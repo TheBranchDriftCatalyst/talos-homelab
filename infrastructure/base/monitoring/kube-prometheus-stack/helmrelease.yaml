@@ -1,0 +1,292 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: prometheus-community
+  namespace: monitoring
+spec:
+  interval: 24h
+  url: https://prometheus-community.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: monitoring
+spec:
+  interval: 30m
+  timeout: 20m
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: ">=65.0.0 <66.0.0"  # Lock to v65.x for stability
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: monitoring
+      interval: 12h
+
+  # Ensure CRDs are managed
+  install:
+    crds: Create
+    createNamespace: false
+    remediation:
+      retries: 3
+
+  upgrade:
+    crds: CreateReplace
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+
+  values:
+    # Global settings
+    fullnameOverride: "kube-prometheus-stack"
+
+    # Prometheus Operator
+    prometheusOperator:
+      enabled: true
+      admissionWebhooks:
+        enabled: true
+        patch:
+          enabled: true
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+    # Prometheus
+    prometheus:
+      enabled: true
+
+      prometheusSpec:
+        # Retention and storage
+        retention: 30d
+        retentionSize: "45GB"
+
+        # Storage configuration (using local-path)
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: local-path
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 50Gi
+
+        # Resource limits for single-node homelab
+        resources:
+          requests:
+            cpu: 500m
+            memory: 2Gi
+          limits:
+            cpu: 2000m
+            memory: 4Gi
+
+        # Service monitors
+        serviceMonitorSelectorNilUsesHelmValues: false
+        podMonitorSelectorNilUsesHelmValues: false
+        probeSelectorNilUsesHelmValues: false
+        ruleSelectorNilUsesHelmValues: false
+
+        # Enable all service monitors
+        serviceMonitorSelector: {}
+        podMonitorSelector: {}
+
+        # Scrape intervals
+        scrapeInterval: 30s
+        evaluationInterval: 30s
+
+        # Enable features
+        enableAdminAPI: true
+        enableRemoteWriteReceiver: false
+
+        # Security context for Talos compatibility
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          fsGroup: 65534
+          seccompProfile:
+            type: RuntimeDefault
+
+    # Alertmanager
+    alertmanager:
+      enabled: true
+
+      alertmanagerSpec:
+        # Storage configuration
+        storage:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: local-path
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 10Gi
+
+        # Resource limits
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+        # Security context
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65534
+          fsGroup: 65534
+          seccompProfile:
+            type: RuntimeDefault
+
+    # Grafana
+    grafana:
+      enabled: true
+
+      # Admin credentials (change in production!)
+      adminPassword: "admin"
+
+      # Persistence
+      persistence:
+        enabled: true
+        storageClassName: local-path
+        accessModes: ["ReadWriteOnce"]
+        size: 10Gi
+
+      # Resource limits
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+      # Datasources
+      datasources:
+        datasources.yaml:
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              type: prometheus
+              url: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
+              access: proxy
+              isDefault: true
+              jsonData:
+                timeInterval: 30s
+
+      # Default dashboards
+      dashboardProviders:
+        dashboardproviders.yaml:
+          apiVersion: 1
+          providers:
+            - name: 'default'
+              orgId: 1
+              folder: ''
+              type: file
+              disableDeletion: false
+              editable: true
+              options:
+                path: /var/lib/grafana/dashboards/default
+
+      # Enable sidecar for dashboard discovery
+      sidecar:
+        dashboards:
+          enabled: true
+          label: grafana_dashboard
+          labelValue: "1"
+          searchNamespace: ALL
+        datasources:
+          enabled: true
+          label: grafana_datasource
+          labelValue: "1"
+
+      # Grafana.ini customizations
+      grafana.ini:
+        server:
+          root_url: "http://grafana.talos00:80"
+        analytics:
+          check_for_updates: false
+        security:
+          allow_embedding: true
+
+    # Node Exporter
+    nodeExporter:
+      enabled: true
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+
+    # Kube State Metrics
+    kube-state-metrics:
+      enabled: true
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+    # Default rules and alerts
+    defaultRules:
+      create: true
+      rules:
+        alertmanager: true
+        etcd: true
+        configReloaders: true
+        general: true
+        k8s: true
+        kubeApiserverAvailability: true
+        kubeApiserverBurnrate: true
+        kubeApiserverHistogram: true
+        kubeApiserverSlos: true
+        kubeControllerManager: true
+        kubelet: true
+        kubeProxy: true
+        kubePrometheusGeneral: true
+        kubePrometheusNodeRecording: true
+        kubernetesApps: true
+        kubernetesResources: true
+        kubernetesStorage: true
+        kubernetesSystem: true
+        kubeSchedulerAlerting: true
+        kubeSchedulerRecording: true
+        kubeStateMetrics: true
+        network: true
+        node: true
+        nodeExporterAlerting: true
+        nodeExporterRecording: true
+        prometheus: true
+        prometheusOperator: true
+
+    # Component-specific service monitors
+    coreDns:
+      enabled: true
+
+    kubeDns:
+      enabled: false
+
+    kubeEtcd:
+      enabled: true
+
+    kubeControllerManager:
+      enabled: true
+
+    kubeScheduler:
+      enabled: true
+
+    kubeProxy:
+      enabled: true
+
+    kubeApiServer:
+      enabled: true

@@ -1,0 +1,117 @@
+---
+# NFS StorageClass for Synology NAS
+# Used for media library and downloads (RWX - multiple pods can share)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-synology
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: ${SYNOLOGY_NFS_SERVER}  # Set via Kustomize overlay
+  share: /volume1  # Base share path
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+mountOptions:
+  - hard
+  - nfsvers=4.1
+  - noatime
+  - nodiratime
+---
+# Example PVs for media and downloads
+# These will be created manually or via a provisioner
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-media
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-synology
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+  nfs:
+    server: ${SYNOLOGY_NFS_SERVER}
+    path: /volume1/media
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-downloads
+spec:
+  capacity:
+    storage: 200Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: nfs-synology
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+  nfs:
+    server: ${SYNOLOGY_NFS_SERVER}
+    path: /volume1/downloads
+---
+# Shared PVCs for media and downloads
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: media-shared
+  namespace: media-dev
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-synology
+  volumeName: nfs-media
+  resources:
+    requests:
+      storage: 1Ti
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: downloads-shared
+  namespace: media-dev
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-synology
+  volumeName: nfs-downloads
+  resources:
+    requests:
+      storage: 200Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: media-shared
+  namespace: media-prod
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-synology
+  volumeName: nfs-media
+  resources:
+    requests:
+      storage: 1Ti
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: downloads-shared
+  namespace: media-prod
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-synology
+  volumeName: nfs-downloads
+  resources:
+    requests:
+      storage: 200Gi

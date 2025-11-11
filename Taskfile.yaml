@@ -1,0 +1,243 @@
+version: '3'
+
+vars:
+  TALOS_NODE: '{{.TALOS_NODE | default "192.168.1.54"}}'
+  TALOSCONFIG: './configs/talosconfig'
+  KUBECONFIG: './.output/kubeconfig'
+  CLUSTER_NAME: 'homelab-single'
+  CLUSTER_ENDPOINT: 'https://{{.TALOS_NODE}}:6443'
+  CONTROLPLANE_CONFIG: './configs/controlplane.yaml'
+  WORKER_CONFIG: './configs/worker.yaml'
+
+tasks:
+  # Initial setup and generation
+  gen-config:
+    desc: Generate fresh Talos configuration files
+    cmds:
+      - mkdir -p configs
+      - talosctl gen config {{.CLUSTER_NAME}} {{.CLUSTER_ENDPOINT}} --output-dir ./configs
+      - echo "Configs generated in ./configs/"
+
+  # Node provisioning
+  apply-config:
+    desc: Apply configuration to Talos node (use --insecure for first-time setup)
+    cmds:
+      - |
+        if [ "{{.INSECURE}}" = "true" ]; then
+          talosctl apply-config --insecure --nodes {{.TALOS_NODE}} --file {{.CONTROLPLANE_CONFIG}}
+        else
+          talosctl --talosconfig {{.TALOSCONFIG}} apply-config --nodes {{.TALOS_NODE}} --file {{.CONTROLPLANE_CONFIG}}
+        fi
+    vars:
+      INSECURE: '{{.INSECURE | default "false"}}'
+
+  bootstrap:
+    desc: Bootstrap etcd on the control plane node
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} bootstrap
+      - echo "Cluster bootstrapped! Waiting for Kubernetes..."
+      - sleep 30
+
+  # Cluster management
+  health:
+    desc: Check cluster health
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} health --server=false
+
+  version:
+    desc: Get Talos version
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} version
+
+  dashboard:
+    desc: Open Talos dashboard
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} dashboard
+
+  # Services
+  services:
+    desc: List all services
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} services
+
+  service-logs:
+    desc: Get logs for a specific service (use -- SERVICE=kubelet)
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} logs {{.SERVICE}}
+    vars:
+      SERVICE: '{{.SERVICE | default "kubelet"}}'
+
+  # Kubernetes
+  kubeconfig:
+    desc: Download kubeconfig
+    cmds:
+      - mkdir -p .output
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} kubeconfig .output
+      - echo "Kubeconfig saved to {{.KUBECONFIG}}"
+
+  kubeconfig-merge:
+    desc: Merge kubeconfig to ~/.kube/config (idempotent, enables kubectx/kubectl)
+    cmds:
+      - ./scripts/kubeconfig-merge.sh
+
+  kubeconfig-unmerge:
+    desc: Remove homelab-single context from ~/.kube/config
+    cmds:
+      - ./scripts/kubeconfig-unmerge.sh
+
+  kubeconfig-export:
+    desc: Export KUBECONFIG environment variable for current shell
+    cmds:
+      - echo "Run this command to use the local kubeconfig:"
+      - echo "  export KUBECONFIG={{.KUBECONFIG}}"
+
+  get-nodes:
+    desc: Get Kubernetes nodes
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} get nodes -o wide
+
+  get-pods:
+    desc: Get all pods in all namespaces
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} get pods -A
+
+  # Troubleshooting
+  dmesg:
+    desc: View kernel logs
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} dmesg
+
+  logs-follow:
+    desc: Follow logs for a service (use -- SERVICE=kubelet)
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} logs --follow {{.SERVICE}}
+    vars:
+      SERVICE: '{{.SERVICE | default "kubelet"}}'
+
+  shell:
+    desc: Get interactive shell (limited in Talos)
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} shell
+
+  containers:
+    desc: List running containers
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} containers
+
+  # Node operations
+  reboot:
+    desc: Reboot the node
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} reboot
+    prompt: This will reboot the node. Continue?
+
+  shutdown:
+    desc: Shutdown the node
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} shutdown
+    prompt: This will shutdown the node. Continue?
+
+  reset:
+    desc: Reset the node (DESTRUCTIVE - wipes all data)
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} reset --graceful=false --reboot
+    prompt: This will WIPE ALL DATA on the node. Are you sure?
+
+  upgrade:
+    desc: Upgrade Talos (use -- VERSION=v1.11.1)
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} upgrade --image ghcr.io/siderolabs/installer:{{.VERSION}}
+    vars:
+      VERSION: '{{.VERSION | default "v1.11.1"}}'
+
+  # Full provisioning workflow
+  provision:
+    desc: Complete provisioning workflow for a fresh node
+    cmds:
+      - ./scripts/provision.sh
+
+  provision-local:
+    desc: Create local Docker-based Talos cluster for testing
+    cmds:
+      - ./scripts/provision-local.sh
+
+  destroy-local:
+    desc: Destroy local Docker-based Talos cluster
+    cmds:
+      - talosctl cluster destroy --name talos-local
+      - echo "Local cluster destroyed"
+
+  # Config management
+  config-merge:
+    desc: Merge talosconfig to default location (~/.talos/config)
+    cmds:
+      - talosctl config merge {{.TALOSCONFIG}}
+      - echo "Config merged to ~/.talos/config"
+
+  config-info:
+    desc: Show current config info
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} config info
+
+  # Network troubleshooting
+  ping:
+    desc: Ping the node
+    cmds:
+      - ping -c 4 {{.TALOS_NODE}}
+
+  check-api:
+    desc: Check if Talos API is responding
+    cmds:
+      - curl -k https://{{.TALOS_NODE}}:50000/version 2>&1 | head -10
+
+  # Etcd operations
+  etcd-members:
+    desc: List etcd members
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} etcd members
+
+  etcd-status:
+    desc: Get etcd status
+    cmds:
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} etcd status
+
+  # Infrastructure setup
+  setup-infrastructure:
+    desc: Install core infrastructure (Traefik, metrics-server, test services)
+    cmds:
+      - ./scripts/setup-infrastructure.sh
+
+  # Kubernetes Dashboard
+  dashboard-token:
+    desc: Get Kubernetes Dashboard access token
+    cmds:
+      - ./scripts/dashboard-token.sh
+
+  dashboard-proxy:
+    desc: Start kubectl proxy for Dashboard access
+    cmds:
+      - echo "Starting proxy... Dashboard will be available at:"
+      - echo "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/"
+      - echo ""
+      - echo "Run 'task dashboard-token' in another terminal to get the login token"
+      - kubectl --kubeconfig {{.KUBECONFIG}} proxy
+
+  # Cluster audit
+  audit:
+    desc: Generate comprehensive cluster audit report
+    cmds:
+      - ./scripts/cluster-audit.sh
+
+  # Cleanup
+  clean:
+    desc: Remove generated/output files only
+    cmds:
+      - rm -rf .output
+      - echo "Cleaned up generated files"
+
+  clean-all:
+    desc: Remove ALL configs including Talos configs (CAREFUL!)
+    cmds:
+      - rm -rf .output configs
+      - echo "All configs and output removed"
+    prompt: This will remove ALL Talos configuration files. Continue?
