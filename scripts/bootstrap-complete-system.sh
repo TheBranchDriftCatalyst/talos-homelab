@@ -37,14 +37,19 @@ echo ""
 echo "🎬 Step 4/5: Deploying Media Stack..."
 kubectl apply -k "${PROJECT_ROOT}/applications/arr-stack/overlays/dev/"
 
-# Step 5: ArgoCD
+# Step 5: Docker Registry
 echo ""
-echo "🚀 Step 5/5: Installing ArgoCD..."
+echo "📦 Step 5/7: Deploying Docker Registry..."
+kubectl apply -f "${PROJECT_ROOT}/infrastructure/base/registry/deployment.yaml"
+
+# Step 6: ArgoCD
+echo ""
+echo "🚀 Step 6/7: Installing ArgoCD..."
 "${SCRIPT_DIR}/bootstrap-argocd.sh"
 
-# Step 6: Bastion
+# Step 7: Bastion
 echo ""
-echo "🔧 Step 6/6: Deploying Bastion Container..."
+echo "🔧 Step 7/7: Deploying Bastion Container..."
 kubectl apply -f "${PROJECT_ROOT}/infrastructure/base/bastion/deployment.yaml"
 
 echo ""
