@@ -1,0 +1,53 @@
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: postgresql-init-db
+  labels:
+    app: postgresql
+    app.kubernetes.io/name: postgresql-init
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  template:
+    metadata:
+      labels:
+        app: postgresql-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: init-db
+          image: postgres:16-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Wait for PostgreSQL to be ready
+              until pg_isready -h postgresql -U arrstack; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+
+              # Create databases for *arr apps (main and log databases)
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h postgresql -U arrstack -d postgres <<EOF
+              SELECT 'CREATE DATABASE sonarr_main' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sonarr_main')\gexec
+              SELECT 'CREATE DATABASE sonarr_log' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sonarr_log')\gexec
+              SELECT 'CREATE DATABASE radarr_main' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'radarr_main')\gexec
+              SELECT 'CREATE DATABASE radarr_log' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'radarr_log')\gexec
+              SELECT 'CREATE DATABASE prowlarr_main' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'prowlarr_main')\gexec
+              SELECT 'CREATE DATABASE prowlarr_log' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'prowlarr_log')\gexec
+              EOF
+
+              echo "All databases created successfully!"
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: postgres-password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

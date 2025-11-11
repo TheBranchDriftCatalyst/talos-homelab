@@ -1,0 +1,145 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  interval: 24h
+  url: https://argoproj.github.io/argo-helm
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  interval: 30m
+  timeout: 20m
+  chart:
+    spec:
+      chart: argo-cd
+      version: ">=7.0.0 <8.0.0"  # Lock to v7.x for stability
+      sourceRef:
+        kind: HelmRepository
+        name: argocd
+        namespace: argocd
+      interval: 12h
+
+  install:
+    crds: Create
+    createNamespace: false
+    remediation:
+      retries: 3
+
+  upgrade:
+    crds: CreateReplace
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+
+  values:
+    # Global settings
+    global:
+      domain: argocd.talos00
+
+    # Redis
+    redis:
+      enabled: true
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+
+    # Argo CD Server
+    server:
+      replicas: 1
+
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+
+      # Allow insecure mode (we're behind Traefik)
+      extraArgs:
+        - --insecure
+
+      # Ingress configuration
+      ingress:
+        enabled: false  # We'll use Traefik IngressRoute
+
+    # Repo Server
+    repoServer:
+      replicas: 1
+
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+    # Application Controller
+    controller:
+      replicas: 1
+
+      resources:
+        requests:
+          cpu: 250m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1Gi
+
+    # ApplicationSet Controller
+    applicationSet:
+      enabled: true
+
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+
+    # Notifications Controller
+    notifications:
+      enabled: false  # Disable for now, can enable later
+
+    # Dex (SSO) - disabled for homelab
+    dex:
+      enabled: false
+
+    # Default admin password (change after first login!)
+    configs:
+      secret:
+        argocdServerAdminPassword: "$2a$10$mivhwttXM0U5eBrZGtAG8.VSRL1l9cZNAmaSaqotIzXRBRwID6gyO"  # "admin"
+        argocdServerAdminPasswordMtime: "2024-01-01T00:00:00Z"
+
+      # Repository credentials (will be added via kubectl later)
+      repositories: {}
+
+      # Default project settings
+      params:
+        server.insecure: true
+        application.instanceLabelKey: argocd.argoproj.io/instance
+
+    # RBAC Configuration
+    rbac:
+      policy.default: role:readonly
+      policy.csv: |
+        p, role:org-admin, applications, *, */*, allow
+        p, role:org-admin, clusters, get, *, allow
+        p, role:org-admin, repositories, get, *, allow
+        p, role:org-admin, repositories, create, *, allow
+        p, role:org-admin, repositories, update, *, allow
+        p, role:org-admin, repositories, delete, *, allow
+        g, admin, role:admin

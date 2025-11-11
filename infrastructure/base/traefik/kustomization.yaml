@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - helmrelease.yaml
+
+# Default domain substitution (will be overridden by overlays)
+replacements:
+  - source:
+      kind: ConfigMap
+      name: domain-config
+      fieldPath: data.DOMAIN
+    targets:
+      - select:
+          kind: HelmRelease
+          name: traefik
+        fieldPaths:
+          - spec.values.ingressRoute.dashboard.matchRule

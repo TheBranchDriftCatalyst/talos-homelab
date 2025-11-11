@@ -1,0 +1,82 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plex
+  labels:
+    app: plex
+    app.kubernetes.io/name: plex
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: plex
+  template:
+    metadata:
+      labels:
+        app: plex
+        app.kubernetes.io/name: plex
+    spec:
+      hostNetwork: true  # Required for Plex discovery
+      containers:
+        - name: plex
+          image: lscr.io/linuxserver/plex:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: "America/Los_Angeles"
+            - name: VERSION
+              value: "docker"
+            - name: PLEX_CLAIM
+              value: ""  # Set this for initial setup: https://www.plex.tv/claim/
+          ports:
+            - name: http
+              containerPort: 32400
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /data
+              readOnly: true
+            - name: transcode
+              mountPath: /transcode
+          livenessProbe:
+            httpGet:
+              path: /web/index.html
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /web/index.html
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 4000m
+              memory: 4Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: plex-config
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-shared
+        - name: transcode
+          emptyDir: {}

@@ -1,0 +1,146 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: HelmRepository
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  interval: 24h
+  url: https://traefik.github.io/charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: traefik
+  namespace: traefik
+spec:
+  interval: 30m
+  timeout: 10m
+  chart:
+    spec:
+      chart: traefik
+      version: ">=37.0.0 <38.0.0"  # Lock to v37.x (Traefik v3.5.x)
+      sourceRef:
+        kind: HelmRepository
+        name: traefik
+        namespace: traefik
+      interval: 12h
+
+  install:
+    crds: Create
+    createNamespace: false
+    remediation:
+      retries: 3
+
+  upgrade:
+    crds: CreateReplace
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+
+  values:
+    # Global settings
+    deployment:
+      kind: DaemonSet  # Use DaemonSet for hostPort binding
+      replicas: 1
+
+    # Service configuration
+    service:
+      enabled: true
+      type: ClusterIP
+
+    # Ports configuration
+    ports:
+      web:
+        port: 80
+        exposedPort: 80
+        protocol: TCP
+        hostPort: 80  # Bind to host port 80
+      websecure:
+        port: 443
+        exposedPort: 443
+        protocol: TCP
+        hostPort: 443  # Bind to host port 443
+      traefik:
+        port: 9000
+        exposedPort: 9000
+        protocol: TCP
+      metrics:
+        port: 9100
+        exposedPort: 9100
+        protocol: TCP
+
+    # Enable dashboard
+    ingressRoute:
+      dashboard:
+        enabled: true
+        matchRule: Host(`traefik.${DOMAIN}`)
+        entryPoints: ["web"]
+
+    # Enable access logs
+    logs:
+      general:
+        level: INFO
+      access:
+        enabled: true
+
+    # Providers
+    providers:
+      kubernetesCRD:
+        enabled: true
+        allowCrossNamespace: true
+        allowExternalNameServices: true
+      kubernetesIngress:
+        enabled: true
+        publishedService:
+          enabled: false
+
+    # Additional arguments
+    additionalArguments:
+      - --serversTransport.insecureSkipVerify=true  # For self-signed certs
+      - --api.insecure=true  # Enable insecure API (homelab only)
+      - --api.dashboard=true
+
+    # Security context - needed for hostPort
+    securityContext:
+      capabilities:
+        drop: [ALL]
+        add: [NET_BIND_SERVICE]
+      readOnlyRootFilesystem: false
+      runAsGroup: 0
+      runAsNonRoot: false
+      runAsUser: 0
+
+    podSecurityContext:
+      fsGroup: 0
+      runAsUser: 0
+      runAsNonRoot: false
+
+    # Resources
+    resources:
+      requests:
+        cpu: 100m
+        memory: 50Mi
+      limits:
+        cpu: 300m
+        memory: 150Mi
+
+    # Enable Prometheus metrics
+    metrics:
+      prometheus:
+        enabled: true
+        entryPoint: metrics
+        service:
+          enabled: true
+        serviceMonitor:
+          enabled: true
+          namespace: monitoring
+          labels:
+            prometheus: kube-prometheus
+
+    # Pod labels
+    podLabels:
+      app: traefik
+
+    # Namespace
+    namespaceOverride: "traefik"

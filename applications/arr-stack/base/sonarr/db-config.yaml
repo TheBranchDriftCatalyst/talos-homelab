@@ -1,0 +1,69 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sonarr-db-config
+  labels:
+    app: sonarr
+    app.kubernetes.io/name: sonarr
+    app.kubernetes.io/part-of: arr-stack
+data:
+  init-db.sh: |
+    #!/bin/sh
+    set -e
+
+    CONFIG_FILE="/config/config.xml"
+
+    # Wait for config directory to be available
+    while [ ! -d "/config" ]; do
+      echo "Waiting for /config directory..."
+      sleep 1
+    done
+
+    # Create config.xml if it doesn't exist
+    if [ ! -f "$CONFIG_FILE" ]; then
+      echo "Creating initial config.xml with PostgreSQL settings..."
+      cat > "$CONFIG_FILE" <<EOF
+    <Config>
+      <LogLevel>info</LogLevel>
+      <Port>8989</Port>
+      <BindAddress>*</BindAddress>
+      <UrlBase></UrlBase>
+      <EnableSsl>False</EnableSsl>
+      <ApiKey>$(cat /dev/urandom | tr -dc 'a-f0-9' | fold -w 32 | head -n 1)</ApiKey>
+      <AuthenticationMethod>None</AuthenticationMethod>
+      <Branch>main</Branch>
+      <LaunchBrowser>False</LaunchBrowser>
+      <SslPort>9898</SslPort>
+      <PostgresUser>arrstack</PostgresUser>
+      <PostgresPassword>changeme123</PostgresPassword>
+      <PostgresPort>5432</PostgresPort>
+      <PostgresHost>postgresql</PostgresHost>
+      <PostgresMainDb>sonarr</PostgresMainDb>
+    </Config>
+    EOF
+      echo "Config file created successfully!"
+    else
+      echo "Config file already exists, checking for database settings..."
+
+      # Check if PostgreSQL settings exist
+      if ! grep -q "PostgresHost" "$CONFIG_FILE"; then
+        echo "Adding PostgreSQL settings to existing config..."
+        # Remove closing </Config> tag
+        sed -i '/<\/Config>/d' "$CONFIG_FILE"
+        # Add PostgreSQL settings
+        cat >> "$CONFIG_FILE" <<EOF
+      <PostgresUser>arrstack</PostgresUser>
+      <PostgresPassword>changeme123</PostgresPassword>
+      <PostgresPort>5432</PostgresPort>
+      <PostgresHost>postgresql</PostgresHost>
+      <PostgresMainDb>sonarr</PostgresMainDb>
+    </Config>
+    EOF
+        echo "PostgreSQL settings added!"
+      else
+        echo "PostgreSQL settings already present."
+      fi
+    fi
+
+    echo "Database configuration complete!"

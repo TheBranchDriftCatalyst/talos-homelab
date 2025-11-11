@@ -1,0 +1,28 @@
+---
+# Kubernetes Dashboard IngressRoute
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kubernetes-dashboard
+  namespace: kubernetes-dashboard
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`dashboard.lab`)
+      kind: Rule
+      services:
+        - name: kubernetes-dashboard
+          port: 443
+          scheme: https  # Dashboard uses HTTPS backend
+          serversTransport: insecure-transport
+
+---
+# ServersTransport to allow insecure HTTPS backend
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: insecure-transport
+  namespace: kubernetes-dashboard
+spec:
+  insecureSkipVerify: true  # Skip cert verification for self-signed certs

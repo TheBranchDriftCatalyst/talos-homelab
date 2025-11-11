@@ -1,0 +1,88 @@
+---
+# whoami Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: whoami
+  namespace: default
+  labels:
+    app: whoami
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: whoami
+  template:
+    metadata:
+      labels:
+        app: whoami
+    spec:
+      containers:
+        - name: whoami
+          image: traefik/whoami:v1.10
+          ports:
+            - name: web
+              containerPort: 80
+
+---
+# whoami Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: whoami
+  namespace: default
+spec:
+  selector:
+    app: whoami
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
+
+---
+# whoami IngressRoute (via hostname)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami-hostname
+  namespace: default
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`whoami.lab`)
+      kind: Rule
+      services:
+        - name: whoami
+          port: 80
+
+---
+# whoami IngressRoute (via path)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami-path
+  namespace: default
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: PathPrefix(`/whoami`)
+      kind: Rule
+      middlewares:
+        - name: whoami-strip-prefix
+      services:
+        - name: whoami
+          port: 80
+
+---
+# Middleware to strip /whoami prefix
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: whoami-strip-prefix
+  namespace: default
+spec:
+  stripPrefix:
+    prefixes:
+      - /whoami

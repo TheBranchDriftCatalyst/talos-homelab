@@ -1,0 +1,98 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bastion
+  labels:
+    name: bastion
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bastion
+  namespace: bastion
+  labels:
+    app: bastion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: bastion
+  template:
+    metadata:
+      labels:
+        app: bastion
+    spec:
+      containers:
+        - name: bastion
+          image: nicolaka/netshoot:latest
+          command: ["/bin/bash"]
+          args:
+            - -c
+            - |
+              # Setup SSH
+              mkdir -p /root/.ssh
+              chmod 700 /root/.ssh
+
+              # Generate SSH host keys if they don't exist
+              if [ ! -f /etc/ssh/ssh_host_rsa_key ]; then
+                ssh-keygen -A
+              fi
+
+              # Set root password (change this!)
+              echo "root:bastion123" | chpasswd
+
+              # Configure SSHD
+              sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+              sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+              # Start SSH server
+              /usr/sbin/sshd -D -e
+          ports:
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_RAW
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bastion
+  namespace: bastion
+  labels:
+    app: bastion
+spec:
+  type: ClusterIP
+  ports:
+    - port: 22
+      targetPort: ssh
+      protocol: TCP
+      name: ssh
+  selector:
+    app: bastion
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: bastion-ssh
+  namespace: bastion
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`bastion.talos00`)
+      kind: Rule
+      services:
+        - name: bastion
+          port: 22

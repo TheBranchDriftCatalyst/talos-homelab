@@ -1,0 +1,123 @@
+---
+# Kube-Prometheus-Stack values for homelab
+
+# Prometheus Operator
+prometheusOperator:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Prometheus
+prometheus:
+  enabled: true
+  prometheusSpec:
+    retention: 30d
+    retentionSize: "45GB"
+    securityContext:
+      runAsUser: 65534
+      runAsGroup: 65534
+      fsGroup: 65534
+      runAsNonRoot: true
+      fsGroupChangePolicy: "OnRootMismatch"
+    queryLogFile: ""
+    resources:
+      requests:
+        cpu: 500m
+        memory: 2Gi
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+    # Use emptyDir instead of PVC due to local-path-provisioner fsGroup issues with subPath
+    # Data will not persist across pod restarts, but Prometheus will work properly
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: ""
+          resources:
+            requests:
+              storage: 1Gi
+    # Disable persistent storage
+    storageSpec: null
+    # Enable ServiceMonitors for all namespaces
+    serviceMonitorSelector: {}
+    podMonitorSelector: {}
+    ruleSelector: {}
+
+# Grafana
+grafana:
+  enabled: true
+  adminPassword: "admin"  # Change this!
+  ingress:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  persistence:
+    enabled: true
+    storageClassName: local-path
+    size: 10Gi
+
+# Alertmanager
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+# Node Exporter
+nodeExporter:
+  enabled: true
+
+# Kube State Metrics
+kubeStateMetrics:
+  enabled: true
+
+# Default rules (alerts)
+defaultRules:
+  create: true
+  rules:
+    alertmanager: true
+    etcd: true
+    configReloaders: true
+    general: true
+    k8s: true
+    kubeApiserverAvailability: true
+    kubeApiserverSlos: true
+    kubelet: true
+    kubeProxy: true
+    kubePrometheusGeneral: true
+    kubePrometheusNodeRecording: true
+    kubernetesApps: true
+    kubernetesResources: true
+    kubernetesStorage: true
+    kubernetesSystem: true
+    kubeScheduler: true
+    kubeStateMetrics: true
+    network: true
+    node: true
+    nodeExporterAlerting: true
+    nodeExporterRecording: true
+    prometheus: true
+    prometheusOperator: true
