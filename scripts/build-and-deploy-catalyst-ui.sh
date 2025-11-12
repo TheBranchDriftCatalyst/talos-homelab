@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CATALYST_UI_PATH="${HOME}/catalyst-devspace/workspace/catalyst-ui"
 REGISTRY_URL="registry.talos00"
+REGISTRY_NODEPORT="192.168.1.54:32553"
 
 echo "==========================================="
 echo "Catalyst UI - Build and Deploy"
@@ -62,11 +63,10 @@ for i in {1..10}; do
     sleep 1
 done
 
-# Tag images for localhost registry
+# Tag and push images to localhost registry
 docker tag "${REGISTRY_URL}/catalyst-ui:latest" "localhost:5000/catalyst-ui:latest"
 docker tag "${REGISTRY_URL}/catalyst-ui:${GIT_HASH}" "localhost:5000/catalyst-ui:${GIT_HASH}"
 
-# Push to local registry via port-forward
 echo "📤 Pushing images to registry..."
 docker push "localhost:5000/catalyst-ui:latest"
 docker push "localhost:5000/catalyst-ui:${GIT_HASH}"
@@ -74,7 +74,7 @@ docker push "localhost:5000/catalyst-ui:${GIT_HASH}"
 # Clean up port-forward
 kill $PF_PID 2>/dev/null || true
 
-echo "✅ Pushed to registry at ${REGISTRY_URL}"
+echo "✅ Pushed to registry (images tagged for ${REGISTRY_URL})"
 echo ""
 
 # Apply the ArgoCD Application
