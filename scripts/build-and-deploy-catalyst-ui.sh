@@ -48,10 +48,23 @@ docker build -t "catalyst-ui:latest" \
 echo "✅ Built image with tags: latest and ${GIT_HASH}"
 echo ""
 
-# Push to local registry
-echo "📤 Pushing image to local registry..."
-docker push "${REGISTRY_URL}/catalyst-ui:latest"
-docker push "${REGISTRY_URL}/catalyst-ui:${GIT_HASH}"
+# Port-forward registry to localhost for Docker push
+echo "📤 Setting up port-forward to registry..."
+kubectl port-forward -n registry svc/docker-registry 5000:5000 > /dev/null 2>&1 &
+PF_PID=$!
+sleep 2
+
+# Tag images for localhost registry
+docker tag "${REGISTRY_URL}/catalyst-ui:latest" "localhost:5000/catalyst-ui:latest"
+docker tag "${REGISTRY_URL}/catalyst-ui:${GIT_HASH}" "localhost:5000/catalyst-ui:${GIT_HASH}"
+
+# Push to local registry via port-forward
+echo "📤 Pushing images to registry..."
+docker push "localhost:5000/catalyst-ui:latest"
+docker push "localhost:5000/catalyst-ui:${GIT_HASH}"
+
+# Clean up port-forward
+kill $PF_PID 2>/dev/null || true
 
 echo "✅ Pushed to registry at ${REGISTRY_URL}"
 echo ""
