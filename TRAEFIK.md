@@ -22,20 +22,20 @@ helm install traefik traefik/traefik \
 ### 1. Traefik Dashboard
 Traefik's own dashboard for monitoring routes and services.
 
-**Access:** `http://traefik.talos00`
+**Access:** `http://traefik.lab`
 
 ### 2. whoami Service
 Test service that echoes request information.
 
 **Access:**
-- Via hostname: `http://whoami.talos00`
+- Via hostname: `http://whoami.lab`
 - Via path: `http://192.168.1.54/whoami`
 
 ### 3. Kubernetes Dashboard
 K8s admin dashboard via Traefik.
 
 **Access:**
-- Via hostname: `http://dashboard.talos00`
+- Via hostname: `http://dashboard.lab`
 - Login token: `task dashboard-token`
 
 ## DNS/Hosts Configuration
@@ -43,10 +43,10 @@ K8s admin dashboard via Traefik.
 Add to `/etc/hosts` on your Mac:
 
 ```bash
-192.168.1.54  traefik.talos00 whoami.talos00 dashboard.talos00
+192.168.1.54  traefik.lab whoami.lab dashboard.lab
 ```
 
-Or configure your router/DNS to point `*.talos00` to `192.168.1.54`.
+Or configure your router/DNS to point `*.lab` to `192.168.1.54`.
 
 ## Traefik CRDs & Features
 
@@ -82,7 +82,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`myapp.talos00`)
+    - match: Host(`myapp.lab`)
       kind: Rule
       services:
         - name: my-app
@@ -125,11 +125,11 @@ Internet/LAN (192.168.1.54)
      v
 [Traefik DaemonSet] ← hostPort: 80, 443
      |
-     +--→ traefik.talos00 → Traefik Dashboard
+     +--→ traefik.lab → Traefik Dashboard
      |
-     +--→ whoami.talos00 → whoami Service
+     +--→ whoami.lab → whoami Service
      |
-     +--→ dashboard.talos00 → kubernetes-dashboard (HTTPS backend)
+     +--→ dashboard.lab → kubernetes-dashboard (HTTPS backend)
      |
      +--→ /whoami → whoami Service (with path strip)
 ```
@@ -178,7 +178,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`myapp.talos00`)
+    - match: Host(`myapp.lab`)
       kind: Rule
       services:
         - name: my-app-service
@@ -196,7 +196,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`myapp.talos00`)
+    - match: Host(`myapp.lab`)
       middlewares:
         - name: rate-limit
         - name: auth
