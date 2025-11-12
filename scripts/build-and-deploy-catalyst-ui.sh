@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CATALYST_UI_PATH="${HOME}/catalyst-devspace/workspace/catalyst-ui"
-REGISTRY_URL="registry.talos00:5000"
+REGISTRY_URL="registry.talos00"
 
 echo "==========================================="
 echo "Catalyst UI - Build and Deploy"
