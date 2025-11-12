@@ -52,7 +52,15 @@ echo ""
 echo "📤 Setting up port-forward to registry..."
 kubectl port-forward -n registry svc/docker-registry 5000:5000 > /dev/null 2>&1 &
 PF_PID=$!
-sleep 2
+
+# Wait for port-forward to be ready
+for i in {1..10}; do
+    if curl -s http://localhost:5000/v2/ > /dev/null 2>&1; then
+        echo "✅ Registry port-forward ready"
+        break
+    fi
+    sleep 1
+done
 
 # Tag images for localhost registry
 docker tag "${REGISTRY_URL}/catalyst-ui:latest" "localhost:5000/catalyst-ui:latest"
