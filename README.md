@@ -56,14 +56,28 @@ brew install go-task/tap/go-task kubectx k9s helm
 - **etcd**: Single-node cluster
 
 ### Observability Stack
-- **Prometheus**: Metrics collection and alerting (30-day retention, 50Gi storage)
-- **Grafana**: Metrics visualization and dashboards
-- **Alertmanager**: Alert routing and management
-- **Graylog**: Centralized log management platform
-- **MongoDB**: Database backend for Graylog (20Gi storage)
-- **OpenSearch**: Log storage and indexing (30Gi storage)
-- **Fluent Bit**: Log collection from all containers
-- **Exportarr**: Prometheus exporters for *arr applications
+- **Prometheus**: Metrics collection and alerting (30-day retention, 50Gi storage) ✅ DEPLOYED
+- **Grafana**: Metrics visualization and dashboards ✅ DEPLOYED
+- **Alertmanager**: Alert routing and management ✅ DEPLOYED
+- **Graylog**: Centralized log management platform ✅ DEPLOYED
+- **MongoDB**: Database backend for Graylog (20Gi storage) ✅ DEPLOYED
+- **OpenSearch**: Log storage and indexing (30Gi storage) ✅ DEPLOYED
+- **Fluent Bit**: Log collection from all containers ✅ DEPLOYED
+- **Exportarr**: Prometheus exporters for *arr applications ✅ DEPLOYED
+
+### GitOps & Management
+- **ArgoCD**: GitOps continuous delivery (v3.2.0) ✅ DEPLOYED
+- **Homepage**: Unified dashboard for all services ✅ DEPLOYED
+
+### Media Applications (Arr Stack)
+- **Prowlarr**: Indexer manager ✅ RUNNING
+- **Sonarr**: TV show automation ✅ RUNNING
+- **Radarr**: Movie automation ✅ RUNNING
+- **Readarr**: Book automation ✅ RUNNING
+- **Overseerr**: Media request management ✅ RUNNING
+- **Plex**: Media server ✅ RUNNING
+- **Jellyfin**: Alternative media server ✅ RUNNING
+- **PostgreSQL**: Database for Overseerr ✅ RUNNING
 
 ### Automatic Dashboard Deployment
 
@@ -98,28 +112,52 @@ This will install:
 - Fluent Bit (log collection)
 
 Access URLs after deployment:
-- Grafana: http://grafana.talos00 (admin / prom-operator)
-- Prometheus: http://prometheus.talos00
-- Alertmanager: http://alertmanager.talos00
-- Graylog: http://graylog.talos00 (admin / admin)
+- **Monitoring**:
+  - Grafana: http://grafana.talos00 (admin / prom-operator)
+  - Prometheus: http://prometheus.talos00
+  - Alertmanager: http://alertmanager.talos00
+  - Graylog: http://graylog.talos00 (admin / admin)
+- **GitOps**:
+  - ArgoCD: http://argocd.talos00 (admin / admin)
+- **Media Apps** (all in media-dev namespace):
+  - Homepage: http://homepage.talos00
+  - Prowlarr: http://prowlarr.talos00
+  - Sonarr: http://sonarr.talos00
+  - Radarr: http://radarr.talos00
+  - Readarr: http://readarr.talos00
+  - Overseerr: http://overseerr.talos00
+  - Plex: http://plex.talos00
+  - Jellyfin: http://jellyfin.talos00
 
-### Deploy Applications (arr stack)
+### Deploy Applications (arr stack) ✅ DEPLOYED
+
+All media applications are currently deployed to the `media-dev` namespace:
 
 ```bash
-# Deploy media applications
-kubectl apply -k applications/arr-stack/overlays/dev
+# View all deployed apps
+kubectl get deployments -n media-dev
+
+# Check app status
+kubectl get pods -n media-dev
 ```
 
-This includes:
-- Prowlarr (indexer manager)
-- Sonarr (TV shows)
-- Radarr (movies)
-- Readarr (books)
-- Overseerr (request management)
-- Plex (media server)
-- Jellyfin (media server)
-- Homepage (dashboard)
-- Exportarr (Prometheus metrics for *arr apps)
+**Deployed Applications**:
+- Prowlarr (indexer manager) ✅
+- Sonarr (TV shows) ✅
+- Radarr (movies) ✅
+- Readarr (books) ✅
+- Overseerr (request management) ✅
+- Plex (media server) ✅
+- Jellyfin (media server) ✅
+- Homepage (dashboard) ✅
+- PostgreSQL (database) ✅
+- Exportarr (Prometheus metrics - 4 instances) ⚠️ Needs API keys
+
+**Configuration Needed**:
+1. Configure Exportarr API keys (see `scripts/extract-arr-api-keys.sh`)
+2. Configure Prowlarr indexers
+3. Connect Sonarr/Radarr/Readarr to Prowlarr
+4. Configure Plex and Jellyfin media libraries
 
 ## Common Tasks
 
@@ -392,6 +430,30 @@ For Kubernetes documentation: https://kubernetes.io/docs/
 
 ## Version Info
 
-- Talos: v1.11.1
-- Kubernetes: v1.34.0
-- Dashboard: v2.7.0
+### Core Infrastructure
+- **Talos**: v1.11.1
+- **Kubernetes**: v1.34.0
+- **Dashboard**: v2.7.0
+- **Traefik**: v3.5.3
+
+### Deployed Services
+- **ArgoCD**: v3.2.0
+- **kube-prometheus-stack**: v0.86.2 (Prometheus Operator v0.86.2)
+- **MongoDB**: v8.2.1
+- **OpenSearch**: v3.3.2
+- **Graylog**: Latest
+- **Fluent Bit**: Latest
+
+### Scripts Available
+- `provision.sh` - Cluster provisioning
+- `setup-infrastructure.sh` - Infrastructure deployment
+- `deploy-stack.sh` - Complete stack deployment (monitoring + observability)
+- `deploy-observability.sh` - Observability stack only
+- `bootstrap-argocd.sh` - ArgoCD installation
+- `bootstrap-complete-system.sh` - Full system bootstrap
+- `build-and-deploy-catalyst-ui.sh` - Catalyst UI GitOps deployment
+- `extract-arr-api-keys.sh` - Extract API keys from arr apps
+- `cluster-audit.sh` - Generate cluster audit report
+- `kubeconfig-merge.sh` - Merge kubeconfig to ~/.kube/config
+- `kubeconfig-unmerge.sh` - Remove kubeconfig from ~/.kube/config
+- `dashboard-token.sh` - Get Kubernetes Dashboard token
