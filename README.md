@@ -2,6 +2,20 @@
 
 This repository contains configuration and scripts for managing a single-node Talos Kubernetes cluster.
 
+## GitOps Architecture
+
+This cluster uses a **dual GitOps pattern** with two distinct deployment workflows:
+
+1. **Infrastructure GitOps** (this repo) - Manual, controlled platform deployments
+   - Manages: ArgoCD, Traefik, Registry, Monitoring, Observability
+   - Method: Scripts + kubectl apply
+
+2. **Application GitOps** (app repos) - Automated, continuous deployments
+   - Manages: Application workloads (e.g., catalyst-ui)
+   - Method: ArgoCD watches and auto-syncs
+
+**📖 Full details**: See [docs/DUAL-GITOPS.md](docs/DUAL-GITOPS.md)
+
 ## Quick Start
 
 ### Prerequisites
