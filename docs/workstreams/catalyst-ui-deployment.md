@@ -11,6 +11,7 @@ The infrastructure is set up but ArgoCD deployment is currently paused pending D
 ## Components
 
 ### 1. Docker Registry
+
 - **Location**: `registry` namespace
 - **Service**: `docker-registry` (ClusterIP + NodePort)
 - **Storage**: 50Gi PVC using `local-path` storage class
@@ -36,6 +37,7 @@ Location: `infrastructure/base/argocd/applications/catalyst-ui.yaml`
 Location: `~/catalyst-devspace/workspace/catalyst-ui/k8s/`
 
 Files:
+
 - `namespace.yaml` - Creates `catalyst` namespace
 - `deployment.yaml` - Runs catalyst-ui pods (2 replicas)
 - `service.yaml` - ClusterIP service
@@ -48,6 +50,7 @@ Files:
 Location: `scripts/build-and-deploy-catalyst-ui.sh`
 
 **What it does**:
+
 1. Verifies catalyst-ui directory exists
 2. Ensures registry is deployed and ready
 3. Gets git hash for image tagging
@@ -58,6 +61,7 @@ Location: `scripts/build-and-deploy-catalyst-ui.sh`
 8. Waits for ArgoCD to sync
 
 **Usage**:
+
 ```bash
 ./scripts/build-and-deploy-catalyst-ui.sh
 ```
@@ -67,6 +71,7 @@ Location: `scripts/build-and-deploy-catalyst-ui.sh`
 Location: `~/catalyst-devspace/workspace/catalyst-ui/Dockerfile`
 
 **Build Strategy**:
+
 - Multi-stage build (Node 24 + nginx:alpine)
 - Uses existing `yarn build:app` command
 - Configured for production with `VITE_BASE_PATH=/` and `NODE_ENV=production`
@@ -78,6 +83,7 @@ Location: `~/catalyst-devspace/workspace/catalyst-ui/Dockerfile`
 **Required**: Docker Desktop must trust the local registry
 
 File: `~/.docker/daemon.json`
+
 ```json
 {
   "insecure-registries": [
@@ -93,6 +99,7 @@ After updating, restart Docker Desktop.
 ## Access URLs
 
 Once deployed:
+
 - **ArgoCD UI**: http://argocd.talos00
 - **Registry UI**: http://registry.talos00
 - **Catalyst UI**: http://catalyst.talos00
@@ -100,11 +107,13 @@ Once deployed:
 ## Current Issues
 
 ### Docker Desktop Restart Problems
-Docker Desktop has been experiencing issues restarting after daemon.json updates. The configuration is valid but Docker takes a long time to start or fails to start.
+
+Docker Desktop has been experiencing issues restarting after daemon.JSON updates. The configuration is valid but Docker takes a long time to start or fails to start.
 
 **Workaround**: Manually restart Docker Desktop through macOS menu bar.
 
 ### Registry Access
+
 - **HTTP via Traefik**: The registry is accessible via Traefik on port 80, but Docker's registry client has issues with the blob upload endpoints returning 404 errors.
 - **NodePort**: NodePort services are not externally accessible on Talos Linux.
 - **Current Solution**: Use `kubectl port-forward` to localhost:5000 for pushing images.
@@ -119,13 +128,15 @@ Docker Desktop has been experiencing issues restarting after daemon.json updates
 
 ## Files Created/Modified
 
-### In talos-fix repo:
+### In Talos-fix repo
+
 - `infrastructure/base/registry/deployment.yaml` - Registry deployment
 - `infrastructure/base/argocd/applications/catalyst-ui.yaml` - ArgoCD app
 - `scripts/build-and-deploy-catalyst-ui.sh` - Build and deploy script
 - `docs/catalyst-ui-deployment.md` - This file
 
-### In catalyst-ui repo:
+### In catalyst-ui repo
+
 - `Dockerfile` - Multi-stage production build
 - `.dockerignore` - Optimized build context
 - `k8s/namespace.yaml` - Namespace definition
@@ -157,6 +168,7 @@ git push origin main
 ## Troubleshooting
 
 ### Registry not accessible
+
 ```bash
 # Check registry pod
 kubectl get pods -n registry
@@ -170,6 +182,7 @@ kubectl run -it --rm curl-test --image=curlimages/curl -- \
 ```
 
 ### ArgoCD not syncing
+
 ```bash
 # Check application status
 kubectl get application -n argocd catalyst-ui
@@ -182,6 +195,7 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
 ```
 
 ### Docker build fails
+
 ```bash
 # Verify build works locally
 cd ~/catalyst-devspace/workspace/catalyst-ui

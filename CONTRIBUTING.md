@@ -16,6 +16,7 @@ task dev-setup
 ```
 
 This installs:
+
 - ✅ Homebrew packages (lefthook, gitleaks, yamllint, shellcheck, etc.)
 - ✅ Yarn packages (markdownlint, prettier)
 - ✅ Git hooks (automatic linting on commit)
@@ -76,6 +77,7 @@ Types:
 ```
 
 **Examples:**
+
 ```
 feat: add external secrets operator
 fix(monitoring): resolve Prometheus scrape timeout
@@ -86,11 +88,13 @@ chore(deps): update Flux to v2.2.0
 ### Git Hooks
 
 Hooks run automatically on:
+
 - **Pre-commit:** Linting, formatting, validation
 - **Commit-msg:** Commit message format check
 - **Pre-push:** Full secret scan, TODO warnings
 
 **Skip hooks (emergency only):**
+
 ```bash
 LEFTHOOK=0 git commit -m "emergency fix"
 ```

@@ -51,27 +51,29 @@ This homelab uses a **dual GitOps approach** for clear separation of concerns:
 
 ## Responsibility Matrix
 
-| Component | Managed By | Why |
-|-----------|------------|-----|
-| **Namespaces** (media-dev, media-prod) | FluxCD | Low-level infrastructure |
-| **Storage** (local-path, NFS) | FluxCD | Low-level infrastructure |
-| **Monitoring** (Prometheus, Grafana) | FluxCD | Low-level infrastructure |
-| **Observability** (Graylog, OpenSearch) | FluxCD | Low-level infrastructure |
-| **Traefik** | Manual/Helm | Pre-installed, not in GitOps |
-| **ArgoCD** | Manual/Helm | Bootstraps itself, not self-managed |
-| **Arr Stack** (Prowlarr, Sonarr, etc.) | ArgoCD | High-level applications |
-| **Media Servers** (Plex, Jellyfin) | ArgoCD | High-level applications |
-| **Supporting Apps** (PostgreSQL, Homepage) | ArgoCD | High-level applications |
+| Component                                  | Managed By  | Why                                 |
+| ------------------------------------------ | ----------- | ----------------------------------- |
+| **Namespaces** (media-dev, media-prod)     | FluxCD      | Low-level infrastructure            |
+| **Storage** (local-path, NFS)              | FluxCD      | Low-level infrastructure            |
+| **Monitoring** (Prometheus, Grafana)       | FluxCD      | Low-level infrastructure            |
+| **Observability** (Graylog, OpenSearch)    | FluxCD      | Low-level infrastructure            |
+| **Traefik**                                | Manual/Helm | Pre-installed, not in GitOps        |
+| **ArgoCD**                                 | Manual/Helm | Bootstraps itself, not self-managed |
+| **Arr Stack** (Prowlarr, Sonarr, etc.)     | ArgoCD      | High-level applications             |
+| **Media Servers** (Plex, Jellyfin)         | ArgoCD      | High-level applications             |
+| **Supporting Apps** (PostgreSQL, Homepage) | ArgoCD      | High-level applications             |
 
 ---
 
 ## Current Deployment Status
 
 ### ❌ FluxCD - NOT YET DEPLOYED
+
 **Status**: Ready to deploy, bootstrap script created
 **Path**: `bootstrap/flux/bootstrap.sh`
 
 **What Flux Will Manage**:
+
 ```
 infrastructure/base/
 ├── namespaces/              ← Flux
@@ -90,10 +92,12 @@ infrastructure/base/
 ```
 
 ### ✅ ArgoCD - DEPLOYED
+
 **Status**: Running in `argocd` namespace
 **Access**: http://argocd.talos00
 
 **What ArgoCD Manages**:
+
 ```
 applications/arr-stack/
 ├── base/
@@ -119,6 +123,7 @@ applications/arr-stack/
 ### Initial Setup (One-time)
 
 #### 1. Deploy FluxCD
+
 ```bash
 # Install Flux CLI
 brew install fluxcd/tap/flux
@@ -140,6 +145,7 @@ flux bootstrap github \
 ```
 
 #### 2. Verify Flux Deployment
+
 ```bash
 # Check Flux status
 flux check
@@ -155,6 +161,7 @@ flux get kustomizations --watch
 ```
 
 #### 3. ArgoCD (Already Deployed)
+
 ```bash
 # ArgoCD is already running
 kubectl get pods -n argocd
@@ -189,14 +196,14 @@ open http://argocd.talos00
 
 ## Key Differences
 
-| Feature | FluxCD | ArgoCD |
-|---------|--------|--------|
-| **UI** | CLI only (or WeaveGitOps for UI) | Full web UI ✨ |
-| **Scope** | Infrastructure (foundational) | Applications (user-facing) |
-| **CRDs** | GitRepository, Kustomization, HelmRelease | Application, ApplicationSet |
-| **Sync** | Automatic (pull-based) | Manual or automatic |
-| **Multi-cluster** | Excellent | Excellent |
-| **Helm Support** | Via HelmRelease CRD | Native via Application |
+| Feature           | FluxCD                                    | ArgoCD                      |
+| ----------------- | ----------------------------------------- | --------------------------- |
+| **UI**            | CLI only (or WeaveGitOps for UI)          | Full web UI ✨              |
+| **Scope**         | Infrastructure (foundational)             | Applications (user-facing)  |
+| **CRDs**          | GitRepository, Kustomization, HelmRelease | Application, ApplicationSet |
+| **Sync**          | Automatic (pull-based)                    | Manual or automatic         |
+| **Multi-cluster** | Excellent                                 | Excellent                   |
+| **Helm Support**  | Via HelmRelease CRD                       | Native via Application      |
 
 ---
 
@@ -239,6 +246,7 @@ open http://argocd.talos00
 ## Migration Plan (From Current State)
 
 ### Current State
+
 - ✅ ArgoCD deployed via Helm
 - ❌ FluxCD not deployed
 - ❌ Infrastructure deployed manually via Helm/kubectl
@@ -246,6 +254,7 @@ open http://argocd.talos00
 ### Migration Steps
 
 #### Phase 1: Deploy FluxCD (No Changes to Cluster)
+
 ```bash
 # Bootstrap Flux (won't touch existing resources)
 ./bootstrap/flux/bootstrap.sh
@@ -256,6 +265,7 @@ flux get kustomizations
 ```
 
 #### Phase 2: Let Flux Adopt Existing Resources
+
 ```bash
 # Flux will detect and adopt existing resources
 # No recreation needed - Flux uses kubectl apply
@@ -265,6 +275,7 @@ flux get kustomizations --watch
 ```
 
 #### Phase 3: Verify No Disruption
+
 ```bash
 # Check all pods still running
 kubectl get pods -A
@@ -277,6 +288,7 @@ kubectl get pods -n media-dev
 ```
 
 #### Phase 4: Future Changes via GitOps
+
 ```bash
 # From now on, change infrastructure via Git
 # 1. Edit files in infrastructure/
@@ -324,6 +336,7 @@ talos-fix/
 ### Flux Issues
 
 **Check Flux status:**
+
 ```bash
 flux check
 flux get all
@@ -331,12 +344,14 @@ flux logs --all-namespaces
 ```
 
 **Force reconciliation:**
+
 ```bash
 flux reconcile source git flux-system
 flux reconcile kustomization flux-system
 ```
 
 **Suspend/Resume:**
+
 ```bash
 flux suspend kustomization flux-system
 flux resume kustomization flux-system
@@ -345,6 +360,7 @@ flux resume kustomization flux-system
 ### ArgoCD Issues
 
 **Check ArgoCD status:**
+
 ```bash
 kubectl get pods -n argocd
 argocd app list
@@ -352,12 +368,14 @@ argocd app get <app-name>
 ```
 
 **Force sync:**
+
 ```bash
 argocd app sync <app-name>
 argocd app sync --force <app-name>  # Hard refresh
 ```
 
 **Diff before sync:**
+
 ```bash
 argocd app diff <app-name>
 ```
@@ -445,11 +463,13 @@ argocd cluster list
 ## Decision Log
 
 **2025-11-09**: Dual GitOps Architecture Chosen
+
 - **Flux**: Infrastructure (namespaces, storage, monitoring, observability)
 - **ArgoCD**: Applications (arr stack, media servers)
 - **Rationale**: Clean separation, best tool for each job
 
 **2025-11-11**: FluxCD Bootstrap Files Restored
+
 - Accidentally deleted in cleanup
 - Restored for proper dual GitOps implementation
 - Ready to deploy Flux alongside existing ArgoCD

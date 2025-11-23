@@ -9,16 +9,19 @@ This guide explains how to run a local Talos Kubernetes cluster on your Mac usin
    - Make sure Docker is running before proceeding
 
 2. **Talosctl** - Talos CLI tool
+
    ```bash
    brew install siderolabs/tap/talosctl
    ```
 
-3. **Kubectl** - Kubernetes CLI
+3. **kubectl** - Kubernetes CLI
+
    ```bash
    brew install kubectl
    ```
 
 4. **Helm** - Kubernetes package manager
+
    ```bash
    brew install helm
    ```
@@ -32,6 +35,7 @@ This guide explains how to run a local Talos Kubernetes cluster on your Mac usin
 ```
 
 This script will:
+
 - Create a single-node Talos cluster running in Docker
 - Install metrics-server
 - Install Traefik ingress controller
@@ -154,18 +158,21 @@ kubectl -n media-dev port-forward svc/jellyfin 8096:8096
 ## Differences from Production
 
 ### Storage
+
 - ❌ No NFS storage (Synology)
 - ✅ local-path-provisioner only
-- ⚠️  Data persists in Docker volume (lost on cluster destroy)
+- ⚠️ Data persists in Docker volume (lost on cluster destroy)
 
 ### Networking
+
 - ❌ No hostPort binding (80/443)
 - ✅ LoadBalancer service type
 - ✅ Access via `*.localhost` domains
 
 ### Resources
-- ⚠️  Limited to Docker Desktop resource allocation
-- ⚠️  Single node (no HA)
+
+- ⚠️ Limited to Docker Desktop resource allocation
+- ⚠️ Single node (no HA)
 - ✅ Good for testing deployments and configs
 
 ## Cleanup
@@ -177,6 +184,7 @@ talosctl cluster destroy --name talos-local
 ```
 
 This removes:
+
 - All Docker containers
 - All Docker volumes
 - Cluster data
@@ -193,6 +201,7 @@ kubectl config delete-cluster talos-local
 ### Docker Issues
 
 **Error: Cannot connect to Docker daemon**
+
 ```bash
 # Start Docker Desktop
 open -a Docker
@@ -202,6 +211,7 @@ open -a Docker
 ```
 
 **Error: Out of disk space**
+
 ```bash
 # Clean up Docker
 docker system prune -a --volumes
@@ -210,13 +220,15 @@ docker system prune -a --volumes
 ### Cluster Issues
 
 **Error: Cluster creation timeout**
+
 ```bash
 # Destroy and retry
 talosctl cluster destroy --name talos-local
 ./scripts/provision-local.sh
 ```
 
-**Error: Can't reach *.localhost**
+**Error: Can't reach \*.localhost**
+
 ```bash
 # Get Traefik LoadBalancer IP
 kubectl -n traefik get svc traefik
@@ -229,6 +241,7 @@ kubectl -n traefik port-forward svc/traefik 8080:80
 ### Application Issues
 
 **Pods stuck in Pending**
+
 ```bash
 # Check PVC binding
 kubectl -n media-dev get pvc

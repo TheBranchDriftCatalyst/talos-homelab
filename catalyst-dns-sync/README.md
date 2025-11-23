@@ -11,8 +11,8 @@ Automatically sync Traefik IngressRoute and standard Ingress hostnames to DNS re
 ### Status
 
 Untested entirely, need debug sesh.
-- [ ] Need to move this to the dev repo as well at some point
 
+- [ ] Need to move this to the dev repo as well at some point
 
 ### Development Mode (Local /etc/hosts)
 
@@ -87,6 +87,7 @@ See [full proposal](../docs/proposals/CATALYST-DNS-SYNC-PROPOSAL.md) and [MVP de
 ```
 
 **Dev Mode:**
+
 ```
 Kubernetes Cluster ──▶ catalyst-dns-sync ──▶ /etc/hosts (local)
 ```
@@ -165,6 +166,7 @@ task metrics      # Port-forward metrics endpoint
 ### Dev Mode Details
 
 When running `task dev` or `--dev-mode`:
+
 - Watches Ingress/IngressRoute resources from cluster
 - Extracts hostnames matching `DNS_ZONE` (e.g., `*.talos00`)
 - Updates `/etc/hosts` with idempotent managed block:
@@ -189,14 +191,14 @@ All metrics exposed at `:8080/metrics` for Prometheus scraping.
 
 ### Core Metrics
 
-| Metric | Type | Description |
-|--------|------|-------------|
-| `catalyst_dns_sync_records_total` | Counter | DNS records created/updated/deleted |
-| `catalyst_dns_sync_api_requests_total` | Counter | DNS API calls by endpoint/status |
-| `catalyst_dns_sync_api_request_duration_seconds` | Histogram | API request latency |
-| `catalyst_dns_sync_reconcile_duration_seconds` | Histogram | Controller reconciliation time |
-| `catalyst_dns_sync_reconcile_errors_total` | Counter | Reconciliation errors by type |
-| `catalyst_dns_sync_ingress_resources` | Gauge | Current Ingress resources watched |
+| Metric                                           | Type      | Description                         |
+| ------------------------------------------------ | --------- | ----------------------------------- |
+| `catalyst_dns_sync_records_total`                | Counter   | DNS records created/updated/deleted |
+| `catalyst_dns_sync_api_requests_total`           | Counter   | DNS API calls by endpoint/status    |
+| `catalyst_dns_sync_api_request_duration_seconds` | Histogram | API request latency                 |
+| `catalyst_dns_sync_reconcile_duration_seconds`   | Histogram | Controller reconciliation time      |
+| `catalyst_dns_sync_reconcile_errors_total`       | Counter   | Reconciliation errors by type       |
+| `catalyst_dns_sync_ingress_resources`            | Gauge     | Current Ingress resources watched   |
 
 ### Example Queries
 
@@ -234,6 +236,7 @@ curl http://localhost:8081/readyz
 ```
 
 Returns 200 if:
+
 - Kubernetes API is reachable
 - DNS API is reachable (or /etc/hosts is writable in dev mode)
 
@@ -423,12 +426,14 @@ MIT
 ## Status
 
 **Phase 1 MVP:** 🚧 In Progress
+
 - [ ] Core CRUD implementation
 - [ ] Prometheus metrics
 - [ ] Health endpoints
 - [ ] Dev mode with Air
 
 **Phase 2:** 📅 Planned
+
 - [ ] Web UI Dashboard
 - [ ] Certificate tracking
 - [ ] Advanced features

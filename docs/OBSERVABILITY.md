@@ -7,12 +7,14 @@ This document describes the complete observability stack for the Talos Kubernete
 The observability stack is split into two namespaces:
 
 ### `monitoring` namespace
+
 - **Prometheus**: Metrics collection, storage, and alerting
 - **Grafana**: Visualization and dashboards
 - **Alertmanager**: Alert routing and management
 - **Prometheus Operator**: Manages Prometheus instances using CRDs
 
 ### `observability` namespace
+
 - **Graylog**: Centralized log management and analysis
 - **MongoDB**: Graylog's metadata database
 - **OpenSearch**: Log storage and search engine
@@ -20,11 +22,12 @@ The observability stack is split into two namespaces:
 
 ## Components
 
-### Prometheus Stack (kube-prometheus-stack)
+### Prometheus Stack (kube-Prometheus-stack)
 
-**Deployment Method**: Helm chart from prometheus-community
+**Deployment Method**: Helm chart from Prometheus-community
 
 **Resources**:
+
 - Prometheus: 50Gi storage, 30-day retention, 45GB size limit
 - Grafana: 10Gi storage
 - Alertmanager: 10Gi storage
@@ -33,11 +36,13 @@ The observability stack is split into two namespaces:
 **Configuration**: `infrastructure/base/monitoring/kube-prometheus-stack/values.yaml`
 
 **Access**:
+
 - Grafana: http://grafana.talos00 (admin / prom-operator)
 - Prometheus: http://prometheus.talos00
 - Alertmanager: http://alertmanager.talos00
 
 **Features**:
+
 - ServiceMonitor CRDs for automatic target discovery
 - Monitors all namespaces by default
 - Includes node-exporter, kube-state-metrics
@@ -46,29 +51,35 @@ The observability stack is split into two namespaces:
 ### Graylog Stack
 
 **Deployment Method**:
+
 - MongoDB: Helm chart from Bitnami
 - OpenSearch: Helm chart from opensearch-project
 - Graylog: Native Kubernetes manifests
 
 **Resources**:
+
 - MongoDB: 20Gi storage, standalone architecture, no authentication
 - OpenSearch: 30Gi storage, 1 replica, 512m heap
 - Graylog: 20Gi storage, 1Gi-2Gi memory
 
 **Configuration**:
+
 - MongoDB values: `infrastructure/base/observability/mongodb/values.yaml`
 - OpenSearch values: `infrastructure/base/observability/opensearch/values.yaml`
 - Graylog manifests: `infrastructure/base/observability/graylog/deployment.yaml`
 
 **Access**:
+
 - Graylog: http://graylog.talos00 (admin / admin)
 
 **Default Credentials**:
+
 - Admin username: `admin`
 - Admin password: `admin` (SHA2 hash stored in Secret)
 - Password secret: 96-character random string (placeholder in repo)
 
 **Ports**:
+
 - 9000/TCP: Graylog web interface
 - 12201/TCP: GELF input (for Fluent Bit)
 - 12201/UDP: GELF input (alternative)
@@ -80,6 +91,7 @@ The observability stack is split into two namespaces:
 **Configuration**: `infrastructure/base/observability/fluent-bit/values.yaml`
 
 **Functionality**:
+
 - Runs as DaemonSet (one pod per node)
 - Collects all container logs from `/var/log/containers/*.log`
 - Enriches logs with Kubernetes metadata (pod, namespace, labels, etc.)
@@ -87,6 +99,7 @@ The observability stack is split into two namespaces:
 - Adds cluster name tag: `talos-homelab`
 
 **Resources**:
+
 - Requests: 100m CPU, 128Mi memory
 - Limits: 500m CPU, 512Mi memory
 
@@ -97,18 +110,20 @@ The observability stack is split into two namespaces:
 **Configuration**: `applications/arr-stack/base/exportarr/`
 
 **Components**:
-- Separate deployment for each *arr app:
+
+- Separate deployment for each \*arr app:
   - exportarr-prowlarr (port 9707)
   - exportarr-sonarr (port 9707)
   - exportarr-radarr (port 9707)
   - exportarr-readarr (port 9707)
 
 **ServiceMonitors**:
+
 - Automatic Prometheus scraping via ServiceMonitor CRDs
 - Scrape interval: 60 seconds
 - Path: `/metrics`
 
-**Note**: API keys are set to `"placeholder"` by default. Update with real API keys after *arr apps are configured:
+**Note**: API keys are set to `"placeholder"` by default. Update with real API keys after \*arr apps are configured:
 
 ```bash
 # Get API key from each app's settings
@@ -127,12 +142,13 @@ Deploy the complete observability stack:
 ```
 
 This script will:
+
 1. Add all required Helm repositories
 2. Create namespaces
 3. Deploy MongoDB
 4. Deploy OpenSearch
 5. Deploy Graylog
-6. Deploy kube-prometheus-stack
+6. Deploy kube-Prometheus-stack
 7. Deploy Fluent Bit
 8. Apply IngressRoutes
 
@@ -243,11 +259,11 @@ kubectl apply -k applications/arr-stack/overlays/dev
    - URL: http://graylog.observability.svc.cluster.local:9000
 
 4. **Import Dashboards**:
-   - Many dashboards are pre-installed with kube-prometheus-stack
-   - Import additional dashboards from grafana.com:
+   - Many dashboards are pre-installed with kube-Prometheus-stack
+   - Import additional dashboards from Grafana.com:
      - Node Exporter Full: Dashboard ID 1860
      - Kubernetes Cluster Monitoring: Dashboard ID 7249
-     - *arr apps: Custom dashboards using Exportarr metrics
+     - \*arr apps: Custom dashboards using Exportarr metrics
 
 ### Exportarr API Keys
 
@@ -346,6 +362,7 @@ kubectl logs -n observability -l app.kubernetes.io/name=fluent-bit --tail=50
 ### Prometheus Issues
 
 **Pod crash looping with permission errors**:
+
 ```bash
 # Label namespace as privileged
 kubectl label namespace monitoring pod-security.kubernetes.io/enforce=privileged
@@ -356,6 +373,7 @@ kubectl delete sts -n monitoring prometheus-kube-prometheus-stack-prometheus
 ```
 
 **No metrics from Exportarr**:
+
 ```bash
 # Check ServiceMonitor exists
 kubectl get servicemonitor -n media-dev
@@ -370,6 +388,7 @@ kubectl get prometheus -n monitoring kube-prometheus-stack-prometheus -o yaml | 
 ### Graylog Issues
 
 **Graylog not starting - config file not found**:
+
 ```bash
 # Check ConfigMap is mounted
 kubectl describe pod -n observability -l app=graylog | grep -A 10 "Mounts:"
@@ -382,6 +401,7 @@ kubectl logs -n observability -l app=graylog
 ```
 
 **OpenSearch not connecting**:
+
 ```bash
 # Check OpenSearch is running
 kubectl get pods -n observability -l app.kubernetes.io/name=opensearch
@@ -394,6 +414,7 @@ kubectl logs -n observability -l app.kubernetes.io/name=opensearch
 ```
 
 **MongoDB not connecting**:
+
 ```bash
 # Check MongoDB is running
 kubectl get pods -n observability -l app.kubernetes.io/name=mongodb
@@ -408,6 +429,7 @@ kubectl logs -n observability -l app.kubernetes.io/name=mongodb
 ### Fluent Bit Issues
 
 **Logs not appearing in Graylog**:
+
 ```bash
 # Check Fluent Bit is running
 kubectl get pods -n observability -l app.kubernetes.io/name=fluent-bit
@@ -423,6 +445,7 @@ kubectl exec -n observability -it <fluent-bit-pod> -- nc -zv graylog.observabili
 ```
 
 **Fluent Bit consuming too much memory**:
+
 ```bash
 # Edit values.yaml and increase limits
 # Restart Fluent Bit
@@ -501,6 +524,7 @@ The arr stack includes Exportarr deployments that expose Prometheus metrics:
 - **Readarr metrics**: http://exportarr-readarr.media-dev:9707/metrics
 
 Metrics include:
+
 - Download queue statistics
 - Library item counts
 - Indexer statistics
@@ -511,6 +535,7 @@ Metrics include:
 All container logs are automatically collected by Fluent Bit and sent to Graylog.
 
 Filter logs in Graylog by:
+
 - Namespace: `namespace:media-dev`
 - Pod: `pod_name:sonarr-*`
 - Container: `container_name:sonarr`

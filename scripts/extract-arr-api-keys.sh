@@ -14,24 +14,24 @@ echo ""
 
 # Function to extract API key from config.xml
 extract_api_key() {
-    local app=$1
-    local pod=$(kubectl get pod -n media-dev -l app=$app -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  local app=$1
+  local pod=$(kubectl get pod -n media-dev -l app=$app -o jsonpath='{.items[0].metadata.name}' 2> /dev/null)
 
-    if [ -z "$pod" ]; then
-        echo "  ❌ No pod found for $app"
-        return 1
-    fi
+  if [ -z "$pod" ]; then
+    echo "  ❌ No pod found for $app"
+    return 1
+  fi
 
-    local apikey=$(kubectl exec -n media-dev $pod -- cat /config/config.xml 2>/dev/null | grep "<ApiKey>" | sed 's/.*<ApiKey>\(.*\)<\/ApiKey>/\1/' | tr -d ' \n\r')
+  local apikey=$(kubectl exec -n media-dev $pod -- cat /config/config.xml 2> /dev/null | grep "<ApiKey>" | sed 's/.*<ApiKey>\(.*\)<\/ApiKey>/\1/' | tr -d ' \n\r')
 
-    if [ -z "$apikey" ]; then
-        echo "  ⚠️  $app: Not configured yet (access http://$app.talos00 to complete setup)"
-        return 1
-    else
-        echo "  ✅ $app: $apikey"
-        echo "$apikey"
-        return 0
-    fi
+  if [ -z "$apikey" ]; then
+    echo "  ⚠️  $app: Not configured yet (access http://$app.talos00 to complete setup)"
+    return 1
+  else
+    echo "  ✅ $app: $apikey"
+    echo "$apikey"
+    return 0
+  fi
 }
 
 # Extract API keys
@@ -52,21 +52,21 @@ MISSING=0
 [ -z "$RADARR_KEY" ] && MISSING=1
 
 if [ $MISSING -eq 1 ]; then
-    echo "=========================================="
-    echo "⚠️  Some API keys are missing"
-    echo "=========================================="
-    echo ""
-    echo "Please complete the initial setup for all *arr applications:"
-    echo "  1. Access each app's web interface:"
-    echo "     - Prowlarr: http://prowlarr.talos00"
-    echo "     - Sonarr:   http://sonarr.talos00"
-    echo "     - Radarr:   http://radarr.talos00"
-    echo "     - Readarr:  http://readarr.talos00 (if working)"
-    echo ""
-    echo "  2. Complete the initial setup wizard for each"
-    echo "  3. Run this script again"
-    echo ""
-    exit 1
+  echo "=========================================="
+  echo "⚠️  Some API keys are missing"
+  echo "=========================================="
+  echo ""
+  echo "Please complete the initial setup for all *arr applications:"
+  echo "  1. Access each app's web interface:"
+  echo "     - Prowlarr: http://prowlarr.talos00"
+  echo "     - Sonarr:   http://sonarr.talos00"
+  echo "     - Radarr:   http://radarr.talos00"
+  echo "     - Readarr:  http://readarr.talos00 (if working)"
+  echo ""
+  echo "  2. Complete the initial setup wizard for each"
+  echo "  3. Run this script again"
+  echo ""
+  exit 1
 fi
 
 echo "=========================================="
@@ -78,12 +78,12 @@ echo ""
 echo "Creating/updating arr-api-keys Secret..."
 
 kubectl create secret generic arr-api-keys \
-    --from-literal=prowlarr-api-key="$PROWLARR_KEY" \
-    --from-literal=sonarr-api-key="$SONARR_KEY" \
-    --from-literal=radarr-api-key="$RADARR_KEY" \
-    ${READARR_KEY:+--from-literal=readarr-api-key="$READARR_KEY"} \
-    --namespace=media-dev \
-    --dry-run=client -o yaml | kubectl apply -f -
+  --from-literal=prowlarr-api-key="$PROWLARR_KEY" \
+  --from-literal=sonarr-api-key="$SONARR_KEY" \
+  --from-literal=radarr-api-key="$RADARR_KEY" \
+  ${READARR_KEY:+--from-literal=readarr-api-key="$READARR_KEY"} \
+  --namespace=media-dev \
+  --dry-run=client -o yaml | kubectl apply -f -
 
 echo "✅ Secret created/updated"
 echo ""
@@ -93,16 +93,16 @@ echo "Updating Exportarr deployments to use Secret..."
 
 # Patch each deployment
 for app in prowlarr sonarr radarr readarr; do
-    if kubectl get deployment -n media-dev exportarr-$app &>/dev/null; then
-        echo "  Updating exportarr-$app..."
-        kubectl set env deployment/exportarr-$app -n media-dev \
-            APIKEY="" \
-            --from=secret/arr-api-keys \
-            --keys=${app}-api-key \
-            --prefix=API 2>/dev/null || true
+  if kubectl get deployment -n media-dev exportarr-$app &> /dev/null; then
+    echo "  Updating exportarr-$app..."
+    kubectl set env deployment/exportarr-$app -n media-dev \
+      APIKEY="" \
+      --from=secret/arr-api-keys \
+      --keys=${app}-api-key \
+      --prefix=API 2> /dev/null || true
 
-        # Direct patch approach
-        kubectl patch deployment exportarr-$app -n media-dev --type=json -p='[
+    # Direct patch approach
+    kubectl patch deployment exportarr-$app -n media-dev --type=json -p='[
             {
                 "op": "replace",
                 "path": "/spec/template/spec/containers/0/env",
@@ -112,8 +112,8 @@ for app in prowlarr sonarr radarr readarr; do
                     {"name": "APIKEY", "valueFrom": {"secretKeyRef": {"name": "arr-api-keys", "key": "'$app'-api-key"}}}
                 ]
             }
-        ]' 2>/dev/null || echo "    ⚠️  Failed to patch $app (may not exist)"
-    fi
+        ]' 2> /dev/null || echo "    ⚠️  Failed to patch $app (may not exist)"
+  fi
 done
 
 echo ""

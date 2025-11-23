@@ -5,6 +5,7 @@ This guide shows how to develop and test External Secrets Operator (ESO) with 1P
 ## Overview
 
 **Local Stack:**
+
 - **Talos Local Cluster** - Docker-based single-node Talos cluster
 - **Tilt** - Local development tool with live reload
 - **External Secrets Operator** - Deployed via Helm in Tilt
@@ -21,6 +22,7 @@ brew install tilt
 ```
 
 **Required:**
+
 - Docker Desktop (running)
 - talosctl (already installed)
 - kubectl (already installed)
@@ -37,6 +39,7 @@ task dev:local-up
 ```
 
 This will:
+
 1. Provision local Talos cluster (`talos-local`)
 2. Install core components (Traefik, metrics-server)
 3. Launch Tilt with ESO deployment
@@ -60,11 +63,13 @@ task dev:tilt-up
 Once Tilt is running, open http://localhost:10350
 
 **Resources shown:**
+
 - `external-secrets-operator` - Main ESO deployment
 - `onepassword-secretstore` - SecretStore CRD
 - `onepassword-cluster-secretstore` - ClusterSecretStore CRD
 
 **Manual Actions (buttons in Tilt UI):**
+
 - `setup-1password` - Run 1Password Connect setup script
 - `debug-secretstore` - Run diagnostic script
 - `view-eso-logs` - View ESO logs
@@ -96,6 +101,7 @@ kubectl get crds | grep external-secrets
 ```
 
 This script will prompt you for:
+
 - 1Password Connect credentials file (JSON)
 - 1Password Connect token
 - Vault ID
@@ -138,6 +144,7 @@ task dev:eso-debug
 ```
 
 **What it checks:**
+
 - ✓ kubectl connectivity
 - ✓ Namespace exists
 - ✓ ESO deployment status
@@ -164,7 +171,7 @@ kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets --ta
 
 ### Common Issues
 
-#### Issue: "Context 'talos-local' not found"
+#### Issue: "Context 'Talos-local' not found"
 
 ```bash
 # Provision local cluster first
@@ -219,6 +226,7 @@ kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets --ta
 ### Making Changes to ESO Configuration
 
 1. **Edit Helm values** in `Tiltfile`:
+
    ```python
    helm_resource(
        'external-secrets-operator',
@@ -239,6 +247,7 @@ kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets --ta
 2. **Tilt watches for changes** - Auto-applies via kustomize
 
 3. **Verify status**:
+
    ```bash
    kubectl get secretstore -n external-secrets
    kubectl describe secretstore -n external-secrets onepassword-secretstore
@@ -247,6 +256,7 @@ kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets --ta
 ### Testing 1Password Connect
 
 1. **Deploy 1Password Connect**:
+
    ```bash
    # Uncomment in Tiltfile:
    k8s_yaml(kustomize('infrastructure/base/external-secrets/onepassword-connect'))
@@ -255,6 +265,7 @@ kubectl logs -n external-secrets -l app.kubernetes.io/name=external-secrets --ta
 2. **Tilt reloads** - 1Password Connect deployed
 
 3. **Test connectivity**:
+
    ```bash
    ./scripts/onepassword-debug.sh
    ```
@@ -297,11 +308,13 @@ talosctl cluster destroy --name talos-local
 **Talosconfig:** `./.output/local/talosconfig`
 
 **Pre-installed:**
+
 - Traefik (Ingress controller)
 - metrics-server
 - Test whoami service
 
 **Access:**
+
 - Traefik Dashboard: http://traefik.localhost
 - Whoami Test: http://whoami.localhost
 

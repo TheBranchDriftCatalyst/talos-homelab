@@ -19,6 +19,7 @@ The cluster is in a **perfect state** for Flux adoption. All resources were depl
 ## Current Cluster State
 
 ### Namespaces (14 total)
+
 ```
 ✅ argocd                  - Keep (ArgoCD management)
 ✅ bastion                 - Keep (utility)
@@ -37,6 +38,7 @@ The cluster is in a **perfect state** for Flux adoption. All resources were depl
 ```
 
 ### Helm Releases (5 total)
+
 ```
 Helm Release              Namespace      Should Migrate to Flux?
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -50,6 +52,7 @@ traefik                   traefik        ❌ NO  - Keep as Helm (pre-installed, 
 ### Deployments by Namespace
 
 **media-dev (12 deployments)**: ✅ ArgoCD will manage
+
 ```
 - exportarr-prowlarr (0/1 ready - needs API keys)
 - exportarr-radarr (0/1 ready - needs API keys)
@@ -66,6 +69,7 @@ traefik                   traefik        ❌ NO  - Keep as Helm (pre-installed, 
 ```
 
 **monitoring (3 deployments + 1 statefulset + 1 daemonset)**: 📦 Flux will adopt
+
 ```
 - grafana (1/1 ready) ✅
 - kube-state-metrics (1/1 ready) ✅
@@ -76,6 +80,7 @@ traefik                   traefik        ❌ NO  - Keep as Helm (pre-installed, 
 ```
 
 **observability (2 deployments + 1 statefulset)**: 📦 Flux will adopt
+
 ```
 - graylog (1/1 ready) ✅
 - mongodb (1/1 ready) ✅
@@ -83,6 +88,7 @@ traefik                   traefik        ❌ NO  - Keep as Helm (pre-installed, 
 ```
 
 **registry (1 deployment)**: ✅ Keep as-is
+
 ```
 - docker-registry (1/1 ready) ✅
 ```
@@ -90,11 +96,13 @@ traefik                   traefik        ❌ NO  - Keep as Helm (pre-installed, 
 ### Storage
 
 **StorageClass**:
+
 ```
 local-path (default) - FLUX WILL ADOPT
 ```
 
 **Persistent Volumes (16 total)**:
+
 ```
 All dynamically provisioned by local-path-provisioner
 All using local-path StorageClass
@@ -107,6 +115,7 @@ Note: 2 PVCs showing "Terminating" in monitoring namespace
 ```
 
 **local-path-provisioner**:
+
 ```
 Status: Running (1/1 ready) ✅
 Deployment: local-path-provisioner in local-path-storage namespace
@@ -130,6 +139,7 @@ When you run `flux bootstrap`, it will:
 ### How Flux Adopts Resources
 
 Flux uses **Server-Side Apply (SSA)** which:
+
 - ✅ Detects existing resources
 - ✅ Takes ownership without recreation
 - ✅ No pod restarts
@@ -137,6 +147,7 @@ Flux uses **Server-Side Apply (SSA)** which:
 - ✅ No downtime
 
 **Example**: If namespace `media-dev` exists in cluster AND in Git:
+
 - Flux applies the manifest
 - Kubernetes sees it's identical
 - Flux adds `managedFields` metadata
@@ -149,18 +160,21 @@ Flux uses **Server-Side Apply (SSA)** which:
 ### ❌ NO CONFLICTS FOUND
 
 **Checked**:
+
 - ✅ No Flux CRDs present (clean slate)
 - ✅ No `flux-system` namespace
 - ✅ No GitRepository/Kustomization/HelmRelease resources
 - ✅ No resources with Flux ownership metadata
 
 **Resources managed via `kubectl apply`**:
+
 - Namespaces (media-dev, media-prod, local-path-storage)
 - local-path-provisioner deployment
 - All application deployments in media-dev
 
 **Resources managed via `helm install`**:
-- kube-prometheus-stack
+
+- kube-Prometheus-stack
 - mongodb
 - opensearch
 - (These will need HelmRelease CRDs for Flux)
@@ -173,11 +187,13 @@ Flux uses **Server-Side Apply (SSA)** which:
 
 Currently deployed via Helm, need to convert to Flux HelmRelease:
 
-#### 1. kube-prometheus-stack
+#### 1. kube-Prometheus-stack
+
 **Current**: `helm install kube-prometheus-stack -n monitoring`
 **Flux**: Create `infrastructure/base/monitoring/kube-prometheus-stack/helmrelease.yaml`
 
 **Status**: ✅ Already exists!
+
 ```yaml
 # infrastructure/base/monitoring/kube-prometheus-stack/helmrelease.yaml
 apiVersion: helm.toolkit.fluxcd.io/v2beta1
@@ -195,12 +211,14 @@ spec:
 ```
 
 #### 2. MongoDB (Observability)
+
 **Current**: `helm install mongodb bitnami/mongodb -n observability`
 **Flux**: Need to create HelmRelease
 
 **Action**: Create `infrastructure/base/observability/mongodb/helmrelease.yaml`
 
 #### 3. OpenSearch (Observability)
+
 **Current**: `helm install opensearch -n observability`
 **Flux**: Need to create HelmRelease
 
@@ -211,6 +229,7 @@ spec:
 ## Migration Plan
 
 ### Phase 1: Pre-Migration (Current State)
+
 **Status**: ✅ COMPLETE - No action needed
 
 - ✅ All apps running and healthy
@@ -219,19 +238,23 @@ spec:
 - ✅ No conflicts detected
 
 ### Phase 2: Create HelmRelease Manifests
+
 **Status**: ⚠️ PARTIAL - 1 of 3 complete
 
 **Actions Needed**:
-1. ✅ kube-prometheus-stack HelmRelease (EXISTS)
+
+1. ✅ kube-Prometheus-stack HelmRelease (EXISTS)
 2. ❌ Create MongoDB HelmRelease manifest
 3. ❌ Create OpenSearch HelmRelease manifest
 4. ❌ Create Graylog HelmRelease or Deployment manifest
 5. ❌ Create Fluent Bit HelmRelease manifest
 
 ### Phase 3: Deploy Flux (Zero Downtime)
+
 **Status**: ⏸️ READY
 
 **Steps**:
+
 ```bash
 # 1. Install Flux
 flux bootstrap github \
@@ -247,15 +270,18 @@ flux bootstrap github \
 ```
 
 **Expected Result**:
+
 - ✅ Flux running in flux-system namespace
 - ✅ Existing resources adopted (no recreation)
 - ✅ All pods stay running
 - ✅ No data loss
 
 ### Phase 4: Migrate Helm Releases
+
 **Status**: ⏸️ PENDING
 
 **Option A: Uninstall Helm, Let Flux Reinstall** (RISKY)
+
 ```bash
 # NOT RECOMMENDED - Causes downtime
 helm uninstall kube-prometheus-stack -n monitoring
@@ -263,6 +289,7 @@ helm uninstall kube-prometheus-stack -n monitoring
 ```
 
 **Option B: Let Flux Adopt Existing Helm Release** (SAFE)
+
 ```bash
 # Flux can adopt existing Helm releases
 # Create HelmRelease with same values
@@ -273,6 +300,7 @@ helm uninstall kube-prometheus-stack -n monitoring
 **Recommendation**: Use Option B (adoption)
 
 ### Phase 5: Verify Flux Control
+
 **Status**: ⏸️ PENDING
 
 ```bash
@@ -331,12 +359,14 @@ flux reconcile kustomization flux-system
 ### ❌ NONE - NO CLEANUP NEEDED
 
 **Why No Cleanup?**
+
 1. All resources deployed via `kubectl apply` → Flux compatible
 2. No conflicting GitOps tools installed
 3. No orphaned resources detected
 4. Helm releases can be adopted (not reinstalled)
 
 **What Stays Running During Migration**:
+
 - ✅ All arr apps (Prowlarr, Sonarr, Radarr, etc.)
 - ✅ Media servers (Plex, Jellyfin)
 - ✅ Monitoring stack (Prometheus, Grafana)
@@ -414,6 +444,7 @@ flux logs --all-namespaces
 If something goes wrong:
 
 ### Option 1: Suspend Flux
+
 ```bash
 # Stop Flux from reconciling
 flux suspend kustomization flux-system
@@ -424,6 +455,7 @@ flux resume kustomization flux-system
 ```
 
 ### Option 2: Uninstall Flux
+
 ```bash
 # Complete removal
 flux uninstall
@@ -439,6 +471,7 @@ flux uninstall
 ### ✅ PROCEED WITH CONFIDENCE
 
 **Summary**:
+
 - ✅ No cleanup needed
 - ✅ No shutdown required
 - ✅ Zero downtime migration possible
@@ -448,6 +481,7 @@ flux uninstall
 **Blocking Issues**: None
 
 **Prerequisites**:
+
 1. Create HelmRelease manifests for MongoDB, OpenSearch, Graylog, Fluent Bit
 2. Commit to Git
 3. Run Flux bootstrap

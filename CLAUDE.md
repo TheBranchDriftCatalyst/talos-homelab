@@ -7,6 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a **Talos Linux single-node Kubernetes cluster** infrastructure repository using a dual GitOps pattern. It manages platform infrastructure (not applications) through manual, controlled deployments.
 
 **Key Characteristics:**
+
 - Single-node cluster: Control plane scheduling enabled, no worker nodes
 - Talos Linux: Immutable Kubernetes OS (config via `talosctl`, not SSH)
 - Dual GitOps: This repo = infrastructure; App repos = ArgoCD-managed applications
@@ -16,22 +17,26 @@ This is a **Talos Linux single-node Kubernetes cluster** infrastructure reposito
 
 This repository maintains comprehensive documentation organized in multiple locations:
 
-### Root-Level Documentation:
+### Root-Level Documentation
+
 - Quick-start guides and operational references
 - Platform-specific documentation (Traefik, Observability)
 - Implementation tracking
 
-### `docs/` Directory:
+### `docs/` Directory
+
 - Architecture documentation
 - Deployment guides
 - Migration assessments
 - Progress tracking
 
-### `bootstrap/` Directory:
+### `bootstrap/` Directory
+
 - Bootstrap-specific README files
 - Tool-specific setup guides (ArgoCD, Flux)
 
-### `configs/` Directory:
+### `configs/` Directory
+
 - Configuration documentation
 - Talos-specific configuration guides
 
@@ -39,46 +44,47 @@ This repository maintains comprehensive documentation organized in multiple loca
 
 ### Root Documentation
 
-| Document | Description |
-|----------|-------------|
-| `README.md` | Main repository documentation - Quick start guide, cluster overview, deployment workflows |
-| `QUICKSTART.md` | Quick reference guide - Essential commands and common tasks |
-| `TRAEFIK.md` | Traefik ingress controller documentation - IngressRoute configuration, hostnames, certificates |
-| `OBSERVABILITY.md` | Monitoring and logging stack - Prometheus, Grafana, OpenSearch, Graylog, Fluent Bit |
-| `IMPLEMENTATION-TRACKER.md` | Implementation progress tracking - Completed features, pending tasks |
-| `CLAUDE.md` | **THIS FILE** - Guidance for Claude Code instances working in this repository |
+| Document                    | Description                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `README.md`                 | Main repository documentation - Quick start guide, cluster overview, deployment workflows      |
+| `QUICKSTART.md`             | Quick reference guide - Essential commands and common tasks                                    |
+| `TRAEFIK.md`                | Traefik ingress controller documentation - IngressRoute configuration, hostnames, certificates |
+| `OBSERVABILITY.md`          | Monitoring and logging stack - Prometheus, Grafana, OpenSearch, Graylog, Fluent Bit            |
+| `IMPLEMENTATION-TRACKER.md` | Implementation progress tracking - Completed features, pending tasks                           |
+| `CLAUDE.md`                 | **THIS FILE** - Guidance for Claude Code instances working in this repository                  |
 
 ### docs/ - Detailed Documentation
 
-| Document | Description |
-|----------|-------------|
-| `docs/DUAL-GITOPS.md` | **CRITICAL** - Dual GitOps architecture pattern, rules, and workflows |
-| `docs/catalyst-ui-deployment.md` | Catalyst UI deployment guide - Docker registry, ArgoCD application setup, troubleshooting |
-| `docs/DUAL-GITOPS-ARCHITECTURE.md` | Additional GitOps architecture documentation and diagrams |
-| `docs/FLUX-MIGRATION-ASSESSMENT.md` | FluxCD migration assessment - Comparison with ArgoCD, pros/cons |
-| `docs/infra-testing-tools.md` | Infrastructure testing UI tools - Headlamp, Kubeview, Kube-ops-view, Goldilocks deployment and usage |
-| `docs/kubernetes-ui-tools.md` | Comprehensive guide to Kubernetes UI tools - Comparison and evaluation of available options |
-| `docs/LOCAL-TESTING.md` | Local testing guide - Testing infrastructure changes before deployment |
-| `docs/tilt-development-workflow.md` | Tilt development workflow - Hot-reload development environment for infrastructure manifests |
-| `docs/PROGRESS-SUMMARY.md` | Progress summary - Session-by-session tracking of implementation work |
-| `docs/TALOS-PROVISIONING-STEPS.md` | Talos provisioning steps - Detailed cluster setup and bootstrap process |
+| Document                            | Description                                                                                          |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `docs/DUAL-GITOPS.md`               | **CRITICAL** - Dual GitOps architecture pattern, rules, and workflows                                |
+| `docs/catalyst-ui-deployment.md`    | Catalyst UI deployment guide - Docker registry, ArgoCD application setup, troubleshooting            |
+| `docs/DUAL-GITOPS-ARCHITECTURE.md`  | Additional GitOps architecture documentation and diagrams                                            |
+| `docs/FLUX-MIGRATION-ASSESSMENT.md` | FluxCD migration assessment - Comparison with ArgoCD, pros/cons                                      |
+| `docs/infra-testing-tools.md`       | Infrastructure testing UI tools - Headlamp, Kubeview, Kube-ops-view, Goldilocks deployment and usage |
+| `docs/kubernetes-ui-tools.md`       | Comprehensive guide to Kubernetes UI tools - Comparison and evaluation of available options          |
+| `docs/LOCAL-TESTING.md`             | Local testing guide - Testing infrastructure changes before deployment                               |
+| `docs/tilt-development-workflow.md` | Tilt development workflow - Hot-reload development environment for infrastructure manifests          |
+| `docs/PROGRESS-SUMMARY.md`          | Progress summary - Session-by-session tracking of implementation work                                |
+| `docs/TALOS-PROVISIONING-STEPS.md`  | Talos provisioning steps - Detailed cluster setup and bootstrap process                              |
 
 ### bootstrap/ - Bootstrap Documentation
 
-| Document | Description |
-|----------|-------------|
+| Document                     | Description                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------- |
 | `bootstrap/argocd/README.md` | ArgoCD bootstrap documentation - Installation, configuration, initial setup |
-| `bootstrap/flux/README.md` | Flux bootstrap documentation - Installation steps, repository structure |
+| `bootstrap/flux/README.md`   | Flux bootstrap documentation - Installation steps, repository structure     |
 
 ### configs/ - Configuration Documentation
 
-| Document | Description |
-|----------|-------------|
+| Document           | Description                                                                         |
+| ------------------ | ----------------------------------------------------------------------------------- |
 | `configs/TALOS.md` | Talos configuration documentation - Machine config structure, customization options |
 
 ### **⚠️ MAINTENANCE INSTRUCTION ⚠️**
 
 **When adding new documentation or making changes to existing documentation:**
+
 1. **Update this CLAUDE.md file** with the new document entry in the appropriate table
 2. **Add a brief description** of what the document covers
 3. **Mark critical documents** with **CRITICAL** or other importance indicators
@@ -104,7 +110,7 @@ This repository uses a **modular Taskfile structure** organized by domain for be
 
 ### Task Domains
 
-1. **talos:** - Talos Linux cluster management
+1. **Talos:** - Talos Linux cluster management
    - Configuration generation, node provisioning, bootstrapping
    - Health checks, service management, troubleshooting
    - Node operations (reboot, shutdown, reset, upgrade)
@@ -236,7 +242,7 @@ task etcd-status
 
 **READ FIRST:** `docs/DUAL-GITOPS.md` - Complete dual GitOps documentation
 
-### Two Distinct Patterns:
+### Two Distinct Patterns
 
 1. **Infrastructure GitOps (THIS REPO)**
    - Tool: Scripts + `kubectl apply`
@@ -250,7 +256,7 @@ task etcd-status
    - Manages: Application workloads
    - Philosophy: Push to main = auto-deploy
 
-### Critical Rules:
+### Critical Rules
 
 - **Infrastructure changes**: Modify manifests → Run deployment script → kubectl apply
 - **Application changes**: Modify app repo → Push to GitHub → ArgoCD auto-syncs
@@ -276,7 +282,7 @@ talos-fix/
 └── docs/                    # Documentation
 ```
 
-### Key Files:
+### Key Files
 
 - `Taskfile.yaml` - Task automation (preferred over direct talosctl/kubectl)
 - `scripts/deploy-stack.sh` - Main infrastructure deployment script
@@ -286,9 +292,10 @@ talos-fix/
 
 ## How Infrastructure Deployment Works
 
-### Deployment Script Pattern:
+### Deployment Script Pattern
 
 All deployment scripts follow this pattern:
+
 1. Verify cluster health
 2. Apply namespaces first
 3. Apply base manifests (kubectl apply -k)
@@ -296,15 +303,17 @@ All deployment scripts follow this pattern:
 5. Apply additional configurations
 
 **Example:**
+
 ```bash
 # Deploy monitoring stack
 kubectl apply -k infrastructure/base/monitoring/kube-prometheus-stack/
 kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=prometheus -n monitoring
 ```
 
-### Kustomize Usage:
+### Kustomize Usage
 
 Infrastructure uses Kustomize for configuration management:
+
 - `base/` - Common configurations
 - `overlays/dev/` - Development overrides
 - `overlays/prod/` - Production overrides
@@ -313,7 +322,7 @@ Apply with: `kubectl apply -k path/to/kustomization/`
 
 ## Important Talos Specifics
 
-### Talos is NOT a traditional Linux:
+### Talos is NOT a traditional Linux
 
 - **No SSH**: Use `talosctl shell` for emergency access (very limited)
 - **No package manager**: Everything runs in Kubernetes
@@ -321,14 +330,14 @@ Apply with: `kubectl apply -k path/to/kustomization/`
 - **Config application**: `talosctl apply-config` triggers node reboot
 - **API access**: Talos API on port 50000, Kubernetes API on 6443
 
-### Single-Node Considerations:
+### Single-Node Considerations
 
 - Control plane scheduling **enabled** by default (`allowSchedulingOnControlPlanes: true`)
 - No high availability - single point of failure
 - All workloads run on one node - watch resource limits
 - Control plane taint **removed** during provisioning
 
-### Configuration Management:
+### Configuration Management
 
 ```bash
 # Apply new Talos configuration (TRIGGERS REBOOT)
@@ -343,7 +352,7 @@ task reset
 
 ## Accessing Services
 
-### Via Traefik IngressRoutes:
+### Via Traefik IngressRoutes
 
 All services accessible via hostname (requires `/etc/hosts` entry for `*.talos00`):
 
@@ -356,7 +365,7 @@ All services accessible via hostname (requires `/etc/hosts` entry for `*.talos00
 
 Access: `http://<service>.talos00`
 
-### Default Credentials:
+### Default Credentials
 
 - **Grafana**: admin / prom-operator
 - **Graylog**: admin / admin
@@ -364,23 +373,23 @@ Access: `http://<service>.talos00`
 
 ## Common Patterns & Workflows
 
-### Adding a New Infrastructure Component:
+### Adding a New Infrastructure Component
 
 1. Create manifests: `infrastructure/base/new-component/`
-2. Create kustomization.yaml
+2. Create kustomization.YAML
 3. Update deployment script or create new one
 4. Test: `kubectl apply -k infrastructure/base/new-component/ --dry-run=client`
 5. Deploy: `./scripts/deploy-stack.sh` or specific script
 6. Verify: `kubectl get pods -n <namespace>`
 
-### Adding a New Application (ArgoCD):
+### Adding a New Application (ArgoCD)
 
 1. Create k8s manifests in application repo (e.g., `catalyst-ui/k8s/`)
 2. Create ArgoCD Application: `infrastructure/base/argocd/applications/my-app.yaml`
 3. Apply: `kubectl apply -f infrastructure/base/argocd/applications/my-app.yaml`
 4. ArgoCD auto-syncs from app repo going forward
 
-### Debugging Deployment Issues:
+### Debugging Deployment Issues
 
 ```bash
 # Check pod status
@@ -402,35 +411,38 @@ task dmesg
 
 ## Storage Configuration
 
-### Available Storage Classes:
+### Available Storage Classes
 
 - `local-path` (default) - Rancher local-path-provisioner
 - `nfs` - NFS storage (if configured)
 - Manual PVs for specific workloads
 
-### PVC Pattern:
+### PVC Pattern
 
 Applications use shared PVCs in media namespaces:
+
 - `media-dev` namespace - Development media storage
 - `media-prod` namespace - Production media storage
-- Shared configs/downloads PVCs across *arr apps
+- Shared configs/downloads PVCs across \*arr apps
 
 ## Monitoring & Observability Stack
 
-### Components:
+### Components
 
 **Monitoring** (`monitoring` namespace):
+
 - Prometheus - Metrics collection (30-day retention, 50Gi)
 - Grafana - Visualization
 - Alertmanager - Alert routing
 
 **Observability** (`observability` namespace):
+
 - OpenSearch - Log storage (30Gi)
 - Fluent Bit - Log collection
 - Graylog - Log management UI
 - MongoDB - Graylog backend (20Gi)
 
-### Accessing Metrics:
+### Accessing Metrics
 
 ```bash
 # Port-forward Prometheus
@@ -443,11 +455,12 @@ curl http://localhost:9090/api/v1/query?query=up
 ## Docker Registry Usage
 
 Local registry for application images:
+
 - URL: `registry.talos00` (HTTP)
 - Storage: 50Gi PVC
 - Access: Via Traefik IngressRoute or kubectl port-forward
 
-### Building & Pushing Images:
+### Building & Pushing Images
 
 ```bash
 # Example: catalyst-ui
@@ -460,7 +473,8 @@ docker tag registry.talos00/catalyst-ui:latest localhost:5000/catalyst-ui:latest
 docker push localhost:5000/catalyst-ui:latest
 ```
 
-**Docker daemon.json configuration required:**
+**Docker daemon.JSON configuration required:**
+
 ```json
 {
   "insecure-registries": ["localhost:5000", "registry.talos00"]
@@ -469,36 +483,36 @@ docker push localhost:5000/catalyst-ui:latest
 
 ## Known Issues & Workarounds
 
-### Docker Registry Access:
+### Docker Registry Access
 
 - **Issue**: NodePort not externally accessible on Talos
 - **Workaround**: Use `kubectl port-forward` to localhost:5000
 - **Alternative**: HTTP push via Traefik has blob upload issues (404 errors)
 
-### Storage Class:
+### Storage Class
 
 - **Issue**: `openebs-hostpath` not available
 - **Solution**: Use `local-path` storage class instead
 
-### Control Plane Scheduling:
+### Control Plane Scheduling
 
 - **Expected**: Workloads schedule on control plane (single-node cluster)
 - **Verification**: `kubectl describe node | grep Taints` should show no taints
 
 ## Important File Locations
 
-### Configs (gitignored):
+### Configs (gitignored)
 
 - `configs/controlplane.yaml` - Talos machine config
 - `configs/talosconfig` - Talos CLI config
 - `.output/kubeconfig` - Kubernetes access config
 
-### Generated Files:
+### Generated Files
 
 - `.output/dashboard-token.txt` - K8s Dashboard token
 - `.output/audit/` - Cluster audit reports
 
-### Environment Variables:
+### Environment Variables
 
 - `TALOS_NODE` - Node IP address (default: 192.168.1.54)
 - `DEPLOY_MONITORING` - Enable monitoring deployment
@@ -507,7 +521,7 @@ docker push localhost:5000/catalyst-ui:latest
 
 ## Quick Reference
 
-### Most Common Tasks:
+### Most Common Tasks
 
 ```bash
 # Daily operations
@@ -530,7 +544,7 @@ kubectl logs <pod> -n <namespace>
 kubectl describe pod <pod> -n <namespace>
 ```
 
-### Emergency Recovery:
+### Emergency Recovery
 
 ```bash
 # Cluster not responding

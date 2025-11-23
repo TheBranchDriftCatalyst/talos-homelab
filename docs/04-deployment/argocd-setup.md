@@ -11,11 +11,13 @@ ArgoCD will be automatically deployed by Flux once the Flux bootstrap is complet
 1. **Via Traefik IngressRoute**: http://argocd.lab (configure DNS or /etc/hosts)
 
 2. **Get initial admin password**:
+
 ```bash
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d && echo
 ```
 
 Default credentials:
+
 - Username: `admin`
 - Password: `admin` (change immediately after first login)
 

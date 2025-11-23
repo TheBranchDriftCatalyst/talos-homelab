@@ -18,11 +18,11 @@ echo ""
 
 # Create a token for the admin-user
 echo "📋 Getting admin-user token..."
-TOKEN=$(kubectl --kubeconfig "$KUBECONFIG" -n kubernetes-dashboard create token admin-user --duration=8760h 2>/dev/null)
+TOKEN=$(kubectl --kubeconfig "$KUBECONFIG" -n kubernetes-dashboard create token admin-user --duration=8760h 2> /dev/null)
 
 if [ -z "$TOKEN" ]; then
-    echo "❌ Failed to get token"
-    exit 1
+  echo "❌ Failed to get token"
+  exit 1
 fi
 
 echo "✅ Token retrieved!"

@@ -7,6 +7,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
 ## Level 0: Base Infrastructure ✅ COMPLETED
 
 ### Prerequisites
+
 - Talos Linux ISO/Image
 - Target hardware (bare metal or VM)
 - Network connectivity (192.168.1.54 in this setup)
@@ -14,6 +15,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
 ### Steps Taken
 
 1. **Initial Talos Installation**
+
    ```bash
    # Generate Talos secrets
    talosctl gen secrets -o configs/secrets.yaml
@@ -30,6 +32,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
    ```
 
 2. **Bootstrap Kubernetes**
+
    ```bash
    # Bootstrap etcd
    talosctl bootstrap --nodes 192.168.1.54 --talosconfig configs/talosconfig
@@ -39,6 +42,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
    ```
 
 3. **Extract Kubeconfig**
+
    ```bash
    # Get kubeconfig
    talosctl kubeconfig .output/kubeconfig \
@@ -53,6 +57,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
    ```
 
 4. **Set Node Hostname**
+
    ```bash
    # Edit configs/controlplane.yaml to add:
    network:
@@ -65,6 +70,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
    ```
 
    **Note**: Changing hostname AFTER cluster bootstrap causes Kubernetes to see it as a new node. This required cleanup:
+
    ```bash
    # Delete old node entry
    kubectl delete node talos-v8c-548
@@ -76,6 +82,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
    ```
 
 ### Verification
+
 ```bash
 # Check node status
 kubectl get nodes
@@ -90,6 +97,7 @@ talosctl health --nodes 192.168.1.54 --talosconfig configs/talosconfig
 ```
 
 **Current State**:
+
 - Node: `talos00` (Ready)
 - Kubernetes: v1.34.0
 - Talos: v1.11.1
@@ -111,11 +119,13 @@ kubectl get namespaces
 ```
 
 **Created Namespaces**:
+
 - `media-dev` - Development environment (4 CPU / 8Gi RAM quota)
 - `media-prod` - Production environment (8 CPU / 16Gi RAM quota)
 - `local-path-storage` - Storage provisioner namespace
 
 **Files**:
+
 - `infrastructure/base/namespaces/media-dev.yaml` - Dev namespace with ResourceQuota and LimitRange
 - `infrastructure/base/namespaces/media-prod.yaml` - Prod namespace with ResourceQuota and LimitRange
 - `infrastructure/base/namespaces/kustomization.yaml` - Kustomize manifest
@@ -135,28 +145,33 @@ kubectl get storageclass
 ```
 
 **Storage Classes Created**:
+
 - `local-path` (default) - Local path provisioner for SQLite databases (RWO)
 - `nfs-synology` - NFS storage for media files (RWX)
 
 **PersistentVolumes Created**:
+
 - `nfs-media` - 1Ti NFS volume for media files
 - `nfs-downloads` - 200Gi NFS volume for downloads
 
 **PersistentVolumeClaims Created** (per namespace):
+
 - `media-pvc` - Claim for media files (RWX)
 - `downloads-pvc` - Claim for downloads (RWX)
 
 **Critical Note**: SQLite databases CANNOT use NFS due to locking issues. All arr apps use local-path storage for config/databases.
 
 **Files**:
+
 - `infrastructure/base/storage/local-path-provisioner.yaml` - Complete local-path-provisioner deployment
 - `infrastructure/base/storage/nfs-storageclass.yaml` - NFS StorageClass, PVs, and PVCs
 - `infrastructure/base/storage/kustomization.yaml` - Kustomize manifest
 
 **TODO**: Update NFS server IP in `nfs-storageclass.yaml`:
+
 ```yaml
 nfs:
-  server: ${SYNOLOGY_NFS_SERVER}  # Update this before deploying to prod
+  server: ${SYNOLOGY_NFS_SERVER} # Update this before deploying to prod
   path: /volume1/media
 ```
 
@@ -176,21 +191,25 @@ curl http://whoami.talos00
 ```
 
 **Domain Changes**: All domains updated from `.lab` to `.talos00`:
+
 ```bash
 # Global find/replace across all YAML files
 find . -name "*.yaml" -type f -exec sed -i '' 's/\.lab/\.talos00/g' {} +
 ```
 
 **Access Points**:
+
 - Traefik Dashboard: http://traefik.talos00
 - Whoami Test: http://whoami.talos00
 
 **Add to `/etc/hosts`**:
+
 ```
 192.168.1.54 traefik.talos00 whoami.talos00
 ```
 
 ### Verification
+
 ```bash
 # Run deployment script
 ./scripts/deploy-stack.sh
@@ -205,6 +224,7 @@ kubectl get pods -n traefik
 ```
 
 **Current State**:
+
 - ✅ Namespaces: media-dev, media-prod, local-path-storage
 - ✅ Storage: local-path (default), nfs-synology
 - ✅ PVs: nfs-media (1Ti), nfs-downloads (200Gi)
@@ -259,11 +279,13 @@ kubectl get ingressroute -n media-dev
 ### 2.3 Access Applications
 
 **Add to `/etc/hosts`**:
+
 ```
 192.168.1.54 prowlarr.talos00 sonarr.talos00 radarr.talos00 plex.talos00 jellyfin.talos00
 ```
 
 **Access URLs** (development):
+
 - Prowlarr: http://prowlarr.talos00
 - Sonarr: http://sonarr.talos00
 - Radarr: http://radarr.talos00
@@ -284,6 +306,7 @@ kubectl apply -k applications/arr-stack/base/jellyfin/ -n media-prod
 ```
 
 **Production URLs**:
+
 - Prowlarr: http://prowlarr.prod.talos00
 - Sonarr: http://sonarr.prod.talos00
 - Radarr: http://radarr.prod.talos00
@@ -293,6 +316,7 @@ kubectl apply -k applications/arr-stack/base/jellyfin/ -n media-prod
 ### Storage Architecture
 
 Each application gets:
+
 - **Config Volume**: local-path storage (SQLite databases)
   - Cannot use NFS due to SQLite locking issues
   - Each pod gets its own local-path PVC
@@ -307,7 +331,7 @@ Each application gets:
 
 ## Level 3: Monitoring Stack ⏳ PENDING
 
-Deploy kube-prometheus-stack for comprehensive monitoring.
+Deploy kube-Prometheus-stack for comprehensive monitoring.
 
 ### 3.1 Add Helm Repository
 
@@ -349,18 +373,21 @@ kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=kube-prometheus
 ### 3.4 Access Monitoring
 
 **Add to `/etc/hosts`**:
+
 ```
 192.168.1.54 grafana.talos00 prometheus.talos00 alertmanager.talos00
 ```
 
 **Access URLs**:
+
 - Grafana: http://grafana.talos00
 - Prometheus: http://prometheus.talos00
 - Alertmanager: http://alertmanager.talos00
 
 **Default Credentials**:
+
 - Username: `admin`
-- Password: `prom-operator` (change in values.yaml)
+- Password: `prom-operator` (change in values.YAML)
 
 ### 3.5 Verification
 
@@ -387,6 +414,7 @@ Deploy FluxCD and ArgoCD for automated deployments.
 ### 4.1 Prerequisites
 
 1. **Create Git Repository**:
+
    ```bash
    # Initialize git repo (if not already done)
    git init
@@ -428,12 +456,14 @@ flux check
 ```
 
 **What Flux Manages**:
+
 - Namespaces
 - Storage classes
-- Monitoring stack (kube-prometheus-stack)
+- Monitoring stack (kube-Prometheus-stack)
 - Infrastructure configuration
 
 **Files**:
+
 - `bootstrap/flux/gotk-components.yaml` - Flux installation
 - `bootstrap/flux/gotk-sync.yaml` - Flux sync configuration
 - `bootstrap/flux/kustomization.yaml` - Flux Kustomization
@@ -467,6 +497,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 ### 4.4 Access ArgoCD
 
 **Add to `/etc/hosts`**:
+
 ```
 192.168.1.54 argocd.talos00
 ```
@@ -474,6 +505,7 @@ kubectl -n argocd get secret argocd-initial-admin-secret \
 **Access URL**: http://argocd.talos00
 
 **Login**:
+
 - Username: `admin`
 - Password: (from previous step)
 
@@ -488,6 +520,7 @@ argocd app list
 ```
 
 **ArgoCD Applications Created**:
+
 - `prowlarr-dev` - Prowlarr in media-dev namespace
 - `sonarr-dev` - Sonarr in media-dev namespace
 - `radarr-dev` - Radarr in media-dev namespace
@@ -603,6 +636,7 @@ GRAFANA_ADMIN_PASSWORD=changeme
 ## Current Status Summary
 
 ### ✅ Completed (Levels 0-1)
+
 - Talos node provisioned and configured (hostname: talos00)
 - Kubernetes v1.34.0 running
 - Namespaces deployed (media-dev, media-prod)
@@ -611,12 +645,14 @@ GRAFANA_ADMIN_PASSWORD=changeme
 - All system pods Running and healthy
 
 ### 🔄 Next Steps (Level 2)
+
 - Deploy arr stack applications to media-dev
 - Test applications in dev environment
 - Configure NFS server IP in storage manifests
 
 ### ⏳ Pending (Levels 3-4)
-- Deploy monitoring stack (kube-prometheus-stack)
+
+- Deploy monitoring stack (kube-Prometheus-stack)
 - Create Git repository and push configuration
 - Bootstrap FluxCD for infrastructure management
 - Deploy ArgoCD for application management
@@ -626,6 +662,7 @@ GRAFANA_ADMIN_PASSWORD=changeme
 ## Notes and Lessons Learned
 
 ### Hostname Change Issue
+
 - Changing hostname AFTER cluster bootstrap causes Kubernetes to register a new node
 - This creates network conflicts (Flannel CNI bridge IP mismatch)
 - **Solution**: Always set hostname BEFORE first bootstrap, or be prepared to:
@@ -634,18 +671,21 @@ GRAFANA_ADMIN_PASSWORD=changeme
   3. Wait for network to re-initialize
 
 ### Storage Strategy
+
 - SQLite databases CANNOT use NFS (locking issues)
 - Use local-path storage for all app config and databases
 - Use NFS only for media files (large, sequential reads)
 - Arr apps require separate config volumes per pod
 
 ### Multi-Environment Setup
+
 - Use namespace-based separation (media-dev, media-prod)
 - ResourceQuotas prevent resource exhaustion
 - LimitRanges provide pod-level defaults
 - IngressRoutes use hostname-based routing (.talos00 vs .dev.talos00)
 
 ### Kubeconfig Management
+
 - `.output/` directory structure supports multiple environments
 - `kubeconfig-merge.sh` automatically discovers all configs
 - Context names derived from directory structure

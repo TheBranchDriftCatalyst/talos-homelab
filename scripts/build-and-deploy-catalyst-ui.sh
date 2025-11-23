@@ -16,8 +16,8 @@ echo ""
 
 # Check if catalyst-ui directory exists
 if [ ! -d "${CATALYST_UI_PATH}" ]; then
-    echo "❌ Catalyst UI directory not found at: ${CATALYST_UI_PATH}"
-    exit 1
+  echo "❌ Catalyst UI directory not found at: ${CATALYST_UI_PATH}"
+  exit 1
 fi
 
 echo "✅ Found catalyst-ui at: ${CATALYST_UI_PATH}"
@@ -29,8 +29,8 @@ kubectl apply -f "${PROJECT_ROOT}/infrastructure/base/registry/deployment.yaml"
 kubectl wait --for=condition=ready pod -l app=docker-registry -n registry --timeout=120s
 
 # Get the current git commit hash for tagging
-GIT_HASH=$(git -C "${CATALYST_UI_PATH}" rev-parse --short HEAD 2>/dev/null || echo "dev")
-VERSION=$(git -C "${CATALYST_UI_PATH}" describe --tags --always 2>/dev/null || echo "v0.0.0-${GIT_HASH}")
+GIT_HASH=$(git -C "${CATALYST_UI_PATH}" rev-parse --short HEAD 2> /dev/null || echo "dev")
+VERSION=$(git -C "${CATALYST_UI_PATH}" describe --tags --always 2> /dev/null || echo "v0.0.0-${GIT_HASH}")
 
 echo "ℹ️  Version: ${VERSION}"
 echo "ℹ️  Git Hash: ${GIT_HASH}"
@@ -40,10 +40,10 @@ echo ""
 echo "🔨 Building Docker image..."
 cd "${CATALYST_UI_PATH}"
 docker build -t "catalyst-ui:latest" \
-             -t "catalyst-ui:${GIT_HASH}" \
-             -t "${REGISTRY_URL}/catalyst-ui:latest" \
-             -t "${REGISTRY_URL}/catalyst-ui:${GIT_HASH}" \
-             .
+  -t "catalyst-ui:${GIT_HASH}" \
+  -t "${REGISTRY_URL}/catalyst-ui:latest" \
+  -t "${REGISTRY_URL}/catalyst-ui:${GIT_HASH}" \
+  .
 
 echo "✅ Built image with tags: latest and ${GIT_HASH}"
 echo ""
@@ -55,11 +55,11 @@ PF_PID=$!
 
 # Wait for port-forward to be ready
 for i in {1..10}; do
-    if curl -s http://localhost:5000/v2/ > /dev/null 2>&1; then
-        echo "✅ Registry port-forward ready"
-        break
-    fi
-    sleep 1
+  if curl -s http://localhost:5000/v2/ > /dev/null 2>&1; then
+    echo "✅ Registry port-forward ready"
+    break
+  fi
+  sleep 1
 done
 
 # Tag images for localhost registry
@@ -72,7 +72,7 @@ docker push "localhost:5000/catalyst-ui:latest"
 docker push "localhost:5000/catalyst-ui:${GIT_HASH}"
 
 # Clean up port-forward
-kill $PF_PID 2>/dev/null || true
+kill $PF_PID 2> /dev/null || true
 
 echo "✅ Pushed to registry at ${REGISTRY_URL}"
 echo ""

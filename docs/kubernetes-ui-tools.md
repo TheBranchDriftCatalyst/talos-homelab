@@ -13,6 +13,7 @@ This document lists various UI tools you can use to visualize and manage your Ku
 The official Kubernetes Dashboard provides a general-purpose web UI for managing cluster resources.
 
 **How to access:**
+
 ```bash
 # Get access token
 task dashboard-token
@@ -24,6 +25,7 @@ task dashboard-proxy
 ```
 
 **Features:**
+
 - View all resources (deployments, pods, services, etc.)
 - Monitor resource usage (CPU/Memory)
 - View logs and exec into containers
@@ -46,6 +48,7 @@ task dashboard-proxy
 A powerful terminal-based UI for navigating and managing Kubernetes clusters.
 
 **Installation:**
+
 ```bash
 brew install k9s
 # or
@@ -53,6 +56,7 @@ task dev:install-brew-deps  # Already in Brewfile
 ```
 
 **Usage:**
+
 ```bash
 # Launch k9s
 k9s
@@ -65,6 +69,7 @@ k9s --context homelab-single
 ```
 
 **Features:**
+
 - Real-time resource monitoring
 - Fast navigation with keyboard shortcuts
 - Built-in log viewer and shell access
@@ -75,6 +80,7 @@ k9s --context homelab-single
 - Skin/theme customization
 
 **Keyboard shortcuts:**
+
 - `:` - Command mode (e.g., `:pods`, `:deploy`, `:svc`)
 - `/` - Filter/search
 - `l` - View logs
@@ -101,16 +107,19 @@ k9s --context homelab-single
 The "Kubernetes IDE" - a powerful desktop application for cluster management.
 
 **Installation:**
+
 ```bash
 brew install --cask lens
 ```
 
 **Setup:**
+
 1. Launch Lens
 2. Add cluster: File → Add Cluster → Select your kubeconfig
 3. Browse resources, view metrics, access terminal
 
 **Features:**
+
 - Multi-cluster management
 - Built-in Prometheus metrics charts
 - Helm chart browser and installer
@@ -136,6 +145,7 @@ A modern, extensible Kubernetes UI designed to be user-friendly.
 **Installation Options:**
 
 **Option A: In-Cluster (Recommended)**
+
 ```bash
 # Using Helm
 helm repo add headlamp https://headlamp-k8s.github.io/headlamp/
@@ -147,11 +157,13 @@ kubectl port-forward -n kube-system svc/headlamp 8080:80
 ```
 
 **Option B: Desktop App**
+
 ```bash
 brew install --cask headlamp
 ```
 
 **Features:**
+
 - Clean, modern interface
 - Multi-cluster support
 - Plugin system
@@ -175,11 +187,13 @@ brew install --cask headlamp
 A developer-centric web interface that runs locally and visualizes Kubernetes workloads.
 
 **Installation:**
+
 ```bash
 brew install octant
 ```
 
 **Usage:**
+
 ```bash
 # Launch Octant
 octant
@@ -188,6 +202,7 @@ octant
 ```
 
 **Features:**
+
 - Real-time updates
 - Plugin system
 - Resource relationship visualization
@@ -210,6 +225,7 @@ octant
 A lightweight visualization tool that shows cluster resources as an interactive diagram.
 
 **Installation (In-Cluster):**
+
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/benc-uk/kubeview/main/deployments/kubernetes.yaml
 
@@ -219,6 +235,7 @@ kubectl port-forward -n kubeview svc/kubeview 8080:80
 ```
 
 **Features:**
+
 - Visual graph of resources
 - Shows relationships between resources
 - Interactive navigation
@@ -238,6 +255,7 @@ kubectl port-forward -n kubeview svc/kubeview 8080:80
 Container management platform with Kubernetes support.
 
 **Installation:**
+
 ```bash
 helm repo add portainer https://portainer.github.io/k8s/
 helm repo update
@@ -252,6 +270,7 @@ kubectl port-forward -n portainer svc/portainer 9443:9443
 ```
 
 **Features:**
+
 - Multi-cluster management
 - Team/user management
 - Application templates
@@ -273,6 +292,7 @@ kubectl port-forward -n portainer svc/portainer 9443:9443
 Since you already have Grafana deployed, you can add the Kubernetes App plugin.
 
 **Installation:**
+
 ```bash
 # Install plugin in Grafana pod
 kubectl exec -n monitoring <grafana-pod> -- grafana-cli plugins install grafana-kubernetes-app
@@ -282,6 +302,7 @@ kubectl rollout restart -n monitoring deployment/grafana
 ```
 
 **Access Grafana:**
+
 ```bash
 # Your existing Grafana
 open http://grafana.talos00
@@ -289,6 +310,7 @@ open http://grafana.talos00
 ```
 
 **Features:**
+
 - Integrated with Prometheus metrics
 - Pre-built dashboards
 - Cluster monitoring
@@ -308,6 +330,7 @@ open http://grafana.talos00
 A hybrid CLI/GUI tool that enhances kubectl with visualizations.
 
 **Installation:**
+
 ```bash
 npm install -g @kui-shell/kubectl-kui
 
@@ -315,6 +338,7 @@ npm install -g @kui-shell/kubectl-kui
 ```
 
 **Usage:**
+
 ```bash
 # Launch Kui
 kui
@@ -324,6 +348,7 @@ kubectl kui get pods
 ```
 
 **Features:**
+
 - CLI + GUI hybrid
 - Live data tables
 - YAML diff viewer
@@ -343,6 +368,7 @@ kubectl kui get pods
 You already have this stack installed for metrics and visualization.
 
 **Access:**
+
 ```bash
 # Prometheus
 open http://prometheus.talos00
@@ -366,6 +392,7 @@ open http://alertmanager.talos00
 For log aggregation and analysis.
 
 **Access:**
+
 ```bash
 open http://graylog.talos00
 # Login: admin / admin
@@ -384,6 +411,7 @@ open http://graylog.talos00
 **Focus**: Cost monitoring and optimization
 
 **Installation:**
+
 ```bash
 helm repo add kubecost https://kubecost.github.io/cost-analyzer/
 helm install kubecost kubecost/cost-analyzer \
@@ -403,6 +431,7 @@ kubectl port-forward -n kubecost svc/kubecost-cost-analyzer 9090:9090
 **Focus**: Resource recommendations (right-sizing)
 
 **Installation:**
+
 ```bash
 helm repo add fairwinds-stable https://charts.fairwinds.com/stable
 helm install goldilocks fairwinds-stable/goldilocks \
@@ -422,6 +451,7 @@ kubectl port-forward -n goldilocks svc/goldilocks-dashboard 8080:80
 **Focus**: Real-time cluster visualization
 
 **Installation:**
+
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/hjacobs/kube-ops-view/main/deploy/deploy.yaml
 
@@ -434,45 +464,51 @@ kubectl port-forward -n kube-ops-view svc/kube-ops-view 8080:80
 
 ## Comparison Matrix
 
-| Tool | Type | Installation | Complexity | Best For |
-|------|------|--------------|------------|----------|
-| **Kubernetes Dashboard** | Web | In-Cluster | Low | General purpose |
-| **k9s** | Terminal | Local | Low | Daily operations, power users |
-| **Lens** | Desktop | Local | Medium | Multi-cluster, developers |
-| **Headlamp** | Web/Desktop | Both | Low | Modern UI, simplicity |
-| **Kubeview** | Web | In-Cluster | Low | Visual relationships |
-| **Portainer** | Web | In-Cluster | Medium | Teams, multi-cluster |
-| **Grafana K8s** | Web | In-Cluster | Medium | Metrics integration |
-| **Prometheus** | Web | In-Cluster | Low | Metrics, monitoring |
-| **Graylog** | Web | In-Cluster | Medium | Logs, debugging |
-| **Kubecost** | Web | In-Cluster | Medium | Cost analysis |
+| Tool                     | Type        | Installation | Complexity | Best For                      |
+| ------------------------ | ----------- | ------------ | ---------- | ----------------------------- |
+| **Kubernetes Dashboard** | Web         | In-Cluster   | Low        | General purpose               |
+| **k9s**                  | Terminal    | Local        | Low        | Daily operations, power users |
+| **Lens**                 | Desktop     | Local        | Medium     | Multi-cluster, developers     |
+| **Headlamp**             | Web/Desktop | Both         | Low        | Modern UI, simplicity         |
+| **Kubeview**             | Web         | In-Cluster   | Low        | Visual relationships          |
+| **Portainer**            | Web         | In-Cluster   | Medium     | Teams, multi-cluster          |
+| **Grafana K8s**          | Web         | In-Cluster   | Medium     | Metrics integration           |
+| **Prometheus**           | Web         | In-Cluster   | Low        | Metrics, monitoring           |
+| **Graylog**              | Web         | In-Cluster   | Medium     | Logs, debugging               |
+| **Kubecost**             | Web         | In-Cluster   | Medium     | Cost analysis                 |
 
 ---
 
 ## Recommendations Based on Use Case
 
 ### For Daily Operations
+
 1. **k9s** - Fast, keyboard-driven, terminal-based
 2. **Lens** - If you prefer desktop apps
 
 ### For Beginners
+
 1. **Kubernetes Dashboard** - Already installed
 2. **Headlamp** - Modern, user-friendly
 
 ### For Multi-Cluster Management
+
 1. **Lens**
 2. **Portainer**
 
 ### For Visualization & Architecture
+
 1. **Kubeview** - Resource relationships
 2. **Kube-ops-view** - Real-time cluster view
 
 ### For Monitoring & Debugging
+
 1. **Grafana** - Already installed, great dashboards
 2. **k9s** - Built-in log viewer and shell access
 3. **Graylog** - Already installed, log analysis
 
 ### For Cost Optimization
+
 1. **Kubecost** - Cost analysis
 2. **Goldilocks** - Resource right-sizing
 
@@ -531,22 +567,26 @@ kubectl port-forward -n kube-system svc/headlamp 8080:80
 ## Summary
 
 **Already Have:**
+
 - ✅ Kubernetes Dashboard
 - ✅ Grafana (with Prometheus)
 - ✅ Graylog
 - ✅ k9s (can install via existing Brewfile)
 
 **Recommended to Add:**
+
 - **k9s** - For terminal-based power users (already in Brewfile)
 - **Headlamp** - For modern web UI
 - **Lens** - If you want a desktop IDE experience
 
 **For Specific Needs:**
+
 - **Kubeview** - Visual resource relationships
 - **Kubecost** - Cost monitoring
 - **Portainer** - Team management, multi-cluster
 
 The best tool depends on your workflow:
+
 - **Terminal user?** → k9s
 - **Desktop app?** → Lens
 - **Web UI?** → Headlamp or existing Kubernetes Dashboard

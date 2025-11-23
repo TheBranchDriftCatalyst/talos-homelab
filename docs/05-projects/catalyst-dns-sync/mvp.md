@@ -283,23 +283,27 @@
 ### Week 1: Core Implementation
 
 **Days 1-2:** Project setup & DNS client
+
 - Initialize project structure
 - Implement Technitium DNS client
 - Implement hosts file manager
 - Unit tests for DNS operations
 
 **Days 3-4:** Kubernetes controllers
+
 - Ingress controller
 - IngressRoute controller
 - Reconciliation logic
 - Hostname extraction
 
 **Days 5-6:** Metrics & health
+
 - Prometheus metrics setup
 - Health check endpoints
 - Structured logging
 
 **Day 7:** Testing & fixes
+
 - Integration testing
 - Bug fixes
 - Dev mode validation
@@ -307,21 +311,25 @@
 ### Week 2: Deployment & Production
 
 **Days 1-2:** Containerization
+
 - Dockerfile
 - Build & push to local registry
 - Test container locally
 
 **Days 3-4:** Kubernetes deployment
+
 - Manifests (Deployment, RBAC, Service, etc.)
 - Deploy to cluster
 - ServiceMonitor setup
 
 **Days 5-6:** Production validation
+
 - Test with real IngressRoutes
 - Monitor metrics in Prometheus
 - Test edge cases (updates, deletes)
 
 **Day 7:** Documentation & polish
+
 - README documentation
 - Troubleshooting guide
 - Code cleanup
@@ -472,7 +480,7 @@ metadata:
   namespace: infrastructure
 type: Opaque
 stringData:
-  token: "YOUR_TECHNITIUM_API_TOKEN_HERE"
+  token: 'YOUR_TECHNITIUM_API_TOKEN_HERE'
 ```
 
 ---
@@ -505,15 +513,18 @@ Once Phase 1 MVP is complete and stable, Phase 2 will add:
 **Last Updated:** 2025-11-11
 
 ### Completed
+
 - ✅ Technical proposal (CATALYST-DNS-SYNC-PROPOSAL.md)
 - ✅ MVP definition (this document)
 - ✅ Architecture design
 - ✅ API research (Technitium)
 
 ### In Progress
+
 - ⏳ Phase 1 implementation (starting now)
 
 ### Next Steps
+
 1. Initialize Go project structure
 2. Implement Technitium DNS client
 3. Implement hosts file manager

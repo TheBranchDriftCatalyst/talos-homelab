@@ -4,14 +4,15 @@
 
 ## Current Status
 
-| Component | Status | Health | Notes |
-|-----------|--------|--------|-------|
-| ESO Operator | 🟡 Ready | ⚪ Not Deployed | HelmRelease created, awaiting Flux |
-| 1Password Connect | 🟡 Ready | ⚪ Not Deployed | Manifests created, needs credentials |
-| ClusterSecretStore | 🟡 Ready | ⚪ Not Deployed | Needs vault ID update |
-| SecretStore | 🟡 Ready | ⚪ Not Deployed | Needs vault ID update |
+| Component          | Status   | Health          | Notes                                |
+| ------------------ | -------- | --------------- | ------------------------------------ |
+| ESO Operator       | 🟡 Ready | ⚪ Not Deployed | HelmRelease created, awaiting Flux   |
+| 1Password Connect  | 🟡 Ready | ⚪ Not Deployed | Manifests created, needs credentials |
+| ClusterSecretStore | 🟡 Ready | ⚪ Not Deployed | Needs vault ID update                |
+| SecretStore        | 🟡 Ready | ⚪ Not Deployed | Needs vault ID update                |
 
 **Legend:**
+
 - Status: ✅ Deployed | 🟡 Ready | 🔴 Not Started
 - Health: 🟢 Healthy | 🟡 Degraded | 🔴 Down | ⚪ Not Deployed
 
@@ -22,6 +23,7 @@ External Secrets Operator (ESO) integration with 1Password Connect is configured
 ## Deployment Checklist
 
 ### Prerequisites
+
 - [x] FluxCD installed and bootstrapped
 - [x] ESO HelmRepository manifest created
 - [x] ESO HelmRelease manifest created
@@ -31,6 +33,7 @@ External Secrets Operator (ESO) integration with 1Password Connect is configured
 - [x] Documentation completed
 
 ### Configuration Required
+
 - [ ] Obtain 1Password Connect credentials file
 - [ ] Generate 1Password Connect API token
 - [ ] Run setup script: `./scripts/setup-1password-connect.sh`
@@ -38,6 +41,7 @@ External Secrets Operator (ESO) integration with 1Password Connect is configured
 - [ ] Uncomment 1Password Connect and SecretStores in root kustomization
 
 ### Deployment
+
 - [ ] Deploy ESO operator: `kubectl apply -k infrastructure/base/external-secrets/operator/`
 - [ ] Verify ESO pods running
 - [ ] Deploy 1Password Connect: `kubectl apply -k infrastructure/base/external-secrets/onepassword-connect/`
@@ -46,6 +50,7 @@ External Secrets Operator (ESO) integration with 1Password Connect is configured
 - [ ] Verify SecretStores ready
 
 ### Validation
+
 - [ ] Create test ExternalSecret
 - [ ] Verify secret created in Kubernetes
 - [ ] Check Prometheus metrics endpoint
@@ -60,12 +65,14 @@ External Secrets Operator (ESO) integration with 1Password Connect is configured
 **Management:** FluxCD HelmRelease
 
 **Features Enabled:**
+
 - CRD auto-install/upgrade
 - ServiceMonitor for Prometheus
 - Webhook for validation
 - Cert controller for webhook certs
 
 **Resource Limits:**
+
 - Controller: 10m CPU / 64Mi RAM (requests), 100m CPU / 128Mi RAM (limits)
 - Cert Controller: 10m CPU / 64Mi RAM (requests), 100m CPU / 128Mi RAM (limits)
 
@@ -74,28 +81,34 @@ External Secrets Operator (ESO) integration with 1Password Connect is configured
 **Version:** 1.7.3
 **Namespace:** external-secrets
 **Components:**
+
 - connect-api (port 8080) - REST API for external clients
 - connect-sync (port 8081) - Syncs with 1Password cloud
 
 **Resource Limits (per container):**
+
 - Requests: 50m CPU / 128Mi RAM
 - Limits: 200m CPU / 256Mi RAM
 
 **Health Checks:**
+
 - Liveness: HTTP GET /health (every 30s)
 - Readiness: HTTP GET /health (every 10s)
 
 **Storage:**
+
 - EmptyDir volume for shared data between API and Sync containers
 
 ### SecretStores
 
 **ClusterSecretStore:** `onepassword`
+
 - Scope: Cluster-wide
 - Provider: 1Password Connect
 - Connect URL: `http://onepassword-connect.external-secrets.svc.cluster.local:8080`
 
 **SecretStore:** `onepassword` (namespace: external-secrets)
+
 - Scope: external-secrets namespace only
 - Provider: 1Password Connect
 - Same configuration as ClusterSecretStore
@@ -177,7 +190,7 @@ env:
   - name: DB_PASSWORD
     valueFrom:
       secretKeyRef:
-        name: postgres-secret  # Created by ExternalSecret
+        name: postgres-secret # Created by ExternalSecret
         key: password
 ```
 
@@ -268,6 +281,7 @@ kubectl exec -n external-secrets deployment/onepassword-connect -c connect-api -
    - Generate API token
 
 2. **Run Setup Script**
+
    ```bash
    ./scripts/setup-1password-connect.sh
    ```
@@ -277,6 +291,7 @@ kubectl exec -n external-secrets deployment/onepassword-connect -c connect-api -
    - Uncomment disabled components
 
 4. **Deploy via Flux**
+
    ```bash
    flux reconcile kustomization external-secrets --with-source
    ```
@@ -315,6 +330,7 @@ kubectl delete -k infrastructure/base/external-secrets/
 ## Change Log
 
 ### 2025-11-22
+
 - ✅ Initial ESO configuration created
 - ✅ 1Password Connect manifests created
 - ✅ SecretStore configurations created

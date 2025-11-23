@@ -8,6 +8,7 @@
 ## What We Built
 
 ### 1. Complete Technical Proposal ✅
+
 - **File:** `docs/CATALYST-DNS-SYNC-PROPOSAL.md` (1,200+ lines)
 - Architecture design with diagrams
 - Full API integration details (Technitium DNS)
@@ -18,6 +19,7 @@
 - Development and production deployment guides
 
 ### 2. MVP Definition ✅
+
 - **File:** `docs/CATALYST-DNS-SYNC-MVP.md`
 - Clear Phase 1 scope (core features)
 - Phase 2 scope (web UI)
@@ -27,6 +29,7 @@
 - Command reference guide
 
 ### 3. Project Scaffolding ✅
+
 - **Directory:** `catalyst-dns-sync/`
 - Project structure created
 - `Makefile` with all dev/prod commands
@@ -83,12 +86,14 @@
 ## Phase 2 Features (Future)
 
 ### Web UI Dashboard
+
 - Live DNS records table at `dns.talos00/ui`
 - Real-time event stream (SSE)
 - Manual override panel (force resync, delete records)
 - Built with HTMX + Alpine.js (no build step)
 
 ### OP Features
+
 - Auto-wildcard SSL certificate management
 - DNS preview environments (`pr-123.app.talos00`)
 - Certificate expiration metrics
@@ -138,6 +143,7 @@ catalyst-dns-sync/
 ## Quick Start Commands
 
 ### Development (Local)
+
 ```bash
 cd catalyst-dns-sync
 
@@ -150,6 +156,7 @@ task dev
 ```
 
 ### Production (Cluster)
+
 ```bash
 # Build and deploy
 task deploy
@@ -164,28 +171,33 @@ kubectl logs -n infrastructure -l app=catalyst-dns-sync -f
 ## Key Design Decisions
 
 ### 1. Single Repository Initially
+
 - Lives in `talos-fix/catalyst-dns-sync/`
 - Can be extracted to separate repo later
 - Easier to iterate during development
 
 ### 2. Dual Mode Architecture
+
 - **Production:** Updates Technitium DNS via REST API
 - **Dev Mode:** Updates `/etc/hosts` for local development
 - Same controller logic, different DNS backend
 
 ### 3. Air Hot Reload
+
 - Fast iteration during development
 - Auto-rebuilds on code changes
 - Immediate `/etc/hosts` updates
 - No manual restart needed
 
 ### 4. Incremental Sync Strategy
+
 - Only modify DNS records that changed
 - Preserve non-managed records
 - Reduces API calls to DNS server
 - Safer than full replacement
 
 ### 5. Prometheus-First Observability
+
 - 6 core metrics covering all operations
 - ServiceMonitor for auto-scraping
 - Ready for Grafana dashboards
@@ -198,6 +210,7 @@ kubectl logs -n infrastructure -l app=catalyst-dns-sync -f
 See [CATALYST-DNS-SYNC-MVP.md](./CATALYST-DNS-SYNC-MVP.md) for the complete checklist.
 
 ### Week 1: Core Implementation
+
 - [ ] Go module initialization
 - [ ] Technitium DNS client
 - [ ] Hosts file manager (dev mode)
@@ -207,6 +220,7 @@ See [CATALYST-DNS-SYNC-MVP.md](./CATALYST-DNS-SYNC-MVP.md) for the complete chec
 - [ ] Structured logging
 
 ### Week 2: Deployment & Production
+
 - [ ] Dockerfile
 - [ ] Kubernetes manifests
 - [ ] RBAC setup
@@ -220,6 +234,7 @@ See [CATALYST-DNS-SYNC-MVP.md](./CATALYST-DNS-SYNC-MVP.md) for the complete chec
 ## Success Criteria
 
 ### Functional
+
 - [x] Dev mode: `task dev` works
 - [ ] Dev mode: Creates/deletes /etc/hosts entries within 5s
 - [ ] Prod mode: Deploys successfully to cluster
@@ -227,17 +242,20 @@ See [CATALYST-DNS-SYNC-MVP.md](./CATALYST-DNS-SYNC-MVP.md) for the complete chec
 - [ ] Prod mode: New/updated/deleted Ingress syncs within 30s
 
 ### Observability
+
 - [ ] Prometheus scrapes metrics successfully
 - [ ] All 6 metrics present and accurate
 - [ ] JSON logs parseable by Graylog
 - [ ] Health probes work correctly
 
 ### Performance
+
 - [ ] Memory < 50MB
 - [ ] CPU < 0.1 core
 - [ ] Reconciliation < 5s per Ingress
 
 ### Reliability
+
 - [ ] Runs 24hrs without crashes
 - [ ] Handles API failures gracefully
 - [ ] No orphaned DNS records
@@ -257,6 +275,7 @@ See [CATALYST-DNS-SYNC-MVP.md](./CATALYST-DNS-SYNC-MVP.md) for the complete chec
 ## Next Steps
 
 1. **Initialize Go Module**
+
    ```bash
    cd catalyst-dns-sync
    task init
@@ -268,11 +287,13 @@ See [CATALYST-DNS-SYNC-MVP.md](./CATALYST-DNS-SYNC-MVP.md) for the complete chec
    - Then controllers
 
 3. **Test Early**
+
    ```bash
    task dev  # Test dev mode
    ```
 
 4. **Build & Deploy**
+
    ```bash
    task deploy  # When ready for cluster testing
    ```
@@ -292,18 +313,23 @@ See [CATALYST-DNS-SYNC-MVP.md](./CATALYST-DNS-SYNC-MVP.md) for the complete chec
 ## Questions Answered
 
 ### Q: Why not use external-dns?
+
 A: external-dns doesn't support Technitium DNS. This is custom-built for homelab Technitium integration.
 
 ### Q: Why two modes (dev/prod)?
+
 A: Dev mode allows local development without DNS server, using /etc/hosts. Same controller logic, different backend.
 
 ### Q: Why not cert-manager webhook?
+
 A: Phase 1 focuses on DNS sync only. Certificate integration is Phase 2/3 feature.
 
 ### Q: Why Technitium instead of CoreDNS?
+
 A: Existing infrastructure choice. Technitium provides web UI and advanced features.
 
 ### Q: Can this be extracted to separate repo?
+
 A: Yes! Designed to be portable. Lives in `talos-fix` initially for rapid iteration.
 
 ---

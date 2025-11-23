@@ -33,11 +33,12 @@ After bootstrap, Flux will manage:
 ## Components Managed by Flux
 
 ### Infrastructure
+
 - Local-path-provisioner (storage)
 - NFS CSI driver (Synology storage)
 - Traefik (ingress controller) - already manually installed
 - Metrics-server - already manually installed
-- kube-prometheus-stack (monitoring)
+- kube-Prometheus-stack (monitoring)
 - ArgoCD (application GitOps)
 
 ### Post-Bootstrap Steps

@@ -22,7 +22,7 @@ echo ""
 
 # Step 1: Add Helm repo
 echo "1️⃣  Adding Traefik Helm repository..."
-helm repo add traefik https://traefik.github.io/charts 2>/dev/null || echo "Repo already exists"
+helm repo add traefik https://traefik.github.io/charts 2> /dev/null || echo "Repo already exists"
 helm repo update
 echo "✅ Helm repo updated"
 echo ""
@@ -30,30 +30,30 @@ echo ""
 # Step 2: Create namespace
 echo "2️⃣  Creating traefik namespace..."
 if ! kubectl --kubeconfig "$KUBECONFIG" get namespace traefik > /dev/null 2>&1; then
-    kubectl --kubeconfig "$KUBECONFIG" create namespace traefik
-    kubectl --kubeconfig "$KUBECONFIG" label namespace traefik \
-        pod-security.kubernetes.io/enforce=privileged \
-        pod-security.kubernetes.io/audit=privileged \
-        pod-security.kubernetes.io/warn=privileged
-    echo "✅ Namespace created with privileged security labels"
+  kubectl --kubeconfig "$KUBECONFIG" create namespace traefik
+  kubectl --kubeconfig "$KUBECONFIG" label namespace traefik \
+    pod-security.kubernetes.io/enforce=privileged \
+    pod-security.kubernetes.io/audit=privileged \
+    pod-security.kubernetes.io/warn=privileged
+  echo "✅ Namespace created with privileged security labels"
 else
-    echo "⚠️  Namespace already exists"
+  echo "⚠️  Namespace already exists"
 fi
 echo ""
 
 # Step 3: Install Traefik
 echo "3️⃣  Installing Traefik via Helm..."
 if helm --kubeconfig "$KUBECONFIG" list -n traefik | grep -q traefik; then
-    echo "⚠️  Traefik already installed, upgrading..."
-    helm --kubeconfig "$KUBECONFIG" upgrade traefik traefik/traefik \
-        --namespace traefik \
-        --values kubernetes/traefik-values.yaml \
-        2>&1 | grep -v "Warning:"
+  echo "⚠️  Traefik already installed, upgrading..."
+  helm --kubeconfig "$KUBECONFIG" upgrade traefik traefik/traefik \
+    --namespace traefik \
+    --values kubernetes/traefik-values.yaml \
+    2>&1 | grep -v "Warning:"
 else
-    helm --kubeconfig "$KUBECONFIG" install traefik traefik/traefik \
-        --namespace traefik \
-        --values kubernetes/traefik-values.yaml \
-        2>&1 | grep -v "Warning:"
+  helm --kubeconfig "$KUBECONFIG" install traefik traefik/traefik \
+    --namespace traefik \
+    --values kubernetes/traefik-values.yaml \
+    2>&1 | grep -v "Warning:"
 fi
 echo "✅ Traefik installed"
 echo ""
@@ -61,9 +61,9 @@ echo ""
 # Step 4: Wait for Traefik to be ready
 echo "4️⃣  Waiting for Traefik to be ready..."
 kubectl --kubeconfig "$KUBECONFIG" wait --namespace traefik \
-    --for=condition=ready pod \
-    --selector=app.kubernetes.io/name=traefik \
-    --timeout=90s
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/name=traefik \
+  --timeout=90s
 echo "✅ Traefik is ready"
 echo ""
 
@@ -82,26 +82,26 @@ echo ""
 # Step 7: Install metrics-server
 echo "7️⃣  Installing metrics-server..."
 if kubectl --kubeconfig "$KUBECONFIG" get deployment metrics-server -n kube-system > /dev/null 2>&1; then
-    echo "⚠️  Metrics-server already installed"
+  echo "⚠️  Metrics-server already installed"
 else
-    # Download and apply metrics-server with modified configuration for single-node
-    kubectl --kubeconfig "$KUBECONFIG" apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+  # Download and apply metrics-server with modified configuration for single-node
+  kubectl --kubeconfig "$KUBECONFIG" apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 
-    # Patch metrics-server to work with self-signed certs (common in homelab)
-    kubectl --kubeconfig "$KUBECONFIG" patch deployment metrics-server -n kube-system \
-        --type='json' \
-        -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]' 2>/dev/null || true
+  # Patch metrics-server to work with self-signed certs (common in homelab)
+  kubectl --kubeconfig "$KUBECONFIG" patch deployment metrics-server -n kube-system \
+    --type='json' \
+    -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]' 2> /dev/null || true
 
-    echo "✅ Metrics-server installed"
+  echo "✅ Metrics-server installed"
 fi
 echo ""
 
 # Step 8: Wait for metrics-server to be ready
 echo "8️⃣  Waiting for metrics-server to be ready..."
 kubectl --kubeconfig "$KUBECONFIG" wait --namespace kube-system \
-    --for=condition=ready pod \
-    --selector=k8s-app=metrics-server \
-    --timeout=90s || echo "⚠️  Metrics-server may still be starting..."
+  --for=condition=ready pod \
+  --selector=k8s-app=metrics-server \
+  --timeout=90s || echo "⚠️  Metrics-server may still be starting..."
 echo ""
 
 # Step 9: Show status
@@ -119,7 +119,7 @@ echo ""
 
 # Step 10: Test metrics
 echo "🔟 Testing metrics availability..."
-sleep 5  # Give metrics server a moment to collect data
+sleep 5 # Give metrics server a moment to collect data
 kubectl --kubeconfig "$KUBECONFIG" top nodes 2>&1 || echo "⏳ Metrics not ready yet (may take 30-60 seconds)"
 echo ""
 

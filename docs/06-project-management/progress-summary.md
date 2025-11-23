@@ -7,7 +7,9 @@
 ### Phase 1: Infrastructure Foundation (100% Complete)
 
 #### 1. Directory Structure ✅
+
 Created complete GitOps directory structure:
+
 ```
 talos-fix/
 ├── bootstrap/          # GitOps bootstrap configs
@@ -40,6 +42,7 @@ talos-fix/
 ```
 
 #### 2. Namespace Manifests ✅
+
 - **media-dev** namespace with:
   - ResourceQuota: 4 CPU / 8Gi RAM
   - LimitRange: Container limits and defaults
@@ -53,6 +56,7 @@ talos-fix/
 #### 3. Storage Configuration ✅
 
 **NFS Storage (Synology):**
+
 - StorageClass: `nfs-synology`
 - PersistentVolume: `nfs-media` (1Ti, ReadWriteMany)
 - PersistentVolume: `nfs-downloads` (200Gi, ReadWriteMany)
@@ -60,6 +64,7 @@ talos-fix/
 - Mount options optimized: hard, nfsvers=4.1, noatime
 
 **Local Path Provisioner:**
+
 - Complete deployment manifest
 - StorageClass: `local-path` (default)
 - For SQLite databases (critical for arr apps)
@@ -67,7 +72,8 @@ talos-fix/
 
 #### 4. Monitoring Stack ✅
 
-**kube-prometheus-stack HelmRelease:**
+**kube-Prometheus-stack HelmRelease:**
+
 - Prometheus with 30d retention, 50Gi storage
 - Alertmanager with 10Gi storage
 - Grafana with persistence enabled
@@ -80,6 +86,7 @@ talos-fix/
 #### 5. FluxCD Bootstrap ✅
 
 **Flux Manifests:**
+
 - Namespace configuration
 - Kustomization for namespaces (first priority)
 - Kustomization for storage (second priority)
@@ -88,6 +95,7 @@ talos-fix/
 - README with bootstrap instructions
 
 **Cluster Configuration:**
+
 - `clusters/homelab-single/` structure ready
 - Flux sync configuration prepared
 - Dependency ordering configured
@@ -95,6 +103,7 @@ talos-fix/
 #### 6. ArgoCD Bootstrap ✅
 
 **ArgoCD HelmRelease:**
+
 - Deployed via FluxCD
 - Admin password: "admin" (change after install!)
 - Server configured with --insecure flag
@@ -107,13 +116,15 @@ talos-fix/
 #### 7. Traefik Configuration ✅
 
 **Base Configuration:**
+
 - HelmRelease for Traefik v3.5.x
 - DaemonSet deployment with hostPort
 - Dashboard IngressRoute with domain substitution
 - Prometheus metrics enabled
-- ServiceMonitor for kube-prometheus-stack
+- ServiceMonitor for kube-Prometheus-stack
 
 **Multi-Environment Support:**
+
 - Dev overlay: `*.dev.lab` domains
 - Prod overlay: `*.lab` domains
 - ConfigMap-based domain substitution
@@ -122,6 +133,7 @@ talos-fix/
 #### 8. Application Manifests ✅
 
 **Prowlarr (Indexer Manager):**
+
 - Deployment with LinuxServer image
 - Service (ClusterIP, port 9696)
 - PVC (1Gi, local-path for SQLite)
@@ -129,6 +141,7 @@ talos-fix/
 - Health probes configured
 
 **Sonarr (TV Automation):**
+
 - Deployment with LinuxServer image
 - Service (ClusterIP, port 8989)
 - PVC (5Gi, local-path for SQLite)
@@ -137,6 +150,7 @@ talos-fix/
 - Resource limits: 1 CPU / 1Gi RAM
 
 **Radarr (Movie Automation):**
+
 - Deployment with LinuxServer image
 - Service (ClusterIP, port 7878)
 - PVC (5Gi, local-path for SQLite)
@@ -145,6 +159,7 @@ talos-fix/
 - Resource limits: 1 CPU / 1Gi RAM
 
 **Plex Media Server:**
+
 - Deployment with hostNetwork enabled
 - Service (ClusterIP, port 32400)
 - PVC (50Gi, local-path)
@@ -154,6 +169,7 @@ talos-fix/
 - PLEX_CLAIM environment variable for setup
 
 **Jellyfin Media Server:**
+
 - Deployment with LinuxServer image
 - Service (ClusterIP, ports 8096/8920)
 - PVC (50Gi, local-path)
@@ -167,6 +183,7 @@ talos-fix/
 #### Local Cluster Provisioning ✅
 
 **provision-local.sh Script:**
+
 - Creates Docker-based single-node Talos cluster
 - Cluster name: `talos-local`
 - Installs metrics-server with insecure TLS
@@ -176,10 +193,12 @@ talos-fix/
 - Full error handling and colorized output
 
 **Taskfile Commands:**
+
 - `task provision-local` - Create local cluster
 - `task destroy-local` - Destroy local cluster
 
 **Documentation:**
+
 - Complete LOCAL-TESTING.md guide
 - Prerequisites and setup instructions
 - Differences from production
@@ -189,14 +208,16 @@ talos-fix/
 ## 📊 Current State
 
 ### Infrastructure
+
 - ✅ Directory structure: Complete
 - ✅ Namespaces: Complete (dev + prod)
 - ✅ Storage: Complete (NFS + local-path)
-- ✅ Monitoring: Complete (kube-prometheus-stack)
+- ✅ Monitoring: Complete (kube-Prometheus-stack)
 - ✅ GitOps: Complete (Flux + ArgoCD)
 - ✅ Ingress: Complete (Traefik multi-env)
 
 ### Applications
+
 - ✅ Prowlarr: Complete
 - ✅ Sonarr: Complete
 - ✅ Radarr: Complete
@@ -204,6 +225,7 @@ talos-fix/
 - ✅ Jellyfin: Complete
 
 ### Testing
+
 - ✅ Local cluster script: Complete
 - ✅ Documentation: Complete
 - ⏳ Local testing: Ready to execute
@@ -213,6 +235,7 @@ talos-fix/
 ### Immediate (Testing Phase)
 
 1. **Test Local Cluster**
+
    ```bash
    task provision-local
    kubectl get nodes
@@ -220,12 +243,14 @@ talos-fix/
    ```
 
 2. **Validate Kustomize Builds**
+
    ```bash
    kustomize build infrastructure/base
    kustomize build applications/arr-stack/base/prowlarr
    ```
 
 3. **Deploy to Local Cluster**
+
    ```bash
    # Infrastructure
    kubectl apply -k infrastructure/base/namespaces/
@@ -245,6 +270,7 @@ talos-fix/
    - Tag initial release
 
 2. **Bootstrap FluxCD**
+
    ```bash
    flux bootstrap github \
      --owner=<username> \
@@ -255,6 +281,7 @@ talos-fix/
    ```
 
 3. **Verify Flux Reconciliation**
+
    ```bash
    flux get all
    flux get kustomizations
@@ -330,6 +357,7 @@ talos-fix/
 ### Domain Configuration
 
 **Development (`*.dev.lab`):**
+
 - Grafana: `http://grafana.dev.lab`
 - Prometheus: `http://prometheus.dev.lab`
 - Alertmanager: `http://alertmanager.dev.lab`
@@ -340,6 +368,7 @@ talos-fix/
 - Jellyfin: `http://jellyfin.dev.lab`
 
 **Production (`*.lab`):**
+
 - Grafana: `http://grafana.lab`
 - Prometheus: `http://prometheus.lab`
 - Alertmanager: `http://alertmanager.lab`
@@ -354,11 +383,13 @@ talos-fix/
 ### Storage Requirements
 
 **NFS (Synology):**
+
 - Media Library: 1Ti (movies + TV shows)
 - Downloads: 200Gi (temporary download location)
 - Access Mode: ReadWriteMany (shared across pods)
 
 **Local Path:**
+
 - Prowlarr config: 1Gi (SQLite database)
 - Sonarr config: 5Gi (SQLite database + metadata)
 - Radarr config: 5Gi (SQLite database + metadata)
@@ -373,18 +404,21 @@ talos-fix/
 ### Resource Allocation
 
 **Development Namespace:**
+
 - Total Requests: 4 CPU / 8Gi RAM
 - Total Limits: 8 CPU / 16Gi RAM
 - Max per Container: 2 CPU / 4Gi RAM
 - Max per Pod: 4 CPU / 8Gi RAM
 
 **Production Namespace:**
+
 - Total Requests: 8 CPU / 16Gi RAM
 - Total Limits: 16 CPU / 32Gi RAM
 - Max per Container: 4 CPU / 8Gi RAM
 - Max per Pod: 8 CPU / 16Gi RAM
 
 **Monitoring Namespace:**
+
 - Prometheus: 500m-2 CPU / 2-4Gi RAM
 - Grafana: 100m-500m CPU / 256Mi-512Mi RAM
 - Alertmanager: 50m-200m CPU / 128Mi-256Mi RAM
@@ -396,7 +430,7 @@ talos-fix/
 - **FluxCD** v2.x - Infrastructure GitOps
 - **ArgoCD** v2.x - Application GitOps
 - **Traefik** v3.5.3 - Ingress controller
-- **kube-prometheus-stack** v65.x - Monitoring stack
+- **kube-Prometheus-stack** v65.x - Monitoring stack
 - **Kustomize** - Configuration management
 - **Helm** - Package management
 
@@ -406,7 +440,7 @@ talos-fix/
 - ✅ PROGRESS-SUMMARY.md - This document
 - ✅ LOCAL-TESTING.md - Local cluster guide
 - ✅ bootstrap/flux/README.md - Flux setup
-- ✅ bootstrap/argocd/README.md - ArgoCD setup
+- ✅ bootstrap/ArgoCD/README.md - ArgoCD setup
 
 ## 🎉 Achievements
 

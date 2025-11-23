@@ -23,6 +23,7 @@ The `catalyst-dns-sync` daemon continuously monitors Kubernetes Ingress resource
 ### 1.2 Problem Statement
 
 Currently, accessing services requires either:
+
 - Manual `/etc/hosts` updates on each client (not scalable)
 - Running scripts to sync DNS entries (manual, error-prone)
 - Remembering IP addresses and ports (poor UX)
@@ -30,6 +31,7 @@ Currently, accessing services requires either:
 ### 1.3 Solution
 
 A Kubernetes controller that:
+
 - Watches Ingress/IngressRoute/HTTPRoute resources
 - Creates DNS A records pointing to the Traefik load balancer IP
 - Updates records when hostnames change
@@ -82,7 +84,7 @@ A Kubernetes controller that:
 - **Language:** Go 1.23+
 - **Framework:** controller-runtime (Kubernetes controller framework)
 - **Logging:** slog (Go structured logging)
-- **Metrics:** prometheus/client_golang
+- **Metrics:** Prometheus/client_golang
 - **DNS Client:** net/http (Technitium REST API)
 - **Dependencies:**
   - `k8s.io/client-go` - Kubernetes client
@@ -106,11 +108,11 @@ A Kubernetes controller that:
 
 The daemon MUST watch the following Kubernetes resources:
 
-| Resource Type | API Group | Version | Watch Scope |
-|---------------|-----------|---------|-------------|
-| Ingress | networking.k8s.io | v1 | All namespaces |
-| IngressRoute | traefik.io | v1alpha1 | All namespaces |
-| HTTPRoute | gateway.networking.k8s.io | v1beta1 | All namespaces |
+| Resource Type | API Group                 | Version  | Watch Scope    |
+| ------------- | ------------------------- | -------- | -------------- |
+| Ingress       | networking.k8s.io         | v1       | All namespaces |
+| IngressRoute  | traefik.io                | v1alpha1 | All namespaces |
+| HTTPRoute     | gateway.networking.k8s.io | v1beta1  | All namespaces |
 
 ### 3.2 DNS Record Management
 
@@ -125,6 +127,7 @@ When an Ingress/IngressRoute is created:
 5. Set TTL from annotation or default configuration
 
 **Example:**
+
 ```yaml
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -132,16 +135,17 @@ metadata:
   name: grafana
   namespace: monitoring
   annotations:
-    catalyst-dns-sync.io/ttl: "300"  # Optional TTL override
+    catalyst-dns-sync.io/ttl: '300' # Optional TTL override
 spec:
   routes:
-  - match: Host(`grafana.talos00`)
-    services:
-    - name: grafana
-      port: 3000
+    - match: Host(`grafana.talos00`)
+      services:
+        - name: grafana
+          port: 3000
 ```
 
 Creates DNS record:
+
 ```
 grafana.talos00 A 192.168.1.54 (TTL: 300)
 ```
@@ -156,6 +160,7 @@ When an Ingress/IngressRoute is updated:
 4. Update TTL if annotation changed
 
 **Incremental Sync Strategy:**
+
 - Only modify DNS records that have changed
 - Preserve existing records not managed by this controller
 - Use metadata labels to track managed resources
@@ -202,7 +207,7 @@ metadata:
   namespace: infrastructure
 type: Opaque
 stringData:
-  token: "your-technitium-api-token-here"
+  token: 'your-technitium-api-token-here'
 ```
 
 #### 3.3.3 ConfigMap (Optional Overrides)
@@ -214,10 +219,10 @@ metadata:
   name: catalyst-dns-sync-config
   namespace: infrastructure
 data:
-  dns-server-url: "https://dns.talos00:5380"
-  dns-zone: "talos00"
-  dns-ip-address: "192.168.1.54"
-  ttl-default: "300"
+  dns-server-url: 'https://dns.talos00:5380'
+  dns-zone: 'talos00'
+  dns-ip-address: '192.168.1.54'
+  ttl-default: '300'
 ```
 
 ---
@@ -240,12 +245,14 @@ logger.Info("DNS record created",
 ```
 
 **Log Levels:**
+
 - **DEBUG:** Controller loop iterations, API request/response details
 - **INFO:** Record creation, updates, deletions (default)
 - **WARN:** Retryable errors, DNS API failures
 - **ERROR:** Unrecoverable errors, panics
 
 **Log Format:**
+
 - **JSON:** Default for machine parsing (Graylog)
 - **Text:** Optional for local development
 
@@ -253,15 +260,15 @@ logger.Info("DNS record created",
 
 Expose metrics on `:8080/metrics` for Prometheus scraping:
 
-| Metric Name | Type | Description | Labels |
-|-------------|------|-------------|--------|
-| `catalyst_dns_sync_records_total` | Counter | Total DNS records managed | `zone`, `status` (created/updated/deleted) |
-| `catalyst_dns_sync_api_requests_total` | Counter | Technitium API calls | `endpoint`, `method`, `status_code` |
-| `catalyst_dns_sync_api_request_duration_seconds` | Histogram | API request latency | `endpoint`, `method` |
-| `catalyst_dns_sync_reconcile_duration_seconds` | Histogram | Controller reconciliation time | `resource_type` |
-| `catalyst_dns_sync_reconcile_errors_total` | Counter | Reconciliation errors | `resource_type`, `error_type` |
-| `catalyst_dns_sync_ingress_resources` | Gauge | Current Ingress resources watched | `namespace`, `type` |
-| `catalyst_dns_sync_build_info` | Gauge | Build version info | `version`, `commit`, `go_version` |
+| Metric Name                                      | Type      | Description                       | Labels                                     |
+| ------------------------------------------------ | --------- | --------------------------------- | ------------------------------------------ |
+| `catalyst_dns_sync_records_total`                | Counter   | Total DNS records managed         | `zone`, `status` (created/updated/deleted) |
+| `catalyst_dns_sync_api_requests_total`           | Counter   | Technitium API calls              | `endpoint`, `method`, `status_code`        |
+| `catalyst_dns_sync_api_request_duration_seconds` | Histogram | API request latency               | `endpoint`, `method`                       |
+| `catalyst_dns_sync_reconcile_duration_seconds`   | Histogram | Controller reconciliation time    | `resource_type`                            |
+| `catalyst_dns_sync_reconcile_errors_total`       | Counter   | Reconciliation errors             | `resource_type`, `error_type`              |
+| `catalyst_dns_sync_ingress_resources`            | Gauge     | Current Ingress resources watched | `namespace`, `type`                        |
+| `catalyst_dns_sync_build_info`                   | Gauge     | Build version info                | `version`, `commit`, `go_version`          |
 
 **ServiceMonitor for Prometheus:**
 
@@ -276,9 +283,9 @@ spec:
     matchLabels:
       app: catalyst-dns-sync
   endpoints:
-  - port: metrics
-    interval: 30s
-    path: /metrics
+    - port: metrics
+      interval: 30s
+      path: /metrics
 ```
 
 #### 4.1.3 Graylog Integration
@@ -286,14 +293,17 @@ spec:
 Send structured JSON logs to Graylog via GELF UDP/TCP:
 
 **Option 1: Fluent Bit Sidecar**
+
 - Fluent Bit reads container logs
 - Parses JSON and forwards to Graylog
 
 **Option 2: Direct GELF Logging** (future enhancement)
+
 - Use Go GELF library
 - Send logs directly to Graylog GELF input
 
 **Log Fields for Graylog:**
+
 ```json
 {
   "timestamp": "2025-11-11T20:00:00Z",
@@ -398,6 +408,7 @@ DNS_API_TOKEN=xxx \
 **Purpose:** Local development without Technitium DNS server - updates `/etc/hosts` instead.
 
 **Activation:**
+
 ```bash
 # Use Air for hot reload during development
 air
@@ -407,6 +418,7 @@ air
 ```
 
 **Behavior:**
+
 - Watches Kubernetes Ingress/IngressRoute resources
 - Extracts hostnames matching `DNS_ZONE` (default: `talos00`)
 - **Updates `/etc/hosts` idempotently** using managed block (same as `update-hosts.sh`)
@@ -414,6 +426,7 @@ air
 - Logs to console in human-readable format
 
 **Example `/etc/hosts` output:**
+
 ```bash
 # BEGIN CATALYST-DNS-SYNC MANAGED BLOCK
 # Auto-generated by catalyst-dns-sync (dev mode)
@@ -428,6 +441,7 @@ air
 ```
 
 **Dev Mode Features:**
+
 - No Technitium API calls (offline development)
 - Immediate feedback via Air hot reload
 - Uses same reconciliation logic as production
@@ -484,6 +498,7 @@ tmp_dir = "tmp"
 ```
 
 **Usage:**
+
 ```bash
 # Install Air
 go install github.com/cosmtrek/air@latest
@@ -680,6 +695,7 @@ task debug:pod    # Exec into pod
 ```
 
 **Quick Start:**
+
 ```bash
 # Development with hot reload
 task dev:setup  # One-time setup
@@ -694,6 +710,7 @@ task prod:deploy
 ### 5.5 Development Phases
 
 #### Phase 1: Core Controller (Week 1)
+
 - [x] Project scaffolding with Go modules
 - [ ] Kubernetes controller-runtime setup
 - [ ] Ingress resource watcher
@@ -701,24 +718,28 @@ task prod:deploy
 - [ ] Basic reconciliation loop
 
 #### Phase 2: DNS Integration (Week 2)
+
 - [ ] Technitium DNS client implementation
 - [ ] A record creation via `/api/zones/records/add`
 - [ ] A record deletion via `/api/zones/records/delete`
 - [ ] Error handling and retries
 
 #### Phase 3: Observability (Week 3)
+
 - [ ] Structured logging with slog
 - [ ] Prometheus metrics implementation
 - [ ] Health/readiness probes
 - [ ] ServiceMonitor for Prometheus
 
 #### Phase 4: Kubernetes Deployment (Week 4)
+
 - [ ] Dockerfile with multi-stage build
 - [ ] Kubernetes manifests (Deployment, RBAC, ConfigMap, Secret)
 - [ ] Kustomize overlays
 - [ ] Integration testing in cluster
 
 #### Phase 5: Advanced Features (Future)
+
 - [ ] HTTPRoute (Gateway API) support
 - [ ] Leader election for HA
 - [ ] GELF logging to Graylog
@@ -748,6 +769,7 @@ token=YOUR_API_TOKEN
 ```
 
 **Response:**
+
 ```json
 {
   "status": "ok"
@@ -767,6 +789,7 @@ token=YOUR_API_TOKEN
 ```
 
 **Response:**
+
 ```json
 {
   "status": "ok"
@@ -783,6 +806,7 @@ token=YOUR_API_TOKEN
 ```
 
 **Common Error Codes:**
+
 - `401` - Invalid API token
 - `404` - Zone or record not found
 - `500` - Internal DNS server error
@@ -856,15 +880,15 @@ kind: ClusterRole
 metadata:
   name: catalyst-dns-sync
 rules:
-- apiGroups: ["networking.k8s.io"]
-  resources: ["ingresses"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["traefik.io"]
-  resources: ["ingressroutes"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["gateway.networking.k8s.io"]
-  resources: ["httproutes"]
-  verbs: ["get", "list", "watch"]
+  - apiGroups: ['networking.k8s.io']
+    resources: ['ingresses']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['traefik.io']
+    resources: ['ingressroutes']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['gateway.networking.k8s.io']
+    resources: ['httproutes']
+    verbs: ['get', 'list', 'watch']
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -875,9 +899,9 @@ roleRef:
   kind: ClusterRole
   name: catalyst-dns-sync
 subjects:
-- kind: ServiceAccount
-  name: catalyst-dns-sync
-  namespace: infrastructure
+  - kind: ServiceAccount
+    name: catalyst-dns-sync
+    namespace: infrastructure
 ```
 
 ### 7.2 Deployment Manifest
@@ -900,59 +924,59 @@ spec:
       labels:
         app: catalyst-dns-sync
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8080"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8080'
+        prometheus.io/path: '/metrics'
     spec:
       serviceAccountName: catalyst-dns-sync
       containers:
-      - name: controller
-        image: localhost:5000/catalyst-dns-sync:latest
-        imagePullPolicy: Always
-        env:
-        - name: DNS_SERVER_URL
-          value: "https://dns.talos00:5380"
-        - name: DNS_ZONE
-          value: "talos00"
-        - name: DNS_IP_ADDRESS
-          value: "192.168.1.54"
-        - name: DNS_TTL_DEFAULT
-          value: "300"
-        - name: DNS_API_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: technitium-api-token
-              key: token
-        - name: LOG_LEVEL
-          value: "info"
-        - name: LOG_FORMAT
-          value: "json"
-        ports:
-        - containerPort: 8080
-          name: metrics
-          protocol: TCP
-        - containerPort: 8081
-          name: health
-          protocol: TCP
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: health
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: health
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        resources:
-          requests:
-            cpu: 50m
-            memory: 64Mi
-          limits:
-            cpu: 200m
-            memory: 128Mi
+        - name: controller
+          image: localhost:5000/catalyst-dns-sync:latest
+          imagePullPolicy: Always
+          env:
+            - name: DNS_SERVER_URL
+              value: 'https://dns.talos00:5380'
+            - name: DNS_ZONE
+              value: 'talos00'
+            - name: DNS_IP_ADDRESS
+              value: '192.168.1.54'
+            - name: DNS_TTL_DEFAULT
+              value: '300'
+            - name: DNS_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: technitium-api-token
+                  key: token
+            - name: LOG_LEVEL
+              value: 'info'
+            - name: LOG_FORMAT
+              value: 'json'
+          ports:
+            - containerPort: 8080
+              name: metrics
+              protocol: TCP
+            - containerPort: 8081
+              name: health
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
 ```
 
 ### 7.3 Service Manifest
@@ -969,12 +993,12 @@ spec:
   selector:
     app: catalyst-dns-sync
   ports:
-  - name: metrics
-    port: 8080
-    targetPort: metrics
-  - name: health
-    port: 8081
-    targetPort: health
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+    - name: health
+      port: 8081
+      targetPort: health
 ```
 
 ---
@@ -1009,38 +1033,39 @@ spec:
 
 ```yaml
 groups:
-- name: catalyst-dns-sync
-  rules:
-  - alert: DNSSyncHighErrorRate
-    expr: rate(catalyst_dns_sync_reconcile_errors_total[5m]) > 0.1
-    for: 5m
-    labels:
-      severity: warning
-    annotations:
-      summary: "DNS sync experiencing high error rate"
-      description: "{{ $value }} errors/sec in namespace {{ $labels.namespace }}"
+  - name: catalyst-dns-sync
+    rules:
+      - alert: DNSSyncHighErrorRate
+        expr: rate(catalyst_dns_sync_reconcile_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'DNS sync experiencing high error rate'
+          description: '{{ $value }} errors/sec in namespace {{ $labels.namespace }}'
 
-  - alert: DNSSyncAPIFailures
-    expr: rate(catalyst_dns_sync_api_requests_total{status_code!="200"}[5m]) > 0.5
-    for: 5m
-    labels:
-      severity: critical
-    annotations:
-      summary: "Technitium DNS API failures detected"
-      description: "{{ $value }} failed API calls/sec to {{ $labels.endpoint }}"
+      - alert: DNSSyncAPIFailures
+        expr: rate(catalyst_dns_sync_api_requests_total{status_code!="200"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Technitium DNS API failures detected'
+          description: '{{ $value }} failed API calls/sec to {{ $labels.endpoint }}'
 
-  - alert: DNSSyncControllerDown
-    expr: up{job="catalyst-dns-sync"} == 0
-    for: 2m
-    labels:
-      severity: critical
-    annotations:
-      summary: "DNS sync controller is down"
+      - alert: DNSSyncControllerDown
+        expr: up{job="catalyst-dns-sync"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'DNS sync controller is down'
 ```
 
 ### 9.2 Grafana Dashboard
 
 Create dashboard with:
+
 - DNS records managed (gauge)
 - API request rate (graph)
 - Reconciliation latency (heatmap)
@@ -1063,6 +1088,7 @@ Create dashboard with:
 ### 10.2 Rollback Plan
 
 If DNS sync fails:
+
 1. Scale deployment to 0 replicas
 2. Manually delete DNS records via Technitium web UI
 3. Revert to `/etc/hosts` management scripts
@@ -1094,17 +1120,19 @@ spec:
     name: letsencrypt-prod
     kind: ClusterIssuer
   dnsNames:
-  - "*.talos00"
-  - "talos00"
+    - '*.talos00'
+    - 'talos00'
 ```
 
 **Features:**
+
 - Detect first Ingress creation, auto-create wildcard cert if missing
 - Monitor cert expiration via cert-manager
 - Export cert expiration metrics to Prometheus
 - Auto-update Traefik default certificate to use wildcard
 
 **Metrics:**
+
 ```go
 catalyst_dns_sync_certificate_expiry_seconds{cert="wildcard-talos00"} 2592000
 catalyst_dns_sync_certificate_status{cert="wildcard-talos00",status="ready"} 1
@@ -1125,8 +1153,8 @@ kind: Namespace
 metadata:
   name: app-pr-123
   annotations:
-    catalyst-dns-sync.io/preview: "true"
-    catalyst-dns-sync.io/base-hostname: "myapp"
+    catalyst-dns-sync.io/preview: 'true'
+    catalyst-dns-sync.io/base-hostname: 'myapp'
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -1134,22 +1162,25 @@ metadata:
   name: myapp-preview
   namespace: app-pr-123
   labels:
-    preview: "pr-123"
+    preview: 'pr-123'
 spec:
   routes:
-  - match: Host(`pr-123.myapp.talos00`)  # Auto-generated!
+    - match: Host(`pr-123.myapp.talos00`) # Auto-generated!
 ```
 
 **DNS Pattern:**
+
 - `pr-123.myapp.talos00` → 192.168.1.54
 - `pr-456.api.talos00` → 192.168.1.54
 - `staging.grafana.talos00` → 192.168.1.54
 
 **Auto-Cleanup:**
+
 - Namespace deleted → DNS record removed within 30s
 - TTL set to 60s for preview envs (fast updates)
 
 **Metrics:**
+
 ```go
 catalyst_dns_sync_preview_environments_total{namespace="app-pr-123",status="active"} 1
 ```
@@ -1163,6 +1194,7 @@ catalyst_dns_sync_preview_environments_total{namespace="app-pr-123",status="acti
 **Features:**
 
 1. **DNS Records Table:**
+
    ```
    ┌──────────────────────────────────────────────────────────────────┐
    │ Hostname              │ IP            │ TTL │ Source            │
@@ -1184,6 +1216,7 @@ catalyst_dns_sync_preview_environments_total{namespace="app-pr-123",status="acti
    - Create custom DNS entry (not managed by Ingress)
 
 4. **Real-time Event Stream (WebSocket):**
+
    ```
    [20:45:32] ✅ Created DNS record: grafana.talos00
    [20:45:35] ⚠️  API retry (attempt 2/5): prometheus.talos00
@@ -1191,6 +1224,7 @@ catalyst_dns_sync_preview_environments_total{namespace="app-pr-123",status="acti
    ```
 
 **Tech Stack:**
+
 - Backend: Go `net/http` + `gorilla/mux`
 - Frontend: Single HTML file with HTMX + Alpine.js (no build step!)
 - Styling: Tailwind CSS via CDN
@@ -1207,10 +1241,10 @@ metadata:
   namespace: infrastructure
 spec:
   routes:
-  - match: Host(`dns.talos00`)
-    services:
-    - name: catalyst-dns-sync
-      port: 8080
+    - match: Host(`dns.talos00`)
+      services:
+        - name: catalyst-dns-sync
+          port: 8080
 ```
 
 **Access:** https://dns.talos00/ui
@@ -1252,7 +1286,7 @@ catalyst_dns_sync_certificate_renewal_failures_total{
   labels:
     severity: warning
   annotations:
-    summary: "Certificate {{ $labels.name }} expires in {{ $value }} days"
+    summary: 'Certificate {{ $labels.name }} expires in {{ $value }} days'
 
 - alert: CertificateNotReady
   expr: catalyst_dns_sync_certificate_ready == 0
@@ -1260,16 +1294,16 @@ catalyst_dns_sync_certificate_renewal_failures_total{
   labels:
     severity: critical
   annotations:
-    summary: "Certificate {{ $labels.name }} is not ready"
+    summary: 'Certificate {{ $labels.name }} is not ready'
 ```
 
 **RBAC Addition:**
 
 ```yaml
 # Add to ClusterRole
-- apiGroups: ["cert-manager.io"]
-  resources: ["certificates"]
-  verbs: ["get", "list", "watch"]
+- apiGroups: ['cert-manager.io']
+  resources: ['certificates']
+  verbs: ['get', 'list', 'watch']
 ```
 
 ### 11.5 Additional OP Enhancements
@@ -1277,11 +1311,13 @@ catalyst_dns_sync_certificate_renewal_failures_total{
 #### 11.5.1 Smart Reconciliation
 
 **Adaptive Sync Interval:**
+
 - High activity (>10 changes/min): 15s reconciliation
 - Normal activity: 5min reconciliation
 - No changes for 1hr: 30min reconciliation
 
 **Reduces:**
+
 - API calls to Technitium by 80%
 - CPU usage during idle periods
 - Network traffic
@@ -1296,11 +1332,11 @@ kind: IngressRoute
 metadata:
   name: grafana
   annotations:
-    catalyst-dns-sync.io/ttl: "60"              # Override TTL
-    catalyst-dns-sync.io/priority: "high"       # Sync priority
-    catalyst-dns-sync.io/description: "Grafana Monitoring Dashboard"
-    catalyst-dns-sync.io/owner: "platform-team"
-    catalyst-dns-sync.io/slack-notify: "true"   # Notify on DNS changes
+    catalyst-dns-sync.io/ttl: '60' # Override TTL
+    catalyst-dns-sync.io/priority: 'high' # Sync priority
+    catalyst-dns-sync.io/description: 'Grafana Monitoring Dashboard'
+    catalyst-dns-sync.io/owner: 'platform-team'
+    catalyst-dns-sync.io/slack-notify: 'true' # Notify on DNS changes
 ```
 
 #### 11.5.3 DNS Drift Detection
@@ -1310,11 +1346,13 @@ metadata:
 **Solution:** Periodic drift detection comparing cluster state vs DNS state.
 
 **Process:**
+
 1. Every 15 minutes, query all A records in `talos00` zone
 2. Compare with expected state from Ingresses
 3. Report drift in metrics and logs
 
 **Metrics:**
+
 ```promql
 catalyst_dns_sync_drift_detected_total{
   zone="talos00",
@@ -1324,6 +1362,7 @@ catalyst_dns_sync_drift_detected_total{
 ```
 
 **Auto-Remediation:**
+
 - Annotation: `catalyst-dns-sync.io/auto-remediate: "true"`
 - Deletes unexpected records, recreates missing ones
 
@@ -1333,11 +1372,12 @@ Manage multiple DNS zones from one controller:
 
 ```yaml
 env:
-- name: DNS_ZONES
-  value: "talos00,home.lab,internal.dev"
+  - name: DNS_ZONES
+    value: 'talos00,home.lab,internal.dev'
 ```
 
 **Hostname Matching:**
+
 - `grafana.talos00` → Zone: `talos00`
 - `api.home.lab` → Zone: `home.lab`
 - `jenkins.internal.dev` → Zone: `internal.dev`
@@ -1362,16 +1402,16 @@ kubectl exec -n infrastructure deploy/catalyst-dns-sync -- \
 apiVersion: catalyst-dns-sync.io/v1alpha1
 kind: DNSRecordBackup
 metadata:
-  timestamp: "2025-11-11T20:00:00Z"
+  timestamp: '2025-11-11T20:00:00Z'
   zone: talos00
 records:
-- hostname: grafana.talos00
-  ip: 192.168.1.54
-  ttl: 300
-  source:
-    kind: IngressRoute
-    namespace: monitoring
-    name: grafana
+  - hostname: grafana.talos00
+    ip: 192.168.1.54
+    ttl: 300
+    source:
+      kind: IngressRoute
+      namespace: monitoring
+      name: grafana
 ```
 
 ### 11.6 Developer Experience Enhancements
@@ -1389,9 +1429,9 @@ status:
   catalyst-dns-sync:
     hostname: grafana.talos00
     dnsRecordCreated: true
-    lastSyncTime: "2025-11-11T20:00:00Z"
-    technitiumRecordId: "abc123"
-    message: "DNS record synced successfully"
+    lastSyncTime: '2025-11-11T20:00:00Z'
+    technitiumRecordId: 'abc123'
+    message: 'DNS record synced successfully'
 ```
 
 #### 11.6.2 DNS Test Endpoint
@@ -1399,6 +1439,7 @@ status:
 **Endpoint:** `/api/v1/test-dns?hostname=grafana.talos00`
 
 **Response:**
+
 ```json
 {
   "hostname": "grafana.talos00",
@@ -1420,6 +1461,7 @@ status:
 ```
 
 **Use Case:**
+
 - CI/CD validation: Ensure DNS propagated before running tests
 - Debugging: Quick check if DNS sync is working
 
@@ -1434,7 +1476,7 @@ metadata:
   name: catalyst-dns-sync-dashboard
   namespace: monitoring
   labels:
-    grafana_dashboard: "1"
+    grafana_dashboard: '1'
 data:
   catalyst-dns-sync.json: |
     {
@@ -1519,11 +1561,11 @@ The implementation is considered successful when:
 
 ## 14. Approval & Sign-off
 
-| Stakeholder | Role | Status | Date |
-|-------------|------|--------|------|
-| Architecture Review | Technical Lead | ⏳ Pending | - |
-| Security Review | SecOps | ⏳ Pending | - |
-| Implementation | Engineering | ⏳ Pending | - |
+| Stakeholder         | Role           | Status     | Date |
+| ------------------- | -------------- | ---------- | ---- |
+| Architecture Review | Technical Lead | ⏳ Pending | -    |
+| Security Review     | SecOps         | ⏳ Pending | -    |
+| Implementation      | Engineering    | ⏳ Pending | -    |
 
 ---
 

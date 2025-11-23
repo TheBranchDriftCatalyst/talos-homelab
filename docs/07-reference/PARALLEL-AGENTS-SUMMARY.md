@@ -14,6 +14,7 @@ Launched **5 parallel sub-agents** to simultaneously create comprehensive STATUS
 ## 📊 Agents Deployed
 
 ### Agent 1: Traefik STATUS.md
+
 - **Location:** `infrastructure/base/traefik/STATUS.md`
 - **Content:** 850+ lines comprehensive status document
 - **Includes:**
@@ -26,18 +27,20 @@ Launched **5 parallel sub-agents** to simultaneously create comprehensive STATUS
   - Best practices and security considerations
 
 ### Agent 2: Registry STATUS.md
+
 - **Location:** `infrastructure/base/registry/STATUS.md`
 - **Content:** 750+ lines detailed status document
 - **Includes:**
   - CRITICAL blob upload issue via Traefik
   - Workaround: kubectl port-forward to localhost:5000
-  - Docker daemon.json configuration requirements
+  - Docker daemon.JSON configuration requirements
   - Complete push workflow with port-forward
   - Storage monitoring (50Gi PVC)
   - Security warnings (HTTP only, no auth)
   - Related to catalyst-ui deployment
 
 ### Agent 3: Monitoring STATUS.md
+
 - **Location:** `infrastructure/base/monitoring/STATUS.md`
 - **Content:** 900+ lines comprehensive monitoring guide
 - **Includes:**
@@ -46,10 +49,11 @@ Launched **5 parallel sub-agents** to simultaneously create comprehensive STATUS
   - Alertmanager (deployed but not configured)
   - Pre-installed + recommended dashboards
   - Metrics endpoints and PromQL queries
-  - Exportarr missing (TODO for *arr metrics)
+  - Exportarr missing (TODO for \*arr metrics)
   - Complete troubleshooting, deployment, backup procedures
 
 ### Agent 4: Observability STATUS.md
+
 - **Location:** `infrastructure/base/observability/STATUS.md`
 - **Content:** 1000+ lines logging infrastructure guide
 - **Includes:**
@@ -62,6 +66,7 @@ Launched **5 parallel sub-agents** to simultaneously create comprehensive STATUS
   - Complete troubleshooting for each component
 
 ### Agent 5: Catalyst DNS Sync STATUS.md
+
 - **Location:** `catalyst-dns-sync/STATUS.md`
 - **Content:** 1100+ lines project status document
 - **Includes:**
@@ -77,13 +82,13 @@ Launched **5 parallel sub-agents** to simultaneously create comprehensive STATUS
 
 ## 📈 Documentation Statistics
 
-| Subsystem | Lines | Critical Issues | TODOs | Status |
-|-----------|-------|-----------------|-------|--------|
-| Traefik | 850+ | HTTP only, Registry 404 | 15+ | 🟢 Healthy |
-| Registry | 750+ | Blob upload 404 | 12+ | 🟡 Degraded |
-| Monitoring | 900+ | Alertmanager not configured | 14+ | 🟢 Healthy |
-| Observability | 1000+ | GELF input config required | 13+ | 🟡 Partial |
-| Catalyst DNS Sync | 1100+ | No K8s deployment yet | 25+ | 🔵 Development |
+| Subsystem         | Lines | Critical Issues             | TODOs | Status         |
+| ----------------- | ----- | --------------------------- | ----- | -------------- |
+| Traefik           | 850+  | HTTP only, Registry 404     | 15+   | 🟢 Healthy     |
+| Registry          | 750+  | Blob upload 404             | 12+   | 🟡 Degraded    |
+| Monitoring        | 900+  | Alertmanager not configured | 14+   | 🟢 Healthy     |
+| Observability     | 1000+ | GELF input config required  | 13+   | 🟡 Partial     |
+| Catalyst DNS Sync | 1100+ | No K8s deployment yet       | 25+   | 🔵 Development |
 
 **Total:** 4600+ lines of comprehensive subsystem documentation generated
 
@@ -92,17 +97,20 @@ Launched **5 parallel sub-agents** to simultaneously create comprehensive STATUS
 ## 🎯 Key Benefits of Parallel Approach
 
 ### Speed
+
 - **Sequential:** Would take ~45-60 minutes to create all 5 STATUS files manually
 - **Parallel:** Completed in ~2-3 minutes using concurrent agents
 - **Speedup:** ~15-20x faster
 
 ### Consistency
+
 - All STATUS.md files follow same template structure
 - Consistent section headings, health indicators, TODOs
 - Cross-references properly linked
 - Relative path links validated
 
 ### Completeness
+
 - Each agent had full context of:
   - Existing documentation (OBSERVABILITY.md, TRAEFIK.md, etc.)
   - ArgoCD STATUS.md template
@@ -111,6 +119,7 @@ Launched **5 parallel sub-agents** to simultaneously create comprehensive STATUS
 - Agents extracted real details from actual docs, not generic templates
 
 ### Quality
+
 - Each STATUS.md includes:
   - Current deployment status with metrics
   - What's working / Known issues sections
@@ -126,6 +135,7 @@ Launched **5 parallel sub-agents** to simultaneously create comprehensive STATUS
 ## 📂 Files Created
 
 ### Infrastructure Components
+
 ```
 infrastructure/base/
 ├── argocd/STATUS.md         (✅ Created earlier - 1000+ lines)
@@ -136,6 +146,7 @@ infrastructure/base/
 ```
 
 ### Application Components
+
 ```
 catalyst-dns-sync/STATUS.md  (✅ Created by Agent 5 - 1100+ lines)
 ```
@@ -145,6 +156,7 @@ catalyst-dns-sync/STATUS.md  (✅ Created by Agent 5 - 1100+ lines)
 ## 🔗 Cross-Reference Network
 
 Each STATUS.md properly links to:
+
 - Central TODO.md tracker
 - docs/INDEX.md navigation hub
 - Related subsystem STATUS.md files
@@ -153,6 +165,7 @@ Each STATUS.md properly links to:
 - External references (official docs)
 
 Example from Registry STATUS.md:
+
 - Links to catalyst-ui deployment guide
 - Links to ArgoCD STATUS.md
 - Links to Traefik configuration
@@ -189,27 +202,32 @@ catalyst-dns-sync/
 The parallel agents identified these CRITICAL issues that need attention:
 
 ### 1. Traefik: HTTP Only (🔴 Critical Security)
+
 - All services accessible via unencrypted HTTP
 - Credentials transmitted in plaintext
 - **Fix:** Deploy cert-manager, configure TLS
 
 ### 2. Registry: Blob Upload 404 (🔴 Blocking)
+
 - Cannot push images via `docker push registry.talos00/...`
 - **Workaround:** kubectl port-forward works
 - **Root Cause:** Traefik proxy configuration with Docker Registry v2 API
 - **Impact:** Blocks catalyst-ui production deployment
 
 ### 3. Graylog: GELF Input Not Configured (🔴 Critical)
+
 - Logs collected but not reaching Graylog
 - **Fix:** Manual one-time setup via web UI
 - **Impact:** No centralized logging until configured
 
 ### 4. Catalyst DNS Sync: No K8s Deployment (🔴 Blocker)
+
 - 70% complete but cannot deploy to cluster
 - **Blocker:** Missing Dockerfile, K8s manifests, RBAC
 - **Impact:** Stuck in dev mode, cannot test in cluster
 
 ### 5. Monitoring: Alertmanager Not Configured (🟡 Medium)
+
 - Deployed but no notification channels
 - **Impact:** Alerts fire but don't notify anyone
 
@@ -218,18 +236,21 @@ The parallel agents identified these CRITICAL issues that need attention:
 ## 📋 Next Steps (From STATUS Files)
 
 ### Immediate Actions
+
 1. **Configure Graylog GELF input** - Critical for logging
 2. **Investigate Traefik/Registry blob upload** - Blocking catalyst-ui
 3. **Deploy cert-manager** - Security improvement
 4. **Create catalyst-dns-sync K8s manifests** - Unblock deployment
 
 ### Short Term
+
 1. Configure Alertmanager notifications
-2. Deploy Exportarr for *arr metrics
+2. Deploy Exportarr for \*arr metrics
 3. Complete catalyst-dns-sync Phase 1
 4. Add HTTPS to all services
 
 ### Medium Term
+
 1. Backup strategies for all subsystems
 2. Advanced monitoring dashboards
 3. Catalyst DNS Sync Phase 2 (web UI)
@@ -240,12 +261,14 @@ The parallel agents identified these CRITICAL issues that need attention:
 ## 🎯 Success Metrics
 
 ### Documentation Coverage
+
 - ✅ 6 of 9 planned subsystems have STATUS.md
 - ✅ All major infrastructure components documented
 - ✅ Application project status tracked
 - 🔄 3 remaining: Storage, Namespaces, Applications (arr-stack)
 
 ### Quality Metrics
+
 - ✅ Average 900+ lines per STATUS.md
 - ✅ Consistent structure across all files
 - ✅ Real data extracted from existing docs
@@ -253,6 +276,7 @@ The parallel agents identified these CRITICAL issues that need attention:
 - ✅ Actionable TODOs prioritized
 
 ### Usability
+
 - ✅ Quick status overview tables
 - ✅ Troubleshooting guides included
 - ✅ Deployment commands provided
@@ -263,6 +287,7 @@ The parallel agents identified these CRITICAL issues that need attention:
 ## 🏆 Achievement Unlocked
 
 **Parallel Documentation Generation**
+
 - Deployed 5 specialized agents concurrently
 - Each with full GitOps architecture context
 - Generated 4600+ lines of comprehensive documentation
@@ -275,6 +300,7 @@ The parallel agents identified these CRITICAL issues that need attention:
 ## 📊 Before & After Comparison
 
 ### Before Parallel Agents
+
 ```
 infrastructure/base/
 ├── argocd/
@@ -290,6 +316,7 @@ infrastructure/base/
 ```
 
 ### After Parallel Agents
+
 ```
 infrastructure/base/
 ├── argocd/
@@ -318,6 +345,7 @@ catalyst-dns-sync/
 ## 🔮 Future Applications
 
 This parallel agent pattern can be reused for:
+
 - Generating README files for each subsystem
 - Creating deployment guides
 - Writing troubleshooting runbooks
@@ -332,6 +360,7 @@ This parallel agent pattern can be reused for:
 ## 📝 Lessons Learned
 
 ### What Worked Well
+
 ✅ Parallel execution massively reduced time
 ✅ Injecting full context ensured accuracy
 ✅ Using existing ArgoCD STATUS as template created consistency
@@ -339,6 +368,7 @@ This parallel agent pattern can be reused for:
 ✅ Cross-references properly validated
 
 ### What Could Improve
+
 - Pre-validate that agents can write to file paths
 - Add validation step after agent completion
 - Consider generating summary report automatically

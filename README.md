@@ -21,11 +21,13 @@ This cluster uses a **dual GitOps pattern** with two distinct deployment workflo
 ### Prerequisites
 
 **Required:**
+
 - `talosctl` CLI installed
 - `kubectl` CLI installed
 - Set `TALOS_NODE` environment variable to your node's IP address
 
 **Recommended:**
+
 - `task` (Taskfile) installed - Task runner for automation
 - `kubectx` + `kubens` - Fast context and namespace switching
 - `k9s` - Terminal UI for Kubernetes clusters
@@ -42,15 +44,19 @@ brew install go-task/tap/go-task kubectx k9s helm
 ### Initial Setup
 
 1. **Generate Configuration** (if not already done):
+
    ```bash
    talosctl gen config homelab-single https://$TALOS_NODE:6443 --output-dir . --force
    ```
 
 2. **Provision the Cluster**:
+
    ```bash
    ./provision.sh
    ```
+
    Or using Task:
+
    ```bash
    task provision
    ```
@@ -58,11 +64,13 @@ brew install go-task/tap/go-task kubectx k9s helm
 ## Configuration Features
 
 ### Single-Node Optimizations
+
 - **Control Plane Scheduling**: Configured with `allowSchedulingOnControlPlanes: true` in `controlplane.yaml:551`
 - **No Taints**: Control-plane taint is removed automatically during provisioning
 - **All-in-One**: Single node acts as both control plane and worker
 
 ### Included Services
+
 - **Talos Dashboard**: Built-in node monitoring
 - **Kubernetes Dashboard**: Web UI for cluster management (auto-deployed via extraManifests)
 - **CoreDNS**: DNS resolution (2 replicas)
@@ -70,6 +78,7 @@ brew install go-task/tap/go-task kubectx k9s helm
 - **etcd**: Single-node cluster
 
 ### Observability Stack
+
 - **Prometheus**: Metrics collection and alerting (30-day retention, 50Gi storage)
 - **Grafana**: Metrics visualization and dashboards
 - **Alertmanager**: Alert routing and management
@@ -77,13 +86,14 @@ brew install go-task/tap/go-task kubectx k9s helm
 - **MongoDB**: Database backend for Graylog (20Gi storage)
 - **OpenSearch**: Log storage and indexing (30Gi storage)
 - **Fluent Bit**: Log collection from all containers
-- **Exportarr**: Prometheus exporters for *arr applications
+- **Exportarr**: Prometheus exporters for \*arr applications
 
 ### Automatic Dashboard Deployment
 
 The Kubernetes Dashboard is automatically deployed during cluster bootstrap via:
-- `extraManifests` (controlplane.yaml:510-511) - Downloads dashboard YAML
-- `inlineManifests` (controlplane.yaml:514-534) - Creates admin-user ServiceAccount
+
+- `extraManifests` (controlplane.YAML:510-511) - Downloads dashboard YAML
+- `inlineManifests` (controlplane.YAML:514-534) - Creates admin-user ServiceAccount
 
 ## Deployment
 
@@ -107,11 +117,13 @@ DEPLOY_MONITORING=true DEPLOY_OBSERVABILITY=true ./scripts/deploy-stack.sh
 ```
 
 This will install:
-- Prometheus + Grafana + Alertmanager (kube-prometheus-stack)
+
+- Prometheus + Grafana + Alertmanager (kube-Prometheus-stack)
 - MongoDB + OpenSearch + Graylog (logging stack)
 - Fluent Bit (log collection)
 
 Access URLs after deployment:
+
 - Grafana: http://grafana.talos00 (admin / prom-operator)
 - Prometheus: http://prometheus.talos00
 - Alertmanager: http://alertmanager.talos00
@@ -125,6 +137,7 @@ kubectl apply -k applications/arr-stack/overlays/dev
 ```
 
 This includes:
+
 - Prowlarr (indexer manager)
 - Sonarr (TV shows)
 - Radarr (movies)
@@ -133,7 +146,7 @@ This includes:
 - Plex (media server)
 - Jellyfin (media server)
 - Homepage (dashboard)
-- Exportarr (Prometheus metrics for *arr apps)
+- Exportarr (Prometheus metrics for \*arr apps)
 
 ## Common Tasks
 
@@ -145,6 +158,7 @@ This repository uses a modular Taskfile structure organized by domain. Tasks are
 - `infra:*` - Infrastructure deployment (monitoring, observability, apps)
 
 **Quick reference:**
+
 ```bash
 task                # Show available domains and commands
 task --list         # List all available tasks
@@ -236,12 +250,14 @@ task audit
 ### Kubernetes Dashboard
 
 1. **Get Access Token**:
+
    ```bash
    task dashboard-token
    # Token is saved to ./dashboard-token.txt
    ```
 
 2. **Start Proxy**:
+
    ```bash
    task dashboard-proxy
    ```
@@ -338,12 +354,14 @@ task upgrade -- VERSION=v1.11.2
 
 ### Key Configuration Settings
 
-**configs/controlplane.yaml:551** - Allow scheduling on control plane:
+**configs/controlplane.YAML:551** - Allow scheduling on control plane:
+
 ```yaml
 allowSchedulingOnControlPlanes: true
 ```
 
-**configs/controlplane.yaml:510-534** - Auto-deploy Dashboard:
+**configs/controlplane.YAML:510-534** - Auto-deploy Dashboard:
+
 ```yaml
 extraManifests:
   - https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
@@ -369,12 +387,14 @@ task clean-all
 The kubectl proxy **must run on your local machine** (not the Talos node):
 
 1. **Get Token** (on your Mac):
+
    ```bash
    task dashboard-token
    # Or: ./scripts/dashboard-token.sh
    ```
 
 2. **Start Proxy** (on your Mac):
+
    ```bash
    task dashboard-proxy
    # Or: kubectl --kubeconfig ./.output/kubeconfig proxy

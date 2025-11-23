@@ -29,6 +29,7 @@ All tools are accessible via Traefik IngressRoutes:
 - http://goldilocks.talos00
 
 **Prerequisites**: Add to `/etc/hosts`:
+
 ```
 192.168.1.54  headlamp.talos00 kubeview.talos00 kube-ops-view.talos00 goldilocks.talos00
 ```
@@ -49,6 +50,7 @@ task infra:infra-testing-delete
 ## Documentation
 
 See [docs/infra-testing-tools.md](/docs/infra-testing-tools.md) for:
+
 - Detailed usage instructions
 - Feature descriptions
 - Troubleshooting
@@ -67,6 +69,7 @@ infra-testing/
 ```
 
 Each subdirectory contains:
+
 - `deployment.yaml` or `helmrelease.yaml` - Kubernetes resources
 - `ingressroute.yaml` - Traefik routing configuration
 - `kustomization.yaml` - Kustomize configuration

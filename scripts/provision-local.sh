@@ -24,25 +24,25 @@ echo ""
 echo -e "${GREEN}Step 1: Checking prerequisites...${NC}"
 
 if ! command -v talosctl &> /dev/null; then
-    echo -e "${RED}❌ talosctl not found. Please install it first:${NC}"
-    echo "   brew install siderolabs/tap/talosctl"
-    exit 1
+  echo -e "${RED}❌ talosctl not found. Please install it first:${NC}"
+  echo "   brew install siderolabs/tap/talosctl"
+  exit 1
 fi
 
 if ! command -v kubectl &> /dev/null; then
-    echo -e "${RED}❌ kubectl not found. Please install it first:${NC}"
-    echo "   brew install kubectl"
-    exit 1
+  echo -e "${RED}❌ kubectl not found. Please install it first:${NC}"
+  echo "   brew install kubectl"
+  exit 1
 fi
 
 if ! command -v docker &> /dev/null; then
-    echo -e "${RED}❌ docker not found. Please install Docker Desktop first${NC}"
-    exit 1
+  echo -e "${RED}❌ docker not found. Please install Docker Desktop first${NC}"
+  exit 1
 fi
 
 if ! docker info &> /dev/null; then
-    echo -e "${RED}❌ Docker is not running. Please start Docker Desktop${NC}"
-    exit 1
+  echo -e "${RED}❌ Docker is not running. Please start Docker Desktop${NC}"
+  exit 1
 fi
 
 echo -e "${GREEN}✅ All prerequisites satisfied${NC}"
@@ -60,10 +60,10 @@ echo -e "${GREEN}Step 2: Creating Talos cluster configuration...${NC}"
 
 # Generate cluster configuration
 talosctl gen config "$CLUSTER_NAME" "https://${CONTROLPLANE_IP}:${CONTROLPLANE_PORT}" \
-    --output "$OUTPUT_DIR" \
-    --with-examples=false \
-    --with-docs=false \
-    --force
+  --output "$OUTPUT_DIR" \
+  --with-examples=false \
+  --with-docs=false \
+  --force
 
 echo -e "${GREEN}✅ Cluster configuration generated${NC}"
 echo ""
@@ -72,13 +72,13 @@ echo -e "${GREEN}Step 3: Creating local Talos cluster...${NC}"
 
 # Create the cluster
 talosctl cluster create \
-    --name "$CLUSTER_NAME" \
-    --controlplanes 1 \
-    --workers 0 \
-    --config-patch @"${PROJECT_ROOT}/talos/controlplane.yaml" \
-    --wait=true \
-    --wait-timeout=10m \
-    --talosconfig "$OUTPUT_DIR/talosconfig"
+  --name "$CLUSTER_NAME" \
+  --controlplanes 1 \
+  --workers 0 \
+  --config-patch @"${PROJECT_ROOT}/talos/controlplane.yaml" \
+  --wait=true \
+  --wait-timeout=10m \
+  --talosconfig "$OUTPUT_DIR/talosconfig"
 
 echo -e "${GREEN}✅ Cluster created${NC}"
 echo ""
@@ -87,8 +87,8 @@ echo -e "${GREEN}Step 4: Waiting for cluster to be ready...${NC}"
 
 # Wait for Kubernetes API
 talosctl --talosconfig "$OUTPUT_DIR/talosconfig" \
-    --nodes "$CONTROLPLANE_IP" \
-    health --wait-timeout 10m
+  --nodes "$CONTROLPLANE_IP" \
+  health --wait-timeout 10m
 
 echo -e "${GREEN}✅ Cluster is healthy${NC}"
 echo ""
@@ -97,9 +97,9 @@ echo -e "${GREEN}Step 5: Extracting kubeconfig...${NC}"
 
 # Get kubeconfig
 talosctl --talosconfig "$OUTPUT_DIR/talosconfig" \
-    kubeconfig "$OUTPUT_DIR/kubeconfig" \
-    --force \
-    --nodes "$CONTROLPLANE_IP"
+  kubeconfig "$OUTPUT_DIR/kubeconfig" \
+  --force \
+  --nodes "$CONTROLPLANE_IP"
 
 # Set KUBECONFIG for this script
 export KUBECONFIG="$OUTPUT_DIR/kubeconfig"
@@ -117,8 +117,8 @@ echo -e "${GREEN}Step 6: Installing core components...${NC}"
 # Install metrics-server
 kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 kubectl patch deployment metrics-server -n kube-system \
-    --type='json' \
-    -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+  --type='json' \
+  -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
 
 echo -e "${GREEN}✅ Core components installed${NC}"
 echo ""
@@ -132,19 +132,19 @@ helm repo update
 
 # Install Traefik (modified for local cluster - no hostPort)
 helm upgrade --install traefik traefik/traefik \
-    --namespace traefik \
-    --create-namespace \
-    --set deployment.kind=Deployment \
-    --set service.type=LoadBalancer \
-    --set ports.web.exposedPort=80 \
-    --set ports.websecure.exposedPort=443 \
-    --set ingressRoute.dashboard.enabled=true \
-    --set ingressRoute.dashboard.matchRule='Host(`traefik.localhost`)' \
-    --set logs.general.level=INFO \
-    --set logs.access.enabled=true \
-    --set providers.kubernetesCRD.enabled=true \
-    --set providers.kubernetesCRD.allowCrossNamespace=true \
-    --wait
+  --namespace traefik \
+  --create-namespace \
+  --set deployment.kind=Deployment \
+  --set service.type=LoadBalancer \
+  --set ports.web.exposedPort=80 \
+  --set ports.websecure.exposedPort=443 \
+  --set ingressRoute.dashboard.enabled=true \
+  --set ingressRoute.dashboard.matchRule='Host(`traefik.localhost`)' \
+  --set logs.general.level=INFO \
+  --set logs.access.enabled=true \
+  --set providers.kubernetesCRD.enabled=true \
+  --set providers.kubernetesCRD.allowCrossNamespace=true \
+  --wait
 
 echo -e "${GREEN}✅ Traefik installed${NC}"
 echo ""
@@ -154,7 +154,7 @@ echo -e "${GREEN}Step 8: Creating test service (whoami)...${NC}"
 
 kubectl create namespace whoami --dry-run=client -o yaml | kubectl apply -f -
 
-kubectl apply -n whoami -f - <<EOF
+kubectl apply -n whoami -f - << EOF
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -207,26 +207,26 @@ echo ""
 
 # Auto-merge kubeconfig
 if [ "${AUTO_MERGE_KUBECONFIG:-true}" = "true" ]; then
-    echo -e "${BLUE}🔀 Auto-merging kubeconfig to ~/.kube/config...${NC}"
+  echo -e "${BLUE}🔀 Auto-merging kubeconfig to ~/.kube/config...${NC}"
 
-    # Set context name
-    kubectl config rename-context admin@"$CLUSTER_NAME" "$CLUSTER_NAME" --kubeconfig="$OUTPUT_DIR/kubeconfig" || true
+  # Set context name
+  kubectl config rename-context admin@"$CLUSTER_NAME" "$CLUSTER_NAME" --kubeconfig="$OUTPUT_DIR/kubeconfig" || true
 
-    # Merge
-    if [ -f ~/.kube/config ]; then
-        cp ~/.kube/config ~/.kube/config.backup.$(date +%Y%m%d_%H%M%S)
-        KUBECONFIG="$OUTPUT_DIR/kubeconfig:$HOME/.kube/config" kubectl config view --flatten > ~/.kube/config.tmp
-        mv ~/.kube/config.tmp ~/.kube/config
-        chmod 600 ~/.kube/config
-        echo -e "${GREEN}✅ Kubeconfig merged to ~/.kube/config${NC}"
-    else
-        mkdir -p ~/.kube
-        cp "$OUTPUT_DIR/kubeconfig" ~/.kube/config
-        chmod 600 ~/.kube/config
-        echo -e "${GREEN}✅ Kubeconfig copied to ~/.kube/config${NC}"
-    fi
+  # Merge
+  if [ -f ~/.kube/config ]; then
+    cp ~/.kube/config ~/.kube/config.backup.$(date +%Y%m%d_%H%M%S)
+    KUBECONFIG="$OUTPUT_DIR/kubeconfig:$HOME/.kube/config" kubectl config view --flatten > ~/.kube/config.tmp
+    mv ~/.kube/config.tmp ~/.kube/config
+    chmod 600 ~/.kube/config
+    echo -e "${GREEN}✅ Kubeconfig merged to ~/.kube/config${NC}"
+  else
+    mkdir -p ~/.kube
+    cp "$OUTPUT_DIR/kubeconfig" ~/.kube/config
+    chmod 600 ~/.kube/config
+    echo -e "${GREEN}✅ Kubeconfig copied to ~/.kube/config${NC}"
+  fi
 
-    kubectl config use-context "$CLUSTER_NAME"
+  kubectl config use-context "$CLUSTER_NAME"
 fi
 
 echo ""
