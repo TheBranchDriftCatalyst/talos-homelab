@@ -32,16 +32,16 @@ echo ""
 
 # Function to wait for resources
 wait_for_resource() {
-    local resource=$1
-    local namespace=$2
-    local timeout=${3:-300}
+  local resource=$1
+  local namespace=$2
+  local timeout=${3:-300}
 
-    echo -e "${BLUE}⏳ Waiting for $resource in $namespace (timeout: ${timeout}s)...${NC}"
-    kubectl wait --for=condition=ready "$resource" -n "$namespace" --timeout="${timeout}s" 2>/dev/null || {
-        echo -e "${YELLOW}⚠️  Timeout waiting for $resource, continuing...${NC}"
-        return 0
-    }
-    echo -e "${GREEN}✅ $resource ready${NC}"
+  echo -e "${BLUE}⏳ Waiting for $resource in $namespace (timeout: ${timeout}s)...${NC}"
+  kubectl wait --for=condition=ready "$resource" -n "$namespace" --timeout="${timeout}s" 2> /dev/null || {
+    echo -e "${YELLOW}⚠️  Timeout waiting for $resource, continuing...${NC}"
+    return 0
+  }
+  echo -e "${GREEN}✅ $resource ready${NC}"
 }
 
 # Step 1: Verify cluster health
@@ -50,11 +50,11 @@ echo -e "${GREEN}Step 1: Verifying Cluster Health${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-if ! kubectl cluster-info &>/dev/null; then
-    echo -e "${RED}❌ Cannot connect to cluster${NC}"
-    echo "Make sure you're using the correct context:"
-    echo "  kubectx homelab-single"
-    exit 1
+if ! kubectl cluster-info &> /dev/null; then
+  echo -e "${RED}❌ Cannot connect to cluster${NC}"
+  echo "Make sure you're using the correct context:"
+  echo "  kubectx homelab-single"
+  exit 1
 fi
 
 echo -e "${GREEN}✅ Cluster is accessible${NC}"
@@ -104,80 +104,80 @@ echo -e "${GREEN}Step 4: Verifying Traefik${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-if kubectl get namespace traefik &>/dev/null; then
-    echo -e "${GREEN}✅ Traefik namespace exists${NC}"
-    kubectl get pods -n traefik
-    echo ""
+if kubectl get namespace traefik &> /dev/null; then
+  echo -e "${GREEN}✅ Traefik namespace exists${NC}"
+  kubectl get pods -n traefik
+  echo ""
 
-    # Check if Traefik is responding
-    if kubectl get ingressroute -n default whoami &>/dev/null; then
-        echo -e "${GREEN}✅ Traefik IngressRoutes working${NC}"
-    fi
+  # Check if Traefik is responding
+  if kubectl get ingressroute -n default whoami &> /dev/null; then
+    echo -e "${GREEN}✅ Traefik IngressRoutes working${NC}"
+  fi
 else
-    echo -e "${YELLOW}⚠️  Traefik not found${NC}"
-    echo "Run: task setup-infrastructure"
+  echo -e "${YELLOW}⚠️  Traefik not found${NC}"
+  echo "Run: task setup-infrastructure"
 fi
 echo ""
 
 # Step 5: Deploy Monitoring (optional)
 if [ "$DEPLOY_MONITORING" = "true" ]; then
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}Step 5: Deploying Monitoring Stack${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo ""
+  echo -e "${GREEN}========================================${NC}"
+  echo -e "${GREEN}Step 5: Deploying Monitoring Stack${NC}"
+  echo -e "${GREEN}========================================${NC}"
+  echo ""
 
-    echo -e "${YELLOW}⚠️  NOTE: This requires Helm and will install:${NC}"
-    echo "  - Prometheus Operator"
-    echo "  - Prometheus (50Gi storage)"
-    echo "  - Grafana (10Gi storage)"
-    echo "  - Alertmanager (10Gi storage)"
-    echo "  - Various exporters and service monitors"
-    echo ""
+  echo -e "${YELLOW}⚠️  NOTE: This requires Helm and will install:${NC}"
+  echo "  - Prometheus Operator"
+  echo "  - Prometheus (50Gi storage)"
+  echo "  - Grafana (10Gi storage)"
+  echo "  - Alertmanager (10Gi storage)"
+  echo "  - Various exporters and service monitors"
+  echo ""
 
-    read -p "Continue with monitoring deployment? (y/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        # Apply namespace
-        kubectl apply -f "$PROJECT_ROOT/infrastructure/base/monitoring/kube-prometheus-stack/namespace.yaml"
+  read -p "Continue with monitoring deployment? (y/N) " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    # Apply namespace
+    kubectl apply -f "$PROJECT_ROOT/infrastructure/base/monitoring/kube-prometheus-stack/namespace.yaml"
 
-        # Note: This would normally be deployed via FluxCD
-        # For now, we'll need Helm to deploy it manually
-        echo -e "${YELLOW}📝 Monitoring stack requires Helm${NC}"
-        echo "To deploy manually:"
-        echo "  1. Add Helm repo: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts"
-        echo "  2. Update repos: helm repo update"
-        echo "  3. Install: helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring --create-namespace -f infrastructure/base/monitoring/kube-prometheus-stack/values.yaml"
-        echo ""
-        echo -e "${YELLOW}⏭️  Skipping for now (deploy via Helm manually or FluxCD later)${NC}"
-    else
-        echo -e "${YELLOW}⏭️  Skipping monitoring deployment${NC}"
-    fi
+    # Note: This would normally be deployed via FluxCD
+    # For now, we'll need Helm to deploy it manually
+    echo -e "${YELLOW}📝 Monitoring stack requires Helm${NC}"
+    echo "To deploy manually:"
+    echo "  1. Add Helm repo: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts"
+    echo "  2. Update repos: helm repo update"
+    echo "  3. Install: helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack -n monitoring --create-namespace -f infrastructure/base/monitoring/kube-prometheus-stack/values.yaml"
     echo ""
+    echo -e "${YELLOW}⏭️  Skipping for now (deploy via Helm manually or FluxCD later)${NC}"
+  else
+    echo -e "${YELLOW}⏭️  Skipping monitoring deployment${NC}"
+  fi
+  echo ""
 fi
 
 # Step 6: Deploy Observability Stack (optional)
 if [ "$DEPLOY_OBSERVABILITY" = "true" ]; then
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}Step 6: Deploying Observability Stack${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo ""
+  echo -e "${GREEN}========================================${NC}"
+  echo -e "${GREEN}Step 6: Deploying Observability Stack${NC}"
+  echo -e "${GREEN}========================================${NC}"
+  echo ""
 
-    echo -e "${YELLOW}⚠️  NOTE: This will install the complete observability stack:${NC}"
-    echo "  - MongoDB (20Gi storage)"
-    echo "  - OpenSearch (30Gi storage)"
-    echo "  - Graylog (20Gi storage)"
-    echo "  - Fluent Bit (log collector)"
-    echo ""
+  echo -e "${YELLOW}⚠️  NOTE: This will install the complete observability stack:${NC}"
+  echo "  - MongoDB (20Gi storage)"
+  echo "  - OpenSearch (30Gi storage)"
+  echo "  - Graylog (20Gi storage)"
+  echo "  - Fluent Bit (log collector)"
+  echo ""
 
-    read -p "Continue with observability deployment? (y/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        bash "${SCRIPT_DIR}/deploy-observability.sh"
-        echo -e "${GREEN}✅ Observability stack deployed${NC}"
-    else
-        echo -e "${YELLOW}⏭️  Skipping observability deployment${NC}"
-    fi
-    echo ""
+  read -p "Continue with observability deployment? (y/N) " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    bash "${SCRIPT_DIR}/deploy-observability.sh"
+    echo -e "${GREEN}✅ Observability stack deployed${NC}"
+  else
+    echo -e "${YELLOW}⏭️  Skipping observability deployment${NC}"
+  fi
+  echo ""
 fi
 
 # Step 7: Summary and Next Steps
@@ -198,34 +198,34 @@ kubectl get storageclass
 echo ""
 
 echo "📋 PersistentVolumes:"
-kubectl get pv 2>/dev/null || echo "  (none yet)"
+kubectl get pv 2> /dev/null || echo "  (none yet)"
 echo ""
 
 echo -e "${BLUE}🔗 Access Points:${NC}"
 echo "  Traefik Dashboard: http://traefik.talos00"
 echo "  Whoami Test:       http://whoami.talos00"
 echo ""
-if [ "$DEPLOY_MONITORING" = "true" ] || kubectl get namespace monitoring &>/dev/null; then
-    echo "  Grafana:           http://grafana.talos00"
-    echo "  Prometheus:        http://prometheus.talos00"
-    echo "  Alertmanager:      http://alertmanager.talos00"
-    echo ""
+if [ "$DEPLOY_MONITORING" = "true" ] || kubectl get namespace monitoring &> /dev/null; then
+  echo "  Grafana:           http://grafana.talos00"
+  echo "  Prometheus:        http://prometheus.talos00"
+  echo "  Alertmanager:      http://alertmanager.talos00"
+  echo ""
 fi
-if [ "$DEPLOY_OBSERVABILITY" = "true" ] || kubectl get namespace observability &>/dev/null; then
-    echo "  Graylog:           http://graylog.talos00"
-    echo ""
+if [ "$DEPLOY_OBSERVABILITY" = "true" ] || kubectl get namespace observability &> /dev/null; then
+  echo "  Graylog:           http://graylog.talos00"
+  echo ""
 fi
 echo "  (Add to /etc/hosts: 192.168.1.54 *.talos00)"
 echo ""
 
 if [ "$DEPLOY_APPS" = "true" ]; then
-    echo -e "${BLUE}📱 Application URLs (when deployed):${NC}"
-    echo "  Prowlarr:  http://prowlarr.talos00"
-    echo "  Sonarr:    http://sonarr.talos00"
-    echo "  Radarr:    http://radarr.talos00"
-    echo "  Plex:      http://plex.talos00"
-    echo "  Jellyfin:  http://jellyfin.talos00"
-    echo ""
+  echo -e "${BLUE}📱 Application URLs (when deployed):${NC}"
+  echo "  Prowlarr:  http://prowlarr.talos00"
+  echo "  Sonarr:    http://sonarr.talos00"
+  echo "  Radarr:    http://radarr.talos00"
+  echo "  Plex:      http://plex.talos00"
+  echo "  Jellyfin:  http://jellyfin.talos00"
+  echo ""
 fi
 
 echo -e "${YELLOW}📝 Next Steps:${NC}"

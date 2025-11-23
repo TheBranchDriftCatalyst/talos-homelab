@@ -3,6 +3,7 @@
 ## 5-Minute Setup
 
 ### Step 1: One-time Development Setup
+
 ```bash
 task dev:setup
 ```
@@ -10,6 +11,7 @@ task dev:setup
 This installs Air and initializes the Go module.
 
 ### Step 2: Start Dev Mode
+
 ```bash
 task dev
 ```
@@ -32,6 +34,7 @@ Your `/etc/hosts` will now auto-update when you create/delete Ingress resources!
 ## Test It
 
 ### Create a test Ingress
+
 ```bash
 kubectl apply -f - <<EOF
 apiVersion: traefik.io/v1alpha1
@@ -49,17 +52,20 @@ EOF
 ```
 
 ### Check your /etc/hosts
+
 ```bash
 grep "test.talos00" /etc/hosts
 # Should show: 192.168.1.54  test.talos00
 ```
 
 ### Delete the Ingress
+
 ```bash
 kubectl delete ingressroute test-app
 ```
 
 ### Verify cleanup
+
 ```bash
 grep "test.talos00" /etc/hosts
 # Should be gone!
@@ -97,17 +103,20 @@ kubectl logs -n infrastructure -l app=catalyst-dns-sync -f
 ## Troubleshooting
 
 **Air not found?**
+
 ```bash
 task install-air
 ```
 
 **Sudo password prompt?**
+
 ```bash
 # Required for /etc/hosts updates in dev mode
 # Run: sudo -v
 ```
 
 **Port already in use?**
+
 ```bash
 # Check what's using port 8080/8081
 lsof -i :8080

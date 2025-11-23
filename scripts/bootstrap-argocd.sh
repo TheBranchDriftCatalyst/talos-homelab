@@ -13,9 +13,9 @@ echo "=========================================="
 echo ""
 
 # Check if kubectl is configured
-if ! kubectl cluster-info &>/dev/null; then
-    echo "❌ kubectl is not configured or cluster is not accessible"
-    exit 1
+if ! kubectl cluster-info &> /dev/null; then
+  echo "❌ kubectl is not configured or cluster is not accessible"
+  exit 1
 fi
 
 echo "✅ Kubernetes cluster is accessible"
@@ -23,7 +23,7 @@ echo ""
 
 # Add ArgoCD Helm repository
 echo "📦 Adding ArgoCD Helm repository..."
-helm repo add argo https://argoproj.github.io/argo-helm 2>/dev/null || true
+helm repo add argo https://argoproj.github.io/argo-helm 2> /dev/null || true
 helm repo update
 
 # Create argocd namespace
@@ -33,10 +33,10 @@ kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
 # Install ArgoCD
 echo "🚀 Installing ArgoCD..."
 helm upgrade --install argocd argo/argo-cd \
-    -n argocd \
-    -f "${PROJECT_ROOT}/infrastructure/base/argocd/values.yaml" \
-    --wait \
-    --timeout 5m
+  -n argocd \
+  -f "${PROJECT_ROOT}/infrastructure/base/argocd/values.yaml" \
+  --wait \
+  --timeout 5m
 
 # Apply IngressRoute
 echo "🌐 Applying IngressRoute..."
@@ -45,9 +45,9 @@ kubectl apply -f "${PROJECT_ROOT}/infrastructure/base/argocd/ingressroute.yaml"
 # Wait for ArgoCD to be ready
 echo "⏳ Waiting for ArgoCD pods to be ready..."
 kubectl wait --for=condition=ready pod \
-    -l app.kubernetes.io/name=argocd-server \
-    -n argocd \
-    --timeout=300s
+  -l app.kubernetes.io/name=argocd-server \
+  -n argocd \
+  --timeout=300s
 
 # Get initial admin password
 echo ""

@@ -15,6 +15,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
 **Container Image**: ghcr.io/headlamp-k8s/headlamp:latest
 
 **Features**:
+
 - Clean, modern interface
 - Multi-cluster support
 - CRD support
@@ -25,6 +26,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
 **Best for**: Daily cluster management, users who want a modern alternative to the Kubernetes Dashboard
 
 **Usage**:
+
 1. Navigate to http://headlamp.talos00
 2. Headlamp uses in-cluster authentication (cluster-admin ServiceAccount)
 3. Browse resources, view logs, edit manifests
@@ -38,6 +40,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
 **Container Image**: ghcr.io/benc-uk/kubeview:latest
 
 **Features**:
+
 - Visual graph showing resource relationships
 - Interactive navigation
 - Namespace filtering
@@ -47,6 +50,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
 **Best for**: Understanding application architecture, visualizing resource dependencies, documentation
 
 **Usage**:
+
 1. Navigate to http://kubeview.talos00
 2. Select namespace from dropdown
 3. Explore the visual graph showing relationships between resources
@@ -61,6 +65,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
 **Container Image**: hjacobs/kube-ops-view:latest
 
 **Features**:
+
 - Real-time cluster state display
 - Node and pod visualization
 - Resource utilization metrics
@@ -70,6 +75,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
 **Best for**: NOC displays, presentations, real-time monitoring dashboards, status boards
 
 **Usage**:
+
 1. Navigate to http://kube-ops-view.talos00
 2. View real-time cluster state
 3. See nodes, pods, and resource utilization at a glance
@@ -81,9 +87,10 @@ The infra-testing stack provides a collection of web-based tools for visualizing
 
 **Purpose**: Right-sizing recommendations for CPU/memory requests and limits
 **Access**: http://goldilocks.talos00
-**Container Image**: us-docker.pkg.dev/fairwinds-ops/oss/goldilocks:v4.11.0
+**Container Image**: us-Docker.pkg.dev/fairwinds-ops/oss/goldilocks:v4.11.0
 
 **Features**:
+
 - Analyzes actual resource usage
 - Provides recommendations for requests/limits
 - Integrates with Vertical Pod Autoscaler (VPA)
@@ -93,11 +100,13 @@ The infra-testing stack provides a collection of web-based tools for visualizing
 **Best for**: Cost optimization, resource right-sizing, preventing over/under-provisioning
 
 **Dependencies**:
+
 - Vertical Pod Autoscaler (VPA) - automatically installed with Goldilocks
 
 **Usage**:
 
 1. **Enable Goldilocks for a namespace**:
+
    ```bash
    # Label a namespace to enable Goldilocks analysis
    kubectl label namespace <namespace> goldilocks.fairwinds.com/enabled=true
@@ -107,6 +116,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
    ```
 
 2. **Access the dashboard**:
+
    ```bash
    open http://goldilocks.talos00
    ```
@@ -120,6 +130,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
      - **Upper Bound**: Maximum observed usage
 
 4. **Apply recommendations**:
+
    ```bash
    # Copy recommended values from dashboard
    # Update deployment manifests with new requests/limits
@@ -127,6 +138,7 @@ The infra-testing stack provides a collection of web-based tools for visualizing
    ```
 
 **Important Notes**:
+
 - Goldilocks needs time to gather data (allow 24-48 hours for accurate recommendations)
 - Only analyzes namespaces with the `goldilocks.fairwinds.com/enabled=true` label
 - Recommendations are based on VPA analysis of actual usage
@@ -151,21 +163,25 @@ task infra:deploy-infra-testing
 ### Prerequisites
 
 1. **Cluster Access**: Kubeconfig must be configured
+
    ```bash
    task kubeconfig-merge
    ```
 
 2. **DNS/Hosts Configuration**: Add to `/etc/hosts`
+
    ```bash
    192.168.1.54  headlamp.talos00 kubeview.talos00 kube-ops-view.talos00 goldilocks.talos00
    ```
 
    Or use the update-hosts script:
+
    ```bash
    sudo ./scripts/update-hosts.sh
    ```
 
 3. **Traefik**: Must be deployed (provides ingress routing)
+
    ```bash
    # Check Traefik is running
    kubectl get pods -n traefik
@@ -208,6 +224,7 @@ kubectl get ingressroute -n infra-testing
 ```
 
 Expected output:
+
 ```
 NAME                                    READY   STATUS    RESTARTS   AGE
 goldilocks-controller-xxx               1/1     Running   0          5m
@@ -246,6 +263,7 @@ kubectl delete -k infrastructure/base/infra-testing/
 ```
 
 This will remove:
+
 - All deployed UI tools
 - The infra-testing namespace
 - VPA components (in kube-system namespace)
@@ -292,14 +310,14 @@ infrastructure/base/infra-testing/
 
 ### Resource Limits
 
-| Tool | Memory Request | Memory Limit | CPU Request | CPU Limit |
-|------|---------------|--------------|-------------|-----------|
-| Headlamp | 128Mi | 512Mi | 100m | 500m |
-| Kubeview | 64Mi | 256Mi | 50m | 200m |
-| Kube-ops-view | 64Mi | 256Mi | 50m | 200m |
-| Goldilocks Controller | 32Mi | 32Mi | 25m | 25m |
-| Goldilocks Dashboard | 32Mi | 32Mi | 25m | 25m |
-| VPA Recommender | 500Mi | 1000Mi | 50m | 200m |
+| Tool                  | Memory Request | Memory Limit | CPU Request | CPU Limit |
+| --------------------- | -------------- | ------------ | ----------- | --------- |
+| Headlamp              | 128Mi          | 512Mi        | 100m        | 500m      |
+| Kubeview              | 64Mi           | 256Mi        | 50m         | 200m      |
+| Kube-ops-view         | 64Mi           | 256Mi        | 50m         | 200m      |
+| Goldilocks Controller | 32Mi           | 32Mi         | 25m         | 25m       |
+| Goldilocks Dashboard  | 32Mi           | 32Mi         | 25m         | 25m       |
+| VPA Recommender       | 500Mi          | 1000Mi       | 50m         | 200m      |
 
 ---
 
@@ -307,15 +325,15 @@ infrastructure/base/infra-testing/
 
 These tools complement the existing monitoring infrastructure:
 
-| Tool Stack | Purpose | Access |
-|-----------|---------|--------|
-| **Prometheus + Grafana** | Metrics, dashboards, alerting | http://grafana.talos00 |
-| **Graylog** | Log aggregation and analysis | http://graylog.talos00 |
-| **Kubernetes Dashboard** | Official K8s UI | kubectl proxy |
-| **Headlamp** | Modern K8s management UI | http://headlamp.talos00 |
-| **Kubeview** | Resource visualization | http://kubeview.talos00 |
-| **Kube-ops-view** | Real-time cluster view | http://kube-ops-view.talos00 |
-| **Goldilocks** | Resource optimization | http://goldilocks.talos00 |
+| Tool Stack               | Purpose                       | Access                       |
+| ------------------------ | ----------------------------- | ---------------------------- |
+| **Prometheus + Grafana** | Metrics, dashboards, alerting | http://grafana.talos00       |
+| **Graylog**              | Log aggregation and analysis  | http://graylog.talos00       |
+| **Kubernetes Dashboard** | Official K8s UI               | kubectl proxy                |
+| **Headlamp**             | Modern K8s management UI      | http://headlamp.talos00      |
+| **Kubeview**             | Resource visualization        | http://kubeview.talos00      |
+| **Kube-ops-view**        | Real-time cluster view        | http://kube-ops-view.talos00 |
+| **Goldilocks**           | Resource optimization         | http://goldilocks.talos00    |
 
 **Workflow Integration**:
 
@@ -335,12 +353,15 @@ These tools complement the existing monitoring infrastructure:
 **Symptom**: Cannot access http://headlamp.talos00
 
 **Solution**:
+
 1. Check `/etc/hosts` configuration:
+
    ```bash
    cat /etc/hosts | grep talos00
    ```
 
 2. Add missing entries:
+
    ```bash
    sudo ./scripts/update-hosts.sh
    # Or manually:
@@ -348,6 +369,7 @@ These tools complement the existing monitoring infrastructure:
    ```
 
 3. Verify Traefik IngressRoutes:
+
    ```bash
    kubectl get ingressroute -n infra-testing
    ```
@@ -357,17 +379,21 @@ These tools complement the existing monitoring infrastructure:
 **Symptom**: Pods in CrashLoopBackOff or Pending state
 
 **Solution**:
+
 1. Check pod status and events:
+
    ```bash
    kubectl describe pod -n infra-testing <pod-name>
    ```
 
 2. View logs:
+
    ```bash
    task infra:infra-testing-logs TOOL=<tool-name>
    ```
 
 3. Check resource availability (single-node cluster):
+
    ```bash
    kubectl top nodes
    kubectl top pods -A
@@ -378,17 +404,21 @@ These tools complement the existing monitoring infrastructure:
 **Symptom**: Goldilocks dashboard is empty or shows no namespaces
 
 **Solution**:
+
 1. Verify namespace is labeled:
+
    ```bash
    kubectl get namespace -L goldilocks.fairwinds.com/enabled
    ```
 
 2. Add label if missing:
+
    ```bash
    kubectl label namespace <namespace> goldilocks.fairwinds.com/enabled=true
    ```
 
 3. Check VPA is running:
+
    ```bash
    kubectl get pods -n kube-system -l app=vpa-recommender
    ```
@@ -400,12 +430,15 @@ These tools complement the existing monitoring infrastructure:
 **Symptom**: VPA recommender pod failing
 
 **Solution**:
+
 1. Check VPA CRD is installed:
+
    ```bash
    kubectl get crd verticalpodautoscalers.autoscaling.k8s.io
    ```
 
 2. Reinstall VPA if needed:
+
    ```bash
    kubectl apply -k infrastructure/base/infra-testing/goldilocks/
    ```

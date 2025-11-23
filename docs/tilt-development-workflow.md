@@ -7,6 +7,7 @@ This document describes how to use [Tilt](https://tilt.dev) for rapid iteration 
 Tilt provides a powerful development environment that watches your Kubernetes manifests and automatically applies changes as you edit them. This creates a tight feedback loop for infrastructure development, similar to hot-reload in application development.
 
 **Key Features:**
+
 - **Hot Reload**: Changes to manifests automatically applied to cluster
 - **Port Forwarding**: Automatic port forwards for easy local access
 - **Resource Organization**: Resources grouped by labels (ui-tools, monitoring, etc.)
@@ -125,6 +126,7 @@ Resources are organized by labels:
 ### Resource Status
 
 Each resource shows:
+
 - **Green**: Healthy and running
 - **Yellow**: Building/updating
 - **Red**: Failed or error
@@ -133,6 +135,7 @@ Each resource shows:
 ### Resource Details
 
 Click any resource to see:
+
 - **Pod logs**: Real-time streaming logs
 - **K8s YAML**: Current manifest
 - **Events**: Kubernetes events
@@ -143,6 +146,7 @@ Click any resource to see:
 ### 1. Hot Reload Workflow
 
 Tilt watches these directories for changes:
+
 ```
 infrastructure/base/
 infrastructure/overlays/
@@ -159,6 +163,7 @@ applications/
 6. Resource restarts with new settings
 
 **Watch it happen:**
+
 - Tilt UI shows "Updating" status
 - Logs stream in real-time
 - Status changes to green when complete
@@ -194,39 +199,42 @@ Tilt provides manual actions for common tasks:
 #### Validation
 
 - **validate-manifests**: Dry-run kubectl apply
-- **lint-yaml**: Run YAML linting
+- **lint-YAML**: Run YAML linting
 
 ### 3. Port Forwards
 
 Tilt automatically sets up port forwards for all services:
 
-| Service | Traefik URL | Port Forward | Port |
-|---------|-------------|--------------|------|
-| Headlamp | http://headlamp.talos00 | http://localhost:8080 | 8080 |
-| Kubeview | http://kubeview.talos00 | http://localhost:8081 | 8081 |
-| Kube-ops-view | http://kube-ops-view.talos00 | http://localhost:8082 | 8082 |
-| Goldilocks | http://goldilocks.talos00 | http://localhost:8083 | 8083 |
-| Prometheus | http://prometheus.talos00 | http://localhost:9090 | 9090 |
-| Grafana | http://grafana.talos00 | http://localhost:3000 | 3000 |
-| Alertmanager | http://alertmanager.talos00 | http://localhost:9093 | 9093 |
-| Graylog | http://graylog.talos00 | http://localhost:9000 | 9000 |
-| ArgoCD | http://argocd.talos00 | http://localhost:8443 | 8443 |
-| Registry | http://registry.talos00 | http://localhost:5000 | 5000 |
-| Traefik HTTP | - | http://localhost:8000 | 8000 |
-| Traefik HTTPS | - | https://localhost:8888 | 8888 |
+| Service       | Traefik URL                  | Port Forward           | Port |
+| ------------- | ---------------------------- | ---------------------- | ---- |
+| Headlamp      | http://headlamp.talos00      | http://localhost:8080  | 8080 |
+| Kubeview      | http://kubeview.talos00      | http://localhost:8081  | 8081 |
+| Kube-ops-view | http://kube-ops-view.talos00 | http://localhost:8082  | 8082 |
+| Goldilocks    | http://goldilocks.talos00    | http://localhost:8083  | 8083 |
+| Prometheus    | http://prometheus.talos00    | http://localhost:9090  | 9090 |
+| Grafana       | http://grafana.talos00       | http://localhost:3000  | 3000 |
+| Alertmanager  | http://alertmanager.talos00  | http://localhost:9093  | 9093 |
+| Graylog       | http://graylog.talos00       | http://localhost:9000  | 9000 |
+| ArgoCD        | http://argocd.talos00        | http://localhost:8443  | 8443 |
+| Registry      | http://registry.talos00      | http://localhost:5000  | 5000 |
+| Traefik HTTP  | -                            | http://localhost:8000  | 8000 |
+| Traefik HTTPS | -                            | https://localhost:8888 | 8888 |
 
 **Accessing Services:**
+
 - **Via Traefik**: Use `*.talos00` URLs (requires /etc/hosts)
 - **Via Port Forward**: Use `localhost:<port>` URLs (always works)
 
 ### 4. Viewing Logs
 
 **From Tilt UI:**
+
 1. Click on any resource
 2. Logs tab shows real-time streaming
 3. Use search/filter to find specific messages
 
 **From Terminal:**
+
 ```bash
 # View logs for specific resource
 task dev:tilt-logs RESOURCE=infra-testing:headlamp
@@ -253,6 +261,7 @@ Tilt and Flux can work together, but be careful not to create conflicts.
 **Option 1: Tilt in Control (Recommended for dev)**
 
 1. Suspend Flux reconciliation:
+
    ```bash
    # In Tilt UI, trigger: flux-suspend-all
    # Or manually:
@@ -263,6 +272,7 @@ Tilt and Flux can work together, but be careful not to create conflicts.
 3. Tilt applies changes immediately
 4. Test your changes
 5. Resume Flux when done:
+
    ```bash
    # In Tilt UI, trigger: flux-resume-all
    # Or manually:
@@ -333,8 +343,8 @@ k8s_resource(
 )
 ```
 
-3. Save Tiltfile
-4. Tilt automatically reloads configuration
+1. Save Tiltfile
+2. Tilt automatically reloads configuration
 
 ### CI Mode
 
@@ -359,6 +369,7 @@ tilt ci
 **Symptom**: "Unable to connect to cluster"
 
 **Solution**:
+
 ```bash
 # Check kubeconfig
 kubectl cluster-info
@@ -378,11 +389,13 @@ tilt down && tilt up
 **Symptom**: Red status, pod crashlooping
 
 **Solution**:
+
 1. Click resource in Tilt UI
 2. View logs for error messages
 3. Fix manifest issue
 4. Press 'r' to force rebuild
 5. Or manually restart:
+
    ```bash
    kubectl delete pod -n <namespace> -l app=<label>
    ```
@@ -392,6 +405,7 @@ tilt down && tilt up
 **Symptom**: "Port already in use"
 
 **Solution**:
+
 ```bash
 # Find what's using the port
 lsof -i :8080
@@ -405,6 +419,7 @@ lsof -i :8080
 **Symptom**: Tilt not applying manifest changes
 
 **Solution**:
+
 1. Verify file is in watched directory:
    - infrastructure/base/
    - infrastructure/overlays/
@@ -418,6 +433,7 @@ lsof -i :8080
 **Symptom**: Flux keeps reverting Tilt changes
 
 **Solution**:
+
 ```bash
 # Suspend Flux during development
 flux suspend kustomization --all

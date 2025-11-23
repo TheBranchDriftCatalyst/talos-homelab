@@ -20,21 +20,26 @@ helm install traefik traefik/traefik \
 ## Deployed Services
 
 ### 1. Traefik Dashboard
+
 Traefik's own dashboard for monitoring routes and services.
 
 **Access:** `http://traefik.lab`
 
 ### 2. whoami Service
+
 Test service that echoes request information.
 
 **Access:**
+
 - Via hostname: `http://whoami.lab`
 - Via path: `http://192.168.1.54/whoami`
 
 ### 3. Kubernetes Dashboard
+
 K8s admin dashboard via Traefik.
 
 **Access:**
+
 - Via hostname: `http://dashboard.lab`
 - Login token: `task dashboard-token`
 
@@ -64,6 +69,7 @@ Traefik Helm chart installs all CRDs automatically:
 - **ServersTransport** - Backend server settings
 
 List all installed CRDs:
+
 ```bash
 kubectl get crd | grep traefik
 ```
@@ -144,6 +150,7 @@ Internet/LAN (192.168.1.54)
 ## Helm Management
 
 ### Install/Upgrade
+
 ```bash
 helm upgrade --install traefik traefik/traefik \
   --namespace traefik \
@@ -152,11 +159,13 @@ helm upgrade --install traefik traefik/traefik \
 ```
 
 ### View Current Values
+
 ```bash
 helm get values traefik -n traefik --kubeconfig ./.output/kubeconfig
 ```
 
 ### Uninstall
+
 ```bash
 helm uninstall traefik -n traefik --kubeconfig ./.output/kubeconfig
 ```
@@ -208,13 +217,16 @@ spec:
 ## Monitoring
 
 ### Traefik Dashboard
+
 Access at `http://traefik.lab` to see:
+
 - Active routes
 - Services status
 - Middleware chains
 - Real-time metrics
 
 ### Prometheus Metrics
+
 Traefik exposes Prometheus metrics on the `metrics` entrypoint.
 
 ```bash
@@ -225,27 +237,32 @@ curl http://192.168.1.54:9000/metrics
 ## Troubleshooting
 
 ### Check Traefik Status
+
 ```bash
 kubectl --kubeconfig ./.output/kubeconfig get pods -n traefik
 kubectl --kubeconfig ./.output/kubeconfig logs -n traefik -l app.kubernetes.io/name=traefik
 ```
 
 ### List IngressRoutes
+
 ```bash
 kubectl --kubeconfig ./.output/kubeconfig get ingressroute -A
 ```
 
 ### Describe IngressRoute
+
 ```bash
 kubectl --kubeconfig ./.output/kubeconfig describe ingressroute <name> -n <namespace>
 ```
 
 ### Check Middleware
+
 ```bash
 kubectl --kubeconfig ./.output/kubeconfig get middleware -A
 ```
 
 ### Port 80/443 Not Working
+
 - Ensure Traefik pod is running: `kubectl get pods -n traefik`
 - Check namespace has privileged security: `kubectl get ns traefik -o yaml | grep pod-security`
 - Verify hostPort is bound: `kubectl describe pod -n traefik -l app.kubernetes.io/name=traefik`

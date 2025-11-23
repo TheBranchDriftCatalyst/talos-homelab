@@ -25,6 +25,7 @@ task provision
 ```
 
 That's it! The script will:
+
 - Generate Talos configs
 - Apply configuration to the node
 - Bootstrap the cluster
@@ -67,6 +68,7 @@ task service-logs -- SERVICE=kubelet
 ## What's Deployed
 
 After provisioning, your cluster will have:
+
 - **Talos v1.11.1** - Immutable Linux OS
 - **Kubernetes v1.34.0** - Container orchestration
 - **Flannel** - CNI networking
@@ -86,16 +88,19 @@ scripts/        # Helper scripts
 ## Next Steps
 
 1. **Deploy your first app**:
+
    ```bash
    kubectl --kubeconfig ./.output/kubeconfig run nginx --image=nginx
    ```
 
 2. **Check deployment**:
+
    ```bash
    task get-pods
    ```
 
 3. **Explore Talos**:
+
    ```bash
    task dashboard  # Interactive node dashboard
    ```
@@ -103,15 +108,18 @@ scripts/        # Helper scripts
 ## Troubleshooting
 
 **Dashboard not accessible?**
+
 - Make sure `kubectl proxy` is running on your LOCAL machine
 - The URL is `localhost:8001`, not the node IP
 - Token can be retrieved with `task dashboard-token`
 
 **Can't schedule pods?**
+
 - Check taints: `kubectl --kubeconfig ./.output/kubeconfig get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints`
 - Should show `<none>` for single-node setup
 
 **Need to reset?**
+
 ```bash
 task reset  # WARNING: Destructive!
 ```

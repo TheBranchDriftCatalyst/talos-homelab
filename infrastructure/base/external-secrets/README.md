@@ -107,10 +107,12 @@ Use the setup script to create the required secrets:
 ```
 
 This script will prompt you for:
+
 - Path to `1password-credentials.json`
 - 1Password Connect API token
 
 It creates two secrets:
+
 - `onepassword-connect-secret` - Contains the credentials file
 - `onepassword-connect-token` - Contains the API token
 
@@ -120,10 +122,11 @@ Edit `infrastructure/base/external-secrets/secretstores/onepassword-secretstore.
 
 ```yaml
 vaults:
-  homelab: 1  # Replace '1' with your actual vault ID or name
+  homelab: 1 # Replace '1' with your actual vault ID or name
 ```
 
 To find your vault ID:
+
 1. Go to https://my.1password.com
 2. Navigate to your vault
 3. The vault ID is in the URL or visible in vault settings
@@ -136,8 +139,8 @@ Uncomment the disabled components in `infrastructure/base/external-secrets/kusto
 resources:
   - namespace.yaml
   - operator
-  - onepassword-connect  # Uncomment this line
-  - secretstores         # Uncomment this line
+  - onepassword-connect # Uncomment this line
+  - secretstores # Uncomment this line
 ```
 
 ### Step 5: Deploy via Flux
@@ -190,8 +193,8 @@ spec:
   data:
     - secretKey: password
       remoteRef:
-        key: production-database  # 1Password item name
-        property: password        # Field in the item
+        key: production-database # 1Password item name
+        property: password # Field in the item
     - secretKey: username
       remoteRef:
         key: production-database
@@ -215,7 +218,7 @@ spec:
     name: api-credentials
   dataFrom:
     - extract:
-        key: api-credentials  # All fields from this 1Password item
+        key: api-credentials # All fields from this 1Password item
 ```
 
 **Example 3: Template for complex formats**
@@ -324,6 +327,7 @@ curl -H "Authorization: Bearer <your-token>" http://localhost:8080/v1/vaults
 ### ExternalSecret Not Creating Secret
 
 1. **Check ExternalSecret status:**
+
    ```bash
    kubectl describe externalsecret <name> -n <namespace>
    ```
@@ -335,6 +339,7 @@ curl -H "Authorization: Bearer <your-token>" http://localhost:8080/v1/vaults
    - SecretStore not ready
 
 3. **Check ESO logs:**
+
    ```bash
    kubectl logs -n external-secrets deployment/external-secrets | grep -i error
    ```
@@ -342,16 +347,19 @@ curl -H "Authorization: Bearer <your-token>" http://localhost:8080/v1/vaults
 ### 1Password Connect Not Starting
 
 1. **Check credentials secret:**
+
    ```bash
    kubectl get secret onepassword-connect-secret -n external-secrets
    ```
 
 2. **Verify credentials file:**
+
    ```bash
    kubectl get secret onepassword-connect-secret -n external-secrets -o jsonpath='{.data.1password-credentials\.json}' | base64 -d | jq
    ```
 
 3. **Check Connect logs:**
+
    ```bash
    kubectl logs -n external-secrets deployment/onepassword-connect -c connect-api
    kubectl logs -n external-secrets deployment/onepassword-connect -c connect-sync
@@ -360,17 +368,20 @@ curl -H "Authorization: Bearer <your-token>" http://localhost:8080/v1/vaults
 ### SecretStore Not Ready
 
 1. **Check SecretStore status:**
+
    ```bash
    kubectl get secretstore -A
    kubectl describe clustersecretstore onepassword
    ```
 
 2. **Verify token secret exists:**
+
    ```bash
    kubectl get secret onepassword-connect-token -n external-secrets
    ```
 
 3. **Check connectivity:**
+
    ```bash
    kubectl run -it --rm debug --image=curlimages/curl --restart=Never -- \
      curl http://onepassword-connect.external-secrets.svc.cluster.local:8080/health
@@ -447,6 +458,7 @@ curl http://localhost:8080/metrics
 ### Grafana Dashboards
 
 Import the official ESO dashboard:
+
 - Dashboard ID: 16170
 - URL: https://grafana.com/grafana/dashboards/16170
 
@@ -462,7 +474,7 @@ If you have existing manually created secrets that you want to migrate to ESO:
 spec:
   target:
     name: existing-secret
-    creationPolicy: Merge  # or Owner (deletes existing)
+    creationPolicy: Merge # or Owner (deletes existing)
 ```
 
 ## Best Practices
@@ -498,10 +510,12 @@ Git Repo → Flux/ArgoCD → ExternalSecret → ESO → 1Password → Kubernetes
 ## Support
 
 For issues specific to this setup:
+
 - Check logs: `kubectl logs -n external-secrets deployment/external-secrets`
 - Review ExternalSecret status: `kubectl describe externalsecret <name>`
 - Test 1Password Connect health: `kubectl port-forward -n external-secrets svc/onepassword-connect 8080:8080`
 
 For general ESO issues:
+
 - GitHub: https://github.com/external-secrets/external-secrets/issues
 - Slack: https://kubernetes.slack.com/messages/external-secrets

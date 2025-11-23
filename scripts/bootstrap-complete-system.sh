@@ -20,10 +20,10 @@ echo "📦 Step 1/5: Deploying Infrastructure..."
 echo ""
 echo "📊 Step 2/5: Deploying Monitoring Stack..."
 helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-    -n monitoring \
-    --create-namespace \
-    -f "${PROJECT_ROOT}/infrastructure/base/monitoring/kube-prometheus-stack/values.yaml" \
-    --wait
+  -n monitoring \
+  --create-namespace \
+  -f "${PROJECT_ROOT}/infrastructure/base/monitoring/kube-prometheus-stack/values.yaml" \
+  --wait
 
 kubectl apply -f "${PROJECT_ROOT}/infrastructure/base/monitoring/kube-prometheus-stack/ingressroute.yaml"
 

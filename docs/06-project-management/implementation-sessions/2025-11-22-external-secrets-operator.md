@@ -47,6 +47,7 @@ Implemented External Secrets Operator (ESO) with 1Password Connect for secure se
 **Location:** `scripts/setup-1password-connect.sh`
 
 Interactive script to:
+
 - Create namespace if missing
 - Create `onepassword-connect-secret` (credentials file)
 - Create `onepassword-connect-token` (API token)
@@ -278,11 +279,11 @@ kubectl exec -n external-secrets deployment/onepassword-connect -c connect-api -
 
 ### Created Documentation
 
-| File | Purpose |
-|------|---------|
+| File                                             | Purpose                                            |
+| ------------------------------------------------ | -------------------------------------------------- |
 | `infrastructure/base/external-secrets/README.md` | Complete setup guide, architecture, usage examples |
-| `infrastructure/base/external-secrets/STATUS.md` | Current deployment status, checklist |
-| `scripts/setup-1password-connect.sh` | Interactive setup script |
+| `infrastructure/base/external-secrets/STATUS.md` | Current deployment status, checklist               |
+| `scripts/setup-1password-connect.sh`             | Interactive setup script                           |
 
 ### CLAUDE.md Updates
 
@@ -376,6 +377,7 @@ Decision made **NOT** to convert orchestration scripts to Tilt or Ansible:
 ### Scripts Categorization
 
 **Keep (Bootstrap/One-Time):**
+
 - `provision.sh`
 - `bootstrap-argocd.sh`
 - `bootstrap-flux.sh`
@@ -383,6 +385,7 @@ Decision made **NOT** to convert orchestration scripts to Tilt or Ansible:
 - `kubeconfig-merge.sh`
 
 **Deprecated (Replaced by Flux):**
+
 - `deploy-stack.sh`
 - `deploy-observability.sh`
 - `build-and-deploy-catalyst-ui.sh`

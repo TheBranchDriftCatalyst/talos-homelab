@@ -5,9 +5,10 @@ Based on your existing single-node cluster setup, this guide walks you through a
 ## Prerequisites
 
 **What you need:**
+
 - New physical machine/VM with IP address (let's call it `NEW_NODE_IP`)
 - Talos ISO or metal image installed on the new node
-- The existing `worker.yaml` config from your talos-homelab directory
+- The existing `worker.yaml` config from your Talos-homelab directory
 
 ## Current Cluster Status
 
@@ -21,11 +22,13 @@ Based on your existing single-node cluster setup, this guide walks you through a
 ### 1. Prepare Worker Configuration
 
 Your worker config already exists at:
+
 ```
 configs/worker.yaml
 ```
 
 This config contains the shared cluster secrets needed to join the cluster:
+
 - CA certificate (shared cluster identity)
 - Join token: `<EXAMPLE_TOKEN>` (will be generated during config generation)
 - Kubernetes version: v1.34.0
@@ -44,6 +47,7 @@ talosctl apply-config \
 ```
 
 **What happens:**
+
 - Talos installs the configuration on the new node
 - Node automatically joins the cluster using the shared token
 - Node downloads Kubernetes components
@@ -116,8 +120,8 @@ Add these sections to `worker-powerful.yaml`:
 kubelet:
   image: ghcr.io/siderolabs/kubelet:v1.34.0
   extraArgs:
-    max-pods: "250"  # More pods for powerful node
-    kube-reserved: cpu=2,memory=4Gi  # Reserve more for system
+    max-pods: '250' # More pods for powerful node
+    kube-reserved: cpu=2,memory=4Gi # Reserve more for system
 
   # For GPU nodes, add:
   extraMounts:
@@ -131,7 +135,7 @@ kubelet:
 
 # Under machine:
 sysctls:
-  net.core.somaxconn: "65535"  # For high-performance networking
+  net.core.somaxconn: '65535' # For high-performance networking
 ```
 
 ## Dual GitOps Integration
@@ -139,7 +143,9 @@ sysctls:
 Once your worker node is running, it automatically inherits your dual GitOps setup:
 
 ### Infrastructure (Bootstrap Pattern)
+
 Your worker node automatically gets:
+
 - ✅ Traefik ingress (DaemonSet runs on all nodes)
 - ✅ Monitoring agents (Prometheus node exporter)
 - ✅ CNI networking (Flannel)
@@ -148,7 +154,9 @@ Your worker node automatically gets:
 No additional infrastructure deployment needed!
 
 ### Applications (ArgoCD Pattern)
+
 ArgoCD applications will automatically schedule on the new node based on:
+
 - Resource availability
 - Node selectors
 - Taints/tolerations
@@ -198,12 +206,14 @@ git commit -m "feat: Target tdarr to high-performance node"
 Since you're adding a dedicated worker, consider your control-plane scheduling strategy:
 
 ### Option A: Keep Control-Plane Schedulable (Current Setup)
+
 ```bash
 # Remove taint (if present) to allow scheduling on control-plane
 kubectl taint nodes talos00 node-role.kubernetes.io/control-plane:NoSchedule-
 ```
 
 ### Option B: Dedicate Control-Plane to System Workloads Only
+
 ```bash
 # Add taint to prevent user workloads on control-plane
 kubectl taint nodes talos00 \
@@ -322,29 +332,29 @@ talosctl --nodes <NEW_IP> reset
 Add to `Taskfile.yaml`:
 
 ```yaml
-  add-worker:
-    desc: Add a new worker node to the cluster
-    cmds:
-      - |
-        echo "Enter new node IP address:"
-        read NODE_IP
-        echo "Applying worker config to ${NODE_IP}..."
-        talosctl apply-config --insecure \
-          --nodes ${NODE_IP} \
-          --file {{.WORKER_CONFIG}}
-        echo "Waiting for node to join..."
-        sleep 60
-        kubectl get nodes -o wide
-    vars:
-      WORKER_CONFIG: './configs/worker.yaml'
+add-worker:
+  desc: Add a new worker node to the cluster
+  cmds:
+    - |
+      echo "Enter new node IP address:"
+      read NODE_IP
+      echo "Applying worker config to ${NODE_IP}..."
+      talosctl apply-config --insecure \
+        --nodes ${NODE_IP} \
+        --file {{.WORKER_CONFIG}}
+      echo "Waiting for node to join..."
+      sleep 60
+      kubectl get nodes -o wide
+  vars:
+    WORKER_CONFIG: './configs/worker.yaml'
 
-  worker-health:
-    desc: Check worker node health (use -- NODE=<ip>)
-    cmds:
-      - talosctl --nodes {{.NODE}} health --wait-timeout=10s
-      - kubectl get node -o wide | grep {{.NODE}}
-    vars:
-      NODE: '{{.NODE | default "192.168.1.55"}}'
+worker-health:
+  desc: Check worker node health (use -- NODE=<ip>)
+  cmds:
+    - talosctl --nodes {{.NODE}} health --wait-timeout=10s
+    - kubectl get node -o wide | grep {{.NODE}}
+  vars:
+    NODE: '{{.NODE | default "192.168.1.55"}}'
 ```
 
 ## Implementation Checklist

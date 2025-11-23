@@ -24,13 +24,16 @@ This Talos Kubernetes cluster uses a **dual GitOps pattern** that separates infr
 ## Pattern 1: Infrastructure GitOps (Bootstrap)
 
 ### Purpose
+
 Manage the foundational platform infrastructure that the cluster depends on.
 
 ### Repository
+
 - **Location**: `/Users/panda/talos-fix`
 - **Remote**: Private infrastructure repository
 
 ### What It Manages
+
 - Talos machine configurations
 - Core platform services:
   - ArgoCD (GitOps controller for applications)
@@ -38,11 +41,12 @@ Manage the foundational platform infrastructure that the cluster depends on.
   - Docker Registry (Container image storage)
   - Monitoring stack (Prometheus, Grafana, Loki)
   - Observability (OpenSearch, FluentBit)
-  - *arr stack (Sonarr, Radarr, etc.)
+  - \*arr stack (Sonarr, Radarr, etc.)
 - Network policies and storage classes
 - Cluster bootstrap and recovery scripts
 
 ### Deployment Method
+
 **Manual bootstrap with scripted deployment**
 
 ```bash
@@ -51,6 +55,7 @@ Manage the foundational platform infrastructure that the cluster depends on.
 ```
 
 ### File Structure
+
 ```
 talos-fix/
 ├── infrastructure/
@@ -67,35 +72,42 @@ talos-fix/
 ```
 
 ### Update Workflow
+
 1. Modify infrastructure manifests in `talos-fix` repo
 2. Commit and push changes
 3. Run deployment script: `./scripts/deploy-stack.sh <stack-name>`
 4. Script applies changes via `kubectl apply`
 
 ### Philosophy
+
 Infrastructure changes are **intentional and controlled**. They require explicit execution because they affect cluster stability and foundational services. This pattern prevents accidental infrastructure changes and provides clear audit trails.
 
 ## Pattern 2: Application GitOps (ArgoCD)
 
 ### Purpose
+
 Continuously deploy and synchronize application workloads with minimal manual intervention.
 
 ### Repository
+
 - **Location**: Application-specific repos (e.g., `catalyst-ui`)
 - **Remote**: GitHub (public or private)
 
 ### What It Manages
+
 - Application deployments
 - Application services and ingress routes
 - Application-specific configurations
 - Rolling updates and rollbacks
 
 ### Deployment Method
+
 **Automated continuous deployment via ArgoCD**
 
 ArgoCD watches application repositories and automatically syncs changes to the cluster.
 
 ### File Structure (Example: catalyst-ui)
+
 ```
 catalyst-ui/
 ├── k8s/                   # Kubernetes manifests
@@ -109,6 +121,7 @@ catalyst-ui/
 ```
 
 ### Update Workflow
+
 1. Modify application code or K8s manifests
 2. Commit and push to `main` branch
 3. **ArgoCD automatically detects changes**
@@ -116,6 +129,7 @@ catalyst-ui/
 5. Rolling update occurs automatically
 
 ### ArgoCD Application Definition
+
 Stored in infrastructure repo: `infrastructure/base/argocd/applications/`
 
 ```yaml
@@ -139,54 +153,64 @@ spec:
 ```
 
 ### Philosophy
+
 Application deployments are **continuous and automated**. Developers push code, ArgoCD handles deployment. This enables rapid iteration, GitOps best practices, and clear deployment history.
 
 ## Rules and Standards
 
 ### Rule 1: Separation of Concerns
+
 - **Infrastructure repos** manage the platform
 - **Application repos** manage workloads
 - Never mix infrastructure and application manifests in the same repository
 
 ### Rule 2: Infrastructure Changes Are Explicit
+
 - Infrastructure deployments require manual script execution
 - Use deployment scripts in `scripts/` directory
 - Always review changes before deploying
 - Document breaking changes in commit messages
 
 ### Rule 3: Application Changes Are Automated
+
 - Application deployments are fully automated via ArgoCD
 - Push to `main` branch triggers deployment
 - No manual intervention required for application updates
 - ArgoCD handles rollout strategy and health checks
 
 ### Rule 4: Single Source of Truth
+
 - Git is the source of truth for both patterns
-- **Infrastructure**: talos-fix repo
+- **Infrastructure**: Talos-fix repo
 - **Applications**: respective application repos
 - Manual `kubectl` changes are discouraged (emergency only)
 
 ### Rule 5: Repository Structure
+
 **Infrastructure Repository:**
+
 - Contains platform manifests
 - Contains deployment scripts
 - Contains cluster configuration
 - Contains ArgoCD Application definitions
 
 **Application Repositories:**
+
 - Contains application code
 - Contains `k8s/` directory with manifests
 - Contains Dockerfile
 - Does NOT contain infrastructure configs
 
 ### Rule 6: Namespace Ownership
+
 - Infrastructure namespace: Managed by infrastructure repo
   - `argocd`, `traefik`, `registry`, `monitoring`, `observability`
 - Application namespaces: Managed by ArgoCD Applications
   - `catalyst`, `media`, custom app namespaces
 
 ### Rule 7: Image Management
-- Infrastructure images: Use public registries (quay.io, ghcr.io, docker.io)
+
+- Infrastructure images: Use public registries (quay.io, ghcr.io, Docker.io)
 - Application images: Use local cluster registry (`registry.talos00`)
 - Build and push application images before ArgoCD deployment
 - Tag images with git commit hash for traceability
@@ -245,18 +269,21 @@ kubectl edit deployment -n <namespace> <name>
 ## Benefits of Dual GitOps
 
 ### Infrastructure Side
+
 - **Controlled Changes**: Platform stability through explicit deployments
 - **Audit Trail**: Every infrastructure change tracked in Git
 - **Recovery**: Easy cluster rebuild from infrastructure repo
 - **Testing**: Test infrastructure changes in isolation
 
 ### Application Side
+
 - **Rapid Iteration**: Push code, automatic deployment
 - **Rollback**: Git revert = automatic rollback
 - **Consistency**: Same deployment process for all apps
 - **Developer Experience**: Developers don't need kubectl access
 
 ### Combined Benefits
+
 - **Clear Boundaries**: Infrastructure vs. application changes
 - **Scalability**: Add applications without touching infrastructure
 - **Security**: Applications can't modify platform
@@ -265,11 +292,13 @@ kubectl edit deployment -n <namespace> <name>
 ## Monitoring and Observability
 
 ### ArgoCD Dashboard
+
 - **URL**: http://argocd.talos00
 - **Purpose**: Monitor application sync status
 - **Access**: Admin credentials in cluster secrets
 
 ### Infrastructure Monitoring
+
 ```bash
 # Check infrastructure stack status
 kubectl get pods -n argocd
@@ -283,6 +312,7 @@ kubectl get applications -n argocd
 ## Best Practices
 
 ### For Infrastructure
+
 1. Always test changes in overlays before base
 2. Use semantic commit messages (`feat:`, `fix:`, `chore:`)
 3. Document breaking changes in commit body
@@ -290,6 +320,7 @@ kubectl get applications -n argocd
 5. Keep infrastructure minimal - only platform services
 
 ### For Applications
+
 1. Keep `k8s/` directory structure consistent
 2. Use Kustomize for environment-specific configs
 3. Tag container images with git commit hash
@@ -297,6 +328,7 @@ kubectl get applications -n argocd
 5. Set resource requests and limits
 
 ### For Both
+
 1. Git is the source of truth - always
 2. Review changes before merging to main
 3. Use meaningful branch names for features
@@ -306,6 +338,7 @@ kubectl get applications -n argocd
 ## Troubleshooting
 
 ### Infrastructure Not Applying
+
 ```bash
 # Check if manifests are valid
 kubectl apply --dry-run=client -f infrastructure/base/component/
@@ -318,6 +351,7 @@ kubectl get all -n <namespace>
 ```
 
 ### ArgoCD Not Syncing Application
+
 ```bash
 # Check ArgoCD application status
 kubectl get application -n argocd <app-name>
@@ -332,6 +366,7 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
 ```
 
 ### Manual Changes Keep Getting Reverted
+
 **This is expected behavior!** ArgoCD will revert manual changes to match Git.
 
 **Solution**: Update the Git repository instead.
@@ -339,6 +374,7 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
 ## Future Enhancements
 
 ### Planned
+
 - [ ] CI/CD pipeline for automatic image builds
 - [ ] Multi-environment support (dev/staging/prod)
 - [ ] Automated testing before ArgoCD sync
@@ -347,6 +383,7 @@ kubectl logs -n argocd -l app.kubernetes.io/name=argocd-application-controller
 - [ ] Progressive delivery with Argo Rollouts
 
 ### Under Consideration
+
 - [ ] FluxCD for infrastructure GitOps
 - [ ] Helm charts for complex applications
 - [ ] OPA policy enforcement

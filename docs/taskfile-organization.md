@@ -18,11 +18,13 @@ This repository uses a modular Taskfile structure with domain-specific task file
 ### Root (`task` or `task <command>`)
 
 The root Taskfile provides:
+
 - Default help output showing all available domains
 - Common shortcuts for frequently used tasks
 - Cleanup tasks (`clean`, `clean-all`)
 
 **Example commands:**
+
 ```bash
 task                    # Show help
 task health            # Check cluster health
@@ -35,6 +37,7 @@ task setup             # Install development tools
 Talos Linux operations for cluster management.
 
 **Tasks:**
+
 - `gen-config` - Generate fresh Talos configuration files
 - `apply-config` - Apply configuration to Talos node
 - `bootstrap` - Bootstrap etcd on control plane
@@ -58,6 +61,7 @@ Talos Linux operations for cluster management.
 - `etcd-status` - Get etcd status
 
 **Example commands:**
+
 ```bash
 task talos:health
 task talos:service-logs -- SERVICE=kubelet
@@ -69,6 +73,7 @@ task talos:upgrade -- VERSION=v1.11.2
 Kubernetes cluster operations and troubleshooting.
 
 **Tasks:**
+
 - `kubeconfig` - Download kubeconfig from Talos
 - `kubeconfig-merge` - Merge kubeconfig to ~/.kube/config
 - `kubeconfig-unmerge` - Remove homelab context
@@ -85,6 +90,7 @@ Kubernetes cluster operations and troubleshooting.
 - `logs-follow` - Follow logs from a pod
 
 **Example commands:**
+
 ```bash
 task k8s:kubeconfig-merge
 task k8s:get-pods
@@ -96,13 +102,14 @@ task k8s:logs -- POD=prometheus-0 NAMESPACE=monitoring
 Development tools for code quality, linting, formatting, and validation.
 
 **Tasks:**
+
 - `setup` - Install all development tools (Homebrew + Yarn + hooks)
 - `install-brew-deps` - Install Homebrew dependencies
 - `install-yarn-deps` - Install Yarn dependencies
 - `hooks-install` - Install git hooks with lefthook
 - `hooks-uninstall` - Uninstall git hooks
 - `hooks-run` - Manually run git hooks
-- `lint` - Run all linters (yaml, shell, markdown, secrets)
+- `lint` - Run all linters (YAML, shell, markdown, secrets)
 - `lint-yaml` - Lint YAML files with yamllint
 - `lint-shell` - Lint shell scripts with shellcheck
 - `lint-secrets` - Scan for secrets with gitleaks
@@ -115,6 +122,7 @@ Development tools for code quality, linting, formatting, and validation.
 - `ci` - Run full CI pipeline locally
 
 **Example commands:**
+
 ```bash
 task dev:setup
 task dev:lint
@@ -127,6 +135,7 @@ task dev:ci
 Infrastructure deployment and application management.
 
 **Tasks:**
+
 - `setup` - Install core infrastructure
 - `deploy-stack` - Deploy complete stack (monitoring + observability)
 - `deploy-observability` - Deploy observability stack
@@ -148,6 +157,7 @@ Infrastructure deployment and application management.
 - `redeploy` - Force redeployment (DESTRUCTIVE)
 
 **Example commands:**
+
 ```bash
 task infra:deploy-stack
 task infra:bootstrap-flux
@@ -158,6 +168,7 @@ task infra:registry-port-forward
 ## Common Workflows
 
 ### Initial Cluster Setup
+
 ```bash
 task talos:gen-config
 task talos:apply-config -- INSECURE=true
@@ -168,6 +179,7 @@ task talos:health
 ```
 
 ### Deploy Infrastructure
+
 ```bash
 task infra:apply-namespaces
 task infra:deploy-stack
@@ -176,6 +188,7 @@ task infra:deploy-eso
 ```
 
 ### Development Setup
+
 ```bash
 task dev:setup
 task dev:hooks-install
@@ -184,6 +197,7 @@ task dev:validate
 ```
 
 ### Daily Operations
+
 ```bash
 task health                    # Check cluster health
 task k8s:get-pods              # View pods
@@ -194,17 +208,20 @@ task k8s:audit                # Generate audit report
 ## Tips
 
 1. **List all available tasks:**
+
    ```bash
    task --list                # Short list
    task --list-all            # With descriptions
    ```
 
 2. **Get help for a specific task:**
+
    ```bash
    task <domain>:<task> --help
    ```
 
 3. **Pass variables to tasks:**
+
    ```bash
    task talos:upgrade -- VERSION=v1.11.2
    task k8s:logs -- POD=name NAMESPACE=default
@@ -214,6 +231,7 @@ task k8s:audit                # Generate audit report
    Root Taskfile provides shortcuts like `task health`, `task get-pods`, etc.
 
 5. **Chain multiple tasks:**
+
    ```bash
    task dev:lint && task dev:validate && task dev:format
    ```
@@ -227,6 +245,7 @@ Common variables available across all Taskfiles:
 - `KUBECONFIG` - Kubernetes config path (default: `./.output/kubeconfig`)
 
 Override variables with environment variables:
+
 ```bash
 export TALOS_NODE=192.168.1.55
 task talos:health

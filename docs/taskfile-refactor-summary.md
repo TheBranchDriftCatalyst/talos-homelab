@@ -18,33 +18,34 @@ The monolithic `Taskfile.yaml` (383 lines) has been refactored into a modular, d
 ```
 
 **Total lines**: 805 (vs 383 original)
+
 - Increased due to better organization, comments, and additional tasks
 - Each file is focused and easier to navigate
 - Clear separation of concerns
 
 ### Files Created
 
-1. **Taskfile.talos.yaml**
+1. **Taskfile.Talos.YAML**
    - Talos Linux operations
    - 33 tasks for cluster management
    - Configuration generation, node provisioning, health checks, services, troubleshooting
 
-2. **Taskfile.k8s.yaml**
+2. **Taskfile.k8s.YAML**
    - Kubernetes operations
    - 18 tasks for K8s management
    - Kubeconfig management, resource queries, dashboard access, auditing
 
-3. **Taskfile.dev.yaml**
+3. **Taskfile.dev.YAML**
    - Development tools and quality checks
    - 17 tasks for linting, formatting, validation
    - Git hooks management, secret scanning, CI simulation
 
-4. **Taskfile.infra.yaml**
+4. **Taskfile.infra.YAML**
    - Infrastructure deployment
    - 22 tasks for platform management
    - Monitoring, observability, applications, GitOps controllers
 
-5. **Taskfile.yaml** (Root)
+5. **Taskfile.YAML** (Root)
    - Orchestration layer
    - 17 common shortcuts for frequently used tasks
    - Helpful default task with domain overview
@@ -71,21 +72,25 @@ The monolithic `Taskfile.yaml` (383 lines) has been refactored into a modular, d
 ## Benefits
 
 ### Organization
+
 - Clear separation of concerns by domain
 - Easier to find relevant tasks
 - Reduced cognitive load when working in specific areas
 
 ### Maintainability
+
 - Each file is focused and manageable (130-195 lines)
 - Changes to one domain don't affect others
 - Easier to add new tasks in the right place
 
 ### Discoverability
+
 - Domain-based organization makes tasks easier to find
 - `task --list` now shows clear domain structure
 - Helpful default task guides users to available domains
 
 ### Backwards Compatibility
+
 - All existing task names still work (via shortcuts in root)
 - New namespaced tasks provide clarity (`task talos:health`)
 - Users can gradually adopt new naming
@@ -93,6 +98,7 @@ The monolithic `Taskfile.yaml` (383 lines) has been refactored into a modular, d
 ## Task Domains
 
 ### Talos Domain (`talos:*`)
+
 **Focus**: Talos Linux cluster management
 
 - Configuration generation and application
@@ -104,6 +110,7 @@ The monolithic `Taskfile.yaml` (383 lines) has been refactored into a modular, d
 - etcd operations
 
 **Example tasks:**
+
 ```bash
 task talos:gen-config
 task talos:apply-config
@@ -113,6 +120,7 @@ task talos:services
 ```
 
 ### Kubernetes Domain (`k8s:*`)
+
 **Focus**: Kubernetes cluster operations
 
 - Kubeconfig management
@@ -123,6 +131,7 @@ task talos:services
 - Troubleshooting (events, logs, describe)
 
 **Example tasks:**
+
 ```bash
 task k8s:kubeconfig-merge
 task k8s:get-pods
@@ -132,6 +141,7 @@ task k8s:events
 ```
 
 ### Development Domain (`dev:*`)
+
 **Focus**: Code quality and development tools
 
 - Development environment setup
@@ -143,6 +153,7 @@ task k8s:events
 - CI simulation
 
 **Example tasks:**
+
 ```bash
 task dev:setup
 task dev:lint
@@ -152,6 +163,7 @@ task dev:ci
 ```
 
 ### Infrastructure Domain (`infra:*`)
+
 **Focus**: Platform and application deployment
 
 - Core infrastructure setup
@@ -165,6 +177,7 @@ task dev:ci
 - Complete workflows (deploy-all, redeploy)
 
 **Example tasks:**
+
 ```bash
 task infra:deploy-stack
 task infra:bootstrap-flux
@@ -194,7 +207,7 @@ task dev:setup
 
 When adding new tasks:
 
-1. Identify the appropriate domain (talos, k8s, dev, infra)
+1. Identify the appropriate domain (Talos, k8s, dev, infra)
 2. Add the task to the corresponding `Taskfile.<domain>.yaml`
 3. If it's a frequently used task, consider adding a shortcut in root `Taskfile.yaml`
 4. Update `docs/taskfile-organization.md` with the new task
@@ -255,6 +268,7 @@ Potential improvements to consider:
 ## Conclusion
 
 The Taskfile refactoring successfully:
+
 - ✅ Organized 90+ tasks into 4 logical domains
 - ✅ Maintained backwards compatibility with existing workflows
 - ✅ Improved discoverability and documentation

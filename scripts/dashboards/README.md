@@ -144,6 +144,7 @@ exportarr-8b7c6a5d4-vwx78     1/1     Running   0          2h
 #### Troubleshooting
 
 **Error: "kubectl not found"**
+
 ```bash
 # Install kubectl
 brew install kubectl
@@ -152,6 +153,7 @@ task dev:install-brew-deps
 ```
 
 **Error: "Kubeconfig not found"**
+
 ```bash
 # Download kubeconfig
 task kubeconfig
@@ -160,12 +162,14 @@ task kubeconfig-merge
 ```
 
 **Error: "Namespace 'media-dev' not found"**
+
 ```bash
 # Deploy the arr-stack
 task infra:deploy-arr-stack
 ```
 
 **Services show as "not-found"**
+
 - Ensure services are deployed: `kubectl get svc -n media-dev`
 - Check namespace is correct: `kubectl get ns`
 - Verify kubeconfig context: `kubectl config current-context`

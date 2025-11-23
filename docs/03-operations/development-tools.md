@@ -5,6 +5,7 @@
 ## Overview
 
 This repository uses **lefthook** to manage git hooks with automated:
+
 - ✅ **Secret scanning** (gitleaks)
 - ✅ **YAML linting** (yamllint)
 - ✅ **Kubernetes validation** (kubectl, kustomize)
@@ -23,6 +24,7 @@ task dev-setup
 ```
 
 This installs:
+
 - lefthook (git hooks manager)
 - gitleaks (secret scanner)
 - yamllint, shellcheck, markdownlint (linters)
@@ -45,16 +47,16 @@ task hooks-install
 
 Run automatically before each commit:
 
-| Hook | Tool | Purpose |
-|------|------|---------|
-| **gitleaks** | gitleaks | Scan staged files for secrets |
-| **yamllint** | yamllint | Lint YAML syntax and style |
-| **kube-validate** | kubectl | Validate K8s manifests |
-| **kustomize-validate** | kustomize | Validate kustomizations build |
-| **shellcheck** | shellcheck | Lint shell scripts |
-| **shfmt** | shfmt | Format shell scripts |
-| **markdownlint** | markdownlint | Lint Markdown files |
-| **trailing-whitespace** | grep | Check for trailing spaces |
+| Hook                    | Tool         | Purpose                       |
+| ----------------------- | ------------ | ----------------------------- |
+| **gitleaks**            | gitleaks     | Scan staged files for secrets |
+| **yamllint**            | yamllint     | Lint YAML syntax and style    |
+| **kube-validate**       | kubectl      | Validate K8s manifests        |
+| **kustomize-validate**  | kustomize    | Validate kustomizations build |
+| **shellcheck**          | shellcheck   | Lint shell scripts            |
+| **shfmt**               | shfmt        | Format shell scripts          |
+| **markdownlint**        | markdownlint | Lint Markdown files           |
+| **trailing-whitespace** | grep         | Check for trailing spaces     |
 
 ### Commit-Msg Hook
 
@@ -67,6 +69,7 @@ Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
 ```
 
 **Examples:**
+
 ```bash
 git commit -m "feat: add external secrets operator"
 git commit -m "fix(monitoring): resolve Prometheus scrape timeout"
@@ -78,10 +81,10 @@ git commit -m "chore(deps): update Flux to v2.2.0"
 
 Run before pushing to remote:
 
-| Hook | Purpose |
-|------|---------|
-| **gitleaks-full** | Full repository secret scan |
-| **check-todos** | Warn about TODO/FIXME in code |
+| Hook                            | Purpose                         |
+| ------------------------------- | ------------------------------- |
+| **gitleaks-full**               | Full repository secret scan     |
+| **check-todos**                 | Warn about TODO/FIXME in code   |
 | **validate-all-kustomizations** | Ensure all kustomizations build |
 
 ### Skipping Hooks
@@ -104,6 +107,7 @@ git commit -m "feat: add feature" --no-verify
 **Config:** `.yamllint.yaml`
 
 Validates YAML syntax and style:
+
 - 2-space indentation
 - 120 character line length
 - Document start markers (`---`)
@@ -119,6 +123,7 @@ yamllint --strict .
 ```
 
 **Common fixes:**
+
 ```bash
 # Fix indentation
 # Manual - yamllint will guide you
@@ -132,6 +137,7 @@ sed -i '' 's/[[:space:]]*$//' file.yaml
 **Config:** `.gitleaks.toml`
 
 Scans for secrets and sensitive data:
+
 - API keys, tokens
 - Passwords
 - Private keys
@@ -148,6 +154,7 @@ gitleaks detect --verbose --redact --report-path .output/gitleaks-report.json
 ```
 
 **Custom rules:**
+
 - Talos API tokens
 - Kubernetes service account tokens
 - 1Password Connect tokens
@@ -155,6 +162,7 @@ gitleaks detect --verbose --redact --report-path .output/gitleaks-report.json
 - Docker registry credentials
 
 **Allowlist:**
+
 ```toml
 # .gitleaks.toml
 [allowlist]
@@ -171,6 +179,7 @@ regexes = [
 ### Shellcheck
 
 Lints shell scripts for:
+
 - Syntax errors
 - Common mistakes
 - Best practices
@@ -185,6 +194,7 @@ shellcheck -x scripts/*.sh
 ```
 
 **Common issues:**
+
 ```bash
 # SC2086: Quote to prevent word splitting
 docker build -t $IMAGE .        # ❌
@@ -200,6 +210,7 @@ local var; var=$(cmd)           # ✅
 **Config:** `.markdownlint.yaml`
 
 Validates Markdown style:
+
 - Heading structure
 - List formatting
 - Code block language tags
@@ -219,6 +230,7 @@ markdownlint '**/*.md' --ignore node_modules
 ### shfmt
 
 Formats shell scripts with:
+
 - 2-space indentation
 - Case indentation
 - Simplified redirects
@@ -232,6 +244,7 @@ shfmt -w -i 2 -ci -sr scripts/*.sh
 ```
 
 **Before:**
+
 ```bash
 if [ -f file.txt ]
 then
@@ -240,6 +253,7 @@ fi
 ```
 
 **After:**
+
 ```bash
 if [ -f file.txt ]; then
   echo "found"
@@ -276,7 +290,7 @@ find infrastructure applications -name "kustomization.yaml" -type f | \
   done
 ```
 
-### Kubectl Validation
+### kubectl Validation
 
 Validates Kubernetes manifests with dry-run:
 
@@ -335,6 +349,7 @@ task validate
 ### Hook Fails on Commit
 
 **Check what failed:**
+
 ```bash
 # Lefthook shows detailed output
 # Look for red ❌ marks
@@ -346,6 +361,7 @@ lefthook run pre-commit --all-files
 **Common issues:**
 
 1. **YAML linting fails:**
+
    ```bash
    # See specific errors
    yamllint --strict infrastructure/
@@ -354,6 +370,7 @@ lefthook run pre-commit --all-files
    ```
 
 2. **Secret detected:**
+
    ```bash
    # Review gitleaks output
    gitleaks detect --verbose
@@ -362,6 +379,7 @@ lefthook run pre-commit --all-files
    ```
 
 3. **Kustomize build fails:**
+
    ```bash
    # Build manually to see error
    kustomize build infrastructure/base/monitoring/
@@ -372,22 +390,25 @@ lefthook run pre-commit --all-files
 ### Hook Runs Too Slow
 
 **Disable expensive hooks:**
+
 ```bash
 # Skip Kubernetes validation on commit
 LEFTHOOK_EXCLUDE=kube-validate git commit -m "feat: update"
 ```
 
 **Or edit `lefthook.yaml`:**
+
 ```yaml
 pre-commit:
   commands:
     kube-validate:
-      skip: true  # Temporarily disable
+      skip: true # Temporarily disable
 ```
 
 ### Install Failed
 
 **macOS:**
+
 ```bash
 # Install with Homebrew
 brew install lefthook gitleaks yamllint shellcheck shfmt
@@ -397,6 +418,7 @@ npm install -g markdownlint-cli
 ```
 
 **Linux:**
+
 ```bash
 # Install via package manager or download binaries
 # See Taskfile.yaml install-* tasks for scripts
@@ -404,13 +426,13 @@ npm install -g markdownlint-cli
 
 ## Configuration Files
 
-| File | Purpose |
-|------|---------|
-| `lefthook.yaml` | Git hooks configuration |
-| `.gitleaks.toml` | Secret scanning rules |
-| `.yamllint.yaml` | YAML linting rules |
-| `.markdownlint.yaml` | Markdown linting rules |
-| `.gitignore` | Ignore patterns (includes .output/, configs/) |
+| File                 | Purpose                                       |
+| -------------------- | --------------------------------------------- |
+| `lefthook.yaml`      | Git hooks configuration                       |
+| `.gitleaks.toml`     | Secret scanning rules                         |
+| `.yamllint.yaml`     | YAML linting rules                            |
+| `.markdownlint.yaml` | Markdown linting rules                        |
+| `.gitignore`         | Ignore patterns (includes .output/, configs/) |
 
 ## CI/CD Integration
 
@@ -449,14 +471,14 @@ Use lefthook's built-in `skip_on_ci` feature:
 
 ```yaml
 # lefthook.yaml
-skip_on_ci: false  # Run hooks in CI
+skip_on_ci: false # Run hooks in CI
 
 # Or skip expensive hooks in CI
 pre-commit:
   commands:
     kube-validate:
       skip:
-        - env: CI  # Skip in CI environment
+        - env: CI # Skip in CI environment
 ```
 
 ## Best Practices
@@ -464,6 +486,7 @@ pre-commit:
 ### 1. Always Run Hooks
 
 Don't use `--no-verify` unless absolutely necessary. Hooks prevent:
+
 - Committing secrets
 - Breaking Kubernetes manifests
 - Inconsistent code style
@@ -471,6 +494,7 @@ Don't use `--no-verify` unless absolutely necessary. Hooks prevent:
 ### 2. Fix Linter Issues Immediately
 
 Don't accumulate linting errors:
+
 ```bash
 # Check before committing
 task lint
@@ -485,6 +509,7 @@ task validate
 ### 3. Keep Configuration Updated
 
 Review and update configs periodically:
+
 - Add new file patterns to `.gitleaks.toml` allowlist
 - Update YAMLLint rules for project needs
 - Add custom shellcheck rules
@@ -492,6 +517,7 @@ Review and update configs periodically:
 ### 4. Use Conventional Commits
 
 Enables automated:
+
 - Changelog generation
 - Semantic versioning
 - Release notes
@@ -499,6 +525,7 @@ Enables automated:
 ### 5. Test Hooks Locally
 
 Before pushing:
+
 ```bash
 # Run all pre-push hooks
 lefthook run pre-push
@@ -518,38 +545,41 @@ pre-commit:
   commands:
     custom-check:
       run: ./scripts/custom-validation.sh {staged_files}
-      glob: "*.yaml"
+      glob: '*.yaml'
 ```
 
 ### Parallel Execution
 
 Hooks run in parallel by default:
+
 ```yaml
 pre-commit:
-  parallel: true  # Run all commands concurrently
+  parallel: true # Run all commands concurrently
 ```
 
 ### File-Specific Hooks
 
 Target specific files:
+
 ```yaml
 pre-commit:
   commands:
     helm-lint:
       run: helm lint {staged_files}
-      glob: "**/Chart.yaml"  # Only run on Helm charts
+      glob: '**/Chart.yaml' # Only run on Helm charts
 ```
 
 ### Skip Patterns
 
 Skip hooks for certain commits:
+
 ```yaml
 pre-commit:
   commands:
     yamllint:
       skip:
-        - merge     # Skip on merge commits
-        - rebase    # Skip during rebase
+        - merge # Skip on merge commits
+        - rebase # Skip during rebase
 ```
 
 ## Reference

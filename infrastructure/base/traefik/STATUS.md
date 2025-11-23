@@ -8,14 +8,14 @@
 
 ## 📊 Current Status
 
-| Metric | Value | Health |
-|--------|-------|--------|
-| **Deployment Status** | ✅ Deployed | 🟢 Healthy |
-| **Version** | v3.5.x (Helm v37.x) | 🟢 Current |
-| **Uptime** | >99% | 🟢 Stable |
-| **IngressRoutes Managed** | 12+ | 🟢 Active |
-| **TLS/HTTPS** | ❌ Not Configured | 🔴 HTTP Only |
-| **Metrics Endpoint** | ✅ Prometheus | 🟢 Enabled |
+| Metric                    | Value               | Health       |
+| ------------------------- | ------------------- | ------------ |
+| **Deployment Status**     | ✅ Deployed         | 🟢 Healthy   |
+| **Version**               | v3.5.x (Helm v37.x) | 🟢 Current   |
+| **Uptime**                | >99%                | 🟢 Stable    |
+| **IngressRoutes Managed** | 12+                 | 🟢 Active    |
+| **TLS/HTTPS**             | ❌ Not Configured   | 🔴 HTTP Only |
+| **Metrics Endpoint**      | ✅ Prometheus       | 🟢 Enabled   |
 
 **Health Legend:** 🟢 Healthy | 🟡 Degraded | 🔴 Down | 🔵 Development
 
@@ -24,6 +24,7 @@
 ## 🎯 Purpose
 
 Traefik serves as the **Ingress Controller and HTTP router** in our dual-GitOps architecture:
+
 - **Manages:** All HTTP/HTTPS traffic routing to cluster services
 - **Method:** Kubernetes IngressRoute CRDs (Traefik-native)
 - **Role:** Infrastructure component (manual deployment, not ArgoCD-managed)
@@ -36,23 +37,27 @@ See: [docs/02-architecture/dual-gitops.md](../../../docs/02-architecture/dual-gi
 ## 📦 Deployed Resources
 
 ### Namespace
+
 - `traefik` - Traefik control plane (privileged security context)
 
 ### Core Components
+
 - **Deployment Type:** DaemonSet (for hostPort binding)
 - **Replicas:** 1 (single-node cluster)
 - **Service Type:** ClusterIP
 - **Host Ports:** 80 (HTTP), 443 (HTTPS), 9000 (Dashboard)
 
 ### EntryPoints
-| EntryPoint | Port | Protocol | Status |
-|------------|------|----------|--------|
-| `web` | 80 | HTTP | ✅ Active |
-| `websecure` | 443 | HTTPS | 🟡 Configured but unused |
-| `traefik` | 9000 | HTTP | ✅ Dashboard |
-| `metrics` | 9100 | HTTP | ✅ Prometheus |
+
+| EntryPoint  | Port | Protocol | Status                   |
+| ----------- | ---- | -------- | ------------------------ |
+| `web`       | 80   | HTTP     | ✅ Active                |
+| `websecure` | 443  | HTTPS    | 🟡 Configured but unused |
+| `traefik`   | 9000 | HTTP     | ✅ Dashboard             |
+| `metrics`   | 9100 | HTTP     | ✅ Prometheus            |
 
 ### Access
+
 - **Dashboard:** http://traefik.talos00
 - **Metrics:** http://traefik.talos00:9100/metrics
 - **Auth:** Insecure (dashboard accessible without auth - homelab only)
@@ -62,41 +67,45 @@ See: [docs/02-architecture/dual-gitops.md](../../../docs/02-architecture/dual-gi
 ## 🌐 IngressRoutes Deployed
 
 ### Infrastructure Services
-| Service | Host | Namespace | Port | Status |
-|---------|------|-----------|------|--------|
-| ArgoCD | argocd.talos00 | argocd | 80 | ✅ Active |
-| Grafana | grafana.talos00 | monitoring | 80 | ✅ Active |
-| Prometheus | prometheus.talos00 | monitoring | 9090 | ✅ Active |
-| Alertmanager | alertmanager.talos00 | monitoring | 9093 | ✅ Active |
-| Graylog | graylog.talos00 | observability | 9000 | ✅ Active |
-| Docker Registry | registry.talos00 | registry | 5000 | 🟡 Read-only |
+
+| Service         | Host                 | Namespace     | Port | Status       |
+| --------------- | -------------------- | ------------- | ---- | ------------ |
+| ArgoCD          | ArgoCD.talos00       | ArgoCD        | 80   | ✅ Active    |
+| Grafana         | Grafana.talos00      | monitoring    | 80   | ✅ Active    |
+| Prometheus      | Prometheus.talos00   | monitoring    | 9090 | ✅ Active    |
+| Alertmanager    | alertmanager.talos00 | monitoring    | 9093 | ✅ Active    |
+| Graylog         | graylog.talos00      | observability | 9000 | ✅ Active    |
+| Docker Registry | registry.talos00     | registry      | 5000 | 🟡 Read-only |
 
 ### Application Services (Defined, Not Deployed)
-| Service | Host | Namespace | Port | Status |
-|---------|------|-----------|------|--------|
-| Prowlarr | prowlarr.talos00 | media | 9696 | 🔴 Not Deployed |
-| Sonarr | sonarr.talos00 | media | 8989 | 🔴 Not Deployed |
-| Radarr | radarr.talos00 | media | 7878 | 🔴 Not Deployed |
-| Readarr | readarr.talos00 | media | 8787 | 🔴 Not Deployed |
-| Overseerr | overseerr.talos00 | media | 5055 | 🔴 Not Deployed |
-| Plex | plex.talos00 | media | 32400 | 🔴 Not Deployed |
-| Jellyfin | jellyfin.talos00 | media | 8096 | 🔴 Not Deployed |
-| Homepage | homepage.talos00 | media | 3000 | 🔴 Not Deployed |
+
+| Service   | Host              | Namespace | Port  | Status          |
+| --------- | ----------------- | --------- | ----- | --------------- |
+| Prowlarr  | prowlarr.talos00  | media     | 9696  | 🔴 Not Deployed |
+| Sonarr    | sonarr.talos00    | media     | 8989  | 🔴 Not Deployed |
+| Radarr    | radarr.talos00    | media     | 7878  | 🔴 Not Deployed |
+| Readarr   | readarr.talos00   | media     | 8787  | 🔴 Not Deployed |
+| Overseerr | overseerr.talos00 | media     | 5055  | 🔴 Not Deployed |
+| Plex      | plex.talos00      | media     | 32400 | 🔴 Not Deployed |
+| Jellyfin  | jellyfin.talos00  | media     | 8096  | 🔴 Not Deployed |
+| Homepage  | homepage.talos00  | media     | 3000  | 🔴 Not Deployed |
 
 ---
 
 ## 🔧 Configuration
 
 ### Deployment Method
+
 - **Tool:** Helm (via manual kubectl/script)
 - **Chart:** `traefik/traefik` v37.x (Traefik v3.5.x)
 - **Repository:** https://traefik.github.io/charts
 - **Values File:** `kubernetes/traefik-values.yaml`
 
 ### Helm Values Overview
+
 ```yaml
 deployment:
-  kind: DaemonSet  # Single-node hostPort binding
+  kind: DaemonSet # Single-node hostPort binding
   replicas: 1
 
 service:
@@ -104,13 +113,13 @@ service:
 
 ports:
   web:
-    hostPort: 80     # Direct host binding
+    hostPort: 80 # Direct host binding
   websecure:
     hostPort: 443
   traefik:
-    port: 9000       # Dashboard
+    port: 9000 # Dashboard
   metrics:
-    port: 9100       # Prometheus
+    port: 9100 # Prometheus
 
 ingressRoute:
   dashboard:
@@ -126,8 +135,8 @@ providers:
     enabled: true
 
 additionalArguments:
-  - --serversTransport.insecureSkipVerify=true  # Self-signed certs
-  - --api.insecure=true                          # Homelab only
+  - --serversTransport.insecureSkipVerify=true # Self-signed certs
+  - --api.insecure=true # Homelab only
   - --api.dashboard=true
 
 metrics:
@@ -138,11 +147,12 @@ metrics:
       namespace: monitoring
 
 securityContext:
-  runAsUser: 0       # Required for hostPort binding
+  runAsUser: 0 # Required for hostPort binding
   runAsNonRoot: false
 ```
 
 ### Files Structure
+
 ```
 infrastructure/base/traefik/
 ├── STATUS.md (this file)
@@ -165,7 +175,7 @@ scripts/
 - ✅ Dashboard accessible at http://traefik.talos00
 - ✅ All IngressRoutes routing correctly (HTTP)
 - ✅ Prometheus metrics exposed and scraped
-- ✅ ServiceMonitor integrated with kube-prometheus-stack
+- ✅ ServiceMonitor integrated with kube-Prometheus-stack
 - ✅ Cross-namespace routing enabled
 - ✅ Access logs enabled (INFO level)
 - ✅ hostPort binding for direct node access
@@ -175,6 +185,7 @@ scripts/
 ## 🔴 Known Issues
 
 ### 1. HTTP Only - No HTTPS/TLS
+
 - **Status:** 🔴 Critical Security Gap
 - **Impact:** All traffic unencrypted, credentials transmitted in plaintext
 - **Cause:** cert-manager not deployed, no TLS certificates
@@ -186,6 +197,7 @@ scripts/
 - **Fix ETA:** Medium priority (see TODOs)
 
 ### 2. Docker Registry HTTP Push Issues
+
 - **Status:** 🟡 Partial Service
 - **Impact:** Cannot push images via Traefik ingress (registry.talos00)
 - **Cause:** HTTP blob upload returns 404 via Traefik proxy
@@ -194,6 +206,7 @@ scripts/
 - **Fix ETA:** Under investigation
 
 ### 3. Insecure Dashboard Access
+
 - **Status:** 🟡 Low Priority (homelab)
 - **Impact:** Dashboard accessible without authentication
 - **Cause:** `--api.insecure=true` flag set
@@ -201,8 +214,9 @@ scripts/
 - **Fix ETA:** Add basic auth middleware (see TODOs)
 
 ### 4. Domain Naming Inconsistency
+
 - **Status:** 🟡 Low Priority
-- **Impact:** Mixed usage of `.lab` (values.yaml) vs `.talos00` (IngressRoutes)
+- **Impact:** Mixed usage of `.lab` (values.YAML) vs `.talos00` (IngressRoutes)
 - **Cause:** Migration from initial setup
 - **Current:** All IngressRoutes use `.talos00`
 - **Fix ETA:** Standardize to `.talos00` (see TODO.md)
@@ -212,6 +226,7 @@ scripts/
 ## 📋 TODOs
 
 ### High Priority
+
 - [ ] Deploy cert-manager for TLS certificate management
 - [ ] Configure Let's Encrypt certificate issuer
 - [ ] Update all IngressRoutes to use `websecure` entrypoint
@@ -219,6 +234,7 @@ scripts/
 - [ ] Debug Docker Registry HTTP push failures
 
 ### Medium Priority
+
 - [ ] Add basic auth middleware for Traefik dashboard
 - [ ] Configure rate limiting middleware for public services
 - [ ] Add redirect middleware (HTTP -> HTTPS) after TLS enabled
@@ -227,6 +243,7 @@ scripts/
 - [ ] Standardize domain naming (.talos00)
 
 ### Low Priority
+
 - [ ] Add request tracing with Jaeger/Zipkin
 - [ ] Configure circuit breaker middleware
 - [ ] Add retry middleware for flaky services
@@ -239,6 +256,7 @@ scripts/
 ## 🚀 Deployment Commands
 
 ### Initial Deployment
+
 ```bash
 # Deploy Traefik via bootstrap script
 ./scripts/setup-infrastructure.sh
@@ -259,6 +277,7 @@ helm install traefik traefik/traefik \
 ```
 
 ### Upgrade Traefik
+
 ```bash
 # Update Helm repo
 helm repo update
@@ -270,6 +289,7 @@ helm upgrade traefik traefik/traefik \
 ```
 
 ### Create IngressRoute
+
 ```bash
 # Example IngressRoute manifest
 cat <<EOF | kubectl apply -f -
@@ -292,6 +312,7 @@ EOF
 ```
 
 ### Verify Deployment
+
 ```bash
 # Check Traefik pod status
 kubectl get pods -n traefik
@@ -362,12 +383,14 @@ kubectl port-forward -n traefik svc/traefik 9000:9000
 ### Service Returns 404
 
 **Possible Causes:**
+
 1. IngressRoute match rule incorrect
 2. Service name/port mismatch
 3. Service not running
 4. Namespace mismatch
 
 **Debug Steps:**
+
 ```bash
 # Check IngressRoute match rule
 kubectl get ingressroute -n <namespace> <name> -o yaml
@@ -400,11 +423,13 @@ kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:909
 ## 📊 Metrics & Monitoring
 
 ### Prometheus Metrics Exposed
+
 - **Endpoint:** `:9100/metrics`
 - **ServiceMonitor:** Enabled (namespace: monitoring)
 - **Labels:** `prometheus: kube-prometheus`
 
 ### Key Metrics
+
 ```promql
 # Request rate per service
 rate(traefik_service_requests_total[5m])
@@ -423,11 +448,13 @@ traefik_tls_certs_not_after
 ```
 
 ### Grafana Dashboards
+
 - **Dashboard ID:** 17346 (Traefik Official)
 - **Access:** http://grafana.talos00
 - **Import:** Dashboards -> Import -> 17346
 
 ### Access Logs
+
 - **Enabled:** Yes (INFO level)
 - **Format:** JSON
 - **Destination:** stdout (collected by Fluent Bit)
@@ -449,11 +476,13 @@ traefik_tls_certs_not_after
 ## 📈 Performance
 
 ### Resource Usage (Current)
+
 - **CPU:** ~100m (low, single-node)
 - **Memory:** ~50Mi (minimal)
 - **Storage:** None (stateless)
 
 ### Resource Limits
+
 ```yaml
 resources:
   requests:
@@ -465,11 +494,13 @@ resources:
 ```
 
 ### Scalability
+
 - **Current:** 1 replica (DaemonSet on single node)
 - **Target:** 1 replica (single-node cluster)
 - **Multi-node:** Switch to Deployment with multiple replicas
 
 ### Load Testing
+
 ```bash
 # Install hey (HTTP load generator)
 go install github.com/rakyll/hey@latest
@@ -486,6 +517,7 @@ watch -n 1 'kubectl top pods -n traefik'
 ## 🎓 Best Practices
 
 ### IngressRoute Structure
+
 ```yaml
 ---
 apiVersion: traefik.io/v1alpha1
@@ -498,20 +530,21 @@ metadata:
     team: platform
 spec:
   entryPoints:
-    - web              # HTTP (or websecure for HTTPS)
+    - web # HTTP (or websecure for HTTPS)
   routes:
     - match: Host(`my-app.talos00`)
       kind: Rule
       services:
         - name: my-app-service
           port: 8080
-      middlewares:     # Optional
+      middlewares: # Optional
         - name: rate-limit
 ```
 
 ### Middleware Examples
 
 **Basic Auth:**
+
 ```yaml
 ---
 apiVersion: traefik.io/v1alpha1
@@ -521,10 +554,11 @@ metadata:
   namespace: traefik
 spec:
   basicAuth:
-    secret: auth-secret  # htpasswd format
+    secret: auth-secret # htpasswd format
 ```
 
 **Rate Limiting:**
+
 ```yaml
 ---
 apiVersion: traefik.io/v1alpha1
@@ -539,6 +573,7 @@ spec:
 ```
 
 **HTTP to HTTPS Redirect:**
+
 ```yaml
 ---
 apiVersion: traefik.io/v1alpha1
@@ -553,6 +588,7 @@ spec:
 ```
 
 ### Security Best Practices
+
 1. **Enable TLS/HTTPS** - Use cert-manager for automated certificate management
 2. **Restrict Dashboard Access** - Use basic auth or IP whitelist middleware
 3. **Rate Limiting** - Protect services from abuse
@@ -561,6 +597,7 @@ spec:
 6. **Regular Updates** - Keep Traefik updated for security patches
 
 ### IngressRoute Naming Convention
+
 - Use lowercase with hyphens
 - Match service name when possible
 - Include namespace prefix for shared middlewares
@@ -571,12 +608,14 @@ spec:
 ## 🔄 Maintenance
 
 ### Regular Tasks
+
 - **Weekly:** Review access logs for errors
 - **Monthly:** Update Traefik Helm chart version
 - **Quarterly:** Audit IngressRoutes and middlewares
 - **Annually:** Review TLS certificate expiration (automated with cert-manager)
 
 ### Update Procedure
+
 ```bash
 # 1. Check current version
 helm list -n traefik
@@ -602,6 +641,7 @@ curl -I http://grafana.talos00
 ```
 
 ### Backup Strategy
+
 **Note:** Traefik is stateless - configuration lives in Kubernetes manifests
 
 ```bash
@@ -616,6 +656,7 @@ cp kubernetes/traefik-values.yaml backups/traefik-values-$(date +%Y%m%d).yaml
 ```
 
 ### Rollback Procedure
+
 ```bash
 # Rollback to previous Helm release
 helm rollback traefik -n traefik
@@ -630,6 +671,7 @@ helm rollback traefik <revision> -n traefik
 ## 🚨 Security Considerations
 
 ### Current Security Posture
+
 - ✅ Runs in isolated namespace
 - ✅ Prometheus metrics secured (internal only)
 - ✅ Pod security context configured (privileged for hostPort)
@@ -639,6 +681,7 @@ helm rollback traefik <revision> -n traefik
 - ❌ **No IP whitelisting**
 
 ### Recommended Hardening (Priority Order)
+
 1. **Enable HTTPS/TLS** - Deploy cert-manager, configure TLS certificates
 2. **Secure Dashboard** - Add basic auth or disable external access
 3. **Rate Limiting** - Protect against DoS attacks
@@ -647,6 +690,7 @@ helm rollback traefik <revision> -n traefik
 6. **Header Security** - Add security headers middleware
 
 ### Threat Model
+
 - **Threat:** Unencrypted credential transmission (HTTP)
   - **Mitigation:** Deploy HTTPS/TLS (HIGH PRIORITY)
 - **Threat:** Unauthorized dashboard access
@@ -660,13 +704,13 @@ helm rollback traefik <revision> -n traefik
 
 ## 📅 Maintenance Schedule
 
-| Task | Frequency | Last Completed | Next Due |
-|------|-----------|----------------|----------|
-| Review access logs | Weekly | 2025-11-11 | 2025-11-18 |
-| Update Helm chart | Monthly | 2025-11-11 | 2025-12-11 |
-| Audit IngressRoutes | Quarterly | 2025-11-11 | 2026-02-11 |
-| Security review | Quarterly | - | 2026-02-11 |
-| Performance testing | Semi-annually | - | 2026-05-11 |
+| Task                | Frequency     | Last Completed | Next Due   |
+| ------------------- | ------------- | -------------- | ---------- |
+| Review access logs  | Weekly        | 2025-11-11     | 2025-11-18 |
+| Update Helm chart   | Monthly       | 2025-11-11     | 2025-12-11 |
+| Audit IngressRoutes | Quarterly     | 2025-11-11     | 2026-02-11 |
+| Security review     | Quarterly     | -              | 2026-02-11 |
+| Performance testing | Semi-annually | -              | 2026-05-11 |
 
 ---
 

@@ -14,6 +14,7 @@ Implemented comprehensive development tooling with automated git hooks for code 
 **Config:** `lefthook.yaml`
 
 Automated git hooks for:
+
 - **Pre-commit:** Linting, formatting, validation
 - **Commit-msg:** Conventional commits validation
 - **Pre-push:** Full secret scan, TODO warnings
@@ -24,12 +25,14 @@ Automated git hooks for:
 **Config:** `.gitleaks.toml`
 
 Features:
+
 - Extends default ruleset
 - Custom rules for Talos, Kubernetes, 1Password, ArgoCD
 - Allowlist for false positives
 - Runs on staged files (pre-commit) and full repo (pre-push)
 
 Custom rules added:
+
 - Talos API tokens
 - Kubernetes service account JWTs
 - 1Password Connect tokens
@@ -41,6 +44,7 @@ Custom rules added:
 **Config:** `.yamllint.yaml`
 
 Rules:
+
 - 2-space indentation (Kubernetes standard)
 - 120 character line length
 - Document start markers (`---`)
@@ -50,6 +54,7 @@ Rules:
 ### 4. Shellcheck
 
 Lints shell scripts for:
+
 - Syntax errors
 - Common mistakes (SC2086: unquoted variables, etc.)
 - Portability issues
@@ -60,6 +65,7 @@ Lints shell scripts for:
 **Config:** `.markdownlint.yaml`
 
 Validates:
+
 - Heading structure (ATX style: `#`)
 - List formatting (dash style: `-`)
 - Code block language tags
@@ -98,17 +104,17 @@ task validate-kustomize     # Validate kustomizations build
 
 ### Pre-Commit (Parallel)
 
-| Hook | Tool | Purpose |
-|------|------|---------|
-| gitleaks | gitleaks | Secret scanning (staged files) |
-| yamllint | yamllint | YAML linting |
-| kube-validate | kubectl | Kubernetes manifest validation |
-| kustomize-validate | kustomize | Kustomization build validation |
-| shellcheck | shellcheck | Shell script linting |
-| shfmt | shfmt | Shell script formatting |
-| markdownlint | markdownlint | Markdown linting |
-| trailing-whitespace | grep | Trailing space check |
-| helm-lint | helm | Helm chart linting (if charts exist) |
+| Hook                | Tool         | Purpose                              |
+| ------------------- | ------------ | ------------------------------------ |
+| gitleaks            | gitleaks     | Secret scanning (staged files)       |
+| yamllint            | yamllint     | YAML linting                         |
+| kube-validate       | kubectl      | Kubernetes manifest validation       |
+| kustomize-validate  | kustomize    | Kustomization build validation       |
+| shellcheck          | shellcheck   | Shell script linting                 |
+| shfmt               | shfmt        | Shell script formatting              |
+| markdownlint        | markdownlint | Markdown linting                     |
+| trailing-whitespace | grep         | Trailing space check                 |
+| helm-lint           | helm         | Helm chart linting (if charts exist) |
 
 ### Commit-Msg
 
@@ -119,6 +125,7 @@ Format: `<type>[optional scope]: <description>`
 Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
 
 Examples:
+
 ```
 feat: add external secrets operator
 fix(monitoring): resolve Prometheus scrape timeout
@@ -206,6 +213,7 @@ task validate
 ### Secret Detection
 
 Gitleaks scans for:
+
 - API keys, tokens
 - Passwords, credentials
 - Private keys
@@ -213,6 +221,7 @@ Gitleaks scans for:
 - Docker registry auth
 
 **False positive handling:**
+
 ```toml
 # .gitleaks.toml
 [allowlist]
@@ -241,6 +250,7 @@ stopwords = ["example", "sample", "test"]
 3. **Kustomize build:** kustomize build
 
 Catches:
+
 - Invalid YAML syntax
 - Missing required fields
 - Invalid resource references
@@ -258,6 +268,7 @@ task lint && task validate
 Created: `docs/03-operations/development-tools.md`
 
 Covers:
+
 - Quick start guide
 - Tool configuration
 - Hook descriptions
@@ -314,11 +325,13 @@ Taskfile.yaml               # Added dev-setup, lint, format, validate tasks
 ## Next Steps
 
 1. **Run initial setup:**
+
    ```bash
    task dev-setup
    ```
 
 2. **Test hooks:**
+
    ```bash
    # Make a small change
    echo "# Test" >> README.md
@@ -327,6 +340,7 @@ Taskfile.yaml               # Added dev-setup, lint, format, validate tasks
    ```
 
 3. **Fix any pre-existing issues:**
+
    ```bash
    task lint  # Find problems
    task format  # Auto-fix what's possible
@@ -368,11 +382,13 @@ Taskfile.yaml               # Added dev-setup, lint, format, validate tasks
 ### Hook Execution Time
 
 **Pre-commit (staged files only):**
+
 - Small commit (1-2 files): ~2-5 seconds
 - Medium commit (5-10 files): ~5-10 seconds
 - Large commit (20+ files): ~10-15 seconds
 
 **Pre-push (full repository):**
+
 - Gitleaks full scan: ~5-10 seconds
 - Kustomize validation: ~3-5 seconds
 
@@ -381,6 +397,7 @@ Taskfile.yaml               # Added dev-setup, lint, format, validate tasks
 Hooks run in parallel (`parallel: true`) for speed.
 
 Skip expensive hooks if needed:
+
 ```bash
 # Skip Kubernetes validation
 LEFTHOOK_EXCLUDE=kube-validate git commit -m "docs: update"
