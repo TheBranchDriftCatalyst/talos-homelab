@@ -77,11 +77,21 @@ if [ "${SKIP_CREDS:-false}" != "true" ]; then
   fi
 
   echo "Creating secret: onepassword-connect-secret"
+  echo "Base64 encoding credentials file for 1Password Connect..."
+  echo "(1Password Connect expects OP_SESSION to be base64-encoded JSON)"
+
+  # Create temporary base64-encoded file
+  # Kubernetes auto-decodes secrets when mounting as env vars, so we need to pre-encode
+  cat "${CREDS_FILE}" | base64 | tr -d '\n' > /tmp/op-creds-b64.txt
+
   kubectl create secret generic onepassword-connect-secret \
     -n "${NAMESPACE}" \
-    --from-file=1password-credentials.json="${CREDS_FILE}"
+    --from-file=1password-credentials.json=/tmp/op-creds-b64.txt
 
-  echo "✅ Created onepassword-connect-secret"
+  # Clean up temporary file
+  rm /tmp/op-creds-b64.txt
+
+  echo "✅ Created onepassword-connect-secret (base64-encoded)"
 fi
 
 # Create token secret
