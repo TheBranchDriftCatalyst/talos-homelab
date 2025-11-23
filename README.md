@@ -137,6 +137,22 @@ This includes:
 
 ## Common Tasks
 
+This repository uses a modular Taskfile structure organized by domain. Tasks are grouped into:
+
+- `talos:*` - Talos Linux operations (config, bootstrap, health, services)
+- `k8s:*` - Kubernetes operations (kubeconfig, pods, dashboard, audit)
+- `dev:*` - Development tools (linting, formatting, hooks, validation)
+- `infra:*` - Infrastructure deployment (monitoring, observability, apps)
+
+**Quick reference:**
+```bash
+task                # Show available domains and commands
+task --list         # List all available tasks
+task --list-all     # Show all tasks with descriptions
+```
+
+For complete documentation of all available tasks, see [docs/taskfile-organization.md](docs/taskfile-organization.md).
+
 ### Cluster Management
 
 ```bash

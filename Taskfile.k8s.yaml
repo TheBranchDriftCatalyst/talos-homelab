@@ -1,0 +1,130 @@
+# Taskfile for Kubernetes operations
+version: '3'
+
+vars:
+  TALOS_NODE: '{{.TALOS_NODE | default "192.168.1.54"}}'
+  TALOSCONFIG: './configs/talosconfig'
+  KUBECONFIG: './.output/kubeconfig'
+
+tasks:
+  # ============================================
+  # Kubeconfig Management
+  # ============================================
+
+  kubeconfig:
+    desc: Download kubeconfig from Talos
+    cmds:
+      - mkdir -p .output
+      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} kubeconfig .output
+      - echo "✅ Kubeconfig saved to {{.KUBECONFIG}}"
+
+  kubeconfig-merge:
+    desc: Merge kubeconfig to ~/.kube/config (idempotent, enables kubectx/kubectl)
+    cmds:
+      - ./scripts/kubeconfig-merge.sh
+
+  kubeconfig-unmerge:
+    desc: Remove homelab-single context from ~/.kube/config
+    cmds:
+      - ./scripts/kubeconfig-unmerge.sh
+
+  kubeconfig-export:
+    desc: Export KUBECONFIG environment variable for current shell
+    cmds:
+      - echo "Run this command to use the local kubeconfig:"
+      - echo "  export KUBECONFIG={{.KUBECONFIG}}"
+
+  # ============================================
+  # Cluster Resources
+  # ============================================
+
+  get-nodes:
+    desc: Get Kubernetes nodes
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} get nodes -o wide
+
+  get-pods:
+    desc: Get all pods in all namespaces
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} get pods -A
+
+  get-all:
+    desc: Get all resources in all namespaces
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} get all -A
+
+  # ============================================
+  # Kubernetes Dashboard
+  # ============================================
+
+  dashboard-token:
+    desc: Get Kubernetes Dashboard access token
+    cmds:
+      - ./scripts/dashboard-token.sh
+
+  dashboard-proxy:
+    desc: Start kubectl proxy for Dashboard access
+    cmds:
+      - echo "Starting proxy... Dashboard will be available at:"
+      - echo "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/"
+      - echo ""
+      - echo "Run 'task k8s:dashboard-token' in another terminal to get the login token"
+      - kubectl --kubeconfig {{.KUBECONFIG}} proxy
+
+  # ============================================
+  # Cluster Audit
+  # ============================================
+
+  audit:
+    desc: Generate comprehensive cluster audit report
+    cmds:
+      - ./scripts/cluster-audit.sh
+
+  # ============================================
+  # Namespace Operations
+  # ============================================
+
+  namespaces:
+    desc: List all namespaces
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} get namespaces
+
+  # ============================================
+  # Troubleshooting
+  # ============================================
+
+  events:
+    desc: Get events in all namespaces (use -- NAMESPACE=default for specific)
+    cmds:
+      - |
+        if [ -n "{{.NAMESPACE}}" ]; then
+          kubectl --kubeconfig {{.KUBECONFIG}} get events -n {{.NAMESPACE}} --sort-by='.lastTimestamp'
+        else
+          kubectl --kubeconfig {{.KUBECONFIG}} get events --all-namespaces --sort-by='.lastTimestamp'
+        fi
+    vars:
+      NAMESPACE: '{{.NAMESPACE | default ""}}'
+
+  describe-pod:
+    desc: Describe a pod (use -- POD=name NAMESPACE=default)
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} describe pod {{.POD}} -n {{.NAMESPACE}}
+    vars:
+      POD: '{{.POD}}'
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'
+
+  logs:
+    desc: Get logs from a pod (use -- POD=name NAMESPACE=default)
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} logs {{.POD}} -n {{.NAMESPACE}}
+    vars:
+      POD: '{{.POD}}'
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'
+
+  logs-follow:
+    desc: Follow logs from a pod (use -- POD=name NAMESPACE=default)
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} logs -f {{.POD}} -n {{.NAMESPACE}}
+    vars:
+      POD: '{{.POD}}'
+      NAMESPACE: '{{.NAMESPACE | default "default"}}'

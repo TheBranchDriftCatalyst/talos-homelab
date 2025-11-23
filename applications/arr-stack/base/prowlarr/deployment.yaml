@@ -24,26 +24,33 @@ spec:
         - name: prowlarr
           image: lscr.io/linuxserver/prowlarr:latest
           imagePullPolicy: IfNotPresent
-
+          # Import common environment variables (PUID, PGID, TZ, POSTGRES_*)
+          envFrom:
+            - configMapRef:
+                name: arr-common-env
           env:
-            - name: PUID
-              value: "1000"
-            - name: PGID
-              value: "1000"
-            - name: TZ
-              value: "America/Los_Angeles"
-            # PostgreSQL configuration
+            # Map common PostgreSQL settings to Prowlarr-specific env var names
             - name: PROWLARR__POSTGRES__HOST
-              value: "postgresql"
+              valueFrom:
+                configMapKeyRef:
+                  name: arr-common-env
+                  key: POSTGRES_HOST
             - name: PROWLARR__POSTGRES__PORT
-              value: "5432"
+              valueFrom:
+                configMapKeyRef:
+                  name: arr-common-env
+                  key: POSTGRES_PORT
             - name: PROWLARR__POSTGRES__USER
-              value: "arrstack"
+              valueFrom:
+                configMapKeyRef:
+                  name: arr-common-env
+                  key: POSTGRES_USER
             - name: PROWLARR__POSTGRES__PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: postgresql-secret
                   key: postgres-password
+            # Prowlarr-specific database names
             - name: PROWLARR__POSTGRES__MAINDB
               value: "prowlarr_main"
             - name: PROWLARR__POSTGRES__LOGDB

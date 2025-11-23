@@ -1,0 +1,203 @@
+# Taskfile for infrastructure deployment
+version: '3'
+
+vars:
+  KUBECONFIG: './.output/kubeconfig'
+
+tasks:
+  # ============================================
+  # Infrastructure Setup
+  # ============================================
+
+  setup:
+    desc: Install core infrastructure (Traefik, metrics-server, test services)
+    cmds:
+      - ./scripts/setup-infrastructure.sh
+
+  deploy-stack:
+    desc: Deploy complete observability and monitoring stack
+    cmds:
+      - ./scripts/deploy-stack.sh
+
+  deploy-observability:
+    desc: Deploy observability stack (OpenSearch, FluentBit, Graylog)
+    cmds:
+      - ./scripts/deploy-observability.sh
+
+  deploy-infra-testing:
+    desc: Deploy infrastructure testing UI tools (Headlamp, Kubeview, etc.)
+    cmds:
+      - ./scripts/deploy-infra-testing.sh
+
+  # ============================================
+  # Application Deployment
+  # ============================================
+
+  deploy-arr-stack:
+    desc: Deploy ARR stack (Sonarr, Radarr, Prowlarr, etc.)
+    cmds:
+      - echo "Deploying ARR stack..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k applications/arr-stack/overlays/dev/
+      - echo "✅ ARR stack deployed"
+
+  deploy-tdarr:
+    desc: Deploy Tdarr transcoding service
+    cmds:
+      - ./scripts/deploy-tdarr.sh
+
+  # ============================================
+  # ArgoCD Management
+  # ============================================
+
+  bootstrap-argocd:
+    desc: Bootstrap ArgoCD GitOps controller
+    cmds:
+      - ./scripts/bootstrap-argocd.sh
+
+  argocd-apps:
+    desc: Apply all ArgoCD application definitions
+    cmds:
+      - echo "Applying ArgoCD applications..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/argocd/applications/
+      - echo "✅ ArgoCD applications applied"
+
+  # ============================================
+  # FluxCD Management
+  # ============================================
+
+  bootstrap-flux:
+    desc: Bootstrap FluxCD GitOps controller
+    cmds:
+      - ./scripts/bootstrap-flux.sh
+
+  flux-reconcile:
+    desc: Force reconciliation of all Flux resources
+    cmds:
+      - flux reconcile kustomization flux-system --with-source
+      - echo "✅ Flux reconciliation triggered"
+
+  flux-status:
+    desc: Check Flux system status
+    cmds:
+      - flux check
+      - flux get all
+
+  # ============================================
+  # External Secrets Operator
+  # ============================================
+
+  deploy-eso:
+    desc: Deploy External Secrets Operator
+    cmds:
+      - echo "Deploying External Secrets Operator..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/external-secrets/
+      - echo "✅ External Secrets Operator deployed"
+
+  setup-1password:
+    desc: Setup 1Password Connect secrets (interactive)
+    cmds:
+      - ./scripts/setup-1password-connect.sh
+
+  # ============================================
+  # Registry Management
+  # ============================================
+
+  deploy-registry:
+    desc: Deploy Docker registry
+    cmds:
+      - echo "Deploying Docker registry..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/registry/
+      - echo "✅ Docker registry deployed"
+
+  registry-port-forward:
+    desc: Port-forward to Docker registry (localhost:5000)
+    cmds:
+      - echo "Forwarding registry to localhost:5000..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} port-forward -n registry svc/docker-registry 5000:5000
+
+  # ============================================
+  # Application Builds & Deployments
+  # ============================================
+
+  build-catalyst-ui:
+    desc: Build and deploy catalyst-ui application
+    cmds:
+      - ./scripts/build-and-deploy-catalyst-ui.sh
+
+  # ============================================
+  # Resource Management
+  # ============================================
+
+  apply-namespaces:
+    desc: Apply all namespace definitions
+    cmds:
+      - echo "Applying namespaces..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/namespaces/
+      - echo "✅ Namespaces applied"
+
+  apply-storage:
+    desc: Apply storage classes and PVCs
+    cmds:
+      - echo "Applying storage resources..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/storage/
+      - echo "✅ Storage resources applied"
+
+  # ============================================
+  # Dashboards & Status
+  # ============================================
+
+  dashboard-arr-stack:
+    desc: Show ARR stack dashboard with real-time status
+    cmds:
+      - ./scripts/dashboards/arr-stack.sh
+
+  # ============================================
+  # Infrastructure Testing Tools Management
+  # ============================================
+
+  infra-testing-status:
+    desc: Check status of infra-testing tools
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} get pods -n infra-testing
+      - echo ""
+      - kubectl --kubeconfig {{.KUBECONFIG}} get svc -n infra-testing
+      - echo ""
+      - kubectl --kubeconfig {{.KUBECONFIG}} get ingressroute -n infra-testing
+
+  infra-testing-logs:
+    desc: View logs for a specific infra-testing tool (TOOL=headlamp|kubeview|kube-ops-view|goldilocks)
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} logs -n infra-testing -l app={{.TOOL}} --tail=50 -f
+
+  infra-testing-delete:
+    desc: Delete all infra-testing tools
+    cmds:
+      - echo "🗑️  Deleting infra-testing stack..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} delete -k infrastructure/base/infra-testing/ || true
+      - echo "✅ Infra-testing stack deleted"
+    prompt: This will delete all infra-testing tools. Continue?
+
+  # ============================================
+  # Complete Deployment Workflows
+  # ============================================
+
+  deploy-all:
+    desc: Deploy complete infrastructure stack (monitoring + observability + apps)
+    cmds:
+      - echo "🚀 Deploying complete infrastructure stack..."
+      - task: apply-namespaces
+      - task: deploy-stack
+      - task: deploy-eso
+      - task: deploy-registry
+      - echo "✅ Complete infrastructure stack deployed!"
+
+  redeploy:
+    desc: Force redeployment of all infrastructure
+    cmds:
+      - echo "🔄 Redeploying infrastructure..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} delete -k infrastructure/base/monitoring/kube-prometheus-stack/ || true
+      - kubectl --kubeconfig {{.KUBECONFIG}} delete -k infrastructure/base/observability/ || true
+      - sleep 10
+      - task: deploy-all
+      - echo "✅ Infrastructure redeployed"
+    prompt: This will delete and redeploy all infrastructure. Continue?

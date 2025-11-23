@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: goldilocks
+  namespace: infra-testing
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: goldilocks
+rules:
+- apiGroups:
+  - "apps"
+  resources:
+  - deployments
+  - statefulsets
+  - daemonsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - "autoscaling.k8s.io"
+  resources:
+  - verticalpodautoscalers
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: goldilocks
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: goldilocks
+subjects:
+- kind: ServiceAccount
+  name: goldilocks
+  namespace: infra-testing
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: goldilocks-controller
+  namespace: infra-testing
+  labels:
+    app: goldilocks
+    component: controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: goldilocks
+      component: controller
+  template:
+    metadata:
+      labels:
+        app: goldilocks
+        component: controller
+    spec:
+      serviceAccountName: goldilocks
+      containers:
+      - name: goldilocks
+        image: us-docker.pkg.dev/fairwinds-ops/oss/goldilocks:v4.11.0
+        command:
+        - /goldilocks
+        - controller
+        - -v2
+        resources:
+          limits:
+            cpu: 25m
+            memory: 32Mi
+          requests:
+            cpu: 25m
+            memory: 32Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: goldilocks-dashboard
+  namespace: infra-testing
+  labels:
+    app: goldilocks
+    component: dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: goldilocks
+      component: dashboard
+  template:
+    metadata:
+      labels:
+        app: goldilocks
+        component: dashboard
+    spec:
+      serviceAccountName: goldilocks
+      containers:
+      - name: goldilocks
+        image: us-docker.pkg.dev/fairwinds-ops/oss/goldilocks:v4.11.0
+        command:
+        - /goldilocks
+        - dashboard
+        - -v2
+        ports:
+        - containerPort: 8080
+          name: http
+        resources:
+          limits:
+            cpu: 25m
+            memory: 32Mi
+          requests:
+            cpu: 25m
+            memory: 32Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: goldilocks-dashboard
+  namespace: infra-testing
+  labels:
+    app: goldilocks
+    component: dashboard
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: goldilocks
+    component: dashboard

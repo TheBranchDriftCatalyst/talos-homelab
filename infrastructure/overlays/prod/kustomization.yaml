@@ -5,17 +5,17 @@ kind: Kustomization
 resources:
   - ../../base/namespaces
   - ../../base/storage
-  - ../../base/traefik
+  # - ../../base/traefik  # Disabled - traefik not needed in prod overlay
   - ../../base/monitoring/kube-prometheus-stack
 
 # Environment-specific configuration
-namespace: media-prod
+# NOTE: Do not set 'namespace' here as it transforms ALL resources including namespace definitions
 
-# ConfigMap for domain substitution
-configMapGenerator:
-  - name: domain-config
-    literals:
-      - DOMAIN=lab
+# ConfigMap for domain substitution (currently unused - domains hardcoded in IngressRoutes)
+# configMapGenerator:
+#   - name: domain-config
+#     literals:
+#       - DOMAIN=lab
 
 # Patches for prod environment
 patches:
@@ -49,25 +49,25 @@ patches:
         path: /spec/routes/0/match
         value: Host(`alertmanager.talos00`)
 
-# Variable substitutions for NFS storage
-replacements:
-  - source:
-      kind: ConfigMap
-      name: env-config
-      fieldPath: data.SYNOLOGY_NFS_SERVER
-    targets:
-      - select:
-          kind: StorageClass
-          name: nfs-synology
-        fieldPaths:
-          - parameters.server
-      - select:
-          kind: PersistentVolume
-          name: nfs-media
-        fieldPaths:
-          - spec.nfs.server
-      - select:
-          kind: PersistentVolume
-          name: nfs-downloads
-        fieldPaths:
-          - spec.nfs.server
+# Variable substitutions for NFS storage (disabled - env-config ConfigMap not defined)
+# replacements:
+#   - source:
+#       kind: ConfigMap
+#       name: env-config
+#       fieldPath: data.SYNOLOGY_NFS_SERVER
+#     targets:
+#       - select:
+#           kind: StorageClass
+#           name: nfs-synology
+#         fieldPaths:
+#           - parameters.server
+#       - select:
+#           kind: PersistentVolume
+#           name: nfs-media
+#         fieldPaths:
+#           - spec.nfs.server
+#       - select:
+#           kind: PersistentVolume
+#           name: nfs-downloads
+#         fieldPaths:
+#           - spec.nfs.server

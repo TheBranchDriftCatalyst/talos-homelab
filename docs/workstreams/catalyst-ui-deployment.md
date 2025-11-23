@@ -18,7 +18,7 @@ The infrastructure is set up but ArgoCD deployment is currently paused pending D
   - Internal: `http://docker-registry.registry.svc.cluster.local:5000`
   - Traefik HTTP: `http://registry.talos00` (IngressRoute)
   - NodePort: `192.168.1.54:32553` (not externally accessible on Talos)
-  
+
 **Note**: NodePort is not accessible from outside the cluster on Talos. Use kubectl port-forward for external access.
 
 ### 2. ArgoCD Application
@@ -129,7 +129,7 @@ Docker Desktop has been experiencing issues restarting after daemon.json updates
 - `Dockerfile` - Multi-stage production build
 - `.dockerignore` - Optimized build context
 - `k8s/namespace.yaml` - Namespace definition
-- `k8s/deployment.yaml` - Deployment manifest  
+- `k8s/deployment.yaml` - Deployment manifest
 - `k8s/service.yaml` - Service manifest
 - `k8s/ingressroute.yaml` - Traefik routing
 - `k8s/kustomization.yaml` - Kustomize config

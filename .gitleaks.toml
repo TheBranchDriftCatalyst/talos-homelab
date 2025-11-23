@@ -1,0 +1,469 @@
+# Gitleaks Configuration - Comprehensive Secret Protection
+# Docs: https://github.com/gitleaks/gitleaks
+# Rule examples: https://github.com/gitleaks/gitleaks/tree/master/cmd/generate/config/rules
+
+title = "Comprehensive Gitleaks Configuration for Talos Homelab"
+
+# Extend default gitleaks rules (AWS, GitHub, Slack, etc.)
+[extend]
+useDefault = true
+
+# ============================================
+# Infrastructure & Cloud Providers
+# ============================================
+
+[[rules]]
+id = "talos-api-token"
+description = "Talos Linux API token"
+regex = '''talos\.dev/token:\s*([a-zA-Z0-9+/]{32,})'''
+secretGroup = 1
+tags = ["talos", "token", "infrastructure"]
+
+[[rules]]
+id = "talos-machine-token"
+description = "Talos machine token in configuration"
+regex = '''(?i)(talos[_-]?machine[_-]?token|machine[_-]?token)["\s:=]+([a-zA-Z0-9+/]{40,})'''
+secretGroup = 2
+tags = ["talos", "token", "infrastructure"]
+
+[[rules]]
+id = "proxmox-api-token"
+description = "Proxmox API token"
+regex = '''(?i)(PVEAPIToken|proxmox[_-]?token)["\s:=]+([a-zA-Z0-9-]+![a-zA-Z0-9-]+=[\da-f]{8}(-[\da-f]{4}){3}-[\da-f]{12})'''
+secretGroup = 2
+tags = ["proxmox", "token", "infrastructure"]
+
+[[rules]]
+id = "terraform-token"
+description = "Terraform Cloud/Enterprise token"
+regex = '''(?i)(terraform[_-]?token|atlas[_-]?token)["\s:=]+([a-zA-Z0-9]{14}\.atlasv1\.[a-zA-Z0-9_-]{60,})'''
+secretGroup = 2
+tags = ["terraform", "token", "infrastructure"]
+
+# ============================================
+# Kubernetes & Container Orchestration
+# ============================================
+
+[[rules]]
+id = "kubernetes-service-account-token"
+description = "Kubernetes service account JWT token"
+regex = '''eyJhbGciOiJSUzI1NiIsImtpZCI6[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}\.[a-zA-Z0-9_-]{20,}'''
+tags = ["kubernetes", "jwt", "token"]
+entropy = 3.5
+
+[[rules]]
+id = "kubernetes-secret-base64"
+description = "Kubernetes Secret in base64 (potential)"
+regex = '''(?i)(kubernetes[_-]?secret|k8s[_-]?secret)["\s:=]+([A-Za-z0-9+/]{40,}={0,2})'''
+secretGroup = 2
+tags = ["kubernetes", "secret"]
+entropy = 4.0
+
+[[rules]]
+id = "helm-registry-password"
+description = "Helm registry password"
+regex = '''(?i)(helm[_-]?registry[_-]?password|helm[_-]?repo[_-]?password)["\s:=]+([^\s"']{8,})'''
+secretGroup = 2
+tags = ["helm", "password"]
+
+[[rules]]
+id = "argocd-admin-password"
+description = "ArgoCD admin password or token"
+regex = '''(?i)(argocd[_-]?(admin[_-]?)?password|argocd[_-]?token)["\s:=]+([a-zA-Z0-9+/=]{16,})'''
+secretGroup = 3
+tags = ["argocd", "password", "gitops"]
+
+[[rules]]
+id = "flux-webhook-token"
+description = "Flux webhook token"
+regex = '''(?i)(flux[_-]?webhook[_-]?token|receiver[_-]?token)["\s:=]+([a-zA-Z0-9]{32,})'''
+secretGroup = 2
+tags = ["flux", "token", "gitops"]
+
+# ============================================
+# Container Registry & Docker
+# ============================================
+
+[[rules]]
+id = "docker-registry-auth"
+description = "Docker registry authentication token"
+regex = '''(?i)(registry[_-]?auth|docker[_-]?auth)["\s:=]+([a-zA-Z0-9+/=]{40,})'''
+secretGroup = 2
+tags = ["docker", "auth", "registry"]
+entropy = 4.0
+
+[[rules]]
+id = "docker-hub-token"
+description = "Docker Hub access token"
+regex = '''dckr_pat_[a-zA-Z0-9_-]{20,}'''
+tags = ["docker", "token"]
+
+[[rules]]
+id = "ghcr-token"
+description = "GitHub Container Registry (GHCR) token"
+regex = '''(?i)(ghcr[_-]?token|github[_-]?cr[_-]?token)["\s:=]+(ghp_[a-zA-Z0-9]{36})'''
+secretGroup = 2
+tags = ["github", "ghcr", "token"]
+
+# ============================================
+# Secret Management
+# ============================================
+
+[[rules]]
+id = "onepassword-connect-token"
+description = "1Password Connect API token"
+regex = '''(?i)(op[_-]?connect[_-]?token|onepassword[_-]?token)["\s:=]+([a-zA-Z0-9_-]{26,})'''
+secretGroup = 2
+tags = ["1password", "token"]
+
+[[rules]]
+id = "onepassword-secret-reference"
+description = "1Password secret reference (op://)"
+regex = '''op://[a-zA-Z0-9-]+/[a-zA-Z0-9-]+/[a-zA-Z0-9-]+'''
+tags = ["1password", "reference"]
+# Note: This is a reference, not the actual secret, but may indicate leaked structure
+
+[[rules]]
+id = "hashicorp-vault-token"
+description = "HashiCorp Vault token"
+regex = '''(?i)(vault[_-]?token)["\s:=]+(hvs\.[a-zA-Z0-9_-]{90,})'''
+secretGroup = 2
+tags = ["vault", "token"]
+
+[[rules]]
+id = "sealed-secrets-key"
+description = "Sealed Secrets private key"
+regex = '''-----BEGIN (RSA|EC) PRIVATE KEY-----[A-Za-z0-9+/\s=]+-----END (RSA|EC) PRIVATE KEY-----'''
+tags = ["sealed-secrets", "private-key"]
+
+# ============================================
+# Monitoring & Observability
+# ============================================
+
+[[rules]]
+id = "prometheus-bearer-token"
+description = "Prometheus bearer token"
+regex = '''(?i)(prometheus[_-]?token|bearer[_-]?token)["\s:=]+([a-zA-Z0-9_-]{32,})'''
+secretGroup = 2
+tags = ["prometheus", "token"]
+
+[[rules]]
+id = "grafana-api-key"
+description = "Grafana API key"
+regex = '''(?i)(grafana[_-]?api[_-]?key|gf_[a-zA-Z0-9_]+)'''
+tags = ["grafana", "api-key"]
+
+[[rules]]
+id = "datadog-api-key"
+description = "Datadog API key"
+regex = '''(?i)(datadog[_-]?api[_-]?key|dd[_-]?api[_-]?key)["\s:=]+([a-f0-9]{32})'''
+secretGroup = 2
+tags = ["datadog", "api-key"]
+
+[[rules]]
+id = "newrelic-api-key"
+description = "New Relic API key"
+regex = '''(?i)(newrelic[_-]?api[_-]?key|nr[_-]?api[_-]?key)["\s:=]+(NRAK-[A-Z0-9]{27})'''
+secretGroup = 2
+tags = ["newrelic", "api-key"]
+
+# ============================================
+# Databases
+# ============================================
+
+[[rules]]
+id = "postgresql-password"
+description = "PostgreSQL password in connection string"
+regex = '''postgres(?:ql)?://[a-zA-Z0-9_-]+:([^@\s]+)@[a-zA-Z0-9.-]+'''
+secretGroup = 1
+tags = ["postgresql", "password", "database"]
+
+[[rules]]
+id = "mysql-password"
+description = "MySQL password in connection string"
+regex = '''mysql://[a-zA-Z0-9_-]+:([^@\s]+)@[a-zA-Z0-9.-]+'''
+secretGroup = 1
+tags = ["mysql", "password", "database"]
+
+[[rules]]
+id = "mongodb-password"
+description = "MongoDB password in connection string"
+regex = '''mongodb(\+srv)?://[a-zA-Z0-9_-]+:([^@\s]+)@[a-zA-Z0-9.-]+'''
+secretGroup = 1
+tags = ["mongodb", "password", "database"]
+
+[[rules]]
+id = "redis-password"
+description = "Redis password in connection string"
+regex = '''redis://[^:]*:([^@\s]+)@[a-zA-Z0-9.-]+'''
+secretGroup = 1
+tags = ["redis", "password", "database"]
+
+# ============================================
+# CI/CD & Git
+# ============================================
+
+[[rules]]
+id = "gitlab-token"
+description = "GitLab personal access token"
+regex = '''glpat-[a-zA-Z0-9_-]{20,}'''
+tags = ["gitlab", "token"]
+
+[[rules]]
+id = "github-app-token"
+description = "GitHub App token"
+regex = '''(ghs|ghu)_[a-zA-Z0-9]{36,}'''
+tags = ["github", "token"]
+
+[[rules]]
+id = "github-fine-grained-token"
+description = "GitHub fine-grained personal access token"
+regex = '''github_pat_[a-zA-Z0-9_]{82}'''
+tags = ["github", "token"]
+
+[[rules]]
+id = "circleci-token"
+description = "CircleCI personal API token"
+regex = '''(?i)(circleci[_-]?token)["\s:=]+([a-f0-9]{40})'''
+secretGroup = 2
+tags = ["circleci", "token"]
+
+[[rules]]
+id = "jenkins-token"
+description = "Jenkins API token"
+regex = '''(?i)(jenkins[_-]?token|jenkins[_-]?api[_-]?token)["\s:=]+([a-f0-9]{34})'''
+secretGroup = 2
+tags = ["jenkins", "token"]
+
+# ============================================
+# Messaging & Communication
+# ============================================
+
+[[rules]]
+id = "slack-webhook"
+description = "Slack webhook URL"
+regex = '''https://hooks\.slack\.com/services/T[a-zA-Z0-9_]+/B[a-zA-Z0-9_]+/[a-zA-Z0-9_]+'''
+tags = ["slack", "webhook"]
+
+[[rules]]
+id = "discord-webhook"
+description = "Discord webhook URL"
+regex = '''https://discord(?:app)?\.com/api/webhooks/\d+/[a-zA-Z0-9_-]+'''
+tags = ["discord", "webhook"]
+
+[[rules]]
+id = "teams-webhook"
+description = "Microsoft Teams webhook URL"
+regex = '''https://[a-zA-Z0-9]+\.webhook\.office\.com/webhookb2/[a-zA-Z0-9-]+@[a-zA-Z0-9-]+/IncomingWebhook/[a-zA-Z0-9]+/[a-zA-Z0-9-]+'''
+tags = ["teams", "webhook"]
+
+# ============================================
+# Storage & Backups
+# ============================================
+
+[[rules]]
+id = "s3-presigned-url"
+description = "AWS S3 pre-signed URL"
+regex = '''https://[a-zA-Z0-9.-]+\.s3\.amazonaws\.com/[^\s]*\?[^\s]*X-Amz-Signature=[a-f0-9]{64}'''
+tags = ["aws", "s3", "presigned-url"]
+
+[[rules]]
+id = "azure-storage-key"
+description = "Azure Storage Account key"
+regex = '''(?i)(azure[_-]?storage[_-]?key|storage[_-]?account[_-]?key)["\s:=]+([a-zA-Z0-9+/=]{88})'''
+secretGroup = 2
+tags = ["azure", "storage", "key"]
+entropy = 4.5
+
+[[rules]]
+id = "gcp-service-account-key"
+description = "GCP service account private key"
+regex = '''"private_key":\s*"-----BEGIN PRIVATE KEY-----[^"]+-----END PRIVATE KEY-----"'''
+tags = ["gcp", "private-key"]
+
+# ============================================
+# SSH & Certificates
+# ============================================
+
+[[rules]]
+id = "ssh-private-key"
+description = "SSH private key"
+regex = '''-----BEGIN (RSA|DSA|EC|OPENSSH) PRIVATE KEY-----'''
+tags = ["ssh", "private-key"]
+
+[[rules]]
+id = "pgp-private-key"
+description = "PGP private key block"
+regex = '''-----BEGIN PGP PRIVATE KEY BLOCK-----'''
+tags = ["pgp", "private-key"]
+
+[[rules]]
+id = "ssl-certificate-private-key"
+description = "SSL certificate private key"
+regex = '''-----BEGIN (RSA )?PRIVATE KEY-----[A-Za-z0-9+/\s=]+-----END (RSA )?PRIVATE KEY-----'''
+tags = ["ssl", "private-key", "certificate"]
+
+# ============================================
+# Generic High-Entropy Secrets
+# ============================================
+
+[[rules]]
+id = "high-entropy-base64"
+description = "High entropy base64 string (potential secret)"
+regex = '''(?i)(secret|password|token|key|auth)["\s:=]+([A-Za-z0-9+/]{40,}={0,2})'''
+secretGroup = 2
+tags = ["generic", "high-entropy"]
+entropy = 4.5
+
+[[rules]]
+id = "high-entropy-hex"
+description = "High entropy hexadecimal string (potential secret)"
+regex = '''(?i)(secret|password|token|key|auth)["\s:=]+([a-f0-9]{64,})'''
+secretGroup = 2
+tags = ["generic", "high-entropy"]
+entropy = 3.5
+
+# ============================================
+# Application-Specific
+# ============================================
+
+[[rules]]
+id = "npm-token"
+description = "NPM access token"
+regex = '''npm_[a-zA-Z0-9]{36}'''
+tags = ["npm", "token"]
+
+[[rules]]
+id = "pypi-token"
+description = "PyPI API token"
+regex = '''pypi-AgEIcHlwaS5vcmc[a-zA-Z0-9_-]{70,}'''
+tags = ["pypi", "token"]
+
+[[rules]]
+id = "sendgrid-api-key"
+description = "SendGrid API key"
+regex = '''SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}'''
+tags = ["sendgrid", "api-key"]
+
+[[rules]]
+id = "stripe-api-key"
+description = "Stripe API key"
+regex = '''(?:r|s)k_live_[a-zA-Z0-9]{24,}'''
+tags = ["stripe", "api-key"]
+
+[[rules]]
+id = "mailgun-api-key"
+description = "Mailgun API key"
+regex = '''(?i)(mailgun[_-]?api[_-]?key)["\s:=]+(key-[a-f0-9]{32})'''
+secretGroup = 2
+tags = ["mailgun", "api-key"]
+
+[[rules]]
+id = "twilio-api-key"
+description = "Twilio API key"
+regex = '''SK[a-f0-9]{32}'''
+tags = ["twilio", "api-key"]
+
+# ============================================
+# Allowlist Configuration
+# ============================================
+
+[allowlist]
+description = "Allowlisted files and patterns"
+
+# Paths to exclude from scanning
+paths = [
+    # Generated/output files
+    '''\\.output/.*''',
+    '''\\.git/.*''',
+    '''node_modules/.*''',
+    '''vendor/.*''',
+    '''dist/.*''',
+    '''build/.*''',
+
+    # Test fixtures and mocks
+    '''test/fixtures/.*''',
+    '''tests/fixtures/.*''',
+    '''.*\\.test\\..*''',
+    '''.*\\.spec\\..*''',
+    '''.*_test\\.go''',
+    '''tests/.*\\.golden''',
+
+    # Documentation examples (sanitized)
+    '''docs/.*/.*\\.example''',
+    '''examples/.*''',
+    '''infrastructure/.*/example-.*\\.yaml''',
+    '''.*\\.md\\.example''',
+
+    # Lock files and checksums (hashes, not secrets)
+    '''.*\\.lock$''',
+    '''go\\.sum$''',
+    '''yarn\\.lock$''',
+    '''package-lock\\.json$''',
+    '''poetry\\.lock$''',
+    '''Gemfile\\.lock$''',
+
+    # Changelog and documentation
+    '''CHANGELOG\\.md''',
+    '''HISTORY\\.md''',
+    '''.*\\.svg$''',  # SVG files may contain base64 images
+
+    # Configuration files (non-sensitive)
+    '''\\.gitleaks\\.toml''',  # This file itself
+    '''\\.pre-commit-config\\.yaml''',
+]
+
+# Allowlist specific commits (add commit SHAs for known false positives)
+commits = []
+
+# Allowlist specific regexes (false positives)
+regexes = [
+    # Example/placeholder values
+    '''example.*[a-zA-Z0-9+/=]{20,}''',
+    '''sample.*[a-zA-Z0-9+/=]{20,}''',
+    '''demo.*[a-zA-Z0-9+/=]{20,}''',
+    '''test.*[a-zA-Z0-9+/=]{20,}''',
+
+    # Placeholder strings
+    '''REPLACE_ME''',
+    '''CHANGEME''',
+    '''YOUR_.*_HERE''',
+    '''TODO:.*''',
+    '''FIXME:.*''',
+    '''XXX.*''',
+
+    # Common non-secret patterns
+    '''sha256:[a-f0-9]{64}''',  # Docker image digests
+    '''sha1:[a-f0-9]{40}''',    # Git commit SHAs
+    '''md5:[a-f0-9]{32}''',     # MD5 checksums
+    '''[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}''',  # UUIDs
+
+    # Base64 encoded common strings
+    '''YWRtaW4=''',  # "admin" in base64
+    '''cGFzc3dvcmQ=''',  # "password" in base64
+    '''dGVzdA==''',  # "test" in base64
+
+    # Common Kubernetes ConfigMap data (non-sensitive)
+    '''data:\n\s+[a-zA-Z0-9.-]+:\s*\|''',
+
+    # Public keys (not secrets)
+    '''-----BEGIN PUBLIC KEY-----''',
+    '''-----BEGIN CERTIFICATE-----''',
+    '''ssh-rsa AAAA[A-Za-z0-9+/]+''',
+    '''ssh-ed25519 AAAA[A-Za-z0-9+/]+''',
+]
+
+# Stopwords - patterns that indicate a false positive
+stopwords = [
+    "example",
+    "sample",
+    "test",
+    "demo",
+    "placeholder",
+    "dummy",
+    "fake",
+    "mock",
+    "TODO",
+    "FIXME",
+    "XXX",
+]
