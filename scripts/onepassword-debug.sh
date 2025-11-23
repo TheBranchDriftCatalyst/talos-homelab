@@ -15,8 +15,8 @@ DIM='\033[2m'
 
 # Configuration
 NAMESPACE="${NAMESPACE:-external-secrets}"
-SECRET_STORE_NAME="${SECRET_STORE_NAME:-onepassword-secretstore}"
-CLUSTER_SECRET_STORE_NAME="${CLUSTER_SECRET_STORE_NAME:-onepassword-cluster-secretstore}"
+SECRET_STORE_NAME="${SECRET_STORE_NAME:-onepassword}"
+CLUSTER_SECRET_STORE_NAME="${CLUSTER_SECRET_STORE_NAME:-onepassword}"
 ONEPASSWORD_CONNECT_SVC="${ONEPASSWORD_CONNECT_SVC:-onepassword-connect}"
 
 echo -e "${CYAN}${BOLD}"
