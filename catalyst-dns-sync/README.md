@@ -8,6 +8,12 @@ Automatically sync Traefik IngressRoute and standard Ingress hostnames to DNS re
 
 ## Quick Start
 
+### Status
+
+Untested entirely, need debug sesh.
+- [ ] Need to move this to the dev repo as well at some point
+
+
 ### Development Mode (Local /etc/hosts)
 
 ```bash
