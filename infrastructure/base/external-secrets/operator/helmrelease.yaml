@@ -1,0 +1,56 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: external-secrets
+  namespace: external-secrets
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: external-secrets
+      version: "0.11.x"
+      sourceRef:
+        kind: HelmRepository
+        name: external-secrets
+        namespace: external-secrets
+      interval: 12h
+  install:
+    crds: Create
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    # External Secrets Operator configuration
+    installCRDs: true
+
+    # Webhook configuration
+    webhook:
+      port: 9443
+
+    # Resource limits
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+    # Metrics and monitoring
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+
+    # Cert controller for webhook certificates
+    certController:
+      create: true
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi

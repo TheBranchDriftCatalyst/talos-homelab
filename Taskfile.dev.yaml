@@ -1,0 +1,237 @@
+# Taskfile for development tools (linting, formatting, hooks)
+version: '3'
+
+tasks:
+  # ============================================
+  # Development Environment Setup
+  # ============================================
+
+  setup:
+    desc: Install all development tools (Homebrew + Yarn)
+    cmds:
+      - echo "📦 Installing development tools..."
+      - task: deps:brew
+      - task: deps:yarn
+      - task: hooks:install
+      - echo "✅ Development environment setup complete!"
+      - echo ""
+      - echo "Installed tools:"
+      - echo "  ✓ Homebrew packages (see Brewfile)"
+      - echo "  ✓ Node packages (see package.json)"
+      - echo "  ✓ Git hooks (lefthook)"
+
+  deps:brew:
+    desc: Install Homebrew dependencies from Brewfile
+    cmds:
+      - |
+        if ! command -v brew &> /dev/null; then
+          echo "❌ Homebrew not installed. Install from https://brew.sh"
+          exit 1
+        fi
+        echo "📦 Installing Homebrew packages..."
+        brew bundle --file=Brewfile
+        echo "✅ Homebrew packages installed"
+    sources:
+      - Brewfile
+    generates:
+      - /usr/local/bin/lefthook
+      - /usr/local/bin/gitleaks
+
+  deps:yarn:
+    desc: Install Yarn dependencies (markdownlint, prettier)
+    cmds:
+      - |
+        if ! command -v yarn &> /dev/null; then
+          echo "❌ Yarn not installed. Install with: brew install yarn"
+          exit 1
+        fi
+        echo "📦 Installing Node packages..."
+        yarn install
+        echo "✅ Node packages installed"
+    sources:
+      - package.json
+    generates:
+      - node_modules/
+
+  # ============================================
+  # Git Hooks
+  # ============================================
+
+  hooks:install:
+    desc: Install git hooks with lefthook
+    cmds:
+      - |
+        if ! command -v lefthook &> /dev/null; then
+          echo "❌ lefthook not installed. Run: task dev:deps:brew"
+          exit 1
+        fi
+        lefthook install
+        echo "✅ Git hooks installed"
+
+  hooks:uninstall:
+    desc: Uninstall git hooks
+    cmds:
+      - lefthook uninstall
+      - echo "✅ Git hooks uninstalled"
+
+  hooks:run:
+    desc: Manually run git hooks (use -- HOOK=pre-commit)
+    cmds:
+      - lefthook run {{.HOOK}}
+    vars:
+      HOOK: '{{.HOOK | default "pre-commit"}}'
+
+  # ============================================
+  # Linting
+  # ============================================
+
+  lint:
+    desc: Run all linters
+    cmds:
+      - echo "Running all linters..."
+      - task: lint:yaml
+      - task: lint:shell
+      - yarn lint  # Markdown + Prettier
+      - task: lint:secrets
+      - echo "✅ All linters passed"
+
+  lint:yaml:
+    desc: Lint YAML files with yamllint
+    cmds:
+      - yamllint --strict .
+
+  lint:shell:
+    desc: Lint shell scripts with shellcheck
+    cmds:
+      - find scripts -name "*.sh" -exec shellcheck -x {} +
+
+  lint:secrets:
+    desc: Scan for secrets in repository with gitleaks
+    cmds:
+      - gitleaks detect --verbose --redact
+
+  lint:secrets:report:
+    desc: Scan for secrets and generate report
+    cmds:
+      - mkdir -p .output
+      - gitleaks detect --verbose --redact --report-path .output/gitleaks-report.json
+      - echo "✅ Report saved to .output/gitleaks-report.json"
+
+  # ============================================
+  # Formatting
+  # ============================================
+
+  format:
+    desc: Format all code
+    cmds:
+      - echo "Formatting code..."
+      - task: format-shell
+      - yarn format  # Markdown + Prettier
+      - echo "✅ Formatting complete"
+
+  format-shell:
+    desc: Format shell scripts with shfmt
+    cmds:
+      - find scripts -name "*.sh" -exec shfmt -w -i 2 -ci -sr {} +
+
+  # ============================================
+  # Validation
+  # ============================================
+
+  validate:
+    desc: Validate all infrastructure manifests
+    cmds:
+      - echo "Validating Kubernetes manifests..."
+      - task: validate:kustomize
+      - task: validate:k8s
+      - echo "✅ All validations passed"
+
+  validate:kustomize:
+    desc: Validate all kustomizations build successfully
+    cmds:
+      - |
+        find infrastructure applications -name "kustomization.yaml" -type f 2>/dev/null | while read kfile; do
+          dir=$(dirname "$kfile")
+          echo "  Validating: $dir"
+          kustomize build "$dir" > /dev/null || exit 1
+        done
+
+  validate:k8s:
+    desc: Validate Kubernetes manifests with kubectl dry-run
+    cmds:
+      - |
+        find infrastructure applications -name "*.yaml" -type f 2>/dev/null | while read file; do
+          kubectl apply --dry-run=client -f "$file" 2>&1 | \
+            grep -v "Warning: would violate PodSecurity" || true
+        done
+
+  # ============================================
+  # Local Development (Talos + Tilt)
+  # ============================================
+
+  local-up:
+    desc: Start local Talos cluster and Tilt for ESO development
+    cmds:
+      - echo "🚀 Starting local development environment..."
+      - ./scripts/provision-local.sh
+      - echo "⏳ Waiting for cluster to stabilize..."
+      - sleep 5
+      - tilt up
+
+  local-down:
+    desc: Stop Tilt and destroy local Talos cluster
+    cmds:
+      - echo "🛑 Stopping local development environment..."
+      - tilt down
+      - talosctl cluster destroy --name talos-local
+
+  tilt-up:
+    desc: Start Tilt (assumes cluster is running)
+    cmds:
+      - tilt up
+
+  tilt-down:
+    desc: Stop Tilt
+    cmds:
+      - tilt down
+
+  tilt-ci:
+    desc: Run Tilt in CI mode (validate without UI)
+    cmds:
+      - tilt ci
+
+  tilt-logs:
+    desc: View Tilt logs for a resource (RESOURCE=<name>)
+    cmds:
+      - tilt logs {{.RESOURCE}}
+    vars:
+      RESOURCE: '{{.RESOURCE | default ""}}'
+
+  install-tilt:
+    desc: Install Tilt (macOS via Homebrew)
+    cmds:
+      - |
+        if ! command -v tilt &> /dev/null; then
+          echo "📦 Installing Tilt..."
+          brew install tilt-dev/tap/tilt
+          echo "✅ Tilt installed"
+        else
+          echo "✅ Tilt already installed: $(tilt version)"
+        fi
+
+  eso-debug:
+    desc: Debug External Secrets Operator and 1Password integration
+    cmds:
+      - ./scripts/onepassword-debug.sh
+
+  # ============================================
+  # CI/CD Simulation
+  # ============================================
+
+  ci:
+    desc: Run full CI pipeline locally (lint + format + validate)
+    cmds:
+      - echo "🚀 Running CI pipeline..."
+      - task: lint
+      - task: validate
+      - echo "✅ CI pipeline passed!"

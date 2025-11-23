@@ -1,0 +1,423 @@
+# Tiltfile for Talos Homelab Infrastructure Development
+# Provides hot-reloading for Flux-managed infrastructure manifests during development
+
+# Load Tilt extensions
+load('ext://namespace', 'namespace_create')
+load('ext://helm_resource', 'helm_resource', 'helm_repo')
+
+# Configuration
+config.define_string('k8s_context', args=False, usage='Kubernetes context to use')
+config.define_string('namespace', args=False, usage='Default namespace for development')
+config.define_bool('flux-suspend', args=False, usage='Suspend Flux reconciliation during development')
+cfg = config.parse()
+
+# Settings
+settings = {
+    'k8s_context': cfg.get('k8s_context', 'homelab-single'),
+    'namespace': cfg.get('namespace', 'infra-testing'),
+    'flux_suspend': cfg.get('flux-suspend', False),
+}
+
+# Ensure we're using the correct k8s context
+allow_k8s_contexts(settings['k8s_context'])
+
+print("""
+╔═══════════════════════════════════════════════════════════════╗
+║  Talos Homelab Infrastructure Development with Tilt           ║
+╚═══════════════════════════════════════════════════════════════╝
+
+🎯 K8s Context: %s
+🎯 Target Namespace: %s
+🔧 Flux Auto-suspend: %s
+
+Available Commands:
+  - Press SPACE to open the Tilt UI in your browser
+  - Press 'r' to force rebuild a resource
+  - Press 'k' to view Kubernetes events
+""" % (settings['k8s_context'], settings['namespace'], settings['flux_suspend']))
+
+# ============================================
+# Flux Control Resources
+# ============================================
+
+local_resource(
+    'flux-reconcile',
+    'flux reconcile kustomization flux-system --with-source',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['flux-control']
+)
+
+local_resource(
+    'flux-status',
+    'flux get all',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['flux-control']
+)
+
+local_resource(
+    'flux-suspend-all',
+    'flux suspend kustomization --all',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['flux-control']
+)
+
+local_resource(
+    'flux-resume-all',
+    'flux resume kustomization --all',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['flux-control']
+)
+
+# ============================================
+# Infrastructure Testing Tools
+# ============================================
+
+# Namespace
+namespace_create('infra-testing')
+
+# Deploy infra-testing stack with hot reload
+watch_file('infrastructure/base/infra-testing/')
+k8s_yaml(kustomize('infrastructure/base/infra-testing'))
+
+# Headlamp
+k8s_resource(
+    workload='headlamp',
+    new_name='infra-testing:headlamp',
+    port_forwards=['8080:4466'],
+    labels=['ui-tools'],
+    links=[
+        link('http://headlamp.talos00', 'Headlamp UI (via Traefik)'),
+        link('http://localhost:8080', 'Headlamp UI (port-forward)')
+    ]
+)
+
+# Kubeview
+k8s_resource(
+    workload='kubeview',
+    new_name='infra-testing:kubeview',
+    port_forwards=['8081:8000'],
+    labels=['ui-tools'],
+    links=[
+        link('http://kubeview.talos00', 'Kubeview (via Traefik)'),
+        link('http://localhost:8081', 'Kubeview (port-forward)')
+    ]
+)
+
+# Kube-ops-view
+k8s_resource(
+    workload='kube-ops-view',
+    new_name='infra-testing:kube-ops-view',
+    port_forwards=['8082:8080'],
+    labels=['ui-tools'],
+    links=[
+        link('http://kube-ops-view.talos00', 'Kube-ops-view (via Traefik)'),
+        link('http://localhost:8082', 'Kube-ops-view (port-forward)')
+    ]
+)
+
+# Goldilocks Dashboard
+k8s_resource(
+    workload='goldilocks-dashboard',
+    new_name='infra-testing:goldilocks-dashboard',
+    port_forwards=['8083:8080'],
+    labels=['ui-tools'],
+    links=[
+        link('http://goldilocks.talos00', 'Goldilocks (via Traefik)'),
+        link('http://localhost:8083', 'Goldilocks (port-forward)')
+    ]
+)
+
+# Goldilocks Controller
+k8s_resource(
+    workload='goldilocks-controller',
+    new_name='infra-testing:goldilocks-controller',
+    labels=['ui-tools']
+)
+
+# VPA Recommender (in kube-system)
+k8s_resource(
+    workload='vpa-recommender',
+    new_name='kube-system:vpa-recommender',
+    labels=['ui-tools']
+)
+
+# ============================================
+# Monitoring Stack
+# ============================================
+
+# Prometheus
+k8s_resource(
+    workload='prometheus-kube-prometheus-stack-prometheus',
+    new_name='monitoring:prometheus',
+    port_forwards=['9090:9090'],
+    labels=['monitoring'],
+    links=[
+        link('http://prometheus.talos00', 'Prometheus (via Traefik)'),
+        link('http://localhost:9090', 'Prometheus (port-forward)')
+    ]
+)
+
+# Grafana
+k8s_resource(
+    workload='grafana',
+    new_name='monitoring:grafana',
+    port_forwards=['3000:3000'],
+    labels=['monitoring'],
+    links=[
+        link('http://grafana.talos00', 'Grafana (via Traefik)'),
+        link('http://localhost:3000', 'Grafana (port-forward)')
+    ]
+)
+
+# Alertmanager
+k8s_resource(
+    workload='alertmanager-kube-prometheus-stack-alertmanager',
+    new_name='monitoring:alertmanager',
+    port_forwards=['9093:9093'],
+    labels=['monitoring'],
+    links=[
+        link('http://alertmanager.talos00', 'Alertmanager (via Traefik)'),
+        link('http://localhost:9093', 'Alertmanager (port-forward)')
+    ]
+)
+
+# ============================================
+# Observability Stack
+# ============================================
+
+# Graylog
+k8s_resource(
+    workload='graylog',
+    new_name='observability:graylog',
+    port_forwards=['9000:9000'],
+    labels=['observability'],
+    links=[
+        link('http://graylog.talos00', 'Graylog (via Traefik)'),
+        link('http://localhost:9000', 'Graylog (port-forward)')
+    ]
+)
+
+# OpenSearch
+k8s_resource(
+    workload='opensearch',
+    new_name='observability:opensearch',
+    port_forwards=['9200:9200'],
+    labels=['observability']
+)
+
+# ============================================
+# ArgoCD
+# ============================================
+
+k8s_resource(
+    workload='argocd-server',
+    new_name='argocd:server',
+    port_forwards=['8443:8080'],
+    labels=['gitops'],
+    links=[
+        link('http://argocd.talos00', 'ArgoCD (via Traefik)'),
+        link('http://localhost:8443', 'ArgoCD (port-forward)')
+    ]
+)
+
+# ============================================
+# Traefik Ingress Controller
+# ============================================
+
+k8s_resource(
+    workload='traefik',
+    new_name='traefik:ingress-controller',
+    port_forwards=['8000:80', '8888:443'],
+    labels=['networking'],
+    links=[
+        link('http://localhost:8000', 'Traefik HTTP'),
+        link('https://localhost:8888', 'Traefik HTTPS')
+    ]
+)
+
+# ============================================
+# Docker Registry
+# ============================================
+
+k8s_resource(
+    workload='docker-registry',
+    new_name='registry:docker-registry',
+    port_forwards=['5000:5000'],
+    labels=['infrastructure'],
+    links=[
+        link('http://registry.talos00', 'Registry (via Traefik)'),
+        link('http://localhost:5000', 'Registry (port-forward)')
+    ]
+)
+
+# ============================================
+# External Secrets Operator (Optional)
+# ============================================
+
+# Uncomment to include ESO in the dev loop
+# helm_repo(
+#     'external-secrets',
+#     'https://charts.external-secrets.io',
+#     resource_name='external-secrets-repo'
+# )
+#
+# helm_resource(
+#     'external-secrets-operator',
+#     chart='external-secrets/external-secrets',
+#     namespace='external-secrets',
+#     flags=['--set=installCRDs=true'],
+#     resource_deps=['external-secrets-repo'],
+#     labels=['external-secrets'],
+# )
+
+# ============================================
+# Cluster Information
+# ============================================
+
+local_resource(
+    'cluster-health',
+    'kubectl get nodes && echo "" && kubectl get pods -A | grep -v Running | grep -v Completed || echo "✅ All pods running"',
+    auto_init=True,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['cluster-info']
+)
+
+local_resource(
+    'cluster-resources',
+    'kubectl top nodes && echo "" && kubectl top pods -A --sort-by=memory | head -20',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['cluster-info']
+)
+
+local_resource(
+    'cluster-events',
+    'kubectl get events -A --sort-by=.lastTimestamp | tail -20',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['cluster-info']
+)
+
+# ============================================
+# Setup & Configuration
+# ============================================
+
+local_resource(
+    'update-hosts',
+    'sudo ./scripts/update-hosts.sh || echo "⚠️  Run manually: sudo ./scripts/update-hosts.sh"',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['setup']
+)
+
+local_resource(
+    'kubeconfig-merge',
+    'task kubeconfig-merge',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['setup']
+)
+
+# ============================================
+# Quick Deployment Actions
+# ============================================
+
+local_resource(
+    'deploy-infra-testing',
+    './scripts/deploy-infra-testing.sh',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['quick-actions']
+)
+
+local_resource(
+    'deploy-stack',
+    './scripts/deploy-stack.sh',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['quick-actions']
+)
+
+local_resource(
+    'deploy-observability',
+    './scripts/deploy-observability.sh',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['quick-actions']
+)
+
+# ============================================
+# Development Helpers
+# ============================================
+
+local_resource(
+    'validate-manifests',
+    'kubectl apply --dry-run=client -k infrastructure/base/infra-testing/',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['validation']
+)
+
+local_resource(
+    'lint-yaml',
+    'task dev:lint',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['validation']
+)
+
+# ============================================
+# Tilt Configuration
+# ============================================
+
+# Update settings for better development experience
+update_settings(
+    max_parallel_updates=3,
+    k8s_upsert_timeout_secs=300,
+    suppress_unused_image_warnings=None
+)
+
+# Set up file watches for manifest hot-reload
+watch_file('infrastructure/base/')
+watch_file('infrastructure/overlays/')
+watch_file('applications/')
+
+print("""
+🚀 Tilt is ready!
+
+Quick Tips:
+  - All resources are organized by labels (ui-tools, monitoring, observability, etc.)
+  - Port forwards are automatically configured for local access
+  - Use the manual triggers for quick actions (deploy-stack, etc.)
+  - Press 'r' on any resource to force a rebuild/reapply
+  - Flux reconciliation can be triggered manually from 'flux-control' resources
+  - File watching enabled - changes to manifests will auto-reload
+
+Access URLs (via Traefik - requires /etc/hosts):
+  - Headlamp:       http://headlamp.talos00
+  - Kubeview:       http://kubeview.talos00
+  - Kube-ops-view:  http://kube-ops-view.talos00
+  - Goldilocks:     http://goldilocks.talos00
+  - Grafana:        http://grafana.talos00
+  - Prometheus:     http://prometheus.talos00
+  - ArgoCD:         http://argocd.talos00
+  - Graylog:        http://graylog.talos00
+
+Port-forward URLs (always work without /etc/hosts):
+  - Headlamp:       http://localhost:8080
+  - Kubeview:       http://localhost:8081
+  - Kube-ops-view:  http://localhost:8082
+  - Goldilocks:     http://localhost:8083
+  - Prometheus:     http://localhost:9090
+  - Grafana:        http://localhost:3000
+  - Alertmanager:   http://localhost:9093
+  - Graylog:        http://localhost:9000
+  - Registry:       http://localhost:5000
+  - Traefik HTTP:   http://localhost:8000
+
+Happy developing! 🎉
+""")

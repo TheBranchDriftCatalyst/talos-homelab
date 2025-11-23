@@ -1,0 +1,111 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tdarr
+  labels:
+    app: tdarr
+    app.kubernetes.io/name: tdarr
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Required for PVC mounts
+  selector:
+    matchLabels:
+      app: tdarr
+  template:
+    metadata:
+      labels:
+        app: tdarr
+        app.kubernetes.io/name: tdarr
+    spec:
+      containers:
+        - name: tdarr
+          image: ghcr.io/haveagitgat/tdarr:latest
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: "America/Los_Angeles"
+            - name: serverIP
+              value: "0.0.0.0"
+            - name: serverPort
+              value: "8266"
+            - name: webUIPort
+              value: "8265"
+            - name: internalNode
+              value: "true"
+            - name: inContainer
+              value: "true"
+            - name: ffmpegVersion
+              value: "6"
+            - name: nodeName
+              value: "InternalNode"
+
+          ports:
+            - name: http
+              containerPort: 8265
+              protocol: TCP
+            - name: server
+              containerPort: 8266
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+            - name: server
+              mountPath: /app/server
+            - name: logs
+              mountPath: /app/logs
+            - name: transcode-cache
+              mountPath: /temp
+            - name: media
+              mountPath: /media
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 4000m
+              memory: 4Gi
+
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: tdarr-config
+        - name: server
+          persistentVolumeClaim:
+            claimName: tdarr-server
+        - name: logs
+          persistentVolumeClaim:
+            claimName: tdarr-logs
+        - name: transcode-cache
+          persistentVolumeClaim:
+            claimName: tdarr-transcode-cache
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-shared

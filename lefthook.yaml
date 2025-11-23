@@ -1,0 +1,276 @@
+# Lefthook Configuration
+# Git hooks for code quality, security, and formatting
+# Docs: https://github.com/evilmartians/lefthook
+
+# Skip all hooks with: LEFTHOOK=0 git commit
+# Skip specific hook: LEFTHOOK_EXCLUDE=pre-commit git commit
+
+# Global settings
+min_version: 1.5.0
+
+# Pre-commit hooks - run before commit
+pre-commit:
+  parallel: true
+  commands:
+    # Secret scanning with gitleaks
+    gitleaks:
+      tags: security
+      run: gitleaks protect --verbose --redact --staged
+      glob: "*.{yaml,yml,sh,json,env,txt,md}"
+      skip:
+        - merge
+        - rebase
+
+    # YAML linting and validation
+    yamllint:
+      tags: linting yaml
+      run: yamllint --strict .
+      glob: "*.{yaml,yml}"
+      skip:
+        - merge
+        - rebase
+
+    # Kubernetes YAML validation
+    kube-validate:
+      tags: kubernetes yaml
+      run: |
+        for file in {staged_files}; do
+          if [[ "$file" == infrastructure/* ]] || [[ "$file" == applications/* ]]; then
+            echo "Validating K8s manifest: $file"
+            kubectl apply --dry-run=client -f "$file" 2>&1 | grep -v "Warning: would violate PodSecurity" || true
+          fi
+        done
+      glob: "*.{yaml,yml}"
+      skip:
+        - merge
+        - rebase
+
+    # Kustomize validation
+    kustomize-validate:
+      tags: kubernetes kustomize
+      run: |
+        # Find all directories with kustomization.yaml
+        find infrastructure applications -name "kustomization.yaml" -type f | while read kfile; do
+          dir=$(dirname "$kfile")
+          echo "Validating kustomization: $dir"
+          kustomize build "$dir" > /dev/null || exit 1
+        done
+      files: git diff --cached --name-only --diff-filter=ACM
+      glob: "**/kustomization.yaml"
+      skip:
+        - merge
+        - rebase
+
+    # Shell script linting
+    shellcheck:
+      tags: linting shell
+      run: shellcheck -x {staged_files}
+      glob: "*.sh"
+      skip:
+        - merge
+        - rebase
+
+    # Shell script formatting
+    shfmt:
+      tags: formatting shell
+      run: shfmt -w -i 2 -ci -sr {staged_files}
+      glob: "*.sh"
+      skip:
+        - merge
+        - rebase
+      stage_fixed: true
+
+    # Markdown linting
+    markdownlint:
+      tags: linting markdown
+      run: npx markdownlint-cli2 {staged_files}
+      glob: "*.md"
+      skip:
+        - merge
+        - rebase
+
+    # Trailing whitespace
+    trailing-whitespace:
+      tags: formatting
+      run: |
+        if grep -n '[[:space:]]$' {staged_files}; then
+          echo "❌ Error: Trailing whitespace found"
+          echo "Run: sed -i '' 's/[[:space:]]*$//' <file>"
+          exit 1
+        fi
+      glob: "*.{yaml,yml,sh,md,json}"
+      skip:
+        - merge
+        - rebase
+
+    # Helm chart linting (if charts exist)
+    helm-lint:
+      tags: kubernetes helm
+      run: |
+        for chart_dir in infrastructure/base/*/; do
+          if [ -f "$chart_dir/Chart.yaml" ]; then
+            echo "Linting Helm chart: $chart_dir"
+            helm lint "$chart_dir" || exit 1
+          fi
+        done
+      glob: "**/Chart.yaml"
+      skip:
+        - merge
+        - rebase
+
+# Commit message validation
+commit-msg:
+  commands:
+    # Conventional commits validation
+    conventional-commits:
+      tags: commits
+      run: |
+        commit_msg=$(cat {1})
+        # Allow merge commits
+        if echo "$commit_msg" | grep -qE "^Merge"; then
+          exit 0
+        fi
+        # Check conventional commit format
+        if ! echo "$commit_msg" | grep -qE "^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .+"; then
+          echo "❌ Commit message does not follow Conventional Commits format"
+          echo ""
+          echo "Format: <type>[optional scope]: <description>"
+          echo ""
+          echo "Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+          echo ""
+          echo "Examples:"
+          echo "  feat: add external secrets operator"
+          echo "  fix(monitoring): resolve Prometheus scrape timeout"
+          echo "  docs: update README with ESO setup"
+          echo "  chore(deps): update Flux to v2.2.0"
+          echo ""
+          exit 1
+        fi
+
+# Pre-push hooks - run before push
+pre-push:
+  parallel: false
+  commands:
+    # Full secret scan (not just staged)
+    gitleaks-full:
+      tags: security
+      run: gitleaks detect --verbose --redact
+      skip:
+        - merge
+        - rebase
+
+    # Check for TODO/FIXME in infrastructure code
+    check-todos:
+      tags: quality
+      run: |
+        if git diff origin/main...HEAD -- infrastructure/ applications/ | grep -E "TODO|FIXME" | grep -v "TODO.md"; then
+          echo "⚠️  Warning: Found TODO/FIXME comments in infrastructure code"
+          echo "Consider creating issues for these items"
+          # Don't fail, just warn
+        fi
+
+    # Validate all kustomizations build
+    validate-all-kustomizations:
+      tags: kubernetes
+      run: |
+        echo "🔍 Validating all kustomizations..."
+        find infrastructure applications -name "kustomization.yaml" -type f | while read kfile; do
+          dir=$(dirname "$kfile")
+          echo "  Checking: $dir"
+          if ! kustomize build "$dir" > /dev/null 2>&1; then
+            echo "❌ Failed to build: $dir"
+            exit 1
+          fi
+        done
+        echo "✅ All kustomizations valid"
+
+# Post-checkout hook
+post-checkout:
+  commands:
+    # Remind about infrastructure updates
+    remind-infrastructure:
+      run: |
+        if git diff --name-only HEAD@{1} HEAD | grep -q "infrastructure/"; then
+          echo ""
+          echo "ℹ️  Infrastructure files changed. Consider:"
+          echo "  - Review changes: git diff HEAD@{1} HEAD infrastructure/"
+          echo "  - Test locally if needed"
+          echo "  - Flux will auto-sync on push to main"
+          echo ""
+        fi
+
+# Post-merge hook
+post-merge:
+  commands:
+    # Check for new dependencies
+    check-dependencies:
+      run: |
+        if git diff --name-only HEAD@{1} HEAD | grep -qE "go.mod|package.json|requirements.txt|Gemfile"; then
+          echo ""
+          echo "⚠️  Dependencies changed. You may need to run:"
+          echo "  - npm install"
+          echo "  - go mod download"
+          echo "  - pip install -r requirements.txt"
+          echo ""
+        fi
+
+# Scripts that can be run manually
+# Usage: lefthook run <script-name>
+scripts:
+  # Format all YAML files
+  "format-yaml":
+    runner: bash
+    run: |
+      echo "Formatting YAML files..."
+      find . -name "*.yaml" -o -name "*.yml" | \
+        grep -v node_modules | \
+        xargs -I {} yamlfmt -w {}
+      echo "✅ YAML formatting complete"
+
+  # Format all shell scripts
+  "format-shell":
+    runner: bash
+    run: |
+      echo "Formatting shell scripts..."
+      find . -name "*.sh" | xargs shfmt -w -i 2 -ci -sr
+      echo "✅ Shell script formatting complete"
+
+  # Run all linters
+  "lint-all":
+    runner: bash
+    run: |
+      echo "Running all linters..."
+      lefthook run pre-commit --all-files
+      echo "✅ All linters passed"
+
+  # Scan for secrets in entire repo
+  "scan-secrets":
+    runner: bash
+    run: |
+      echo "Scanning for secrets in entire repository..."
+      gitleaks detect --verbose --redact --report-path .output/gitleaks-report.json
+      echo "✅ Secret scan complete. Report: .output/gitleaks-report.json"
+
+  # Validate all Kubernetes manifests
+  "validate-k8s":
+    runner: bash
+    run: |
+      echo "Validating all Kubernetes manifests..."
+      find infrastructure applications -name "*.yaml" -type f | while read file; do
+        kubectl apply --dry-run=client -f "$file" 2>&1 | \
+          grep -v "Warning: would violate PodSecurity" || true
+      done
+      echo "✅ Kubernetes validation complete"
+
+# Output settings
+output:
+  - meta
+  - summary
+  - success
+  - failure
+
+# Color output
+colors: true
+
+# Skip on CI (optional - set CI=true to skip all hooks)
+skip_on_ci: false

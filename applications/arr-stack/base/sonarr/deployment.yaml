@@ -24,25 +24,33 @@ spec:
         - name: sonarr
           image: lscr.io/linuxserver/sonarr:latest
           imagePullPolicy: IfNotPresent
+          # Import common environment variables (PUID, PGID, TZ, POSTGRES_*)
+          envFrom:
+            - configMapRef:
+                name: arr-common-env
           env:
-            - name: PUID
-              value: "1000"
-            - name: PGID
-              value: "1000"
-            - name: TZ
-              value: "America/Los_Angeles"
-            # PostgreSQL configuration
+            # Map common PostgreSQL settings to Sonarr-specific env var names
             - name: SONARR__POSTGRES__HOST
-              value: "postgresql"
+              valueFrom:
+                configMapKeyRef:
+                  name: arr-common-env
+                  key: POSTGRES_HOST
             - name: SONARR__POSTGRES__PORT
-              value: "5432"
+              valueFrom:
+                configMapKeyRef:
+                  name: arr-common-env
+                  key: POSTGRES_PORT
             - name: SONARR__POSTGRES__USER
-              value: "arrstack"
+              valueFrom:
+                configMapKeyRef:
+                  name: arr-common-env
+                  key: POSTGRES_USER
             - name: SONARR__POSTGRES__PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: postgresql-secret
                   key: postgres-password
+            # Sonarr-specific database names
             - name: SONARR__POSTGRES__MAINDB
               value: "sonarr_main"
             - name: SONARR__POSTGRES__LOGDB

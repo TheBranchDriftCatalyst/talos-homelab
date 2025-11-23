@@ -42,6 +42,8 @@ Last Updated: 2025-11-11
 - [ ] **Deploy FluxCD alongside ArgoCD**
   - Status: Assessment complete, manifests partial
   - Blocked by: None (SAFE TO DEPLOY)
+  - TODO: DJ: Need to get to this- requires creating github repo and pushing current manifests
+  - we need to do this cause we accidently deployed some stuff via argo that should be flux etc, and are shoring up the boudnary between flux controll/boostrap and argo application management
   - See: [docs/06-project-management/migration-assessments/flux-migration.md](docs/06-project-management/migration-assessments/flux-migration.md)
 
 ### Important But Not Blocking
@@ -303,7 +305,7 @@ flux uninstall
 **Estimated Time:** 1 hour (including verification)
 
 **See:**
-- [docs/FLUX-MIGRATION-ASSESSMENT.md](docs/FLUX-MIGRATION-ASSESSMENT.md) - Full migration analysis
+- [docs/FLUX-MIGRATION-ASSESSMENT.md](docs/workstreams/FLUX-MIGRATION-ASSESSMENT.md) - Full migration analysis
 - [docs/DUAL-GITOPS-ARCHITECTURE.md](docs/DUAL-GITOPS-ARCHITECTURE.md) - Architecture details
 - [bootstrap/flux/bootstrap.sh](bootstrap/flux/bootstrap.sh) - Bootstrap script
 

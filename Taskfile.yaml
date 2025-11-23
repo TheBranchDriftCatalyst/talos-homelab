@@ -1,243 +1,230 @@
+# Root Taskfile - Orchestrates domain-specific taskfiles
 version: '3'
+
+# Include domain-specific taskfiles
+includes:
+  talos: Taskfile.talos.yaml
+  k8s: Taskfile.k8s.yaml
+  dev: Taskfile.dev.yaml
+  infra: Taskfile.infra.yaml
 
 vars:
   TALOS_NODE: '{{.TALOS_NODE | default "192.168.1.54"}}'
   TALOSCONFIG: './configs/talosconfig'
   KUBECONFIG: './.output/kubeconfig'
-  CLUSTER_NAME: 'homelab-single'
-  CLUSTER_ENDPOINT: 'https://{{.TALOS_NODE}}:6443'
-  CONTROLPLANE_CONFIG: './configs/controlplane.yaml'
-  WORKER_CONFIG: './configs/worker.yaml'
 
 tasks:
-  # Initial setup and generation
-  gen-config:
-    desc: Generate fresh Talos configuration files
-    cmds:
-      - mkdir -p configs
-      - talosctl gen config {{.CLUSTER_NAME}} {{.CLUSTER_ENDPOINT}} --output-dir ./configs
-      - echo "Configs generated in ./configs/"
+  # ============================================
+  # Default Task
+  # ============================================
 
-  # Node provisioning
-  apply-config:
-    desc: Apply configuration to Talos node (use --insecure for first-time setup)
+  default:
+    desc: Show available task domains and common commands
     cmds:
-      - |
-        if [ "{{.INSECURE}}" = "true" ]; then
-          talosctl apply-config --insecure --nodes {{.TALOS_NODE}} --file {{.CONTROLPLANE_CONFIG}}
-        else
-          talosctl --talosconfig {{.TALOSCONFIG}} apply-config --nodes {{.TALOS_NODE}} --file {{.CONTROLPLANE_CONFIG}}
-        fi
-    vars:
-      INSECURE: '{{.INSECURE | default "false"}}'
+      - echo "╔════════════════════════════════════════════╗"
+      - echo "║  Talos Homelab Task Runner                 ║"
+      - echo "╚════════════════════════════════════════════╝"
+      - echo ""
+      - echo "📦 First time setup:"
+      - echo "  task deps:install              - Install all dependencies (Homebrew, Yarn, Tilt, hooks)"
+      - echo ""
+      - echo "📋 Task domains:"
+      - echo "  • talos:*     - Talos Linux operations (config, bootstrap, health, services)"
+      - echo "  • k8s:*       - Kubernetes operations (kubeconfig, pods, dashboard, audit)"
+      - echo "  • dev:*       - Development tools (linting, formatting, hooks, Tilt)"
+      - echo "  • infra:*     - Infrastructure deployment (monitoring, observability, apps)"
+      - echo ""
+      - echo "🚀 Common commands:"
+      - echo "  task health                    - Check cluster health"
+      - echo "  task kubeconfig-merge          - Merge kubeconfig to ~/.kube/config"
+      - echo "  task get-pods                  - Get all pods"
+      - echo "  task lint                      - Run all linters"
+      - echo "  task dev:tilt-up               - Start Tilt development environment"
+      - echo "  task infra:deploy-stack        - Deploy complete stack"
+      - echo "  task infra:deploy-infra-testing - Deploy UI tools (Headlamp, Kubeview, etc.)"
+      - echo ""
+      - echo "📚 List all tasks:"
+      - echo "  task --list                    - Show all available tasks"
+      - echo "  task --list-all                - Show all tasks with descriptions"
+      - echo ""
+      - echo "💡 Get help for a specific task:"
+      - echo "  task <domain>:<task> --help"
 
-  bootstrap:
-    desc: Bootstrap etcd on the control plane node
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} bootstrap
-      - echo "Cluster bootstrapped! Waiting for Kubernetes..."
-      - sleep 30
+  # ============================================
+  # Common Shortcuts (Most Frequently Used)
+  # ============================================
 
-  # Cluster management
   health:
-    desc: Check cluster health
+    desc: Check Talos cluster health
     cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} health --server=false
-
-  version:
-    desc: Get Talos version
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} version
+      - task: talos:health
 
   dashboard:
     desc: Open Talos dashboard
     cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} dashboard
+      - task: talos:dashboard
 
-  # Services
-  services:
-    desc: List all services
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} services
-
-  service-logs:
-    desc: Get logs for a specific service (use -- SERVICE=kubelet)
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} logs {{.SERVICE}}
-    vars:
-      SERVICE: '{{.SERVICE | default "kubelet"}}'
-
-  # Kubernetes
   kubeconfig:
-    desc: Download kubeconfig
+    desc: Download kubeconfig from Talos
     cmds:
-      - mkdir -p .output
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} kubeconfig .output
-      - echo "Kubeconfig saved to {{.KUBECONFIG}}"
+      - task: k8s:kubeconfig
 
   kubeconfig-merge:
-    desc: Merge kubeconfig to ~/.kube/config (idempotent, enables kubectx/kubectl)
+    desc: Merge kubeconfig to ~/.kube/config (enables kubectl/kubectx)
     cmds:
-      - ./scripts/kubeconfig-merge.sh
-
-  kubeconfig-unmerge:
-    desc: Remove homelab-single context from ~/.kube/config
-    cmds:
-      - ./scripts/kubeconfig-unmerge.sh
-
-  kubeconfig-export:
-    desc: Export KUBECONFIG environment variable for current shell
-    cmds:
-      - echo "Run this command to use the local kubeconfig:"
-      - echo "  export KUBECONFIG={{.KUBECONFIG}}"
-
-  get-nodes:
-    desc: Get Kubernetes nodes
-    cmds:
-      - kubectl --kubeconfig {{.KUBECONFIG}} get nodes -o wide
+      - task: k8s:kubeconfig-merge
 
   get-pods:
     desc: Get all pods in all namespaces
     cmds:
-      - kubectl --kubeconfig {{.KUBECONFIG}} get pods -A
+      - task: k8s:get-pods
 
-  # Troubleshooting
-  dmesg:
-    desc: View kernel logs
+  get-nodes:
+    desc: Get Kubernetes nodes
     cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} dmesg
+      - task: k8s:get-nodes
 
-  logs-follow:
-    desc: Follow logs for a service (use -- SERVICE=kubelet)
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} logs --follow {{.SERVICE}}
-    vars:
-      SERVICE: '{{.SERVICE | default "kubelet"}}'
-
-  shell:
-    desc: Get interactive shell (limited in Talos)
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} shell
-
-  containers:
-    desc: List running containers
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} containers
-
-  # Node operations
-  reboot:
-    desc: Reboot the node
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} reboot
-    prompt: This will reboot the node. Continue?
-
-  shutdown:
-    desc: Shutdown the node
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} shutdown
-    prompt: This will shutdown the node. Continue?
-
-  reset:
-    desc: Reset the node (DESTRUCTIVE - wipes all data)
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} reset --graceful=false --reboot
-    prompt: This will WIPE ALL DATA on the node. Are you sure?
-
-  upgrade:
-    desc: Upgrade Talos (use -- VERSION=v1.11.1)
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} upgrade --image ghcr.io/siderolabs/installer:{{.VERSION}}
-    vars:
-      VERSION: '{{.VERSION | default "v1.11.1"}}'
-
-  # Full provisioning workflow
   provision:
     desc: Complete provisioning workflow for a fresh node
     cmds:
-      - ./scripts/provision.sh
+      - task: talos:provision
 
-  provision-local:
-    desc: Create local Docker-based Talos cluster for testing
-    cmds:
-      - ./scripts/provision-local.sh
+  # ============================================
+  # Dependencies & Setup
+  # ============================================
 
-  destroy-local:
-    desc: Destroy local Docker-based Talos cluster
+  deps:install:
+    desc: Install all dependencies (Homebrew, Yarn, Tilt, git hooks)
     cmds:
-      - talosctl cluster destroy --name talos-local
-      - echo "Local cluster destroyed"
-
-  # Config management
-  config-merge:
-    desc: Merge talosconfig to default location (~/.talos/config)
-    cmds:
-      - talosctl config merge {{.TALOSCONFIG}}
-      - echo "Config merged to ~/.talos/config"
-
-  config-info:
-    desc: Show current config info
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} config info
-
-  # Network troubleshooting
-  ping:
-    desc: Ping the node
-    cmds:
-      - ping -c 4 {{.TALOS_NODE}}
-
-  check-api:
-    desc: Check if Talos API is responding
-    cmds:
-      - curl -k https://{{.TALOS_NODE}}:50000/version 2>&1 | head -10
-
-  # Etcd operations
-  etcd-members:
-    desc: List etcd members
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} etcd members
-
-  etcd-status:
-    desc: Get etcd status
-    cmds:
-      - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} etcd status
-
-  # Infrastructure setup
-  setup-infrastructure:
-    desc: Install core infrastructure (Traefik, metrics-server, test services)
-    cmds:
-      - ./scripts/setup-infrastructure.sh
-
-  # Kubernetes Dashboard
-  dashboard-token:
-    desc: Get Kubernetes Dashboard access token
-    cmds:
-      - ./scripts/dashboard-token.sh
-
-  dashboard-proxy:
-    desc: Start kubectl proxy for Dashboard access
-    cmds:
-      - echo "Starting proxy... Dashboard will be available at:"
-      - echo "http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/"
+      - echo "🚀 Installing all project dependencies..."
       - echo ""
-      - echo "Run 'task dashboard-token' in another terminal to get the login token"
-      - kubectl --kubeconfig {{.KUBECONFIG}} proxy
+      - task: _check-homebrew
+      - task: _install-brew-deps
+      - task: _install-yarn-deps
+      - task: _install-tilt
+      - task: _install-hooks
+      - echo ""
+      - echo "✅ All dependencies installed successfully!"
+      - echo ""
+      - echo "📦 Installed:"
+      - echo "  ✓ Homebrew packages (kubectl, kustomize, helm, flux, talosctl, etc.)"
+      - echo "  ✓ Node packages (markdownlint, prettier)"
+      - echo "  ✓ Tilt (local development tool)"
+      - echo "  ✓ Git hooks (lefthook)"
+      - echo ""
+      - echo "🎯 Next steps:"
+      - echo "  1. Provision cluster - task provision"
+      - echo "  2. Merge kubeconfig - task kubeconfig-merge"
+      - echo "  3. Deploy stack - task infra:deploy-stack"
+      - echo "  4. Start development - task dev:tilt-up"
 
-  # Cluster audit
+  _check-homebrew:
+    internal: true
+    cmds:
+      - |
+        if ! command -v brew &> /dev/null; then
+          echo "❌ Homebrew not installed. Install from https://brew.sh"
+          exit 1
+        fi
+        echo "✅ Homebrew found: $(brew --version | head -1)"
+
+  _install-brew-deps:
+    internal: true
+    cmds:
+      - |
+        echo "📦 Installing Homebrew packages from Brewfile..."
+        brew bundle --file=Brewfile
+        echo "✅ Homebrew packages installed"
+
+  _install-yarn-deps:
+    internal: true
+    cmds:
+      - |
+        if ! command -v yarn &> /dev/null; then
+          echo "⚠️  Yarn not found, installing..."
+          brew install yarn
+        fi
+        echo "📦 Installing Node packages..."
+        yarn install
+        echo "✅ Node packages installed"
+
+  _install-tilt:
+    internal: true
+    cmds:
+      - |
+        if ! command -v tilt &> /dev/null; then
+          echo "📦 Installing Tilt..."
+          brew install tilt-dev/tap/tilt
+          echo "✅ Tilt installed: $(tilt version)"
+        else
+          echo "✅ Tilt already installed: $(tilt version)"
+        fi
+
+  _install-hooks:
+    internal: true
+    cmds:
+      - |
+        if ! command -v lefthook &> /dev/null; then
+          echo "❌ Lefthook not found. Should have been installed via Brewfile."
+          exit 1
+        fi
+        echo "📦 Installing git hooks..."
+        lefthook install
+        echo "✅ Git hooks installed"
+
+  setup:
+    desc: Alias for deps:install
+    cmds:
+      - task: deps:install
+
+  lint:
+    desc: Run all linters
+    cmds:
+      - task: dev:lint
+
+  format:
+    desc: Format all code
+    cmds:
+      - task: dev:format
+
+  validate:
+    desc: Validate all infrastructure manifests
+    cmds:
+      - task: dev:validate
+
+  ci:
+    desc: Run full CI pipeline locally (lint + format + validate)
+    cmds:
+      - task: dev:ci
+
+  deploy-stack:
+    desc: Deploy complete observability and monitoring stack
+    cmds:
+      - task: infra:deploy-stack
+
   audit:
     desc: Generate comprehensive cluster audit report
     cmds:
-      - ./scripts/cluster-audit.sh
+      - task: k8s:audit
 
-  # Cleanup
+  dashboard-arr:
+    desc: Show ARR stack dashboard with real-time status
+    cmds:
+      - task: infra:dashboard-arr-stack
+
+  # ============================================
+  # Cleanup Tasks
+  # ============================================
+
   clean:
     desc: Remove generated/output files only
     cmds:
       - rm -rf .output
-      - echo "Cleaned up generated files"
+      - echo "✅ Cleaned up generated files"
 
   clean-all:
     desc: Remove ALL configs including Talos configs (CAREFUL!)
     cmds:
       - rm -rf .output configs
-      - echo "All configs and output removed"
+      - echo "✅ All configs and output removed"
     prompt: This will remove ALL Talos configuration files. Continue?
