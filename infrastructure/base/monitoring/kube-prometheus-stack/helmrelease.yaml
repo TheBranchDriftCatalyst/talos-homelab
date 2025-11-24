@@ -67,12 +67,12 @@ spec:
         retention: 30d
         retentionSize: '45GB'
 
-        # Storage configuration (using NFS from Synology)
+        # Storage configuration (using local-path)
         storageSpec:
           volumeClaimTemplate:
             spec:
-              storageClassName: nfs
-              accessModes: ['ReadWriteMany']
+              storageClassName: local-path
+              accessModes: ['ReadWriteOnce']
               resources:
                 requests:
                   storage: 50Gi
@@ -103,6 +103,25 @@ spec:
         # Enable features
         enableAdminAPI: true
         enableRemoteWriteReceiver: false
+
+        # Additional scrape configs for services without ServiceMonitors
+        additionalScrapeConfigs:
+          # Graylog metrics
+          - job_name: 'graylog'
+            static_configs:
+              - targets: ['graylog.observability.svc:9000']
+            metrics_path: /api/system/metrics/prometheus
+
+          # OpenSearch metrics
+          - job_name: 'opensearch'
+            static_configs:
+              - targets: ['opensearch-cluster-master.observability.svc:9200']
+            metrics_path: /_prometheus/metrics
+
+          # MongoDB metrics (if exporter is running)
+          - job_name: 'mongodb'
+            static_configs:
+              - targets: ['mongodb.observability.svc:27017']
 
         # Security context - run as root for NFS compatibility
         securityContext:
