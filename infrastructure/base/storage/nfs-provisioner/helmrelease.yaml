@@ -1,0 +1,67 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: nfs-subdir-external-provisioner
+  namespace: kube-system
+spec:
+  interval: 24h
+  url: https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: nfs-subdir-external-provisioner
+  namespace: kube-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: nfs-subdir-external-provisioner
+      version: '>=4.0.0 <5.0.0'
+      sourceRef:
+        kind: HelmRepository
+        name: nfs-subdir-external-provisioner
+        namespace: kube-system
+      interval: 12h
+
+  install:
+    crds: Create
+    remediation:
+      retries: 3
+
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+
+  values:
+    nfs:
+      server: 192.168.1.234
+      path: /volume1/appdata
+      mountOptions:
+        - vers=3
+        - nolock
+        - tcp
+        - rsize=1048576
+        - wsize=1048576
+        - hard
+        - timeo=600
+        - retrans=2
+
+    storageClass:
+      name: nfs
+      defaultClass: false
+      allowVolumeExpansion: true
+      reclaimPolicy: Retain
+      archiveOnDelete: true
+      accessModes: ReadWriteMany
+
+    # Resource limits for homelab
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
