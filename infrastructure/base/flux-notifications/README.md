@@ -11,34 +11,33 @@ Real-time notifications for Flux CD events sent to Discord.
 
 ## Setup
 
-### 1. Create Discord Webhook
+### Option A: Using 1Password (Recommended)
 
-1. Go to your Discord server
-2. Navigate to: **Server Settings → Integrations → Webhooks**
-3. Click **Create Webhook** or select existing webhook
-4. Copy the **Webhook URL**
+The Discord webhook URL is automatically synced from 1Password using External Secrets Operator.
 
-### 2. Configure Flux Notifications
+**See [SETUP-1PASSWORD.md](./SETUP-1PASSWORD.md) for detailed instructions.**
 
-Run the setup script with your webhook URL:
+Quick steps:
+1. Get Discord webhook URL from your server settings
+2. Create 1Password item named `flux-discord-webhook` in `catalyst-eso` vault
+3. Add field `webhook_url` with the webhook URL
+4. Apply configuration: `kubectl apply -k infrastructure/base/flux-notifications/`
 
-```bash
-./scripts/setup-flux-discord.sh https://discord.com/api/webhooks/YOUR_WEBHOOK_URL
-```
+The ExternalSecret will automatically sync the webhook URL to Kubernetes.
 
-Or manually create the secret:
+### Option B: Manual Secret (Not Recommended)
+
+For testing or if 1Password is not available:
 
 ```bash
 kubectl create secret generic discord-webhook \
   --from-literal=address="https://discord.com/api/webhooks/YOUR_WEBHOOK_URL" \
   --namespace=flux-system
-```
 
-Then apply the configuration:
-
-```bash
 kubectl apply -k infrastructure/base/flux-notifications/
 ```
+
+**Note**: Manual secrets are not version-controlled and require manual rotation.
 
 ### 3. Verify
 
