@@ -18,6 +18,7 @@ The Discord webhook URL is automatically synced from 1Password using External Se
 **See [SETUP-1PASSWORD.md](./SETUP-1PASSWORD.md) for detailed instructions.**
 
 Quick steps:
+
 1. Get Discord webhook URL from your server settings
 2. Create 1Password item named `flux-discord-webhook` in `catalyst-eso` vault
 3. Add field `webhook_url` with the webhook URL
@@ -56,11 +57,13 @@ kubectl get alerts -n flux-system
 ## Alerts Configured
 
 ### 1. Homelab Infrastructure Alerts
+
 - **Severity**: Info and above
 - **Sources**: All GitRepositories, Kustomizations, HelmReleases
 - **Purpose**: General deployment and update notifications
 
 ### 2. Critical Errors
+
 - **Severity**: Error only
 - **Sources**: All Flux resources
 - **Purpose**: Immediate notification of failures
@@ -82,7 +85,7 @@ Edit `alert.yaml` to change which events trigger notifications:
 
 ```yaml
 spec:
-  eventSeverity: info  # Options: info, error, warning
+  eventSeverity: info # Options: info, error, warning
 ```
 
 ### Add More Alerts
@@ -96,7 +99,7 @@ metadata:
   name: media-stack-alerts
   namespace: flux-system
 spec:
-  summary: "Media Stack Deployments"
+  summary: 'Media Stack Deployments'
   providerRef:
     name: discord
   eventSeverity: info
@@ -113,8 +116,8 @@ Edit `provider.yaml`:
 ```yaml
 spec:
   type: discord
-  username: "Flux Bot"  # Change bot name
-  channel: "flux-alerts"  # Change channel name (cosmetic)
+  username: 'Flux Bot' # Change bot name
+  channel: 'flux-alerts' # Change channel name (cosmetic)
 ```
 
 ## Troubleshooting
@@ -122,11 +125,13 @@ spec:
 ### No notifications received
 
 1. Check provider status:
+
    ```bash
    kubectl describe provider discord -n flux-system
    ```
 
 2. View notification-controller logs:
+
    ```bash
    kubectl logs -n flux-system -l app=notification-controller -f
    ```

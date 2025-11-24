@@ -19,6 +19,7 @@ This guide explains how to store the Discord webhook URL in 1Password so it can 
 5. Click **Copy Webhook URL**
 
 The URL will look like:
+
 ```
 https://discord.com/api/webhooks/1234567890/AbCdEfGhIjKlMnOpQrStUvWxYz
 ```
@@ -52,6 +53,7 @@ op item create \
 ## Step 3: Verify 1Password Item Structure
 
 The item in 1Password should have:
+
 - **Title**: `flux-discord-webhook`
 - **Field Name**: `webhook_url`
 - **Field Value**: Your Discord webhook URL
@@ -106,6 +108,7 @@ You should see a notification in your Discord channel!
 ### ExternalSecret not syncing
 
 Check the ExternalSecret status:
+
 ```bash
 kubectl describe externalsecret discord-webhook -n flux-system
 ```
@@ -115,6 +118,7 @@ Look for error messages in the status conditions.
 ### Provider not ready
 
 Check the Provider status:
+
 ```bash
 kubectl describe provider discord -n flux-system
 ```
@@ -122,6 +126,7 @@ kubectl describe provider discord -n flux-system
 ### Secret exists but notifications not working
 
 1. Verify the webhook URL is correct:
+
    ```bash
    kubectl get secret discord-webhook -n flux-system -o jsonpath='{.data.address}' | base64 -d
    ```
@@ -134,6 +139,7 @@ kubectl describe provider discord -n flux-system
 ### 1Password item not found
 
 Ensure:
+
 - The vault name matches (`catalyst-eso`)
 - The item title is exactly `flux-discord-webhook`
 - The field name is `webhook_url` (case-sensitive)
@@ -142,6 +148,7 @@ Ensure:
 ## ExternalSecret Configuration
 
 The ExternalSecret is configured to:
+
 - **Refresh every hour** - Webhook URL changes are picked up automatically
 - **Use ClusterSecretStore** - Works across all namespaces
 - **Target namespace**: `flux-system`

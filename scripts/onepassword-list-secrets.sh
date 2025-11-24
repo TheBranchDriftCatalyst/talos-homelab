@@ -19,24 +19,24 @@ echo ""
 
 # Check prerequisites
 if ! command -v kubectl &> /dev/null; then
-    echo -e "${RED}✗ kubectl not found${RESET}"
-    exit 1
+  echo -e "${RED}✗ kubectl not found${RESET}"
+  exit 1
 fi
 
 # Check cluster connectivity
 if ! kubectl cluster-info &> /dev/null; then
-    echo -e "${RED}✗ Not connected to Kubernetes cluster${RESET}"
-    exit 1
+  echo -e "${RED}✗ Not connected to Kubernetes cluster${RESET}"
+  exit 1
 fi
 
 # Get the token from the secret
 echo -e "${CYAN}→ Retrieving 1Password Connect token...${RESET}"
-OP_TOKEN=$(kubectl get secret onepassword-connect-token -n "${NAMESPACE}" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d)
+OP_TOKEN=$(kubectl get secret onepassword-connect-token -n "${NAMESPACE}" -o jsonpath='{.data.token}' 2> /dev/null | base64 -d)
 
 if [ -z "${OP_TOKEN}" ]; then
-    echo -e "${RED}✗ Could not retrieve 1Password Connect token${RESET}"
-    echo "  Make sure the secret 'onepassword-connect-token' exists in namespace '${NAMESPACE}'"
-    exit 1
+  echo -e "${RED}✗ Could not retrieve 1Password Connect token${RESET}"
+  echo "  Make sure the secret 'onepassword-connect-token' exists in namespace '${NAMESPACE}'"
+  exit 1
 fi
 
 echo -e "${CYAN}→ Querying 1Password Connect API...${RESET}"
@@ -44,10 +44,10 @@ echo ""
 
 # Run ephemeral pod with curl and jq to query the API
 kubectl run test-1p-list-secrets --rm -i --restart=Never --image=alpine:latest -n "${NAMESPACE}" \
-    --env="OP_CONNECT_TOKEN=${OP_TOKEN}" \
-    --env="VAULT_NAME=${VAULT_NAME}" \
-    --env="NAMESPACE=${NAMESPACE}" \
-    -- sh -c '
+  --env="OP_CONNECT_TOKEN=${OP_TOKEN}" \
+  --env="VAULT_NAME=${VAULT_NAME}" \
+  --env="NAMESPACE=${NAMESPACE}" \
+  -- sh -c '
 apk add --no-cache curl jq > /dev/null 2>&1
 
 TOKEN="${OP_CONNECT_TOKEN}"
