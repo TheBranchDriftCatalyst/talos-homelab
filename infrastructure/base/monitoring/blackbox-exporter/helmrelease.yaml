@@ -1,0 +1,123 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: prometheus-community
+  namespace: monitoring
+spec:
+  interval: 24h
+  url: https://prometheus-community.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: prometheus-blackbox-exporter
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: prometheus-blackbox-exporter
+      version: '>=9.0.0 <10.0.0'
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: monitoring
+      interval: 12h
+
+  install:
+    remediation:
+      retries: 3
+
+  upgrade:
+    remediation:
+      retries: 3
+
+  values:
+    # Resource limits for homelab
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 128Mi
+
+    # Blackbox exporter configuration
+    config:
+      modules:
+        # HTTP 2xx probe
+        http_2xx:
+          prober: http
+          timeout: 5s
+          http:
+            valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+            valid_status_codes: []  # Defaults to 2xx
+            method: GET
+            no_follow_redirects: false
+            fail_if_ssl: false
+            fail_if_not_ssl: false
+            preferred_ip_protocol: "ip4"
+
+        # HTTP POST probe
+        http_post_2xx:
+          prober: http
+          timeout: 5s
+          http:
+            method: POST
+            valid_http_versions: ["HTTP/1.1", "HTTP/2.0"]
+
+        # TCP connect probe
+        tcp_connect:
+          prober: tcp
+          timeout: 5s
+
+        # ICMP ping probe
+        icmp:
+          prober: icmp
+          timeout: 5s
+          icmp:
+            preferred_ip_protocol: "ip4"
+
+        # DNS probe
+        dns_udp:
+          prober: dns
+          timeout: 5s
+          dns:
+            transport_protocol: "udp"
+            preferred_ip_protocol: "ip4"
+            query_name: "kubernetes.default.svc.cluster.local"
+
+    # ServiceMonitor for Prometheus discovery
+    serviceMonitor:
+      enabled: true
+      defaults:
+        labels:
+          prometheus: kube-prometheus
+        interval: 30s
+        scrapeTimeout: 30s
+
+      # Probe targets - add your endpoints here
+      targets:
+        - name: grafana
+          url: http://kube-prometheus-stack-grafana.monitoring.svc:80
+          module: http_2xx
+        - name: prometheus
+          url: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
+          module: http_2xx
+        - name: alertmanager
+          url: http://kube-prometheus-stack-alertmanager.monitoring.svc:9093
+          module: http_2xx
+        - name: traefik-dashboard
+          url: http://traefik.traefik.svc:9000/dashboard/
+          module: http_2xx
+        - name: graylog
+          url: http://graylog.observability.svc:9000
+          module: http_2xx
+        - name: opensearch
+          url: http://opensearch-cluster-master.observability.svc:9200
+          module: http_2xx
+
+    # Pod labels
+    podLabels:
+      app: blackbox-exporter

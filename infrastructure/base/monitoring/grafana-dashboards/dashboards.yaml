@@ -1,0 +1,78 @@
+---
+# ConfigMap with dashboard URLs for manual import
+# Grafana sidecar will look for ConfigMaps with label grafana_dashboard="1"
+# For dashboard JSON embedding, use the format below with the full JSON
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-urls
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "0"  # Set to 0 to not auto-import, just document
+data:
+  dashboard-urls.txt: |
+    # Kubernetes Monitoring Dashboards
+    # Import these manually via Grafana UI → Dashboards → Import → Enter ID
+
+    # Core Kubernetes Monitoring
+    315   - Kubernetes Cluster Monitoring (via Prometheus)
+    12740 - Kubernetes Monitoring
+    18283 - Kubernetes Dashboard
+    19004 - Kubernetes / Views / Global
+    15760 - Kubernetes Cluster (Prometheus)
+
+    # Traefik Ingress Monitoring
+    17347 - Traefik Official Kubernetes Dashboard
+    18111 - RT Traefik Kubernetes Dashboard
+    17346 - Traefik Official Standalone Dashboard
+
+    # Node Monitoring
+    1860  - Node Exporter Full
+    11074 - Node Exporter for Prometheus Dashboard
+
+    # PostgreSQL Monitoring
+    9628  - PostgreSQL Database
+    12485 - PostgreSQL Exporter Quickstart
+
+    # Blackbox Exporter
+    13659 - Blackbox Exporter (HTTP prober)
+    7587  - Prometheus Blackbox Exporter
+
+    # Storage Monitoring
+    11454 - Kubernetes Persistent Volumes
+
+    # Additional Useful Dashboards
+    14518 - Kubernetes Monitoring - Cluster and Nodes
+    15757 - Kubernetes All-in-One Cluster Monitoring
+    15172 - Kubernetes NFS Volumes
+---
+# Grafana Dashboard Provisioning - Auto-import from grafana.com
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider-config
+  namespace: monitoring
+  labels:
+    grafana_dashboard_provider: "1"
+data:
+  # This configures Grafana to auto-download dashboards from grafana.com
+  # Note: This requires additional configuration in Grafana's provisioning
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: 'Kubernetes'
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+      - name: 'traefik'
+        orgId: 1
+        folder: 'Traefik'
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/traefik
