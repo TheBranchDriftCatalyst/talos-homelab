@@ -104,10 +104,17 @@ spec:
         enableAdminAPI: true
         enableRemoteWriteReceiver: false
 
-        # Additional arguments to disable query logging
-        additionalArgs:
-          - name: query.max-concurrency
-            value: '0'
+        # Init containers to fix permissions on Prometheus data directory
+        initContainers:
+          - name: fix-permissions
+            image: busybox:1.36
+            command: ['sh', '-c', 'chown -R 65534:65534 /prometheus && chmod -R 755 /prometheus']
+            volumeMounts:
+              - name: prometheus-kube-prometheus-stack-prometheus-db
+                mountPath: /prometheus
+            securityContext:
+              runAsUser: 0
+              runAsNonRoot: false
 
         # Security context for Talos compatibility
         securityContext:
