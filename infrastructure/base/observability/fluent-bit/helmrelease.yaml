@@ -111,6 +111,19 @@ spec:
             Set log no_message
             Condition Key_Does_Not_Exist log
 
+        # Ensure kubernetes_host field exists for GELF host (fallback to node name)
+        [FILTER]
+            Name modify
+            Match *
+            Copy kubernetes.host kubernetes_host
+            Condition Key_Does_Not_Exist kubernetes_host
+
+        [FILTER]
+            Name modify
+            Match *
+            Set kubernetes_host talos00
+            Condition Key_Does_Not_Exist kubernetes_host
+
       outputs: |
         [OUTPUT]
             Name gelf
@@ -119,6 +132,7 @@ spec:
             Port 12201
             Mode tcp
             Gelf_Short_Message_Key log
+            Gelf_Host_Key kubernetes_host
 
       customParsers: |
         [PARSER]
