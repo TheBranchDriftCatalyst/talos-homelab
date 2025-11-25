@@ -1,0 +1,128 @@
+# Arr-Stack Tiltfile
+# Local development workflow for media automation stack
+#
+# Usage:
+#   tilt up              # Start Tilt with Flux suspension
+#   SUSPEND_FLUX=false tilt up  # Start without suspending Flux
+#   tilt down            # Stop Tilt and resume Flux
+
+# Allow Kubernetes context
+allow_k8s_contexts('kubernetes-admin@talos00')
+
+# Configuration
+namespace = 'media-dev'
+suspend_flux = os.getenv('SUSPEND_FLUX', 'true') == 'true'
+
+print('🚀 Arr-Stack Tilt Development Environment')
+print('📦 Namespace: ' + namespace)
+print('🔄 Flux Suspension: ' + str(suspend_flux))
+
+# Suspend Flux reconciliation during development (optional)
+if suspend_flux:
+    print('⏸️  Suspending Flux reconciliation...')
+    local('flux suspend kustomization flux-system')
+    # Note: Resume handled in tilt down hook below
+
+# Apply dev overlay (uses local-path storage, media-dev namespace)
+print('📝 Applying Kustomize overlay: overlays/dev')
+k8s_yaml(kustomize('overlays/dev'))
+
+# Watch for changes in base and overlay directories
+watch_file('base/')
+watch_file('overlays/dev/')
+watch_file('overlays/storage/local-path/')
+watch_file('overlays/ingress/talos00/')
+
+# Group resources by function
+print('🎯 Configuring resource groups...')
+
+## Indexer & Management
+k8s_resource(
+    'prowlarr',
+    port_forwards=['9696:9696'],
+    labels=['indexer'],
+    resource_deps=['postgresql']
+)
+
+## Media Automation
+k8s_resource(
+    'sonarr',
+    port_forwards=['8989:8989'],
+    labels=['automation'],
+    resource_deps=['postgresql', 'prowlarr']
+)
+
+k8s_resource(
+    'radarr',
+    port_forwards=['7878:7878'],
+    labels=['automation'],
+    resource_deps=['postgresql', 'prowlarr']
+)
+
+k8s_resource(
+    'overseerr',
+    port_forwards=['5055:5055'],
+    labels=['automation'],
+    resource_deps=['sonarr', 'radarr']
+)
+
+## Media Servers
+k8s_resource(
+    'plex',
+    port_forwards=['32400:32400'],
+    labels=['media-server']
+)
+
+k8s_resource(
+    'jellyfin',
+    port_forwards=['8096:8096'],
+    labels=['media-server']
+)
+
+k8s_resource(
+    'tdarr',
+    port_forwards=['8265:8265', '8266:8266'],
+    labels=['media-processing']
+)
+
+## Infrastructure
+k8s_resource(
+    'postgresql',
+    labels=['infrastructure']
+)
+
+k8s_resource(
+    'homepage',
+    port_forwards=['3000:3000'],
+    labels=['dashboard']
+)
+
+# Tilt down hook: Resume Flux if it was suspended
+if suspend_flux:
+    local_resource(
+        'flux-resume',
+        cmd='flux resume kustomization flux-system',
+        auto_init=False,
+        trigger_mode=TRIGGER_MODE_MANUAL,
+        labels=['infrastructure']
+    )
+
+print('')
+print('✅ Tilt configuration loaded!')
+print('🌐 Tilt UI: http://localhost:10350')
+print('')
+print('📚 Quick Access:')
+print('  - Prowlarr:   http://localhost:9696')
+print('  - Sonarr:     http://localhost:8989')
+print('  - Radarr:     http://localhost:7878')
+print('  - Overseerr:  http://localhost:5055')
+print('  - Plex:       http://localhost:32400/web')
+print('  - Jellyfin:   http://localhost:8096')
+print('  - Tdarr:      http://localhost:8265')
+print('  - Homepage:   http://localhost:3000')
+print('')
+print('💡 Tips:')
+print('  - Edit manifests in base/ or overlays/ - Tilt will auto-apply')
+print('  - View logs in Tilt UI or: tilt logs <resource>')
+print('  - Stop Tilt: tilt down (will resume Flux)')
+print('')
