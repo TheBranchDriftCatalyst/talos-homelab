@@ -69,7 +69,7 @@ spec:
         [INPUT]
             Name tail
             Path /var/log/containers/*.log
-            Parser docker_no_time
+            multiline.parser multiline_docker_no_time
             Tag kube.*
             Mem_Buf_Limit 5MB
             Skip_Long_Lines On
@@ -182,6 +182,17 @@ spec:
             Time_Keep Off
             Time_Key time
             Time_Format %Y-%m-%dT%H:%M:%S.%L
+
+        [MULTILINE_PARSER]
+            Name multiline_docker_no_time
+            Type regex
+            Flush_timeout 1000
+            # Use docker_no_time parser for base parsing (with Time_Keep Off)
+            Parser docker_no_time
+            # Rules to detect continuation lines (lines that don't start with timestamp)
+            # A line starting with whitespace or not starting with { is a continuation
+            Rule "start_state" "/^\{/" "cont"
+            Rule "cont" "/^[^\{]/" "cont"
 
     # Lua scripts for log enrichment
     luaScripts:
