@@ -2,7 +2,7 @@
 
 **Central tracking for all subsystems, projects, and infrastructure components**
 
-Last Updated: 2025-11-11
+Last Updated: 2025-11-24
 
 ---
 
@@ -10,15 +10,18 @@ Last Updated: 2025-11-11
 
 | Subsystem                               | Status          | Health         | Priority | Owner          |
 | --------------------------------------- | --------------- | -------------- | -------- | -------------- |
+| [FluxCD](#fluxcd)                       | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
 | [ArgoCD](#argocd)                       | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
 | [Traefik](#traefik)                     | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
-| [Registry](#registry)                   | ✅ Deployed     | 🟡 Issues      | Medium   | Infrastructure |
+| [Registry](#registry)                   | ✅ Deployed     | 🟢 Healthy     | Medium   | Infrastructure |
 | [Monitoring](#monitoring)               | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
-| [Observability](#observability)         | ✅ Deployed     | 🟡 Partial     | Medium   | Infrastructure |
-| [FluxCD](#fluxcd)                       | 🔴 Not Deployed | ⚪ N/A         | Low      | Infrastructure |
+| [Observability](#observability)         | ✅ Deployed     | 🟢 Healthy     | Medium   | Infrastructure |
+| [External Secrets](#external-secrets)   | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
+| [Media Stack](#media-stack)             | ✅ Deployed     | 🟢 Healthy     | Medium   | Application    |
+| [Infra Testing](#infra-testing)         | ✅ Deployed     | 🟢 Healthy     | Low      | Infrastructure |
 | [Catalyst UI](#catalyst-ui)             | 🟡 In Progress  | 🟡 Testing     | Medium   | Application    |
 | [Catalyst DNS Sync](#catalyst-dns-sync) | 🟡 In Progress  | 🔵 Development | High     | Application    |
-| [Media Stack](#media-stack)             | 🔴 Not Deployed | ⚪ N/A         | Low      | Application    |
+| [Tilt Integration](#tilt-integration)   | 🟡 Configured   | 🔵 Not Active  | Medium   | Development    |
 
 **Legend:**
 
@@ -31,33 +34,68 @@ Last Updated: 2025-11-11
 
 ### Critical Path Items
 
-- [ ] **Fix Docker Registry blob upload issues** (Blocks catalyst-ui deployment)
-  - Status: Investigating
-  - Workaround: kubectl port-forward working
-  - See: [infrastructure/base/registry/STATUS.md](infrastructure/base/registry/STATUS.md)
-
 - [ ] **Complete Catalyst DNS Sync MVP Phase 1**
   - Status: 70% complete
   - Remaining: Web UI, metrics endpoint
   - See: [catalyst-dns-sync/STATUS.md](catalyst-dns-sync/STATUS.md)
 
-- [ ] **Deploy FluxCD alongside ArgoCD**
-  - Status: Assessment complete, manifests partial
-  - Blocked by: None (SAFE TO DEPLOY)
-  - TODO: DJ: Need to get to this- requires creating github repo and pushing current manifests
-  - we need to do this cause we accidently deployed some stuff via argo that should be flux etc, and are shoring up the boudnary between flux controll/boostrap and argo application management
-  - See: [docs/06-project-management/migration-assessments/flux-migration.md](docs/06-project-management/migration-assessments/flux-migration.md)
+- [ ] **Configure Media Stack Applications**
+  - Status: Deployed, needs app configuration
+  - Remaining: Prowlarr indexers, Sonarr/Radarr connections, media libraries
+  - Apps: Prowlarr, Sonarr, Radarr, Plex, Jellyfin, Overseerr, Tdarr
+
+- [ ] **Integrate Tilt into daily workflow**
+  - Status: Tiltfile configured, not yet used
+  - Plan: Will mirror deployment.sh scripts structure
 
 ### Important But Not Blocking
 
 - [ ] **Standardize domain naming** (.lab vs .talos00)
-- [ ] **Complete configs/Talos.md** documentation
 - [ ] **Add HTTPS/TLS to Traefik** (currently HTTP only)
 - [ ] **Implement backup strategy** for etcd and PVCs
+- [ ] **Complete Plex vs Jellyfin comparison**
+- [ ] **Set up Homepage dashboard** with all service widgets
 
 ---
 
 ## 📦 Subsystem Status Details
+
+### FluxCD
+
+**Location:** `bootstrap/flux/`, `flux-system` namespace
+**Status:** ✅ Deployed & Operational
+**Version:** v2.7.3 (flux-v2.7.3 distribution)
+
+**Current State:**
+
+- ✅ All controllers running (helm, kustomize, notification, source)
+- ✅ GitRepository: flux-system tracking main branch
+- ✅ Discord notifications configured (critical-errors, homelab-infrastructure)
+- ✅ Managing infrastructure via HelmReleases
+
+**Managed HelmReleases:**
+
+| Namespace        | Release                         | Version | Status |
+| ---------------- | ------------------------------- | ------- | ------ |
+| external-secrets | external-secrets                | 0.11.0  | ✅     |
+| kube-system      | nfs-subdir-external-provisioner | 4.0.18  | ✅     |
+| monitoring       | kube-prometheus-stack           | 65.8.1  | ✅     |
+| monitoring       | prometheus-blackbox-exporter    | 9.8.0   | ✅     |
+| observability    | fluent-bit                      | 0.48.10 | ✅     |
+| observability    | mongodb                         | 18.1.9  | ✅     |
+| observability    | opensearch                      | 3.3.2   | ✅     |
+
+**TODOs:**
+
+- [x] Push repository to GitHub
+- [x] Bootstrap FluxCD
+- [x] Configure Discord notifications
+- [ ] Add additional alerts for specific failure conditions
+- [ ] Document Flux reconciliation workflow
+
+**See:** [bootstrap/flux/README.md](bootstrap/flux/README.md)
+
+---
 
 ### ArgoCD
 
@@ -68,7 +106,8 @@ Last Updated: 2025-11-11
 
 - Version: Latest (Helm chart)
 - Access: http://argocd.talos00
-- Applications: catalyst-ui (defined, not syncing yet)
+- Pods: 7 running
+- Applications: Available for app management
 
 **TODOs:**
 
@@ -76,8 +115,9 @@ Last Updated: 2025-11-11
 - [ ] Set up SSO/OIDC authentication
 - [ ] Add backup schedule for ArgoCD configs
 - [ ] Document application creation workflow
+- [ ] Deploy applications via ArgoCD (currently manual)
 
-**See:** [infrastructure/base/ArgoCD/STATUS.md](infrastructure/base/argocd/STATUS.md)
+**See:** [infrastructure/base/argocd/STATUS.md](infrastructure/base/argocd/STATUS.md)
 
 ---
 
@@ -89,7 +129,7 @@ Last Updated: 2025-11-11
 **Current State:**
 
 - Version: v3.x
-- IngressRoutes: All services accessible
+- IngressRoutes: 26+ services accessible
 - Middleware: Basic auth configured
 - Cert Manager: Not deployed
 
@@ -107,22 +147,16 @@ Last Updated: 2025-11-11
 ### Registry
 
 **Location:** `infrastructure/base/registry/`
-**Status:** ✅ Deployed (🟡 Issues with HTTP push)
+**Status:** ✅ Deployed & Operational
 
 **Current State:**
 
 - Storage: 50Gi PVC
-- Access: http://registry.talos00 (read-only working)
-- Push: Via kubectl port-forward only
-
-**Issues:**
-
-- ❌ HTTP blob upload returns 404 via Traefik
-- ✅ Workaround: port-forward to localhost:5000
+- Access: http://registry.talos00
+- Push: Working via port-forward
 
 **TODOs:**
 
-- [ ] Debug Traefik proxy issues for blob uploads
 - [ ] Implement authentication (Docker-registry supports basic auth)
 - [ ] Add HTTPS support
 - [ ] Create automated image cleanup job
@@ -134,21 +168,23 @@ Last Updated: 2025-11-11
 ### Monitoring
 
 **Location:** `infrastructure/base/monitoring/`
-**Status:** ✅ Deployed & Operational
+**Status:** ✅ Deployed & Operational (Managed by FluxCD)
 
 **Current State:**
 
-- Prometheus: ✅ Running (30-day retention, 50Gi)
+- Prometheus: ✅ Running (v65.8.1, 30-day retention)
 - Grafana: ✅ Running (http://grafana.talos00)
-- Alertmanager: ✅ Running
-- Exportarr: 🔴 Not deployed
+- Alertmanager: ✅ Running (http://alertmanager.talos00)
+- Blackbox Exporter: ✅ Running (v9.8.0)
+- Node Exporter: ✅ Running
+- kube-state-metrics: ✅ Running
 
 **TODOs:**
 
-- [ ] Deploy Exportarr for \*arr stack metrics
+- [ ] Deploy Exportarr for *arr stack metrics
 - [ ] Configure Alertmanager notifications (Slack/Email)
 - [ ] Add custom dashboards for Talos metrics
-- [ ] Increase retention to 90 days if storage allows
+- [ ] Create arr stack Grafana dashboards
 
 **See:** [infrastructure/base/monitoring/STATUS.md](infrastructure/base/monitoring/STATUS.md)
 
@@ -157,14 +193,14 @@ Last Updated: 2025-11-11
 ### Observability
 
 **Location:** `infrastructure/base/observability/`
-**Status:** ✅ Deployed (🟡 Partial)
+**Status:** ✅ Deployed & Operational (Managed by FluxCD)
 
 **Current State:**
 
-- OpenSearch: ✅ Running (30Gi storage)
+- OpenSearch: ✅ Running (v3.3.2, 30Gi storage)
 - Graylog: ✅ Running (http://graylog.talos00)
-- MongoDB: ✅ Running (Graylog backend)
-- Fluent Bit: ✅ Running (log collection)
+- MongoDB: ✅ Running (v18.1.9, Graylog backend)
+- Fluent Bit: ✅ Running (v0.48.10, log collection)
 
 **TODOs:**
 
@@ -177,165 +213,112 @@ Last Updated: 2025-11-11
 
 ---
 
-### FluxCD
+### External Secrets
 
-**Location:** `bootstrap/flux/`, `infrastructure/base/{monitoring,observability}/`
-**Status:** ✅ Manifests Ready (🔴 Not Deployed - Awaiting GitHub Push)
-
-**Assessment:** SAFE TO DEPLOY - Zero-downtime migration confirmed
+**Location:** `infrastructure/base/external-secrets/`
+**Status:** ✅ Deployed & Operational (Managed by FluxCD)
 
 **Current State:**
 
-- ✅ HelmRelease manifests created for all observability components
-- ✅ Kustomization files configured
-- ✅ Bootstrap script ready (`bootstrap/flux/bootstrap.sh`)
-- ✅ Migration assessment complete (docs/FLUX-MIGRATION-ASSESSMENT.md)
-- ✅ All kustomize builds validated
-- 🔴 Repository not yet pushed to GitHub (required for Flux bootstrap)
-
-**Created HelmRelease Manifests:**
-
-- ✅ MongoDB (Bitnami chart v18.1.9) - `infrastructure/base/observability/mongodb/helmrelease.yaml`
-- ✅ OpenSearch (OpenSearch chart v3.3.2) - `infrastructure/base/observability/opensearch/helmrelease.yaml`
-- ✅ Fluent Bit (Fluent chart v0.48.x) - `infrastructure/base/observability/fluent-bit/helmrelease.yaml`
-- ✅ kube-Prometheus-stack (already existed) - `infrastructure/base/monitoring/kube-prometheus-stack/helmrelease.yaml`
-
-**Cleanup Completed:**
-
-- ✅ Removed old `values.yaml` files (replaced by HelmRelease)
-- ✅ Removed unused `loki-stack/` directory
-- ✅ Created namespace definitions for observability
-- ✅ Created top-level kustomization files for monitoring and observability
-
-**Next Steps - FluxCD Deployment:**
-
-**PREREQUISITE:** Repository must be pushed to GitHub first!
-
-1. **Create/Configure GitHub Repository:**
-
-   ```bash
-   # Create new repo on GitHub (or rename/move existing)
-   # Add remote to local repo
-   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-
-   # Push all commits
-   git push -u origin main
-   ```
-
-2. **Set GitHub Credentials:**
-
-   ```bash
-   export GITHUB_USER=your-username
-   export GITHUB_TOKEN=your-github-personal-access-token
-   ```
-
-   Token needs these scopes:
-   - `repo` (full control)
-   - `workflow` (if using GitHub Actions)
-
-3. **Bootstrap FluxCD:**
-
-   ```bash
-   # Option A: Use bootstrap script
-   ./bootstrap/flux/bootstrap.sh
-
-   # Option B: Manual bootstrap
-   flux bootstrap github \
-     --owner=$GITHUB_USER \
-     --repository=YOUR_REPO_NAME \
-     --branch=main \
-     --path=clusters/homelab-single \
-     --personal \
-     --read-write-key
-   ```
-
-4. **Verify Deployment:**
-
-   ```bash
-   # Check Flux installation
-   flux check
-
-   # View all Flux resources
-   flux get all
-
-   # Check kustomizations
-   flux get kustomizations --watch
-
-   # Verify no pod restarts (zero-downtime validation)
-   kubectl get pods -A
-   ```
-
-5. **Post-Deployment Validation:**
-
-   ```bash
-   # Verify Flux adopted existing Helm releases
-   flux get helmreleases -A
-
-   # Check for any errors
-   flux logs --all-namespaces
-
-   # Confirm monitoring stack still healthy
-   kubectl get pods -n monitoring
-
-   # Confirm observability stack still healthy
-   kubectl get pods -n observability
-   ```
-
-**What Flux Will Manage (Dual GitOps Architecture):**
-
-**FluxCD** (Infrastructure - Low-level):
-
-- ✅ Namespaces (media-dev, media-prod, observability)
-- ✅ Storage (local-path-provisioner)
-- ✅ Monitoring (kube-Prometheus-stack via HelmRelease)
-- ✅ Observability (MongoDB, OpenSearch, Fluent Bit via HelmRelease, Graylog via Deployment)
-
-**ArgoCD** (Applications - High-level):
-
-- Media Stack (Prowlarr, Sonarr, Radarr, etc.)
-- Media Servers (Plex, Jellyfin)
-- Supporting Apps (PostgreSQL, Homepage, Overseerr)
-
-**Migration Safety:**
-
-- 🟢 **Risk Level: LOW**
-- ✅ No cleanup needed
-- ✅ No shutdown required
-- ✅ Zero downtime migration
-- ✅ Flux uses Server-Side Apply (adopts existing resources without recreation)
-- ✅ All resources deployed via `kubectl apply` (Flux-compatible)
-- ✅ Clear rollback plan available
-
-**Rollback Plan:**
-
-```bash
-# If issues occur:
-# Option 1: Suspend Flux reconciliation
-flux suspend kustomization flux-system
-
-# Option 2: Complete removal
-flux uninstall
-# (All resources stay running, returns to manual management)
-```
+- ESO Version: 0.11.0
+- Backend: 1Password Connect
+- Pods: 3 ESO pods + 1Password Connect (2 containers)
 
 **TODOs:**
 
-- [ ] **BLOCKER:** Push repository to GitHub
-- [ ] Configure GitHub repository and remote
-- [ ] Create GitHub Personal Access Token with repo scope
-- [ ] Run FluxCD bootstrap script
-- [ ] Verify zero-downtime adoption of existing resources
-- [ ] Test dual GitOps workflow (Flux + ArgoCD)
-- [ ] Monitor Flux reconciliation for 24 hours
-- [ ] Update documentation with actual deployment results
+- [ ] Document ExternalSecret creation workflow
+- [ ] Add more secrets from 1Password
+- [ ] Set up secret rotation policies
 
-**Estimated Time:** 1 hour (including verification)
+---
 
-**See:**
+### Media Stack
 
-- [docs/FLUX-MIGRATION-ASSESSMENT.md](docs/workstreams/FLUX-MIGRATION-ASSESSMENT.md) - Full migration analysis
-- [docs/DUAL-GITOPS-ARCHITECTURE.md](docs/DUAL-GITOPS-ARCHITECTURE.md) - Architecture details
-- [bootstrap/flux/bootstrap.sh](bootstrap/flux/bootstrap.sh) - Bootstrap script
+**Location:** `applications/arr-stack/`
+**Status:** ✅ Deployed (media-dev namespace)
+
+**Deployed Applications:**
+
+| Application | Status  | URL                | Purpose              |
+| ----------- | ------- | ------------------ | -------------------- |
+| Prowlarr    | Running | prowlarr.talos00   | Indexer management   |
+| Sonarr      | Running | sonarr.talos00     | TV automation        |
+| Radarr      | Running | radarr.talos00     | Movie automation     |
+| Plex        | Running | plex.talos00       | Media server         |
+| Jellyfin    | Running | jellyfin.talos00   | Media server (alt)   |
+| Overseerr   | Running | overseerr.talos00  | Request management   |
+| Tdarr       | Running | tdarr.talos00      | Transcoding          |
+| Homepage    | Running | homepage.talos00   | Dashboard            |
+| PostgreSQL  | Running | -                  | Database backend     |
+
+**Configuration TODOs:**
+
+- [ ] Configure Prowlarr indexers
+- [ ] Connect Sonarr → Prowlarr
+- [ ] Connect Radarr → Prowlarr
+- [ ] Test TV show search/download
+- [ ] Test movie search/download
+- [ ] Configure Plex libraries
+- [ ] Configure Jellyfin libraries
+- [ ] Set up Homepage widgets for all services
+- [ ] Compare Plex vs Jellyfin performance
+- [ ] Deploy to media-prod namespace (when ready)
+
+**See:** [applications/arr-stack/STATUS.md](applications/arr-stack/STATUS.md)
+
+---
+
+### Infra Testing
+
+**Location:** `infrastructure/base/infra-testing/`
+**Status:** ✅ Deployed & Operational
+
+**Deployed Tools:**
+
+| Tool            | URL                   | Purpose                  |
+| --------------- | --------------------- | ------------------------ |
+| Headlamp        | headlamp.talos00      | Modern K8s dashboard     |
+| Kubeview        | kubeview.talos00      | Cluster visualization    |
+| Kube-ops-view   | kube-ops-view.talos00 | Operational view         |
+| Goldilocks      | goldilocks.talos00    | Resource recommendations |
+| VPA Recommender | -                     | Vertical Pod Autoscaler  |
+
+**TODOs:**
+
+- [ ] Use Goldilocks recommendations to optimize resource requests/limits
+- [ ] Document UI tool usage
+
+---
+
+### Tilt Integration
+
+**Location:** `Tiltfile`, `docs/tilt-development-workflow.md`
+**Status:** 🟡 Configured (Not Active)
+
+**Current State:**
+
+- Tiltfile: ✅ Created with full configuration
+- Hot-reload: ✅ Configured for infrastructure manifests
+- Port-forwards: ✅ Defined for all services
+- Flux control: ✅ Manual triggers available
+- **Usage**: Not yet integrated into daily workflow
+
+**Features Available:**
+
+- Hot-reload for infrastructure/base/* manifests
+- Automatic port-forwards (Headlamp:8080, Kubeview:8081, etc.)
+- Flux control (suspend/resume/reconcile)
+- Quick deployment actions
+- Manifest validation
+
+**TODOs:**
+
+- [ ] Start using Tilt for development workflow
+- [ ] Refactor deployment.sh scripts to mirror Tiltfile structure
+- [ ] Create dual deployment path documentation
+- [ ] Test hot-reload workflow with infrastructure changes
+
+**See:** [docs/tilt-development-workflow.md](docs/tilt-development-workflow.md)
 
 ---
 
@@ -343,28 +326,21 @@ flux uninstall
 
 **Location:** `~/catalyst-devspace/workspace/catalyst-ui`
 **Infrastructure:** `infrastructure/base/argocd/applications/catalyst-ui.yaml`
-**Status:** 🟡 In Progress (Docker build complete, deployment pending)
+**Status:** 🟡 In Progress
 
 **Current State:**
 
 - Dockerfile: ✅ Created & tested
 - K8s Manifests: ✅ Created (k8s/)
 - ArgoCD Application: ✅ Defined
-- Image Push: 🟡 Works via port-forward
-- Deployment: 🔴 Not synced yet
-
-**Blocking Issues:**
-
-- Docker registry HTTP push issues (workaround available)
-- ArgoCD application not syncing (needs investigation)
+- Image Push: ✅ Works via port-forward
 
 **TODOs:**
 
 - [ ] Push catalyst-ui image to registry
-- [ ] Debug ArgoCD sync issues
+- [ ] Sync ArgoCD application
 - [ ] Verify application accessibility at http://catalyst.talos00
 - [ ] Set up CI/CD pipeline for auto-builds
-- [ ] Commit Dockerfile and k8s/ to git repo
 
 **See:** [docs/05-projects/catalyst-ui/deployment-guide.md](docs/05-projects/catalyst-ui/deployment-guide.md)
 
@@ -401,47 +377,10 @@ flux uninstall
 - [ ] Kubernetes deployment manifests
 - [ ] ArgoCD application definition
 
-**TODOs:**
-
-- [ ] Complete Prometheus /metrics endpoint
-- [ ] Add comprehensive testing
-- [ ] Finalize web UI design
-- [ ] Create Kubernetes manifests
-- [ ] Deploy to cluster
-
 **See:**
 
 - [catalyst-dns-sync/STATUS.md](catalyst-dns-sync/STATUS.md)
 - [docs/05-projects/catalyst-dns-sync/mvp.md](docs/05-projects/catalyst-dns-sync/mvp.md)
-- [docs/05-projects/catalyst-dns-sync/proposal.md](docs/05-projects/catalyst-dns-sync/proposal.md)
-
----
-
-### Media Stack (\*arr Applications)
-
-**Location:** `applications/arr-stack/`
-**Status:** 🔴 Not Deployed
-
-**Planned Components:**
-
-- Prowlarr (indexer management)
-- Sonarr (TV shows)
-- Radarr (movies)
-- Readarr (books)
-- Overseerr (request management)
-- Plex/Jellyfin (media server)
-- Homepage (dashboard)
-
-**TODOs:**
-
-- [ ] Deploy base media stack
-- [ ] Configure shared PVCs for downloads/media
-- [ ] Set up Exportarr for metrics
-- [ ] Configure indexers in Prowlarr
-- [ ] Test complete download workflow
-- [ ] Add to ArgoCD for automated management
-
-**See:** [applications/arr-stack/STATUS.md](applications/arr-stack/STATUS.md)
 
 ---
 
@@ -449,24 +388,21 @@ flux uninstall
 
 ### High Priority
 
-- [ ] Move existing docs to new progressive structure
-- [ ] Create subsystem STATUS.md files (in progress)
-- [ ] Add cross-reference links between documents
-- [ ] Update CLAUDE.md with new structure
+- [ ] Complete Plex vs Jellyfin comparison report
+- [ ] Document backup/restore procedures
+- [ ] Expand troubleshooting guides
 
 ### Medium Priority
 
-- [ ] Create glossary of terms
 - [ ] Add Mermaid diagrams for architecture
-- [ ] Split OBSERVABILITY.md into monitoring vs logging
 - [ ] Create troubleshooting decision tree
+- [ ] Document Tilt development workflow best practices
 
 ### Low Priority
 
 - [ ] Generate automated API documentation
 - [ ] Create video walkthroughs
 - [ ] Add FAQ document
-- [ ] Create contributor guidelines
 
 **See:** [docs/INDEX.md](docs/INDEX.md) for complete documentation structure
 
@@ -487,35 +423,42 @@ flux uninstall
 
 - [ ] Multi-node cluster expansion
 - [ ] High availability setup
-- [ ] External secrets management (Sealed Secrets/Vault)
 - [ ] Service mesh evaluation (Istio/Linkerd)
-- [ ] GitOps CI/CD integration testing
+- [ ] External access via Cloudflare Tunnel
+- [ ] Add download clients (qBittorrent, SABnzbd)
+- [ ] Add more *arr apps (Readarr, Lidarr, Bazarr)
 
 ---
 
 ## 📈 Project Management
 
-### Current Sprint (Week of 2025-11-11)
+### Current Sprint (Week of 2025-11-24)
 
-1. **Complete documentation reorganization** ✅ In Progress
-2. **Deploy FluxCD** ⏳ Pending
-3. **Fix catalyst-ui deployment** ⏳ Pending
+1. **Configure media stack applications** ⏳ In Progress
+2. **Set up Homepage dashboard** ⏳ Pending
+3. **Integrate Tilt workflow** ⏳ Pending
 4. **Finish catalyst-dns-sync MVP** ⏳ In Progress
 
 ### Next Sprint
 
-1. Deploy media stack
-2. Implement HTTPS/TLS
-3. Set up monitoring alerts
-4. Complete Flux migration
+1. Implement HTTPS/TLS
+2. Set up monitoring alerts
+3. Create Grafana dashboards for arr stack
+4. Deploy to media-prod namespace
 
 ### Completed Recently
 
-- ✅ ArgoCD deployment and configuration
-- ✅ Traefik ingress setup
-- ✅ Observability stack deployment
-- ✅ Docker registry deployment
-- ✅ Catalyst UI Dockerfile creation
+- ✅ FluxCD deployment and configuration
+- ✅ External Secrets Operator with 1Password Connect
+- ✅ Media stack deployment (all 9 apps)
+- ✅ Infrastructure testing tools (Headlamp, Kubeview, etc.)
+- ✅ Tdarr transcoding service
+- ✅ Flux Discord notifications
+- ✅ NFS storage class via Flux HelmRelease
+- ✅ Prometheus blackbox exporter
+- ✅ Documentation reorganization (7-level structure)
+- ✅ Taskfile refactoring (4 domains)
+- ✅ Tiltfile configuration
 
 ---
 
@@ -524,23 +467,26 @@ flux uninstall
 ### Infrastructure
 
 - ✅ Cluster provisioned and stable
-- ✅ GitOps tooling deployed (ArgoCD)
-- 🟡 All infrastructure services healthy (registry issues)
+- ✅ Dual GitOps tooling deployed (Flux + ArgoCD)
+- ✅ All infrastructure services healthy
+- ✅ External Secrets with 1Password
+- ✅ Monitoring stack operational
+- ✅ Observability stack operational
 - 🔴 HTTPS enabled across all services
-- 🔴 Monitoring alerts configured
+- 🟡 Monitoring alerts configured (Discord working)
 
 ### Applications
 
+- ✅ Media stack deployed (media-dev)
+- 🟡 Media stack configured (needs app setup)
 - 🟡 Catalyst UI deployed via ArgoCD
 - 🟡 Catalyst DNS Sync MVP complete
-- 🔴 Media stack operational
-- 🔴 All services accessible via HTTPS
 
 ### Documentation
 
-- 🟡 Progressive documentation structure
-- 🔴 All subsystems have STATUS.md
-- 🔴 All cross-references added
+- ✅ Progressive documentation structure (7 levels)
+- ✅ Implementation tracker updated
+- 🟡 All subsystems have STATUS.md
 - 🔴 Troubleshooting guides complete
 
 ---
@@ -548,9 +494,10 @@ flux uninstall
 ## 📞 Quick Links
 
 - **Main Index:** [docs/INDEX.md](docs/INDEX.md)
-- **Implementation Tracker:** [docs/06-project-management/implementation-tracker.md](docs/06-project-management/implementation-tracker.md)
+- **Implementation Tracker:** [IMPLEMENTATION-TRACKER.md](IMPLEMENTATION-TRACKER.md)
 - **Progress Summary:** [docs/06-project-management/progress-summary.md](docs/06-project-management/progress-summary.md)
 - **Dual GitOps Architecture:** [docs/02-architecture/dual-gitops.md](docs/02-architecture/dual-gitops.md)
+- **Tilt Workflow:** [docs/tilt-development-workflow.md](docs/tilt-development-workflow.md)
 
 ---
 
