@@ -99,10 +99,10 @@ for ITEM_ID in $(echo "${ITEMS}" | jq -r ".[].id"); do
     ITEM_TITLE=$(echo "${ITEM_DETAILS}" | jq -r ".title")
     echo ""
     echo "📌 ${ITEM_TITLE}:"
-    
+
     # Extract all fields with their values
     FIELDS=$(echo "${ITEM_DETAILS}" | jq -r ".fields[]? | select(.value != null and .value != \"\") | \"  \(.label // .id): \(.value)\"")
-    
+
     if [ -z "${FIELDS}" ]; then
         echo "  (no fields with values)"
     else

@@ -28,13 +28,32 @@ spec:
           env:
             - name: TZ
               value: 'America/Los_Angeles'
+          envFrom:
+            - secretRef:
+                name: homepage-secrets
           ports:
             - name: http
               containerPort: 3000
               protocol: TCP
           volumeMounts:
             - name: config
-              mountPath: /app/config
+              mountPath: /app/config/settings.yaml
+              subPath: settings.yaml
+            - name: config
+              mountPath: /app/config/kubernetes.yaml
+              subPath: kubernetes.yaml
+            - name: services
+              mountPath: /app/config/services.yaml
+              subPath: services.yaml
+            - name: services
+              mountPath: /app/config/widgets.yaml
+              subPath: widgets.yaml
+            - name: services
+              mountPath: /app/config/bookmarks.yaml
+              subPath: bookmarks.yaml
+            - name: services
+              mountPath: /app/config/docker.yaml
+              subPath: docker.yaml
           livenessProbe:
             httpGet:
               path: /
@@ -60,5 +79,8 @@ spec:
               memory: 256Mi
       volumes:
         - name: config
-          persistentVolumeClaim:
-            claimName: homepage-config
+          configMap:
+            name: homepage-config
+        - name: services
+          configMap:
+            name: homepage-services
