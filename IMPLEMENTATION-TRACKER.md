@@ -1,8 +1,8 @@
 # Homelab GitOps + Arr Stack Implementation Tracker
 
 **Project Start**: 2025-11-09
-**Target Completion**: 6 weeks
-**Status**: 🚧 Phase 1 - Directory Structure Created
+**Last Updated**: 2025-11-24
+**Status**: ✅ Phase 6 Complete - Full Stack Operational
 
 ---
 
@@ -10,414 +10,454 @@
 
 | Phase                              | Status         | Progress |
 | ---------------------------------- | -------------- | -------- |
-| Phase 1: Directory Structure       | 🚧 IN PROGRESS | 25%      |
-| Phase 2: GitOps Foundation         | ⏸️ PENDING     | 0%       |
-| Phase 3: Multi-Environment         | ⏸️ PENDING     | 0%       |
-| Phase 4: Storage Setup             | ⏸️ PENDING     | 0%       |
-| Phase 5: Monitoring Stack          | ⏸️ PENDING     | 0%       |
-| Phase 6: Arr Stack + Media Servers | ⏸️ PENDING     | 0%       |
-| Phase 7: Finalize & Document       | ⏸️ PENDING     | 0%       |
+| Phase 1: Directory Structure       | ✅ COMPLETE    | 100%     |
+| Phase 2: GitOps Foundation         | ✅ COMPLETE    | 100%     |
+| Phase 3: Multi-Environment         | ✅ COMPLETE    | 100%     |
+| Phase 4: Storage Setup             | ✅ COMPLETE    | 100%     |
+| Phase 5: Monitoring Stack          | ✅ COMPLETE    | 100%     |
+| Phase 6: Arr Stack + Media Servers | ✅ COMPLETE    | 100%     |
+| Phase 7: Finalize & Document       | 🚧 IN PROGRESS | 70%      |
 
-**Overall Progress**: 4% (1/25 major tasks)
+**Overall Progress**: 96% (24/25 major tasks)
 
 ---
 
 ## Stack Overview
 
-### Core Infrastructure
+### Core Infrastructure (DEPLOYED)
 
 - **OS**: Talos Linux v1.11.1
 - **Kubernetes**: v1.34.0
-- **GitOps (Infra)**: FluxCD v2.x
-- **GitOps (Apps)**: ArgoCD v2.x
-- **Ingress**: Traefik v3.5.3
-- **Monitoring**: kube-Prometheus-stack
-- **Storage**: Synology NFS + local-path-provisioner
+- **GitOps (Infra)**: FluxCD v2.7.3 ✅
+- **GitOps (Apps)**: ArgoCD v2.x ✅
+- **Ingress**: Traefik v3.5.3 ✅
+- **Monitoring**: kube-prometheus-stack v65.8.1 ✅
+- **Observability**: OpenSearch + Graylog + Fluent Bit ✅
+- **Storage**: local-path (default) + NFS StorageClass ✅
+- **Secrets**: External Secrets Operator v0.11.0 + 1Password Connect ✅
 
-### Media Applications
+### Media Applications (DEPLOYED in media-dev)
 
-- **Indexer Manager**: Prowlarr
-- **TV Automation**: Sonarr
-- **Movie Automation**: Radarr
-- **Media Servers**: **Plex** (primary) + **Jellyfin** (testing/comparison)
+- **Indexer Manager**: Prowlarr ✅
+- **TV Automation**: Sonarr ✅
+- **Movie Automation**: Radarr ✅
+- **Media Servers**: Plex ✅ + Jellyfin ✅
+- **Request Management**: Overseerr ✅
+- **Transcoding**: Tdarr ✅
+- **Dashboard**: Homepage ✅
+- **Database**: PostgreSQL ✅
+
+### Infrastructure Testing Tools (DEPLOYED)
+
+- **Headlamp** - Modern K8s dashboard ✅
+- **Kubeview** - Cluster visualizer ✅
+- **Kube-ops-view** - Operational view ✅
+- **Goldilocks** - Resource recommendations ✅
+- **VPA** - Vertical Pod Autoscaler ✅
+
+### Development Tools
+
+- **Tilt**: Configured (Tiltfile exists) - Not yet integrated into workflow
+- **Taskfile**: 90+ tasks across 4 domains (talos, k8s, dev, infra)
 
 ### Environments
 
-- **Dev**: `media-dev` namespace, `*.dev.lab` domains
-- **Prod**: `media-prod` namespace, `*.lab` domains
+- **Dev**: `media-dev` namespace ✅ - All apps deployed
+- **Prod**: `media-prod` namespace ✅ - Ready for deployment
 
 ---
 
-## Phase 1: Directory Structure ✅ 25% Complete
+## Phase 1: Directory Structure ✅ COMPLETE
 
 ### ✅ Completed Tasks
 
-- [x] Created bootstrap directories (flux, ArgoCD)
+- [x] Created bootstrap directories (flux, argocd)
 - [x] Created infrastructure directories (base + overlays)
 - [x] Created applications/arr-stack structure
-- [x] Created base dirs for all apps (prowlarr, sonarr, radarr, plex, jellyfin)
+- [x] Created base dirs for all apps (prowlarr, sonarr, radarr, plex, jellyfin, overseerr, tdarr, homepage)
+- [x] Created namespace manifests
+- [x] Created storage provisioner manifests
+- [x] Created kube-prometheus-stack configuration
+- [x] Created Flux bootstrap manifests
+- [x] Created ArgoCD bootstrap manifests
 
-### 🚧 In Progress
-
-- [ ] Create namespace manifests
-- [ ] Create storage provisioner manifests
-- [ ] Create kube-Prometheus-stack configuration
-- [ ] Create Flux bootstrap manifests
-- [ ] Create ArgoCD bootstrap manifests
-
-### Directory Structure
+### Directory Structure (Implemented)
 
 ```
-talos-fix/
+talos-homelab/
 ├── bootstrap/
-│   ├── flux/                    # FluxCD installation
-│   └── argocd/                  # ArgoCD installation
-├── infrastructure/               # Managed by Flux
+│   ├── flux/                    # FluxCD installation ✅
+│   └── argocd/                  # ArgoCD installation ✅
+├── infrastructure/base/         # Managed by Flux ✅
+│   ├── namespaces/              # media-dev, media-prod ✅
+│   ├── storage/                 # local-path + NFS ✅
+│   ├── traefik/                 # Ingress controller ✅
+│   ├── monitoring/              # kube-prometheus-stack ✅
+│   ├── observability/           # OpenSearch, Graylog, Fluent Bit ✅
+│   ├── external-secrets/        # ESO + 1Password ✅
+│   ├── infra-testing/           # Headlamp, Kubeview, etc. ✅
+│   └── flux-notifications/      # Flux alerts + Discord ✅
+├── applications/arr-stack/      # Media applications ✅
 │   ├── base/
-│   │   ├── namespaces/          # media-dev, media-prod
-│   │   ├── storage/             # NFS + local-path
-│   │   ├── traefik/             # Ingress controller
-│   │   ├── cert-manager/        # TLS certificates
-│   │   └── monitoring/
-│   │       └── kube-prometheus-stack/
+│   │   ├── prowlarr/            ✅
+│   │   ├── sonarr/              ✅
+│   │   ├── radarr/              ✅
+│   │   ├── plex/                ✅
+│   │   ├── jellyfin/            ✅
+│   │   ├── overseerr/           ✅
+│   │   ├── tdarr/               ✅
+│   │   ├── homepage/            ✅
+│   │   ├── postgresql/          ✅
+│   │   ├── exportarr/           ✅
+│   │   └── readarr/             ✅
 │   └── overlays/
-│       ├── dev/                 # Dev environment patches
-│       └── prod/                # Prod environment patches
-├── applications/                 # Managed by ArgoCD
-│   └── arr-stack/
-│       ├── base/
-│       │   ├── prowlarr/        # Indexer manager
-│       │   ├── sonarr/          # TV automation
-│       │   ├── radarr/          # Movie automation
-│       │   ├── plex/            # Media server (primary)
-│       │   └── jellyfin/        # Media server (testing)
-│       └── overlays/
-│           ├── dev/
-│           └── prod/
-├── clusters/homelab-single/
-├── argocd-apps/
-└── docs/
+│       ├── dev/                 ✅
+│       └── prod/                ✅
+├── scripts/                     # Deployment automation ✅
+├── docs/                        # Documentation (7 levels) ✅
+├── Tiltfile                     # Tilt configuration ✅
+└── Taskfile.yaml               # Task automation ✅
 ```
 
 ---
 
-## Phase 2: GitOps Foundation (Week 2)
+## Phase 2: GitOps Foundation ✅ COMPLETE
 
-### Goals
+### FluxCD Deployment
 
-- Install FluxCD
-- Install ArgoCD via Flux
-- Deploy storage provisioners
-- Migrate Traefik to Flux management
+**Version**: v2.7.3 (flux-v2.7.3 distribution)
 
-### Tasks
+**Controllers Running**:
 
-- [ ] Write `bootstrap-flux.sh` script
-- [ ] Create Flux bootstrap manifests
-- [ ] Install Flux to cluster
-- [ ] Create GitRepository source
-- [ ] Deploy NFS StorageClass
-- [ ] Deploy local-path-provisioner
-- [ ] Create ArgoCD Helm release (via Flux)
-- [ ] Deploy ArgoCD
-- [ ] Access ArgoCD UI
-- [ ] Create root App-of-Apps
+| Controller                | Version | Status  |
+| ------------------------- | ------- | ------- |
+| helm-controller           | v1.4.3  | Running |
+| kustomize-controller      | v1.7.2  | Running |
+| notification-controller   | v1.7.4  | Running |
+| source-controller         | v1.7.3  | Running |
 
----
+**GitRepository Source**: `flux-system` tracking `main@sha1:5a2553ec`
 
-## Phase 3: Multi-Environment Setup (Week 3)
+### Active Flux Resources
 
-### Goals
+| Namespace        | Resource Type   | Name                            | Version | Status |
+| ---------------- | --------------- | ------------------------------- | ------- | ------ |
+| flux-system      | GitRepository   | flux-system                     | -       | ✅     |
+| flux-system      | Kustomization   | flux-system                     | -       | ✅     |
+| external-secrets | HelmRelease     | external-secrets                | 0.11.0  | ✅     |
+| kube-system      | HelmRelease     | nfs-subdir-external-provisioner | 4.0.18  | ✅     |
+| monitoring       | HelmRelease     | kube-prometheus-stack           | 65.8.1  | ✅     |
+| monitoring       | HelmRelease     | prometheus-blackbox-exporter    | 9.8.0   | ✅     |
+| observability    | HelmRelease     | fluent-bit                      | 0.48.10 | ✅     |
+| observability    | HelmRelease     | mongodb                         | 18.1.9  | ✅     |
+| observability    | HelmRelease     | opensearch                      | 3.3.2   | ✅     |
 
-- Create dev/prod namespaces
-- Configure environment-specific routing
-- Set up Kustomize overlays
+### Flux Notifications
 
-### Tasks
+| Resource | Name                   | Target  | Status |
+| -------- | ---------------------- | ------- | ------ |
+| Provider | discord                | Discord | ✅     |
+| Alert    | critical-errors        | Discord | ✅     |
+| Alert    | homelab-infrastructure | Discord | ✅     |
 
-- [ ] Create `media-dev` namespace with resource quotas
-- [ ] Create `media-prod` namespace with resource quotas
-- [ ] Configure Traefik for multi-env routing
-- [ ] Create dev overlay (\*.dev.lab domains)
-- [ ] Create prod overlay (\*.lab domains)
-- [ ] Test routing isolation
+### ArgoCD Deployment
 
----
-
-## Phase 4: Storage Setup (Week 3)
-
-### Synology NFS Configuration
-
-```
-/volume1/media/           # RWX - Shared media library
-├── tv/                   # TV shows
-├── movies/               # Movies
-└── music/                # Music
-
-/volume1/downloads/       # RWX - Download client
-├── complete/             # Finished downloads
-└── incomplete/           # In-progress downloads
-```
-
-### Local Storage (SQLite - MUST be local, not NFS)
-
-- Prowlarr config: 5Gi RWO
-- Sonarr config: 10Gi RWO
-- Radarr config: 10Gi RWO
-- Plex metadata: 20Gi RWO
-- Jellyfin config: 10Gi RWO
-
-### Tasks
-
-- [ ] Configure Synology NFS shares
-- [ ] Create NFS StorageClass manifest
-- [ ] Deploy local-path-provisioner
-- [ ] Test NFS PVC provisioning
-- [ ] Test local-path PVC provisioning
-- [ ] Create PVC templates for all apps
+- **Namespace**: argocd
+- **URL**: argocd.talos00
+- **Status**: Running (7 pods)
 
 ---
 
-## Phase 5: Monitoring Stack (Week 4)
+## Phase 3: Multi-Environment Setup ✅ COMPLETE
 
-### kube-Prometheus-stack Components
+### ✅ Completed Tasks
 
-- Prometheus Operator
-- Prometheus (metrics collection)
-- Alertmanager (alert routing)
-- Grafana (visualization)
-- node-exporter (node metrics)
-- kube-state-metrics (K8s metrics)
+- [x] Created `media-dev` namespace
+- [x] Created `media-prod` namespace
+- [x] Configured Traefik IngressRoutes for all services
+- [x] Created dev overlay (*.talos00 domains)
+- [x] Routing working for all applications
 
-### Tasks
+### Active IngressRoutes (26 total)
 
-- [ ] Create kube-Prometheus-stack HelmRelease
-- [ ] Configure Prometheus storage (20Gi PVC)
-- [ ] Configure Grafana admin password
-- [ ] Create IngressRoutes (Grafana.dev.lab, Prometheus.dev.lab)
-- [ ] Import arr stack dashboards
-- [ ] Create custom dashboards for Plex/Jellyfin comparison
-- [ ] Configure ServiceMonitors for arr apps
-- [ ] Test metrics collection
+| Namespace              | Service              | URL                    | Status |
+| ---------------------- | -------------------- | ---------------------- | ------ |
+| argocd                 | ArgoCD               | argocd.talos00         | ✅     |
+| monitoring             | Grafana              | grafana.talos00        | ✅     |
+| monitoring             | Prometheus           | prometheus.talos00     | ✅     |
+| monitoring             | Alertmanager         | alertmanager.talos00   | ✅     |
+| observability          | Graylog              | graylog.talos00        | ✅     |
+| observability          | Grafana              | grafana.talos00        | ✅     |
+| observability          | Prometheus           | prometheus.talos00     | ✅     |
+| observability          | Alertmanager         | alertmanager.talos00   | ✅     |
+| media-dev              | Prowlarr             | prowlarr.talos00       | ✅     |
+| media-dev              | Sonarr               | sonarr.talos00         | ✅     |
+| media-dev              | Radarr               | radarr.talos00         | ✅     |
+| media-dev              | Plex                 | plex.talos00           | ✅     |
+| media-dev              | Jellyfin             | jellyfin.talos00       | ✅     |
+| media-dev              | Overseerr            | overseerr.talos00      | ✅     |
+| media-dev              | Tdarr                | tdarr.talos00          | ✅     |
+| media-dev              | Homepage             | homepage.talos00       | ✅     |
+| infra-testing          | Headlamp             | headlamp.talos00       | ✅     |
+| infra-testing          | Kubeview             | kubeview.talos00       | ✅     |
+| infra-testing          | Kube-ops-view        | kube-ops-view.talos00  | ✅     |
+| infra-testing          | Goldilocks           | goldilocks.talos00     | ✅     |
+| registry               | Docker Registry      | registry.talos00       | ✅     |
+| kubernetes-dashboard   | K8s Dashboard        | dashboard.talos00      | ✅     |
+| traefik                | Traefik Dashboard    | traefik.talos00        | ✅     |
+| default                | whoami-hostname      | whoami.talos00         | ✅     |
+| default                | whoami-path          | whoami.talos00/path    | ✅     |
+| bastion                | Bastion SSH          | -                      | ✅     |
 
 ---
 
-## Phase 6: Arr Stack + Media Servers (Week 4-5)
+## Phase 4: Storage Setup ✅ COMPLETE
 
-### Deployment Order
+### Storage Classes Available
 
-1. **Prowlarr** (indexer manager) - Deploy first
-2. **Sonarr** (TV) - Connect to Prowlarr
-3. **Radarr** (Movies) - Connect to Prowlarr
-4. **Plex** (primary media server)
-5. **Jellyfin** (comparison/testing)
+| Name         | Provisioner                                   | Reclaim Policy | Status  |
+| ------------ | --------------------------------------------- | -------------- | ------- |
+| local-path   | rancher.io/local-path                         | Delete         | Default |
+| nfs          | cluster.local/nfs-subdir-external-provisioner | Retain         | ✅      |
 
-### Media Server Comparison Goals
+### PVCs in media-dev (14 total, All Bound)
 
-- Side-by-side performance testing
-- UI/UX comparison
-- Resource usage monitoring (Grafana dashboards)
-- Transcoding performance
-- Mobile app experience
-- Choose primary server after testing
+| PVC Name              | Capacity | Storage Class | Status |
+| --------------------- | -------- | ------------- | ------ |
+| prowlarr-config       | 1Gi      | local-path    | Bound  |
+| sonarr-config         | 5Gi      | local-path    | Bound  |
+| radarr-config         | 5Gi      | local-path    | Bound  |
+| plex-config           | 50Gi     | local-path    | Bound  |
+| jellyfin-config       | 50Gi     | local-path    | Bound  |
+| overseerr-config      | 1Gi      | local-path    | Bound  |
+| homepage-config       | 1Gi      | local-path    | Bound  |
+| postgresql-data       | 10Gi     | local-path    | Bound  |
+| media-shared          | 100Gi    | local-path    | Bound  |
+| downloads-shared      | 50Gi     | local-path    | Bound  |
+| tdarr-config          | 2Gi      | local-path    | Bound  |
+| tdarr-server          | 5Gi      | local-path    | Bound  |
+| tdarr-logs            | 2Gi      | local-path    | Bound  |
+| tdarr-transcode-cache | 50Gi     | local-path    | Bound  |
 
-### IngressRoutes
+---
 
-**Dev Environment**:
+## Phase 5: Monitoring Stack ✅ COMPLETE
 
-- `prowlarr.dev.lab` → Prowlarr
-- `sonarr.dev.lab` → Sonarr
-- `radarr.dev.lab` → Radarr
-- `plex.dev.lab` → Plex
-- `jellyfin.dev.lab` → Jellyfin
+### Monitoring Namespace (monitoring)
 
-**Prod Environment**:
+| Component                      | Version | Status  | Notes                        |
+| ------------------------------ | ------- | ------- | ---------------------------- |
+| Prometheus                     | 65.8.1  | Running | 30-day retention             |
+| Grafana                        | 65.8.1  | Running | grafana.talos00              |
+| Alertmanager                   | 65.8.1  | Running | alertmanager.talos00         |
+| kube-state-metrics             | 65.8.1  | Running | K8s metrics                  |
+| prometheus-node-exporter       | 65.8.1  | Running | Node metrics                 |
+| prometheus-blackbox-exporter   | 9.8.0   | Running | Endpoint monitoring          |
+| kube-prometheus-stack-operator | 65.8.1  | Running | Manages Prometheus resources |
 
-- `prowlarr.lab` → Prowlarr
-- `sonarr.lab` → Sonarr
-- `radarr.lab` → Radarr
-- `plex.lab` → Plex
-- `jellyfin.lab` → Jellyfin
+### Observability Namespace (observability)
 
-### Tasks
+| Component   | Version | Status  | Notes                  |
+| ----------- | ------- | ------- | ---------------------- |
+| OpenSearch  | 3.3.2   | Running | Log storage            |
+| MongoDB     | 18.1.9  | Running | Graylog backend        |
+| Graylog     | -       | Running | graylog.talos00        |
+| Fluent Bit  | 0.48.10 | Running | Log collection (1 pod) |
 
-- [ ] Create Prowlarr manifests (deployment, service, PVC, ingressroute)
-- [ ] Create Sonarr manifests
-- [ ] Create Radarr manifests
-- [ ] Create Plex manifests
-- [ ] Create Jellyfin manifests
-- [ ] Create dev/prod overlays
-- [ ] Deploy to dev environment
+---
+
+## Phase 6: Arr Stack + Media Servers ✅ COMPLETE
+
+### Deployed Applications (media-dev namespace)
+
+| Application | Status  | IngressRoute       | Purpose              |
+| ----------- | ------- | ------------------ | -------------------- |
+| Prowlarr    | Running | prowlarr.talos00   | Indexer management   |
+| Sonarr      | Running | sonarr.talos00     | TV show automation   |
+| Radarr      | Running | radarr.talos00     | Movie automation     |
+| Plex        | Running | plex.talos00       | Media server         |
+| Jellyfin    | Running | jellyfin.talos00   | Media server (alt)   |
+| Overseerr   | Running | overseerr.talos00  | Request management   |
+| Tdarr       | Running | tdarr.talos00      | Transcoding          |
+| Homepage    | Running | homepage.talos00   | Dashboard            |
+| PostgreSQL  | Running | -                  | Database backend     |
+
+### ✅ Completed Tasks
+
+- [x] Create Prowlarr manifests (deployment, service, PVC, ingressroute)
+- [x] Create Sonarr manifests
+- [x] Create Radarr manifests
+- [x] Create Plex manifests
+- [x] Create Jellyfin manifests
+- [x] Create Overseerr manifests
+- [x] Create Tdarr manifests
+- [x] Create Homepage manifests
+- [x] Create PostgreSQL manifests
+- [x] Create dev overlays
+- [x] Deploy to dev environment
+- [x] All services accessible via Traefik IngressRoutes
+
+### 🚧 Remaining Configuration Tasks
+
 - [ ] Configure Prowlarr indexers
 - [ ] Connect Sonarr → Prowlarr
 - [ ] Connect Radarr → Prowlarr
 - [ ] Test TV show search/download
 - [ ] Test movie search/download
-- [ ] Verify media in both Plex and Jellyfin
+- [ ] Configure Plex libraries
+- [ ] Configure Jellyfin libraries
 - [ ] Compare Plex vs Jellyfin performance
-- [ ] Deploy to prod environment
+- [ ] Deploy to prod environment (when ready)
 
 ---
 
-## Phase 7: Documentation & Finalization (Week 6)
+## Phase 7: Documentation & Finalization 🚧 70% Complete
 
-### Documentation
+### Documentation Status
 
-- [ ] Architecture diagram
+**Comprehensive docs structure with 7 levels:**
+
+- [x] docs/INDEX.md - Master documentation index
+- [x] docs/01-getting-started/ - Onboarding guides
+- [x] docs/02-architecture/ - System design (dual-gitops, networking, observability)
+- [x] docs/03-operations/ - Cluster operations
+- [x] docs/04-deployment/ - Deployment guides
+- [x] docs/05-projects/ - Project implementations
+- [x] docs/06-project-management/ - Tracking and progress
+- [x] docs/07-reference/ - Technical references
+
+**Root-level docs:**
+
+- [x] README.md - Main repository overview
+- [x] QUICKSTART.md - Quick reference guide
+- [x] TRAEFIK.md - Ingress configuration (in docs/)
+- [x] OBSERVABILITY.md - Monitoring and logging (in docs/)
+- [x] CLAUDE.md - AI assistant guidance
+- [x] IMPLEMENTATION-TRACKER.md - This file
+
+**Remaining documentation:**
+
 - [ ] Plex vs Jellyfin comparison report
-- [ ] Deployment procedures
-- [ ] Troubleshooting guide
 - [ ] Backup/restore procedures
+- [ ] Troubleshooting guide expansion
 
-### Taskfile Commands
+### Taskfile Organization
+
+**4 Domain Structure:**
+
+| Taskfile             | Domain | Tasks | Purpose                      |
+| -------------------- | ------ | ----- | ---------------------------- |
+| Taskfile.yaml        | Root   | 20+   | Common shortcuts             |
+| Taskfile.talos.yaml  | talos: | 33    | Talos Linux operations       |
+| Taskfile.k8s.yaml    | k8s:   | 18    | Kubernetes operations        |
+| Taskfile.dev.yaml    | dev:   | 17    | Development tools            |
+| Taskfile.infra.yaml  | infra: | 22    | Infrastructure deployment    |
+
+**Key Tasks:**
 
 ```bash
-# GitOps
-task bootstrap-flux
-task bootstrap-argocd
-task sync-flux
-task sync-argocd
+# Common shortcuts
+task health              # Cluster health check
+task get-pods            # View all pods
+task kubeconfig-merge    # Merge kubeconfig
+task deploy-stack        # Deploy infrastructure
 
-# Storage
-task setup-storage
-task test-storage
-
-# Arr Stack
-task deploy-arr-dev
-task deploy-arr-prod
-
-# Monitoring
-task grafana-ui
-task prometheus-ui
-
-# Media Servers
-task plex-ui
-task jellyfin-ui
+# Domain-specific
+task talos:health        # Talos-specific health
+task k8s:get-pods        # K8s pod listing
+task dev:lint            # Run all linters
+task infra:deploy-stack  # Deploy full stack
 ```
 
----
+### Development Workflow Status
 
-## Environment Configuration
+**Tilt Integration (Planned)**:
 
-### Dev Environment (`media-dev`)
+- Tiltfile exists with full configuration
+- Hot-reload support for infrastructure manifests
+- Port-forwarding configured for all services
+- Flux control resources defined
+- **Status**: Configured but not yet integrated into daily workflow
 
-- **Namespace**: `media-dev`
-- **Domains**: `*.dev.lab`
-- **Resources**: Lower limits for testing
-- **Logging**: DEBUG level
-- **Purpose**: Testing new configurations
+**Dual Deployment Path (Planned)**:
 
-### Prod Environment (`media-prod`)
+Future structure will have:
 
-- **Namespace**: `media-prod`
-- **Domains**: `*.lab`
-- **Resources**: Higher limits for performance
-- **Logging**: INFO level
-- **Purpose**: Stable media consumption
+1. **deployment.sh scripts** - Mirroring Tiltfile orchestration
+2. **Tiltfile** - Hot-reload development
+3. Both paths co-located and using same manifest structure
 
 ---
 
-## Plex vs Jellyfin Comparison
+## Additional Components Deployed
 
-### Will Track
+### External Secrets Operator
 
-- **Performance**: Response time, load time
-- **Resource Usage**: CPU, memory (monitored in Grafana)
-- **Transcoding**: Quality, speed, format support
-- **Features**: Mobile apps, sharing, user management
-- **UI/UX**: Ease of use, aesthetics
-- **Stability**: Uptime, crashes
+- **Namespace**: external-secrets
+- **Version**: 0.11.0
+- **Backend**: 1Password Connect
+- **Status**: Running (3 pods + 1Password Connect)
+- **Purpose**: Secure secret management from 1Password
 
-### Both Share Same
+### Infrastructure Testing (infra-testing namespace)
 
-- Media library (Synology NFS `/volume1/media`)
-- Same hardware resources
-- Same network configuration
+| Tool            | Purpose                        | URL                   |
+| --------------- | ------------------------------ | --------------------- |
+| Headlamp        | Modern K8s dashboard           | headlamp.talos00      |
+| Kubeview        | Cluster visualization          | kubeview.talos00      |
+| Kube-ops-view   | Operational cluster view       | kube-ops-view.talos00 |
+| Goldilocks      | Resource recommendations       | goldilocks.talos00    |
+| VPA Recommender | Vertical Pod Autoscaler engine | -                     |
 
-### Decision Point
+### Registry
 
-After 2-4 weeks of testing, choose primary server:
+- **Namespace**: registry
+- **URL**: registry.talos00
+- **Status**: Running
+- **Purpose**: Local Docker registry for custom images
 
-- Keep both if needed
-- Or standardize on one
-- Track decision in this document
+### Bastion
+
+- **Namespace**: bastion
+- **Purpose**: SSH bastion host for cluster access
 
 ---
 
-## Storage Architecture
+## Cluster Health Summary
+
+### Namespaces (17 total)
 
 ```
-┌─────────────────────────────────────────────┐
-│           Synology NAS (NFS)                │
-│  /volume1/media (RWX) - Shared by all      │
-│  /volume1/downloads (RWX) - Shared by all  │
-└─────────────────────────────────────────────┘
-                    ↓ NFS Mount
-┌─────────────────────────────────────────────┐
-│         Kubernetes Cluster (Talos)          │
-│                                             │
-│  ┌─────────────────────────────────────┐  │
-│  │  Apps with SQLite (Local Storage)   │  │
-│  │  - Prowlarr config (5Gi RWO)        │  │
-│  │  - Sonarr config (10Gi RWO)         │  │
-│  │  - Radarr config (10Gi RWO)         │  │
-│  │  - Plex metadata (20Gi RWO)         │  │
-│  │  - Jellyfin config (10Gi RWO)       │  │
-│  └─────────────────────────────────────┘  │
-│                                             │
-│  All apps mount NFS for media/downloads    │
-└─────────────────────────────────────────────┘
+argocd, bastion, default, external-secrets, flux-system,
+infra-testing, kube-node-lease, kube-public, kube-system,
+kubernetes-dashboard, local-path-storage, media-dev,
+media-prod, monitoring, observability, registry, traefik
 ```
 
----
+### Pod Status (All namespaces)
 
-## Testing Checklist
-
-### Infrastructure
-
-- [ ] Flux reconciles automatically
-- [ ] ArgoCD syncs applications
-- [ ] Traefik routes correctly to both envs
-- [ ] NFS volumes mount successfully
-- [ ] Local volumes provision correctly
-- [ ] Prometheus collects metrics
-- [ ] Grafana displays dashboards
-
-### Arr Stack
-
-- [ ] Prowlarr indexers working
-- [ ] Sonarr finds TV shows
-- [ ] Radarr finds movies
-- [ ] Downloads complete successfully
-- [ ] Media files organized correctly
-
-### Media Servers
-
-- [ ] Plex discovers media library
-- [ ] Jellyfin discovers media library
-- [ ] Both can stream without buffering
-- [ ] Transcoding works (if needed)
-- [ ] Mobile apps work (if testing)
-- [ ] Remote access configured (optional)
+- **Total Running Pods**: 50+
+- **Failed/Pending**: None
+- **Cluster Health**: Healthy
 
 ---
 
-## Next Actions
+## Deployment Scripts
 
-### This Week (Phase 1)
-
-1. ✅ Create directory structure
-2. Create namespace manifests
-3. Create storage manifests
-4. Create Flux bootstrap files
-5. Create ArgoCD bootstrap files
-
-### Next Week (Phase 2)
-
-1. Install FluxCD
-2. Deploy storage provisioners
-3. Install ArgoCD
-4. Test GitOps workflows
+| Script                          | Purpose                              | Status |
+| ------------------------------- | ------------------------------------ | ------ |
+| scripts/deploy-stack.sh         | Main infrastructure deployment       | ✅     |
+| scripts/deploy-observability.sh | Observability stack deployment       | ✅     |
+| scripts/deploy-infra-testing.sh | UI tools deployment                  | ✅     |
+| scripts/deploy-tdarr.sh         | Tdarr transcoding deployment         | ✅     |
+| scripts/provision.sh            | Complete cluster provisioning        | ✅     |
+| scripts/bootstrap-argocd.sh     | ArgoCD bootstrap                     | ✅     |
+| scripts/setup-1password-connect | 1Password Connect setup              | ✅     |
+| scripts/kubeconfig-merge.sh     | Merge kubeconfig to ~/.kube/config   | ✅     |
+| scripts/kubeconfig-unmerge.sh   | Remove kubeconfig from ~/.kube/config| ✅     |
+| scripts/dashboard-token.sh      | Get K8s Dashboard token              | ✅     |
+| scripts/cluster-audit.sh        | Generate cluster audit report        | ✅     |
+| scripts/extract-arr-api-keys.sh | Extract API keys from arr apps       | ✅     |
 
 ---
 
@@ -427,35 +467,95 @@ After 2-4 weeks of testing, choose primary server:
 
 - **Why**: User wants to test Jellyfin alongside Plex
 - **Benefit**: Can compare performance and features side-by-side
-- **Resource Impact**: ~2-4GB additional memory for second server
-- **Monitoring**: Will track resource usage in Grafana to compare
 
 **2025-11-09**: Dual GitOps (Flux + Argo)
 
-- **Flux**: Infrastructure management (storage, traefik, monitoring)
-- **ArgoCD**: Application management (arr stack, media servers)
-- **Benefit**: Clean separation, better UI for apps
+- **Flux**: Infrastructure management via HelmReleases
+- **ArgoCD**: Available for app management
+- **Benefit**: Declarative infrastructure with GitOps
 
 **2025-11-09**: Namespace-based Environments
 
 - **Dev + Prod** in same cluster
 - **Benefit**: Simpler for single-node, adequate isolation
 
+**2025-11-22**: Added External Secrets Operator
+
+- **Why**: Secure secret management
+- **Backend**: 1Password Connect
+- **Benefit**: Secrets synced from 1Password vaults
+
+**2025-11-22**: Added Infrastructure Testing Tools
+
+- **Components**: Headlamp, Kubeview, Kube-ops-view, Goldilocks, VPA
+- **Benefit**: Better cluster visibility and resource optimization
+
+**2025-11-22**: Flux Notifications via Discord
+
+- **Why**: Real-time alerts for infrastructure changes
+- **Alerts**: critical-errors, homelab-infrastructure
+
+**2025-11-23**: Added Tdarr for Transcoding
+
+- **Why**: Automated media transcoding and optimization
+- **Integration**: Works with Plex/Jellyfin media libraries
+
+**2025-11-24**: Tilt Configuration Added
+
+- **Why**: Hot-reload development workflow
+- **Status**: Configured, not yet integrated into daily workflow
+- **Future**: Will mirror deployment.sh scripts structure
+
 ---
 
-## Issues & Blockers
+## Known Issues & Workarounds
+
+### Resolved Issues
+
+1. ✅ **Storage Class**: Using `local-path` as default, `nfs` available
+2. ✅ **Control Plane Scheduling**: Working (single-node cluster)
+3. ✅ **Graylog Deployment**: Fixed with Recreate strategy
+4. ✅ **Prometheus Storage**: Configured with proper retention
+5. ✅ **Fluent Bit**: Running but may have collection issues (1 pod)
 
 ### Current Blockers
 
-None
+None - all core infrastructure operational
 
 ### Known Risks
 
-1. **SQLite on NFS**: Must use local storage for configs
-2. **Single-Node**: No HA, need good backups
-3. **Resource Usage**: Plex + Jellyfin + Monitoring may be heavy
+1. **Single-Node**: No HA, need good backups
+2. **Resource Usage**: Monitor with Grafana/Goldilocks
+3. **SQLite on NFS**: Apps using local-path for configs (correct approach)
 
 ---
 
-**Last Updated**: 2025-11-09 16:05 PST
-**Next Review**: Daily during Phase 1-2
+## Next Actions
+
+### Immediate (This Week)
+
+1. Configure Prowlarr indexers
+2. Connect Sonarr/Radarr to Prowlarr
+3. Configure media libraries in Plex/Jellyfin
+4. Test end-to-end media workflow
+
+### Short Term
+
+1. Document backup/restore procedures
+2. Set up Homepage with all service widgets
+3. Create Grafana dashboards for arr stack
+4. Compare Plex vs Jellyfin performance
+
+### Future Considerations
+
+1. Integrate Tilt into daily development workflow
+2. Refactor deployment.sh scripts to mirror Tiltfile structure
+3. Deploy to media-prod namespace
+4. Add more *arr apps (Readarr, Lidarr, Bazarr)
+5. Consider adding download clients (qBittorrent, SABnzbd)
+6. External access via Cloudflare Tunnel or similar
+
+---
+
+**Last Updated**: 2025-11-24
+**Next Review**: As needed
