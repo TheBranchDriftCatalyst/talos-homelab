@@ -1,0 +1,141 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: kongz
+  namespace: observability
+spec:
+  interval: 24h
+  url: https://charts.kong-z.com
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: graylog
+  namespace: observability
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: graylog
+      version: 3.0.5
+      sourceRef:
+        kind: HelmRepository
+        name: kongz
+        namespace: observability
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    tags:
+      # We already have MongoDB and OpenSearch deployed separately
+      install-opensearch: false
+      install-mongodb: false
+
+    graylog:
+      replicas: 1
+
+      persistence:
+        enabled: true
+        size: 20Gi
+        storageClass: local-path
+
+      # External URI for web interface
+      externalUri: http://graylog.talos00/
+
+      # Root user configuration
+      rootUsername: admin
+      # Password: admin (SHA256 hash)
+      rootPassword: admin
+      rootTimezone: America/Los_Angeles
+
+      # Connect to existing OpenSearch
+      opensearch:
+        hosts: http://opensearch-cluster-master:9200
+
+      # Connect to existing MongoDB
+      mongodb:
+        uri: mongodb://mongodb:27017/graylog
+
+      # Expose GELF TCP port for Fluent Bit
+      input:
+        tcp:
+          service:
+            name: graylog-gelf-tcp
+            type: ClusterIP
+          ports:
+            - name: gelf
+              port: 12201
+
+      # Resource limits
+      resources:
+        requests:
+          cpu: 50m
+          memory: 512Mi
+        limits:
+          cpu: 1000m
+          memory: 1536Mi
+
+      # Provisioner to auto-create GELF TCP input on startup
+      provisioner:
+        enabled: true
+        script: |
+          #!/bin/bash
+          set -e
+
+          GRAYLOG_URL="http://graylog:9000"
+          MAX_ATTEMPTS=60
+          ATTEMPT=0
+
+          echo "Waiting for Graylog to be ready..."
+          until curl -sf -u "admin:admin" "${GRAYLOG_URL}/api/system/lbstatus" | grep -q "ALIVE"; do
+            ATTEMPT=$((ATTEMPT + 1))
+            if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
+              echo "Timeout waiting for Graylog"
+              exit 1
+            fi
+            echo "Attempt ${ATTEMPT}/${MAX_ATTEMPTS} - Graylog not ready, waiting..."
+            sleep 5
+          done
+
+          echo "Graylog is ready. Checking for existing GELF TCP input..."
+
+          # Check if GELF TCP input already exists
+          EXISTING=$(curl -sf -u "admin:admin" "${GRAYLOG_URL}/api/system/inputs" \
+            -H "Accept: application/json" | grep -c "GELF TCP" || true)
+
+          if [ "$EXISTING" -eq "0" ]; then
+            echo "Creating GELF TCP input on port 12201..."
+            curl -sf -u "admin:admin" \
+              -H "Content-Type: application/json" \
+              -H "X-Requested-By: provisioner" \
+              -X POST "${GRAYLOG_URL}/api/system/inputs" \
+              -d '{
+                "title": "GELF TCP",
+                "type": "org.graylog2.inputs.gelf.tcp.GELFTCPInput",
+                "configuration": {
+                  "bind_address": "0.0.0.0",
+                  "port": 12201,
+                  "recv_buffer_size": 1048576,
+                  "number_worker_threads": 4,
+                  "override_source": null,
+                  "decompress_size_limit": 8388608
+                },
+                "global": true
+              }'
+            echo ""
+            echo "GELF TCP input created successfully!"
+          else
+            echo "GELF TCP input already exists, skipping creation."
+          fi
+
+          echo "Provisioning complete!"
+
+      # Web service configuration
+      service:
+        type: ClusterIP
+        port: 9000
