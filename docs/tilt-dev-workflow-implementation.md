@@ -12,7 +12,33 @@ Establish a standardized local development workflow for each functional namespac
 
 ## Pattern: Per-Namespace Development Tooling
 
-Each functional namespace will have three standard files:
+### Root Orchestration
+
+A **root `Tiltfile`** at the repository root orchestrates all namespace-specific Tiltfiles:
+
+```
+talos-homelab/
+├── Tiltfile                      # Root orchestrator
+├── applications/
+│   └── arr-stack/
+│       └── Tiltfile              # Namespace-specific
+└── infrastructure/
+    └── base/
+        ├── monitoring/
+        │   └── Tiltfile          # TODO: Phase 2
+        └── observability/
+            └── Tiltfile          # TODO: Phase 2
+```
+
+**Root Tiltfile responsibilities:**
+- Suspend/resume Flux for the entire cluster
+- Include namespace-specific Tiltfiles via `include()` directive
+- Provide cluster-wide resources (health checks, Flux controls)
+- Display unified summary of all loaded namespaces
+
+### Per-Namespace Files
+
+Each functional namespace has three standard files:
 
 1. **`Tiltfile`** - Tilt configuration for hot-reload local development
 2. **`dashboard.sh`** - Status dashboard for the namespace
@@ -117,20 +143,40 @@ As new applications are added (catalyst-ui via ArgoCD, etc.)
 
 ## Tilt Workflow
 
+### Root vs Namespace Tiltfiles
+
+**Two ways to run Tilt:**
+
+1. **Root Tiltfile (Recommended)** - Orchestrates all namespaces:
+   ```bash
+   # From repository root
+   tilt up                    # Start all namespaces
+   tilt up arr-stack          # Start specific namespace
+   tilt up monitoring observability  # Start multiple namespaces
+   SUSPEND_FLUX=false tilt up # Don't suspend Flux
+   ```
+
+2. **Namespace Tiltfile** - Isolated namespace development:
+   ```bash
+   # From namespace directory
+   cd applications/arr-stack
+   tilt up                    # Only arr-stack namespace
+   ```
+
 ### Local Development Session
 
 ```bash
-# Start Tilt for arr-stack
-cd applications/arr-stack
+# Start Tilt (from repository root)
 tilt up
 
 # Tilt UI opens at http://localhost:10350
-# - See all resources
+# - See all resources across all namespaces
+# - Resources grouped by namespace labels
 # - View logs
 # - Trigger manual updates
 
-# Make changes to manifests
-vim base/sonarr/deployment.yaml
+# Make changes to manifests in any namespace
+vim applications/arr-stack/base/sonarr/deployment.yaml
 
 # Tilt auto-detects and applies changes
 # Watch logs in Tilt UI
@@ -201,23 +247,37 @@ SUSPEND_FLUX=false tilt up
 ## Directory Structure
 
 ```
-applications/arr-stack/
-├── Tiltfile                      # 🆕 Tilt configuration
-├── dashboard.sh                  # ✅ Status dashboard
-├── deploy.sh                     # 🆕 Deployment script
-├── base/                         # Base manifests
-│   ├── kustomization.yaml
-│   ├── sonarr/
-│   ├── radarr/
-│   └── ...
-└── overlays/
-    ├── dev/                      # 🆕 Local dev overlay
-    │   └── kustomization.yaml    # Uses storage/local-path
-    ├── prod/                     # Production overlay
-    │   └── kustomization.yaml    # Uses storage/fatboy-nfs
-    └── storage/
-        ├── local-path/           # Fast local storage
-        └── fatboy-nfs/           # NFS storage
+talos-homelab/
+├── Tiltfile                          # 🆕 Root orchestrator
+│
+├── applications/
+│   └── arr-stack/
+│       ├── Tiltfile                  # 🆕 Namespace-specific Tilt config
+│       ├── dashboard.sh              # ✅ Status dashboard
+│       ├── deploy.sh                 # 🆕 Deployment script
+│       ├── base/                     # Base manifests
+│       │   ├── kustomization.yaml
+│       │   ├── sonarr/
+│       │   ├── radarr/
+│       │   └── ...
+│       └── overlays/
+│           ├── dev/                  # 🆕 Local dev overlay
+│           │   └── kustomization.yaml  # Uses storage/local-path
+│           ├── prod/                 # Production overlay
+│           │   └── kustomization.yaml  # Uses storage/fatboy-nfs
+│           └── storage/
+│               ├── local-path/       # Fast local storage
+│               └── fatboy-nfs/       # NFS storage
+│
+└── infrastructure/base/
+    ├── monitoring/
+    │   ├── Tiltfile                  # TODO: Phase 2
+    │   ├── dashboard.sh              # TODO: Phase 2
+    │   └── deploy.sh                 # TODO: Phase 2
+    └── observability/
+        ├── Tiltfile                  # TODO: Phase 2
+        ├── dashboard.sh              # TODO: Phase 2
+        └── deploy.sh                 # TODO: Phase 2
 ```
 
 ---
