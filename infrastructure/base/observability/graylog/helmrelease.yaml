@@ -58,8 +58,8 @@ spec:
 
       # Root user configuration
       rootUsername: admin
-      # Password: admin (SHA256 hash)
-      rootPassword: admin
+      # Password must be >= 16 chars (used for both login and password_secret)
+      rootPassword: adminadminadmin16
       rootTimezone: America/Los_Angeles
 
       # Connect to existing OpenSearch
@@ -94,7 +94,7 @@ spec:
           ATTEMPT=0
 
           echo "Waiting for Graylog to be ready..."
-          until curl -sf -u "admin:admin" "${GRAYLOG_URL}/api/system/lbstatus" | grep -q "ALIVE"; do
+          until curl -sf -u "admin:adminadminadmin16" "${GRAYLOG_URL}/api/system/lbstatus" | grep -q "ALIVE"; do
             ATTEMPT=$((ATTEMPT + 1))
             if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
               echo "Timeout waiting for Graylog"
@@ -107,12 +107,12 @@ spec:
           echo "Graylog is ready. Checking for existing GELF TCP input..."
 
           # Check if GELF TCP input already exists
-          EXISTING=$(curl -sf -u "admin:admin" "${GRAYLOG_URL}/api/system/inputs" \
+          EXISTING=$(curl -sf -u "admin:adminadminadmin16" "${GRAYLOG_URL}/api/system/inputs" \
             -H "Accept: application/json" | grep -c "GELF TCP" || true)
 
           if [ "$EXISTING" -eq "0" ]; then
             echo "Creating GELF TCP input on port 12201..."
-            curl -sf -u "admin:admin" \
+            curl -sf -u "admin:adminadminadmin16" \
               -H "Content-Type: application/json" \
               -H "X-Requested-By: provisioner" \
               -X POST "${GRAYLOG_URL}/api/system/inputs" \
