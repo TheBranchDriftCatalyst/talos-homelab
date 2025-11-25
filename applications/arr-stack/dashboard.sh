@@ -16,7 +16,7 @@ RED='\033[91m'
 MAGENTA='\033[95m'
 
 # Configuration
-NAMESPACE="${NAMESPACE:-media-dev}"
+NAMESPACE="${NAMESPACE:-media-prod}"
 KUBECONFIG_PATH="${KUBECONFIG:-./.output/kubeconfig}"
 DOMAIN="${DOMAIN:-talos00}"
 
