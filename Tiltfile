@@ -1,5 +1,23 @@
-# Tiltfile for Talos Homelab Infrastructure Development
-# Provides hot-reloading for Flux-managed infrastructure manifests during development
+# Root Tiltfile - Talos Homelab Infrastructure
+# Orchestrates all namespace development environments
+#
+# Usage:
+#   tilt up                          # Start all namespaces
+#   tilt up arr-stack                # Start specific namespace
+#   tilt up monitoring observability # Start multiple namespaces
+#   SUSPEND_FLUX=false tilt up       # Start without suspending Flux
+#
+# Architecture:
+#   This root Tiltfile orchestrates namespace-specific Tiltfiles:
+#   - applications/arr-stack/Tiltfile     - Media automation
+#   - infrastructure/base/monitoring/     - Monitoring (TODO: Phase 2)
+#   - infrastructure/base/observability/  - Observability (TODO: Phase 2)
+#
+#   Each namespace Tiltfile is self-contained with its own:
+#   - Kustomize overlays (dev/prod)
+#   - Resource configurations
+#   - Port forwards
+#   - Dependencies
 
 # Load Tilt extensions
 load('ext://namespace', 'namespace_create')
@@ -7,15 +25,13 @@ load('ext://helm_resource', 'helm_resource', 'helm_repo')
 
 # Configuration
 config.define_string('k8s_context', args=False, usage='Kubernetes context to use')
-config.define_string('namespace', args=False, usage='Default namespace for development')
 config.define_bool('flux-suspend', args=False, usage='Suspend Flux reconciliation during development')
 cfg = config.parse()
 
 # Settings
 settings = {
-    'k8s_context': cfg.get('k8s_context', 'homelab-single'),
-    'namespace': cfg.get('namespace', 'infra-testing'),
-    'flux_suspend': cfg.get('flux-suspend', False),
+    'k8s_context': cfg.get('k8s_context', 'kubernetes-admin@talos00'),
+    'flux_suspend': cfg.get('flux-suspend', True),
 }
 
 # Ensure we're using the correct k8s context
@@ -27,14 +43,25 @@ print("""
 ╚═══════════════════════════════════════════════════════════════╝
 
 🎯 K8s Context: %s
-🎯 Target Namespace: %s
 🔧 Flux Auto-suspend: %s
+
+Architecture: Orchestrated Namespace Pattern
+  - Root Tiltfile orchestrates namespace-specific Tiltfiles
+  - Each namespace manages its own overlays and resources
+  - Flux-aware development (suspend/resume)
 
 Available Commands:
   - Press SPACE to open the Tilt UI in your browser
   - Press 'r' to force rebuild a resource
   - Press 'k' to view Kubernetes events
-""" % (settings['k8s_context'], settings['namespace'], settings['flux_suspend']))
+""" % (settings['k8s_context'], settings['flux_suspend']))
+
+# Suspend Flux if configured
+if settings['flux_suspend']:
+    print('⏸️  Suspending Flux reconciliation...')
+    local('flux suspend kustomization flux-system')
+    print('✅ Flux suspended')
+    print('')
 
 # ============================================
 # Flux Control Resources
@@ -71,6 +98,50 @@ local_resource(
     trigger_mode=TRIGGER_MODE_MANUAL,
     labels=['flux-control']
 )
+
+# Resume Flux when Tilt shuts down
+if settings['flux_suspend']:
+    local_resource(
+        'flux-resume-on-shutdown',
+        cmd='flux resume kustomization flux-system',
+        auto_init=False,
+        trigger_mode=TRIGGER_MODE_MANUAL,
+        labels=['flux-control']
+    )
+
+# ============================================
+# Application Namespaces
+# ============================================
+
+print('📱 Loading Application Namespaces...')
+print('')
+
+# Arr-Stack - Media Automation
+# Note: This includes its own Flux suspension logic, resource definitions,
+# port-forwards, and dependencies. See applications/arr-stack/Tiltfile
+print('  📺 Arr-Stack (Media Automation)')
+include('./applications/arr-stack/Tiltfile')
+print('')
+
+# TODO: Add more application namespaces as they implement Tilt pattern
+# include('./applications/other-app/Tiltfile')
+
+# ============================================
+# Infrastructure Namespaces (TODO: Phase 2)
+# ============================================
+
+print('🏗️  Infrastructure Namespaces (Phase 2 - TBD)...')
+print('')
+
+# TODO: Monitoring Stack
+# print('  📊 Monitoring (Prometheus, Grafana)')
+# include('./infrastructure/base/monitoring/Tiltfile')
+
+# TODO: Observability Stack
+# print('  🔍 Observability (OpenSearch, Graylog)')
+# include('./infrastructure/base/observability/Tiltfile')
+
+print('')
 
 # ============================================
 # Infrastructure Testing Tools
@@ -387,37 +458,65 @@ watch_file('infrastructure/overlays/')
 watch_file('applications/')
 
 print("""
+═══════════════════════════════════════════════════════════════
 🚀 Tilt is ready!
+═══════════════════════════════════════════════════════════════
+
+📦 Loaded Namespaces:
+  ✅ arr-stack          Media automation (Sonarr, Radarr, Plex, etc.)
+  📊 monitoring         Prometheus, Grafana, Alertmanager
+  🔍 observability      OpenSearch, Graylog
+  🧪 infra-testing      Headlamp, Kubeview, Kube-ops-view, Goldilocks
+  🌐 networking         Traefik, ArgoCD, Registry
 
 Quick Tips:
-  - All resources are organized by labels (ui-tools, monitoring, observability, etc.)
+  - All resources are organized by labels (automation, media-server, monitoring, etc.)
   - Port forwards are automatically configured for local access
-  - Use the manual triggers for quick actions (deploy-stack, etc.)
+  - Use manual triggers for quick actions (deploy-stack, flux-reconcile, etc.)
   - Press 'r' on any resource to force a rebuild/reapply
   - Flux reconciliation can be triggered manually from 'flux-control' resources
   - File watching enabled - changes to manifests will auto-reload
 
-Access URLs (via Traefik - requires /etc/hosts):
+Arr-Stack URLs (via Traefik - requires /etc/hosts):
+  - Sonarr:         http://sonarr.talos00
+  - Radarr:         http://radarr.talos00
+  - Prowlarr:       http://prowlarr.talos00
+  - Overseerr:      http://overseerr.talos00
+  - Plex:           http://plex.talos00
+  - Jellyfin:       http://jellyfin.talos00
+  - Tdarr:          http://tdarr.talos00
+  - Homepage:       http://homepage.talos00
+
+Arr-Stack Port-forwards (from namespace Tiltfile):
+  - Sonarr:         http://localhost:8989
+  - Radarr:         http://localhost:7878
+  - Prowlarr:       http://localhost:9696
+  - Overseerr:      http://localhost:5055
+  - Plex:           http://localhost:32400/web
+  - Jellyfin:       http://localhost:8096
+  - Tdarr:          http://localhost:8265
+  - Homepage:       http://localhost:3000
+
+Infrastructure URLs (via Traefik):
   - Headlamp:       http://headlamp.talos00
-  - Kubeview:       http://kubeview.talos00
-  - Kube-ops-view:  http://kube-ops-view.talos00
-  - Goldilocks:     http://goldilocks.talos00
   - Grafana:        http://grafana.talos00
   - Prometheus:     http://prometheus.talos00
   - ArgoCD:         http://argocd.talos00
   - Graylog:        http://graylog.talos00
 
-Port-forward URLs (always work without /etc/hosts):
+Infrastructure Port-forwards:
   - Headlamp:       http://localhost:8080
-  - Kubeview:       http://localhost:8081
-  - Kube-ops-view:  http://localhost:8082
-  - Goldilocks:     http://localhost:8083
-  - Prometheus:     http://localhost:9090
   - Grafana:        http://localhost:3000
+  - Prometheus:     http://localhost:9090
   - Alertmanager:   http://localhost:9093
   - Graylog:        http://localhost:9000
   - Registry:       http://localhost:5000
-  - Traefik HTTP:   http://localhost:8000
 
+⚠️  Flux Status: %s
+%s
 Happy developing! 🎉
-""")
+═══════════════════════════════════════════════════════════════
+""" % (
+    'SUSPENDED' if settings['flux_suspend'] else 'ACTIVE',
+    '   Flux will resume when you run: tilt down' if settings['flux_suspend'] else ''
+))
