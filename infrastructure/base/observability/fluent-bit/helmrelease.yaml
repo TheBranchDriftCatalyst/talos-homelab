@@ -87,12 +87,45 @@ spec:
             K8S-Logging.Parser On
             K8S-Logging.Exclude On
 
+        # Add cluster identifier as GELF custom field
         [FILTER]
             Name modify
             Match *
-            Add cluster talos-homelab
+            Add _cluster talos-homelab
 
-        # Ensure log field exists for GELF short_message (fallback to message or stream)
+        # Add Kubernetes metadata as GELF custom fields (using modify filter with Copy)
+        [FILTER]
+            Name modify
+            Match *
+            Copy kubernetes.namespace_name _namespace
+            Condition Key_Exists kubernetes.namespace_name
+
+        [FILTER]
+            Name modify
+            Match *
+            Copy kubernetes.pod_name _pod
+            Condition Key_Exists kubernetes.pod_name
+
+        [FILTER]
+            Name modify
+            Match *
+            Copy kubernetes.container_name _container
+            Condition Key_Exists kubernetes.container_name
+
+        [FILTER]
+            Name modify
+            Match *
+            Copy kubernetes.host _node
+            Condition Key_Exists kubernetes.host
+
+        # Add app label if exists
+        [FILTER]
+            Name modify
+            Match *
+            Copy kubernetes.labels.app _app
+            Condition Key_Exists kubernetes.labels.app
+
+        # Ensure log field exists (for GELF short_message)
         [FILTER]
             Name modify
             Match *
@@ -111,18 +144,25 @@ spec:
             Set log no_message
             Condition Key_Does_Not_Exist log
 
-        # Ensure kubernetes_host field exists for GELF host (fallback to node name)
+        # Set host field for GELF (use pod name)
         [FILTER]
             Name modify
             Match *
-            Copy kubernetes.host kubernetes_host
-            Condition Key_Does_Not_Exist kubernetes_host
+            Copy kubernetes.pod_name host
+            Condition Key_Does_Not_Exist host
 
         [FILTER]
             Name modify
             Match *
-            Set kubernetes_host talos00
-            Condition Key_Does_Not_Exist kubernetes_host
+            Set host talos00
+            Condition Key_Does_Not_Exist host
+
+        # Parse log level from message and map to syslog severity
+        [FILTER]
+            Name lua
+            Match *
+            script /fluent-bit/scripts/gelf-enrich.lua
+            call enrich_gelf
 
       outputs: |
         [OUTPUT]
@@ -132,7 +172,9 @@ spec:
             Port 12201
             Mode tcp
             Gelf_Short_Message_Key log
-            Gelf_Host_Key kubernetes_host
+            Gelf_Host_Key host
+            # Note: Plugin uses Fluent Bit's internal numeric timestamp automatically
+            # Do NOT set Gelf_Timestamp_Key to avoid ISO8601 string issues
 
       customParsers: |
         [PARSER]
@@ -141,6 +183,58 @@ spec:
             Time_Keep Off
             Time_Key time
             Time_Format %Y-%m-%dT%H:%M:%S.%L
+
+    # Lua scripts for log enrichment
+    luaScripts:
+      gelf-enrich.lua: |
+        function enrich_gelf(tag, timestamp, record)
+            -- CRITICAL: Convert Fluent Bit timestamp to integer for GELF
+            -- Fluent Bit timestamp is a floating point number (seconds.nanoseconds)
+            -- GELF expects integer seconds.milliseconds
+            -- Use math.floor to ensure it's an integer, not scientific notation
+            local timestamp_int = math.floor(timestamp)
+            record["gelf_timestamp"] = timestamp_int
+
+            -- Extract log level from message
+            local message = record["log"] or ""
+
+            -- Map log levels to syslog severity
+            local level_map = {
+                ["FATAL"] = 2,    -- Critical
+                ["PANIC"] = 2,    -- Critical
+                ["ERROR"] = 3,    -- Error
+                ["WARN"] = 4,     -- Warning
+                ["WARNING"] = 4,  -- Warning
+                ["INFO"] = 6,     -- Informational
+                ["DEBUG"] = 7,    -- Debug
+                ["TRACE"] = 7     -- Debug
+            }
+
+            -- Default to informational
+            record["level"] = 6
+            record["_log_level"] = "INFO"
+
+            -- Search for log level in message (case-insensitive)
+            for level_name, level_num in pairs(level_map) do
+                if string.match(message:upper(), level_name) then
+                    record["level"] = level_num
+                    record["_log_level"] = level_name
+                    break
+                end
+            end
+
+            -- Extract app from Kubernetes labels if not already set
+            if not record["_app"] and record["kubernetes"] and record["kubernetes"]["labels"] then
+                if record["kubernetes"]["labels"]["app"] then
+                    record["_app"] = record["kubernetes"]["labels"]["app"]
+                elseif record["kubernetes"]["labels"]["app.kubernetes.io/name"] then
+                    record["_app"] = record["kubernetes"]["labels"]["app.kubernetes.io/name"]
+                end
+            end
+
+            -- Return: code (2 = success), MODIFIED timestamp (integer), modified record
+            return 2, timestamp_int, record
+        end
 
     # Tolerations to ensure Fluent Bit runs on all nodes
     tolerations:
