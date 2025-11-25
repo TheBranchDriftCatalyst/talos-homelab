@@ -173,7 +173,8 @@ spec:
             Mode tcp
             Gelf_Short_Message_Key log
             Gelf_Host_Key host
-            # Use the integer timestamp from Lua script
+            # Use the gelf_timestamp field from Lua script
+            # This field contains the integer timestamp without scientific notation
             Gelf_Timestamp_Key gelf_timestamp
 
       customParsers: |
@@ -188,12 +189,12 @@ spec:
     luaScripts:
       gelf-enrich.lua: |
         function enrich_gelf(tag, timestamp, record)
-            -- CRITICAL: Convert Fluent Bit timestamp to integer for GELF
-            -- Fluent Bit timestamp is a floating point number (seconds.nanoseconds)
-            -- GELF expects integer seconds.milliseconds
-            -- Use math.floor to ensure it's an integer, not scientific notation
-            local timestamp_int = math.floor(timestamp)
-            record["gelf_timestamp"] = timestamp_int
+            -- CRITICAL: Convert Fluent Bit timestamp for GELF
+            -- Fluent Bit timestamp is seconds.nanoseconds as float
+            -- GELF accepts seconds.milliseconds as float (epoch_millis)
+            -- Convert to milliseconds to avoid scientific notation issues
+            local timestamp_ms = timestamp * 1000
+            record["gelf_timestamp"] = timestamp_ms
 
             -- Extract log level from message
             local message = record["log"] or ""
@@ -232,8 +233,10 @@ spec:
                 end
             end
 
-            -- Return: code (2 = success), MODIFIED timestamp (integer), modified record
-            return 2, timestamp_int, record
+            -- Return code 2 (success) but do NOT modify the timestamp parameter
+            -- The timestamp parameter is what Fluent Bit uses, and we can't prevent
+            -- scientific notation there. Instead, rely on gelf_timestamp field.
+            return 2, timestamp, record
         end
 
     # Tolerations to ensure Fluent Bit runs on all nodes
