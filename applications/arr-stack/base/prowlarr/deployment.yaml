@@ -20,6 +20,22 @@ spec:
         app: prowlarr
         app.kubernetes.io/name: prowlarr
     spec:
+      initContainers:
+        - name: wait-for-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for PostgreSQL at postgresql:5432..."
+              until nc -z postgresql 5432; do
+                echo "PostgreSQL is unavailable - sleeping"
+                sleep 2
+              done
+              echo "PostgreSQL is up - starting Prowlarr"
+          envFrom:
+            - configMapRef:
+                name: arr-common-env
       containers:
         - name: prowlarr
           image: lscr.io/linuxserver/prowlarr:latest
