@@ -1,55 +1,35 @@
 # Grafana Dashboards
 
-This directory contains Grafana dashboard ConfigMaps that are automatically discovered by the Grafana sidecar.
+## Auto-Import Script
 
-## Available Dashboards
+### Option 1: Direct access (requires /etc/hosts entry for grafana.talos00)
 
-### Kubernetes Monitoring
+```bash
+./scripts/import-grafana-dashboards.sh
+```
 
-1. **Kubernetes Cluster Monitoring** (ID: 315)
-   - Overall cluster CPU/Memory/Filesystem usage
-   - Pod and container statistics
-   - https://grafana.com/grafana/dashboards/315
+### Option 2: Via kubectl port-forward
 
-2. **Kubernetes Monitoring** (ID: 12740)
-   - Comprehensive Kubernetes monitoring
-   - https://grafana.com/grafana/dashboards/12740
+```bash
+# Terminal 1: Port-forward Grafana
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
 
-3. **dotdc Kubernetes Dashboards** (GitHub: dotdc/Grafana-dashboards-Kubernetes)
-   - Modern set of Kubernetes dashboards
-   - https://github.com/dotdc/grafana-dashboards-kubernetes
-
-### Traefik Monitoring
-
-1. **Traefik Official Kubernetes Dashboard** (ID: 17347)
-   - Official Traefik dashboard for Kubernetes
-   - https://grafana.com/grafana/dashboards/17347
-
-2. **RT Traefik Kubernetes Dashboard** (ID: 18111)
-   - Router Traefik monitoring
-   - https://grafana.com/grafana/dashboards/18111
-
-### Node/System Monitoring
-
-1. **Node Exporter Full** (ID: 1860)
-   - Comprehensive node metrics
-   - https://grafana.com/grafana/dashboards/1860
-
-### Application Monitoring
-
-1. **PostgreSQL Database** (ID: 9628)
-   - PostgreSQL metrics via postgres_exporter
-   - https://grafana.com/grafana/dashboards/9628
+# Terminal 2: Run import script
+GRAFANA_URL=http://localhost:3000 ./scripts/import-grafana-dashboards.sh
+```
 
 ## Manual Import
 
-To import dashboards manually in Grafana:
+If you prefer to import manually:
 
-1. Navigate to Dashboards → Import
-2. Enter the dashboard ID from above
-3. Select the Prometheus datasource
+1. Access Grafana: `http://grafana.talos00`
+2. Navigate to Dashboards → Import
+3. Enter dashboard ID and select Prometheus datasource
 4. Click Import
 
-## Automatic Import
+## Recommended Dashboards
 
-Dashboards with the label `grafana_dashboard: "1"` are automatically discovered by Grafana's sidecar and imported on startup.
+- **315** - Kubernetes Cluster Monitoring
+- **17347** - Traefik Official Kubernetes Dashboard
+- **1860** - Node Exporter Full
+- **9628** - PostgreSQL Database
