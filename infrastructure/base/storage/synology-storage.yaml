@@ -1,0 +1,191 @@
+---
+# Synology NAS NFS Storage Configuration
+# Static PVs and PVCs for media libraries and downloads ONLY
+# (App configs/appdata use separate dynamic provisioning via fatboy-nfs-appdata)
+#
+# Variables substituted via Flux postBuild from cluster-settings ConfigMap:
+#   ${SYNOLOGY_IP} - Synology NAS IP
+#   ${SYNOLOGY_VOLUME} - Base volume path (e.g., /volume1)
+
+# ============================================================================
+# YAML Anchors - DRY configuration
+# ============================================================================
+x-nfs-mount-options: &nfs-mount-options
+  - hard
+  - nfsvers=4.1
+  - noatime
+  - nodiratime
+  - rsize=1048576
+  - wsize=1048576
+
+x-pv-defaults: &pv-defaults
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  mountOptions: *nfs-mount-options
+
+x-pvc-defaults: &pvc-defaults
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
+
+# ============================================================================
+# Storage Class
+# ============================================================================
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: synology-nfs
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: kubernetes.io/no-provisioner
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+
+---
+# ============================================================================
+# PERSISTENT VOLUMES - Media Library
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-media-movies
+  labels: { type: synology-nfs, media-type: movies }
+spec:
+  <<: *pv-defaults
+  capacity: { storage: 10Ti }
+  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/media/movies" }
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-media-tv
+  labels: { type: synology-nfs, media-type: tv }
+spec:
+  <<: *pv-defaults
+  capacity: { storage: 10Ti }
+  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/media/tv" }
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-media-music
+  labels: { type: synology-nfs, media-type: music }
+spec:
+  <<: *pv-defaults
+  capacity: { storage: 2Ti }
+  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/media/music" }
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-media-books
+  labels: { type: synology-nfs, media-type: books }
+spec:
+  <<: *pv-defaults
+  capacity: { storage: 500Gi }
+  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/media/books" }
+
+---
+# ============================================================================
+# PERSISTENT VOLUMES - Downloads
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-downloads-complete
+  labels: { type: synology-nfs, download-type: complete }
+spec:
+  <<: *pv-defaults
+  capacity: { storage: 1Ti }
+  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/downloads/complete" }
+
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-downloads-incomplete
+  labels: { type: synology-nfs, download-type: incomplete }
+spec:
+  <<: *pv-defaults
+  capacity: { storage: 500Gi }
+  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/downloads/incomplete" }
+
+---
+# ============================================================================
+# PERSISTENT VOLUME CLAIMS - media-prod namespace
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-movies
+  namespace: media-prod
+  labels: { app.kubernetes.io/component: media-storage }
+spec:
+  <<: *pvc-defaults
+  volumeName: synology-media-movies
+  resources: { requests: { storage: 10Ti } }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-tv
+  namespace: media-prod
+  labels: { app.kubernetes.io/component: media-storage }
+spec:
+  <<: *pvc-defaults
+  volumeName: synology-media-tv
+  resources: { requests: { storage: 10Ti } }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-music
+  namespace: media-prod
+  labels: { app.kubernetes.io/component: media-storage }
+spec:
+  <<: *pvc-defaults
+  volumeName: synology-media-music
+  resources: { requests: { storage: 2Ti } }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-books
+  namespace: media-prod
+  labels: { app.kubernetes.io/component: media-storage }
+spec:
+  <<: *pvc-defaults
+  volumeName: synology-media-books
+  resources: { requests: { storage: 500Gi } }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-downloads-complete
+  namespace: media-prod
+  labels: { app.kubernetes.io/component: download-storage }
+spec:
+  <<: *pvc-defaults
+  volumeName: synology-downloads-complete
+  resources: { requests: { storage: 1Ti } }
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-downloads-incomplete
+  namespace: media-prod
+  labels: { app.kubernetes.io/component: download-storage }
+spec:
+  <<: *pvc-defaults
+  volumeName: synology-downloads-incomplete
+  resources: { requests: { storage: 500Gi } }
