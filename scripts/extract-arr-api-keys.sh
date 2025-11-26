@@ -15,14 +15,14 @@ echo ""
 # Function to extract API key from config.xml
 extract_api_key() {
   local app=$1
-  local pod=$(kubectl get pod -n media-dev -l app=$app -o jsonpath='{.items[0].metadata.name}' 2> /dev/null)
+  local pod=$(kubectl get pod -n media -l app=$app -o jsonpath='{.items[0].metadata.name}' 2> /dev/null)
 
   if [ -z "$pod" ]; then
     echo "  ❌ No pod found for $app"
     return 1
   fi
 
-  local apikey=$(kubectl exec -n media-dev $pod -- cat /config/config.xml 2> /dev/null | grep "<ApiKey>" | sed 's/.*<ApiKey>\(.*\)<\/ApiKey>/\1/' | tr -d ' \n\r')
+  local apikey=$(kubectl exec -n media $pod -- cat /config/config.xml 2> /dev/null | grep "<ApiKey>" | sed 's/.*<ApiKey>\(.*\)<\/ApiKey>/\1/' | tr -d ' \n\r')
 
   if [ -z "$apikey" ]; then
     echo "  ⚠️  $app: Not configured yet (access http://$app.talos00 to complete setup)"
