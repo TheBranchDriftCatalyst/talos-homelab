@@ -12,7 +12,7 @@
 set -euo pipefail
 
 # Configuration
-NAMESPACE="${NAMESPACE:-media-prod}"
+NAMESPACE="${NAMESPACE:-media}"
 SECRET_NAME="${SECRET_NAME:-arr-api-keys}"
 DRY_RUN=false
 SINGLE_SERVICE=""
