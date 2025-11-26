@@ -8,13 +8,14 @@ Homepage is configured with ConfigMaps containing all service definitions, widge
 
 ## Configuration Files
 
-- **configmap.YAML** - Core settings (settings.YAML, Kubernetes.YAML)
-- **configmap-services.YAML** - Service definitions, widgets, bookmarks, Docker config
-- **deployment.YAML** - Homepage pod deployment
-- **service.YAML** - Kubernetes service
-- **serviceaccount.YAML** - RBAC permissions for Kubernetes API access
-- **pvc.YAML** - Persistent volume (currently not used, configs in ConfigMaps)
-- **ingressroute.YAML** - Traefik ingress route
+- **configmap.yaml** - Core settings (settings.yaml, kubernetes.yaml)
+- **configmap-services.yaml** - Service definitions, widgets, bookmarks, Docker config
+- **deployment.yaml** - Homepage pod deployment
+- **service.yaml** - Kubernetes service
+- **serviceaccount.yaml** - RBAC permissions for Kubernetes API access
+- **pvc.yaml** - Persistent volume (currently not used, configs in ConfigMaps)
+- **ingressroute.yaml** - Traefik ingress route
+- **secret.yaml** - API keys secret (auto-synced from running services)
 
 ## Configured Services
 
@@ -55,103 +56,78 @@ Homepage is configured with ConfigMaps containing all service definitions, widge
 
 ## API Key Configuration
 
-Homepage widgets use template variables for API keys that are synced from 1Password using External Secrets Operator.
+Homepage widgets require API keys which are automatically synced from running services.
 
-### Setup via 1Password (Recommended - Already Configured)
+### Automatic API Key Sync (Recommended)
 
-The ExternalSecret is already configured in `externalsecret.yaml`. You just need to create the 1Password item:
-
-**See [ONEPASSWORD-SETUP.md](./ONEPASSWORD-SETUP.md) for complete setup instructions.**
-
-Quick summary:
-
-1. Create a 1Password item named `arr-stack-credentials` in the `catalyst-eso` vault
-2. Add fields for each API key (sonarr_api_key, radarr_api_key, etc.)
-3. The ExternalSecret will automatically sync to a Kubernetes secret
-4. Homepage deployment is already configured to use the secret
-
-### Alternative: Manual Secret Creation
-
-If you're not using 1Password/ESO, create a secret manually:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: homepage-secrets
-  namespace: media-dev
-type: Opaque
-stringData:
-  HOMEPAGE_VAR_SONARR_KEY: 'your-sonarr-api-key'
-  HOMEPAGE_VAR_RADARR_KEY: 'your-radarr-api-key'
-  HOMEPAGE_VAR_READARR_KEY: 'your-readarr-api-key'
-  HOMEPAGE_VAR_PROWLARR_KEY: 'your-prowlarr-api-key'
-  HOMEPAGE_VAR_PLEX_KEY: 'your-plex-token'
-  HOMEPAGE_VAR_JELLYFIN_KEY: 'your-jellyfin-api-key'
-  HOMEPAGE_VAR_OVERSEERR_KEY: 'your-overseerr-api-key'
-  HOMEPAGE_VAR_ARGOCD_KEY: 'your-argocd-token'
-  HOMEPAGE_VAR_GRAFANA_USER: 'admin'
-  HOMEPAGE_VAR_GRAFANA_PASS: 'your-grafana-password'
-```
-
-The deployment is already configured to use this secret via `envFrom`.
-
-### Option 3: Direct ConfigMap Edit (Not Recommended)
-
-Edit the `configmap-services.yaml` and replace the template variables with actual values:
+The *arr applications generate API keys on first startup. These can be automatically
+extracted and synced to the Kubernetes secret using:
 
 ```bash
-kubectl edit configmap homepage-services -n media-dev
+# Sync API keys from all running services
+./scripts/sync-api-keys.sh
+
+# Preview what would be synced (dry run)
+./scripts/sync-api-keys.sh --dry-run
+
+# Sync a single service
+./scripts/sync-api-keys.sh --service sonarr
 ```
 
-Replace `{{HOMEPAGE_VAR_SONARR_KEY}}` with actual API key, etc.
+The sync script:
+1. Extracts API keys from `/config/config.xml` in *arr containers
+2. Gets Overseerr key from `/config/settings.json`
+3. Gets Plex token from `Preferences.xml` (if claimed)
+4. Creates/updates `arr-api-keys` secret
+5. Patches `homepage-secrets` with the synced keys
 
-## Getting API Keys
+**Run this after deploying services for the first time, or whenever you need to refresh keys.**
 
-### \*arr Applications (Sonarr, Radarr, Readarr, Prowlarr)
+### Secret Structure
 
-1. Log into the application web UI
-2. Go to Settings → General
-3. Copy the API Key
+The `homepage-secrets` secret contains:
 
-### Plex
+```yaml
+stringData:
+  # *arr API keys (auto-synced)
+  HOMEPAGE_VAR_SONARR_KEY: "<extracted from running service>"
+  HOMEPAGE_VAR_RADARR_KEY: "<extracted from running service>"
+  HOMEPAGE_VAR_PROWLARR_KEY: "<extracted from running service>"
+  HOMEPAGE_VAR_READARR_KEY: "<extracted from running service>"
+  HOMEPAGE_VAR_OVERSEERR_KEY: "<extracted from running service>"
+  HOMEPAGE_VAR_PLEX_KEY: "<extracted from running service>"
+  HOMEPAGE_VAR_JELLYFIN_KEY: "<manual - create in Jellyfin UI>"
 
-1. Follow instructions at: https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/
-2. Or use: Settings → Account → XML → Look for `PlexToken`
+  # Infrastructure (set manually or via separate sync)
+  HOMEPAGE_VAR_ARGOCD_KEY: "<argocd token>"
+  HOMEPAGE_VAR_GRAFANA_USER: "admin"
+  HOMEPAGE_VAR_GRAFANA_PASS: "prom-operator"
+```
 
-### Jellyfin
+### Manual API Key Sources
 
-1. Dashboard → API Keys
+For keys that can't be auto-synced:
+
+#### Jellyfin
+1. Dashboard -> API Keys
 2. Create a new API key for "Homepage Dashboard"
 
-### Overseerr
-
-1. Settings → General → API Key
-2. Copy the API key
-
-### ArgoCD
-
+#### ArgoCD
 1. Create a readonly account:
-
    ```bash
    kubectl edit cm argocd-cm -n argocd
    ```
-
    Add:
-
    ```yaml
    data:
      accounts.readonly: apiKey
    ```
 
 2. Configure RBAC:
-
    ```bash
    kubectl edit cm argocd-rbac-cm -n argocd
    ```
-
    Add:
-
    ```yaml
    data:
      policy.csv: |
@@ -163,8 +139,7 @@ Replace `{{HOMEPAGE_VAR_SONARR_KEY}}` with actual API key, etc.
    argocd account generate-token --account readonly
    ```
 
-### Grafana
-
+#### Grafana
 - Default: username `admin`, password `prom-operator`
 - Or get from secret:
   ```bash
@@ -203,11 +178,11 @@ Edit the `layout:` section in `configmap.yaml` to change columns, styles, etc.
 
 ### Widgets Not Loading
 
-1. Check API keys are correctly configured
+1. Check API keys are correctly synced: `./scripts/sync-api-keys.sh --dry-run`
 2. Verify service URLs are accessible from within the cluster
 3. Check logs:
    ```bash
-   kubectl logs -n media-dev -l app=homepage
+   kubectl logs -n media-prod -l app=homepage
    ```
 
 ### Permission Errors
@@ -223,7 +198,15 @@ kubectl get clusterrolebinding homepage -o yaml
 After changing ConfigMaps, restart the pod:
 
 ```bash
-kubectl rollout restart deployment homepage -n media-dev
+kubectl rollout restart deployment homepage -n media-prod
+```
+
+### API Keys Showing "pending-sync"
+
+Run the sync script to extract keys from running services:
+
+```bash
+./scripts/sync-api-keys.sh
 ```
 
 ## References

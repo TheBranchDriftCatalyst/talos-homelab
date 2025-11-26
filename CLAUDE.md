@@ -65,6 +65,7 @@ This repository maintains comprehensive documentation organized in multiple loca
 | `docs/kubernetes-ui-tools.md`       | Comprehensive guide to Kubernetes UI tools - Comparison and evaluation of available options          |
 | `docs/LOCAL-TESTING.md`             | Local testing guide - Testing infrastructure changes before deployment                               |
 | `docs/node-shutdown-procedure.md`   | Node shutdown and restart guide - Safe procedures for hardware maintenance and recovery              |
+| `docs/ENHANCEMENT-ROADMAP.md`       | **Enhancement Roadmap** - MCP server and Tilt extension integration planning (2-stream project)       |
 | `docs/PROGRESS-SUMMARY.md`          | Progress summary - Session-by-session tracking of implementation work                                |
 | `docs/TALOS-PROVISIONING-STEPS.md`  | Talos provisioning steps - Detailed cluster setup and bootstrap process                              |
 | `docs/tilt-development-workflow.md` | Tilt development workflow - Hot-reload development environment for infrastructure manifests          |
