@@ -1,91 +1,29 @@
 #!/usr/bin/env bash
 # Infrastructure Dashboard - Dynamic cluster status display
 # Dynamically queries the cluster for all infrastructure services and their status
+#
+# Usage:
+#   ./dashboard.sh              # Show full dashboard
+#
 # shellcheck disable=SC2016,SC2034
 
 set -euo pipefail
 
-# Color codes
-RESET='\033[0m'
-BOLD='\033[1m'
-DIM='\033[2m'
-CYAN='\033[96m'
-GREEN='\033[92m'
-YELLOW='\033[93m'
-RED='\033[91m'
-MAGENTA='\033[95m'
-BLUE='\033[94m'
+# Get script directory and source common library
+DASHBOARD_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${DASHBOARD_SCRIPT_DIR}/.." && pwd)"
 
-# Configuration
-KUBECONFIG_PATH="${KUBECONFIG:-../.output/kubeconfig}"
-DOMAIN="${DOMAIN:-talos00}"
+# shellcheck source=../scripts/lib/dashboard-common.sh
+source "${PROJECT_ROOT}/scripts/lib/dashboard-common.sh"
 
-# Check if kubectl is available
-if ! command -v kubectl &> /dev/null; then
-  echo "kubectl not found. Please install kubectl."
-  exit 1
-fi
+# ============================================================================
+# Infrastructure-specific configuration
+# ============================================================================
+INFRA_NAMESPACES=("monitoring" "observability" "traefik" "argocd" "registry" "external-secrets" "flux-system")
 
-# Check if kubeconfig exists
-if [[ ! -f "$KUBECONFIG_PATH" ]] && [[ -z "${KUBECONFIG:-}" ]]; then
-  echo "Kubeconfig not found at $KUBECONFIG_PATH"
-  echo "Run: task kubeconfig"
-  exit 1
-fi
-
-# Use local kubeconfig if KUBECONFIG env var not set
-if [[ -z "${KUBECONFIG:-}" ]]; then
-  export KUBECONFIG="$KUBECONFIG_PATH"
-fi
-
-# Helper function to check if namespace exists
-namespace_exists() {
-  kubectl get namespace "$1" &> /dev/null
-}
-
-# Helper function to get service info
-get_service_info() {
-  local service=$1
-  local namespace=$2
-
-  if kubectl get svc "$service" -n "$namespace" &> /dev/null; then
-    local cluster_ip
-    cluster_ip=$(kubectl get svc "$service" -n "$namespace" -o jsonpath='{.spec.clusterIP}' 2> /dev/null || echo "N/A")
-    local port
-    port=$(kubectl get svc "$service" -n "$namespace" -o jsonpath='{.spec.ports[0].port}' 2> /dev/null || echo "N/A")
-    echo "$cluster_ip:$port"
-  else
-    echo "not-found"
-  fi
-}
-
-# Helper function to get pod status
-get_pod_status() {
-  local label=$1
-  local namespace=$2
-
-  if kubectl get pods -n "$namespace" -l "$label" &> /dev/null 2>&1; then
-    kubectl get pods -n "$namespace" -l "$label" -o jsonpath='{.items[0].status.phase}' 2> /dev/null || echo "NotFound"
-  else
-    echo "NotFound"
-  fi
-}
-
-# Helper function to get pod ready status
-get_pod_ready() {
-  local label=$1
-  local namespace=$2
-
-  if kubectl get pods -n "$namespace" -l "$label" &> /dev/null 2>&1; then
-    local ready
-    ready=$(kubectl get pods -n "$namespace" -l "$label" -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2> /dev/null || echo "false")
-    echo "$ready"
-  else
-    echo "false"
-  fi
-}
-
+# ============================================================================
 # Print ASCII header
+# ============================================================================
 print_header() {
   echo -e "${CYAN}${BOLD}"
   cat << 'EOF'
@@ -101,192 +39,249 @@ EOF
   echo ""
 }
 
-# Print service with status
-print_service() {
-  local name=$1
-  local namespace=$2
-  local label=$3
-  local url=$4
-  local last=${5:-false}
+# ============================================================================
+# Fetch all infrastructure namespace data
+# ============================================================================
+fetch_infra_data() {
+  echo -e "${DIM}Loading infrastructure data...${RESET}"
 
-  local status
-  status=$(get_pod_status "$label" "$namespace")
-  local ready
-  ready=$(get_pod_ready "$label" "$namespace")
+  # Fetch cluster-wide data
+  kubectl get nodes -o json > "$CACHE_DIR/nodes.json" 2> /dev/null &
+  kubectl get sc -o json > "$CACHE_DIR/storageclasses.json" 2> /dev/null &
+  kubectl get pv -o json > "$CACHE_DIR/pvs.json" 2> /dev/null &
+  kubectl get pvc -A -o json > "$CACHE_DIR/all-pvcs.json" 2> /dev/null &
 
-  # Status indicator
-  local status_icon="⚠"
-  local status_color=$YELLOW
-  if [[ "$status" == "Running" ]] && [[ "$ready" == "true" ]]; then
-    status_icon="✓"
-    status_color=$GREEN
-  elif [[ "$status" == "NotFound" ]]; then
-    status_icon="✗"
-    status_color=$RED
-  fi
+  # Fetch per-namespace data
+  for ns in "${INFRA_NAMESPACES[@]}"; do
+    if namespace_exists "$ns"; then
+      kubectl get pods -n "$ns" -o json > "$CACHE_DIR/${ns}-pods.json" 2> /dev/null &
+      kubectl get svc -n "$ns" -o json > "$CACHE_DIR/${ns}-services.json" 2> /dev/null &
+      kubectl get deployments -n "$ns" -o json > "$CACHE_DIR/${ns}-deployments.json" 2> /dev/null &
+    fi
+  done
 
-  local prefix="┣━"
-  local indent="┃ "
-  if [[ "$last" == "true" ]]; then
-    prefix="┗━"
-    indent="  "
-  fi
+  wait
 
-  echo -e "  ${BOLD}${prefix} ${name}${RESET} ${status_color}[${status_icon}]${RESET}"
-  if [[ -n "$url" ]]; then
-    echo -e "  ${indent} ${DIM}URL:${RESET} ${CYAN}${url}${RESET}"
-  fi
+  # Clear the loading message
+  echo -e "\033[1A\033[2K"
 }
 
+# ============================================================================
+# Print infrastructure service
+# ============================================================================
+print_infra_service() {
+  local name=$1
+  local namespace=$2
+  local label_key=$3
+  local label_value=$4
+  local url=$5
+  local is_last=${6:-false}
+
+  local status ready
+  status=$(jq -r ".items[] | select(.metadata.labels[\"$label_key\"] == \"$label_value\") | .status.phase" "$CACHE_DIR/${namespace}-pods.json" 2> /dev/null | head -1)
+  ready=$(jq -r ".items[] | select(.metadata.labels[\"$label_key\"] == \"$label_value\") | .status.containerStatuses[0].ready // false" "$CACHE_DIR/${namespace}-pods.json" 2> /dev/null | head -1)
+
+  # Handle missing data
+  [[ -z "$status" ]] && status="NotFound"
+
+  print_service_line "$name" "$status" "$ready" "$url" "$is_last"
+}
+
+# ============================================================================
 # Print storage section
-print_storage() {
-  echo -e "${MAGENTA}▸ STORAGE${RESET}"
+# ============================================================================
+print_storage_section() {
+  print_section "STORAGE"
   echo ""
 
   # Storage Classes
   echo -e "  ${BOLD}Storage Classes:${RESET}"
-  kubectl get sc 2> /dev/null | tail -n +2 | while IFS= read -r line; do
-    local name
-    name=$(echo "$line" | awk '{print $1}')
-    local provisioner
-    provisioner=$(echo "$line" | awk '{print $2}')
-    local default
-    default=$(echo "$line" | grep -q "(default)" && echo " ${GREEN}(default)${RESET}" || echo "")
-    echo -e "    ${DIM}•${RESET} ${name}${default} ${DIM}→ ${provisioner}${RESET}"
-  done
-  echo ""
-
-  # PersistentVolumes
-  echo -e "  ${BOLD}PersistentVolumes:${RESET}"
-  local pv_count
-  pv_count=$(kubectl get pv 2> /dev/null | grep -c "Available\|Bound" || echo "0")
-  if [[ "$pv_count" -gt 0 ]]; then
-    kubectl get pv 2> /dev/null | tail -n +2 | while IFS= read -r line; do
-      local name
-      name=$(echo "$line" | awk '{print $1}')
-      local capacity
-      capacity=$(echo "$line" | awk '{print $2}')
-      local status
-      status=$(echo "$line" | awk '{print $5}')
-      local status_color=$GREEN
-      [[ "$status" != "Bound" ]] && status_color=$YELLOW
-      echo -e "    ${DIM}•${RESET} ${name} ${DIM}(${capacity})${RESET} ${status_color}[${status}]${RESET}"
+  if [[ -f "$CACHE_DIR/storageclasses.json" ]]; then
+    jq -r '.items[] | .metadata.name + "|" + .provisioner + "|" + (if .metadata.annotations["storageclass.kubernetes.io/is-default-class"] == "true" then "default" else "" end)' "$CACHE_DIR/storageclasses.json" 2> /dev/null | while IFS='|' read -r name provisioner default; do
+      local default_marker=""
+      [[ "$default" == "default" ]] && default_marker=" ${GREEN}(default)${RESET}"
+      echo -e "    ${DIM}•${RESET} ${name}${default_marker} ${DIM}→ ${provisioner}${RESET}"
     done
-  else
-    echo -e "    ${DIM}No PVs found${RESET}"
   fi
   echo ""
 
-  # PersistentVolumeClaims by namespace
+  # PVCs by namespace
   echo -e "  ${BOLD}PersistentVolumeClaims:${RESET}"
-  local pvc_namespaces
-  pvc_namespaces=$(kubectl get pvc -A 2> /dev/null | tail -n +2 | awk '{print $1}' | sort -u)
-  if [[ -n "$pvc_namespaces" ]]; then
-    for ns in $pvc_namespaces; do
-      echo -e "    ${CYAN}$ns:${RESET}"
-      kubectl get pvc -n "$ns" 2> /dev/null | tail -n +2 | while IFS= read -r line; do
-        local name
-        name=$(echo "$line" | awk '{print $1}')
-        local status
-        status=$(echo "$line" | awk '{print $2}')
-        local capacity
-        capacity=$(echo "$line" | awk '{print $4}')
+  if [[ -f "$CACHE_DIR/all-pvcs.json" ]]; then
+    local pvc_namespaces
+    pvc_namespaces=$(jq -r '[.items[].metadata.namespace] | unique | .[]' "$CACHE_DIR/all-pvcs.json" 2> /dev/null | sort)
+
+    if [[ -n "$pvc_namespaces" ]]; then
+      for ns in $pvc_namespaces; do
+        local pvc_count
+        pvc_count=$(jq "[.items[] | select(.metadata.namespace == \"$ns\")] | length" "$CACHE_DIR/all-pvcs.json" 2> /dev/null)
+        local bound_count
+        bound_count=$(jq "[.items[] | select(.metadata.namespace == \"$ns\" and .status.phase == \"Bound\")] | length" "$CACHE_DIR/all-pvcs.json" 2> /dev/null)
+
         local status_color=$GREEN
-        [[ "$status" != "Bound" ]] && status_color=$YELLOW
-        echo -e "      ${DIM}•${RESET} ${name} ${DIM}(${capacity})${RESET} ${status_color}[${status}]${RESET}"
+        [[ "$bound_count" != "$pvc_count" ]] && status_color=$YELLOW
+
+        echo -e "    ${CYAN}${ns}:${RESET} ${status_color}${bound_count}/${pvc_count} Bound${RESET}"
       done
-    done
-  else
-    echo -e "    ${DIM}No PVCs found${RESET}"
+    else
+      echo -e "    ${DIM}No PVCs found${RESET}"
+    fi
   fi
   echo ""
 }
 
+# ============================================================================
+# Print Flux status
+# ============================================================================
+print_flux_status() {
+  print_section "GITOPS (FLUX)"
+
+  if ! command -v flux &> /dev/null; then
+    echo -e "  ${DIM}flux CLI not installed${RESET}"
+    echo ""
+    return
+  fi
+
+  local flux_status flux_ready
+  flux_status=$(flux get kustomization flux-system 2> /dev/null | tail -n 1 | awk '{print $2}')
+  flux_ready=$(flux get kustomization flux-system 2> /dev/null | tail -n 1 | awk '{print $3}')
+
+  if [[ "$flux_ready" == "True" ]]; then
+    echo -e "  ${GREEN}✓${RESET} Flux is ready and reconciling"
+  elif [[ "$flux_status" == "True" ]]; then
+    echo -e "  ${YELLOW}⚠${RESET} Flux is suspended"
+  else
+    echo -e "  ${RED}✗${RESET} Flux status unknown or not installed"
+  fi
+  echo ""
+
+  echo -e "  ${DIM}Kustomizations:${RESET}"
+  flux get kustomization 2> /dev/null | tail -n +2 | while IFS= read -r line; do
+    local name ready
+    name=$(echo "$line" | awk '{print $1}')
+    ready=$(echo "$line" | awk '{print $3}')
+    local status_icon="✓"
+    local status_color=$GREEN
+    if [[ "$ready" != "True" ]]; then
+      status_icon="⚠"
+      status_color=$YELLOW
+    fi
+    echo -e "    ${status_color}${status_icon}${RESET} ${name}"
+  done
+  echo ""
+}
+
+# ============================================================================
+# Print service URLs section
+# ============================================================================
+print_service_urls() {
+  print_section "SERVICE URLS (via Traefik)"
+  echo -e "  ${DIM}Requires /etc/hosts entries for *.${DOMAIN}${RESET}"
+  echo ""
+
+  echo -e "  ${BOLD}Monitoring:${RESET}"
+  echo -e "    Grafana:       http://grafana.$DOMAIN"
+  echo -e "    Prometheus:    http://prometheus.$DOMAIN"
+  echo -e "    Alertmanager:  http://alertmanager.$DOMAIN"
+  echo ""
+
+  echo -e "  ${BOLD}Observability:${RESET}"
+  echo -e "    Graylog:       http://graylog.$DOMAIN"
+  echo ""
+
+  echo -e "  ${BOLD}GitOps:${RESET}"
+  echo -e "    ArgoCD:        http://argocd.$DOMAIN"
+  echo ""
+
+  echo -e "  ${BOLD}Artifact Repository:${RESET}"
+  echo -e "    Nexus UI:      http://nexus.$DOMAIN"
+  echo -e "    Docker:        http://registry.$DOMAIN"
+  echo -e "    Docker Proxy:  http://docker-proxy.$DOMAIN"
+  echo -e "    npm:           http://npm.$DOMAIN"
+  echo ""
+}
+
+# ============================================================================
+# Print credentials section
+# ============================================================================
+print_credentials() {
+  print_section "DEFAULT CREDENTIALS"
+  echo -e "  ${DIM}Grafana:${RESET}  admin / prom-operator"
+  echo -e "  ${DIM}Graylog:${RESET}  admin / admin"
+  echo -e "  ${DIM}ArgoCD:${RESET}   admin / kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+  echo -e "  ${DIM}Nexus:${RESET}    admin / kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password"
+  echo ""
+}
+
+# ============================================================================
 # Main dashboard
+# ============================================================================
 main() {
+  # Initialize (checks kubectl, kubeconfig, creates cache dir)
+  dashboard_init
+
   clear
   print_header
 
+  # Fetch all infrastructure data
+  fetch_infra_data
+
   # Cluster status
-  local cluster_status
-  if kubectl get nodes &> /dev/null; then
-    cluster_status="${GREEN}✓ Cluster is running${RESET}"
-  else
-    cluster_status="${RED}✗ Cluster is not accessible${RESET}"
-  fi
-  echo -e "$cluster_status"
+  print_cluster_status
   echo ""
 
   # Monitoring Stack
-  echo -e "${MAGENTA}▸ MONITORING${RESET}"
-  print_service "prometheus" "monitoring" "app.kubernetes.io/name=prometheus" "http://prometheus.$DOMAIN"
-  print_service "grafana" "monitoring" "app.kubernetes.io/name=grafana" "http://grafana.$DOMAIN"
-  print_service "alertmanager" "monitoring" "app.kubernetes.io/name=alertmanager" "http://alertmanager.$DOMAIN" true
+  print_section "MONITORING"
+  print_infra_service "prometheus" "monitoring" "app.kubernetes.io/name" "prometheus" "http://prometheus.$DOMAIN"
+  print_infra_service "grafana" "monitoring" "app.kubernetes.io/name" "grafana" "http://grafana.$DOMAIN"
+  print_infra_service "alertmanager" "monitoring" "app.kubernetes.io/name" "alertmanager" "http://alertmanager.$DOMAIN" true
   echo ""
 
   # Observability Stack
-  echo -e "${MAGENTA}▸ OBSERVABILITY${RESET}"
-  print_service "graylog" "observability" "app=graylog" "http://graylog.$DOMAIN"
-  print_service "opensearch" "observability" "app=opensearch" ""
-  print_service "mongodb" "observability" "app=mongodb" ""
-  print_service "fluent-bit" "observability" "app.kubernetes.io/name=fluent-bit" "" true
+  print_section "OBSERVABILITY"
+  print_infra_service "graylog" "observability" "app.kubernetes.io/name" "graylog" "http://graylog.$DOMAIN"
+  print_infra_service "opensearch" "observability" "app.kubernetes.io/name" "opensearch" ""
+  print_infra_service "mongodb" "observability" "app.kubernetes.io/name" "mongodb" ""
+  print_infra_service "fluent-bit" "observability" "app.kubernetes.io/name" "fluent-bit" "" true
   echo ""
 
   # Networking
-  echo -e "${MAGENTA}▸ NETWORKING${RESET}"
-  print_service "traefik" "traefik" "app.kubernetes.io/name=traefik" "http://traefik.$DOMAIN/dashboard/"
-  print_service "argocd-server" "argocd" "app.kubernetes.io/name=argocd-server" "http://argocd.$DOMAIN" true
+  print_section "NETWORKING"
+  print_infra_service "traefik" "traefik" "app.kubernetes.io/name" "traefik" "http://traefik.$DOMAIN/dashboard/"
+  print_infra_service "argocd-server" "argocd" "app.kubernetes.io/name" "argocd-server" "http://argocd.$DOMAIN" true
   echo ""
 
-  # Registry
-  echo -e "${MAGENTA}▸ REGISTRY${RESET}"
-  print_service "docker-registry" "registry" "app=docker-registry" "http://registry.$DOMAIN" true
-  echo ""
+  # Registry - detect if Nexus or old docker-registry
+  print_section "ARTIFACT REPOSITORY"
+  local nexus_status
+  nexus_status=$(jq -r '.items[] | select(.metadata.labels["app"] == "nexus") | .status.phase' "$CACHE_DIR/registry-pods.json" 2> /dev/null | head -1)
 
-  # External Secrets
-  echo -e "${MAGENTA}▸ SECRETS MANAGEMENT${RESET}"
-  print_service "external-secrets" "external-secrets" "app.kubernetes.io/name=external-secrets" "" true
-  echo ""
-
-  # Storage
-  print_storage
-
-  # Flux Status
-  echo -e "${MAGENTA}▸ GITOPS (FLUX)${RESET}"
-  if command -v flux &> /dev/null; then
-    local flux_status
-    flux_status=$(flux get kustomization flux-system 2> /dev/null | tail -n 1 | awk '{print $2}')
-    local flux_ready
-    flux_ready=$(flux get kustomization flux-system 2> /dev/null | tail -n 1 | awk '{print $3}')
-    if [[ "$flux_ready" == "True" ]]; then
-      echo -e "  ${GREEN}✓${RESET} Flux is ready and reconciling"
-    elif [[ "$flux_status" == "True" ]]; then
-      echo -e "  ${YELLOW}⚠${RESET} Flux is suspended"
-    else
-      echo -e "  ${RED}✗${RESET} Flux status unknown"
-    fi
-    echo ""
-    echo -e "  ${DIM}Kustomizations:${RESET}"
-    flux get kustomization 2> /dev/null | tail -n +2 | while IFS= read -r line; do
-      local name
-      name=$(echo "$line" | awk '{print $1}')
-      local ready
-      ready=$(echo "$line" | awk '{print $3}')
-      local status_icon="✓"
-      local status_color=$GREEN
-      if [[ "$ready" != "True" ]]; then
-        status_icon="⚠"
-        status_color=$YELLOW
-      fi
-      echo -e "    ${status_color}${status_icon}${RESET} ${name}"
-    done
+  if [[ -n "$nexus_status" ]]; then
+    # Nexus is deployed
+    print_infra_service "nexus" "registry" "app" "nexus" "http://nexus.$DOMAIN"
+    echo -e "  ┣━ ${DIM}Docker Registry:${RESET}  ${CYAN}http://registry.$DOMAIN${RESET}"
+    echo -e "  ┣━ ${DIM}Docker Proxy:${RESET}     ${CYAN}http://docker-proxy.$DOMAIN${RESET}"
+    echo -e "  ┗━ ${DIM}npm Registry:${RESET}     ${CYAN}http://npm.$DOMAIN${RESET}"
   else
-    echo -e "  ${DIM}flux CLI not installed${RESET}"
+    # Old docker-registry still in use
+    print_infra_service "docker-registry" "registry" "app" "docker-registry" "http://registry.$DOMAIN" true
+    echo -e "  ${DIM}    (Upgrade to Nexus: kubectl apply -f infrastructure/base/registry/deployment.yaml)${RESET}"
   fi
   echo ""
 
+  # External Secrets
+  print_section "SECRETS MANAGEMENT"
+  print_infra_service "external-secrets" "external-secrets" "app.kubernetes.io/name" "external-secrets" "" true
+  echo ""
+
+  # Storage
+  print_storage_section
+
+  # Flux Status
+  print_flux_status
+
   # Quick Commands
-  echo -e "${MAGENTA}▸ QUICK COMMANDS${RESET}"
+  print_section "QUICK COMMANDS"
   echo -e "  ${CYAN}deploy${RESET}      │ ./scripts/deploy-stack.sh"
   echo -e "  ${CYAN}tilt${RESET}        │ cd infrastructure && tilt up"
   echo -e "  ${CYAN}flux-status${RESET} │ flux get all"
@@ -295,30 +290,10 @@ main() {
   echo ""
 
   # Service URLs
-  echo -e "${MAGENTA}▸ SERVICE URLS (via Traefik)${RESET}"
-  echo -e "  ${DIM}Requires /etc/hosts entries for *.$DOMAIN${RESET}"
-  echo ""
-  echo -e "  ${BOLD}Monitoring:${RESET}"
-  echo -e "    Grafana:       http://grafana.$DOMAIN"
-  echo -e "    Prometheus:    http://prometheus.$DOMAIN"
-  echo -e "    Alertmanager:  http://alertmanager.$DOMAIN"
-  echo ""
-  echo -e "  ${BOLD}Observability:${RESET}"
-  echo -e "    Graylog:       http://graylog.$DOMAIN"
-  echo ""
-  echo -e "  ${BOLD}GitOps:${RESET}"
-  echo -e "    ArgoCD:        http://argocd.$DOMAIN"
-  echo ""
-  echo -e "  ${BOLD}Registry:${RESET}"
-  echo -e "    Docker:        http://registry.$DOMAIN"
-  echo ""
+  print_service_urls
 
   # Credentials
-  echo -e "${MAGENTA}▸ DEFAULT CREDENTIALS${RESET}"
-  echo -e "  ${DIM}Grafana:${RESET}  admin / prom-operator"
-  echo -e "  ${DIM}Graylog:${RESET}  admin / admin"
-  echo -e "  ${DIM}ArgoCD:${RESET}   admin / kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
-  echo ""
+  print_credentials
 }
 
 # Run main function

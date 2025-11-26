@@ -8,29 +8,6 @@
 #   ${SYNOLOGY_VOLUME} - Base volume path (e.g., /volume1)
 
 # ============================================================================
-# YAML Anchors - DRY configuration
-# ============================================================================
-x-nfs-mount-options: &nfs-mount-options
-  - hard
-  - nfsvers=4.1
-  - noatime
-  - nodiratime
-  - rsize=1048576
-  - wsize=1048576
-
-x-pv-defaults: &pv-defaults
-  accessModes:
-    - ReadWriteMany
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: synology-nfs
-  mountOptions: *nfs-mount-options
-
-x-pvc-defaults: &pvc-defaults
-  accessModes:
-    - ReadWriteMany
-  storageClassName: synology-nfs
-
-# ============================================================================
 # Storage Class
 # ============================================================================
 apiVersion: storage.k8s.io/v1
@@ -51,44 +28,104 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: synology-media-movies
-  labels: { type: synology-nfs, media-type: movies }
+  labels:
+    type: synology-nfs
+    media-type: movies
 spec:
-  <<: *pv-defaults
-  capacity: { storage: 10Ti }
-  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/media/movies" }
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity:
+    storage: 10Ti
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+    - rsize=1048576
+    - wsize=1048576
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/media/movies"
 
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: synology-media-tv
-  labels: { type: synology-nfs, media-type: tv }
+  labels:
+    type: synology-nfs
+    media-type: tv
 spec:
-  <<: *pv-defaults
-  capacity: { storage: 10Ti }
-  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/media/tv" }
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity:
+    storage: 10Ti
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+    - rsize=1048576
+    - wsize=1048576
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/media/tv"
 
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: synology-media-music
-  labels: { type: synology-nfs, media-type: music }
+  labels:
+    type: synology-nfs
+    media-type: music
 spec:
-  <<: *pv-defaults
-  capacity: { storage: 2Ti }
-  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/media/music" }
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity:
+    storage: 2Ti
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+    - rsize=1048576
+    - wsize=1048576
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/media/music"
 
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: synology-media-books
-  labels: { type: synology-nfs, media-type: books }
+  labels:
+    type: synology-nfs
+    media-type: books
 spec:
-  <<: *pv-defaults
-  capacity: { storage: 500Gi }
-  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/media/books" }
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity:
+    storage: 500Gi
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+    - rsize=1048576
+    - wsize=1048576
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/media/books"
 
 ---
 # ============================================================================
@@ -98,94 +135,154 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: synology-downloads-complete
-  labels: { type: synology-nfs, download-type: complete }
+  labels:
+    type: synology-nfs
+    download-type: complete
 spec:
-  <<: *pv-defaults
-  capacity: { storage: 1Ti }
-  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/downloads/complete" }
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity:
+    storage: 1Ti
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+    - rsize=1048576
+    - wsize=1048576
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/downloads/complete"
 
 ---
 apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: synology-downloads-incomplete
-  labels: { type: synology-nfs, download-type: incomplete }
+  labels:
+    type: synology-nfs
+    download-type: incomplete
 spec:
-  <<: *pv-defaults
-  capacity: { storage: 500Gi }
-  nfs: { server: "${SYNOLOGY_IP}", path: "${SYNOLOGY_VOLUME}/downloads/incomplete" }
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity:
+    storage: 500Gi
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+    - rsize=1048576
+    - wsize=1048576
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/downloads/incomplete"
 
 ---
 # ============================================================================
-# PERSISTENT VOLUME CLAIMS - media-prod namespace
+# PERSISTENT VOLUME CLAIMS - media namespace
 # ============================================================================
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: synology-movies
-  namespace: media-prod
-  labels: { app.kubernetes.io/component: media-storage }
+  namespace: media
+  labels:
+    app.kubernetes.io/component: media-storage
 spec:
-  <<: *pvc-defaults
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
   volumeName: synology-media-movies
-  resources: { requests: { storage: 10Ti } }
+  resources:
+    requests:
+      storage: 10Ti
 
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: synology-tv
-  namespace: media-prod
-  labels: { app.kubernetes.io/component: media-storage }
+  namespace: media
+  labels:
+    app.kubernetes.io/component: media-storage
 spec:
-  <<: *pvc-defaults
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
   volumeName: synology-media-tv
-  resources: { requests: { storage: 10Ti } }
+  resources:
+    requests:
+      storage: 10Ti
 
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: synology-music
-  namespace: media-prod
-  labels: { app.kubernetes.io/component: media-storage }
+  namespace: media
+  labels:
+    app.kubernetes.io/component: media-storage
 spec:
-  <<: *pvc-defaults
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
   volumeName: synology-media-music
-  resources: { requests: { storage: 2Ti } }
+  resources:
+    requests:
+      storage: 2Ti
 
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: synology-books
-  namespace: media-prod
-  labels: { app.kubernetes.io/component: media-storage }
+  namespace: media
+  labels:
+    app.kubernetes.io/component: media-storage
 spec:
-  <<: *pvc-defaults
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
   volumeName: synology-media-books
-  resources: { requests: { storage: 500Gi } }
+  resources:
+    requests:
+      storage: 500Gi
 
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: synology-downloads-complete
-  namespace: media-prod
-  labels: { app.kubernetes.io/component: download-storage }
+  namespace: media
+  labels:
+    app.kubernetes.io/component: download-storage
 spec:
-  <<: *pvc-defaults
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
   volumeName: synology-downloads-complete
-  resources: { requests: { storage: 1Ti } }
+  resources:
+    requests:
+      storage: 1Ti
 
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: synology-downloads-incomplete
-  namespace: media-prod
-  labels: { app.kubernetes.io/component: download-storage }
+  namespace: media
+  labels:
+    app.kubernetes.io/component: download-storage
 spec:
-  <<: *pvc-defaults
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
   volumeName: synology-downloads-incomplete
-  resources: { requests: { storage: 500Gi } }
+  resources:
+    requests:
+      storage: 500Gi

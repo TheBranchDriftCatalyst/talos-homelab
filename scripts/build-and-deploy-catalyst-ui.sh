@@ -23,10 +23,10 @@ fi
 echo "✅ Found catalyst-ui at: ${CATALYST_UI_PATH}"
 echo ""
 
-# Ensure local registry is deployed
-echo "📦 Ensuring local Docker registry is deployed..."
+# Ensure Nexus registry is deployed
+echo "📦 Ensuring Nexus registry is deployed..."
 kubectl apply -f "${PROJECT_ROOT}/infrastructure/base/registry/deployment.yaml"
-kubectl wait --for=condition=ready pod -l app=docker-registry -n registry --timeout=120s
+kubectl wait --for=condition=ready pod -l app=nexus -n registry --timeout=300s
 
 # Get the current git commit hash for tagging
 GIT_HASH=$(git -C "${CATALYST_UI_PATH}" rev-parse --short HEAD 2> /dev/null || echo "dev")
@@ -48,13 +48,13 @@ docker build -t "catalyst-ui:latest" \
 echo "✅ Built image with tags: latest and ${GIT_HASH}"
 echo ""
 
-# Port-forward registry to localhost for Docker push
-echo "📤 Setting up port-forward to registry..."
-kubectl port-forward -n registry svc/docker-registry 5000:5000 > /dev/null 2>&1 &
+# Port-forward Nexus Docker registry to localhost for Docker push
+echo "📤 Setting up port-forward to Nexus Docker registry..."
+kubectl port-forward -n registry svc/nexus-docker 5000:5000 > /dev/null 2>&1 &
 PF_PID=$!
 
 # Wait for port-forward to be ready
-for i in {1..10}; do
+for _ in {1..10}; do
   if curl -s http://localhost:5000/v2/ > /dev/null 2>&1; then
     echo "✅ Registry port-forward ready"
     break
@@ -95,6 +95,7 @@ echo "  kubectl get application -n argocd catalyst-ui"
 echo ""
 echo "Access services:"
 echo "  ArgoCD:      http://argocd.talos00"
+echo "  Nexus UI:    http://nexus.talos00"
 echo "  Registry:    http://registry.talos00"
 echo "  Catalyst UI: http://catalyst.talos00 (once synced)"
 echo ""
