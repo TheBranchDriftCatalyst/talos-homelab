@@ -87,31 +87,32 @@ spec:
       javaOpts: "-Dlog4j2.formatMsgNoLookups=true -Djdk.tls.acknowledgeCloseNotify=true -XX:+UnlockExperimentalVMOptions -XX:-OmitStackTraceInFastThrow -XX:+UseG1GC -server -Xms3g -Xmx3g"
 
       # Provisioner to auto-create GELF TCP input on startup
+      # Note: Using graylog-web service (has ClusterIP) instead of graylog (headless)
       provisioner:
         enabled: true
         script: |
           #!/bin/bash
           set -e
 
-          GRAYLOG_URL="http://graylog:9000"
+          GRAYLOG_BASE=http://graylog-web:9000
           MAX_ATTEMPTS=60
           ATTEMPT=0
 
-          echo "Waiting for Graylog to be ready..."
-          until curl -sf -u "admin:adminadminadmin16" "${GRAYLOG_URL}/api/system/lbstatus" | grep -q "ALIVE"; do
+          echo "Waiting for Graylog to be ready at $GRAYLOG_BASE..."
+          until curl -sf -u "admin:adminadminadmin16" "$GRAYLOG_BASE/api/system/lbstatus" | grep -q "ALIVE"; do
             ATTEMPT=$((ATTEMPT + 1))
             if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
               echo "Timeout waiting for Graylog"
               exit 1
             fi
-            echo "Attempt ${ATTEMPT}/${MAX_ATTEMPTS} - Graylog not ready, waiting..."
+            echo "Attempt $ATTEMPT/$MAX_ATTEMPTS - Graylog not ready, waiting..."
             sleep 5
           done
 
           echo "Graylog is ready. Checking for existing GELF TCP input..."
 
           # Check if GELF TCP input already exists
-          EXISTING=$(curl -sf -u "admin:adminadminadmin16" "${GRAYLOG_URL}/api/system/inputs" \
+          EXISTING=$(curl -sf -u "admin:adminadminadmin16" "$GRAYLOG_BASE/api/system/inputs" \
             -H "Accept: application/json" | grep -c "GELF TCP" || true)
 
           if [ "$EXISTING" -eq "0" ]; then
@@ -119,7 +120,7 @@ spec:
             curl -sf -u "admin:adminadminadmin16" \
               -H "Content-Type: application/json" \
               -H "X-Requested-By: provisioner" \
-              -X POST "${GRAYLOG_URL}/api/system/inputs" \
+              -X POST "$GRAYLOG_BASE/api/system/inputs" \
               -d '{
                 "title": "GELF TCP",
                 "type": "org.graylog2.inputs.gelf.tcp.GELFTCPInput",
