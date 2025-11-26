@@ -57,6 +57,8 @@ fetch_infra_data() {
       kubectl get pods -n "$ns" -o json > "$CACHE_DIR/${ns}-pods.json" 2> /dev/null &
       kubectl get svc -n "$ns" -o json > "$CACHE_DIR/${ns}-services.json" 2> /dev/null &
       kubectl get deployments -n "$ns" -o json > "$CACHE_DIR/${ns}-deployments.json" 2> /dev/null &
+      kubectl get pvc -n "$ns" -o json > "$CACHE_DIR/${ns}-pvcs.json" 2> /dev/null &
+      kubectl get secrets -n "$ns" -o json > "$CACHE_DIR/${ns}-secrets.json" 2> /dev/null &
     fi
   done
 
@@ -64,6 +66,135 @@ fetch_infra_data() {
 
   # Clear the loading message
   echo -e "\033[1A\033[2K"
+}
+
+# ============================================================================
+# Infrastructure credential helpers
+# ============================================================================
+
+# Get secret data (base64 decoded)
+get_infra_secret() {
+  local namespace=$1
+  local secret_name=$2
+  local key=$3
+  local value
+  value=$(jq -r ".items[] | select(.metadata.name == \"$secret_name\") | .data[\"$key\"] // empty" "$CACHE_DIR/${namespace}-secrets.json" 2> /dev/null)
+  if [[ -n "$value" ]]; then
+    echo "$value" | base64 -d 2> /dev/null
+  fi
+}
+
+# Get credentials for infrastructure services
+get_infra_credentials() {
+  local service=$1
+  local namespace=$2
+
+  case "$service" in
+    grafana)
+      # Grafana creds from kube-prometheus-stack
+      local pass
+      pass=$(get_infra_secret "$namespace" "kube-prometheus-stack-grafana" "admin-password")
+      if [[ -n "$pass" ]]; then
+        echo "admin:${pass}"
+      fi
+      ;;
+    argocd-server)
+      # ArgoCD initial admin password
+      local pass
+      pass=$(get_infra_secret "$namespace" "argocd-initial-admin-secret" "password")
+      if [[ -n "$pass" ]]; then
+        echo "admin:${pass}"
+      fi
+      ;;
+    graylog)
+      # Graylog default credentials (from helm values)
+      echo "admin:admin"
+      ;;
+    nexus)
+      # Nexus admin password is generated on first startup
+      echo "admin:(kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password)"
+      ;;
+    opensearch)
+      local pass
+      pass=$(get_infra_secret "$namespace" "opensearch-admin-credentials" "password")
+      if [[ -n "$pass" ]]; then
+        echo "admin:${pass}"
+      fi
+      ;;
+    mongodb)
+      local user pass
+      user=$(get_infra_secret "$namespace" "mongodb-secret" "MONGO_INITDB_ROOT_USERNAME")
+      pass=$(get_infra_secret "$namespace" "mongodb-secret" "MONGO_INITDB_ROOT_PASSWORD")
+      if [[ -n "$user" ]] && [[ -n "$pass" ]]; then
+        echo "${user}:${pass}"
+      fi
+      ;;
+    *)
+      # No credentials known
+      ;;
+  esac
+}
+
+# Get volume mounts for a deployment by label
+get_infra_volume_mounts() {
+  local namespace=$1
+  local label_key=$2
+  local label_value=$3
+
+  # Find deployment name by label first
+  local deploy_name
+  deploy_name=$(jq -r ".items[] | select(.spec.selector.matchLabels[\"$label_key\"] == \"$label_value\" or .metadata.labels[\"$label_key\"] == \"$label_value\") | .metadata.name" "$CACHE_DIR/${namespace}-deployments.json" 2> /dev/null | head -1)
+
+  if [[ -n "$deploy_name" ]]; then
+    jq -r ".items[] | select(.metadata.name == \"$deploy_name\") | .spec.template.spec.volumes[]? | select(.persistentVolumeClaim != null) | .name + \":\" + .persistentVolumeClaim.claimName" "$CACHE_DIR/${namespace}-deployments.json" 2> /dev/null
+  fi
+}
+
+# Get PVC info from namespace cache
+get_infra_pvc_info() {
+  local namespace=$1
+  local pvc_name=$2
+  jq -r ".items[] | select(.metadata.name == \"$pvc_name\") | .status.phase + \"|\" + .spec.resources.requests.storage + \"|\" + (.spec.storageClassName // \"default\")" "$CACHE_DIR/${namespace}-pvcs.json" 2> /dev/null
+}
+
+# Print volume mount with status
+print_infra_volume_mount() {
+  local namespace=$1
+  local pvc_name=$2
+  local indent=$3
+
+  local pvc_info
+  pvc_info=$(get_infra_pvc_info "$namespace" "$pvc_name")
+
+  if [[ -z "$pvc_info" ]]; then
+    echo -e "${indent}${RED}✗${RESET} ${DIM}${pvc_name}${RESET} ${RED}[NotFound]${RESET}"
+    return
+  fi
+
+  local status capacity sc
+  IFS='|' read -r status capacity sc <<< "$pvc_info"
+
+  # Status indicator
+  local status_icon="⚠"
+  local status_color=$YELLOW
+  if [[ "$status" == "Bound" ]]; then
+    status_icon="●"
+    status_color=$GREEN
+  elif [[ "$status" == "Pending" ]]; then
+    status_icon="○"
+    status_color=$YELLOW
+  fi
+
+  # Shorten storage class names
+  local sc_short="$sc"
+  case "$sc" in
+    fatboy-nfs-appdata) sc_short="nfs:appdata" ;;
+    truenas-nfs) sc_short="truenas" ;;
+    synology-nfs) sc_short="synology" ;;
+    local-path) sc_short="local" ;;
+  esac
+
+  echo -e "${indent}${status_color}${status_icon}${RESET} ${DIM}${pvc_name}${RESET} ${BLUE}(${capacity})${RESET} ${DIM}[${sc_short}]${RESET}"
 }
 
 # ============================================================================
@@ -84,7 +215,29 @@ print_infra_service() {
   # Handle missing data
   [[ -z "$status" ]] && status="NotFound"
 
-  print_service_line "$name" "$status" "$ready" "$url" "$is_last"
+  # Get credentials for this service
+  local creds creds_display=""
+  creds=$(get_infra_credentials "$name" "$namespace")
+  if [[ -n "$creds" ]]; then
+    creds_display="${YELLOW}${creds}${RESET}"
+  fi
+
+  print_service_line "$name" "$status" "$ready" "$url" "$is_last" "$creds_display"
+
+  # Tree continuation character
+  local cont="┃"
+  [[ "$is_last" == "true" ]] && cont=" "
+
+  # Get and print volume mounts
+  local volumes
+  volumes=$(get_infra_volume_mounts "$namespace" "$label_key" "$label_value")
+  if [[ -n "$volumes" ]]; then
+    while IFS=: read -r vol_name pvc_name; do
+      if [[ -n "$pvc_name" ]]; then
+        print_infra_volume_mount "$namespace" "$pvc_name" "  ${cont}    "
+      fi
+    done <<< "$volumes"
+  fi
 }
 
 # ============================================================================
@@ -142,24 +295,28 @@ print_flux_status() {
     return
   fi
 
-  local flux_status flux_ready
-  flux_status=$(flux get kustomization flux-system 2> /dev/null | tail -n 1 | awk '{print $2}')
-  flux_ready=$(flux get kustomization flux-system 2> /dev/null | tail -n 1 | awk '{print $3}')
+  local flux_suspended flux_ready
+  # Flux output columns: NAME, REVISION, SUSPENDED, READY, MESSAGE
+  flux_suspended=$(flux get kustomization flux-system 2> /dev/null | tail -n 1 | awk '{print $3}')
+  flux_ready=$(flux get kustomization flux-system 2> /dev/null | tail -n 1 | awk '{print $4}')
 
   if [[ "$flux_ready" == "True" ]]; then
     echo -e "  ${GREEN}✓${RESET} Flux is ready and reconciling"
-  elif [[ "$flux_status" == "True" ]]; then
+  elif [[ "$flux_suspended" == "True" ]]; then
     echo -e "  ${YELLOW}⚠${RESET} Flux is suspended"
+  elif [[ -n "$flux_ready" ]]; then
+    echo -e "  ${YELLOW}⚠${RESET} Flux is not ready (status: $flux_ready)"
   else
     echo -e "  ${RED}✗${RESET} Flux status unknown or not installed"
   fi
   echo ""
 
   echo -e "  ${DIM}Kustomizations:${RESET}"
+  # Flux output columns: NAME, REVISION, SUSPENDED, READY, MESSAGE
   flux get kustomization 2> /dev/null | tail -n +2 | while IFS= read -r line; do
     local name ready
     name=$(echo "$line" | awk '{print $1}')
-    ready=$(echo "$line" | awk '{print $3}')
+    ready=$(echo "$line" | awk '{print $4}')
     local status_icon="✓"
     local status_color=$GREEN
     if [[ "$ready" != "True" ]]; then
@@ -205,11 +362,58 @@ print_service_urls() {
 # Print credentials section
 # ============================================================================
 print_credentials() {
-  print_section "DEFAULT CREDENTIALS"
-  echo -e "  ${DIM}Grafana:${RESET}  admin / prom-operator"
-  echo -e "  ${DIM}Graylog:${RESET}  admin / admin"
-  echo -e "  ${DIM}ArgoCD:${RESET}   admin / kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
-  echo -e "  ${DIM}Nexus:${RESET}    admin / kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password"
+  print_section "CREDENTIALS (user:password)"
+  local has_creds=false
+
+  # Grafana
+  local grafana_creds
+  grafana_creds=$(get_infra_credentials "grafana" "monitoring")
+  if [[ -n "$grafana_creds" ]]; then
+    printf "  ${CYAN}%-14s${RESET} │ ${YELLOW}%s${RESET}\n" "Grafana" "$grafana_creds"
+    has_creds=true
+  else
+    printf "  ${CYAN}%-14s${RESET} │ ${DIM}admin:prom-operator (default)${RESET}\n" "Grafana"
+    has_creds=true
+  fi
+
+  # ArgoCD
+  local argocd_creds
+  argocd_creds=$(get_infra_credentials "argocd-server" "argocd")
+  if [[ -n "$argocd_creds" ]]; then
+    printf "  ${CYAN}%-14s${RESET} │ ${YELLOW}%s${RESET}\n" "ArgoCD" "$argocd_creds"
+    has_creds=true
+  else
+    printf "  ${CYAN}%-14s${RESET} │ ${DIM}(run: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)${RESET}\n" "ArgoCD"
+    has_creds=true
+  fi
+
+  # Graylog
+  printf "  ${CYAN}%-14s${RESET} │ ${YELLOW}admin:admin${RESET}\n" "Graylog"
+  has_creds=true
+
+  # OpenSearch
+  local opensearch_creds
+  opensearch_creds=$(get_infra_credentials "opensearch" "observability")
+  if [[ -n "$opensearch_creds" ]]; then
+    printf "  ${CYAN}%-14s${RESET} │ ${YELLOW}%s${RESET}\n" "OpenSearch" "$opensearch_creds"
+    has_creds=true
+  fi
+
+  # MongoDB
+  local mongodb_creds
+  mongodb_creds=$(get_infra_credentials "mongodb" "observability")
+  if [[ -n "$mongodb_creds" ]]; then
+    printf "  ${CYAN}%-14s${RESET} │ ${YELLOW}%s${RESET}\n" "MongoDB" "$mongodb_creds"
+    has_creds=true
+  fi
+
+  # Nexus
+  printf "  ${CYAN}%-14s${RESET} │ ${DIM}admin:(kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password)${RESET}\n" "Nexus"
+  has_creds=true
+
+  if [[ "$has_creds" == "false" ]]; then
+    echo -e "  ${DIM}No credentials found in secrets${RESET}"
+  fi
   echo ""
 }
 
