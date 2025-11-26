@@ -361,6 +361,7 @@ All services accessible via hostname (requires `/etc/hosts` entry for `*.talos00
 ```
 192.168.1.54  argocd.talos00 grafana.talos00 prometheus.talos00 \
               alertmanager.talos00 graylog.talos00 registry.talos00 \
+              nexus.talos00 npm.talos00 docker-proxy.talos00 \
               sonarr.talos00 radarr.talos00 prowlarr.talos00 \
               plex.talos00 jellyfin.talos00 tdarr.talos00 catalyst.talos00
 ```
@@ -372,6 +373,7 @@ Access: `http://<service>.talos00`
 - **Grafana**: admin / prom-operator
 - **Graylog**: admin / admin
 - **ArgoCD**: admin / (get via `kubectl -n argocd get secret argocd-initial-admin-secret`)
+- **Nexus**: admin / (get via `kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password`)
 
 ## Common Patterns & Workflows
 
@@ -454,28 +456,53 @@ kubectl port-forward -n monitoring svc/prometheus-kube-prometheus-stack-promethe
 curl http://localhost:9090/api/v1/query?query=up
 ```
 
-## Docker Registry Usage
+## Nexus Repository Usage
 
-Local registry for application images:
+Nexus Repository OSS - Universal artifact repository for Docker, npm, PyPI, and more.
 
-- URL: `registry.talos00` (HTTP)
-- Storage: 50Gi PVC
-- Access: Via Traefik IngressRoute or kubectl port-forward
+### Available Registries
 
-### Building & Pushing Images
+| Registry | URL | Port | Description |
+|----------|-----|------|-------------|
+| Nexus UI | http://nexus.talos00 | 8081 | Web management interface |
+| Docker (hosted) | http://registry.talos00 | 5000 | Private Docker images |
+| Docker (proxy) | http://docker-proxy.talos00 | 5001 | Docker Hub cache |
+| npm | http://npm.talos00 | 8082 | npm packages |
+
+### Initial Setup
+
+After first deployment, get the admin password:
+```bash
+kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password
+```
+
+Then login at http://nexus.talos00 and create repositories (see `infrastructure/base/registry/README.md`).
+
+### Building & Pushing Docker Images
 
 ```bash
 # Example: catalyst-ui
 cd ~/catalyst-devspace/workspace/catalyst-ui
 docker build -t registry.talos00/catalyst-ui:latest .
 
-# Push via port-forward (NodePort not externally accessible on Talos)
-kubectl port-forward -n registry svc/docker-registry 5000:5000 &
+# Push via port-forward
+kubectl port-forward -n registry svc/nexus-docker 5000:5000 &
 docker tag registry.talos00/catalyst-ui:latest localhost:5000/catalyst-ui:latest
 docker push localhost:5000/catalyst-ui:latest
 ```
 
-**Docker daemon.JSON configuration required:**
+### npm Registry Usage
+
+```bash
+# Configure npm to use local registry
+npm config set registry http://npm.talos00/repository/npm-hosted/
+
+# Publish package
+npm login --registry=http://npm.talos00/repository/npm-hosted/
+npm publish
+```
+
+**Docker daemon.json configuration required:**
 
 ```json
 {
@@ -488,8 +515,8 @@ docker push localhost:5000/catalyst-ui:latest
 ### Docker Registry Access
 
 - **Issue**: NodePort not externally accessible on Talos
-- **Workaround**: Use `kubectl port-forward` to localhost:5000
-- **Alternative**: HTTP push via Traefik has blob upload issues (404 errors)
+- **Workaround**: Use `kubectl port-forward -n registry svc/nexus-docker 5000:5000`
+- **Note**: Nexus startup takes 2-3 minutes due to Java initialization
 
 ### Storage Class
 

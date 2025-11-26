@@ -37,10 +37,12 @@ echo ""
 echo "🎬 Step 4/5: Deploying Media Stack..."
 kubectl apply -k "${PROJECT_ROOT}/applications/arr-stack/overlays/dev/"
 
-# Step 5: Docker Registry
+# Step 5: Nexus Artifact Repository
 echo ""
-echo "📦 Step 5/7: Deploying Docker Registry..."
+echo "📦 Step 5/7: Deploying Nexus Repository..."
 kubectl apply -f "${PROJECT_ROOT}/infrastructure/base/registry/deployment.yaml"
+echo "⏳ Waiting for Nexus to be ready (this may take 2-3 minutes)..."
+kubectl wait --for=condition=ready pod -l app=nexus -n registry --timeout=300s || echo "⚠️  Nexus may still be starting up"
 
 # Step 6: ArgoCD
 echo ""

@@ -40,12 +40,10 @@ spec:
         - name: sonarr
           image: lscr.io/linuxserver/sonarr:latest
           imagePullPolicy: IfNotPresent
-          # Import common environment variables (PUID, PGID, TZ, POSTGRES_*)
           envFrom:
             - configMapRef:
                 name: arr-common-env
           env:
-            # Map common PostgreSQL settings to Sonarr-specific env var names
             - name: SONARR__POSTGRES__HOST
               valueFrom:
                 configMapKeyRef:
@@ -66,7 +64,6 @@ spec:
                 secretKeyRef:
                   name: postgresql-secret
                   key: postgres-password
-            # Sonarr-specific database names
             - name: SONARR__POSTGRES__MAINDB
               value: 'sonarr_main'
             - name: SONARR__POSTGRES__LOGDB
@@ -78,10 +75,17 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
-            - name: media
-              mountPath: /tv
-            - name: downloads
-              mountPath: /downloads
+            # TrueNAS media
+            - name: truenas-tv
+              mountPath: /data/truenas/tv
+            # Synology media
+            - name: synology-tv
+              mountPath: /data/synology/tv
+            # Downloads (Synology)
+            - name: downloads-complete
+              mountPath: /data/downloads/complete
+            - name: downloads-incomplete
+              mountPath: /data/downloads/incomplete
           livenessProbe:
             httpGet:
               path: /ping
@@ -109,9 +113,18 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: sonarr-config
-        - name: media
+        # TrueNAS TV library
+        - name: truenas-tv
           persistentVolumeClaim:
-            claimName: media-shared
-        - name: downloads
+            claimName: truenas-tv
+        # Synology TV library
+        - name: synology-tv
           persistentVolumeClaim:
-            claimName: downloads-shared
+            claimName: synology-tv
+        # Synology downloads
+        - name: downloads-complete
+          persistentVolumeClaim:
+            claimName: synology-downloads-complete
+        - name: downloads-incomplete
+          persistentVolumeClaim:
+            claimName: synology-downloads-incomplete

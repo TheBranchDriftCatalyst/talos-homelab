@@ -12,91 +12,194 @@ metadata:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: registry-data
+  name: nexus-data
   namespace: registry
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 50Gi
+      storage: 100Gi
   storageClassName: local-path
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nexus-properties
+  namespace: registry
+data:
+  nexus.properties: |
+    # Nexus configuration
+    nexus.scripts.allowCreation=true
+    nexus.onboarding.enabled=false
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: docker-registry
+  name: nexus
   namespace: registry
   labels:
-    app: docker-registry
+    app: nexus
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: docker-registry
+      app: nexus
+  strategy:
+    type: Recreate
   template:
     metadata:
       labels:
-        app: docker-registry
+        app: nexus
     spec:
+      securityContext:
+        fsGroup: 200
       containers:
-        - name: registry
-          image: registry:2
+        - name: nexus
+          image: sonatype/nexus3:3.72.0
           ports:
-            - name: registry
+            - name: nexus-ui
+              containerPort: 8081
+              protocol: TCP
+            - name: docker-hosted
               containerPort: 5000
               protocol: TCP
+            - name: docker-proxy
+              containerPort: 5001
+              protocol: TCP
+            - name: npm
+              containerPort: 8082
+              protocol: TCP
           volumeMounts:
-            - name: registry-data
-              mountPath: /var/lib/registry
+            - name: nexus-data
+              mountPath: /nexus-data
           env:
-            - name: REGISTRY_STORAGE_DELETE_ENABLED
-              value: 'true'
+            - name: INSTALL4J_ADD_VM_PARAMS
+              value: >-
+                -Xms1024m -Xmx2048m
+                -XX:MaxDirectMemorySize=2048m
+                -Djava.util.prefs.userRoot=/nexus-data/javaprefs
           resources:
             requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
               cpu: 500m
-              memory: 512Mi
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
           livenessProbe:
             httpGet:
-              path: /
-              port: registry
-            initialDelaySeconds: 30
-            periodSeconds: 10
+              path: /service/rest/v1/status
+              port: nexus-ui
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
           readinessProbe:
             httpGet:
-              path: /
-              port: registry
-            initialDelaySeconds: 5
-            periodSeconds: 5
+              path: /service/rest/v1/status
+              port: nexus-ui
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
       volumes:
-        - name: registry-data
+        - name: nexus-data
           persistentVolumeClaim:
-            claimName: registry-data
+            claimName: nexus-data
 ---
+# Main Nexus UI Service
 apiVersion: v1
 kind: Service
 metadata:
-  name: docker-registry
+  name: nexus
   namespace: registry
   labels:
-    app: docker-registry
+    app: nexus
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8081
+      targetPort: nexus-ui
+      protocol: TCP
+      name: nexus-ui
+  selector:
+    app: nexus
+---
+# Docker Registry Service (hosted images - push/pull your own images)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-docker
+  namespace: registry
+  labels:
+    app: nexus
 spec:
   type: ClusterIP
   ports:
     - port: 5000
-      targetPort: registry
+      targetPort: docker-hosted
       protocol: TCP
-      name: registry
+      name: docker
   selector:
-    app: docker-registry
+    app: nexus
 ---
+# Docker Proxy Service (cached images from Docker Hub)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-docker-proxy
+  namespace: registry
+  labels:
+    app: nexus
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5001
+      targetPort: docker-proxy
+      protocol: TCP
+      name: docker-proxy
+  selector:
+    app: nexus
+---
+# NPM Registry Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: nexus-npm
+  namespace: registry
+  labels:
+    app: nexus
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8082
+      targetPort: npm
+      protocol: TCP
+      name: npm
+  selector:
+    app: nexus
+---
+# Nexus UI IngressRoute
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: docker-registry
+  name: nexus
+  namespace: registry
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`nexus.talos00`)
+      kind: Rule
+      services:
+        - name: nexus
+          port: 8081
+---
+# Docker Registry IngressRoute (for pushing/pulling images)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: nexus-docker
   namespace: registry
 spec:
   entryPoints:
@@ -105,5 +208,37 @@ spec:
     - match: Host(`registry.talos00`)
       kind: Rule
       services:
-        - name: docker-registry
+        - name: nexus-docker
           port: 5000
+---
+# Docker Hub Proxy IngressRoute (for cached Docker Hub images)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: nexus-docker-proxy
+  namespace: registry
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`docker-proxy.talos00`)
+      kind: Rule
+      services:
+        - name: nexus-docker-proxy
+          port: 5001
+---
+# NPM Registry IngressRoute
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: nexus-npm
+  namespace: registry
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`npm.talos00`)
+      kind: Rule
+      services:
+        - name: nexus-npm
+          port: 8082
