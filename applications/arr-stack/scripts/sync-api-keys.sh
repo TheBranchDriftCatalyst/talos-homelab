@@ -266,34 +266,7 @@ sync_api_keys() {
 
   success "✓ Secret $SECRET_NAME updated with $key_count keys"
   echo ""
-
-  # Also update homepage-secrets if it exists (for dashboard integration)
-  if kubectl get secret homepage-secrets -n "$NAMESPACE" &> /dev/null; then
-    log "Updating homepage-secrets for dashboard integration..."
-
-    # Build patch with HOMEPAGE_VAR_ prefixed keys
-    # Re-read the keys file from the beginning
-    local patch_entries=""
-    local first=true
-    while IFS='=' read -r key value; do
-      local homepage_key
-      # Convert SONARR_API_KEY to HOMEPAGE_VAR_SONARR_KEY format
-      homepage_key=$(echo "$key" | sed 's/_API_KEY/_KEY/' | sed 's/_TOKEN/_KEY/' | sed 's/^/HOMEPAGE_VAR_/')
-      local encoded_value
-      encoded_value=$(echo -n "$value" | base64)
-
-      if [[ "$first" == "true" ]]; then
-        first=false
-      else
-        patch_entries="$patch_entries,"
-      fi
-      patch_entries="$patch_entries\"$homepage_key\":\"$encoded_value\""
-    done < <(cat "$keys_file")
-
-    local patch_data="{\"data\":{$patch_entries}}"
-    kubectl patch secret homepage-secrets -n "$NAMESPACE" -p "$patch_data" --type=merge
-    success "✓ homepage-secrets updated"
-  fi
+  log "Homepage deployment uses arr-api-keys directly via envFrom"
 }
 
 # Run main function
