@@ -4,9 +4,51 @@ set -euo pipefail
 
 # Setup 1Password Connect for External Secrets Operator
 # This script helps you configure the required secrets for 1Password Connect
+#
+# Usage:
+#   ./setup-1password-connect.sh           # Interactive mode
+#   ./setup-1password-connect.sh --auto    # Auto mode (uses env vars and local files)
+#
+# Auto mode requires:
+#   - OP_CONNECT_TOKEN environment variable
+#   - ./1password-credentials.json file (or OP_CREDENTIALS_FILE env var)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 NAMESPACE="external-secrets"
+AUTO_MODE=false
+FORCE_RECREATE=false
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --auto|-a)
+      AUTO_MODE=true
+      shift
+      ;;
+    --force|-f)
+      FORCE_RECREATE=true
+      shift
+      ;;
+    --help|-h)
+      echo "Usage: $0 [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --auto, -a     Auto mode: use OP_CONNECT_TOKEN env var and ./1password-credentials.json"
+      echo "  --force, -f    Force recreate secrets even if they exist"
+      echo "  --help, -h     Show this help message"
+      echo ""
+      echo "Environment variables (for auto mode):"
+      echo "  OP_CONNECT_TOKEN      1Password Connect API token"
+      echo "  OP_CREDENTIALS_FILE   Path to 1password-credentials.json (default: ./1password-credentials.json)"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      exit 1
+      ;;
+  esac
+done
 
 echo "=========================================="
 echo "1Password Connect Setup for ESO"
@@ -20,7 +62,6 @@ if ! command -v kubectl &> /dev/null; then
 fi
 
 echo "✅ kubectl installed"
-echo ""
 
 # Check if namespace exists
 if ! kubectl get namespace "${NAMESPACE}" &> /dev/null; then
@@ -28,6 +69,103 @@ if ! kubectl get namespace "${NAMESPACE}" &> /dev/null; then
   kubectl create namespace "${NAMESPACE}"
 fi
 
+# Auto mode logic
+if [ "$AUTO_MODE" = true ]; then
+  echo "🤖 Running in AUTO mode"
+  echo ""
+
+  # Check for OP_CONNECT_TOKEN
+  if [ -z "${OP_CONNECT_TOKEN:-}" ]; then
+    echo "❌ OP_CONNECT_TOKEN environment variable not set"
+    echo "   Set it with: export OP_CONNECT_TOKEN='your-token-here'"
+    exit 1
+  fi
+  echo "✅ OP_CONNECT_TOKEN found in environment"
+
+  # Check for credentials file
+  CREDS_FILE="${OP_CREDENTIALS_FILE:-${PROJECT_DIR}/1password-credentials.json}"
+  if [ ! -f "${CREDS_FILE}" ]; then
+    echo "❌ Credentials file not found: ${CREDS_FILE}"
+    echo "   Set OP_CREDENTIALS_FILE or place 1password-credentials.json in project root"
+    exit 1
+  fi
+  echo "✅ Credentials file found: ${CREDS_FILE}"
+  echo ""
+
+  # Handle existing secrets
+  SKIP_CREDS=false
+  SKIP_TOKEN=false
+
+  if kubectl get secret onepassword-connect-secret -n "${NAMESPACE}" &> /dev/null; then
+    if [ "$FORCE_RECREATE" = true ]; then
+      echo "🔄 Recreating onepassword-connect-secret (--force)"
+      kubectl delete secret onepassword-connect-secret -n "${NAMESPACE}"
+    else
+      echo "⏭️  Secret 'onepassword-connect-secret' already exists (use --force to recreate)"
+      SKIP_CREDS=true
+    fi
+  fi
+
+  if kubectl get secret onepassword-connect-token -n "${NAMESPACE}" &> /dev/null; then
+    if [ "$FORCE_RECREATE" = true ]; then
+      echo "🔄 Recreating onepassword-connect-token (--force)"
+      kubectl delete secret onepassword-connect-token -n "${NAMESPACE}"
+    else
+      echo "⏭️  Secret 'onepassword-connect-token' already exists (use --force to recreate)"
+      SKIP_TOKEN=true
+    fi
+  fi
+
+  # Create credentials secret
+  if [ "${SKIP_CREDS}" != "true" ]; then
+    echo ""
+    echo "Creating secret: onepassword-connect-secret"
+    echo "Base64 encoding credentials file for 1Password Connect..."
+
+    # Create temporary base64-encoded file
+    cat "${CREDS_FILE}" | base64 | tr -d '\n' > /tmp/op-creds-b64.txt
+
+    kubectl create secret generic onepassword-connect-secret \
+      -n "${NAMESPACE}" \
+      --from-file=1password-credentials.json=/tmp/op-creds-b64.txt
+
+    rm /tmp/op-creds-b64.txt
+    echo "✅ Created onepassword-connect-secret"
+  fi
+
+  # Create token secret
+  if [ "${SKIP_TOKEN}" != "true" ]; then
+    echo ""
+    echo "Creating secret: onepassword-connect-token"
+    kubectl create secret generic onepassword-connect-token \
+      -n "${NAMESPACE}" \
+      --from-literal=token="${OP_CONNECT_TOKEN}"
+    echo "✅ Created onepassword-connect-token"
+  fi
+
+  # Restart onepassword-connect if it exists
+  if kubectl get deployment onepassword-connect -n "${NAMESPACE}" &> /dev/null; then
+    echo ""
+    echo "🔄 Restarting onepassword-connect deployment..."
+    kubectl rollout restart deployment/onepassword-connect -n "${NAMESPACE}" 2>/dev/null || true
+  fi
+
+  echo ""
+  echo "=========================================="
+  echo "✅ Auto Setup Complete!"
+  echo "=========================================="
+
+  # Quick status check
+  echo ""
+  echo "Checking pod status..."
+  sleep 3
+  kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/name=onepassword-connect 2>/dev/null || echo "onepassword-connect not yet deployed"
+
+  exit 0
+fi
+
+# Interactive mode (original behavior)
+echo ""
 echo "This script will help you create the required secrets for 1Password Connect."
 echo ""
 echo "You will need:"
@@ -36,8 +174,13 @@ echo "  2. 1Password Connect API token"
 echo ""
 echo "Get these from: https://my.1password.com/developer-tools/infrastructure-secrets/connect"
 echo ""
+echo "TIP: Run with --auto to use OP_CONNECT_TOKEN env var and ./1password-credentials.json"
+echo ""
 
 # Check if secrets already exist
+SKIP_CREDS=false
+SKIP_TOKEN=false
+
 if kubectl get secret onepassword-connect-secret -n "${NAMESPACE}" &> /dev/null; then
   echo "⚠️  Secret 'onepassword-connect-secret' already exists"
   read -p "Do you want to recreate it? (y/N): " -n 1 -r
@@ -63,7 +206,7 @@ if kubectl get secret onepassword-connect-token -n "${NAMESPACE}" &> /dev/null; 
 fi
 
 # Create credentials secret
-if [ "${SKIP_CREDS:-false}" != "true" ]; then
+if [ "${SKIP_CREDS}" != "true" ]; then
   echo ""
   echo "=========================================="
   echo "Step 1: 1Password Credentials File"
@@ -95,7 +238,7 @@ if [ "${SKIP_CREDS:-false}" != "true" ]; then
 fi
 
 # Create token secret
-if [ "${SKIP_TOKEN:-false}" != "true" ]; then
+if [ "${SKIP_TOKEN}" != "true" ]; then
   echo ""
   echo "=========================================="
   echo "Step 2: 1Password Connect Token"
