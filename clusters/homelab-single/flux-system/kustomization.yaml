@@ -6,23 +6,18 @@ resources:
   - flux-system/gotk-components.yaml
   - flux-system/gotk-sync.yaml
 
-  # Cluster-wide settings (used by postBuild substitution)
+  # Cluster-wide settings ConfigMap (used by Flux postBuild substitution)
   - ../cluster-settings.yaml
 
-  # Infrastructure managed by Flux
-  - ../../../infrastructure/base/namespaces
-  - ../../../infrastructure/base/storage
-  - ../../../infrastructure/base/external-secrets
-  - ../../../infrastructure/base/flux-notifications
-  - ../../../infrastructure/base/monitoring
-  - ../../../infrastructure/base/observability
-
-  # Applications managed by Flux
-  - ../../../applications/arr-stack/base
-
-# Post-build variable substitution from cluster-settings ConfigMap
-postBuild:
-  substitute: {}
-  substituteFrom:
-    - kind: ConfigMap
-      name: cluster-settings
+  # Flux Kustomizations (each has postBuild for variable substitution)
+  # Core infrastructure (order matters via dependsOn)
+  - ../namespaces.yaml
+  - ../storage.yaml
+  - ../traefik.yaml
+  - ../external-secrets.yaml
+  - ../registry.yaml
+  - ../monitoring.yaml
+  - ../observability.yaml
+  - ../argocd.yaml
+  # Applications
+  - ../arr-stack.yaml
