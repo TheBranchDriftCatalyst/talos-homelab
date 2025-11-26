@@ -21,7 +21,7 @@ source "${PROJECT_ROOT}/scripts/lib/dashboard-common.sh"
 # ============================================================================
 # ARR-specific configuration
 # ============================================================================
-NAMESPACE="${NAMESPACE:-media-prod}"
+NAMESPACE="${NAMESPACE:-media}"
 COPY_MODE=""
 COPY_INDEX=""
 LIST_MODE=false
