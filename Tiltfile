@@ -20,7 +20,6 @@
 #   - Dependencies
 
 # Load Tilt extensions
-load('ext://namespace', 'namespace_create')
 load('ext://helm_resource', 'helm_resource', 'helm_repo')
 
 # Configuration
@@ -30,7 +29,7 @@ cfg = config.parse()
 
 # Settings
 settings = {
-    'k8s_context': cfg.get('k8s_context', 'kubernetes-admin@talos00'),
+    'k8s_context': cfg.get('k8s_context', 'admin@homelab-single'),
     'flux_suspend': cfg.get('flux-suspend', True),
 }
 
@@ -147,10 +146,8 @@ print('')
 # Infrastructure Testing Tools
 # ============================================
 
-# Namespace
-namespace_create('infra-testing')
-
 # Deploy infra-testing stack with hot reload
+# Note: Kustomization includes namespace definition, so we don't need namespace_create()
 watch_file('infrastructure/base/infra-testing/')
 k8s_yaml(kustomize('infrastructure/base/infra-testing'))
 
@@ -217,113 +214,120 @@ k8s_resource(
 )
 
 # ============================================
-# Monitoring Stack
+# Monitoring Stack (Flux-managed, commented out for now)
 # ============================================
-
-# Prometheus
-k8s_resource(
-    workload='prometheus-kube-prometheus-stack-prometheus',
-    new_name='monitoring:prometheus',
-    port_forwards=['9090:9090'],
-    labels=['monitoring'],
-    links=[
-        link('http://prometheus.talos00', 'Prometheus (via Traefik)'),
-        link('http://localhost:9090', 'Prometheus (port-forward)')
-    ]
-)
-
-# Grafana
-k8s_resource(
-    workload='grafana',
-    new_name='monitoring:grafana',
-    port_forwards=['3000:3000'],
-    labels=['monitoring'],
-    links=[
-        link('http://grafana.talos00', 'Grafana (via Traefik)'),
-        link('http://localhost:3000', 'Grafana (port-forward)')
-    ]
-)
-
-# Alertmanager
-k8s_resource(
-    workload='alertmanager-kube-prometheus-stack-alertmanager',
-    new_name='monitoring:alertmanager',
-    port_forwards=['9093:9093'],
-    labels=['monitoring'],
-    links=[
-        link('http://alertmanager.talos00', 'Alertmanager (via Traefik)'),
-        link('http://localhost:9093', 'Alertmanager (port-forward)')
-    ]
-)
-
-# ============================================
-# Observability Stack
-# ============================================
-
-# Graylog
-k8s_resource(
-    workload='graylog',
-    new_name='observability:graylog',
-    port_forwards=['9000:9000'],
-    labels=['observability'],
-    links=[
-        link('http://graylog.talos00', 'Graylog (via Traefik)'),
-        link('http://localhost:9000', 'Graylog (port-forward)')
-    ]
-)
-
-# OpenSearch
-k8s_resource(
-    workload='opensearch',
-    new_name='observability:opensearch',
-    port_forwards=['9200:9200'],
-    labels=['observability']
-)
+# TODO: Use k8s_discover() extension to auto-discover Flux-managed resources
+# For now, these are commented out since Tilt can't attach to resources
+# it didn't load via k8s_yaml()
+#
+# # Prometheus
+# k8s_resource(
+#     workload='prometheus-kube-prometheus-stack-prometheus',
+#     new_name='monitoring:prometheus',
+#     port_forwards=['9090:9090'],
+#     labels=['monitoring'],
+#     links=[
+#         link('http://prometheus.talos00', 'Prometheus (via Traefik)'),
+#         link('http://localhost:9090', 'Prometheus (port-forward)')
+#     ]
+# )
+#
+# # Grafana
+# k8s_resource(
+#     workload='grafana',
+#     new_name='monitoring:grafana',
+#     port_forwards=['3000:3000'],
+#     labels=['monitoring'],
+#     links=[
+#         link('http://grafana.talos00', 'Grafana (via Traefik)'),
+#         link('http://localhost:3000', 'Grafana (port-forward)')
+#     ]
+# )
+#
+# # Alertmanager
+# k8s_resource(
+#     workload='alertmanager-kube-prometheus-stack-alertmanager',
+#     new_name='monitoring:alertmanager',
+#     port_forwards=['9093:9093'],
+#     labels=['monitoring'],
+#     links=[
+#         link('http://alertmanager.talos00', 'Alertmanager (via Traefik)'),
+#         link('http://localhost:9093', 'Alertmanager (port-forward)')
+#     ]
+# )
 
 # ============================================
-# ArgoCD
+# Observability Stack (Flux-managed, commented out for now)
 # ============================================
-
-k8s_resource(
-    workload='argocd-server',
-    new_name='argocd:server',
-    port_forwards=['8443:8080'],
-    labels=['gitops'],
-    links=[
-        link('http://argocd.talos00', 'ArgoCD (via Traefik)'),
-        link('http://localhost:8443', 'ArgoCD (port-forward)')
-    ]
-)
-
-# ============================================
-# Traefik Ingress Controller
-# ============================================
-
-k8s_resource(
-    workload='traefik',
-    new_name='traefik:ingress-controller',
-    port_forwards=['8000:80', '8888:443'],
-    labels=['networking'],
-    links=[
-        link('http://localhost:8000', 'Traefik HTTP'),
-        link('https://localhost:8888', 'Traefik HTTPS')
-    ]
-)
+# TODO: Use k8s_discover() extension to auto-discover Flux-managed resources
+#
+# # Graylog
+# k8s_resource(
+#     workload='graylog',
+#     new_name='observability:graylog',
+#     port_forwards=['9000:9000'],
+#     labels=['observability'],
+#     links=[
+#         link('http://graylog.talos00', 'Graylog (via Traefik)'),
+#         link('http://localhost:9000', 'Graylog (port-forward)')
+#     ]
+# )
+#
+# # OpenSearch
+# k8s_resource(
+#     workload='opensearch',
+#     new_name='observability:opensearch',
+#     port_forwards=['9200:9200'],
+#     labels=['observability']
+# )
 
 # ============================================
-# Docker Registry
+# ArgoCD (Flux-managed, commented out for now)
 # ============================================
+# TODO: Use k8s_discover() extension
+#
+# k8s_resource(
+#     workload='argocd-server',
+#     new_name='argocd:server',
+#     port_forwards=['8443:8080'],
+#     labels=['gitops'],
+#     links=[
+#         link('http://argocd.talos00', 'ArgoCD (via Traefik)'),
+#         link('http://localhost:8443', 'ArgoCD (port-forward)')
+#     ]
+# )
 
-k8s_resource(
-    workload='docker-registry',
-    new_name='registry:docker-registry',
-    port_forwards=['5000:5000'],
-    labels=['infrastructure'],
-    links=[
-        link('http://registry.talos00', 'Registry (via Traefik)'),
-        link('http://localhost:5000', 'Registry (port-forward)')
-    ]
-)
+# ============================================
+# Traefik Ingress Controller (Flux-managed, commented out for now)
+# ============================================
+# TODO: Use k8s_discover() extension
+#
+# k8s_resource(
+#     workload='traefik',
+#     new_name='traefik:ingress-controller',
+#     port_forwards=['8000:80', '8888:443'],
+#     labels=['networking'],
+#     links=[
+#         link('http://localhost:8000', 'Traefik HTTP'),
+#         link('https://localhost:8888', 'Traefik HTTPS')
+#     ]
+# )
+
+# ============================================
+# Docker Registry (Flux-managed, commented out for now)
+# ============================================
+# TODO: Use k8s_discover() extension
+#
+# k8s_resource(
+#     workload='docker-registry',
+#     new_name='registry:docker-registry',
+#     port_forwards=['5000:5000'],
+#     labels=['infrastructure'],
+#     links=[
+#         link('http://registry.talos00', 'Registry (via Traefik)'),
+#         link('http://localhost:5000', 'Registry (port-forward)')
+#     ]
+# )
 
 # ============================================
 # External Secrets Operator (Optional)
@@ -463,11 +467,11 @@ print("""
 ═══════════════════════════════════════════════════════════════
 
 📦 Loaded Namespaces:
-  ✅ arr-stack          Media automation (Sonarr, Radarr, Plex, etc.)
-  📊 monitoring         Prometheus, Grafana, Alertmanager
-  🔍 observability      OpenSearch, Graylog
+  ✅ media              Arr-stack media automation (Sonarr, Radarr, Plex, etc.)
+  📊 monitoring         Prometheus, Grafana, Alertmanager (Flux-managed, commented out)
+  🔍 observability      OpenSearch, Graylog (Flux-managed, commented out)
   🧪 infra-testing      Headlamp, Kubeview, Kube-ops-view, Goldilocks
-  🌐 networking         Traefik, ArgoCD, Registry
+  🌐 networking         Traefik, ArgoCD, Registry (Flux-managed, commented out)
 
 Quick Tips:
   - All resources are organized by labels (automation, media-server, monitoring, etc.)

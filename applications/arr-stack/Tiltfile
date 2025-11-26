@@ -7,10 +7,10 @@
 #   tilt down            # Stop Tilt and resume Flux
 
 # Allow Kubernetes context
-allow_k8s_contexts('kubernetes-admin@talos00')
+allow_k8s_contexts('admin@homelab-single')
 
 # Configuration
-namespace = 'media-dev'
+namespace = 'media'
 suspend_flux = os.getenv('SUSPEND_FLUX', 'true') == 'true'
 
 print('🚀 Arr-Stack Tilt Development Environment')
@@ -23,15 +23,13 @@ if suspend_flux:
     local('flux suspend kustomization flux-system')
     # Note: Resume handled in tilt down hook below
 
-# Apply dev overlay (uses local-path storage, media-dev namespace)
-print('📝 Applying Kustomize overlay: overlays/dev')
-k8s_yaml(kustomize('overlays/dev'))
+# Apply base (Flux manages production deployment)
+# Tilt provides hot-reload for local development
+print('📝 Applying Kustomize base manifests')
+k8s_yaml(kustomize('base/'))
 
-# Watch for changes in base and overlay directories
+# Watch for changes in base directory
 watch_file('base/')
-watch_file('overlays/dev/')
-watch_file('overlays/storage/local-path/')
-watch_file('overlays/ingress/talos00/')
 
 # Group resources by function
 print('🎯 Configuring resource groups...')
