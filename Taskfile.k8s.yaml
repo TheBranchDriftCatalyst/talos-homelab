@@ -128,3 +128,38 @@ tasks:
     vars:
       POD: '{{.POD}}'
       NAMESPACE: '{{.NAMESPACE | default "default"}}'
+
+  # ============================================
+  # Flux GitOps Control
+  # ============================================
+
+  flux-suspend:
+    desc: Suspend all Flux reconciliation (enables manual control)
+    cmds:
+      - echo "⏸️  Suspending Flux reconciliation..."
+      - flux suspend kustomization --all -n flux-system
+      - flux suspend source git --all -n flux-system
+      - echo ""
+      - echo "✅ Flux reconciliation suspended. Manual control enabled."
+      - echo "   Run 'task k8s:flux-resume' to re-enable GitOps sync."
+
+  flux-resume:
+    desc: Resume all Flux reconciliation (re-enables GitOps)
+    cmds:
+      - echo "▶️  Resuming Flux reconciliation..."
+      - flux resume source git --all -n flux-system
+      - flux resume kustomization --all -n flux-system
+      - echo ""
+      - echo "✅ Flux reconciliation resumed. GitOps sync re-enabled."
+
+  flux-status:
+    desc: Show Flux reconciliation status
+    cmds:
+      - echo "📊 Flux Sources:"
+      - flux get sources git -A
+      - echo ""
+      - echo "📊 Flux Kustomizations:"
+      - flux get kustomizations -A
+      - echo ""
+      - echo "📊 Flux HelmReleases:"
+      - flux get helmreleases -A
