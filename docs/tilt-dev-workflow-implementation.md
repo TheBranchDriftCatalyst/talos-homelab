@@ -31,6 +31,7 @@ talos-homelab/
 ```
 
 **Root Tiltfile responsibilities:**
+
 - Suspend/resume Flux for the entire cluster
 - Include namespace-specific Tiltfiles via `include()` directive
 - Provide cluster-wide resources (health checks, Flux controls)
@@ -53,6 +54,7 @@ Each functional namespace has three standard files:
 **Purpose:** Local development with live updates, uses dev/local-path overlays
 
 **Key Features:**
+
 - Apply kustomize overlays for local development
 - Watch for manifest changes and auto-apply
 - Port-forward services for local access
@@ -60,6 +62,7 @@ Each functional namespace has three standard files:
 - **Flux-aware:** Automatically suspend Flux reconciliation for the namespace during dev
 
 **Template Structure:**
+
 ```python
 # Load Kubernetes context
 allow_k8s_contexts('kubernetes-admin@talos00')
@@ -89,6 +92,7 @@ k8s_resource('pod-name', labels=['namespace-name'])
 **Purpose:** Display current namespace status (already implemented for arr-stack)
 
 **Features:**
+
 - Show all pods with status indicators
 - Display service endpoints and ingress URLs
 - Show PVC status and storage usage
@@ -102,6 +106,7 @@ k8s_resource('pod-name', labels=['namespace-name'])
 **Purpose:** Orchestrate deployment to production via Flux
 
 **Features:**
+
 - Validate manifests (kustomize build, kubectl dry-run)
 - Git workflow (commit, push)
 - Trigger Flux reconciliation
@@ -109,6 +114,7 @@ k8s_resource('pod-name', labels=['namespace-name'])
 - Rollback on failure (optional)
 
 **Flux Integration:**
+
 - Commits to main branch
 - Flux auto-reconciles within 10 minutes
 - Can force immediate sync with `flux reconcile`
@@ -120,11 +126,13 @@ k8s_resource('pod-name', labels=['namespace-name'])
 ### Phase 1: arr-stack Namespace (Prototype)
 
 **Files to Create:**
+
 - ✅ `applications/arr-stack/dashboard.sh` (DONE)
 - 🚧 `applications/arr-stack/Tiltfile` (IN PROGRESS)
 - 🚧 `applications/arr-stack/deploy.sh` (IN PROGRESS)
 
 **Dev Overlay:** `applications/arr-stack/overlays/dev/`
+
 - Uses `storage/local-path` for fast local storage
 - Smaller resource limits for local dev
 - Optional: Reduced replica counts
@@ -132,6 +140,7 @@ k8s_resource('pod-name', labels=['namespace-name'])
 ### Phase 2: Infrastructure Namespaces
 
 Apply pattern to:
+
 - `infrastructure/base/monitoring/` (Prometheus, Grafana)
 - `infrastructure/base/observability/` (Graylog, OpenSearch)
 
@@ -148,6 +157,7 @@ As new applications are added (catalyst-ui via ArgoCD, etc.)
 **Two ways to run Tilt:**
 
 1. **Root Tiltfile (Recommended)** - Orchestrates all namespaces:
+
    ```bash
    # From repository root
    tilt up                    # Start all namespaces
@@ -219,6 +229,7 @@ tilt up  # Then visit http://localhost:10350
 ### Development Mode (Tilt Active)
 
 **Option A: Suspend Flux (Recommended)**
+
 ```bash
 # Tilt automatically suspends Flux for the namespace
 flux suspend kustomization flux-system
@@ -228,6 +239,7 @@ flux suspend kustomization flux-system
 ```
 
 **Option B: Coexist with Flux**
+
 ```bash
 # Don't suspend Flux
 SUSPEND_FLUX=false tilt up
@@ -285,18 +297,21 @@ talos-homelab/
 ## Overlay Strategy
 
 ### Production (`overlays/prod`)
+
 - **Used by:** Flux (committed to git)
 - **Storage:** `storage/fatboy-nfs` (NFS, ReadWriteMany, 1Ti)
 - **Resources:** Full production limits
 - **Purpose:** Production deployment on Talos cluster
 
 ### Development (`overlays/dev`)
+
 - **Used by:** Tilt (local only, not committed)
 - **Storage:** `storage/local-path` (Local, ReadWriteOnce, 100Gi)
 - **Resources:** Reduced limits for local dev
 - **Purpose:** Fast iteration on local machine
 
 ### Storage Sub-overlays
+
 - **fatboy-nfs:** NFS storage from Synology (prod)
 - **local-path:** Local-path provisioner (dev)
 
@@ -366,12 +381,14 @@ flux version
 ## Current Status
 
 **Arr-Stack Implementation:**
+
 - ✅ Dashboard (`dashboard.sh`) - COMPLETED
 - 🚧 Tiltfile - IN PROGRESS
 - 🚧 deploy.sh - IN PROGRESS
 - 🚧 overlays/dev/ - NEEDS CREATION
 
 **Next Steps:**
+
 1. Create `overlays/dev/kustomization.yaml`
 2. Implement `Tiltfile`
 3. Implement `deploy.sh`

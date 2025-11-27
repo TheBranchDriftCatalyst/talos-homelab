@@ -22,15 +22,15 @@ FORCE_RECREATE=false
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --auto|-a)
+    --auto | -a)
       AUTO_MODE=true
       shift
       ;;
-    --force|-f)
+    --force | -f)
       FORCE_RECREATE=true
       shift
       ;;
-    --help|-h)
+    --help | -h)
       echo "Usage: $0 [OPTIONS]"
       echo ""
       echo "Options:"
@@ -147,7 +147,7 @@ if [ "$AUTO_MODE" = true ]; then
   if kubectl get deployment onepassword-connect -n "${NAMESPACE}" &> /dev/null; then
     echo ""
     echo "🔄 Restarting onepassword-connect deployment..."
-    kubectl rollout restart deployment/onepassword-connect -n "${NAMESPACE}" 2>/dev/null || true
+    kubectl rollout restart deployment/onepassword-connect -n "${NAMESPACE}" 2> /dev/null || true
   fi
 
   echo ""
@@ -159,7 +159,7 @@ if [ "$AUTO_MODE" = true ]; then
   echo ""
   echo "Checking pod status..."
   sleep 3
-  kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/name=onepassword-connect 2>/dev/null || echo "onepassword-connect not yet deployed"
+  kubectl get pods -n "${NAMESPACE}" -l app.kubernetes.io/name=onepassword-connect 2> /dev/null || echo "onepassword-connect not yet deployed"
 
   exit 0
 fi

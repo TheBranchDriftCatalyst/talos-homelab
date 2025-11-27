@@ -35,6 +35,7 @@ talosctl shutdown --force
 ```
 
 **What happens:**
+
 - All Kubernetes services stop gracefully
 - Kubelet terminates
 - Filesystems unmount cleanly
@@ -43,6 +44,7 @@ talosctl shutdown --force
 ### Step 3: Perform Hardware Changes
 
 With the system powered off, perform your hardware maintenance:
+
 - RAM upgrades
 - Disk additions/replacements
 - Network card changes
@@ -95,6 +97,7 @@ kubectl uncordon talos00
 ## Quick Command Reference
 
 ### Complete Shutdown Sequence
+
 ```bash
 export TALOS_NODE=192.168.1.54
 kubectl drain talos00 --ignore-daemonsets --delete-emptydir-data  # Optional
@@ -102,6 +105,7 @@ talosctl shutdown
 ```
 
 ### After Hardware Changes and Power-On
+
 ```bash
 export TALOS_NODE=192.168.1.54
 talosctl health --wait-timeout=5m
@@ -125,6 +129,7 @@ After powering on the node:
 ### Cluster Not Coming Back
 
 #### Check Talos Services
+
 ```bash
 talosctl services
 talosctl logs kubelet
@@ -132,12 +137,14 @@ talosctl dmesg | tail -50
 ```
 
 #### Check etcd Health
+
 ```bash
 talosctl etcd status
 talosctl etcd members
 ```
 
 #### Force Recovery (If Needed)
+
 ```bash
 # Bootstrap etcd if it's stuck
 talosctl bootstrap
@@ -147,6 +154,7 @@ talosctl service kubelet restart
 ```
 
 #### Check API Server
+
 ```bash
 kubectl get --raw /healthz
 kubectl get componentstatuses
@@ -155,6 +163,7 @@ kubectl get componentstatuses
 ### Common Issues
 
 **Issue:** Node shows `NotReady`
+
 ```bash
 # Check kubelet logs
 talosctl logs kubelet
@@ -164,6 +173,7 @@ talosctl service kubelet restart
 ```
 
 **Issue:** etcd won't start
+
 ```bash
 # Check etcd status
 talosctl etcd status
@@ -173,6 +183,7 @@ talosctl bootstrap
 ```
 
 **Issue:** Pods stuck in `Pending` or `ContainerCreating`
+
 ```bash
 # Check pod events
 kubectl describe pod <pod-name> -n <namespace>
@@ -198,17 +209,20 @@ This performs a clean reboot cycle automatically without manual power cycling.
 ## Important Notes
 
 ### Single-Node Cluster Considerations
+
 - **Expect downtime** - All services will be unavailable during shutdown
 - **No high availability** - Control plane is unavailable during maintenance
 - **Plan maintenance windows** accordingly
 
 ### Data Persistence
+
 - **Local-path storage (PostgreSQL)** - Data persists on disk, no data loss
 - **NFS mounts** - Automatically reconnect when pods restart
 - **Talos state** - Configuration persists in `/system/state` partition
 - **Machine config backup** - Always kept in `configs/controlplane.yaml`
 
 ### Post-Restart Validation Checklist
+
 - [ ] Node status is `Ready`
 - [ ] All system pods running (kube-system namespace)
 - [ ] etcd cluster healthy
@@ -222,11 +236,13 @@ This performs a clean reboot cycle automatically without manual power cycling.
 If the cluster fails to start after hardware changes:
 
 ### 1. Check BIOS/Boot Settings
+
 - Verify boot device order
 - Check secure boot settings
 - Ensure network boot (PXE) is disabled if using local disk
 
 ### 2. Verify Talos Installation
+
 ```bash
 # Check Talos version on boot
 talosctl version
@@ -236,11 +252,13 @@ talosctl get machineconfig -o yaml
 ```
 
 ### 3. Re-apply Machine Config (If Needed)
+
 ```bash
 talosctl apply-config --file configs/controlplane.yaml
 ```
 
 ### 4. Complete Cluster Reset (LAST RESORT)
+
 If the cluster is completely broken and you have backups:
 
 ```bash
@@ -252,6 +270,7 @@ talosctl reset --graceful=false --reboot
 ```
 
 **WARNING:** This will destroy all data. Only use if you have backups of:
+
 - etcd data
 - Application data
 - Configuration files

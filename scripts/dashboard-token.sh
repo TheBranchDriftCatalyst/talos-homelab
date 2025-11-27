@@ -25,7 +25,7 @@ echo "   URL: http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/servi
 echo "   Start proxy: task dashboard-proxy"
 echo ""
 
-K8S_TOKEN=$(kubectl --kubeconfig "$KUBECONFIG" -n kubernetes-dashboard create token admin-user --duration=8760h 2>/dev/null || echo "")
+K8S_TOKEN=$(kubectl --kubeconfig "$KUBECONFIG" -n kubernetes-dashboard create token admin-user --duration=8760h 2> /dev/null || echo "")
 if [ -n "$K8S_TOKEN" ]; then
   echo "   Token:"
   echo "   ────────────────────────────────────────────────────────────────────────────"
@@ -44,7 +44,7 @@ echo "2. HEADLAMP"
 echo "   URL: http://headlamp.talos00"
 echo ""
 
-HEADLAMP_TOKEN=$(kubectl --kubeconfig "$KUBECONFIG" -n infra-testing create token headlamp --duration=8760h 2>/dev/null || echo "")
+HEADLAMP_TOKEN=$(kubectl --kubeconfig "$KUBECONFIG" -n infra-testing create token headlamp --duration=8760h 2> /dev/null || echo "")
 if [ -n "$HEADLAMP_TOKEN" ]; then
   echo "   Token:"
   echo "   ────────────────────────────────────────────────────────────────────────────"
@@ -64,7 +64,7 @@ echo "   URL: http://argocd.talos00"
 echo "   Username: admin"
 echo ""
 
-ARGOCD_PASS=$(kubectl --kubeconfig "$KUBECONFIG" -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" 2>/dev/null | base64 -d || echo "")
+ARGOCD_PASS=$(kubectl --kubeconfig "$KUBECONFIG" -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" 2> /dev/null | base64 -d || echo "")
 if [ -n "$ARGOCD_PASS" ]; then
   echo "   Password:"
   echo "   ────────────────────────────────────────────────────────────────────────────"

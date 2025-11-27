@@ -8,14 +8,14 @@ Homepage is configured with ConfigMaps containing all service definitions, widge
 
 ## Configuration Files
 
-- **configmap.yaml** - Core settings (settings.yaml, kubernetes.yaml)
-- **configmap-services.yaml** - Service definitions, widgets, bookmarks, Docker config
-- **deployment.yaml** - Homepage pod deployment
-- **service.yaml** - Kubernetes service
-- **serviceaccount.yaml** - RBAC permissions for Kubernetes API access
-- **pvc.yaml** - Persistent volume (currently not used, configs in ConfigMaps)
-- **ingressroute.yaml** - Traefik ingress route
-- **secret.yaml** - API keys secret (auto-synced from running services)
+- **configmap.YAML** - Core settings (settings.YAML, Kubernetes.YAML)
+- **configmap-services.YAML** - Service definitions, widgets, bookmarks, Docker config
+- **deployment.YAML** - Homepage pod deployment
+- **service.YAML** - Kubernetes service
+- **serviceaccount.YAML** - RBAC permissions for Kubernetes API access
+- **pvc.YAML** - Persistent volume (currently not used, configs in ConfigMaps)
+- **ingressroute.YAML** - Traefik ingress route
+- **secret.YAML** - API keys secret (auto-synced from running services)
 
 ## Configured Services
 
@@ -60,7 +60,7 @@ Homepage widgets require API keys which are automatically synced from running se
 
 ### Automatic API Key Sync (Recommended)
 
-The *arr applications generate API keys on first startup. These can be automatically
+The \*arr applications generate API keys on first startup. These can be automatically
 extracted and synced to the Kubernetes secret using:
 
 ```bash
@@ -75,7 +75,8 @@ extracted and synced to the Kubernetes secret using:
 ```
 
 The sync script:
-1. Extracts API keys from `/config/config.xml` in *arr containers
+
+1. Extracts API keys from `/config/config.xml` in \*arr containers
 2. Gets Overseerr key from `/config/settings.json`
 3. Gets Plex token from `Preferences.xml` (if claimed)
 4. Creates/updates `arr-api-keys` secret
@@ -90,18 +91,18 @@ The `homepage-secrets` secret contains:
 ```yaml
 stringData:
   # *arr API keys (auto-synced)
-  HOMEPAGE_VAR_SONARR_KEY: "<extracted from running service>"
-  HOMEPAGE_VAR_RADARR_KEY: "<extracted from running service>"
-  HOMEPAGE_VAR_PROWLARR_KEY: "<extracted from running service>"
-  HOMEPAGE_VAR_READARR_KEY: "<extracted from running service>"
-  HOMEPAGE_VAR_OVERSEERR_KEY: "<extracted from running service>"
-  HOMEPAGE_VAR_PLEX_KEY: "<extracted from running service>"
-  HOMEPAGE_VAR_JELLYFIN_KEY: "<manual - create in Jellyfin UI>"
+  HOMEPAGE_VAR_SONARR_KEY: '<extracted from running service>'
+  HOMEPAGE_VAR_RADARR_KEY: '<extracted from running service>'
+  HOMEPAGE_VAR_PROWLARR_KEY: '<extracted from running service>'
+  HOMEPAGE_VAR_READARR_KEY: '<extracted from running service>'
+  HOMEPAGE_VAR_OVERSEERR_KEY: '<extracted from running service>'
+  HOMEPAGE_VAR_PLEX_KEY: '<extracted from running service>'
+  HOMEPAGE_VAR_JELLYFIN_KEY: '<manual - create in Jellyfin UI>'
 
   # Infrastructure (set manually or via separate sync)
-  HOMEPAGE_VAR_ARGOCD_KEY: "<argocd token>"
-  HOMEPAGE_VAR_GRAFANA_USER: "admin"
-  HOMEPAGE_VAR_GRAFANA_PASS: "prom-operator"
+  HOMEPAGE_VAR_ARGOCD_KEY: '<argocd token>'
+  HOMEPAGE_VAR_GRAFANA_USER: 'admin'
+  HOMEPAGE_VAR_GRAFANA_PASS: 'prom-operator'
 ```
 
 ### Manual API Key Sources
@@ -109,25 +110,33 @@ stringData:
 For keys that can't be auto-synced:
 
 #### Jellyfin
+
 1. Dashboard -> API Keys
 2. Create a new API key for "Homepage Dashboard"
 
 #### ArgoCD
+
 1. Create a readonly account:
+
    ```bash
    kubectl edit cm argocd-cm -n argocd
    ```
+
    Add:
+
    ```yaml
    data:
      accounts.readonly: apiKey
    ```
 
 2. Configure RBAC:
+
    ```bash
    kubectl edit cm argocd-rbac-cm -n argocd
    ```
+
    Add:
+
    ```yaml
    data:
      policy.csv: |
@@ -140,6 +149,7 @@ For keys that can't be auto-synced:
    ```
 
 #### Grafana
+
 - Default: username `admin`, password `prom-operator`
 - Or get from secret:
   ```bash

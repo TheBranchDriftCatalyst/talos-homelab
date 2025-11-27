@@ -31,7 +31,7 @@
 - **GitOps (Infra)**: FluxCD v2.7.3 ✅
 - **GitOps (Apps)**: ArgoCD v2.x ✅
 - **Ingress**: Traefik v3.5.3 ✅
-- **Monitoring**: kube-prometheus-stack v65.8.1 ✅
+- **Monitoring**: kube-Prometheus-stack v65.8.1 ✅
 - **Observability**: OpenSearch + Graylog + Fluent Bit ✅
 - **Storage**: local-path (default) + NFS StorageClass ✅
 - **Secrets**: External Secrets Operator v0.11.0 + 1Password Connect ✅
@@ -58,7 +58,7 @@
 ### Development Tools
 
 - **Tilt**: Configured (Tiltfile exists) - Not yet integrated into workflow
-- **Taskfile**: 90+ tasks across 4 domains (talos, k8s, dev, infra)
+- **Taskfile**: 90+ tasks across 4 domains (Talos, k8s, dev, infra)
 
 ### Environments
 
@@ -71,13 +71,13 @@
 
 ### ✅ Completed Tasks
 
-- [x] Created bootstrap directories (flux, argocd)
+- [x] Created bootstrap directories (flux, ArgoCD)
 - [x] Created infrastructure directories (base + overlays)
 - [x] Created applications/arr-stack structure
 - [x] Created base dirs for all apps (prowlarr, sonarr, radarr, plex, jellyfin, overseerr, tdarr, homepage)
 - [x] Created namespace manifests
 - [x] Created storage provisioner manifests
-- [x] Created kube-prometheus-stack configuration
+- [x] Created kube-Prometheus-stack configuration
 - [x] Created Flux bootstrap manifests
 - [x] Created ArgoCD bootstrap manifests
 
@@ -129,28 +129,28 @@ talos-homelab/
 
 **Controllers Running**:
 
-| Controller                | Version | Status  |
-| ------------------------- | ------- | ------- |
-| helm-controller           | v1.4.3  | Running |
-| kustomize-controller      | v1.7.2  | Running |
-| notification-controller   | v1.7.4  | Running |
-| source-controller         | v1.7.3  | Running |
+| Controller              | Version | Status  |
+| ----------------------- | ------- | ------- |
+| helm-controller         | v1.4.3  | Running |
+| kustomize-controller    | v1.7.2  | Running |
+| notification-controller | v1.7.4  | Running |
+| source-controller       | v1.7.3  | Running |
 
 **GitRepository Source**: `flux-system` tracking `main@sha1:5a2553ec`
 
 ### Active Flux Resources
 
-| Namespace        | Resource Type   | Name                            | Version | Status |
-| ---------------- | --------------- | ------------------------------- | ------- | ------ |
-| flux-system      | GitRepository   | flux-system                     | -       | ✅     |
-| flux-system      | Kustomization   | flux-system                     | -       | ✅     |
-| external-secrets | HelmRelease     | external-secrets                | 0.11.0  | ✅     |
-| kube-system      | HelmRelease     | nfs-subdir-external-provisioner | 4.0.18  | ✅     |
-| monitoring       | HelmRelease     | kube-prometheus-stack           | 65.8.1  | ✅     |
-| monitoring       | HelmRelease     | prometheus-blackbox-exporter    | 9.8.0   | ✅     |
-| observability    | HelmRelease     | fluent-bit                      | 0.48.10 | ✅     |
-| observability    | HelmRelease     | mongodb                         | 18.1.9  | ✅     |
-| observability    | HelmRelease     | opensearch                      | 3.3.2   | ✅     |
+| Namespace        | Resource Type | Name                            | Version | Status |
+| ---------------- | ------------- | ------------------------------- | ------- | ------ |
+| flux-system      | GitRepository | flux-system                     | -       | ✅     |
+| flux-system      | Kustomization | flux-system                     | -       | ✅     |
+| external-secrets | HelmRelease   | external-secrets                | 0.11.0  | ✅     |
+| kube-system      | HelmRelease   | nfs-subdir-external-provisioner | 4.0.18  | ✅     |
+| monitoring       | HelmRelease   | kube-Prometheus-stack           | 65.8.1  | ✅     |
+| monitoring       | HelmRelease   | Prometheus-blackbox-exporter    | 9.8.0   | ✅     |
+| observability    | HelmRelease   | fluent-bit                      | 0.48.10 | ✅     |
+| observability    | HelmRelease   | mongodb                         | 18.1.9  | ✅     |
+| observability    | HelmRelease   | opensearch                      | 3.3.2   | ✅     |
 
 ### Flux Notifications
 
@@ -162,8 +162,8 @@ talos-homelab/
 
 ### ArgoCD Deployment
 
-- **Namespace**: argocd
-- **URL**: argocd.talos00
+- **Namespace**: ArgoCD
+- **URL**: ArgoCD.talos00
 - **Status**: Running (7 pods)
 
 ---
@@ -175,39 +175,39 @@ talos-homelab/
 - [x] Created `media-dev` namespace
 - [x] Created `media-prod` namespace
 - [x] Configured Traefik IngressRoutes for all services
-- [x] Created dev overlay (*.talos00 domains)
+- [x] Created dev overlay (\*.talos00 domains)
 - [x] Routing working for all applications
 
 ### Active IngressRoutes (26 total)
 
-| Namespace              | Service              | URL                    | Status |
-| ---------------------- | -------------------- | ---------------------- | ------ |
-| argocd                 | ArgoCD               | argocd.talos00         | ✅     |
-| monitoring             | Grafana              | grafana.talos00        | ✅     |
-| monitoring             | Prometheus           | prometheus.talos00     | ✅     |
-| monitoring             | Alertmanager         | alertmanager.talos00   | ✅     |
-| observability          | Graylog              | graylog.talos00        | ✅     |
-| observability          | Grafana              | grafana.talos00        | ✅     |
-| observability          | Prometheus           | prometheus.talos00     | ✅     |
-| observability          | Alertmanager         | alertmanager.talos00   | ✅     |
-| media-dev              | Prowlarr             | prowlarr.talos00       | ✅     |
-| media-dev              | Sonarr               | sonarr.talos00         | ✅     |
-| media-dev              | Radarr               | radarr.talos00         | ✅     |
-| media-dev              | Plex                 | plex.talos00           | ✅     |
-| media-dev              | Jellyfin             | jellyfin.talos00       | ✅     |
-| media-dev              | Overseerr            | overseerr.talos00      | ✅     |
-| media-dev              | Tdarr                | tdarr.talos00          | ✅     |
-| media-dev              | Homepage             | homepage.talos00       | ✅     |
-| infra-testing          | Headlamp             | headlamp.talos00       | ✅     |
-| infra-testing          | Kubeview             | kubeview.talos00       | ✅     |
-| infra-testing          | Kube-ops-view        | kube-ops-view.talos00  | ✅     |
-| infra-testing          | Goldilocks           | goldilocks.talos00     | ✅     |
-| registry               | Docker Registry      | registry.talos00       | ✅     |
-| kubernetes-dashboard   | K8s Dashboard        | dashboard.talos00      | ✅     |
-| traefik                | Traefik Dashboard    | traefik.talos00        | ✅     |
-| default                | whoami-hostname      | whoami.talos00         | ✅     |
-| default                | whoami-path          | whoami.talos00/path    | ✅     |
-| bastion                | Bastion SSH          | -                      | ✅     |
+| Namespace            | Service           | URL                   | Status |
+| -------------------- | ----------------- | --------------------- | ------ |
+| ArgoCD               | ArgoCD            | ArgoCD.talos00        | ✅     |
+| monitoring           | Grafana           | Grafana.talos00       | ✅     |
+| monitoring           | Prometheus        | Prometheus.talos00    | ✅     |
+| monitoring           | Alertmanager      | alertmanager.talos00  | ✅     |
+| observability        | Graylog           | graylog.talos00       | ✅     |
+| observability        | Grafana           | Grafana.talos00       | ✅     |
+| observability        | Prometheus        | Prometheus.talos00    | ✅     |
+| observability        | Alertmanager      | alertmanager.talos00  | ✅     |
+| media-dev            | Prowlarr          | prowlarr.talos00      | ✅     |
+| media-dev            | Sonarr            | sonarr.talos00        | ✅     |
+| media-dev            | Radarr            | radarr.talos00        | ✅     |
+| media-dev            | Plex              | plex.talos00          | ✅     |
+| media-dev            | Jellyfin          | jellyfin.talos00      | ✅     |
+| media-dev            | Overseerr         | overseerr.talos00     | ✅     |
+| media-dev            | Tdarr             | tdarr.talos00         | ✅     |
+| media-dev            | Homepage          | homepage.talos00      | ✅     |
+| infra-testing        | Headlamp          | headlamp.talos00      | ✅     |
+| infra-testing        | Kubeview          | kubeview.talos00      | ✅     |
+| infra-testing        | Kube-ops-view     | kube-ops-view.talos00 | ✅     |
+| infra-testing        | Goldilocks        | goldilocks.talos00    | ✅     |
+| registry             | Docker Registry   | registry.talos00      | ✅     |
+| Kubernetes-dashboard | K8s Dashboard     | dashboard.talos00     | ✅     |
+| traefik              | Traefik Dashboard | traefik.talos00       | ✅     |
+| default              | whoami-hostname   | whoami.talos00        | ✅     |
+| default              | whoami-path       | whoami.talos00/path   | ✅     |
+| bastion              | Bastion SSH       | -                     | ✅     |
 
 ---
 
@@ -215,10 +215,10 @@ talos-homelab/
 
 ### Storage Classes Available
 
-| Name         | Provisioner                                   | Reclaim Policy | Status  |
-| ------------ | --------------------------------------------- | -------------- | ------- |
-| local-path   | rancher.io/local-path                         | Delete         | Default |
-| nfs          | cluster.local/nfs-subdir-external-provisioner | Retain         | ✅      |
+| Name       | Provisioner                                   | Reclaim Policy | Status  |
+| ---------- | --------------------------------------------- | -------------- | ------- |
+| local-path | rancher.io/local-path                         | Delete         | Default |
+| nfs        | cluster.local/nfs-subdir-external-provisioner | Retain         | ✅      |
 
 ### PVCs in media-dev (14 total, All Bound)
 
@@ -248,21 +248,21 @@ talos-homelab/
 | Component                      | Version | Status  | Notes                        |
 | ------------------------------ | ------- | ------- | ---------------------------- |
 | Prometheus                     | 65.8.1  | Running | 30-day retention             |
-| Grafana                        | 65.8.1  | Running | grafana.talos00              |
+| Grafana                        | 65.8.1  | Running | Grafana.talos00              |
 | Alertmanager                   | 65.8.1  | Running | alertmanager.talos00         |
 | kube-state-metrics             | 65.8.1  | Running | K8s metrics                  |
-| prometheus-node-exporter       | 65.8.1  | Running | Node metrics                 |
-| prometheus-blackbox-exporter   | 9.8.0   | Running | Endpoint monitoring          |
-| kube-prometheus-stack-operator | 65.8.1  | Running | Manages Prometheus resources |
+| Prometheus-node-exporter       | 65.8.1  | Running | Node metrics                 |
+| Prometheus-blackbox-exporter   | 9.8.0   | Running | Endpoint monitoring          |
+| kube-Prometheus-stack-operator | 65.8.1  | Running | Manages Prometheus resources |
 
 ### Observability Namespace (observability)
 
-| Component   | Version | Status  | Notes                  |
-| ----------- | ------- | ------- | ---------------------- |
-| OpenSearch  | 3.3.2   | Running | Log storage            |
-| MongoDB     | 18.1.9  | Running | Graylog backend        |
-| Graylog     | -       | Running | graylog.talos00        |
-| Fluent Bit  | 0.48.10 | Running | Log collection (1 pod) |
+| Component  | Version | Status  | Notes                  |
+| ---------- | ------- | ------- | ---------------------- |
+| OpenSearch | 3.3.2   | Running | Log storage            |
+| MongoDB    | 18.1.9  | Running | Graylog backend        |
+| Graylog    | -       | Running | graylog.talos00        |
+| Fluent Bit | 0.48.10 | Running | Log collection (1 pod) |
 
 ---
 
@@ -270,17 +270,17 @@ talos-homelab/
 
 ### Deployed Applications (media-dev namespace)
 
-| Application | Status  | IngressRoute       | Purpose              |
-| ----------- | ------- | ------------------ | -------------------- |
-| Prowlarr    | Running | prowlarr.talos00   | Indexer management   |
-| Sonarr      | Running | sonarr.talos00     | TV show automation   |
-| Radarr      | Running | radarr.talos00     | Movie automation     |
-| Plex        | Running | plex.talos00       | Media server         |
-| Jellyfin    | Running | jellyfin.talos00   | Media server (alt)   |
-| Overseerr   | Running | overseerr.talos00  | Request management   |
-| Tdarr       | Running | tdarr.talos00      | Transcoding          |
-| Homepage    | Running | homepage.talos00   | Dashboard            |
-| PostgreSQL  | Running | -                  | Database backend     |
+| Application | Status  | IngressRoute      | Purpose            |
+| ----------- | ------- | ----------------- | ------------------ |
+| Prowlarr    | Running | prowlarr.talos00  | Indexer management |
+| Sonarr      | Running | sonarr.talos00    | TV show automation |
+| Radarr      | Running | radarr.talos00    | Movie automation   |
+| Plex        | Running | plex.talos00      | Media server       |
+| Jellyfin    | Running | jellyfin.talos00  | Media server (alt) |
+| Overseerr   | Running | overseerr.talos00 | Request management |
+| Tdarr       | Running | tdarr.talos00     | Transcoding        |
+| Homepage    | Running | homepage.talos00  | Dashboard          |
+| PostgreSQL  | Running | -                 | Database backend   |
 
 ### ✅ Completed Tasks
 
@@ -345,13 +345,13 @@ talos-homelab/
 
 **4 Domain Structure:**
 
-| Taskfile             | Domain | Tasks | Purpose                      |
-| -------------------- | ------ | ----- | ---------------------------- |
-| Taskfile.yaml        | Root   | 20+   | Common shortcuts             |
-| Taskfile.talos.yaml  | talos: | 33    | Talos Linux operations       |
-| Taskfile.k8s.yaml    | k8s:   | 18    | Kubernetes operations        |
-| Taskfile.dev.yaml    | dev:   | 17    | Development tools            |
-| Taskfile.infra.yaml  | infra: | 22    | Infrastructure deployment    |
+| Taskfile            | Domain | Tasks | Purpose                   |
+| ------------------- | ------ | ----- | ------------------------- |
+| Taskfile.YAML       | Root   | 20+   | Common shortcuts          |
+| Taskfile.Talos.YAML | Talos: | 33    | Talos Linux operations    |
+| Taskfile.k8s.YAML   | k8s:   | 18    | Kubernetes operations     |
+| Taskfile.dev.YAML   | dev:   | 17    | Development tools         |
+| Taskfile.infra.YAML | infra: | 22    | Infrastructure deployment |
 
 **Key Tasks:**
 
@@ -444,20 +444,20 @@ media-prod, monitoring, observability, registry, traefik
 
 ## Deployment Scripts
 
-| Script                          | Purpose                              | Status |
-| ------------------------------- | ------------------------------------ | ------ |
-| scripts/deploy-stack.sh         | Main infrastructure deployment       | ✅     |
-| scripts/deploy-observability.sh | Observability stack deployment       | ✅     |
-| scripts/deploy-infra-testing.sh | UI tools deployment                  | ✅     |
-| scripts/deploy-tdarr.sh         | Tdarr transcoding deployment         | ✅     |
-| scripts/provision.sh            | Complete cluster provisioning        | ✅     |
-| scripts/bootstrap-argocd.sh     | ArgoCD bootstrap                     | ✅     |
-| scripts/setup-1password-connect | 1Password Connect setup              | ✅     |
-| scripts/kubeconfig-merge.sh     | Merge kubeconfig to ~/.kube/config   | ✅     |
-| scripts/kubeconfig-unmerge.sh   | Remove kubeconfig from ~/.kube/config| ✅     |
-| scripts/dashboard-token.sh      | Get K8s Dashboard token              | ✅     |
-| scripts/cluster-audit.sh        | Generate cluster audit report        | ✅     |
-| scripts/extract-arr-api-keys.sh | Extract API keys from arr apps       | ✅     |
+| Script                          | Purpose                               | Status |
+| ------------------------------- | ------------------------------------- | ------ |
+| scripts/deploy-stack.sh         | Main infrastructure deployment        | ✅     |
+| scripts/deploy-observability.sh | Observability stack deployment        | ✅     |
+| scripts/deploy-infra-testing.sh | UI tools deployment                   | ✅     |
+| scripts/deploy-tdarr.sh         | Tdarr transcoding deployment          | ✅     |
+| scripts/provision.sh            | Complete cluster provisioning         | ✅     |
+| scripts/bootstrap-ArgoCD.sh     | ArgoCD bootstrap                      | ✅     |
+| scripts/setup-1password-connect | 1Password Connect setup               | ✅     |
+| scripts/kubeconfig-merge.sh     | Merge kubeconfig to ~/.kube/config    | ✅     |
+| scripts/kubeconfig-unmerge.sh   | Remove kubeconfig from ~/.kube/config | ✅     |
+| scripts/dashboard-token.sh      | Get K8s Dashboard token               | ✅     |
+| scripts/cluster-audit.sh        | Generate cluster audit report         | ✅     |
+| scripts/extract-arr-api-keys.sh | Extract API keys from arr apps        | ✅     |
 
 ---
 
@@ -551,7 +551,7 @@ None - all core infrastructure operational
 1. Integrate Tilt into daily development workflow
 2. Refactor deployment.sh scripts to mirror Tiltfile structure
 3. Deploy to media-prod namespace
-4. Add more *arr apps (Readarr, Lidarr, Bazarr)
+4. Add more \*arr apps (Readarr, Lidarr, Bazarr)
 5. Consider adding download clients (qBittorrent, SABnzbd)
 6. External access via Cloudflare Tunnel or similar
 

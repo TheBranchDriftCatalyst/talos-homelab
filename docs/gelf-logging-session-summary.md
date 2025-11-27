@@ -16,20 +16,23 @@ Successfully stabilized Graylog logging infrastructure. The critical issue (hour
 ### ✅ CRITICAL - Graylog OOM Crashes (FIXED)
 
 **Problem:**
+
 - Graylog crashing every ~60 minutes with `OOMKilled` (exit code 137)
 - JVM attempting to allocate 16GB heap with only 1.5GB memory limit
 
 **Root Cause:**
+
 ```yaml
 # BEFORE (broken):
 resources:
   limits:
     memory: 1536Mi
 env:
-  GRAYLOG_SERVER_JAVA_OPTS: "-Xms16g -Xmx16g"  # Requesting 16GB!
+  GRAYLOG_SERVER_JAVA_OPTS: '-Xms16g -Xmx16g' # Requesting 16GB!
 ```
 
 **Solution:**
+
 ```yaml
 # AFTER (fixed):
 resources:
@@ -38,10 +41,11 @@ resources:
   limits:
     cpu: 2000m
     memory: 4Gi
-javaOpts: "-Xms3g -Xmx3g"  # Proper heap size
+javaOpts: '-Xms3g -Xmx3g' # Proper heap size
 ```
 
 **Verification:**
+
 - Uptime: 15+ minutes with 0 restarts (was crashing at ~60min)
 - Memory usage: 1650Mi / 4Gi (healthy)
 - CPU: 62m (stable)
@@ -51,13 +55,15 @@ javaOpts: "-Xms3g -Xmx3g"  # Proper heap size
 ### ✅ Log Collection & Enrichment (WORKING)
 
 **Achievements:**
+
 - ✅ Fluent Bit collecting from 22 log sources
-- ✅ Kubernetes metadata enrichment (_namespace, _pod, _container, _node, _app)
+- ✅ Kubernetes metadata enrichment (\_namespace,\_pod, \_container,\_node, \_app)
 - ✅ Log level parsing (FATAL/ERROR/WARN/INFO/DEBUG → syslog severity 0-7)
-- ✅ Cluster identifier added (_cluster: talos-homelab)
+- ✅ Cluster identifier added (\_cluster: Talos-homelab)
 - ✅ Messages flowing to Graylog successfully
 
 **Configuration:**
+
 ```ini
 # Fluent Bit filters extract and map Kubernetes metadata
 [FILTER]
@@ -79,6 +85,7 @@ javaOpts: "-Xms3g -Xmx3g"  # Proper heap size
 ### ⚠️ KNOWN ISSUE - Scientific Notation in Timestamps (ACCEPTED)
 
 **Problem:**
+
 - ~8 messages per 5 minutes fail OpenSearch indexing
 - Error: `mapper_parsing_exception: failed to parse field [ts]. Preview: '1.764E9'`
 - Impact: <2% data loss
@@ -87,6 +94,7 @@ javaOpts: "-Xms3g -Xmx3g"  # Proper heap size
 Lua → JSON serialization renders large numbers (Unix epoch > 1.7B) in scientific notation. OpenSearch date field mapping rejects this format.
 
 **Why We're Accepting This:**
+
 1. Graylog is **stable** (no crashes)
 2. **98%+ success rate** for message indexing
 3. Attempted fixes create more complexity than value
@@ -96,6 +104,7 @@ Lua → JSON serialization renders large numbers (Unix epoch > 1.7B) in scientif
    - Alternative timestamp handling
 
 **Attempted Approaches (all failed):**
+
 - `math.floor()` + `tonumber()` - still serializes to scientific notation
 - `string.format()` - creates strings that Graylog rejects
 - Milliseconds conversion - numbers still too large
@@ -105,17 +114,19 @@ Lua → JSON serialization renders large numbers (Unix epoch > 1.7B) in scientif
 
 ## Files Modified
 
-### infrastructure/base/observability/graylog/helmrelease.yaml
+### infrastructure/base/observability/graylog/helmrelease.YAML
 
 **Changes:**
+
 - Memory limits: 1.5GB → 4GB
 - CPU limits: 1000m → 2000m
 - JVM heap: 16GB → 3GB
 - Added `javaOpts` configuration
 
-### infrastructure/base/observability/fluent-bit/helmrelease.yaml
+### infrastructure/base/observability/fluent-bit/helmrelease.YAML
 
 **Changes:**
+
 - Added Lua script (`gelf-enrich.lua`) for log enrichment
 - Added Kubernetes metadata field mapping
 - Added log level parsing with syslog severity
@@ -159,6 +170,7 @@ $ kubectl logs graylog-0 -n observability --since=5m | grep -c "ERROR"
 ### ✅ Prometheus WAL File Issue (FIXED)
 
 **Problem:** Prometheus unable to write to WAL
+
 ```
 err="write to WAL: create segment file: no such file or directory"
 ```
@@ -213,6 +225,7 @@ Graylog is functional and stable. No immediate action required.
 ## Current State
 
 **Observability Stack:**
+
 - ✅ Graylog: Stable, 0 restarts, 1.6GB/4GB memory
 - ✅ Fluent Bit: Collecting from 22 sources
 - ✅ OpenSearch: Indexing 98%+ of messages
