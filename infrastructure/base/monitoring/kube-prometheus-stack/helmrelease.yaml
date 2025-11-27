@@ -187,7 +187,18 @@ spec:
           cpu: 500m
           memory: 512Mi
 
-      # Datasources
+      # Datasources - configured statically via Helm values (simpler for single-node homelab)
+      # Sidecar datasource discovery is disabled to avoid duplicate default datasource errors
+      sidecar:
+        dashboards:
+          enabled: true
+          label: grafana_dashboard
+          labelValue: '1'
+          searchNamespace: ALL
+        datasources:
+          enabled: false  # Disabled - using static datasources below instead
+
+      # Static datasource configuration
       datasources:
         datasources.yaml:
           apiVersion: 1
@@ -197,8 +208,14 @@ spec:
               url: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
               access: proxy
               isDefault: true
+              editable: true
+            - name: Alertmanager
+              type: alertmanager
+              url: http://kube-prometheus-stack-alertmanager.monitoring.svc:9093
+              access: proxy
+              editable: true
               jsonData:
-                timeInterval: 30s
+                implementation: prometheus
 
       # Default dashboards
       dashboardProviders:
@@ -213,18 +230,6 @@ spec:
               editable: true
               options:
                 path: /var/lib/grafana/dashboards/default
-
-      # Enable sidecar for dashboard discovery
-      sidecar:
-        dashboards:
-          enabled: true
-          label: grafana_dashboard
-          labelValue: '1'
-          searchNamespace: ALL
-        datasources:
-          enabled: true
-          label: grafana_datasource
-          labelValue: '1'
 
       # Grafana.ini customizations
       grafana.ini:
