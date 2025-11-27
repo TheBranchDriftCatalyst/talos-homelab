@@ -5,6 +5,7 @@ This document describes the storage mount structure for the homelab cluster.
 ## Overview
 
 The cluster uses two NAS devices for storage:
+
 - **TrueNAS** (192.168.1.200) - Primary media storage with large capacity
 - **Synology** (192.168.1.234) - Secondary storage and app configurations
 
@@ -12,12 +13,12 @@ All NFS variables are substituted via Flux postBuild from `cluster-settings.yaml
 
 ## Storage Classes
 
-| Storage Class | Type | Use Case |
-|--------------|------|----------|
+| Storage Class          | Type              | Use Case                                   |
+| ---------------------- | ----------------- | ------------------------------------------ |
 | `local-path` (default) | Local provisioner | Databases, pods needing fast local storage |
-| `truenas-nfs` | Static NFS | Large media libraries |
-| `synology-nfs` | Static NFS | Media libraries, downloads |
-| `fatboy-nfs-appdata` | Dynamic NFS | App configs (*arr apps) |
+| `truenas-nfs`          | Static NFS        | Large media libraries                      |
+| `synology-nfs`         | Static NFS        | Media libraries, downloads                 |
+| `fatboy-nfs-appdata`   | Dynamic NFS       | App configs (\*arr apps)                   |
 
 ## NAS Mount Structure
 
@@ -58,30 +59,33 @@ All NFS variables are substituted via Flux postBuild from `cluster-settings.yaml
 
 ## App Storage Pattern
 
-### Media Apps (*arr stack)
+### Media Apps (\*arr stack)
 
 Each media app gets:
+
 1. **Config volume** - Dynamic PVC using `fatboy-nfs-appdata` (Synology /volume1/appdata/)
 2. **Media volume(s)** - Static PVC(s) bound to TrueNAS or Synology media PVs
 3. **Downloads volume** - Static PVC bound to downloads PV
 
 Example for Sonarr:
+
 ```yaml
 volumes:
   - name: config
     persistentVolumeClaim:
-      claimName: sonarr-config  # Dynamic, fatboy-nfs-appdata
+      claimName: sonarr-config # Dynamic, fatboy-nfs-appdata
   - name: media-tv
     persistentVolumeClaim:
-      claimName: truenas-tv     # Static, TrueNAS
+      claimName: truenas-tv # Static, TrueNAS
   - name: downloads
     persistentVolumeClaim:
-      claimName: synology-downloads-complete  # Static, Synology
+      claimName: synology-downloads-complete # Static, Synology
 ```
 
 ### Databases
 
 Databases should use `local-path` storage class for performance:
+
 ```yaml
 spec:
   storageClassName: local-path
@@ -89,11 +93,11 @@ spec:
 
 ## PVC Naming Convention
 
-| Pattern | Example | Description |
-|---------|---------|-------------|
-| `{nas}-{type}` | `truenas-movies` | Static PVC bound to NAS PV |
-| `{app}-config` | `sonarr-config` | Dynamic PVC for app config |
-| `{app}-data` | `postgresql-data` | Database storage |
+| Pattern        | Example           | Description                |
+| -------------- | ----------------- | -------------------------- |
+| `{nas}-{type}` | `truenas-movies`  | Static PVC bound to NAS PV |
+| `{app}-config` | `sonarr-config`   | Dynamic PVC for app config |
+| `{app}-data`   | `postgresql-data` | Database storage           |
 
 ## Variable Substitution
 
@@ -102,24 +106,25 @@ Storage files use Flux postBuild substitution from `clusters/homelab-single/clus
 ```yaml
 # cluster-settings.yaml
 data:
-  TRUENAS_IP: "192.168.1.200"
-  TRUENAS_POOL: "/mnt/megapool"
-  SYNOLOGY_IP: "192.168.1.234"
-  SYNOLOGY_VOLUME: "/volume1"
+  TRUENAS_IP: '192.168.1.200'
+  TRUENAS_POOL: '/mnt/megapool'
+  SYNOLOGY_IP: '192.168.1.234'
+  SYNOLOGY_VOLUME: '/volume1'
 ```
 
 These variables are substituted in storage manifests:
+
 ```yaml
 nfs:
-  server: "${TRUENAS_IP}"
-  path: "${TRUENAS_POOL}/media/movies"
+  server: '${TRUENAS_IP}'
+  path: '${TRUENAS_POOL}/media/movies'
 ```
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| `local-path-provisioner.yaml` | Local path storage class (default) |
-| `truenas-storage.yaml` | TrueNAS PVs, PVCs, and storage class |
-| `synology-storage.yaml` | Synology PVs, PVCs, and storage class |
-| `nfs-provisioner/` | Dynamic NFS provisioner for app configs |
+| File                          | Description                             |
+| ----------------------------- | --------------------------------------- |
+| `local-path-provisioner.yaml` | Local path storage class (default)      |
+| `truenas-storage.yaml`        | TrueNAS PVs, PVCs, and storage class    |
+| `synology-storage.yaml`       | Synology PVs, PVCs, and storage class   |
+| `nfs-provisioner/`            | Dynamic NFS provisioner for app configs |

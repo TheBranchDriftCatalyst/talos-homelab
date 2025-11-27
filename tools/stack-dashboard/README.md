@@ -11,7 +11,7 @@ A reusable Kubernetes stack dashboard built with [Textual](https://textual.textu
 - **Volume status** - See PVC binding status with visual indicators
 - **Credential extraction** - Auto-extract API keys from:
   - Kubernetes Secrets
-  - *arr config.xml files
+  - \*arr config.xml files
   - JSON config files
   - Plex Preferences.xml
 
@@ -55,12 +55,12 @@ stack-dashboard -n monitoring -d mycluster.local
 
 ## Keyboard Shortcuts
 
-| Key | Action |
-|-----|--------|
-| `q` | Quit |
-| `r` | Refresh data |
+| Key   | Action                    |
+| ----- | ------------------------- |
+| `q`   | Quit                      |
+| `r`   | Refresh data              |
 | `1-9` | Copy credential by number |
-| Click | Copy clicked credential |
+| Click | Copy clicked credential   |
 
 ## Configuration
 
@@ -105,24 +105,25 @@ global_credentials:
 
 ### Credential Sources
 
-| Source | Description | Config Fields |
-|--------|-------------|---------------|
-| `secret` | Kubernetes Secret | `secret_name`, `secret_key` |
-| `config_xml` | XML config file (like *arr apps) | `config_path`, `xml_tag` |
-| `config_json` | JSON config file | `config_path`, `json_path` |
-| `preferences_xml` | Plex-style preferences | `config_path`, `xml_attribute` |
+| Source            | Description                       | Config Fields                  |
+| ----------------- | --------------------------------- | ------------------------------ |
+| `secret`          | Kubernetes Secret                 | `secret_name`, `secret_key`    |
+| `config_xml`      | XML config file (like \*arr apps) | `config_path`, `xml_tag`       |
+| `config_json`     | JSON config file                  | `config_path`, `json_path`     |
+| `preferences_xml` | Plex-style preferences            | `config_path`, `xml_attribute` |
 
 ### Credential Types
 
-| Type | Description | Display Format |
-|------|-------------|----------------|
-| `api_key` | API key/token | `apikey:VALUE` |
-| `userpass` | Username/password | `USER:PASS` |
-| `token` | Bearer token | `apikey:VALUE` |
+| Type       | Description       | Display Format |
+| ---------- | ----------------- | -------------- |
+| `api_key`  | API key/token     | `apikey:VALUE` |
+| `userpass` | Username/password | `USER:PASS`    |
+| `token`    | Bearer token      | `apikey:VALUE` |
 
 ## Creating a New Stack Config
 
 1. Copy an existing config as a template:
+
    ```bash
    cp configs/arr-stack.yaml configs/my-stack.yaml
    ```

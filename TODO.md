@@ -8,20 +8,20 @@ Last Updated: 2025-11-24
 
 ## 📊 System-Wide Status Overview
 
-| Subsystem                               | Status          | Health         | Priority | Owner          |
-| --------------------------------------- | --------------- | -------------- | -------- | -------------- |
-| [FluxCD](#fluxcd)                       | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
-| [ArgoCD](#argocd)                       | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
-| [Traefik](#traefik)                     | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
-| [Registry](#registry)                   | ✅ Deployed     | 🟢 Healthy     | Medium   | Infrastructure |
-| [Monitoring](#monitoring)               | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
-| [Observability](#observability)         | ✅ Deployed     | 🟢 Healthy     | Medium   | Infrastructure |
-| [External Secrets](#external-secrets)   | ✅ Deployed     | 🟢 Healthy     | High     | Infrastructure |
-| [Media Stack](#media-stack)             | ✅ Deployed     | 🟢 Healthy     | Medium   | Application    |
-| [Infra Testing](#infra-testing)         | ✅ Deployed     | 🟢 Healthy     | Low      | Infrastructure |
-| [Catalyst UI](#catalyst-ui)             | 🟡 In Progress  | 🟡 Testing     | Medium   | Application    |
-| [Catalyst DNS Sync](#catalyst-dns-sync) | 🟡 In Progress  | 🔵 Development | High     | Application    |
-| [Tilt Integration](#tilt-integration)   | 🟡 Configured   | 🔵 Not Active  | Medium   | Development    |
+| Subsystem                               | Status         | Health         | Priority | Owner          |
+| --------------------------------------- | -------------- | -------------- | -------- | -------------- |
+| [FluxCD](#fluxcd)                       | ✅ Deployed    | 🟢 Healthy     | High     | Infrastructure |
+| [ArgoCD](#argocd)                       | ✅ Deployed    | 🟢 Healthy     | High     | Infrastructure |
+| [Traefik](#traefik)                     | ✅ Deployed    | 🟢 Healthy     | High     | Infrastructure |
+| [Registry](#registry)                   | ✅ Deployed    | 🟢 Healthy     | Medium   | Infrastructure |
+| [Monitoring](#monitoring)               | ✅ Deployed    | 🟢 Healthy     | High     | Infrastructure |
+| [Observability](#observability)         | ✅ Deployed    | 🟢 Healthy     | Medium   | Infrastructure |
+| [External Secrets](#external-secrets)   | ✅ Deployed    | 🟢 Healthy     | High     | Infrastructure |
+| [Media Stack](#media-stack)             | ✅ Deployed    | 🟢 Healthy     | Medium   | Application    |
+| [Infra Testing](#infra-testing)         | ✅ Deployed    | 🟢 Healthy     | Low      | Infrastructure |
+| [Catalyst UI](#catalyst-ui)             | 🟡 In Progress | 🟡 Testing     | Medium   | Application    |
+| [Catalyst DNS Sync](#catalyst-dns-sync) | 🟡 In Progress | 🔵 Development | High     | Application    |
+| [Tilt Integration](#tilt-integration)   | 🟡 Configured  | 🔵 Not Active  | Medium   | Development    |
 
 **Legend:**
 
@@ -79,8 +79,8 @@ Last Updated: 2025-11-24
 | ---------------- | ------------------------------- | ------- | ------ |
 | external-secrets | external-secrets                | 0.11.0  | ✅     |
 | kube-system      | nfs-subdir-external-provisioner | 4.0.18  | ✅     |
-| monitoring       | kube-prometheus-stack           | 65.8.1  | ✅     |
-| monitoring       | prometheus-blackbox-exporter    | 9.8.0   | ✅     |
+| monitoring       | kube-Prometheus-stack           | 65.8.1  | ✅     |
+| monitoring       | Prometheus-blackbox-exporter    | 9.8.0   | ✅     |
 | observability    | fluent-bit                      | 0.48.10 | ✅     |
 | observability    | mongodb                         | 18.1.9  | ✅     |
 | observability    | opensearch                      | 3.3.2   | ✅     |
@@ -117,7 +117,7 @@ Last Updated: 2025-11-24
 - [ ] Document application creation workflow
 - [ ] Deploy applications via ArgoCD (currently manual)
 
-**See:** [infrastructure/base/argocd/STATUS.md](infrastructure/base/argocd/STATUS.md)
+**See:** [infrastructure/base/ArgoCD/STATUS.md](infrastructure/base/argocd/STATUS.md)
 
 ---
 
@@ -181,7 +181,7 @@ Last Updated: 2025-11-24
 
 **TODOs:**
 
-- [ ] Deploy Exportarr for *arr stack metrics
+- [ ] Deploy Exportarr for \*arr stack metrics
 - [ ] Configure Alertmanager notifications (Slack/Email)
 - [ ] Add custom dashboards for Talos metrics
 - [ ] Create arr stack Grafana dashboards
@@ -239,17 +239,17 @@ Last Updated: 2025-11-24
 
 **Deployed Applications:**
 
-| Application | Status  | URL                | Purpose              |
-| ----------- | ------- | ------------------ | -------------------- |
-| Prowlarr    | Running | prowlarr.talos00   | Indexer management   |
-| Sonarr      | Running | sonarr.talos00     | TV automation        |
-| Radarr      | Running | radarr.talos00     | Movie automation     |
-| Plex        | Running | plex.talos00       | Media server         |
-| Jellyfin    | Running | jellyfin.talos00   | Media server (alt)   |
-| Overseerr   | Running | overseerr.talos00  | Request management   |
-| Tdarr       | Running | tdarr.talos00      | Transcoding          |
-| Homepage    | Running | homepage.talos00   | Dashboard            |
-| PostgreSQL  | Running | -                  | Database backend     |
+| Application | Status  | URL               | Purpose            |
+| ----------- | ------- | ----------------- | ------------------ |
+| Prowlarr    | Running | prowlarr.talos00  | Indexer management |
+| Sonarr      | Running | sonarr.talos00    | TV automation      |
+| Radarr      | Running | radarr.talos00    | Movie automation   |
+| Plex        | Running | plex.talos00      | Media server       |
+| Jellyfin    | Running | jellyfin.talos00  | Media server (alt) |
+| Overseerr   | Running | overseerr.talos00 | Request management |
+| Tdarr       | Running | tdarr.talos00     | Transcoding        |
+| Homepage    | Running | homepage.talos00  | Dashboard          |
+| PostgreSQL  | Running | -                 | Database backend   |
 
 **Configuration TODOs:**
 
@@ -305,7 +305,7 @@ Last Updated: 2025-11-24
 
 **Features Available:**
 
-- Hot-reload for infrastructure/base/* manifests
+- Hot-reload for infrastructure/base/\* manifests
 - Automatic port-forwards (Headlamp:8080, Kubeview:8081, etc.)
 - Flux control (suspend/resume/reconcile)
 - Quick deployment actions
@@ -426,7 +426,7 @@ Last Updated: 2025-11-24
 - [ ] Service mesh evaluation (Istio/Linkerd)
 - [ ] External access via Cloudflare Tunnel
 - [ ] Add download clients (qBittorrent, SABnzbd)
-- [ ] Add more *arr apps (Readarr, Lidarr, Bazarr)
+- [ ] Add more \*arr apps (Readarr, Lidarr, Bazarr)
 
 ---
 

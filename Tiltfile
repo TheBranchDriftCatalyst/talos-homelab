@@ -21,6 +21,13 @@
 
 # Load Tilt extensions
 load('ext://helm_resource', 'helm_resource', 'helm_repo')
+load('ext://dotenv', 'dotenv')
+load('ext://uibutton', 'cmd_button', 'location', 'text_input', 'bool_input')
+load('ext://k8s_attach', 'k8s_attach')
+
+# Load environment variables from .env file (if exists)
+# This allows per-developer configuration without modifying Tiltfile
+dotenv()
 
 # Configuration
 config.define_string('k8s_context', args=False, usage='Kubernetes context to use')
@@ -28,9 +35,12 @@ config.define_bool('flux-suspend', args=False, usage='Suspend Flux reconciliatio
 cfg = config.parse()
 
 # Settings
+# NOTE: flux_suspend defaults to False because we use k8s_attach for Flux-managed
+# resources (read-only observation). Only set to True if you need to iterate on
+# infra-testing manifests without committing.
 settings = {
     'k8s_context': cfg.get('k8s_context', 'admin@homelab-single'),
-    'flux_suspend': cfg.get('flux-suspend', True),
+    'flux_suspend': cfg.get('flux-suspend', False),
 }
 
 # Ensure we're using the correct k8s context
@@ -107,6 +117,122 @@ if settings['flux_suspend']:
         trigger_mode=TRIGGER_MODE_MANUAL,
         labels=['flux-control']
     )
+
+# ============================================
+# UI Buttons - Quick Actions in Tilt UI
+# ============================================
+# These buttons appear in the Tilt UI for easy access to common operations
+
+# Global Navigation Buttons
+cmd_button(
+    name='btn-flux-sync',
+    argv=['flux', 'reconcile', 'kustomization', 'flux-system', '--with-source'],
+    location=location.NAV,
+    text='🔄 Flux Sync',
+    icon_name='sync'
+)
+
+cmd_button(
+    name='btn-dashboard-token',
+    argv=['./scripts/dashboard-token.sh'],
+    location=location.NAV,
+    text='🔑 K8s Token',
+    icon_name='key'
+)
+
+cmd_button(
+    name='btn-cluster-health',
+    argv=['sh', '-c', 'kubectl get nodes && echo "" && kubectl get pods -A | grep -v Running | grep -v Completed || echo "✅ All pods healthy"'],
+    location=location.NAV,
+    text='💚 Health',
+    icon_name='favorite'
+)
+
+cmd_button(
+    name='btn-infrastructure-dashboard',
+    argv=['./infrastructure/dashboard.sh'],
+    location=location.NAV,
+    text='📊 Infra Dashboard',
+    icon_name='dashboard'
+)
+
+# Deployment Buttons (in quick-actions resource group)
+cmd_button(
+    name='btn-deploy-full-stack',
+    argv=['./scripts/deploy-stack.sh'],
+    location=location.NAV,
+    text='🚀 Deploy Stack',
+    icon_name='rocket_launch',
+    requires_confirmation=True
+)
+
+# Resource-specific buttons
+# These will appear on specific resources in the Tilt UI
+
+# Grafana - get admin password
+cmd_button(
+    name='btn-grafana-password',
+    resource='monitoring:grafana',
+    argv=['sh', '-c', 'kubectl get secret -n monitoring kube-prometheus-stack-grafana -o jsonpath="{.data.admin-password}" | base64 -d && echo'],
+    text='Get Password',
+    icon_name='password'
+)
+
+# ArgoCD - get admin password
+cmd_button(
+    name='btn-argocd-password',
+    resource='gitops:argocd-server',
+    argv=['sh', '-c', 'kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d && echo'],
+    text='Get Password',
+    icon_name='password'
+)
+
+# Graylog - restart if stuck
+cmd_button(
+    name='btn-graylog-restart',
+    resource='observability:graylog',
+    argv=['kubectl', 'rollout', 'restart', 'statefulset/graylog', '-n', 'observability'],
+    text='Restart',
+    icon_name='refresh',
+    requires_confirmation=True
+)
+
+# Registry - check catalog
+cmd_button(
+    name='btn-registry-catalog',
+    resource='registry:docker-registry',
+    argv=['sh', '-c', 'kubectl port-forward -n registry svc/docker-registry 5000:5000 & sleep 2 && curl -s http://localhost:5000/v2/_catalog | jq . ; kill %1 2>/dev/null'],
+    text='List Images',
+    icon_name='inventory'
+)
+
+# Headlamp - copy service account token
+cmd_button(
+    name='btn-headlamp-token',
+    resource='infra-testing:headlamp',
+    argv=['sh', '-c', 'kubectl get secret -n infra-testing headlamp-admin -o jsonpath="{.data.token}" | base64 -d && echo'],
+    text='Get Token',
+    icon_name='key'
+)
+
+# Goldilocks - force VPA recommendations refresh
+cmd_button(
+    name='btn-goldilocks-refresh',
+    resource='infra-testing:goldilocks-controller',
+    argv=['kubectl', 'rollout', 'restart', 'deployment/goldilocks-controller', '-n', 'infra-testing'],
+    text='Refresh VPAs',
+    icon_name='refresh'
+)
+
+# Scale buttons with input
+cmd_button(
+    name='btn-scale-sonarr',
+    resource='media:sonarr',
+    argv=['sh', '-c', 'kubectl scale deployment/sonarr -n media --replicas=$REPLICAS'],
+    text='Scale',
+    icon_name='tune',
+    inputs=[text_input('REPLICAS', default='1', placeholder='Number of replicas')]
+)
 
 # ============================================
 # Application Namespaces
@@ -214,120 +340,100 @@ k8s_resource(
 )
 
 # ============================================
-# Monitoring Stack (Flux-managed, commented out for now)
+# Flux-Managed Resources (using k8s_attach)
 # ============================================
-# TODO: Use k8s_discover() extension to auto-discover Flux-managed resources
-# For now, these are commented out since Tilt can't attach to resources
-# it didn't load via k8s_yaml()
-#
-# # Prometheus
-# k8s_resource(
-#     workload='prometheus-kube-prometheus-stack-prometheus',
-#     new_name='monitoring:prometheus',
-#     port_forwards=['9090:9090'],
-#     labels=['monitoring'],
-#     links=[
-#         link('http://prometheus.talos00', 'Prometheus (via Traefik)'),
-#         link('http://localhost:9090', 'Prometheus (port-forward)')
-#     ]
-# )
-#
-# # Grafana
-# k8s_resource(
-#     workload='grafana',
-#     new_name='monitoring:grafana',
-#     port_forwards=['3000:3000'],
-#     labels=['monitoring'],
-#     links=[
-#         link('http://grafana.talos00', 'Grafana (via Traefik)'),
-#         link('http://localhost:3000', 'Grafana (port-forward)')
-#     ]
-# )
-#
-# # Alertmanager
-# k8s_resource(
-#     workload='alertmanager-kube-prometheus-stack-alertmanager',
-#     new_name='monitoring:alertmanager',
-#     port_forwards=['9093:9093'],
-#     labels=['monitoring'],
-#     links=[
-#         link('http://alertmanager.talos00', 'Alertmanager (via Traefik)'),
-#         link('http://localhost:9093', 'Alertmanager (port-forward)')
-#     ]
-# )
+# k8s_attach allows viewing logs/health for resources managed by Flux
+# without Tilt taking control of them. Tilt is read-only observer.
 
-# ============================================
-# Observability Stack (Flux-managed, commented out for now)
-# ============================================
-# TODO: Use k8s_discover() extension to auto-discover Flux-managed resources
-#
-# # Graylog
-# k8s_resource(
-#     workload='graylog',
-#     new_name='observability:graylog',
-#     port_forwards=['9000:9000'],
-#     labels=['observability'],
-#     links=[
-#         link('http://graylog.talos00', 'Graylog (via Traefik)'),
-#         link('http://localhost:9000', 'Graylog (port-forward)')
-#     ]
-# )
-#
-# # OpenSearch
-# k8s_resource(
-#     workload='opensearch',
-#     new_name='observability:opensearch',
-#     port_forwards=['9200:9200'],
-#     labels=['observability']
-# )
+# Monitoring Stack
+k8s_attach(
+    'monitoring:prometheus',
+    'statefulset/prometheus-kube-prometheus-stack-prometheus',
+    namespace='monitoring'
+)
 
-# ============================================
-# ArgoCD (Flux-managed, commented out for now)
-# ============================================
-# TODO: Use k8s_discover() extension
-#
-# k8s_resource(
-#     workload='argocd-server',
-#     new_name='argocd:server',
-#     port_forwards=['8443:8080'],
-#     labels=['gitops'],
-#     links=[
-#         link('http://argocd.talos00', 'ArgoCD (via Traefik)'),
-#         link('http://localhost:8443', 'ArgoCD (port-forward)')
-#     ]
-# )
+k8s_attach(
+    'monitoring:grafana',
+    'deployment/kube-prometheus-stack-grafana',
+    namespace='monitoring'
+)
 
-# ============================================
-# Traefik Ingress Controller (Flux-managed, commented out for now)
-# ============================================
-# TODO: Use k8s_discover() extension
-#
-# k8s_resource(
-#     workload='traefik',
-#     new_name='traefik:ingress-controller',
-#     port_forwards=['8000:80', '8888:443'],
-#     labels=['networking'],
-#     links=[
-#         link('http://localhost:8000', 'Traefik HTTP'),
-#         link('https://localhost:8888', 'Traefik HTTPS')
-#     ]
-# )
+k8s_attach(
+    'monitoring:alertmanager',
+    'statefulset/alertmanager-kube-prometheus-stack-alertmanager',
+    namespace='monitoring'
+)
 
-# ============================================
-# Docker Registry (Flux-managed, commented out for now)
-# ============================================
-# TODO: Use k8s_discover() extension
-#
-# k8s_resource(
-#     workload='docker-registry',
-#     new_name='registry:docker-registry',
-#     port_forwards=['5000:5000'],
-#     labels=['infrastructure'],
-#     links=[
-#         link('http://registry.talos00', 'Registry (via Traefik)'),
-#         link('http://localhost:5000', 'Registry (port-forward)')
-#     ]
-# )
+# Observability Stack
+k8s_attach(
+    'observability:graylog',
+    'statefulset/graylog',
+    namespace='observability'
+)
+
+k8s_attach(
+    'observability:opensearch',
+    'statefulset/opensearch',
+    namespace='observability'
+)
+
+k8s_attach(
+    'observability:mongodb',
+    'deployment/mongodb',
+    namespace='observability'
+)
+
+k8s_attach(
+    'observability:fluent-bit',
+    'daemonset/fluent-bit',
+    namespace='observability'
+)
+
+# GitOps - ArgoCD
+k8s_attach(
+    'gitops:argocd-server',
+    'deployment/argocd-server',
+    namespace='argocd'
+)
+
+k8s_attach(
+    'gitops:argocd-repo-server',
+    'deployment/argocd-repo-server',
+    namespace='argocd'
+)
+
+k8s_attach(
+    'gitops:argocd-app-controller',
+    'statefulset/argocd-application-controller',
+    namespace='argocd'
+)
+
+# Networking - Traefik
+k8s_attach(
+    'networking:traefik',
+    'deployment/traefik',
+    namespace='traefik'
+)
+
+# Registry
+k8s_attach(
+    'registry:docker-registry',
+    'deployment/docker-registry',
+    namespace='registry'
+)
+
+# External Secrets Operator
+k8s_attach(
+    'secrets:external-secrets',
+    'deployment/external-secrets',
+    namespace='external-secrets'
+)
+
+k8s_attach(
+    'secrets:onepassword-connect',
+    'deployment/onepassword-connect',
+    namespace='external-secrets'
+)
 
 # ============================================
 # External Secrets Operator (Optional)

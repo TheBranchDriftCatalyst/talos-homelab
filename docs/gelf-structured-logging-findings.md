@@ -16,6 +16,7 @@ Fluent Bit is sending GELF messages with **ISO8601 string timestamps** instead o
 4. ❌ Performance overhead from string parsing
 
 **Impact:**
+
 - **WARNING**: `GELF message has invalid "timestamp": 2025-11-25T19:54:57.49464557Z (type: STRING)`
 - **ERROR**: `Failed to index [6] messages - mapper_parsing_exception: failed to parse field [ts] of type [date]`
 
@@ -125,6 +126,7 @@ Update Fluent Bit configuration to send numeric Unix timestamps and add proper G
 ### What's Happening
 
 **Fluent Bit sends:**
+
 ```json
 {
   "timestamp": "2025-11-25T19:54:57.49464557Z",
@@ -134,6 +136,7 @@ Update Fluent Bit configuration to send numeric Unix timestamps and add proper G
 ```
 
 **GELF spec requires:**
+
 ```json
 {
   "version": "1.1",
@@ -147,6 +150,7 @@ Update Fluent Bit configuration to send numeric Unix timestamps and add proper G
 ### GELF Output Plugin Behavior
 
 The Fluent Bit GELF output plugin:
+
 - Automatically adds `version` field (1.1)
 - Maps `kubernetes_host` → `host`
 - Maps `log` → `short_message`
@@ -155,10 +159,12 @@ The Fluent Bit GELF output plugin:
 ### Why OpenSearch Fails
 
 OpenSearch index mapping expects `ts` field as:
+
 - Type: `date`
 - Format: `strict_date_optional_time||epoch_millis`
 
 When Fluent Bit sends scientific notation (`1.764E9`) or ISO string, OpenSearch rejects it:
+
 ```
 mapper_parsing_exception: failed to parse field [ts] of type [date]
 Preview of field's value: '1.764099672486776E9'
@@ -171,14 +177,16 @@ Preview of field's value: '1.764099672486776E9'
 ### Current State
 
 Logs arrive with minimal structure:
+
 - `host` = pod name
 - `short_message` = raw log line
 - `timestamp` = string (wrong format)
-- `cluster` = talos-homelab
+- `cluster` = Talos-homelab
 
 ### Missing Critical Fields
 
 **Kubernetes Metadata:**
+
 - `_namespace` - Kubernetes namespace
 - `_pod` - Pod name
 - `_container` - Container name
@@ -186,6 +194,7 @@ Logs arrive with minimal structure:
 - `_app` - Application label
 
 **Log Metadata:**
+
 - `_log_level` - Parsed log level (INFO, ERROR, etc.)
 - `level` - Syslog severity number (0-7)
 - `_source` - Log source type
@@ -215,20 +224,24 @@ graylog-0   0/1     CrashLoopBackOff   4 (22s ago)   28m
 ### Theories
 
 **Theory 1: Resource Exhaustion**
+
 - 16GB heap might be insufficient
 - Index errors queue up in memory
 - Eventually OOMs
 
 **Theory 2: Index Error Accumulation**
+
 - Too many failed indexing operations
 - Error handling code has bug
 - Triggers crash
 
 **Theory 3: Readiness Probe Failure**
+
 - Probe configuration: `initialDelaySeconds: 30`, `periodSeconds: 10`, `failureThreshold: 3`
 - If API becomes unresponsive, probe fails 3 times = restart
 
 **Next Steps for Graylog:**
+
 1. Fix timestamp format (will reduce index errors dramatically)
 2. Monitor after fix to see if crashes continue
 3. If still crashing, investigate:
@@ -540,7 +553,7 @@ kubectl logs -n observability graylog-0 --tail=50 | grep -i "invalid.*timestamp"
 - [ ] No timestamp warnings in Graylog logs
 - [ ] No indexing errors in Graylog logs
 - [ ] Messages visible in Graylog UI
-- [ ] All custom fields present (_namespace, _pod, etc.)
+- [ ] All custom fields present (\_namespace,\_pod, etc.)
 - [ ] Timestamp field is numeric
 - [ ] Log levels parsed correctly
 - [ ] Graylog remains stable (no crashes)

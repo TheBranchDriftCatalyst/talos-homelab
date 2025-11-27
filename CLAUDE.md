@@ -65,7 +65,7 @@ This repository maintains comprehensive documentation organized in multiple loca
 | `docs/kubernetes-ui-tools.md`       | Comprehensive guide to Kubernetes UI tools - Comparison and evaluation of available options          |
 | `docs/LOCAL-TESTING.md`             | Local testing guide - Testing infrastructure changes before deployment                               |
 | `docs/node-shutdown-procedure.md`   | Node shutdown and restart guide - Safe procedures for hardware maintenance and recovery              |
-| `docs/ENHANCEMENT-ROADMAP.md`       | **Enhancement Roadmap** - MCP server and Tilt extension integration planning (2-stream project)       |
+| `docs/ENHANCEMENT-ROADMAP.md`       | **Enhancement Roadmap** - MCP server and Tilt extension integration planning (2-stream project)      |
 | `docs/PROGRESS-SUMMARY.md`          | Progress summary - Session-by-session tracking of implementation work                                |
 | `docs/TALOS-PROVISIONING-STEPS.md`  | Talos provisioning steps - Detailed cluster setup and bootstrap process                              |
 | `docs/tilt-development-workflow.md` | Tilt development workflow - Hot-reload development environment for infrastructure manifests          |
@@ -462,16 +462,17 @@ Nexus Repository OSS - Universal artifact repository for Docker, npm, PyPI, and 
 
 ### Available Registries
 
-| Registry | URL | Port | Description |
-|----------|-----|------|-------------|
-| Nexus UI | http://nexus.talos00 | 8081 | Web management interface |
-| Docker (hosted) | http://registry.talos00 | 5000 | Private Docker images |
-| Docker (proxy) | http://docker-proxy.talos00 | 5001 | Docker Hub cache |
-| npm | http://npm.talos00 | 8082 | npm packages |
+| Registry        | URL                         | Port | Description              |
+| --------------- | --------------------------- | ---- | ------------------------ |
+| Nexus UI        | http://nexus.talos00        | 8081 | Web management interface |
+| Docker (hosted) | http://registry.talos00     | 5000 | Private Docker images    |
+| Docker (proxy)  | http://docker-proxy.talos00 | 5001 | Docker Hub cache         |
+| npm             | http://npm.talos00          | 8082 | npm packages             |
 
 ### Initial Setup
 
 After first deployment, get the admin password:
+
 ```bash
 kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password
 ```
@@ -502,7 +503,7 @@ npm login --registry=http://npm.talos00/repository/npm-hosted/
 npm publish
 ```
 
-**Docker daemon.json configuration required:**
+**Docker daemon.JSON configuration required:**
 
 ```json
 {

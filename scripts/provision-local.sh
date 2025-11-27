@@ -131,6 +131,7 @@ helm repo add traefik https://traefik.github.io/charts || true
 helm repo update
 
 # Install Traefik (modified for local cluster - no hostPort)
+# shellcheck disable=SC2016 # Backticks are Traefik expression syntax, not shell
 helm upgrade --install traefik traefik/traefik \
   --namespace traefik \
   --create-namespace \
@@ -139,7 +140,7 @@ helm upgrade --install traefik traefik/traefik \
   --set ports.web.exposedPort=80 \
   --set ports.websecure.exposedPort=443 \
   --set ingressRoute.dashboard.enabled=true \
-  --set ingressRoute.dashboard.matchRule='Host(`traefik.localhost`)' \
+  --set 'ingressRoute.dashboard.matchRule=Host(`traefik.localhost`)' \
   --set logs.general.level=INFO \
   --set logs.access.enabled=true \
   --set providers.kubernetesCRD.enabled=true \
@@ -214,7 +215,7 @@ if [ "${AUTO_MERGE_KUBECONFIG:-true}" = "true" ]; then
 
   # Merge
   if [ -f ~/.kube/config ]; then
-    cp ~/.kube/config ~/.kube/config.backup.$(date +%Y%m%d_%H%M%S)
+    cp ~/.kube/config ~/.kube/config.backup."$(date +%Y%m%d_%H%M%S)"
     KUBECONFIG="$OUTPUT_DIR/kubeconfig:$HOME/.kube/config" kubectl config view --flatten > ~/.kube/config.tmp
     mv ~/.kube/config.tmp ~/.kube/config
     chmod 600 ~/.kube/config

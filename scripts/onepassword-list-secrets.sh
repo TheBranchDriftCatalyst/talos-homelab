@@ -43,6 +43,7 @@ echo -e "${CYAN}→ Querying 1Password Connect API...${RESET}"
 echo ""
 
 # Run ephemeral pod with curl and jq to query the API
+# shellcheck disable=SC2016 # Single quotes intentional - vars expand inside pod
 kubectl run test-1p-list-secrets --rm -i --restart=Never --image=alpine:latest -n "${NAMESPACE}" \
   --env="OP_CONNECT_TOKEN=${OP_TOKEN}" \
   --env="VAULT_NAME=${VAULT_NAME}" \

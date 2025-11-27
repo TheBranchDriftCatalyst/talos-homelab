@@ -13,13 +13,13 @@ set -euo pipefail
 
 GRAFANA_URL="${GRAFANA_URL:-http://grafana.talos00}"
 GRAFANA_USER="${GRAFANA_USER:-admin}"
-GRAFANA_PASS="${GRAFANA_PASS:-admin}"  # Change if you've updated the password
+GRAFANA_PASS="${GRAFANA_PASS:-admin}" # Change if you've updated the password
 
 DASHBOARDS=(
-  "315"    # Kubernetes Cluster Monitoring
-  "17347"  # Traefik Official Kubernetes Dashboard
-  "1860"   # Node Exporter Full
-  "9628"   # PostgreSQL Database
+  "315"   # Kubernetes Cluster Monitoring
+  "17347" # Traefik Official Kubernetes Dashboard
+  "1860"  # Node Exporter Full
+  "9628"  # PostgreSQL Database
 )
 
 echo "Importing Grafana dashboards..."

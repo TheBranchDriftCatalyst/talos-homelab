@@ -5,20 +5,24 @@ Media automation stack including indexers, downloaders, and media servers for TV
 ## Components
 
 ### Indexer & Management
+
 - **Prowlarr** - Indexer manager for Usenet and torrents
 
 ### Media Automation
+
 - **Sonarr** - TV show management
 - **Radarr** - Movie management
 - **Readarr** - Book management (ARM64 issues - often disabled)
 - **Overseerr** - Request management
 
 ### Media Servers
+
 - **Plex** - Media server (transcoding, clients)
 - **Jellyfin** - Open-source media server
 - **Tdarr** - Media transcoding and health checking
 
 ### Infrastructure
+
 - **PostgreSQL** - Shared database for \*arr apps
 - **Homepage** - Dashboard for all services
 
@@ -45,6 +49,7 @@ tilt down
 ```
 
 **Features:**
+
 - Uses `overlays/dev` (media-dev namespace, local-path storage)
 - Automatically suspends Flux during development
 - Port-forwards all services to localhost
@@ -52,6 +57,7 @@ tilt down
 - Resource grouping and log viewing
 
 **Environment Variables:**
+
 - `SUSPEND_FLUX=false` - Don't suspend Flux (for testing)
 
 ### 2. dashboard.sh - Status Dashboard
@@ -67,6 +73,7 @@ NAMESPACE=media-dev ./dashboard.sh
 ```
 
 **Features:**
+
 - ASCII art header
 - Pod status with health indicators
 - Service endpoints and ingress URLs
@@ -89,6 +96,7 @@ NAMESPACE=media-dev ./dashboard.sh
 ```
 
 **Workflow:**
+
 1. Validates manifests (kustomize build + kubectl dry-run)
 2. Shows deployment preview
 3. Commits changes to git
@@ -137,12 +145,14 @@ arr-stack/
 ## Overlay Strategy
 
 ### Production (`overlays/prod`)
+
 - **Namespace:** `media-prod`
 - **Storage:** NFS via `storage/fatboy-nfs`
 - **Managed By:** Flux GitOps
-- **Access:** http://*.talos00
+- **Access:** http://\*.talos00
 
 ### Development (`overlays/dev`)
+
 - **Namespace:** `media-dev`
 - **Storage:** Local-path via `storage/local-path`
 - **Managed By:** Tilt
@@ -209,6 +219,7 @@ kubectl get pods -n media-dev
 ### Environment Variables
 
 Shared environment variables in `base/common-env.yaml`:
+
 - `PUID=1000` / `PGID=1000` - User/group IDs
 - `TZ=America/Los_Angeles` - Timezone
 - `POSTGRES_HOST=postgresql` - Database host
@@ -218,9 +229,11 @@ Shared environment variables in `base/common-env.yaml`:
 ### Database Configuration
 
 PostgreSQL credentials in `base/postgresql/secret.yaml` (managed by External Secrets if configured):
+
 - `postgres-password` - Database password
 
 Each app gets its own databases:
+
 - `sonarr_main` / `sonarr_log`
 - `radarr_main` / `radarr_log`
 - `prowlarr_main` / `prowlarr_log`
@@ -228,11 +241,13 @@ Each app gets its own databases:
 ### Storage
 
 **Production (NFS):**
+
 - `media-shared` - 1Ti ReadWriteMany
 - `downloads-shared` - 500Gi ReadWriteMany
 - App configs - 1-50Gi per app
 
 **Development (Local-Path):**
+
 - `media-shared` - 100Gi ReadWriteOnce
 - `downloads-shared` - 50Gi ReadWriteOnce
 - App configs - Same as prod
@@ -244,6 +259,7 @@ Each app gets its own databases:
 ### Tilt Issues
 
 **Problem:** Tilt can't connect to Kubernetes
+
 ```bash
 # Verify context
 kubectl config current-context
@@ -254,6 +270,7 @@ kubectl get nodes
 ```
 
 **Problem:** Flux conflicts with Tilt
+
 ```bash
 # Check if Flux is suspended
 flux get kustomizations
@@ -266,6 +283,7 @@ flux resume kustomization flux-system
 ```
 
 **Problem:** Resources stuck in Pending
+
 ```bash
 # Check PVCs
 kubectl get pvc -n media-dev
@@ -277,6 +295,7 @@ kubectl get events -n media-dev --sort-by='.lastTimestamp'
 ### Deployment Issues
 
 **Problem:** deploy.sh validation fails
+
 ```bash
 # Manual validation
 kustomize build overlays/prod > test.yaml
@@ -284,6 +303,7 @@ kubectl apply --dry-run=client -f test.yaml
 ```
 
 **Problem:** Flux not reconciling
+
 ```bash
 # Check Flux status
 flux get kustomizations

@@ -4,12 +4,12 @@ Sonatype Nexus Repository OSS - Universal artifact repository supporting Docker,
 
 ## Access
 
-| Service | URL | Port | Description |
-|---------|-----|------|-------------|
-| Nexus UI | http://nexus.talos00 | 8081 | Web interface for repository management |
-| Docker Registry | http://registry.talos00 | 5000 | Docker push/pull (hosted) |
-| Docker Proxy | http://docker-proxy.talos00 | 5001 | Docker Hub cache/proxy |
-| npm Registry | http://npm.talos00 | 8082 | npm packages |
+| Service         | URL                         | Port | Description                             |
+| --------------- | --------------------------- | ---- | --------------------------------------- |
+| Nexus UI        | http://nexus.talos00        | 8081 | Web interface for repository management |
+| Docker Registry | http://registry.talos00     | 5000 | Docker push/pull (hosted)               |
+| Docker Proxy    | http://docker-proxy.talos00 | 5001 | Docker Hub cache/proxy                  |
+| npm Registry    | http://npm.talos00          | 8082 | npm packages                            |
 
 ## Initial Setup
 
@@ -36,7 +36,7 @@ kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password
 ### 3. Create Docker Hosted Repository
 
 1. Go to **Settings** (gear icon) > **Repositories** > **Create repository**
-2. Select **docker (hosted)**
+2. Select **Docker (hosted)**
 3. Configure:
    - Name: `docker-hosted`
    - HTTP port: `5000`
@@ -47,7 +47,7 @@ kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password
 ### 4. Create Docker Proxy Repository (Optional - Cache Docker Hub)
 
 1. Go to **Repositories** > **Create repository**
-2. Select **docker (proxy)**
+2. Select **Docker (proxy)**
 3. Configure:
    - Name: `docker-proxy`
    - HTTP port: `5001`
@@ -156,11 +156,13 @@ Nexus requires significant memory for Java heap. Adjust `INSTALL4J_ADD_VM_PARAMS
 ### Nexus Won't Start
 
 Check logs:
+
 ```bash
 kubectl logs -n registry -l app=nexus -f
 ```
 
 Common issues:
+
 - Insufficient memory (needs 2GB+ heap)
 - PVC not provisioned
 - Slow startup (normal, wait 2-3 minutes)
@@ -174,6 +176,7 @@ Common issues:
 ### Anonymous Access
 
 If you need anonymous pull access:
+
 1. **Settings** > **Security** > **Anonymous Access**
 2. Enable "Allow anonymous users to access the server"
 3. Assign `nx-anonymous` role read access to repositories

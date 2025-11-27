@@ -9,16 +9,19 @@
 ## ✅ Pre-Flight Check Results
 
 ### 1. Tilt Installation
+
 - ✅ **Tilt Installed:** v0.36.0 (built 2025-11-18)
 - ✅ **Location:** `/opt/homebrew/bin/tilt`
 - ✅ **Version:** Latest stable
 
 ### 2. Kubernetes Context
+
 - ⚠️ **Current Context:** `admin@homelab-single`
 - ⚠️ **Tiltfile Expects:** `kubernetes-admin@talos00`
 - **Action Required:** Update Tiltfiles or switch context
 
 **Context Mismatch Details:**
+
 ```bash
 # Current context
 $ kubectl config current-context
@@ -29,26 +32,30 @@ allow_k8s_contexts('kubernetes-admin@talos00')
 ```
 
 ### 3. Flux Status
+
 - ✅ **Flux Running:** Yes
 - ✅ **Flux Healthy:** All kustomizations ready
 - ✅ **Current Revision:** `main@sha1:6fab3206`
 - ✅ **Suspended:** False (Flux is actively reconciling)
 
 **Flux Kustomizations:**
+
 ```
-NAME       	REVISION          	SUSPENDED	READY	MESSAGE
-flux-system	main@sha1:6fab3206	False    	True 	Applied revision: main@sha1:6fab3206
+NAME        REVISION           SUSPENDED READY MESSAGE
+flux-system main@sha1:6fab3206 False     True  Applied revision: main@sha1:6fab3206
 ```
 
 ### 4. Existing Cluster Resources
 
 #### Infrastructure Resources (Flux-Managed)
-- ✅ **monitoring:** kube-prometheus-stack, prometheus-blackbox-exporter
+
+- ✅ **monitoring:** kube-Prometheus-stack, Prometheus-blackbox-exporter
 - ✅ **observability:** fluent-bit, graylog, mongodb, opensearch
 - ✅ **external-secrets:** external-secrets-operator
 - ✅ **kube-system:** nfs-subdir-external-provisioner
 
 #### Namespace Status
+
 - ✅ **media-prod:** EXISTS (13 workloads running - Flux-managed)
 - ⚠️ **media-dev:** DOES NOT EXIST (Tilt will create it)
 - ✅ **monitoring:** EXISTS (Flux-managed)
@@ -68,6 +75,7 @@ flux-system	main@sha1:6fab3206	False    	True 	Applied revision: main@sha1:6fab3
 **Solutions:**
 
 **Option A: Update Tiltfiles** (Recommended)
+
 ```bash
 # Update all three Tiltfiles
 sed -i '' 's/kubernetes-admin@talos00/admin@homelab-single/g' Tiltfile
@@ -76,6 +84,7 @@ sed -i '' 's/kubernetes-admin@talos00/admin@homelab-single/g' applications/arr-s
 ```
 
 **Option B: Switch kubectl context**
+
 ```bash
 # Check available contexts
 kubectl config get-contexts
@@ -91,6 +100,7 @@ kubectl config use-context kubernetes-admin@talos00
 **Problem:** Tilt will suspend Flux by default, but your cluster is actively managed by Flux.
 
 **Current Tilt Behavior:**
+
 ```python
 # Root Tiltfile line 34
 'flux_suspend': cfg.get('flux-suspend', True),  # Defaults to suspending Flux
@@ -101,6 +111,7 @@ if settings['flux_suspend']:
 ```
 
 **Impact:**
+
 - Tilt will suspend Flux reconciliation on startup
 - Your Flux-managed resources will stop auto-updating
 - Manual resume required if Tilt crashes
@@ -108,11 +119,13 @@ if settings['flux_suspend']:
 **Recommendations:**
 
 **For Initial Testing:** Keep suspension enabled
+
 - Prevents Flux from fighting Tilt during development
 - Manual control over reconciliation
 - Use `flux-resume-all` button in Tilt UI when needed
 
 **For Daily Use:** Disable suspension
+
 ```bash
 # Start Tilt without suspending Flux
 SUSPEND_FLUX=false tilt up
@@ -128,14 +141,16 @@ tilt config set flux-suspend false
 **Problem:** Tilt expects to manage resources that Flux already controls.
 
 **Affected Resources:**
+
 - monitoring:prometheus (Flux HelmRelease `kube-prometheus-stack`)
-- monitoring:grafana (part of kube-prometheus-stack)
-- monitoring:alertmanager (part of kube-prometheus-stack)
+- monitoring:grafana (part of kube-Prometheus-stack)
+- monitoring:alertmanager (part of kube-Prometheus-stack)
 - observability:graylog (Flux HelmRelease `graylog`)
 - observability:opensearch (Flux HelmRelease `opensearch`)
 - observability:fluent-bit (Flux HelmRelease `fluent-bit`)
 
 **Current Tilt Setup:** k8s_attach pattern (monitoring only, not deploying)
+
 ```python
 # Root Tiltfile lines 223-257
 k8s_resource(
@@ -147,7 +162,8 @@ k8s_resource(
 ```
 
 **Analysis:** ✅ **SAFE**
-- Tilt is only *attaching* to existing resources (not deploying)
+
+- Tilt is only _attaching_ to existing resources (not deploying)
 - Provides monitoring and port-forwarding
 - No conflict with Flux management
 
@@ -158,10 +174,12 @@ k8s_resource(
 **Problem:** Arr-stack Tiltfile targets `media-dev` but production is in `media-prod`.
 
 **Current State:**
+
 - `media-prod` namespace: ✅ EXISTS (13 workloads, Flux-managed)
 - `media-dev` namespace: ❌ DOES NOT EXIST
 
 **Arr-Stack Tiltfile:**
+
 ```python
 # applications/arr-stack/Tiltfile line 13
 namespace = 'media-dev'
@@ -171,6 +189,7 @@ k8s_yaml(kustomize('overlays/dev'))
 ```
 
 **Analysis:** ✅ **INTENTIONAL & SAFE**
+
 - Tilt is designed for dev environment (`media-dev`)
 - Production environment (`media-prod`) managed by Flux
 - No conflict - separate namespaces for dev/prod
@@ -220,6 +239,7 @@ ls -la applications/arr-stack/overlays/dev/
 ## 📋 First Startup Checklist
 
 ### Pre-Startup
+
 - [ ] Fix #1: Update context references (sed commands above)
 - [ ] Fix #2: Verify `applications/arr-stack/overlays/dev/` exists
 - [ ] Verify Flux is healthy: `flux get all`
@@ -228,6 +248,7 @@ ls -la applications/arr-stack/overlays/dev/
 ### Startup Options
 
 **Option 1: Minimal (Recommended for first run)**
+
 ```bash
 # Start with stream mode to see all output
 tilt up --stream
@@ -241,6 +262,7 @@ tilt up --stream
 ```
 
 **Option 2: Without Flux Suspension** (Advanced)
+
 ```bash
 # Keep Flux running alongside Tilt
 SUSPEND_FLUX=false tilt up --stream
@@ -252,6 +274,7 @@ SUSPEND_FLUX=false tilt up --stream
 ```
 
 **Option 3: Specific Resource** (Testing)
+
 ```bash
 # Only monitor specific resources
 tilt up monitoring:prometheus --stream
@@ -261,6 +284,7 @@ tilt up arr-stack --stream
 ```
 
 ### Post-Startup Verification
+
 - [ ] Tilt UI accessible: http://localhost:10350
 - [ ] No errors in Tilt output
 - [ ] Flux status: `flux get kustomizations` (check if suspended)
@@ -268,6 +292,7 @@ tilt up arr-stack --stream
 - [ ] Port forwards working (test one service)
 
 ### Shutdown
+
 ```bash
 # Graceful shutdown (resumes Flux if suspended)
 tilt down
@@ -280,7 +305,8 @@ Ctrl+C
 
 ## 🎯 Expected Behavior on First Startup
 
-### What Tilt WILL Do:
+### What Tilt WILL Do
+
 1. ✅ Suspend Flux (if `flux_suspend=true`)
 2. ✅ Attach to existing monitoring resources (Prometheus, Grafana, etc.)
 3. ✅ Attach to existing observability resources (Graylog, OpenSearch, etc.)
@@ -290,7 +316,8 @@ Ctrl+C
 7. ✅ Start Tilt UI on `localhost:10350`
 8. ✅ Watch for file changes in `infrastructure/` and `applications/`
 
-### What Tilt WILL NOT Do:
+### What Tilt WILL NOT Do
+
 1. ❌ Modify Flux-managed production resources
 2. ❌ Deploy to `media-prod` namespace
 3. ❌ Change Helm releases managed by Flux
@@ -302,7 +329,9 @@ Ctrl+C
 ## 🚨 Common First-Run Issues & Solutions
 
 ### Issue: "Context validation failed"
+
 **Symptom:**
+
 ```
 Error: context kubernetes-admin@talos00 is not allowed
 ```
@@ -312,12 +341,15 @@ Error: context kubernetes-admin@talos00 is not allowed
 ---
 
 ### Issue: "Kustomization not found"
+
 **Symptom:**
+
 ```
 Error: overlays/dev: no such file or directory
 ```
 
 **Solution:**
+
 ```bash
 # Check if overlay exists
 ls applications/arr-stack/overlays/dev/kustomization.yaml
@@ -329,12 +361,15 @@ find applications/arr-stack -name "kustomization.yaml"
 ---
 
 ### Issue: "Port already in use"
+
 **Symptom:**
+
 ```
 Error: bind :9090: address already in use
 ```
 
 **Solution:**
+
 ```bash
 # Find process using the port
 lsof -i :9090
@@ -345,12 +380,15 @@ lsof -i :9090
 ---
 
 ### Issue: "Flux suspension failed"
+
 **Symptom:**
+
 ```
 Error: failed to suspend flux-system
 ```
 
 **Solution:**
+
 ```bash
 # Check Flux status
 flux get kustomizations
@@ -397,47 +435,52 @@ tilt down
 
 ## 📊 Resource Overview
 
-### Resources Tilt Will Attach To (Existing):
-| Resource | Namespace | Type | Port Forward | Flux-Managed |
-|----------|-----------|------|--------------|--------------|
-| prometheus | monitoring | StatefulSet | 9090 | ✅ HelmRelease |
-| grafana | monitoring | Deployment | 3000 | ✅ HelmRelease |
-| alertmanager | monitoring | StatefulSet | 9093 | ✅ HelmRelease |
-| graylog | observability | StatefulSet | 9000 | ✅ HelmRelease |
-| opensearch | observability | StatefulSet | 9200 | ✅ HelmRelease |
-| fluent-bit | observability | DaemonSet | - | ✅ HelmRelease |
-| traefik | traefik | DaemonSet | 8000, 8888 | ✅ Kustomize |
-| argocd-server | argocd | Deployment | 8443 | ✅ Kustomize |
-| docker-registry | registry | Deployment | 5000 | ✅ Kustomize |
+### Resources Tilt Will Attach To (Existing)
 
-### Resources Tilt Will Deploy (New):
-| Resource | Namespace | Type | Port Forward | Source |
-|----------|-----------|------|--------------|--------|
-| sonarr | media-dev | Deployment | 8989 | overlays/dev |
-| radarr | media-dev | Deployment | 7878 | overlays/dev |
-| prowlarr | media-dev | Deployment | 9696 | overlays/dev |
-| overseerr | media-dev | Deployment | 5055 | overlays/dev |
-| plex | media-dev | Deployment | 32400 | overlays/dev |
-| jellyfin | media-dev | Deployment | 8096 | overlays/dev |
-| tdarr | media-dev | Deployment | 8265, 8266 | overlays/dev |
-| homepage | media-dev | Deployment | 3000 | overlays/dev |
-| postgresql | media-dev | StatefulSet | - | overlays/dev |
+| Resource        | Namespace     | Type        | Port Forward | Flux-Managed   |
+| --------------- | ------------- | ----------- | ------------ | -------------- |
+| Prometheus      | monitoring    | StatefulSet | 9090         | ✅ HelmRelease |
+| Grafana         | monitoring    | Deployment  | 3000         | ✅ HelmRelease |
+| alertmanager    | monitoring    | StatefulSet | 9093         | ✅ HelmRelease |
+| graylog         | observability | StatefulSet | 9000         | ✅ HelmRelease |
+| opensearch      | observability | StatefulSet | 9200         | ✅ HelmRelease |
+| fluent-bit      | observability | DaemonSet   | -            | ✅ HelmRelease |
+| traefik         | traefik       | DaemonSet   | 8000, 8888   | ✅ Kustomize   |
+| ArgoCD-server   | ArgoCD        | Deployment  | 8443         | ✅ Kustomize   |
+| Docker-registry | registry      | Deployment  | 5000         | ✅ Kustomize   |
+
+### Resources Tilt Will Deploy (New)
+
+| Resource   | Namespace | Type        | Port Forward | Source       |
+| ---------- | --------- | ----------- | ------------ | ------------ |
+| sonarr     | media-dev | Deployment  | 8989         | overlays/dev |
+| radarr     | media-dev | Deployment  | 7878         | overlays/dev |
+| prowlarr   | media-dev | Deployment  | 9696         | overlays/dev |
+| overseerr  | media-dev | Deployment  | 5055         | overlays/dev |
+| plex       | media-dev | Deployment  | 32400        | overlays/dev |
+| jellyfin   | media-dev | Deployment  | 8096         | overlays/dev |
+| tdarr      | media-dev | Deployment  | 8265, 8266   | overlays/dev |
+| homepage   | media-dev | Deployment  | 3000         | overlays/dev |
+| postgresql | media-dev | StatefulSet | -            | overlays/dev |
 
 ---
 
 ## 🔄 Tilt + Flux Coexistence Strategy
 
 ### Production (media-prod)
+
 - ✅ Managed by Flux
 - ✅ Auto-reconciles from Git
 - ✅ No Tilt interference
 
 ### Development (media-dev)
+
 - ✅ Managed by Tilt
 - ✅ Live reload from local changes
 - ✅ Separate namespace = no conflicts
 
 ### Infrastructure (monitoring, observability, etc.)
+
 - ✅ Managed by Flux
 - ✅ Tilt attaches for monitoring only
 - ✅ Port-forwards for local access
@@ -461,6 +504,7 @@ After successful first startup:
 ## 🎓 Learning Resources
 
 **Tilt Concepts:**
+
 - **k8s_resource:** Attach to existing Kubernetes resources
 - **k8s_yaml:** Apply YAML to cluster
 - **watch_file:** Hot-reload when files change
@@ -468,6 +512,7 @@ After successful first startup:
 - **port_forwards:** Automatic port forwarding
 
 **Tilt UI Navigation:**
+
 - Labels: Click to filter by label (monitoring, automation, etc.)
 - Resources: Click to see logs and details
 - Triggers: Manual buttons (force reconcile, deploy, etc.)
@@ -478,12 +523,14 @@ After successful first startup:
 ## ✅ READY TO START
 
 **Summary:**
+
 - ⚠️ Fix context references (one sed command)
 - ✅ Flux is healthy
 - ✅ Cluster is ready
 - ✅ Tilt setup is well-architected
 
 **First Command:**
+
 ```bash
 # After fixing context references
 tilt up --stream

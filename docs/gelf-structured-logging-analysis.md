@@ -9,12 +9,14 @@
 ## Executive Summary
 
 **Current State:**
+
 - Graylog operational with GELF TCP input on port 12201
 - Multiple log sources sending data with format inconsistencies
 - Timestamp parsing errors causing indexing failures
 - GELF format warnings from string timestamps instead of numeric
 
 **Target State:**
+
 - All log sources using proper GELF format
 - Numeric Unix timestamps (epoch milliseconds)
 - Structured fields for filtering and dashboards
@@ -27,30 +29,30 @@
 
 ### Currently Active Sources (22 Total)
 
-| # | Source | Type | Status | Issues Found | Priority |
-|---|--------|------|--------|--------------|----------|
-| 1 | Fluent Bit | DaemonSet | ✅ Running | Timestamp format, connection failures | **CRITICAL** |
-| 2 | Graylog | StatefulSet | ⚠️ CrashLoop | Timestamp warnings, indexing errors | **CRITICAL** |
-| 3 | Traefik | DaemonSet | ✅ Running | None - excellent format | HIGH |
-| 4 | ArgoCD | Deployment | ✅ Running | None | MEDIUM |
-| 5 | Flux | Deployment | ✅ Running | None - perfect JSON | MEDIUM |
-| 6 | Grafana | Deployment | ✅ Running | Missing dashboard directory | LOW |
-| 7 | OpenSearch | StatefulSet | ✅ Running | None | MEDIUM |
-| 8 | Sonarr | Deployment | ✅ Running | No indexers configured | MEDIUM |
-| 9 | Alertmanager | StatefulSet | ✅ Running | Permission denied errors | LOW |
-| 10 | Radarr | Deployment | ✅ Running | No indexers configured | MEDIUM |
-| 11 | Prowlarr | Deployment | ✅ Running | None | MEDIUM |
-| 12 | Plex | Deployment | ✅ Running | libusb_init failed | LOW |
-| 13 | Jellyfin | Deployment | ✅ Running | Playlist folder missing | MEDIUM |
-| 14 | Tdarr | Deployment | ✅ Running | None | LOW |
-| 15 | Overseerr | Deployment | ✅ Running | No Plex admin configured | MEDIUM |
-| 16 | Homepage | Deployment | ✅ Running | None | LOW |
-| 17 | PostgreSQL | StatefulSet | ✅ Running | None | LOW |
-| 18 | MongoDB | StatefulSet | ✅ Running | None | LOW |
-| 19 | Prometheus | StatefulSet | ❌ **BROKEN** | **WAL segment file missing** | **CRITICAL** |
-| 20 | External Secrets | Deployment | ⚠️ Errors | Missing 1Password keys | HIGH |
-| 21 | Headlamp | Deployment | ✅ Running | None | LOW |
-| 22 | Goldilocks | Deployment | ⚠️ Errors | VPA workload matching failures | MEDIUM |
+| #   | Source           | Type        | Status        | Issues Found                          | Priority     |
+| --- | ---------------- | ----------- | ------------- | ------------------------------------- | ------------ |
+| 1   | Fluent Bit       | DaemonSet   | ✅ Running    | Timestamp format, connection failures | **CRITICAL** |
+| 2   | Graylog          | StatefulSet | ⚠️ CrashLoop  | Timestamp warnings, indexing errors   | **CRITICAL** |
+| 3   | Traefik          | DaemonSet   | ✅ Running    | None - excellent format               | HIGH         |
+| 4   | ArgoCD           | Deployment  | ✅ Running    | None                                  | MEDIUM       |
+| 5   | Flux             | Deployment  | ✅ Running    | None - perfect JSON                   | MEDIUM       |
+| 6   | Grafana          | Deployment  | ✅ Running    | Missing dashboard directory           | LOW          |
+| 7   | OpenSearch       | StatefulSet | ✅ Running    | None                                  | MEDIUM       |
+| 8   | Sonarr           | Deployment  | ✅ Running    | No indexers configured                | MEDIUM       |
+| 9   | Alertmanager     | StatefulSet | ✅ Running    | Permission denied errors              | LOW          |
+| 10  | Radarr           | Deployment  | ✅ Running    | No indexers configured                | MEDIUM       |
+| 11  | Prowlarr         | Deployment  | ✅ Running    | None                                  | MEDIUM       |
+| 12  | Plex             | Deployment  | ✅ Running    | libusb_init failed                    | LOW          |
+| 13  | Jellyfin         | Deployment  | ✅ Running    | Playlist folder missing               | MEDIUM       |
+| 14  | Tdarr            | Deployment  | ✅ Running    | None                                  | LOW          |
+| 15  | Overseerr        | Deployment  | ✅ Running    | No Plex admin configured              | MEDIUM       |
+| 16  | Homepage         | Deployment  | ✅ Running    | None                                  | LOW          |
+| 17  | PostgreSQL       | StatefulSet | ✅ Running    | None                                  | LOW          |
+| 18  | MongoDB          | StatefulSet | ✅ Running    | None                                  | LOW          |
+| 19  | Prometheus       | StatefulSet | ❌ **BROKEN** | **WAL segment file missing**          | **CRITICAL** |
+| 20  | External Secrets | Deployment  | ⚠️ Errors     | Missing 1Password keys                | HIGH         |
+| 21  | Headlamp         | Deployment  | ✅ Running    | None                                  | LOW          |
+| 22  | Goldilocks       | Deployment  | ⚠️ Errors     | VPA workload matching failures        | MEDIUM       |
 
 ### Analysis Status
 
@@ -79,6 +81,7 @@
 ```
 
 **Analysis:**
+
 - Fluent Bit unable to connect when Graylog crashes
 - Chunks being dropped due to retry limits
 - Connection target: `graylog-web.observability.svc.cluster.local:12201`
@@ -95,6 +98,7 @@
 ```
 
 **Analysis:**
+
 - **CRITICAL**: Timestamp arriving as ISO8601 string (`2025-11-25T19:54:57.49464557Z`)
 - GELF spec requires numeric Unix timestamp
 - Graylog accepts messages but logs warnings
@@ -112,6 +116,7 @@
 ```
 
 **Fields Present:**
+
 - `192.168.1.85` - Client IP
 - `[25/Nov/2025:19:58:27 +0000]` - Timestamp
 - `"GET /api/streams HTTP/1.1"` - Request method, path, protocol
@@ -123,12 +128,13 @@
 - `1050ms` - Response time
 
 **Analysis:**
+
 - Structured format, excellent for parsing
 - Contains all key HTTP metrics for dashboards
 - Need regex parser to extract fields
 - **Priority:** HIGH - Critical for infrastructure monitoring
 
-### 4. ArgoCD (GitOps Controller) - argocd namespace
+### 4. ArgoCD (GitOps Controller) - ArgoCD namespace
 
 **Pod:** `argocd-server-c4d9755f7-8k7k5`
 **Format:** Logrus structured logging (key=value pairs)
@@ -140,11 +146,13 @@ time="2025-11-25T19:52:54Z" level=info msg="Alloc=13814 TotalAlloc=520870 Sys=43
 ```
 
 **Fields Present:**
+
 - `time` - ISO8601 timestamp
 - `level` - Log level (info, warn, error)
 - `msg` - Message text
 
 **Analysis:**
+
 - Already structured (key=value format)
 - Easy to parse with regex
 - Log level clearly identified
@@ -156,10 +164,22 @@ time="2025-11-25T19:52:54Z" level=info msg="Alloc=13814 TotalAlloc=520870 Sys=43
 **Format:** Structured JSON
 
 ```json
-{"level":"info","ts":"2025-11-25T19:54:27.364Z","msg":"no changes since last reconcilation: observed revision 'main@sha1:dd0b6b71c12fcccfdec07cb15f7c410b4aa6750c'","controller":"gitrepository","controllerGroup":"source.toolkit.fluxcd.io","controllerKind":"GitRepository","GitRepository":{"name":"flux-system","namespace":"flux-system"},"namespace":"flux-system","name":"flux-system","reconcileID":"4880255a-4f54-41af-9bdd-da2a8fe64a02"}
+{
+  "level": "info",
+  "ts": "2025-11-25T19:54:27.364Z",
+  "msg": "no changes since last reconcilation: observed revision 'main@sha1:dd0b6b71c12fcccfdec07cb15f7c410b4aa6750c'",
+  "controller": "gitrepository",
+  "controllerGroup": "source.toolkit.fluxcd.io",
+  "controllerKind": "GitRepository",
+  "GitRepository": { "name": "flux-system", "namespace": "flux-system" },
+  "namespace": "flux-system",
+  "name": "flux-system",
+  "reconcileID": "4880255a-4f54-41af-9bdd-da2a8fe64a02"
+}
 ```
 
 **Fields Present:**
+
 - `level` - Log level
 - `ts` - ISO8601 timestamp
 - `msg` - Message
@@ -169,6 +189,7 @@ time="2025-11-25T19:52:54Z" level=info msg="Alloc=13814 TotalAlloc=520870 Sys=43
 - `reconcileID` - Unique reconciliation ID
 
 **Analysis:**
+
 - **EXCELLENT**: Already JSON structured
 - Fluent Bit can parse with `Merge_Log On`
 - Rich metadata for filtering
@@ -186,6 +207,7 @@ logger=context userId=0 orgId=0 uname= t=2025-11-25T19:58:30.38046043Z level=inf
 ```
 
 **Fields Present:**
+
 - `logger` - Logger name (context, provisioning.dashboard)
 - `type`, `name` - Dashboard provisioner details
 - `t` - ISO8601 timestamp with nanoseconds
@@ -195,6 +217,7 @@ logger=context userId=0 orgId=0 uname= t=2025-11-25T19:58:30.38046043Z level=inf
 - HTTP request fields: `method`, `path`, `status`, `remote_addr`, `time_ms`, `duration`, `size`
 
 **Analysis:**
+
 - Mix of structured and semi-structured
 - HTTP access logs are excellent for dashboards
 - Error logs about missing dashboard directory (needs fix)
@@ -213,6 +236,7 @@ logger=context userId=0 orgId=0 uname= t=2025-11-25T19:58:30.38046043Z level=inf
 ```
 
 **Fields Present:**
+
 - `[2025-11-25T19:46:02,816]` - Timestamp with milliseconds
 - `[INFO]` - Log level
 - `[o.o.j.s.JobSweeper]` - Logger class (abbreviated)
@@ -220,6 +244,7 @@ logger=context userId=0 orgId=0 uname= t=2025-11-25T19:58:30.38046043Z level=inf
 - Message text
 
 **Analysis:**
+
 - Java logging format
 - Structured with clear delimiters
 - Relatively low volume (housekeeping messages)
@@ -240,11 +265,13 @@ logger=context userId=0 orgId=0 uname= t=2025-11-25T19:58:30.38046043Z level=inf
 ```
 
 **Fields Present:**
+
 - `[Info]`, `[Warn]` - Log level
 - Class/Service name: `DownloadDecisionMaker`, `RssSyncService`, `FetchAndParseRssService`
 - Message text with structured data (Reports found: X, Reports grabbed: Y)
 
 **Analysis:**
+
 - Simple structured format
 - Log level easy to extract
 - Contains application-specific metrics
@@ -263,6 +290,7 @@ ts=2025-11-25T18:51:03.260Z caller=nflog.go:352 level=error component=nflog msg=
 ```
 
 **Fields Present:**
+
 - `ts` - ISO8601 timestamp
 - `caller` - Source file and line
 - `level` - Log level
@@ -271,6 +299,7 @@ ts=2025-11-25T18:51:03.260Z caller=nflog.go:352 level=error component=nflog msg=
 - `err` - Error details
 
 **Analysis:**
+
 - Well-structured key=value format
 - **Issue Found:** Permission denied errors (persistent)
 - Storage permissions problem (needs investigation)
@@ -292,7 +321,8 @@ ts=2025-11-25T18:51:03.260Z caller=nflog.go:352 level=error component=nflog msg=
 ```
 
 **Analysis:**
-- Identical format to Sonarr (same *arr application family)
+
+- Identical format to Sonarr (same \*arr application family)
 - Same indexer configuration warning
 - **Priority:** MEDIUM
 
@@ -316,6 +346,7 @@ ts=2025-11-25T18:51:03.260Z caller=nflog.go:352 level=error component=nflog msg=
 ```
 
 **Analysis:**
+
 - ASP.NET Core application with .NET logging
 - More detailed startup logs than Sonarr/Radarr
 - Component/class names in logs (FluentMigrator, Microsoft.Hosting)
@@ -345,6 +376,7 @@ Critical: libusb_init failed
 ```
 
 **Analysis:**
+
 - Showing Sentry crash reporter help output (unusual)
 - **Error:** `libusb_init failed` - USB library initialization failure
 - Not actual application logs, stderr output
@@ -365,6 +397,7 @@ Critical: libusb_init failed
 ```
 
 **Fields Present:**
+
 - `[08:14:23]` - Timestamp (HH:MM:SS)
 - `[WRN]`/`[INF]` - Log level
 - `[3]` - Thread ID
@@ -372,6 +405,7 @@ Critical: libusb_init failed
 - Message with task timing
 
 **Analysis:**
+
 - Excellent structured format
 - **Warning:** Playlist folder inaccessible (persistent)
 - **Warning:** Query without OrderBy operator
@@ -393,6 +427,7 @@ Critical: libusb_init failed
 ```
 
 **Fields Present:**
+
 - `[32m` - ANSI color code (green)
 - `[2025-11-25T10:21:04.554]` - ISO8601 timestamp with milliseconds
 - `[INFO]` - Log level
@@ -400,6 +435,7 @@ Critical: libusb_init failed
 - Message text
 
 **Analysis:**
+
 - Dual-role container (Server + Node in same pod)
 - ANSI color codes present (terminal output captured)
 - Clean INFO-only logs, no errors
@@ -419,12 +455,14 @@ Critical: libusb_init failed
 ```
 
 **Fields Present:**
+
 - ISO8601 timestamp with milliseconds
 - ANSI color-coded log levels (`[32minfo[39m`, `[33mwarn[39m`, `[34mdebug[39m`)
 - Component in brackets (`[Jobs]`, `[Plex Scan]`)
 - Structured data (JSON sessionId)
 
 **Analysis:**
+
 - **Warning:** No Plex admin configured (scan skipped)
 - Node.js Winston logger
 - ANSI colors for terminal output
@@ -447,6 +485,7 @@ Critical: libusb_init failed
 ```
 
 **Analysis:**
+
 - Minimal logging (startup only)
 - Next.js 15.5.2 application
 - Ready in 8.7 seconds
@@ -465,12 +504,14 @@ Critical: libusb_init failed
 ```
 
 **Fields Present:**
+
 - `2025-11-25 19:19:16.514 UTC` - Timestamp with milliseconds
 - `[56]` - Process ID
 - `LOG` - Log level
 - Detailed checkpoint metrics
 
 **Analysis:**
+
 - Standard PostgreSQL format
 - Regular checkpoint operations (every 5 minutes)
 - No errors detected
@@ -488,6 +529,7 @@ Critical: libusb_init failed
 ```
 
 **Fields Present:**
+
 - `t.$date` - ISO8601 timestamp
 - `s` - Severity (I=Info)
 - `c` - Component (NETWORK, ACCESS, WTCHKPT)
@@ -497,6 +539,7 @@ Critical: libusb_init failed
 - `attr` - Attributes (structured)
 
 **Analysis:**
+
 - **EXCELLENT:** Modern MongoDB JSON logging
 - No authentication configured (expected for internal)
 - Health check connections from mongosh
@@ -513,6 +556,7 @@ ts=2025-11-25T20:07:51.458Z caller=scrape.go:1357 level=error component="scrape 
 ```
 
 **Analysis:**
+
 - **CRITICAL ISSUE:** WAL (Write-Ahead Log) segment file missing
 - Cannot write metrics samples
 - Affects rule manager AND scrape manager
@@ -531,6 +575,7 @@ ts=2025-11-25T20:07:51.458Z caller=scrape.go:1357 level=error component="scrape 
 ```
 
 **Analysis:**
+
 - **Issue:** 1Password Connect connection refused
 - **Issue:** Missing key `flux-discord-webhook` in vault
 - Eventually reconciles successfully
@@ -547,6 +592,7 @@ ts=2025-11-25T20:07:51.458Z caller=scrape.go:1357 level=error component="scrape 
 ```
 
 **Analysis:**
+
 - Clean request logging with duration metrics
 - Response times: 2-348ms
 - **Priority:** LOW
@@ -562,6 +608,7 @@ E1124 05:33:43.458766       1 templates.go:114] Error writing template: write tc
 ```
 
 **Analysis:**
+
 - **Issue:** VPA workload matching failures
 - **Issue:** Network disconnections (broken pipe)
 - Cannot generate recommendations
@@ -574,6 +621,7 @@ E1124 05:33:43.458766       1 templates.go:114] Error writing template: write tc
 ### Issue 1: OpenSearch Timestamp Parsing Errors
 
 **Error:**
+
 ```
 ERROR [ChunkedBulkIndexer] - Failed to index [1] messages
 mapper_parsing_exception: failed to parse field [ts] of type [date]
@@ -581,16 +629,19 @@ Preview of field's value: '1.764099672486776E9'
 ```
 
 **Root Cause:**
+
 - Timestamps sent in scientific notation (`1.764E9`)
 - OpenSearch expects epoch milliseconds as integer
 - Likely coming from Fluent Bit transformation
 
 **Impact:**
+
 - Some messages fail to index
 - Data loss for affected logs
 - Gaps in log timeline
 
 **Solution:**
+
 - Update Fluent Bit timestamp format
 - Ensure numeric epoch milliseconds (not scientific notation)
 - Add field type validation
@@ -598,21 +649,25 @@ Preview of field's value: '1.764099672486776E9'
 ### Issue 2: GELF Invalid Timestamp Format
 
 **Warning:**
+
 ```
 WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.493771618Z (type: STRING)
 ```
 
 **Root Cause:**
+
 - GELF spec requires numeric Unix timestamp (seconds or milliseconds)
 - Logs arriving with ISO8601 string format
 - Graylog accepts but logs warnings
 
 **Impact:**
+
 - Warning noise in Graylog logs
 - Potential performance overhead from parsing
 - Inconsistent timestamp handling
 
 **Solution:**
+
 - Convert ISO8601 to Unix epoch in Fluent Bit
 - Use numeric timestamp field
 - Remove string timestamp field
@@ -628,10 +683,12 @@ WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.4
 **Sample Messages:** TBD - Need to capture
 
 **Identified Issues:**
+
 - Timestamp in scientific notation
 - String timestamps in ISO8601 format
 
 **Required Transformations:**
+
 - [ ] Convert timestamps to numeric epoch milliseconds
 - [ ] Add Kubernetes metadata (namespace, pod, container)
 - [ ] Add log level field
@@ -639,6 +696,7 @@ WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.4
 - [ ] Add source tagging
 
 **Target GELF Format:**
+
 ```json
 {
   "version": "1.1",
@@ -662,6 +720,7 @@ WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.4
 **Sample Messages:** TBD
 
 **Expected Fields:**
+
 - Request method, path, status
 - Response time, size
 - Client IP, user agent
@@ -669,11 +728,13 @@ WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.4
 - TLS version
 
 **Required Transformations:**
+
 - [ ] Parse access logs
 - [ ] Extract structured fields
 - [ ] Add request/response metadata
 
 **Target GELF Format:**
+
 ```json
 {
   "short_message": "GET /api/health 200",
@@ -696,12 +757,14 @@ WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.4
 **Sample Messages:** TBD
 
 **Expected Fields:**
+
 - Application name
 - Sync status
 - Repo URL, branch
 - Kubernetes resource details
 
 **Required Transformations:**
+
 - [ ] Parse structured JSON logs
 - [ ] Extract ArgoCD-specific metadata
 - [ ] Add sync status fields
@@ -709,6 +772,7 @@ WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.4
 ### 4. Arr-Stack Applications
 
 **Components:**
+
 - Sonarr, Radarr, Prowlarr (same logging format)
 - Plex, Jellyfin, Tdarr
 
@@ -717,12 +781,14 @@ WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.4
 **Sample Messages:** TBD
 
 **Expected Fields:**
+
 - Application name
 - Log level
 - Event type (download, import, etc.)
 - Media metadata (title, quality)
 
 **Required Transformations:**
+
 - [ ] Parse application-specific formats
 - [ ] Extract media metadata
 - [ ] Normalize log levels
@@ -732,6 +798,7 @@ WARN [GelfDecoder] - GELF message has invalid "timestamp": 2025-11-25T19:40:47.4
 ## Fluent Bit Configuration Strategy
 
 ### Current State
+
 ```bash
 # Need to inspect current Fluent Bit setup
 kubectl get configmap -n observability
@@ -742,6 +809,7 @@ kubectl get daemonset -n observability
 
 **Input:** Tail Kubernetes logs
 **Filters:**
+
 1. Kubernetes metadata enrichment
 2. JSON parsing (for structured app logs)
 3. Timestamp normalization
@@ -751,6 +819,7 @@ kubectl get daemonset -n observability
 **Output:** GELF TCP to Graylog
 
 **Example Configuration:**
+
 ```ini
 [INPUT]
     Name              tail
@@ -798,6 +867,7 @@ kubectl get daemonset -n observability
 ```
 
 **Lua Script for Transformations:**
+
 ```lua
 function transform_to_gelf(tag, timestamp, record)
     -- Convert timestamp to numeric seconds.microseconds
@@ -842,6 +912,7 @@ end
 ### 1. Infrastructure Overview Dashboard
 
 **Panels:**
+
 - Log rate by namespace (line chart)
 - Log level distribution (pie chart)
 - Top 10 error-generating pods (bar chart)
@@ -849,6 +920,7 @@ end
 - Log volume by application (stacked area)
 
 **Filters:**
+
 - Namespace selector
 - Time range
 - Log level
@@ -857,6 +929,7 @@ end
 ### 2. Traefik Access Dashboard
 
 **Panels:**
+
 - Request rate (line chart)
 - Status code distribution (pie chart)
 - Response time percentiles (line chart)
@@ -865,6 +938,7 @@ end
 - Error rate by backend (bar chart)
 
 **Filters:**
+
 - Backend service
 - HTTP status code
 - Client IP
@@ -873,6 +947,7 @@ end
 ### 3. Application-Specific Dashboards
 
 **Per Application:**
+
 - Error rate trend
 - Log level distribution
 - Recent errors with context
@@ -886,6 +961,7 @@ end
 ### Phase 1: Audit & Analysis (CURRENT)
 
 **Tasks:**
+
 - [x] Create tracking document
 - [ ] Inventory all log sources
 - [ ] Collect sample logs from each source
@@ -893,6 +969,7 @@ end
 - [ ] Document current Fluent Bit configuration
 
 **Deliverables:**
+
 - Complete log source inventory
 - Sample log collection
 - Format issue documentation
@@ -900,6 +977,7 @@ end
 ### Phase 2: Fluent Bit Configuration
 
 **Tasks:**
+
 - [ ] Design transformation rules
 - [ ] Write Lua scripts for complex transformations
 - [ ] Update Fluent Bit ConfigMap
@@ -907,6 +985,7 @@ end
 - [ ] Verify zero indexing errors
 
 **Deliverables:**
+
 - Updated Fluent Bit configuration
 - Transformation scripts
 - Test results
@@ -914,6 +993,7 @@ end
 ### Phase 3: Dashboard Creation
 
 **Tasks:**
+
 - [ ] Create Infrastructure Overview dashboard
 - [ ] Create Traefik Access dashboard
 - [ ] Create Application-specific dashboards
@@ -921,6 +1001,7 @@ end
 - [ ] Add dashboards to infrastructure repo
 
 **Deliverables:**
+
 - Dashboard JSON files
 - Dashboard documentation
 - Screenshot gallery
@@ -928,6 +1009,7 @@ end
 ### Phase 4: Validation & Optimization
 
 **Tasks:**
+
 - [ ] Verify all logs indexing correctly
 - [ ] Performance testing (log throughput)
 - [ ] Dashboard usability testing
@@ -935,6 +1017,7 @@ end
 - [ ] Document best practices
 
 **Deliverables:**
+
 - Validation report
 - Performance metrics
 - Best practices documentation
@@ -956,22 +1039,22 @@ end
 
 ### Required Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `version` | string | GELF spec version (1.1) |
-| `host` | string | Originating host/pod |
-| `short_message` | string | Short message (required) |
-| `timestamp` | number | Unix timestamp (seconds.microseconds) |
+| Field           | Type   | Description                           |
+| --------------- | ------ | ------------------------------------- |
+| `version`       | string | GELF spec version (1.1)               |
+| `host`          | string | Originating host/pod                  |
+| `short_message` | string | Short message (required)              |
+| `timestamp`     | number | Unix timestamp (seconds.microseconds) |
 
 ### Optional Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
+| Field          | Type   | Description                 |
+| -------------- | ------ | --------------------------- |
 | `full_message` | string | Full message with backtrace |
-| `level` | number | Syslog severity (0-7) |
-| `facility` | string | Facility name |
-| `line` | number | Line number |
-| `file` | string | Source file |
+| `level`        | number | Syslog severity (0-7)       |
+| `facility`     | string | Facility name               |
+| `line`         | number | Line number                 |
+| `file`         | string | Source file                 |
 
 ### Custom Fields
 
@@ -981,16 +1064,16 @@ end
 
 ### Syslog Severity Levels
 
-| Level | Name | Description |
-|-------|------|-------------|
-| 0 | Emergency | System unusable |
-| 1 | Alert | Action must be taken immediately |
-| 2 | Critical | Critical conditions |
-| 3 | Error | Error conditions |
-| 4 | Warning | Warning conditions |
-| 5 | Notice | Normal but significant |
-| 6 | Informational | Informational messages |
-| 7 | Debug | Debug-level messages |
+| Level | Name          | Description                      |
+| ----- | ------------- | -------------------------------- |
+| 0     | Emergency     | System unusable                  |
+| 1     | Alert         | Action must be taken immediately |
+| 2     | Critical      | Critical conditions              |
+| 3     | Error         | Error conditions                 |
+| 4     | Warning       | Warning conditions               |
+| 5     | Notice        | Normal but significant           |
+| 6     | Informational | Informational messages           |
+| 7     | Debug         | Debug-level messages             |
 
 ---
 

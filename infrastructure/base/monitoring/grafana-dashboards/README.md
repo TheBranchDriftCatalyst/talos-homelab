@@ -2,7 +2,7 @@
 
 ## Auto-Import Script
 
-### Option 1: Direct access (requires /etc/hosts entry for grafana.talos00)
+### Option 1: Direct access (requires /etc/hosts entry for Grafana.talos00)
 
 ```bash
 ./scripts/import-grafana-dashboards.sh
