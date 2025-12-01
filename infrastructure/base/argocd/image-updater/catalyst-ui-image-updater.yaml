@@ -7,17 +7,17 @@ metadata:
 spec:
   # Namespace where ArgoCD applications are located
   namespace: argocd
-  # Application selection
+  # Application selection and image configuration
   applicationRefs:
-    - name: catalyst-ui
-  # Images to manage
-  images:
-    - name: catalyst-ui
-      image: ghcr.io/thebranchdriftcatalyst/catalyst-ui
-      updateStrategy:
-        type: latest
-      allowTags:
-        matchRegex: ^(latest|main|[a-f0-9]{7,40})$
-  # Write-back method: update ArgoCD Application directly
-  writeBack:
-    method: argocd
+    - namePattern: catalyst-ui
+      images:
+        - alias: catalyst-ui
+          imageName: ghcr.io/thebranchdriftcatalyst/catalyst-ui:latest
+          commonUpdateSettings:
+            updateStrategy: latest
+            allowTags: "^(latest|main|[a-f0-9]{7,40})$"
+          manifestTargets:
+            kustomize:
+              name: catalyst-ui
+      writeBackConfig:
+        method: argocd
