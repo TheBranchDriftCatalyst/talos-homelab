@@ -63,6 +63,7 @@ This repository maintains comprehensive documentation organized in multiple loca
 | `docs/DUAL-GITOPS-ARCHITECTURE.md`  | Additional GitOps architecture documentation and diagrams                                            |
 | `docs/ENHANCEMENT-ROADMAP.md`       | **Enhancement Roadmap** - MCP server and Tilt extension integration planning (2-stream project)      |
 | `docs/FLUX-MIGRATION-ASSESSMENT.md` | FluxCD migration assessment - Comparison with ArgoCD, pros/cons                                      |
+| `docs/GRAFANA-DASHBOARDS.md`        | **REFERENCE** - Grafana dashboard index - All dashboards, ServiceMonitors, troubleshooting           |
 | `docs/infra-testing-tools.md`       | Infrastructure testing UI tools - Headlamp, Kubeview, Kube-ops-view, Goldilocks deployment and usage |
 | `docs/kubernetes-ui-tools.md`       | Comprehensive guide to Kubernetes UI tools - Comparison and evaluation of available options          |
 | `docs/LOCAL-TESTING.md`             | Local testing guide - Testing infrastructure changes before deployment                               |
