@@ -1,6 +1,6 @@
 # Infrastructure Testing UI Tools
 
-This directory contains Kubernetes manifests for deploying UI and visualization tools to the `infra-testing` namespace.
+This directory contains Kubernetes manifests for deploying UI and visualization tools to the `infra-control` namespace.
 
 ## Tools Included
 
@@ -13,10 +13,10 @@ This directory contains Kubernetes manifests for deploying UI and visualization 
 
 ```bash
 # Deploy all tools
-task infra:deploy-infra-testing
+task infra:deploy-infra-control
 
 # Or manually
-kubectl apply -k infrastructure/base/infra-testing/
+kubectl apply -k infrastructure/base/infra-control/
 ```
 
 ## Access
@@ -38,18 +38,18 @@ All tools are accessible via Traefik IngressRoutes:
 
 ```bash
 # Check status
-task infra:infra-testing-status
+task infra:infra-control-status
 
 # View logs
-task infra:infra-testing-logs TOOL=headlamp
+task infra:infra-control-logs TOOL=headlamp
 
 # Delete all
-task infra:infra-testing-delete
+task infra:infra-control-delete
 ```
 
 ## Documentation
 
-See [docs/infra-testing-tools.md](/docs/infra-testing-tools.md) for:
+See [docs/infra-control-tools.md](/docs/infra-control-tools.md) for:
 
 - Detailed usage instructions
 - Feature descriptions
@@ -59,7 +59,7 @@ See [docs/infra-testing-tools.md](/docs/infra-testing-tools.md) for:
 ## Directory Structure
 
 ```
-infra-testing/
+infra-control/
 ├── namespace/           # Namespace definition
 ├── headlamp/           # Modern K8s UI
 ├── kubeview/           # Resource visualizer
