@@ -112,7 +112,100 @@ spec:
 
     # Notifications Controller
     notifications:
-      enabled: false # Disable for now, can enable later
+      enabled: true
+
+      # Use secret created by ExternalSecret
+      secret:
+        create: false
+        name: argocd-notifications-secret
+
+      # Notification services configuration
+      notifiers:
+        service.webhook.discord: |
+          url: $discord-webhook-url
+          headers:
+            - name: Content-Type
+              value: application/json
+
+      # Subscription for all applications - on-sync-succeeded and on-sync-failed
+      subscriptions:
+        - recipients:
+            - discord
+          triggers:
+            - on-sync-succeeded
+            - on-sync-failed
+            - on-health-degraded
+
+      # Notification templates
+      templates:
+        template.app-sync-succeeded: |
+          webhook:
+            discord:
+              method: POST
+              body: |
+                {
+                  "username": "ArgoCD",
+                  "embeds": [{
+                    "title": "✅ {{.app.metadata.name}} synced successfully",
+                    "description": "Application **{{.app.metadata.name}}** has been synced successfully.",
+                    "color": 3066993,
+                    "fields": [
+                      {"name": "Project", "value": "{{.app.spec.project}}", "inline": true},
+                      {"name": "Revision", "value": "{{.app.status.sync.revision | trunc 7}}", "inline": true},
+                      {"name": "Destination", "value": "{{.app.spec.destination.server}}", "inline": true}
+                    ],
+                    "timestamp": "{{.app.status.operationState.finishedAt}}"
+                  }]
+                }
+
+        template.app-sync-failed: |
+          webhook:
+            discord:
+              method: POST
+              body: |
+                {
+                  "username": "ArgoCD",
+                  "embeds": [{
+                    "title": "❌ {{.app.metadata.name}} sync failed",
+                    "description": "Application **{{.app.metadata.name}}** sync has failed!\n\n{{.app.status.operationState.message}}",
+                    "color": 15158332,
+                    "fields": [
+                      {"name": "Project", "value": "{{.app.spec.project}}", "inline": true},
+                      {"name": "Revision", "value": "{{.app.status.sync.revision | trunc 7}}", "inline": true}
+                    ],
+                    "timestamp": "{{.app.status.operationState.finishedAt}}"
+                  }]
+                }
+
+        template.app-health-degraded: |
+          webhook:
+            discord:
+              method: POST
+              body: |
+                {
+                  "username": "ArgoCD",
+                  "embeds": [{
+                    "title": "⚠️ {{.app.metadata.name}} health degraded",
+                    "description": "Application **{{.app.metadata.name}}** health status is **{{.app.status.health.status}}**",
+                    "color": 15105570,
+                    "fields": [
+                      {"name": "Project", "value": "{{.app.spec.project}}", "inline": true},
+                      {"name": "Health Status", "value": "{{.app.status.health.status}}", "inline": true}
+                    ]
+                  }]
+                }
+
+      # Triggers
+      triggers:
+        trigger.on-sync-succeeded: |
+          - when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+            send: [app-sync-succeeded]
+        trigger.on-sync-failed: |
+          - when: app.status.operationState.phase in ['Error', 'Failed']
+            send: [app-sync-failed]
+        trigger.on-health-degraded: |
+          - when: app.status.health.status == 'Degraded'
+            send: [app-health-degraded]
 
     # Dex (SSO) - disabled for homelab
     dex:
