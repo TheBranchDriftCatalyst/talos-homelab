@@ -1,0 +1,48 @@
+---
+# ArgoCD Application for arr-stack-private
+#
+# Copy this file to: talos-homelab/infrastructure/base/argocd/applications/arr-stack-private.yaml
+#
+# This is the ONLY thing that needs to be added to talos-homelab.
+# All configuration (IPs, domains, etc) is in this repo's base/cluster-config.yaml
+#
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: arr-stack-private
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: arr-stack-private
+    app.kubernetes.io/part-of: arr-stack
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/TheBranchDriftCatalyst/private.git
+    targetRevision: main
+    path: base
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: media
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=false  # media namespace already exists from arr-stack
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ServerSideApply=true  # Needed for cluster-scoped PVs
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
