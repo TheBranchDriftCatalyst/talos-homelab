@@ -31,6 +31,26 @@ check_prerequisites() {
     log "Prerequisites OK"
 }
 
+# Create namespace with PSS labels (Linkerd requires NET_ADMIN capability)
+create_namespace() {
+    log "Creating linkerd-viz namespace with privileged PSS..."
+
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: linkerd-viz
+  labels:
+    kubernetes.io/metadata.name: linkerd-viz
+    linkerd.io/extension: viz
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
+EOF
+
+    log "Namespace created with privileged PSS"
+}
+
 # Install Linkerd Viz
 install_viz() {
     log "Installing Linkerd Viz extension..."
@@ -45,7 +65,6 @@ install_viz() {
 
     helm upgrade --install linkerd-viz linkerd-edge/linkerd-viz \
         --namespace linkerd-viz \
-        --create-namespace \
         --set prometheus.enabled=false \
         --set prometheusUrl="$PROMETHEUS_URL" \
         --set dashboard.enforcedHostRegexp=".*" \
@@ -159,6 +178,7 @@ main() {
     case "$action" in
         install)
             check_prerequisites
+            create_namespace
             install_viz
             create_podmonitor
             create_servicemonitor
