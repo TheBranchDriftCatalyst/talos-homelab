@@ -1,5 +1,62 @@
 #!/bin/bash
+# Nebula Lighthouse Userdata Generator
+# Reads certificates from .output/nebula/ and outputs a complete EC2 userdata script
+#
+# Prerequisites:
+#   ./scripts/hybrid-llm/nebula-certs.sh init        # Generate CA
+#   ./scripts/hybrid-llm/nebula-certs.sh lighthouse  # Generate lighthouse cert
+#
+# Usage:
+#   # Generate userdata and pass to AWS CLI
+#   ./scripts/hybrid-llm/lighthouse-userdata.sh > /tmp/userdata.sh
+#   aws ec2 run-instances --user-data file:///tmp/userdata.sh ...
+#
+#   # Or pipe directly (base64 encoded)
+#   ./scripts/hybrid-llm/lighthouse-userdata.sh | base64 | aws ec2 run-instances --user-data ...
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+OUTPUT_DIR="$REPO_ROOT/.output/nebula"
+
+# Certificate paths
+CA_CRT="$OUTPUT_DIR/ca.crt"
+HOST_CRT="$OUTPUT_DIR/lighthouse/host.crt"
+HOST_KEY="$OUTPUT_DIR/lighthouse/host.key"
+
+# Verify certificates exist
+check_certs() {
+    local missing=0
+    if [[ ! -f "$CA_CRT" ]]; then
+        echo "ERROR: CA certificate not found at $CA_CRT" >&2
+        missing=1
+    fi
+    if [[ ! -f "$HOST_CRT" ]]; then
+        echo "ERROR: Lighthouse certificate not found at $HOST_CRT" >&2
+        missing=1
+    fi
+    if [[ ! -f "$HOST_KEY" ]]; then
+        echo "ERROR: Lighthouse key not found at $HOST_KEY" >&2
+        missing=1
+    fi
+
+    if [[ $missing -eq 1 ]]; then
+        echo "" >&2
+        echo "Generate certificates first:" >&2
+        echo "  $SCRIPT_DIR/nebula-certs.sh init" >&2
+        echo "  $SCRIPT_DIR/nebula-certs.sh lighthouse" >&2
+        exit 1
+    fi
+}
+
+check_certs
+
+# Output the userdata script with embedded certificates
+cat << 'HEADER'
+#!/bin/bash
 # Nebula Lighthouse Bootstrap Script
+# Auto-generated - certificates embedded from .output/nebula/
 # This runs on first boot of the EC2 instance
 
 set -euo pipefail
@@ -24,29 +81,32 @@ mkdir -p /etc/nebula
 
 # Write CA certificate
 cat > /etc/nebula/ca.crt << 'CACERT'
------BEGIN NEBULA CERTIFICATE-----
-CkQKEnRhbG9zLWhvbWVsYWItbWVzaCifhKrJBjCf667YBjogsux//EUZXETfe/EW
-Vu26zW2E+Q4LKDZqKxLAjcc/t6tAARJALlAtaZZDQmtuctVoAT62Y7jCt+qllwUB
-jwge5XSICiKrj6pYkXe2jpi+ejs5DeBpHPiOMyvd96mTGkVgbt+oAQ==
------END NEBULA CERTIFICATE-----
+HEADER
+
+# Embed CA certificate
+cat "$CA_CRT"
+
+cat << 'MIDDLE1'
 CACERT
 
 # Write host certificate
 cat > /etc/nebula/host.crt << 'HOSTCERT'
------BEGIN NEBULA CERTIFICATE-----
-CoMBCgpsaWdodGhvdXNlEgmBgKhRgID8/w8iCmxpZ2h0aG91c2UiDmluZnJhc3Ry
-dWN0dXJlKNGFqskGMJ7rrtgGOiBm58sDCRUYMqaevRXyh+tcPOV2aC6hj/i8S3lz
-9Rd1XEogLQHSiDonzGWMHwyY1tCsc8mrv/ztEZNGDXsXIr70gAYSQAvJ12Ur2Dwb
-rN5ar11xK+ENsIdiOCLIJfVaSbRuigHcb9auqOZeYpw24Lf9ehCo13RWCrlg0+UF
-L0EqhyINrAM=
------END NEBULA CERTIFICATE-----
+MIDDLE1
+
+# Embed host certificate
+cat "$HOST_CRT"
+
+cat << 'MIDDLE2'
 HOSTCERT
 
 # Write host key
 cat > /etc/nebula/host.key << 'HOSTKEY'
------BEGIN NEBULA X25519 PRIVATE KEY-----
-zStAbsNBCYCOMksrMjh+2sRoHrC63HDf8MypsD+34FE=
------END NEBULA X25519 PRIVATE KEY-----
+MIDDLE2
+
+# Embed host key
+cat "$HOST_KEY"
+
+cat << 'FOOTER'
 HOSTKEY
 
 chmod 600 /etc/nebula/host.key
@@ -116,7 +176,7 @@ firewall:
 EOF
 
 # Create systemd service
-cat > /etc/systemd/system/nebula.service << 'EOF'
+cat > /etc/systemd/system/nebula.service << 'SVCEOF'
 [Unit]
 Description=Nebula Mesh VPN
 Wants=basic.target network-online.target
@@ -132,7 +192,7 @@ RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SVCEOF
 
 # Enable and start Nebula
 systemctl daemon-reload
@@ -142,3 +202,4 @@ systemctl start nebula
 echo "=== Nebula Lighthouse Bootstrap Complete ==="
 echo "Public IP: ${PUBLIC_IP}"
 echo "Nebula IP: 10.42.0.1"
+FOOTER
