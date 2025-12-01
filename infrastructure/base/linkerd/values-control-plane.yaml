@@ -1,0 +1,49 @@
+# Linkerd Control Plane Helm values
+# Optimized for single-node homelab cluster
+
+# Identity configuration
+# Trust anchor CA is stored in 1Password, issuer cert generated at deploy time
+# Using linkerd.io/tls scheme for externally provided certificates
+identity:
+  issuer:
+    scheme: linkerd.io/tls
+
+# Proxy configuration
+proxy:
+  # Resource limits for sidecar proxies
+  resources:
+    cpu:
+      request: 10m
+      limit: 100m
+    memory:
+      request: 20Mi
+      limit: 50Mi
+
+# Control plane resource limits (reduced for single-node)
+controllerResources: &controller_resources
+  cpu:
+    request: 10m
+    limit: 100m
+  memory:
+    request: 50Mi
+    limit: 125Mi
+
+destinationResources: *controller_resources
+identityResources: *controller_resources
+proxyInjectorResources: *controller_resources
+
+# Enable high availability for control plane (disabled for single-node)
+enablePodAntiAffinity: false
+
+# Prometheus integration
+prometheusUrl: http://prometheus-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+
+# Policy controller (for authorization policies)
+policyController:
+  resources:
+    cpu:
+      request: 10m
+      limit: 100m
+    memory:
+      request: 50Mi
+      limit: 125Mi
