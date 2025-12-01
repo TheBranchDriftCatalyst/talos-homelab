@@ -42,11 +42,11 @@ argocd repo add https://github.com/<username>/<repo>.git \
 
 ## Deploy Applications via ArgoCD
 
-Applications are defined in `argocd-apps/` directory:
+Applications are defined in `argocd/applications` directory:
 
 ```bash
 # Apply Application definitions
-kubectl apply -f argocd-apps/
+kubectl apply -f argocd/applications/
 ```
 
 ## ArgoCD Application Structure
