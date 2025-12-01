@@ -12,7 +12,7 @@ Media automation stack including indexers, downloaders, and media servers for TV
 
 - **Sonarr** - TV show management
 - **Radarr** - Movie management
-- **Readarr** - Book management (ARM64 issues - often disabled)
+- **Readarr** - Book management (disabled - ARM64 compatibility issues)
 - **Overseerr** - Request management
 
 ### Media Servers
@@ -25,84 +25,7 @@ Media automation stack including indexers, downloaders, and media servers for TV
 
 - **PostgreSQL** - Shared database for \*arr apps
 - **Homepage** - Dashboard for all services
-
----
-
-## Development Workflow
-
-This namespace implements the standardized Tilt development pattern with three key files:
-
-### 1. Tiltfile - Local Development
-
-**Purpose:** Fast local development with hot-reload
-
-```bash
-# Start Tilt (suspends Flux automatically)
-cd applications/arr-stack
-tilt up
-
-# Tilt UI: http://localhost:10350
-# Make changes to manifests - auto-applies
-
-# Stop Tilt (resumes Flux)
-tilt down
-```
-
-**Features:**
-
-- Uses `overlays/dev` (media-dev namespace, local-path storage)
-- Automatically suspends Flux during development
-- Port-forwards all services to localhost
-- Auto-applies manifest changes
-- Resource grouping and log viewing
-
-**Environment Variables:**
-
-- `SUSPEND_FLUX=false` - Don't suspend Flux (for testing)
-
-### 2. dashboard.sh - Status Dashboard
-
-**Purpose:** Display current namespace status
-
-```bash
-# Show production status
-./dashboard.sh
-
-# Show development status
-NAMESPACE=media-dev ./dashboard.sh
-```
-
-**Features:**
-
-- ASCII art header
-- Pod status with health indicators
-- Service endpoints and ingress URLs
-- PVC usage and storage info
-- Quick command reference
-
-### 3. deploy.sh - Production Deployment
-
-**Purpose:** Deploy to production via Flux GitOps
-
-```bash
-# Interactive deployment
-./deploy.sh
-
-# Auto-confirm (for CI/CD)
-./deploy.sh --auto-confirm
-
-# Preview only
-./deploy.sh --dry-run
-```
-
-**Workflow:**
-
-1. Validates manifests (kustomize build + kubectl dry-run)
-2. Shows deployment preview
-3. Commits changes to git
-4. Pushes to GitHub
-5. Triggers Flux reconciliation
-6. Waits for pods to be ready
+- **Exportarr** - Prometheus metrics exporter for \*arr apps
 
 ---
 
@@ -116,47 +39,106 @@ arr-stack/
 ├── README.md                 # This file
 │
 ├── base/                     # Base Kubernetes manifests
-│   ├── kustomization.yaml
+│   ├── kustomization.yaml    # Main kustomization (namespace: media)
 │   ├── common-env.yaml       # Shared environment variables
 │   ├── prowlarr/
 │   ├── sonarr/
 │   ├── radarr/
+│   ├── readarr/              # Exists but disabled in main kustomization
 │   ├── overseerr/
 │   ├── plex/
 │   ├── jellyfin/
 │   ├── tdarr/
 │   ├── postgresql/
-│   └── homepage/
+│   ├── homepage/
+│   └── exportarr/            # Prometheus metrics for *arr apps
 │
-└── overlays/                 # Environment-specific overlays
-    ├── dev/                  # Local development (Tilt)
-    │   └── kustomization.yaml  # Uses storage/local-path, media-dev namespace
-    ├── prod/                 # Production (Flux-managed)
-    │   └── kustomization.yaml  # Uses storage/fatboy-nfs, media-prod namespace
-    ├── storage/              # Storage backend overlays
-    │   ├── local-path/       # Local storage (dev)
-    │   └── fatboy-nfs/       # NFS storage (prod)
-    └── ingress/
-        └── talos00/          # Traefik IngressRoutes
+└── scripts/
+    └── sync-api-keys.sh      # Sync API keys between *arr apps
 ```
 
 ---
 
-## Overlay Strategy
+## Development Workflow
 
-### Production (`overlays/prod`)
+### 1. Tiltfile - Local Development
 
-- **Namespace:** `media-prod`
-- **Storage:** NFS via `storage/fatboy-nfs`
-- **Managed By:** Flux GitOps
-- **Access:** http://\*.talos00
+**Purpose:** Fast local development with hot-reload
 
-### Development (`overlays/dev`)
+```bash
+# Start Tilt (from root of repo, includes arr-stack)
+tilt up
 
-- **Namespace:** `media-dev`
-- **Storage:** Local-path via `storage/local-path`
-- **Managed By:** Tilt
-- **Access:** Port-forwards to localhost
+# Tilt UI: http://localhost:10350
+# Make changes to manifests - auto-applies
+
+# Stop Tilt
+tilt down
+```
+
+**Features:**
+
+- Port-forwards all services to localhost
+- Auto-applies manifest changes
+- Resource grouping and log viewing
+- Dependencies managed (PostgreSQL starts first)
+
+**Port Forwards:**
+
+| Service   | Local Port | URL                         |
+| --------- | ---------- | --------------------------- |
+| Prowlarr  | 9696       | http://localhost:9696       |
+| Sonarr    | 8989       | http://localhost:8989       |
+| Radarr    | 7878       | http://localhost:7878       |
+| Overseerr | 5055       | http://localhost:5055       |
+| Plex      | 32400      | http://localhost:32400/web  |
+| Jellyfin  | 8096       | http://localhost:8096       |
+| Tdarr     | 8265       | http://localhost:8265       |
+| Homepage  | 3000       | http://localhost:3000       |
+
+### 2. dashboard.sh - Status Dashboard
+
+**Purpose:** Display current namespace status
+
+```bash
+# Show status
+./dashboard.sh
+
+# Or with custom namespace
+NAMESPACE=media ./dashboard.sh
+```
+
+**Features:**
+
+- ASCII art header
+- Pod status with health indicators
+- Service endpoints and ingress URLs
+- PVC usage and storage info
+- Quick command reference
+
+### 3. deploy.sh - Production Deployment
+
+**Purpose:** Deploy to production
+
+```bash
+# Interactive deployment
+./deploy.sh
+
+# Auto-confirm (for CI/CD)
+./deploy.sh --auto-confirm
+
+# Preview only
+./deploy.sh --dry-run
+```
+
+### 4. scripts/sync-api-keys.sh - API Key Sync
+
+**Purpose:** Sync API keys between \*arr applications
+
+```bash
+# Run API key sync
+./scripts/sync-api-keys.sh
+```
 
 ---
 
@@ -165,16 +147,11 @@ arr-stack/
 ### Local Development
 
 ```bash
-# Start development environment
-cd applications/arr-stack
+# Start development environment (from repo root)
 tilt up
 
 # Tilt UI opens at http://localhost:10350
-# Access services via port-forwards:
-# - Sonarr: http://localhost:8989
-# - Radarr: http://localhost:7878
-# - Prowlarr: http://localhost:9696
-# - etc.
+# Access services via port-forwards (see table above)
 
 # Make changes to manifests
 vim base/sonarr/deployment.yaml
@@ -185,18 +162,20 @@ vim base/sonarr/deployment.yaml
 tilt down
 ```
 
-### Production Deployment
+### Production Access
 
-```bash
-# After testing locally
-cd applications/arr-stack
+All services are accessible via Traefik IngressRoutes:
 
-# Deploy to production
-./deploy.sh
-
-# Verify deployment
-./dashboard.sh
-```
+| Service   | URL                      |
+| --------- | ------------------------ |
+| Prowlarr  | http://prowlarr.talos00  |
+| Sonarr    | http://sonarr.talos00    |
+| Radarr    | http://radarr.talos00    |
+| Overseerr | http://overseerr.talos00 |
+| Plex      | http://plex.talos00      |
+| Jellyfin  | http://jellyfin.talos00  |
+| Tdarr     | http://tdarr.talos00     |
+| Homepage  | http://homepage.talos00  |
 
 ### Check Status
 
@@ -204,12 +183,9 @@ cd applications/arr-stack
 # Dashboard
 ./dashboard.sh
 
-# Specific namespace
-NAMESPACE=media-dev ./dashboard.sh
-
 # Kubectl
-kubectl get pods -n media-prod
-kubectl get pods -n media-dev
+kubectl get pods -n media
+kubectl get pvc -n media
 ```
 
 ---
@@ -228,7 +204,7 @@ Shared environment variables in `base/common-env.yaml`:
 
 ### Database Configuration
 
-PostgreSQL credentials in `base/postgresql/secret.yaml` (managed by External Secrets if configured):
+PostgreSQL credentials in `base/postgresql/secret.yaml`:
 
 - `postgres-password` - Database password
 
@@ -238,19 +214,12 @@ Each app gets its own databases:
 - `radarr_main` / `radarr_log`
 - `prowlarr_main` / `prowlarr_log`
 
-### Storage
+### Enabling Readarr
 
-**Production (NFS):**
+Readarr is disabled by default due to ARM64 issues. To enable:
 
-- `media-shared` - 1Ti ReadWriteMany
-- `downloads-shared` - 500Gi ReadWriteMany
-- App configs - 1-50Gi per app
-
-**Development (Local-Path):**
-
-- `media-shared` - 100Gi ReadWriteOnce
-- `downloads-shared` - 50Gi ReadWriteOnce
-- App configs - Same as prod
+1. Add `readarr/` to `base/kustomization.yaml` resources
+2. Add Readarr resource to `Tiltfile`
 
 ---
 
@@ -269,65 +238,70 @@ kubectl config current-context
 kubectl get nodes
 ```
 
-**Problem:** Flux conflicts with Tilt
-
-```bash
-# Check if Flux is suspended
-flux get kustomizations
-
-# Manually suspend
-flux suspend kustomization flux-system
-
-# Resume
-flux resume kustomization flux-system
-```
-
 **Problem:** Resources stuck in Pending
 
 ```bash
 # Check PVCs
-kubectl get pvc -n media-dev
+kubectl get pvc -n media
 
 # Check events
-kubectl get events -n media-dev --sort-by='.lastTimestamp'
+kubectl get events -n media --sort-by='.lastTimestamp'
 ```
 
-### Deployment Issues
+### Database Issues
 
-**Problem:** deploy.sh validation fails
+**Problem:** \*arr apps can't connect to PostgreSQL
 
 ```bash
-# Manual validation
-kustomize build overlays/prod > test.yaml
-kubectl apply --dry-run=client -f test.yaml
+# Check PostgreSQL is running
+kubectl get pods -n media -l app=postgresql
+
+# Check PostgreSQL logs
+kubectl logs -n media -l app=postgresql
+
+# Verify secret exists
+kubectl get secret -n media postgresql-secret
 ```
 
-**Problem:** Flux not reconciling
+### Storage Issues
+
+**Problem:** PVCs not binding
 
 ```bash
-# Check Flux status
-flux get kustomizations
+# Check storage class
+kubectl get sc
 
-# Force reconcile
-flux reconcile source git flux-system
-flux reconcile kustomization flux-system
+# Check PV/PVC status
+kubectl get pv,pvc -n media
 ```
+
+---
+
+## Metrics & Monitoring
+
+### Exportarr
+
+Exportarr provides Prometheus metrics for all \*arr applications:
+
+- Sonarr metrics: queue, calendar, wanted
+- Radarr metrics: queue, calendar, wanted
+- Prowlarr metrics: indexer status
+
+Access via ServiceMonitor in `base/exportarr/servicemonitor.yaml`.
 
 ---
 
 ## Related Documentation
 
-- **Tilt Workflow:** `docs/tilt-dev-workflow-implementation.md`
-- **Storage Overlays:** `overlays/storage/README.md`
-- **Flux GitOps:** `docs/DUAL-GITOPS.md`
-- **Traefik Ingress:** `TRAEFIK.md`
+- [Dual GitOps Pattern](../../docs/02-architecture/dual-gitops.md)
+- [Networking & Ingress](../../docs/02-architecture/networking.md)
+- [Homepage Configuration](base/homepage/README.md)
 
 ---
 
 ## Notes
 
-- **media-dev namespace** is for local development only (not deployed to prod)
-- **media-prod namespace** is managed by Flux
-- Changes to `base/` affect both dev and prod
-- Changes to `overlays/` only affect that environment
-- Always test in dev (Tilt) before deploying to prod (deploy.sh)
+- **Namespace:** `media` (single namespace, no dev/prod split)
+- **Readarr:** Disabled by default (ARM64 issues)
+- **Exportarr:** Provides metrics for Prometheus/Grafana dashboards
+- **IngressRoutes:** Each app has its own Traefik IngressRoute in its directory

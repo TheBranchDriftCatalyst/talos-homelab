@@ -7,26 +7,21 @@
 #   tilt up monitoring observability # Start multiple namespaces
 #   SUSPEND_FLUX=false tilt up       # Start without suspending Flux
 #
-# Architecture:
-#   This root Tiltfile orchestrates namespace-specific Tiltfiles:
-#   - applications/arr-stack/Tiltfile     - Media automation
-#   - infrastructure/base/monitoring/     - Monitoring (TODO: Phase 2)
-#   - infrastructure/base/observability/  - Observability (TODO: Phase 2)
-#
-#   Each namespace Tiltfile is self-contained with its own:
-#   - Kustomize overlays (dev/prod)
-#   - Resource configurations
-#   - Port forwards
-#   - Dependencies
+# UI Organization:
+#   Labels create collapsible groups in the sidebar. We use these groups:
+#   - 1-apps-media      → Arr-stack applications (Sonarr, Radarr, etc.)
+#   - 2-infra-platform  → Core platform (ArgoCD, Traefik, Registry)
+#   - 3-infra-observe   → Monitoring & Observability
+#   - 4-tools           → UI tools & utilities
+#   - 5-ops             → Operations (cluster health, cleanup, deploy)
 
 # Load Tilt extensions
 load('ext://helm_resource', 'helm_resource', 'helm_repo')
 load('ext://dotenv', 'dotenv')
-load('ext://uibutton', 'cmd_button', 'location', 'text_input', 'bool_input')
+load('ext://uibutton', 'cmd_button', 'location', 'text_input', 'bool_input', 'choice_input')
 load('ext://k8s_attach', 'k8s_attach')
 
 # Load environment variables from .env file (if exists)
-# This allows per-developer configuration without modifying Tiltfile
 dotenv()
 
 # Configuration
@@ -35,598 +30,383 @@ config.define_bool('flux-suspend', args=False, usage='Suspend Flux reconciliatio
 cfg = config.parse()
 
 # Settings
-# NOTE: flux_suspend defaults to False because we use k8s_attach for Flux-managed
-# resources (read-only observation). Only set to True if you need to iterate on
-# infra-testing manifests without committing.
 settings = {
     'k8s_context': cfg.get('k8s_context', 'admin@homelab-single'),
     'flux_suspend': cfg.get('flux-suspend', False),
 }
 
-# Ensure we're using the correct k8s context
 allow_k8s_contexts(settings['k8s_context'])
 
 print("""
 ╔═══════════════════════════════════════════════════════════════╗
-║  Talos Homelab Infrastructure Development with Tilt           ║
+║  Talos Homelab - Tilt Development Environment                 ║
 ╚═══════════════════════════════════════════════════════════════╝
-
-🎯 K8s Context: %s
-🔧 Flux Auto-suspend: %s
-
-Architecture: Orchestrated Namespace Pattern
-  - Root Tiltfile orchestrates namespace-specific Tiltfiles
-  - Each namespace manages its own overlays and resources
-  - Flux-aware development (suspend/resume)
-
-Available Commands:
-  - Press SPACE to open the Tilt UI in your browser
-  - Press 'r' to force rebuild a resource
-  - Press 'k' to view Kubernetes events
-""" % (settings['k8s_context'], settings['flux_suspend']))
+Context: %s | Flux: %s
+""" % (settings['k8s_context'], 'SUSPENDED' if settings['flux_suspend'] else 'active'))
 
 # Suspend Flux if configured
 if settings['flux_suspend']:
-    print('⏸️  Suspending Flux reconciliation...')
     local('flux suspend kustomization flux-system')
-    print('✅ Flux suspended')
-    print('')
 
 # ============================================
-# Flux Control Resources
+# LABEL CONSTANTS - Controls UI grouping
+# ============================================
+# Labels must be alphanumeric with '-', '_', '.' only (no colons)
+# Numbered prefixes ensure consistent ordering in sidebar
+
+LABEL_MEDIA = '1-apps-media'
+LABEL_PLATFORM = '2-infra-platform'
+LABEL_OBSERVE = '3-infra-observe'
+LABEL_TOOLS = '4-tools'
+LABEL_OPS = '5-ops'
+
+# ============================================
+# NAV BUTTONS - Only essential actions
+# ============================================
+# Keep nav bar minimal - detailed actions go on resources
+
+# Flux operations dropdown
+cmd_button(
+    name='btn-flux',
+    argv=['sh', '-c', '''
+        case "$FLUX_ACTION" in
+            "sync") flux reconcile kustomization flux-system --with-source && echo "✅ Flux synced" ;;
+            "suspend") flux suspend kustomization --all && echo "✅ All kustomizations suspended" ;;
+            "resume") flux resume kustomization --all && echo "✅ All kustomizations resumed" ;;
+            "status") flux get all ;;
+            *) echo "Unknown action: $FLUX_ACTION" ;;
+        esac
+    '''],
+    location=location.NAV,
+    text='Flux',
+    icon_name='sync',
+    inputs=[
+        choice_input('FLUX_ACTION', 'Action', ['sync', 'status', 'suspend', 'resume'])
+    ]
+)
+
+cmd_button(
+    name='btn-cluster-health',
+    argv=['sh', '-c', '''echo "=== Nodes ===" && kubectl get nodes -o wide && \
+        echo "" && echo "=== Problem Pods ===" && \
+        kubectl get pods -A | grep -v Running | grep -v Completed | grep -v "^NAMESPACE" || echo "✅ All healthy"'''],
+    location=location.NAV,
+    text='Health',
+    icon_name='favorite'
+)
+
+# Cleanup with dropdown selection
+cmd_button(
+    name='btn-cleanup',
+    argv=['sh', '-c', '''
+        case "$CLEANUP_TYPE" in
+            "failed") kubectl delete pods --field-selector=status.phase=Failed -A && echo "✅ Failed pods deleted" ;;
+            "completed") kubectl delete pods --field-selector=status.phase=Succeeded -A && echo "✅ Completed pods deleted" ;;
+            "evicted") kubectl get pods -A -o json | jq -r ".items[] | select(.status.reason==\"Evicted\") | .metadata.namespace + \" \" + .metadata.name" | xargs -r -n2 sh -c "kubectl delete pod -n \\$0 \\$1" && echo "✅ Evicted pods deleted" ;;
+            "all") kubectl delete pods --field-selector=status.phase=Failed -A 2>/dev/null; kubectl delete pods --field-selector=status.phase=Succeeded -A 2>/dev/null; echo "✅ All stale pods deleted" ;;
+            *) echo "Unknown cleanup type: $CLEANUP_TYPE" ;;
+        esac
+    '''],
+    location=location.NAV,
+    text='Cleanup',
+    icon_name='auto_delete',
+    inputs=[
+        choice_input('CLEANUP_TYPE', 'Type', ['all', 'failed', 'completed', 'evicted'])
+    ],
+    requires_confirmation=True
+)
+
+# Deploy dropdown
+cmd_button(
+    name='btn-deploy',
+    argv=['sh', '-c', '''
+        case "$DEPLOY_TARGET" in
+            "full-stack") ./scripts/deploy-stack.sh && echo "✅ Full stack deployed" ;;
+            "monitoring") DEPLOY_MONITORING=true DEPLOY_OBSERVABILITY=false DEPLOY_MEDIA=false ./scripts/deploy-stack.sh && echo "✅ Monitoring deployed" ;;
+            "observability") ./scripts/deploy-observability.sh && echo "✅ Observability deployed" ;;
+            "media") DEPLOY_MONITORING=false DEPLOY_OBSERVABILITY=false DEPLOY_MEDIA=true ./scripts/deploy-stack.sh && echo "✅ Media stack deployed" ;;
+            "infra-testing") kubectl apply -k infrastructure/base/infra-testing/ && echo "✅ Infra-testing deployed" ;;
+            *) echo "Unknown target: $DEPLOY_TARGET" ;;
+        esac
+    '''],
+    location=location.NAV,
+    text='Deploy',
+    icon_name='rocket_launch',
+    inputs=[
+        choice_input('DEPLOY_TARGET', 'Target', ['full-stack', 'monitoring', 'observability', 'media', 'infra-testing'])
+    ],
+    requires_confirmation=True
+)
+
+# Quick namespace viewer
+cmd_button(
+    name='btn-pods',
+    argv=['sh', '-c', '''
+        case "$NAMESPACE" in
+            "all") kubectl get pods -A ;;
+            *) kubectl get pods -n "$NAMESPACE" ;;
+        esac
+    '''],
+    location=location.NAV,
+    text='Pods',
+    icon_name='view_list',
+    inputs=[
+        choice_input('NAMESPACE', 'Namespace', ['all', 'media', 'monitoring', 'observability', 'argocd', 'traefik', 'registry', 'infra-testing', 'kube-system'])
+    ]
+)
+
+# ============================================
+# OPERATIONS GROUP - Cluster management
 # ============================================
 
 local_resource(
-    'flux-reconcile',
-    'flux reconcile kustomization flux-system --with-source',
-    auto_init=False,
+    'cluster-status',
+    '''echo "📊 CLUSTER STATUS" && echo "=================" && \
+       echo "" && echo "Nodes:" && kubectl get nodes -o wide && \
+       echo "" && echo "Resource Usage:" && kubectl top nodes 2>/dev/null || echo "(metrics-server not ready)" && \
+       echo "" && echo "Problem Pods:" && \
+       kubectl get pods -A | grep -v Running | grep -v Completed | grep -v "^NAMESPACE" || echo "✅ All pods healthy"''',
+    auto_init=True,
     trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['flux-control']
+    labels=[LABEL_OPS]
 )
 
 local_resource(
-    'flux-status',
-    'flux get all',
+    'cluster-events',
+    'kubectl get events -A --sort-by=.lastTimestamp | tail -30',
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['flux-control']
+    labels=[LABEL_OPS]
 )
 
 local_resource(
-    'flux-suspend-all',
-    'flux suspend kustomization --all',
+    'stale-pods',
+    '''echo "Failed:    $(kubectl get pods -A --field-selector=status.phase=Failed --no-headers 2>/dev/null | wc -l | tr -d ' ')" && \
+       echo "Succeeded: $(kubectl get pods -A --field-selector=status.phase=Succeeded --no-headers 2>/dev/null | wc -l | tr -d ' ')" && \
+       echo "" && kubectl get pods -A | grep -v Running | grep -v "^NAMESPACE" || echo "✅ All pods running"''',
+    auto_init=True,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=[LABEL_OPS]
+)
+
+
+# Setup helpers
+local_resource(
+    'setup-hosts',
+    'sudo ./scripts/update-hosts.sh || echo "⚠️  Run: sudo ./scripts/update-hosts.sh"',
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['flux-control']
+    labels=[LABEL_OPS]
 )
 
 local_resource(
-    'flux-resume-all',
-    'flux resume kustomization --all',
+    'setup-kubeconfig',
+    'task kubeconfig-merge',
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['flux-control']
+    labels=[LABEL_OPS]
 )
 
-# Resume Flux when Tilt shuts down
+local_resource(
+    'validate-manifests',
+    'kubectl apply --dry-run=client -k infrastructure/base/infra-testing/ && echo "✅ Valid"',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=[LABEL_OPS]
+)
+
+# Resume Flux on shutdown if it was suspended
 if settings['flux_suspend']:
     local_resource(
         'flux-resume-on-shutdown',
         cmd='flux resume kustomization flux-system',
         auto_init=False,
         trigger_mode=TRIGGER_MODE_MANUAL,
-        labels=['flux-control']
+        labels=[LABEL_OPS]
     )
 
 # ============================================
-# UI Buttons - Quick Actions in Tilt UI
+# APPLICATIONS - Media Stack
 # ============================================
-# These buttons appear in the Tilt UI for easy access to common operations
 
-# Global Navigation Buttons
-cmd_button(
-    name='btn-flux-sync',
-    argv=['flux', 'reconcile', 'kustomization', 'flux-system', '--with-source'],
-    location=location.NAV,
-    text='🔄 Flux Sync',
-    icon_name='sync'
+print('Loading: Media Stack (arr-stack)')
+include('./applications/arr-stack/Tiltfile')
+
+# ============================================
+# APPLICATIONS - Scratch/Experimental
+# ============================================
+
+print('Loading: Scratch Stack (grpc-example)')
+include('./applications/scratch/Tiltfile')
+
+# ============================================
+# TOOLS - Infrastructure Testing UIs
+# ============================================
+
+watch_file('infrastructure/base/infra-testing/')
+k8s_yaml(kustomize('infrastructure/base/infra-testing'))
+
+k8s_resource(
+    workload='headlamp',
+    new_name='headlamp',
+    port_forwards=['8080:4466'],
+    labels=[LABEL_TOOLS],
+    links=[
+        link('http://headlamp.talos00', 'Headlamp (Traefik)'),
+        link('http://localhost:8080', 'Headlamp (local)')
+    ]
 )
 
 cmd_button(
-    name='btn-dashboard-token',
-    argv=['./scripts/dashboard-token.sh'],
-    location=location.NAV,
-    text='🔑 K8s Token',
+    name='btn-headlamp-token',
+    resource='headlamp',
+    argv=['sh', '-c', 'kubectl get secret -n infra-testing headlamp-admin -o jsonpath="{.data.token}" | base64 -d && echo'],
+    text='Get Token',
     icon_name='key'
 )
 
-cmd_button(
-    name='btn-cluster-health',
-    argv=['sh', '-c', 'kubectl get nodes && echo "" && kubectl get pods -A | grep -v Running | grep -v Completed || echo "✅ All pods healthy"'],
-    location=location.NAV,
-    text='💚 Health',
-    icon_name='favorite'
+k8s_resource(
+    workload='kubeview',
+    new_name='kubeview',
+    port_forwards=['8081:8000'],
+    labels=[LABEL_TOOLS],
+    links=[
+        link('http://kubeview.talos00', 'Kubeview (Traefik)'),
+        link('http://localhost:8081', 'Kubeview (local)')
+    ]
+)
+
+k8s_resource(
+    workload='kube-ops-view',
+    new_name='kube-ops-view',
+    port_forwards=['8082:8080'],
+    labels=[LABEL_TOOLS],
+    links=[
+        link('http://kube-ops-view.talos00', 'Kube-ops-view (Traefik)'),
+        link('http://localhost:8082', 'Kube-ops-view (local)')
+    ]
+)
+
+k8s_resource(
+    workload='goldilocks-dashboard',
+    new_name='goldilocks',
+    port_forwards=['8083:8080'],
+    labels=[LABEL_TOOLS],
+    links=[
+        link('http://goldilocks.talos00', 'Goldilocks (Traefik)'),
+        link('http://localhost:8083', 'Goldilocks (local)')
+    ]
+)
+
+k8s_resource(
+    workload='goldilocks-controller',
+    new_name='goldilocks-ctrl',
+    labels=[LABEL_TOOLS]
 )
 
 cmd_button(
-    name='btn-infrastructure-dashboard',
-    argv=['./infrastructure/dashboard.sh'],
-    location=location.NAV,
-    text='📊 Infra Dashboard',
-    icon_name='dashboard'
+    name='btn-goldilocks-refresh',
+    resource='goldilocks-ctrl',
+    argv=['kubectl', 'rollout', 'restart', 'deployment/goldilocks-controller', '-n', 'infra-testing'],
+    text='Refresh VPAs',
+    icon_name='refresh'
 )
 
-# Deployment Buttons (in quick-actions resource group)
-cmd_button(
-    name='btn-deploy-full-stack',
-    argv=['./scripts/deploy-stack.sh'],
-    location=location.NAV,
-    text='🚀 Deploy Stack',
-    icon_name='rocket_launch',
-    requires_confirmation=True
+k8s_resource(
+    workload='vpa-recommender',
+    new_name='vpa-recommender',
+    labels=[LABEL_TOOLS]
 )
 
-# Resource-specific buttons
-# These will appear on specific resources in the Tilt UI
+# ============================================
+# PLATFORM - Core Infrastructure (k8s_attach)
+# ============================================
+# Read-only observation of Flux-managed resources
 
-# Grafana - get admin password
-cmd_button(
-    name='btn-grafana-password',
-    resource='monitoring:grafana',
-    argv=['sh', '-c', 'kubectl get secret -n monitoring kube-prometheus-stack-grafana -o jsonpath="{.data.admin-password}" | base64 -d && echo'],
-    text='Get Password',
-    icon_name='password'
-)
+# ArgoCD
+k8s_attach('argocd-server', 'deployment/argocd-server', namespace='argocd', labels=[LABEL_PLATFORM])
+k8s_attach('argocd-repo', 'deployment/argocd-repo-server', namespace='argocd', labels=[LABEL_PLATFORM])
+k8s_attach('argocd-ctrl', 'statefulset/argocd-application-controller', namespace='argocd', labels=[LABEL_PLATFORM])
 
-# ArgoCD - get admin password
 cmd_button(
     name='btn-argocd-password',
-    resource='gitops:argocd-server',
+    resource='argocd-server',
     argv=['sh', '-c', 'kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d && echo'],
     text='Get Password',
     icon_name='password'
 )
 
-# Graylog - restart if stuck
+# Traefik
+k8s_attach('traefik', 'deployment/traefik', namespace='traefik', labels=[LABEL_PLATFORM])
+
+# Registry
+k8s_attach('registry', 'deployment/docker-registry', namespace='registry', labels=[LABEL_PLATFORM])
+
+cmd_button(
+    name='btn-registry-catalog',
+    resource='registry',
+    argv=['sh', '-c', 'kubectl port-forward -n registry svc/docker-registry 5000:5000 & sleep 2 && curl -s http://localhost:5000/v2/_catalog | jq . ; kill %1 2>/dev/null'],
+    text='List Images',
+    icon_name='inventory'
+)
+
+# External Secrets
+k8s_attach('external-secrets', 'deployment/external-secrets', namespace='external-secrets', labels=[LABEL_PLATFORM])
+k8s_attach('1password-connect', 'deployment/onepassword-connect', namespace='external-secrets', labels=[LABEL_PLATFORM])
+
+# ============================================
+# OBSERVABILITY - Monitoring & Logging
+# ============================================
+
+# Prometheus Stack
+k8s_attach('prometheus', 'statefulset/prometheus-kube-prometheus-stack-prometheus', namespace='monitoring', labels=[LABEL_OBSERVE])
+k8s_attach('grafana', 'deployment/kube-prometheus-stack-grafana', namespace='monitoring', labels=[LABEL_OBSERVE])
+k8s_attach('alertmanager', 'statefulset/alertmanager-kube-prometheus-stack-alertmanager', namespace='monitoring', labels=[LABEL_OBSERVE])
+
+cmd_button(
+    name='btn-grafana-password',
+    resource='grafana',
+    argv=['sh', '-c', 'kubectl get secret -n monitoring kube-prometheus-stack-grafana -o jsonpath="{.data.admin-password}" | base64 -d && echo'],
+    text='Get Password',
+    icon_name='password'
+)
+
+# Logging Stack
+k8s_attach('graylog', 'statefulset/graylog', namespace='observability', labels=[LABEL_OBSERVE])
+k8s_attach('opensearch', 'statefulset/opensearch', namespace='observability', labels=[LABEL_OBSERVE])
+k8s_attach('mongodb', 'deployment/mongodb', namespace='observability', labels=[LABEL_OBSERVE])
+k8s_attach('fluent-bit', 'daemonset/fluent-bit', namespace='observability', labels=[LABEL_OBSERVE])
+
 cmd_button(
     name='btn-graylog-restart',
-    resource='observability:graylog',
+    resource='graylog',
     argv=['kubectl', 'rollout', 'restart', 'statefulset/graylog', '-n', 'observability'],
     text='Restart',
     icon_name='refresh',
     requires_confirmation=True
 )
 
-# Registry - check catalog
-cmd_button(
-    name='btn-registry-catalog',
-    resource='registry:docker-registry',
-    argv=['sh', '-c', 'kubectl port-forward -n registry svc/docker-registry 5000:5000 & sleep 2 && curl -s http://localhost:5000/v2/_catalog | jq . ; kill %1 2>/dev/null'],
-    text='List Images',
-    icon_name='inventory'
-)
-
-# Headlamp - copy service account token
-cmd_button(
-    name='btn-headlamp-token',
-    resource='infra-testing:headlamp',
-    argv=['sh', '-c', 'kubectl get secret -n infra-testing headlamp-admin -o jsonpath="{.data.token}" | base64 -d && echo'],
-    text='Get Token',
-    icon_name='key'
-)
-
-# Goldilocks - force VPA recommendations refresh
-cmd_button(
-    name='btn-goldilocks-refresh',
-    resource='infra-testing:goldilocks-controller',
-    argv=['kubectl', 'rollout', 'restart', 'deployment/goldilocks-controller', '-n', 'infra-testing'],
-    text='Refresh VPAs',
-    icon_name='refresh'
-)
-
-# Scale buttons with input
-cmd_button(
-    name='btn-scale-sonarr',
-    resource='media:sonarr',
-    argv=['sh', '-c', 'kubectl scale deployment/sonarr -n media --replicas=$REPLICAS'],
-    text='Scale',
-    icon_name='tune',
-    inputs=[text_input('REPLICAS', default='1', placeholder='Number of replicas')]
-)
-
 # ============================================
-# Application Namespaces
+# CONFIGURATION
 # ============================================
 
-print('📱 Loading Application Namespaces...')
-print('')
-
-# Arr-Stack - Media Automation
-# Note: This includes its own Flux suspension logic, resource definitions,
-# port-forwards, and dependencies. See applications/arr-stack/Tiltfile
-print('  📺 Arr-Stack (Media Automation)')
-include('./applications/arr-stack/Tiltfile')
-print('')
-
-# TODO: Add more application namespaces as they implement Tilt pattern
-# include('./applications/other-app/Tiltfile')
-
-# ============================================
-# Infrastructure Namespaces (TODO: Phase 2)
-# ============================================
-
-print('🏗️  Infrastructure Namespaces (Phase 2 - TBD)...')
-print('')
-
-# TODO: Monitoring Stack
-# print('  📊 Monitoring (Prometheus, Grafana)')
-# include('./infrastructure/base/monitoring/Tiltfile')
-
-# TODO: Observability Stack
-# print('  🔍 Observability (OpenSearch, Graylog)')
-# include('./infrastructure/base/observability/Tiltfile')
-
-print('')
-
-# ============================================
-# Infrastructure Testing Tools
-# ============================================
-
-# Deploy infra-testing stack with hot reload
-# Note: Kustomization includes namespace definition, so we don't need namespace_create()
-watch_file('infrastructure/base/infra-testing/')
-k8s_yaml(kustomize('infrastructure/base/infra-testing'))
-
-# Headlamp
-k8s_resource(
-    workload='headlamp',
-    new_name='infra-testing:headlamp',
-    port_forwards=['8080:4466'],
-    labels=['ui-tools'],
-    links=[
-        link('http://headlamp.talos00', 'Headlamp UI (via Traefik)'),
-        link('http://localhost:8080', 'Headlamp UI (port-forward)')
-    ]
-)
-
-# Kubeview
-k8s_resource(
-    workload='kubeview',
-    new_name='infra-testing:kubeview',
-    port_forwards=['8081:8000'],
-    labels=['ui-tools'],
-    links=[
-        link('http://kubeview.talos00', 'Kubeview (via Traefik)'),
-        link('http://localhost:8081', 'Kubeview (port-forward)')
-    ]
-)
-
-# Kube-ops-view
-k8s_resource(
-    workload='kube-ops-view',
-    new_name='infra-testing:kube-ops-view',
-    port_forwards=['8082:8080'],
-    labels=['ui-tools'],
-    links=[
-        link('http://kube-ops-view.talos00', 'Kube-ops-view (via Traefik)'),
-        link('http://localhost:8082', 'Kube-ops-view (port-forward)')
-    ]
-)
-
-# Goldilocks Dashboard
-k8s_resource(
-    workload='goldilocks-dashboard',
-    new_name='infra-testing:goldilocks-dashboard',
-    port_forwards=['8083:8080'],
-    labels=['ui-tools'],
-    links=[
-        link('http://goldilocks.talos00', 'Goldilocks (via Traefik)'),
-        link('http://localhost:8083', 'Goldilocks (port-forward)')
-    ]
-)
-
-# Goldilocks Controller
-k8s_resource(
-    workload='goldilocks-controller',
-    new_name='infra-testing:goldilocks-controller',
-    labels=['ui-tools']
-)
-
-# VPA Recommender (in kube-system)
-k8s_resource(
-    workload='vpa-recommender',
-    new_name='kube-system:vpa-recommender',
-    labels=['ui-tools']
-)
-
-# ============================================
-# Flux-Managed Resources (using k8s_attach)
-# ============================================
-# k8s_attach allows viewing logs/health for resources managed by Flux
-# without Tilt taking control of them. Tilt is read-only observer.
-
-# Monitoring Stack
-k8s_attach(
-    'monitoring:prometheus',
-    'statefulset/prometheus-kube-prometheus-stack-prometheus',
-    namespace='monitoring'
-)
-
-k8s_attach(
-    'monitoring:grafana',
-    'deployment/kube-prometheus-stack-grafana',
-    namespace='monitoring'
-)
-
-k8s_attach(
-    'monitoring:alertmanager',
-    'statefulset/alertmanager-kube-prometheus-stack-alertmanager',
-    namespace='monitoring'
-)
-
-# Observability Stack
-k8s_attach(
-    'observability:graylog',
-    'statefulset/graylog',
-    namespace='observability'
-)
-
-k8s_attach(
-    'observability:opensearch',
-    'statefulset/opensearch',
-    namespace='observability'
-)
-
-k8s_attach(
-    'observability:mongodb',
-    'deployment/mongodb',
-    namespace='observability'
-)
-
-k8s_attach(
-    'observability:fluent-bit',
-    'daemonset/fluent-bit',
-    namespace='observability'
-)
-
-# GitOps - ArgoCD
-k8s_attach(
-    'gitops:argocd-server',
-    'deployment/argocd-server',
-    namespace='argocd'
-)
-
-k8s_attach(
-    'gitops:argocd-repo-server',
-    'deployment/argocd-repo-server',
-    namespace='argocd'
-)
-
-k8s_attach(
-    'gitops:argocd-app-controller',
-    'statefulset/argocd-application-controller',
-    namespace='argocd'
-)
-
-# Networking - Traefik
-k8s_attach(
-    'networking:traefik',
-    'deployment/traefik',
-    namespace='traefik'
-)
-
-# Registry
-k8s_attach(
-    'registry:docker-registry',
-    'deployment/docker-registry',
-    namespace='registry'
-)
-
-# External Secrets Operator
-k8s_attach(
-    'secrets:external-secrets',
-    'deployment/external-secrets',
-    namespace='external-secrets'
-)
-
-k8s_attach(
-    'secrets:onepassword-connect',
-    'deployment/onepassword-connect',
-    namespace='external-secrets'
-)
-
-# ============================================
-# External Secrets Operator (Optional)
-# ============================================
-
-# Uncomment to include ESO in the dev loop
-# helm_repo(
-#     'external-secrets',
-#     'https://charts.external-secrets.io',
-#     resource_name='external-secrets-repo'
-# )
-#
-# helm_resource(
-#     'external-secrets-operator',
-#     chart='external-secrets/external-secrets',
-#     namespace='external-secrets',
-#     flags=['--set=installCRDs=true'],
-#     resource_deps=['external-secrets-repo'],
-#     labels=['external-secrets'],
-# )
-
-# ============================================
-# Cluster Information
-# ============================================
-
-local_resource(
-    'cluster-health',
-    'kubectl get nodes && echo "" && kubectl get pods -A | grep -v Running | grep -v Completed || echo "✅ All pods running"',
-    auto_init=True,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['cluster-info']
-)
-
-local_resource(
-    'cluster-resources',
-    'kubectl top nodes && echo "" && kubectl top pods -A --sort-by=memory | head -20',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['cluster-info']
-)
-
-local_resource(
-    'cluster-events',
-    'kubectl get events -A --sort-by=.lastTimestamp | tail -20',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['cluster-info']
-)
-
-# ============================================
-# Setup & Configuration
-# ============================================
-
-local_resource(
-    'update-hosts',
-    'sudo ./scripts/update-hosts.sh || echo "⚠️  Run manually: sudo ./scripts/update-hosts.sh"',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['setup']
-)
-
-local_resource(
-    'kubeconfig-merge',
-    'task kubeconfig-merge',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['setup']
-)
-
-# ============================================
-# Quick Deployment Actions
-# ============================================
-
-local_resource(
-    'deploy-infra-testing',
-    './scripts/deploy-infra-testing.sh',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['quick-actions']
-)
-
-local_resource(
-    'deploy-stack',
-    './scripts/deploy-stack.sh',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['quick-actions']
-)
-
-local_resource(
-    'deploy-observability',
-    './scripts/deploy-observability.sh',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['quick-actions']
-)
-
-# ============================================
-# Development Helpers
-# ============================================
-
-local_resource(
-    'validate-manifests',
-    'kubectl apply --dry-run=client -k infrastructure/base/infra-testing/',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['validation']
-)
-
-local_resource(
-    'lint-yaml',
-    'task dev:lint',
-    auto_init=False,
-    trigger_mode=TRIGGER_MODE_MANUAL,
-    labels=['validation']
-)
-
-# ============================================
-# Tilt Configuration
-# ============================================
-
-# Update settings for better development experience
 update_settings(
     max_parallel_updates=3,
     k8s_upsert_timeout_secs=300,
     suppress_unused_image_warnings=None
 )
 
-# Set up file watches for manifest hot-reload
 watch_file('infrastructure/base/')
 watch_file('infrastructure/overlays/')
 watch_file('applications/')
 
 print("""
-═══════════════════════════════════════════════════════════════
-🚀 Tilt is ready!
-═══════════════════════════════════════════════════════════════
+Ready! UI Groups:
+  1-apps-media     → Sonarr, Radarr, Plex, etc.
+  2-infra-platform → ArgoCD, Traefik, Registry
+  3-infra-observe  → Prometheus, Grafana, Graylog
+  4-tools          → Headlamp, Kubeview, Goldilocks
+  5-ops            → Cluster health, cleanup, deploy
 
-📦 Loaded Namespaces:
-  ✅ media              Arr-stack media automation (Sonarr, Radarr, Plex, etc.)
-  📊 monitoring         Prometheus, Grafana, Alertmanager (Flux-managed, commented out)
-  🔍 observability      OpenSearch, Graylog (Flux-managed, commented out)
-  🧪 infra-testing      Headlamp, Kubeview, Kube-ops-view, Goldilocks
-  🌐 networking         Traefik, ArgoCD, Registry (Flux-managed, commented out)
-
-Quick Tips:
-  - All resources are organized by labels (automation, media-server, monitoring, etc.)
-  - Port forwards are automatically configured for local access
-  - Use manual triggers for quick actions (deploy-stack, flux-reconcile, etc.)
-  - Press 'r' on any resource to force a rebuild/reapply
-  - Flux reconciliation can be triggered manually from 'flux-control' resources
-  - File watching enabled - changes to manifests will auto-reload
-
-Arr-Stack URLs (via Traefik - requires /etc/hosts):
-  - Sonarr:         http://sonarr.talos00
-  - Radarr:         http://radarr.talos00
-  - Prowlarr:       http://prowlarr.talos00
-  - Overseerr:      http://overseerr.talos00
-  - Plex:           http://plex.talos00
-  - Jellyfin:       http://jellyfin.talos00
-  - Tdarr:          http://tdarr.talos00
-  - Homepage:       http://homepage.talos00
-
-Arr-Stack Port-forwards (from namespace Tiltfile):
-  - Sonarr:         http://localhost:8989
-  - Radarr:         http://localhost:7878
-  - Prowlarr:       http://localhost:9696
-  - Overseerr:      http://localhost:5055
-  - Plex:           http://localhost:32400/web
-  - Jellyfin:       http://localhost:8096
-  - Tdarr:          http://localhost:8265
-  - Homepage:       http://localhost:3000
-
-Infrastructure URLs (via Traefik):
-  - Headlamp:       http://headlamp.talos00
-  - Grafana:        http://grafana.talos00
-  - Prometheus:     http://prometheus.talos00
-  - ArgoCD:         http://argocd.talos00
-  - Graylog:        http://graylog.talos00
-
-Infrastructure Port-forwards:
-  - Headlamp:       http://localhost:8080
-  - Grafana:        http://localhost:3000
-  - Prometheus:     http://localhost:9090
-  - Alertmanager:   http://localhost:9093
-  - Graylog:        http://localhost:9000
-  - Registry:       http://localhost:5000
-
-⚠️  Flux Status: %s
-%s
-Happy developing! 🎉
-═══════════════════════════════════════════════════════════════
-""" % (
-    'SUSPENDED' if settings['flux_suspend'] else 'ACTIVE',
-    '   Flux will resume when you run: tilt down' if settings['flux_suspend'] else ''
-))
+Tip: Collapse groups you don't need in the sidebar.
+""")

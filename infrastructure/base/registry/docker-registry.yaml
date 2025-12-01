@@ -1,0 +1,269 @@
+---
+# Simple Docker Registry with UI
+# Lightweight alternative to Nexus, works better with Traefik
+# Nexus is kept for npm/maven/etc, this is for Docker images only
+#
+# Access:
+#   - Registry API: http://docker.talos00
+#   - Registry UI:  http://docker-ui.talos00
+#
+# Uses existing 'registry' namespace from Nexus deployment
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: docker-registry-data
+  namespace: registry
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: fatboy-nfs-appdata
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: docker-registry-config
+  namespace: registry
+data:
+  config.yml: |
+    version: 0.1
+    log:
+      fields:
+        service: registry
+    storage:
+      cache:
+        blobdescriptor: inmemory
+      filesystem:
+        rootdirectory: /var/lib/registry
+      delete:
+        enabled: true
+    http:
+      addr: :5000
+      headers:
+        X-Content-Type-Options: [nosniff]
+        Access-Control-Allow-Origin: ['*']
+        Access-Control-Allow-Methods: ['HEAD', 'GET', 'OPTIONS', 'DELETE']
+        Access-Control-Allow-Headers: ['Authorization', 'Accept', 'Cache-Control']
+        Access-Control-Expose-Headers: ['Docker-Content-Digest']
+      relativeurls: true
+    health:
+      storagedriver:
+        enabled: true
+        interval: 10s
+        threshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docker-registry
+  namespace: registry
+  labels:
+    app: docker-registry
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docker-registry
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: docker-registry
+    spec:
+      containers:
+        - name: registry
+          image: registry:2
+          ports:
+            - name: registry
+              containerPort: 5000
+              protocol: TCP
+          volumeMounts:
+            - name: registry-data
+              mountPath: /var/lib/registry
+            - name: registry-config
+              mountPath: /etc/docker/registry
+          env:
+            - name: REGISTRY_HTTP_RELATIVEURLS
+              value: "true"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: registry
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: registry
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: registry-data
+          persistentVolumeClaim:
+            claimName: docker-registry-data
+        - name: registry-config
+          configMap:
+            name: docker-registry-config
+---
+# Registry UI - lightweight web UI for browsing images
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: docker-registry-ui
+  namespace: registry
+  labels:
+    app: docker-registry-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: docker-registry-ui
+  template:
+    metadata:
+      labels:
+        app: docker-registry-ui
+    spec:
+      containers:
+        - name: registry-ui
+          image: joxit/docker-registry-ui:2
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          env:
+            - name: SINGLE_REGISTRY
+              value: "true"
+            - name: REGISTRY_TITLE
+              value: "Talos00 Docker Registry"
+            - name: DELETE_IMAGES
+              value: "true"
+            - name: SHOW_CONTENT_DIGEST
+              value: "true"
+            - name: NGINX_PROXY_PASS_URL
+              value: "http://docker-registry:5000"
+            - name: SHOW_CATALOG_NB_TAGS
+              value: "true"
+            - name: CATALOG_MIN_BRANCHES
+              value: "1"
+            - name: CATALOG_MAX_BRANCHES
+              value: "1"
+            - name: TAGLIST_PAGE_SIZE
+              value: "100"
+            - name: REGISTRY_SECURED
+              value: "false"
+            - name: CATALOG_ELEMENTS_LIMIT
+              value: "1000"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+# Registry Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: docker-registry
+  namespace: registry
+  labels:
+    app: docker-registry
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5000
+      targetPort: registry
+      protocol: TCP
+      name: registry
+  selector:
+    app: docker-registry
+---
+# Registry UI Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: docker-registry-ui
+  namespace: registry
+  labels:
+    app: docker-registry-ui
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app: docker-registry-ui
+---
+# Middleware for Docker Registry - CORS and headers
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: docker-registry-headers
+  namespace: registry
+spec:
+  headers:
+    customRequestHeaders:
+      X-Forwarded-Proto: "http"
+    customResponseHeaders:
+      Access-Control-Allow-Origin: "*"
+      Access-Control-Allow-Methods: "HEAD, GET, OPTIONS, DELETE, PUT, POST, PATCH"
+      Access-Control-Allow-Headers: "Authorization, Accept, Cache-Control, Content-Type"
+      Access-Control-Expose-Headers: "Docker-Content-Digest"
+---
+# Registry IngressRoute - with PathPrefix fix for Docker API
+# Uses docker.talos00 to not conflict with Nexus on registry.talos00
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: docker-registry
+  namespace: registry
+spec:
+  entryPoints:
+    - web
+  routes:
+    # Docker API v2 - primary route
+    - match: Host(`docker.talos00`) && PathPrefix(`/v2`)
+      kind: Rule
+      middlewares:
+        - name: docker-registry-headers
+      services:
+        - name: docker-registry
+          port: 5000
+    # Fallback for root path
+    - match: Host(`docker.talos00`)
+      kind: Rule
+      middlewares:
+        - name: docker-registry-headers
+      services:
+        - name: docker-registry
+          port: 5000
+---
+# Registry UI IngressRoute
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: docker-registry-ui
+  namespace: registry
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`docker-ui.talos00`)
+      kind: Rule
+      services:
+        - name: docker-registry-ui
+          port: 80

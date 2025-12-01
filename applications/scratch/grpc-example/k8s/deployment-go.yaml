@@ -1,0 +1,66 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpc-go
+  labels:
+    app: grpc-go
+    app.kubernetes.io/name: grpc-go
+    app.kubernetes.io/component: grpc-server
+    app.kubernetes.io/part-of: grpc-example
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grpc-go
+  template:
+    metadata:
+      labels:
+        app: grpc-go
+        app.kubernetes.io/name: grpc-go
+      annotations:
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '9090'
+        prometheus.io/path: '/metrics'
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: grpc-go
+          image: grpc-go:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SERVICE_NAME
+              value: go-service
+            - name: GRPC_PORT
+              value: '50051'
+            - name: METRICS_PORT
+              value: '9090'
+            - name: PEER_ADDRESS
+              value: grpc-python:50052
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
