@@ -74,7 +74,7 @@ DASHBOARDS=(
   "${ARGOCD_DASHBOARDS[@]}"
   # Note: Linkerd dashboards require linkerd-viz extension or prometheus scrape config
   # Uncomment after running: ./scripts/deploy-linkerd-viz.sh
-  # "${LINKERD_DASHBOARDS[@]}"
+  "${LINKERD_DASHBOARDS[@]}"
 )
 
 echo "Importing Grafana dashboards..."
