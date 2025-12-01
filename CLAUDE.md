@@ -57,16 +57,18 @@ This repository maintains comprehensive documentation organized in multiple loca
 
 | Document                            | Description                                                                                          |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `docs/DUAL-GITOPS.md`               | **CRITICAL** - Dual GitOps architecture pattern, rules, and workflows                                |
+| `docs/AUTH-IMPLEMENTATION-GUIDE.md` | **PLANNING** - Authentication guide - LDAP, Authelia, Authentik, Kerberos comparison and implementation plan |
 | `docs/catalyst-ui-deployment.md`    | Catalyst UI deployment guide - Docker registry, ArgoCD application setup, troubleshooting            |
+| `docs/DUAL-GITOPS.md`               | **CRITICAL** - Dual GitOps architecture pattern, rules, and workflows                                |
 | `docs/DUAL-GITOPS-ARCHITECTURE.md`  | Additional GitOps architecture documentation and diagrams                                            |
+| `docs/ENHANCEMENT-ROADMAP.md`       | **Enhancement Roadmap** - MCP server and Tilt extension integration planning (2-stream project)      |
 | `docs/FLUX-MIGRATION-ASSESSMENT.md` | FluxCD migration assessment - Comparison with ArgoCD, pros/cons                                      |
 | `docs/infra-testing-tools.md`       | Infrastructure testing UI tools - Headlamp, Kubeview, Kube-ops-view, Goldilocks deployment and usage |
 | `docs/kubernetes-ui-tools.md`       | Comprehensive guide to Kubernetes UI tools - Comparison and evaluation of available options          |
 | `docs/LOCAL-TESTING.md`             | Local testing guide - Testing infrastructure changes before deployment                               |
 | `docs/node-shutdown-procedure.md`   | Node shutdown and restart guide - Safe procedures for hardware maintenance and recovery              |
-| `docs/ENHANCEMENT-ROADMAP.md`       | **Enhancement Roadmap** - MCP server and Tilt extension integration planning (2-stream project)      |
 | `docs/PROGRESS-SUMMARY.md`          | Progress summary - Session-by-session tracking of implementation work                                |
+| `docs/SERVICE-MESH.md`              | **PLANNING** - Service mesh strategy - Linkerd, Istio comparison, hybrid cluster integration         |
 | `docs/TALOS-PROVISIONING-STEPS.md`  | Talos provisioning steps - Detailed cluster setup and bootstrap process                              |
 | `docs/tilt-development-workflow.md` | Tilt development workflow - Hot-reload development environment for infrastructure manifests          |
 

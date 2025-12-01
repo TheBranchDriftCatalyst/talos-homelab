@@ -1,0 +1,132 @@
+# Scratch Stack Tiltfile
+# Experimental/learning applications
+#
+# Can run standalone: cd applications/scratch && tilt up
+# Or included from root Tiltfile
+#
+# All resources use the 'apps-scratch' label for sidebar grouping.
+
+# Load extensions (needed for standalone mode, harmless if already loaded)
+load('ext://uibutton', 'cmd_button')
+
+# Configuration
+namespace = 'scratch'
+LABEL = '0-apps-scratch'
+K8S_CONTEXT = 'admin@homelab-single'
+REGISTRY = 'ghcr.io/thebranchdriftcatalyst/scratch'
+
+# Allow k8s context - safe to call multiple times
+allow_k8s_contexts(K8S_CONTEXT)
+
+# Use ghcr.io registry for images
+default_registry(REGISTRY)
+
+# ============================================
+# gRPC Example - Go & Python services
+# ============================================
+
+# Watch proto files - changes trigger rebuild of BOTH services
+# This creates a local_resource that both docker_builds depend on
+local_resource(
+    'proto-gen',
+    cmd='echo "Proto files changed - triggering rebuilds"',
+    deps=['./grpc-example/proto/'],
+    labels=[LABEL],
+    allow_parallel=True,
+)
+
+# Build Go service - depends on proto changes
+docker_build(
+    'grpc-go',
+    context='./grpc-example',
+    dockerfile='./grpc-example/go-service/Dockerfile',
+    only=[
+        'proto/',
+        'go-service/',
+    ],
+    live_update=[
+        sync('./grpc-example/go-service/', '/app/'),
+        run('cd /app && go build -o /grpc-server .', trigger=['./grpc-example/go-service/*.go']),
+    ]
+)
+
+# Build Python service - depends on proto changes
+docker_build(
+    'grpc-python',
+    context='./grpc-example',
+    dockerfile='./grpc-example/python-service/Dockerfile',
+    only=[
+        'proto/',
+        'python-service/',
+    ],
+    live_update=[
+        sync('./grpc-example/python-service/server.py', '/app/server.py'),
+    ]
+)
+
+# Apply K8s manifests
+k8s_yaml(kustomize('./grpc-example/k8s/'))
+watch_file('./grpc-example/k8s/')
+
+# Go service resource - rebuilds when proto-gen triggers
+k8s_resource(
+    'grpc-go',
+    port_forwards=[
+        '50051:50051',  # gRPC
+        '9090:9090',    # Metrics
+    ],
+    labels=[LABEL],
+    resource_deps=['proto-gen'],
+    links=[
+        link('http://localhost:9090/metrics', 'Go Metrics'),
+    ]
+)
+
+# Python service resource - rebuilds when proto-gen triggers
+k8s_resource(
+    'grpc-python',
+    port_forwards=[
+        '50052:50052',  # gRPC
+        '9091:9091',    # Metrics
+    ],
+    labels=[LABEL],
+    resource_deps=['proto-gen', 'grpc-go'],
+    links=[
+        link('http://localhost:9091/metrics', 'Python Metrics'),
+    ]
+)
+
+# ============================================
+# Utility buttons
+# ============================================
+
+# Test gRPC call from Go -> Python
+cmd_button(
+    name='btn-grpcurl-go',
+    resource='grpc-go',
+    argv=['sh', '-c', '''
+        kubectl exec -n scratch deploy/grpc-go -- \
+            /grpc-server echo "Test from button" 2>/dev/null || \
+        echo "Use grpcurl: grpcurl -plaintext localhost:50051 echo.EchoService/Echo"
+    '''],
+    text='Test Echo',
+    icon_name='play_arrow'
+)
+
+# View gRPC logs
+cmd_button(
+    name='btn-grpc-logs',
+    resource='grpc-go',
+    argv=['sh', '-c', 'kubectl logs -n scratch -l app.kubernetes.io/part-of=grpc-example --tail=50 -f'],
+    text='All Logs',
+    icon_name='article'
+)
+
+# Rebuild protos (local)
+cmd_button(
+    name='btn-rebuild-protos',
+    resource='grpc-go',
+    argv=['sh', '-c', 'cd applications/scratch/grpc-example/proto && make all'],
+    text='Rebuild Protos',
+    icon_name='build'
+)

@@ -1,83 +1,48 @@
 #!/usr/bin/env bash
-# Common dashboard library - shared functions for all dashboard scripts
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Dashboard Common Library                                                    ║
+# ║  Extended utilities for dashboard scripts (extends common.sh)                ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
 # Source this file from dashboard scripts:
 #   source "$(dirname "${BASH_SOURCE[0]}")/../scripts/lib/dashboard-common.sh"
 #
+# This library extends common.sh with dashboard-specific functionality:
+#   - Cached kubectl data fetching (parallel)
+#   - Pod/deployment status helpers
+#   - Volume and PVC information
+#   - Service URL resolution
+#   - Credential extraction
+#
 # shellcheck disable=SC2016,SC2034
 
-# ============================================================================
-# Color codes
-# ============================================================================
-RESET='\033[0m'
-BOLD='\033[1m'
-DIM='\033[2m'
-CYAN='\033[96m'
-GREEN='\033[92m'
-YELLOW='\033[93m'
-RED='\033[91m'
-MAGENTA='\033[95m'
-BLUE='\033[94m'
+# Get the directory of this script
+_DASHBOARD_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ============================================================================
-# Configuration
-# ============================================================================
-DOMAIN="${DOMAIN:-talos00}"
+# Source the base common library
+source "${_DASHBOARD_LIB_DIR}/common.sh"
 
-# Find project root
-_find_project_root() {
-  local dir="$1"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -f "$dir/Taskfile.yaml" ]] && [[ -d "$dir/infrastructure" ]]; then
-      echo "$dir"
-      return
-    fi
-    dir="$(dirname "$dir")"
-  done
-  echo ""
-}
+# ══════════════════════════════════════════════════════════════════════════════
+# DASHBOARD INITIALIZATION
+# ══════════════════════════════════════════════════════════════════════════════
 
-DASHBOARD_SCRIPT_DIR="${DASHBOARD_SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-PROJECT_ROOT="${PROJECT_ROOT:-$(_find_project_root "$DASHBOARD_SCRIPT_DIR")}"
-
-# Kubeconfig search order: KUBECONFIG env, project .output, ~/.kube/config
-_find_kubeconfig() {
-  if [[ -n "${KUBECONFIG:-}" ]] && [[ -f "$KUBECONFIG" ]]; then
-    echo "$KUBECONFIG"
-  elif [[ -n "$PROJECT_ROOT" ]] && [[ -f "${PROJECT_ROOT}/.output/kubeconfig" ]]; then
-    echo "${PROJECT_ROOT}/.output/kubeconfig"
-  elif [[ -f "${HOME}/.kube/config" ]]; then
-    echo "${HOME}/.kube/config"
-  else
-    echo ""
-  fi
-}
-
-# ============================================================================
-# Initialization
-# ============================================================================
+# Initialize dashboard environment
+# Creates cache directory and validates prerequisites
 dashboard_init() {
-  # Check if kubectl is available
-  if ! command -v kubectl &> /dev/null; then
-    echo "kubectl not found. Please install kubectl."
-    exit 1
-  fi
-
-  # Check if jq is available
-  if ! command -v jq &> /dev/null; then
-    echo "jq not found. Please install jq."
-    exit 1
-  fi
+  # Check prerequisites
+  require_cmd "kubectl" "kubectl is required for dashboards"
+  require_cmd "jq" "jq is required for JSON parsing"
 
   # Find and set kubeconfig
   local kubeconfig_path
   kubeconfig_path=$(_find_kubeconfig)
 
   if [[ -z "$kubeconfig_path" ]]; then
-    echo "Kubeconfig not found. Searched:"
-    echo "  - \$KUBECONFIG env var"
-    [[ -n "$PROJECT_ROOT" ]] && echo "  - ${PROJECT_ROOT}/.output/kubeconfig"
-    echo "  - ${HOME}/.kube/config"
-    echo "Run: task kubeconfig"
+    error "Kubeconfig not found. Searched:"
+    log_note "\$KUBECONFIG env var"
+    [[ -n "$PROJECT_ROOT" ]] && log_note "${PROJECT_ROOT}/.output/kubeconfig"
+    log_note "${HOME}/.kube/config"
+    log_note "Run: task kubeconfig-merge"
     exit 1
   fi
 
@@ -85,99 +50,117 @@ dashboard_init() {
 
   # Create temp cache directory
   CACHE_DIR=$(mktemp -d)
-  trap 'rm -rf "$CACHE_DIR"' EXIT
+  register_cleanup "rm -rf $CACHE_DIR"
+  setup_cleanup_trap
 }
 
-# ============================================================================
-# Bulk data fetching - do all kubectl calls upfront
-# ============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
+# BULK DATA FETCHING (Parallel for Performance)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Fetch cluster-wide data (nodes, storage classes, PVs)
 fetch_cluster_data() {
   echo -e "${DIM}Loading cluster data...${RESET}"
 
-  # Fetch cluster-wide data in parallel
-  kubectl get nodes -o json > "$CACHE_DIR/nodes.json" 2> /dev/null &
-  kubectl get sc -o json > "$CACHE_DIR/storageclasses.json" 2> /dev/null &
-  kubectl get pv -o json > "$CACHE_DIR/pvs.json" 2> /dev/null &
+  # Fetch in parallel
+  kubectl get nodes -o json > "$CACHE_DIR/nodes.json" 2>/dev/null &
+  kubectl get sc -o json > "$CACHE_DIR/storageclasses.json" 2>/dev/null &
+  kubectl get pv -o json > "$CACHE_DIR/pvs.json" 2>/dev/null &
 
   wait
 
-  # Clear the loading message
+  # Clear loading message
   echo -e "\033[1A\033[2K"
 }
 
+# Fetch namespace-specific data
+# Usage: fetch_namespace_data "media" ["prefix"]
 fetch_namespace_data() {
   local namespace=$1
-  local prefix="${2:-}" # optional prefix for cache files
+  local prefix="${2:-}"
 
   echo -e "${DIM}Loading ${namespace} data...${RESET}"
 
-  # Fetch namespace data in parallel
-  kubectl get deployments -n "$namespace" -o json > "$CACHE_DIR/${prefix}deployments.json" 2> /dev/null &
-  kubectl get pods -n "$namespace" -o json > "$CACHE_DIR/${prefix}pods.json" 2> /dev/null &
-  kubectl get pvc -n "$namespace" -o json > "$CACHE_DIR/${prefix}pvcs.json" 2> /dev/null &
-  kubectl get svc -n "$namespace" -o json > "$CACHE_DIR/${prefix}services.json" 2> /dev/null &
-  kubectl get secrets -n "$namespace" -o json > "$CACHE_DIR/${prefix}secrets.json" 2> /dev/null &
-
-  # IngressRoutes (Traefik CRD - may not exist)
-  kubectl get ingressroute -n "$namespace" -o json > "$CACHE_DIR/${prefix}ingressroutes.json" 2> /dev/null &
+  # Fetch in parallel
+  kubectl get deployments -n "$namespace" -o json > "$CACHE_DIR/${prefix}deployments.json" 2>/dev/null &
+  kubectl get pods -n "$namespace" -o json > "$CACHE_DIR/${prefix}pods.json" 2>/dev/null &
+  kubectl get pvc -n "$namespace" -o json > "$CACHE_DIR/${prefix}pvcs.json" 2>/dev/null &
+  kubectl get svc -n "$namespace" -o json > "$CACHE_DIR/${prefix}services.json" 2>/dev/null &
+  kubectl get secrets -n "$namespace" -o json > "$CACHE_DIR/${prefix}secrets.json" 2>/dev/null &
+  kubectl get ingressroute -n "$namespace" -o json > "$CACHE_DIR/${prefix}ingressroutes.json" 2>/dev/null &
 
   wait
 
-  # Clear the loading message
+  # Clear loading message
   echo -e "\033[1A\033[2K"
 }
 
-# ============================================================================
-# Helper functions using cached data
-# ============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
+# NAMESPACE HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
 
 # Check if namespace exists
 namespace_exists() {
-  kubectl get namespace "$1" &> /dev/null
+  kubectl get namespace "$1" &>/dev/null
 }
 
 # Check cluster health from cache
 cluster_healthy() {
-  [[ -f "$CACHE_DIR/nodes.json" ]] && jq -e '.items | length > 0' "$CACHE_DIR/nodes.json" &> /dev/null
+  [[ -f "$CACHE_DIR/nodes.json" ]] && jq -e '.items | length > 0' "$CACHE_DIR/nodes.json" &>/dev/null
 }
 
-# Get deployment exists from cache
+# ══════════════════════════════════════════════════════════════════════════════
+# DEPLOYMENT HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Check if deployment exists
 get_deployment_exists() {
   local app=$1
   local prefix="${2:-}"
-  jq -e ".items[] | select(.metadata.name == \"$app\")" "$CACHE_DIR/${prefix}deployments.json" &> /dev/null
+  jq -e ".items[] | select(.metadata.name == \"$app\")" "$CACHE_DIR/${prefix}deployments.json" &>/dev/null
 }
 
-# Get pod status from cache
+# Get volume mounts for a deployment
+get_volume_mounts() {
+  local app=$1
+  local prefix="${2:-}"
+  jq -r ".items[] | select(.metadata.name == \"$app\") | .spec.template.spec.volumes[]? | select(.persistentVolumeClaim != null) | .name + \":\" + .persistentVolumeClaim.claimName" "$CACHE_DIR/${prefix}deployments.json" 2>/dev/null
+}
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POD STATUS HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Get pod status by label
+# Usage: get_pod_status "app" "nginx" ["prefix"]
 get_pod_status() {
   local label_key=$1
   local label_value=$2
   local prefix="${3:-}"
 
-  jq -r ".items[] | select(.metadata.labels[\"$label_key\"] == \"$label_value\") | .status.phase" "$CACHE_DIR/${prefix}pods.json" 2> /dev/null | head -1
+  jq -r ".items[] | select(.metadata.labels[\"$label_key\"] == \"$label_value\") | .status.phase" "$CACHE_DIR/${prefix}pods.json" 2>/dev/null | head -1
 }
 
-# Get pod status by app label (convenience function)
+# Convenience wrappers
 get_pod_status_by_app() {
   local app=$1
   local prefix="${2:-}"
   get_pod_status "app" "$app" "$prefix"
 }
 
-# Get pod status by k8s app name label
 get_pod_status_by_name() {
   local app=$1
   local prefix="${2:-}"
   get_pod_status "app.kubernetes.io/name" "$app" "$prefix"
 }
 
-# Get pod ready status from cache
+# Get pod ready status
 get_pod_ready() {
   local label_key=$1
   local label_value=$2
   local prefix="${3:-}"
 
-  jq -r ".items[] | select(.metadata.labels[\"$label_key\"] == \"$label_value\") | .status.containerStatuses[0].ready // false" "$CACHE_DIR/${prefix}pods.json" 2> /dev/null | head -1
+  jq -r ".items[] | select(.metadata.labels[\"$label_key\"] == \"$label_value\") | .status.containerStatuses[0].ready // false" "$CACHE_DIR/${prefix}pods.json" 2>/dev/null | head -1
 }
 
 get_pod_ready_by_app() {
@@ -192,23 +175,27 @@ get_pod_ready_by_name() {
   get_pod_ready "app.kubernetes.io/name" "$app" "$prefix"
 }
 
-# Get service info from cache
+# ══════════════════════════════════════════════════════════════════════════════
+# SERVICE HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Get service info (ClusterIP:Port)
 get_service_info() {
   local service=$1
   local prefix="${2:-}"
   local result
-  result=$(jq -r ".items[] | select(.metadata.name == \"$service\") | .spec.clusterIP + \":\" + (.spec.ports[0].port | tostring)" "$CACHE_DIR/${prefix}services.json" 2> /dev/null)
+  result=$(jq -r ".items[] | select(.metadata.name == \"$service\") | .spec.clusterIP + \":\" + (.spec.ports[0].port | tostring)" "$CACHE_DIR/${prefix}services.json" 2>/dev/null)
   echo "${result:-not-found}"
 }
 
-# Get ingress URL from cache (Traefik IngressRoute)
+# Get ingress URL (from Traefik IngressRoute)
 get_ingress_url() {
   local service=$1
   local prefix="${2:-}"
   local host
 
   if [[ -f "$CACHE_DIR/${prefix}ingressroutes.json" ]]; then
-    host=$(jq -r ".items[] | select(.metadata.name | contains(\"$service\")) | .spec.routes[0].match" "$CACHE_DIR/${prefix}ingressroutes.json" 2> /dev/null |
+    host=$(jq -r ".items[] | select(.metadata.name | contains(\"$service\")) | .spec.routes[0].match" "$CACHE_DIR/${prefix}ingressroutes.json" 2>/dev/null |
       sed -n 's/.*Host(`\([^`]*\)`).*/\1/p' | head -1)
   fi
 
@@ -219,35 +206,16 @@ get_ingress_url() {
   fi
 }
 
-# Get volume mounts for a deployment from cache
-get_volume_mounts() {
-  local app=$1
-  local prefix="${2:-}"
-  jq -r ".items[] | select(.metadata.name == \"$app\") | .spec.template.spec.volumes[]? | select(.persistentVolumeClaim != null) | .name + \":\" + .persistentVolumeClaim.claimName" "$CACHE_DIR/${prefix}deployments.json" 2> /dev/null
-}
+# ══════════════════════════════════════════════════════════════════════════════
+# PVC HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
 
-# Get PVC info from cache
+# Get PVC info (phase|capacity|storageClass)
 get_pvc_info() {
   local pvc_name=$1
   local prefix="${2:-}"
-  jq -r ".items[] | select(.metadata.name == \"$pvc_name\") | .status.phase + \"|\" + .spec.resources.requests.storage + \"|\" + (.spec.storageClassName // \"default\")" "$CACHE_DIR/${prefix}pvcs.json" 2> /dev/null
+  jq -r ".items[] | select(.metadata.name == \"$pvc_name\") | .status.phase + \"|\" + .spec.resources.requests.storage + \"|\" + (.spec.storageClassName // \"default\")" "$CACHE_DIR/${prefix}pvcs.json" 2>/dev/null
 }
-
-# Get secret data from cache
-get_secret_data() {
-  local secret_name=$1
-  local key=$2
-  local prefix="${3:-}"
-  local value
-  value=$(jq -r ".items[] | select(.metadata.name == \"$secret_name\") | .data[\"$key\"] // empty" "$CACHE_DIR/${prefix}secrets.json" 2> /dev/null)
-  if [[ -n "$value" ]]; then
-    echo "$value" | base64 -d 2> /dev/null
-  fi
-}
-
-# ============================================================================
-# Display helper functions
-# ============================================================================
 
 # Shorten storage class name for display
 shorten_storageclass() {
@@ -261,21 +229,34 @@ shorten_storageclass() {
   esac
 }
 
-# Print status indicator
-print_status_indicator() {
-  local status=$1
-  local ready=$2
+# ══════════════════════════════════════════════════════════════════════════════
+# SECRET HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
 
-  if [[ "$status" == "Running" ]] && [[ "$ready" == "true" ]]; then
-    echo -e "${GREEN}[✓]${RESET}"
-  elif [[ -z "$status" ]] || [[ "$status" == "null" ]] || [[ "$status" == "NotFound" ]]; then
-    echo -e "${RED}[✗]${RESET}"
-  else
-    echo -e "${YELLOW}[⚠]${RESET}"
+# Get secret data from cache (base64 decoded)
+get_secret_data() {
+  local secret_name=$1
+  local key=$2
+  local prefix="${3:-}"
+  local value
+  value=$(jq -r ".items[] | select(.metadata.name == \"$secret_name\") | .data[\"$key\"] // empty" "$CACHE_DIR/${prefix}secrets.json" 2>/dev/null)
+  if [[ -n "$value" ]]; then
+    echo "$value" | base64 -d 2>/dev/null
   fi
 }
 
-# Print volume mount with status indicator
+# ══════════════════════════════════════════════════════════════════════════════
+# DASHBOARD DISPLAY HELPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Print status indicator (uses base print_status)
+print_status_indicator() {
+  local status=$1
+  local ready=$2
+  print_status "$status" "$ready"
+}
+
+# Print volume mount with status
 print_volume_mount() {
   local pvc_name=$1
   local indent=$2
@@ -285,7 +266,7 @@ print_volume_mount() {
   pvc_info=$(get_pvc_info "$pvc_name" "$prefix")
 
   if [[ -z "$pvc_info" ]]; then
-    echo -e "${indent}${RED}✗${RESET} ${DIM}${pvc_name}${RESET} ${RED}[NotFound]${RESET}"
+    echo -e "${indent}${RED}${ICON_FAILURE}${RESET} ${DIM}${pvc_name}${RESET} ${RED}[NotFound]${RESET}"
     return
   fi
 
@@ -293,13 +274,13 @@ print_volume_mount() {
   IFS='|' read -r status capacity sc <<< "$pvc_info"
 
   # Status indicator
-  local status_icon="⚠"
+  local status_icon="${ICON_WARNING}"
   local status_color=$YELLOW
   if [[ "$status" == "Bound" ]]; then
-    status_icon="●"
+    status_icon="${ICON_RUNNING}"
     status_color=$GREEN
   elif [[ "$status" == "Pending" ]]; then
-    status_icon="○"
+    status_icon="${ICON_PENDING}"
     status_color=$YELLOW
   fi
 
@@ -309,8 +290,8 @@ print_volume_mount() {
   echo -e "${indent}${status_color}${status_icon}${RESET} ${DIM}${pvc_name}${RESET} ${BLUE}(${capacity})${RESET} ${DIM}[${sc_short}]${RESET}"
 }
 
-# Print service with status (generic version)
-# Usage: print_service_line "name" "status" "ready" "url" "is_last" ["extra_info"]
+# Print service line with status (tree-style)
+# Usage: print_service_line "name" "status" "ready" "url" "is_last" ["extra"]
 print_service_line() {
   local name=$1
   local status=$2
@@ -319,20 +300,17 @@ print_service_line() {
   local is_last=${5:-false}
   local extra=${6:-}
 
-  # Status indicator
   local status_indicator
   status_indicator=$(print_status_indicator "$status" "$ready")
 
   # Tree characters
-  local branch="┣━"
-  if [[ "$is_last" == "true" ]]; then
-    branch="┗━"
-  fi
+  local branch="${TREE_BRANCH}"
+  [[ "$is_last" == "true" ]] && branch="${TREE_LAST}"
 
   local line="  ${BOLD}${branch} ${name}${RESET} ${status_indicator}"
 
   if [[ -n "$url" ]]; then
-    line+=" ${DIM}→${RESET} ${CYAN}${url}${RESET}"
+    line+=" ${DIM}${ICON_ARROW}${RESET} ${CYAN}${url}${RESET}"
   fi
 
   if [[ -n "$extra" ]]; then
@@ -342,24 +320,16 @@ print_service_line() {
   echo -e "$line"
 }
 
-# Print section header
-print_section() {
-  local title=$1
-  echo -e "${MAGENTA}▸ ${title}${RESET}"
-}
-
-# Print a sub-item (indented line under a service)
+# Print a sub-item under a tree line
 print_sub_item() {
   local text=$1
   local is_last=${2:-false}
-  local cont="┃"
-  if [[ "$is_last" == "true" ]]; then
-    cont=" "
-  fi
+  local cont="${TREE_CONT}"
+  [[ "$is_last" == "true" ]] && cont=" "
   echo -e "  ${cont}  ${DIM}${text}${RESET}"
 }
 
-# Print storage summary
+# Print storage summary from cache
 print_storage_summary() {
   local prefix="${1:-}"
 
@@ -367,15 +337,15 @@ print_storage_summary() {
 
   if [[ -f "$CACHE_DIR/${prefix}pvcs.json" ]]; then
     local bound_count pending_count total_count
-    bound_count=$(jq '[.items[] | select(.status.phase == "Bound")] | length' "$CACHE_DIR/${prefix}pvcs.json" 2> /dev/null || echo "0")
-    pending_count=$(jq '[.items[] | select(.status.phase == "Pending")] | length' "$CACHE_DIR/${prefix}pvcs.json" 2> /dev/null || echo "0")
-    total_count=$(jq '.items | length' "$CACHE_DIR/${prefix}pvcs.json" 2> /dev/null || echo "0")
+    bound_count=$(jq '[.items[] | select(.status.phase == "Bound")] | length' "$CACHE_DIR/${prefix}pvcs.json" 2>/dev/null || echo "0")
+    pending_count=$(jq '[.items[] | select(.status.phase == "Pending")] | length' "$CACHE_DIR/${prefix}pvcs.json" 2>/dev/null || echo "0")
+    total_count=$(jq '.items | length' "$CACHE_DIR/${prefix}pvcs.json" 2>/dev/null || echo "0")
 
     echo -e "  ${DIM}PVCs:${RESET} ${GREEN}${bound_count} Bound${RESET} ${YELLOW}${pending_count} Pending${RESET} ${DIM}(${total_count} total)${RESET}"
 
-    # Show storage classes in use
+    # Storage classes in use
     local storage_classes
-    storage_classes=$(jq -r '[.items[].spec.storageClassName] | unique | join(" ")' "$CACHE_DIR/${prefix}pvcs.json" 2> /dev/null)
+    storage_classes=$(jq -r '[.items[].spec.storageClassName] | unique | join(" ")' "$CACHE_DIR/${prefix}pvcs.json" 2>/dev/null)
     if [[ -n "$storage_classes" ]] && [[ "$storage_classes" != "null" ]]; then
       echo -e "  ${DIM}Storage Classes:${RESET} ${storage_classes}"
     fi
@@ -385,12 +355,12 @@ print_storage_summary() {
   echo ""
 }
 
-# Print cluster status
+# Print cluster status line
 print_cluster_status() {
   if cluster_healthy; then
-    echo -e "${GREEN}✓ Cluster is running${RESET}"
+    echo -e "${GREEN}${ICON_SUCCESS} Cluster is running${RESET}"
   else
-    echo -e "${RED}✗ Cluster is not accessible${RESET}"
+    echo -e "${RED}${ICON_FAILURE} Cluster is not accessible${RESET}"
   fi
 }
 

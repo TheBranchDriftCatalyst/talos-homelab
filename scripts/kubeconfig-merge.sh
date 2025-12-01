@@ -1,113 +1,114 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Kubeconfig Auto-Merge Utility                                               ║
+# ║  Discovers and merges all kubeconfigs from .output/ directory                ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
 
-# Kubeconfig Merge Script
-# Automatically discovers and merges all kubeconfigs from .output/ directory
+# Source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh"
 
-set -e
-
-# Change to project root
-cd "$(dirname "$0")/.."
-
+# ══════════════════════════════════════════════════════════════════════════════
+# Configuration
+# ══════════════════════════════════════════════════════════════════════════════
 DEFAULT_KUBECONFIG="${HOME}/.kube/config"
-OUTPUT_DIR=".output"
 
-# Colors
-GREEN='\033[0;32m'
-BLUE='\033[0;34m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m' # No Color
+# ══════════════════════════════════════════════════════════════════════════════
+# Banner
+# ══════════════════════════════════════════════════════════════════════════════
+print_banner "
+██╗  ██╗██╗   ██╗██████╗ ███████╗ ██████╗ ██████╗ ███╗   ██╗███████╗██╗ ██████╗
+██║ ██╔╝██║   ██║██╔══██╗██╔════╝██╔════╝██╔═══██╗████╗  ██║██╔════╝██║██╔════╝
+█████╔╝ ██║   ██║██████╔╝█████╗  ██║     ██║   ██║██╔██╗ ██║█████╗  ██║██║  ███╗
+██╔═██╗ ██║   ██║██╔══██╗██╔══╝  ██║     ██║   ██║██║╚██╗██║██╔══╝  ██║██║   ██║
+██║  ██╗╚██████╔╝██████╔╝███████╗╚██████╗╚██████╔╝██║ ╚████║██║     ██║╚██████╔╝
+╚═╝  ╚═╝ ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝     ╚═╝ ╚═════╝
+                             ${ICON_LIGHTNING} Auto-Merge Utility ${ICON_LIGHTNING}
+" "$YELLOW"
 
-echo -e "${BLUE}🔧 Kubeconfig Auto-Merge Utility${NC}"
-echo -e "${BLUE}================================${NC}"
-echo ""
-
-# Check if .output directory exists
-if [ ! -d "$OUTPUT_DIR" ]; then
-  echo -e "${RED}❌ No $OUTPUT_DIR directory found${NC}"
-  echo "Run './scripts/provision.sh' or './scripts/provision-local.sh' first"
+# ══════════════════════════════════════════════════════════════════════════════
+# Check Output Directory
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ ! -d "$OUTPUT_DIR" ]]; then
+  error "No $OUTPUT_DIR directory found"
+  log_note "Run './scripts/provision.sh' or './scripts/provision-local.sh' first"
   exit 1
 fi
 
-# Discover all kubeconfig files in .output/
-echo -e "${BLUE}🔍 Discovering kubeconfigs in $OUTPUT_DIR...${NC}"
-echo ""
+# ══════════════════════════════════════════════════════════════════════════════
+# Discover Kubeconfigs
+# ══════════════════════════════════════════════════════════════════════════════
+log_step "1" "Discovering Kubeconfigs in $OUTPUT_DIR"
 
-# Find all files named 'kubeconfig' recursively
 FOUND_CONFIGS=()
 while IFS= read -r -d '' config_path; do
   FOUND_CONFIGS+=("$config_path")
-done < <(find "$OUTPUT_DIR" -type f -name "kubeconfig" -print0 2> /dev/null)
+done < <(find "$OUTPUT_DIR" -type f -name "kubeconfig" -print0 2>/dev/null)
 
-if [ ${#FOUND_CONFIGS[@]} -eq 0 ]; then
-  echo -e "${YELLOW}⚠️  No kubeconfig files found in $OUTPUT_DIR${NC}"
+if [[ ${#FOUND_CONFIGS[@]} -eq 0 ]]; then
+  warn "No kubeconfig files found in $OUTPUT_DIR"
   echo ""
   echo "Expected locations:"
-  echo "  .output/kubeconfig         (production cluster)"
-  echo "  .output/local/kubeconfig   (local test cluster)"
-  echo "  .output/*/kubeconfig       (any other environment)"
+  log_note ".output/kubeconfig         (production cluster)"
+  log_note ".output/local/kubeconfig   (local test cluster)"
+  log_note ".output/*/kubeconfig       (any other environment)"
   exit 1
 fi
 
-echo -e "${GREEN}Found ${#FOUND_CONFIGS[@]} kubeconfig file(s):${NC}"
+success "Found ${#FOUND_CONFIGS[@]} kubeconfig file(s):"
 for config in "${FOUND_CONFIGS[@]}"; do
-  echo "  - $config"
+  echo -e "  ${DIM}${ICON_BULLET}${RESET} $config"
 done
 echo ""
 
-# Create ~/.kube directory if it doesn't exist
-mkdir -p "${HOME}/.kube"
+# ══════════════════════════════════════════════════════════════════════════════
+# Create Backup
+# ══════════════════════════════════════════════════════════════════════════════
+ensure_dir "${HOME}/.kube"
 
-# Backup existing config if it exists
-if [ -f "$DEFAULT_KUBECONFIG" ]; then
-  BACKUP_FILE="${DEFAULT_KUBECONFIG}.backup.$(date +%Y%m%d-%H%M%S)"
-  echo -e "${BLUE}📦 Backing up existing kubeconfig...${NC}"
-  cp "$DEFAULT_KUBECONFIG" "$BACKUP_FILE"
-  echo -e "${GREEN}✅ Backup created: $BACKUP_FILE${NC}"
+if [[ -f "$DEFAULT_KUBECONFIG" ]]; then
+  log_step "2" "Backing Up Existing Kubeconfig"
+  BACKUP_FILE=$(backup_file "$DEFAULT_KUBECONFIG")
+  success "Backup: $BACKUP_FILE"
   echo ""
 fi
 
-# Process each discovered kubeconfig
+# ══════════════════════════════════════════════════════════════════════════════
+# Process Each Kubeconfig
+# ══════════════════════════════════════════════════════════════════════════════
+log_step "3" "Processing Kubeconfigs"
+
 MERGED_COUNT=0
 SKIPPED_COUNT=0
 
 for KUBECONFIG_PATH in "${FOUND_CONFIGS[@]}"; do
   # Derive context name from path
-  # .output/kubeconfig -> homelab-single
-  # .output/local/kubeconfig -> talos-local
-  # .output/staging/kubeconfig -> talos-staging
-  # etc.
-
-  if [[ "$KUBECONFIG_PATH" == ".output/kubeconfig" ]]; then
-    # Root level is production
+  if [[ "$KUBECONFIG_PATH" == "${OUTPUT_DIR}/kubeconfig" ]]; then
     CONTEXT_NAME="homelab-single"
     CLUSTER_NAME="homelab-single"
     ENV_NAME="production"
   else
-    # Extract directory name between .output/ and /kubeconfig
-    ENV_DIR=$(echo "$KUBECONFIG_PATH" | sed 's|^.output/||' | sed 's|/kubeconfig$||')
+    ENV_DIR=$(echo "$KUBECONFIG_PATH" | sed "s|^${OUTPUT_DIR}/||" | sed 's|/kubeconfig$||')
     CONTEXT_NAME="talos-${ENV_DIR}"
     CLUSTER_NAME="talos-${ENV_DIR}"
     ENV_NAME="$ENV_DIR"
   fi
 
-  echo -e "${BLUE}📋 Processing: $ENV_NAME${NC}"
-  echo "   Path: $KUBECONFIG_PATH"
-  echo "   Context: $CONTEXT_NAME"
-  echo "   Cluster: $CLUSTER_NAME"
+  print_subsection "Processing: $ENV_NAME"
+  echo -e "    ${DIM}Path:${RESET}    $KUBECONFIG_PATH"
+  echo -e "    ${DIM}Context:${RESET} $CONTEXT_NAME"
+  echo -e "    ${DIM}Cluster:${RESET} $CLUSTER_NAME"
 
   # Check if context already exists
-  if [ -f "$DEFAULT_KUBECONFIG" ]; then
-    if kubectl config get-contexts "$CONTEXT_NAME" &> /dev/null; then
-      echo -e "${YELLOW}   ⚠️  Context '$CONTEXT_NAME' already exists${NC}"
-      read -p "   Remove and re-merge? (y/N) " -n 1 -r
-      echo
-      if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "   🗑️  Removing existing context..."
-        kubectl config delete-context "$CONTEXT_NAME" 2> /dev/null || true
-        kubectl config delete-cluster "$CLUSTER_NAME" 2> /dev/null || true
+  if [[ -f "$DEFAULT_KUBECONFIG" ]]; then
+    if kubectl config get-contexts "$CONTEXT_NAME" &>/dev/null; then
+      warn "Context '$CONTEXT_NAME' already exists"
+      if confirm "    Remove and re-merge?"; then
+        info "Removing existing context..."
+        kubectl config delete-context "$CONTEXT_NAME" 2>/dev/null || true
+        kubectl config delete-cluster "$CLUSTER_NAME" 2>/dev/null || true
       else
-        echo -e "${YELLOW}   ⏭️  Skipping${NC}"
+        warn "Skipping"
         echo ""
         ((SKIPPED_COUNT++))
         continue
@@ -115,113 +116,120 @@ for KUBECONFIG_PATH in "${FOUND_CONFIGS[@]}"; do
     fi
   fi
 
-  # Read original context name from the kubeconfig
-  ORIGINAL_CONTEXT=$(kubectl --kubeconfig="$KUBECONFIG_PATH" config current-context 2> /dev/null || echo "")
+  # Read original context name
+  ORIGINAL_CONTEXT=$(kubectl --kubeconfig="$KUBECONFIG_PATH" config current-context 2>/dev/null || echo "")
 
-  if [ -z "$ORIGINAL_CONTEXT" ]; then
-    echo -e "${YELLOW}   ⚠️  No current context found, using first available${NC}"
+  if [[ -z "$ORIGINAL_CONTEXT" ]]; then
+    warn "No current context found, using first available"
     ORIGINAL_CONTEXT=$(kubectl --kubeconfig="$KUBECONFIG_PATH" config get-contexts -o name | head -1 || echo "")
   fi
 
-  if [ -z "$ORIGINAL_CONTEXT" ]; then
-    echo -e "${RED}   ❌ No contexts found in kubeconfig, skipping${NC}"
+  if [[ -z "$ORIGINAL_CONTEXT" ]]; then
+    error "No contexts found in kubeconfig, skipping"
     echo ""
     ((SKIPPED_COUNT++))
     continue
   fi
 
-  # Build KUBECONFIG env var for merging
-  if [ -f "$DEFAULT_KUBECONFIG" ]; then
+  # Merge kubeconfig
+  if [[ -f "$DEFAULT_KUBECONFIG" ]]; then
     export KUBECONFIG="${KUBECONFIG_PATH}:${DEFAULT_KUBECONFIG}"
   else
     export KUBECONFIG="${KUBECONFIG_PATH}"
   fi
 
   # Rename context if needed
-  if [ "$ORIGINAL_CONTEXT" != "$CONTEXT_NAME" ]; then
-    kubectl config rename-context "$ORIGINAL_CONTEXT" "$CONTEXT_NAME" 2> /dev/null || true
+  if [[ "$ORIGINAL_CONTEXT" != "$CONTEXT_NAME" ]]; then
+    kubectl config rename-context "$ORIGINAL_CONTEXT" "$CONTEXT_NAME" 2>/dev/null || true
   fi
 
-  # Update cluster name for clarity
-  kubectl config set-context "$CONTEXT_NAME" --cluster="$CLUSTER_NAME" 2> /dev/null || true
+  # Update cluster name
+  kubectl config set-context "$CONTEXT_NAME" --cluster="$CLUSTER_NAME" 2>/dev/null || true
 
   # Flatten and write
   kubectl config view --flatten > "${DEFAULT_KUBECONFIG}.tmp"
   mv "${DEFAULT_KUBECONFIG}.tmp" "$DEFAULT_KUBECONFIG"
   chmod 600 "$DEFAULT_KUBECONFIG"
 
-  echo -e "${GREEN}   ✅ Merged${NC}"
+  success "Merged"
   echo ""
   ((MERGED_COUNT++))
 done
 
-# Unset KUBECONFIG to use the default
+# Unset KUBECONFIG
 unset KUBECONFIG
 
-echo ""
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}✅ Merge Complete!${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo ""
-echo -e "${BLUE}📊 Summary:${NC}"
-echo "   Merged: $MERGED_COUNT"
-echo "   Skipped: $SKIPPED_COUNT"
+# ══════════════════════════════════════════════════════════════════════════════
+# Summary
+# ══════════════════════════════════════════════════════════════════════════════
+print_summary "success"
+
+print_section "MERGE RESULTS"
+print_kv "Merged" "$MERGED_COUNT"
+print_kv "Skipped" "$SKIPPED_COUNT"
 echo ""
 
 # Show available contexts
-if [ -f "$DEFAULT_KUBECONFIG" ]; then
-  echo -e "${BLUE}📋 Available contexts:${NC}"
+if [[ -f "$DEFAULT_KUBECONFIG" ]]; then
+  print_section "AVAILABLE CONTEXTS"
   kubectl config get-contexts
   echo ""
 fi
 
-# Try to set a sensible default context
-if [ $MERGED_COUNT -gt 0 ]; then
-  # Prefer production if available, otherwise use the first merged
-  if kubectl config get-contexts homelab-single &> /dev/null; then
+# Set default context
+if [[ $MERGED_COUNT -gt 0 ]]; then
+  # Prefer production if available
+  if kubectl config get-contexts homelab-single &>/dev/null; then
     DEFAULT_CONTEXT="homelab-single"
-  elif kubectl config get-contexts talos-local &> /dev/null; then
+  elif kubectl config get-contexts talos-local &>/dev/null; then
     DEFAULT_CONTEXT="talos-local"
   else
     DEFAULT_CONTEXT=$(kubectl config get-contexts -o name | head -1)
   fi
 
-  if [ -n "$DEFAULT_CONTEXT" ]; then
-    echo -e "${BLUE}🎯 Setting current context to: $DEFAULT_CONTEXT${NC}"
+  if [[ -n "$DEFAULT_CONTEXT" ]]; then
+    info "Setting current context to: $DEFAULT_CONTEXT"
     kubectl config use-context "$DEFAULT_CONTEXT"
     echo ""
   fi
 fi
 
-echo -e "${GREEN}✅ Setup complete!${NC}"
+# Quick Commands
+print_section "QUICK COMMANDS"
+echo -e "  ${CYAN}kubectl get nodes${RESET}"
+echo -e "  ${CYAN}kubectl get pods -A${RESET}"
+echo -e "  ${CYAN}kubectl top nodes${RESET}"
 echo ""
-echo -e "${BLUE}🎯 Quick commands (no --kubeconfig needed!):${NC}"
-echo "  kubectl get nodes"
-echo "  kubectl get pods -A"
-echo "  kubectl top nodes"
-echo ""
-echo -e "${BLUE}🔀 Context switching:${NC}"
-if command -v kubectx &> /dev/null; then
-  echo "  kubectx                    # List contexts"
-  echo "  kubectx homelab-single     # Switch to production"
-  echo "  kubectx talos-local        # Switch to local test"
-  echo "  kubectx -                  # Switch to previous context"
+
+# Context switching
+print_section "CONTEXT SWITCHING"
+if command -v kubectx &>/dev/null; then
+  echo -e "  ${CYAN}kubectx${RESET}                    ${DIM}# List contexts${RESET}"
+  echo -e "  ${CYAN}kubectx homelab-single${RESET}     ${DIM}# Switch to production${RESET}"
+  echo -e "  ${CYAN}kubectx talos-local${RESET}        ${DIM}# Switch to local test${RESET}"
+  echo -e "  ${CYAN}kubectx -${RESET}                  ${DIM}# Switch to previous${RESET}"
 else
-  echo "  kubectl config get-contexts"
-  echo "  kubectl config use-context <context-name>"
+  echo -e "  ${CYAN}kubectl config get-contexts${RESET}"
+  echo -e "  ${CYAN}kubectl config use-context <context-name>${RESET}"
 fi
 echo ""
-if command -v kubens &> /dev/null; then
-  echo -e "${BLUE}📦 Namespace switching:${NC}"
-  echo "  kubens                     # List namespaces"
-  echo "  kubens media-dev           # Switch to dev namespace"
-  echo "  kubens media-prod          # Switch to prod namespace"
-  echo "  kubens -                   # Switch to previous namespace"
+
+# Namespace switching
+if command -v kubens &>/dev/null; then
+  print_section "NAMESPACE SWITCHING"
+  echo -e "  ${CYAN}kubens${RESET}                     ${DIM}# List namespaces${RESET}"
+  echo -e "  ${CYAN}kubens media${RESET}               ${DIM}# Switch to media${RESET}"
+  echo -e "  ${CYAN}kubens -${RESET}                   ${DIM}# Switch to previous${RESET}"
   echo ""
 fi
-if command -v k9s &> /dev/null; then
-  echo -e "${BLUE}👾 K9s TUI:${NC}"
-  echo "  k9s                        # Launch interactive cluster manager"
-  echo "  k9s --context <name>       # Launch for specific context"
+
+# K9s
+if command -v k9s &>/dev/null; then
+  print_section "K9S TUI"
+  echo -e "  ${CYAN}k9s${RESET}                        ${DIM}# Launch interactive manager${RESET}"
+  echo -e "  ${CYAN}k9s --context <name>${RESET}       ${DIM}# Launch for specific context${RESET}"
   echo ""
 fi
+
+echo -e "${GREEN}${BOLD}${EMOJI_PARTY} Setup complete!${RESET}"
+echo ""

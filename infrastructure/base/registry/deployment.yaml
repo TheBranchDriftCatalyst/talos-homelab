@@ -5,9 +5,9 @@ metadata:
   name: registry
   labels:
     name: registry
-    pod-security.kubernetes.io/enforce: baseline
-    pod-security.kubernetes.io/audit: baseline
-    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
     # Enable Goldilocks resource recommendations
     goldilocks.fairwinds.com/enabled: 'true'
 ---
@@ -22,7 +22,7 @@ spec:
   resources:
     requests:
       storage: 100Gi
-  storageClassName: local-path
+  storageClassName: fatboy-nfs-appdata
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -55,10 +55,14 @@ spec:
         app: nexus
     spec:
       securityContext:
-        fsGroup: 200
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
       containers:
         - name: nexus
           image: sonatype/nexus3:3.72.0
+          securityContext:
+            runAsUser: 0
           ports:
             - name: nexus-ui
               containerPort: 8081
@@ -197,7 +201,22 @@ spec:
         - name: nexus
           port: 8081
 ---
+# Middleware for Docker Registry - allows large uploads and proper chunked transfer handling
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: docker-registry-buffering
+  namespace: registry
+spec:
+  buffering:
+    maxRequestBodyBytes: 0  # 0 = unlimited
+    maxResponseBodyBytes: 0  # 0 = unlimited
+    memRequestBodyBytes: 2097152  # 2MB
+    memResponseBodyBytes: 2097152  # 2MB
+---
 # Docker Registry IngressRoute (for pushing/pulling images)
+# Fix: Added PathPrefix for Docker registry API version routing
+# See: https://stackoverflow.com/questions/62773097/nexus-3-as-docker-registry-behind-traefik-v-2-pushing-fails
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -207,8 +226,26 @@ spec:
   entryPoints:
     - web
   routes:
+    # Handle /v2/ and /v1/ Docker API paths explicitly
+    - match: Host(`registry.talos00`) && PathPrefix(`/v2`)
+      kind: Rule
+      middlewares:
+        - name: docker-registry-buffering
+      services:
+        - name: nexus-docker
+          port: 5000
+    - match: Host(`registry.talos00`) && PathPrefix(`/v1`)
+      kind: Rule
+      middlewares:
+        - name: docker-registry-buffering
+      services:
+        - name: nexus-docker
+          port: 5000
+    # Fallback for other paths (catalog, etc)
     - match: Host(`registry.talos00`)
       kind: Rule
+      middlewares:
+        - name: docker-registry-buffering
       services:
         - name: nexus-docker
           port: 5000
