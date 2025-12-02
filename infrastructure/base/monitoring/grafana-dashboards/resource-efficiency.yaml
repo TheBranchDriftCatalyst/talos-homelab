@@ -155,13 +155,13 @@ spec:
           "targets": [
             {
               "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "count((sum(rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m])) by (namespace, pod) / sum(kube_pod_container_resource_requests{resource=\"cpu\"}) by (namespace, pod)) < 0.2)",
+              "expr": "count(((sum(rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m])) by (namespace, pod) / sum(kube_pod_container_resource_requests{resource=\"cpu\"}) by (namespace, pod)) < 0.2) and (sum(kube_pod_container_resource_requests{resource=\"cpu\"}) by (namespace, pod) > $min_cpu))",
               "legendFormat": "Over-provisioned",
               "refId": "A"
             }
           ],
           "title": "Over-Provisioned Pods",
-          "description": "Pods using <20% of CPU requests",
+          "description": "Pods using <20% of CPU requests (excludes pods at LimitRange minimum)",
           "type": "stat"
         },
         {
@@ -870,6 +870,25 @@ spec:
             "skipUrlSync": false,
             "sort": 1,
             "type": "query"
+          },
+          {
+            "current": {"selected": true, "text": "10m", "value": "0.01"},
+            "description": "LimitRange minimum CPU - pods at this request level are excluded from over-provisioned count",
+            "hide": 0,
+            "includeAll": false,
+            "label": "Min CPU Request",
+            "multi": false,
+            "name": "min_cpu",
+            "options": [
+              {"selected": false, "text": "None (0)", "value": "0"},
+              {"selected": false, "text": "5m", "value": "0.005"},
+              {"selected": true, "text": "10m", "value": "0.01"},
+              {"selected": false, "text": "25m", "value": "0.025"},
+              {"selected": false, "text": "50m", "value": "0.05"}
+            ],
+            "query": "",
+            "skipUrlSync": false,
+            "type": "custom"
           }
         ]
       },
