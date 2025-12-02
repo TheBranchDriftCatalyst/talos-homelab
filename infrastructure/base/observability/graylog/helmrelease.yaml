@@ -83,17 +83,19 @@ spec:
       # Note: GELF TCP port 12201 is exposed by default on graylog-web service
       # No need for additional input configuration
 
-      # Resource limits - sized for P95 usage (~360m CPU, ~5.4Gi memory)
+      # Resource limits - sized for available cluster capacity
+      # Note: P95 was ~5.4Gi but cluster only has ~15.4Gi total
+      # Using 3.5Gi request to fit within cluster constraints
       resources:
         requests:
           cpu: 400m
-          memory: 5Gi
+          memory: 3584Mi
         limits:
           cpu: 2000m
-          memory: 6Gi
+          memory: 4Gi
 
       # JVM heap settings (must be less than memory limit)
-      # Set to 75% of memory limit (4.5GB out of 6GB)
+      # Set to 75% of memory limit (3GB out of 4GB)
       javaOpts: >-
         -Dlog4j2.formatMsgNoLookups=true
         -Djdk.tls.acknowledgeCloseNotify=true
@@ -101,7 +103,7 @@ spec:
         -XX:-OmitStackTraceInFastThrow
         -XX:+UseG1GC
         -server
-        -Xms4608m -Xmx4608m
+        -Xms3g -Xmx3g
 
       # Provisioner to auto-create GELF TCP input on startup
       # Note: Using graylog-web service (has ClusterIP) instead of graylog (headless)
