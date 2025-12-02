@@ -6,20 +6,23 @@
 
 ## Executive Summary
 
-| Metric | Value |
-|--------|-------|
-| **Node Capacity** | 6 CPU cores, 16GB RAM |
-| **Allocatable** | 5950m CPU, 15.4GB RAM |
-| **Current Usage** | 31% CPU (1856m), 70% memory (10.9GB) |
-| **Requests** | 86% CPU (5120m), 98% memory (15.2GB) |
-| **Limits** | 623% CPU, 290% memory |
+| Metric | Before Optimization | After Optimization (2025-12-02) |
+|--------|---------------------|--------------------------------|
+| **Node Capacity** | 6 CPU cores, 16GB RAM | 6 CPU cores, 16GB RAM |
+| **Allocatable** | 5950m CPU, 15.4GB RAM | 5950m CPU, 15.4GB RAM |
+| **CPU Requests** | 5120m (86%) | 4065m (68%) |
+| **Memory Requests** | 15196Mi (98%) | 14822Mi (96%) |
+| **Actual CPU Usage** | 31% (1856m) | 53% (3164m) |
+| **Actual Memory Usage** | 70% (10.9GB) | 71% (11.0GB) |
+| **Running Pods** | ~75 | 79 |
 
-### Key Findings
+### Key Findings (Post-Optimization)
 
-1. **Memory requests are at 98%** - cluster is at risk of scheduling failures
-2. **CPU/Memory limits are massively overcommitted** - acceptable for burstable workloads but risky
-3. **Many pods are over-provisioned** - using <30% of requested resources
-4. **Actual usage is healthy** - 31% CPU, 70% memory leaves headroom
+1. **CPU requests reduced from 86% to 68%** - freed 1055m CPU headroom
+2. **Memory requests reduced from 98% to 96%** - marginally improved scheduling capacity
+3. **Efficiency improved** - CPU usage/request ratio improved from 36% to 78%
+4. **All 79 pods healthy** - no scheduling failures or OOM events
+5. **External repos optimized** - kasa-exporter, catalyst-ui, arr-stack-private apps right-sized
 
 ---
 
@@ -324,6 +327,40 @@ Largest savings opportunities:
 | Phase 2 (reductions) | -1335m | -1184Mi |
 | Phase 1 (increases) | +420m | +1151Mi |
 | **Net Change** | **-915m** | **-33Mi** |
+
+### External Repos Optimization (Completed 2025-12-02)
+
+Resource limits added to applications in external repositories (managed by ArgoCD):
+
+| Repo | App | Before | After | Change |
+|------|-----|--------|-------|--------|
+| **@kasa-exporter** | kasa-exporter | CPU: 50m, Mem: 128Mi | CPU: 15m, Mem: 64Mi | -35m, -64Mi |
+| **catalyst-ui** | catalyst-ui (x2) | CPU: 50m, Mem: 64Mi | CPU: 10m, Mem: 16Mi | -40m, -48Mi each |
+| **talos-private** | stash-hardcore | CPU: 50m, Mem: 256Mi | CPU: 10m, Mem: 192Mi | -40m, -64Mi |
+| **talos-private** | stash-softcore | CPU: 50m, Mem: 256Mi | CPU: 10m, Mem: 192Mi | -40m, -64Mi |
+| **talos-private** | whisparr | CPU: 25m, Mem: 128Mi | CPU: 10m, Mem: 128Mi | -15m, 0Mi |
+
+**Notes:**
+- All sizing based on P95 usage analysis with 20% headroom
+- stash-* apps keep high limits (2000m CPU, 2Gi memory) for transcoding bursts
+- catalyst-ui runs 2 replicas for availability
+
+**Total External Repo Savings:**
+- CPU: ~210m freed
+- Memory: ~304Mi freed
+
+### Dashboard Enhancements (Completed 2025-12-02)
+
+Added "Efficiency %" column with color thresholds to resource recommendation tables:
+
+| Color | Efficiency Range | Meaning |
+|-------|-----------------|---------|
+| Red | <20% or >200% | Action needed (severely over/under-provisioned) |
+| Orange | 20-40% | Significant over-provisioning |
+| Yellow | 40-60% or 120-200% | Review recommended |
+| Green | 60-120% | Optimal range |
+
+Access: `http://grafana.talos00` → Infrastructure → Resource Efficiency
 
 ---
 
