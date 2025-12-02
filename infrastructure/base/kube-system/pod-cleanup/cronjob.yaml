@@ -1,6 +1,7 @@
 ---
 # CronJob to clean up Completed and Error pods across all namespaces
-# Runs every 6 hours to prevent accumulation of terminated pods
+# Runs every 2 hours to prevent accumulation of terminated pods
+# Pushes metrics to Prometheus Pushgateway for observability
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -10,7 +11,7 @@ metadata:
     app.kubernetes.io/name: pod-cleanup
     app.kubernetes.io/component: maintenance
 spec:
-  # Run every 6 hours
+  # Run every 2 hours
   schedule: "0 */2 * * *"
   # Keep last 3 successful and 1 failed job for debugging
   successfulJobsHistoryLimit: 3
@@ -30,31 +31,82 @@ spec:
           containers:
             - name: kubectl
               image: bitnami/kubectl:latest
+              env:
+                - name: PUSHGATEWAY_URL
+                  value: "http://prometheus-pushgateway.monitoring.svc.cluster.local:9091"
               command:
                 - /bin/sh
                 - -c
                 - |
+                  set -e
+
+                  START_TIME=$(date +%s)
+                  SUCCEEDED_COUNT=0
+                  FAILED_COUNT=0
+                  JOB_STATUS="success"
+
                   echo "=== Pod Cleanup Job Started at $(date) ==="
 
                   echo ""
                   echo "--- Cleaning up Succeeded/Completed pods ---"
-                  kubectl get pods -A --field-selector=status.phase==Succeeded -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers | while read ns name; do
-                    echo "Deleting Succeeded pod: $ns/$name"
-                    kubectl delete pod -n "$ns" "$name" --ignore-not-found
-                  done
+                  SUCCEEDED_PODS=$(kubectl get pods -A --field-selector=status.phase==Succeeded -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers 2>/dev/null || true)
+                  if [ -n "$SUCCEEDED_PODS" ]; then
+                    echo "$SUCCEEDED_PODS" | while read ns name; do
+                      if [ -n "$ns" ] && [ -n "$name" ]; then
+                        echo "Deleting Succeeded pod: $ns/$name"
+                        kubectl delete pod -n "$ns" "$name" --ignore-not-found
+                      fi
+                    done
+                    SUCCEEDED_COUNT=$(echo "$SUCCEEDED_PODS" | grep -c . || echo 0)
+                  fi
+                  echo "Cleaned up $SUCCEEDED_COUNT succeeded pods"
 
                   echo ""
                   echo "--- Cleaning up Failed/Error pods older than 1 hour ---"
-                  # Get failed pods and check their age
-                  kubectl get pods -A --field-selector=status.phase==Failed -o json | \
-                    jq -r '.items[] | select((now - (.status.startTime | fromdateiso8601)) > 3600) | "\(.metadata.namespace) \(.metadata.name)"' | \
-                    while read ns name; do
-                      echo "Deleting Failed pod (>1h old): $ns/$name"
-                      kubectl delete pod -n "$ns" "$name" --ignore-not-found
+                  FAILED_PODS=$(kubectl get pods -A --field-selector=status.phase==Failed -o json 2>/dev/null | \
+                    jq -r '.items[] | select((now - (.status.startTime | fromdateiso8601)) > 3600) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null || true)
+                  if [ -n "$FAILED_PODS" ]; then
+                    echo "$FAILED_PODS" | while read ns name; do
+                      if [ -n "$ns" ] && [ -n "$name" ]; then
+                        echo "Deleting Failed pod (>1h old): $ns/$name"
+                        kubectl delete pod -n "$ns" "$name" --ignore-not-found
+                      fi
                     done
+                    FAILED_COUNT=$(echo "$FAILED_PODS" | grep -c . || echo 0)
+                  fi
+                  echo "Cleaned up $FAILED_COUNT failed pods"
+
+                  END_TIME=$(date +%s)
+                  DURATION=$((END_TIME - START_TIME))
+                  TOTAL_CLEANED=$((SUCCEEDED_COUNT + FAILED_COUNT))
 
                   echo ""
                   echo "=== Pod Cleanup Job Completed at $(date) ==="
+                  echo "Duration: ${DURATION}s, Total cleaned: $TOTAL_CLEANED (succeeded: $SUCCEEDED_COUNT, failed: $FAILED_COUNT)"
+
+                  # Push metrics to Pushgateway
+                  echo ""
+                  echo "--- Pushing metrics to Pushgateway ---"
+                  cat <<EOF | curl --data-binary @- "${PUSHGATEWAY_URL}/metrics/job/pod_cleanup/instance/talos00" 2>/dev/null && echo "Metrics pushed successfully" || echo "Warning: Failed to push metrics"
+                  # HELP pod_cleanup_last_run_timestamp_seconds Unix timestamp of the last cleanup run
+                  # TYPE pod_cleanup_last_run_timestamp_seconds gauge
+                  pod_cleanup_last_run_timestamp_seconds $END_TIME
+                  # HELP pod_cleanup_duration_seconds Duration of the cleanup job in seconds
+                  # TYPE pod_cleanup_duration_seconds gauge
+                  pod_cleanup_duration_seconds $DURATION
+                  # HELP pod_cleanup_pods_deleted_total Total number of pods deleted in the last run
+                  # TYPE pod_cleanup_pods_deleted_total gauge
+                  pod_cleanup_pods_deleted_total $TOTAL_CLEANED
+                  # HELP pod_cleanup_succeeded_pods_deleted Number of succeeded pods deleted
+                  # TYPE pod_cleanup_succeeded_pods_deleted gauge
+                  pod_cleanup_succeeded_pods_deleted $SUCCEEDED_COUNT
+                  # HELP pod_cleanup_failed_pods_deleted Number of failed pods deleted
+                  # TYPE pod_cleanup_failed_pods_deleted gauge
+                  pod_cleanup_failed_pods_deleted $FAILED_COUNT
+                  # HELP pod_cleanup_job_success Whether the cleanup job succeeded (1) or failed (0)
+                  # TYPE pod_cleanup_job_success gauge
+                  pod_cleanup_job_success 1
+                  EOF
               resources:
                 requests:
                   cpu: 10m
