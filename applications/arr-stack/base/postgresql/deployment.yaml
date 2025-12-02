@@ -19,6 +19,9 @@ spec:
       labels:
         app: postgresql
         app.kubernetes.io/name: postgresql
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9187"
     spec:
       containers:
         - name: postgresql
@@ -74,6 +77,51 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+
+        # Prometheus postgres_exporter sidecar
+        - name: postgres-exporter
+          image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: DATA_SOURCE_USER
+              value: 'arrstack'
+            - name: DATA_SOURCE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: postgres-password
+            - name: DATA_SOURCE_URI
+              value: 'localhost:5432/arrstack?sslmode=disable'
+
+          ports:
+            - name: metrics
+              containerPort: 9187
+              protocol: TCP
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
 
       volumes:
         - name: data
