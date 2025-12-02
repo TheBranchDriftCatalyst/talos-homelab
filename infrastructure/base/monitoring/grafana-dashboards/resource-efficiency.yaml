@@ -710,6 +710,101 @@ spec:
             {"id": "organize", "options": {"excludeByName": {"Time": true, "Time 1": true, "Time 2": true, "Time 3": true}, "renameByName": {"Value #A": "P95 Usage (cores)", "Value #B": "Current Request (cores)", "Value #C": "Suggested CPU (cores)", "namespace": "Namespace", "pod": "Pod"}}}
           ],
           "type": "table"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "custom": {
+                "align": "auto",
+                "cellOptions": {"type": "auto"},
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [{"color": "blue", "value": null}]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {"id": "byName", "options": "Namespace"},
+                "properties": [{"id": "custom.width", "value": 150}]
+              },
+              {
+                "matcher": {"id": "byName", "options": "Pod"},
+                "properties": [{"id": "custom.width", "value": 300}]
+              },
+              {
+                "matcher": {"id": "byName", "options": "Suggested Mem (bytes)"},
+                "properties": [{"id": "unit", "value": "bytes"}, {"id": "decimals", "value": 0}]
+              },
+              {
+                "matcher": {"id": "byName", "options": "Current Request (bytes)"},
+                "properties": [{"id": "unit", "value": "bytes"}, {"id": "decimals", "value": 0}]
+              },
+              {
+                "matcher": {"id": "byName", "options": "P95 Usage (bytes)"},
+                "properties": [{"id": "unit", "value": "bytes"}, {"id": "decimals", "value": 0}]
+              }
+            ]
+          },
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 47},
+          "id": 41,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+            "showHeader": true,
+            "sortBy": []
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+              "expr": "quantile_over_time(0.95, sum(container_memory_working_set_bytes{container!=\"\", container!=\"POD\"}) by (namespace, pod)[24h:5m])",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "__auto",
+              "refId": "A"
+            },
+            {
+              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+              "expr": "sum(kube_pod_container_resource_requests{resource=\"memory\"}) by (namespace, pod)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "__auto",
+              "refId": "B"
+            },
+            {
+              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+              "expr": "quantile_over_time(0.95, sum(container_memory_working_set_bytes{container!=\"\", container!=\"POD\"}) by (namespace, pod)[24h:5m]) * 1.2",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "__auto",
+              "refId": "C"
+            }
+          ],
+          "title": "Memory Right-Sizing Recommendations (24h P95 + 20% headroom)",
+          "description": "Suggested memory requests based on P95 usage over 24h with 20% headroom. Export to CSV: Click panel title > Inspect > Data > Download CSV",
+          "transformations": [
+            {"id": "merge", "options": {}},
+            {"id": "organize", "options": {"excludeByName": {"Time": true, "Time 1": true, "Time 2": true, "Time 3": true}, "renameByName": {"Value #A": "P95 Usage (bytes)", "Value #B": "Current Request (bytes)", "Value #C": "Suggested Mem (bytes)", "namespace": "Namespace", "pod": "Pod"}}}
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {"type": "datasource", "uid": "-- Dashboard --"},
+          "gridPos": {"h": 4, "w": 24, "x": 0, "y": 57},
+          "id": 50,
+          "options": {
+            "code": {"language": "plaintext", "showLineNumbers": false, "showMiniMap": false},
+            "content": "## CSV Export\n\nTo export data from any table:\n1. Click the panel title\n2. Select **Inspect** > **Data**\n3. Click **Download CSV**\n\nFor a comprehensive report with recommendations, run:\n```bash\n./scripts/generate-resource-report.py --csv > resource-report.csv\n./scripts/generate-resource-report.py -o docs/RESOURCE-OPTIMIZATION.md\n```",
+            "mode": "markdown"
+          },
+          "pluginVersion": "10.0.0",
+          "title": "Export Options",
+          "type": "text"
         }
       ],
       "refresh": "5m",
