@@ -206,8 +206,6 @@ DEPLOY_MONITORING=true DEPLOY_OBSERVABILITY=false ./scripts/deploy-stack.sh
 # Bootstrap ArgoCD
 ./scripts/bootstrap-argocd.sh
 
-# Build and deploy catalyst-ui (application example)
-./scripts/build-and-deploy-catalyst-ui.sh
 ```
 
 ### Cluster Provisioning (Fresh Setup)
