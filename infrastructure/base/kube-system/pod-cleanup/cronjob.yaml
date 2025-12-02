@@ -1,0 +1,64 @@
+---
+# CronJob to clean up Completed and Error pods across all namespaces
+# Runs every 6 hours to prevent accumulation of terminated pods
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pod-cleanup
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: pod-cleanup
+    app.kubernetes.io/component: maintenance
+spec:
+  # Run every 6 hours
+  schedule: "0 */6 * * *"
+  # Keep last 3 successful and 1 failed job for debugging
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      # Auto-cleanup job pods after 1 hour
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: pod-cleanup
+        spec:
+          serviceAccountName: pod-cleanup
+          restartPolicy: OnFailure
+          containers:
+            - name: kubectl
+              image: bitnami/kubectl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "=== Pod Cleanup Job Started at $(date) ==="
+
+                  echo ""
+                  echo "--- Cleaning up Succeeded/Completed pods ---"
+                  kubectl get pods -A --field-selector=status.phase==Succeeded -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name --no-headers | while read ns name; do
+                    echo "Deleting Succeeded pod: $ns/$name"
+                    kubectl delete pod -n "$ns" "$name" --ignore-not-found
+                  done
+
+                  echo ""
+                  echo "--- Cleaning up Failed/Error pods older than 1 hour ---"
+                  # Get failed pods and check their age
+                  kubectl get pods -A --field-selector=status.phase==Failed -o json | \
+                    jq -r '.items[] | select((now - (.status.startTime | fromdateiso8601)) > 3600) | "\(.metadata.namespace) \(.metadata.name)"' | \
+                    while read ns name; do
+                      echo "Deleting Failed pod (>1h old): $ns/$name"
+                      kubectl delete pod -n "$ns" "$name" --ignore-not-found
+                    done
+
+                  echo ""
+                  echo "=== Pod Cleanup Job Completed at $(date) ==="
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
