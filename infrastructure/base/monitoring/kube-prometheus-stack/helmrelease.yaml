@@ -105,23 +105,9 @@ spec:
         enableRemoteWriteReceiver: false
 
         # Additional scrape configs for services without ServiceMonitors
-        additionalScrapeConfigs:
-          # Graylog metrics
-          - job_name: 'graylog'
-            static_configs:
-              - targets: ['graylog.observability.svc:9000']
-            metrics_path: /api/system/metrics/prometheus
-
-          # OpenSearch metrics
-          - job_name: 'opensearch'
-            static_configs:
-              - targets: ['opensearch-cluster-master.observability.svc:9200']
-            metrics_path: /_prometheus/metrics
-
-          # MongoDB metrics (if exporter is running)
-          - job_name: 'mongodb'
-            static_configs:
-              - targets: ['mongodb.observability.svc:27017']
+        # NOTE: Graylog, OpenSearch, and MongoDB now use dedicated exporters with ServiceMonitors
+        # See infrastructure/base/observability/*/exporter.yaml
+        additionalScrapeConfigs: []
 
         # Security context - run as root for NFS compatibility
         securityContext:
@@ -316,17 +302,20 @@ spec:
         kubeApiserverBurnrate: true
         kubeApiserverHistogram: true
         kubeApiserverSlos: true
-        kubeControllerManager: true
+        # Disabled for Talos Linux - these run as static pods without exposed metrics
+        kubeControllerManager: false
         kubelet: true
-        kubeProxy: true
+        # Disabled for Talos Linux - kube-proxy runs as static pod without exposed metrics
+        kubeProxy: false
         kubePrometheusGeneral: true
         kubePrometheusNodeRecording: true
         kubernetesApps: true
         kubernetesResources: true
         kubernetesStorage: true
         kubernetesSystem: true
-        kubeSchedulerAlerting: true
-        kubeSchedulerRecording: true
+        # Disabled for Talos Linux - scheduler runs as static pod without exposed metrics
+        kubeSchedulerAlerting: false
+        kubeSchedulerRecording: false
         kubeStateMetrics: true
         network: true
         node: true
@@ -345,14 +334,15 @@ spec:
     kubeEtcd:
       enabled: true
 
+    # Disabled on Talos Linux - these components don't expose metrics on standard ports
     kubeControllerManager:
-      enabled: true
+      enabled: false
 
     kubeScheduler:
-      enabled: true
+      enabled: false
 
     kubeProxy:
-      enabled: true
+      enabled: false
 
     kubeApiServer:
       enabled: true
