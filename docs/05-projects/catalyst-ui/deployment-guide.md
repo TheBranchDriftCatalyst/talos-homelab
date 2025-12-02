@@ -47,8 +47,6 @@ Files:
 
 ### 4. Build and Deploy Script
 
-Location: `scripts/build-and-deploy-catalyst-ui.sh`
-
 **What it does**:
 
 1. Verifies catalyst-ui directory exists
@@ -59,12 +57,6 @@ Location: `scripts/build-and-deploy-catalyst-ui.sh`
 6. Pushes image to registry via port-forward
 7. Applies ArgoCD Application manifest
 8. Waits for ArgoCD to sync
-
-**Usage**:
-
-```bash
-./scripts/build-and-deploy-catalyst-ui.sh
-```
 
 ### 5. Dockerfile
 
@@ -132,7 +124,6 @@ Docker Desktop has been experiencing issues restarting after daemon.JSON updates
 
 - `infrastructure/base/registry/deployment.yaml` - Registry deployment
 - `infrastructure/base/argocd/applications/catalyst-ui.yaml` - ArgoCD app
-- `scripts/build-and-deploy-catalyst-ui.sh` - Build and deploy script
 - `docs/catalyst-ui-deployment.md` - This file
 
 ### In catalyst-ui repo

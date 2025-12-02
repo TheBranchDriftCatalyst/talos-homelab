@@ -388,7 +388,6 @@ Decision made **NOT** to convert orchestration scripts to Tilt or Ansible:
 
 - `deploy-stack.sh`
 - `deploy-observability.sh`
-- `build-and-deploy-catalyst-ui.sh`
 
 ## Testing Plan
 
