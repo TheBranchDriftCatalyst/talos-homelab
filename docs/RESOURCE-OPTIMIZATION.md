@@ -271,6 +271,62 @@ Largest savings opportunities:
 
 ---
 
+## Implementation Progress
+
+### Phase 2: Over-provisioned Reductions (Completed 2025-12-02)
+
+| Workload | Before | After | CPU Saved | Memory Saved |
+|----------|--------|-------|-----------|--------------|
+| registry/nexus | CPU: 500m | CPU: 50m | **450m** | - |
+| argocd/repo-server | CPU: 100m, Mem: 256Mi | CPU: 10m, Mem: 64Mi | **90m** | **192Mi** |
+| argocd/application-controller | CPU: 250m, Mem: 512Mi | CPU: 50m, Mem: 256Mi | **200m** | **256Mi** |
+| argocd-image-updater | CPU: 250m, Mem: 512Mi | CPU: 10m, Mem: 64Mi | **240m** | **448Mi** |
+| traefik | CPU: 100m | CPU: 10m | **90m** | - |
+| docker-registry | CPU: 100m, Mem: 128Mi | CPU: 10m, Mem: 32Mi | **90m** | **96Mi** |
+| vpa-recommender | CPU: 50m, Mem: 256Mi | CPU: 10m, Mem: 64Mi | **40m** | **192Mi** |
+| media/sonarr | CPU: 25m | CPU: 10m | **15m** | - |
+| media/radarr | CPU: 25m | CPU: 10m | **15m** | - |
+| media/prowlarr | CPU: 25m | CPU: 10m | **15m** | - |
+| media/overseerr | CPU: 25m | CPU: 10m | **15m** | - |
+| media/tdarr | CPU: 100m | CPU: 25m | **75m** | - |
+
+**Notes:**
+- Media apps use 10m CPU minimum (not 5m) due to namespace LimitRange constraint
+- Tdarr memory kept at 512Mi (256Mi caused startup failures)
+
+**Total Phase 2 Savings:**
+- CPU: ~1335m freed
+- Memory: ~1184Mi freed
+
+### Phase 1: Under-provisioned Increases (Completed 2025-12-02)
+
+| Workload | Before | After | CPU Added | Memory Added |
+|----------|--------|-------|-----------|--------------|
+| observability/graylog | CPU: 100m, Mem: 2Gi | CPU: 400m, Mem: 2Gi | **+300m** | - |
+| observability/mongodb | CPU: 200m, Mem: 256Mi | CPU: 270m, Mem: 350Mi | **+70m** | **+94Mi** |
+| observability/opensearch | Mem: 512Mi, JVM: 512m | Mem: 1450Mi, JVM: 1g | - | **+938Mi** |
+| infra-control/kube-ops-view | CPU: 10m, Mem: 32Mi | CPU: 60m, Mem: 85Mi | **+50m** | **+53Mi** |
+| media/homepage | Mem: 64Mi | Mem: 130Mi | - | **+66Mi** |
+
+**Notes:**
+- Graylog memory kept at original 2Gi (cluster capacity constraint prevents larger allocation)
+- kube-apiserver resources are Talos-managed and cannot be changed via Kubernetes
+- OpenSearch JVM heap increased from 512m to 1g to match memory increase
+
+**Total Phase 1 Increases:**
+- CPU: ~420m added
+- Memory: ~1151Mi added
+
+### Net Resource Impact
+
+| Phase | CPU Change | Memory Change |
+|-------|------------|---------------|
+| Phase 2 (reductions) | -1335m | -1184Mi |
+| Phase 1 (increases) | +420m | +1151Mi |
+| **Net Change** | **-915m** | **-33Mi** |
+
+---
+
 ## Appendix: Raw Metrics Data
 
 See the Resource Efficiency Grafana dashboard for real-time metrics:
