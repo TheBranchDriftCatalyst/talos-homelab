@@ -1,0 +1,96 @@
+---
+# SillyTavern - LLM Frontend for character-based chat
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sillytavern
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: sillytavern
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sillytavern
+  template:
+    metadata:
+      labels:
+        app: sillytavern
+        app.kubernetes.io/name: sillytavern
+    spec:
+      containers:
+        - name: sillytavern
+          image: ghcr.io/sillytavern/sillytavern:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            # Allow connections from any host (for Traefik ingress)
+            - name: LISTEN_HOST
+              value: "0.0.0.0"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /home/node/app/data
+            - name: config
+              mountPath: /home/node/app/config
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: sillytavern-data
+        - name: config
+          persistentVolumeClaim:
+            claimName: sillytavern-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sillytavern
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: sillytavern
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  selector:
+    app: sillytavern
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sillytavern-data
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: sillytavern
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sillytavern-config
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: sillytavern
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 100Mi
