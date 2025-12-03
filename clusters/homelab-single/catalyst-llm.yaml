@@ -1,0 +1,25 @@
+---
+# Kustomization for Catalyst LLM stack
+# Provides LLM inference via AWS worker connected through Nebula mesh
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: catalyst-llm
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/catalyst-llm
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: namespaces
+    - name: storage
+    - name: traefik
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

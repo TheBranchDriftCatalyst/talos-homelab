@@ -18,7 +18,7 @@ spec:
   chart:
     spec:
       chart: graylog
-      version: 3.0.5
+      version: 3.0.8
       sourceRef:
         kind: HelmRepository
         name: kongz
@@ -95,15 +95,21 @@ spec:
           memory: 4Gi
 
       # JVM heap settings (must be less than memory limit)
-      # Set to 75% of memory limit (3GB out of 4GB)
+      # heapSize overrides chart default of 16g - set to empty to use javaOpts only
+      heapSize: ""
+      # Set to ~62% of memory limit (2.5GB out of 4GB) to leave room for:
+      # - Metaspace (~200MB), thread stacks (~100MB), GC overhead (~500MB)
+      # - Native memory, direct buffers (~700MB buffer)
       javaOpts: >-
         -Dlog4j2.formatMsgNoLookups=true
         -Djdk.tls.acknowledgeCloseNotify=true
         -XX:+UnlockExperimentalVMOptions
         -XX:-OmitStackTraceInFastThrow
         -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+        -XX:+UseStringDeduplication
         -server
-        -Xms3g -Xmx3g
+        -Xms2560m -Xmx2560m
 
       # Provisioner to auto-create GELF TCP input on startup
       # Note: Using graylog-web service (has ClusterIP) instead of graylog (headless)

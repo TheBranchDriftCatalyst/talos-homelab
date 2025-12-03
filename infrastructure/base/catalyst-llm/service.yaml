@@ -1,0 +1,55 @@
+---
+# Service to proxy to AWS Ollama (via Nebula mesh)
+# Points to the remote Ollama running on the AWS worker at 10.42.2.1
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-remote
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: catalyst-llm
+    app.kubernetes.io/component: ollama-proxy
+  annotations:
+    description: "Proxy service to AWS Ollama worker via Nebula mesh"
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
+      protocol: TCP
+---
+# Endpoints for the remote Ollama (Nebula mesh IP)
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: ollama-remote
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: catalyst-llm
+    app.kubernetes.io/component: ollama-proxy
+subsets:
+  - addresses:
+      - ip: 10.42.2.1  # AWS worker Nebula mesh IP
+    ports:
+      - name: http
+        port: 11434
+        protocol: TCP
+---
+# ExternalName service for easier access
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: catalyst-llm
+    app.kubernetes.io/component: ollama
+  annotations:
+    description: "Main Ollama service - routes to AWS worker"
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 11434
+      targetPort: 11434
