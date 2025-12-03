@@ -1,0 +1,386 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os/exec"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+// State represents worker lifecycle states
+type State string
+
+const (
+	StateUnknown  State = "unknown"
+	StateStopped  State = "stopped"
+	StateStarting State = "starting"
+	StateRunning  State = "running"
+	StateStopping State = "stopping"
+)
+
+// Scaler manages the EC2 worker lifecycle and proxies requests
+type Scaler struct {
+	cfg   Config
+	proxy *httputil.ReverseProxy
+
+	mu           sync.RWMutex
+	state        State
+	lastActivity time.Time
+	startOnce    *sync.Once
+	startDone    chan struct{}
+
+	// Metrics (atomic for lock-free reads)
+	requests atomic.Int64
+	blocked  atomic.Int64
+	starts   atomic.Int64
+}
+
+// NewScaler creates a new scaler instance
+func NewScaler(cfg Config) *Scaler {
+	target, _ := url.Parse(cfg.OllamaURL)
+
+	s := &Scaler{
+		cfg:          cfg,
+		state:        StateUnknown,
+		lastActivity: time.Now(),
+	}
+
+	s.proxy = httputil.NewSingleHostReverseProxy(target)
+	s.proxy.ErrorHandler = s.proxyError
+
+	return s
+}
+
+// proxyError handles backend connection failures
+func (s *Scaler) proxyError(w http.ResponseWriter, r *http.Request, err error) {
+	log.Printf("⚠️  Proxy error: %v", err)
+	writeJSON(w, http.StatusBadGateway, map[string]any{
+		"error": "backend unavailable",
+		"hint":  "worker may be starting up",
+	})
+}
+
+// Proxy handles all incoming requests
+func (s *Scaler) Proxy(w http.ResponseWriter, r *http.Request) {
+	s.requests.Add(1)
+
+	// Ensure worker is running
+	if !s.isReady() {
+		s.blocked.Add(1)
+
+		ctx, cancel := context.WithTimeout(r.Context(), s.cfg.WarmupTimeout)
+		defer cancel()
+
+		if err := s.ensureRunning(ctx); err != nil {
+			log.Printf("❌ Cold start failed: %v", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error":   "worker unavailable",
+				"message": "LLM worker is starting. Retry in 2-3 minutes.",
+				"state":   s.getState(),
+			})
+			return
+		}
+	}
+
+	// Update activity timestamp
+	s.touch()
+
+	// Proxy the request
+	s.proxy.ServeHTTP(w, r)
+}
+
+// Health returns 200 if the scaler is running (liveness)
+func (s *Scaler) Health(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+// Ready returns 200 only if worker is ready (readiness)
+func (s *Scaler) Ready(w http.ResponseWriter, r *http.Request) {
+	if s.isReady() {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ready",
+			"worker": "running",
+		})
+	} else {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"status": "not_ready",
+			"worker": s.getState(),
+		})
+	}
+}
+
+// Status returns detailed scaler status
+func (s *Scaler) Status(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	idle := time.Since(s.lastActivity)
+	s.mu.RUnlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"worker_state":     s.getState(),
+		"worker_ready":     s.isReady(),
+		"idle":             idle.Round(time.Second).String(),
+		"idle_timeout":     s.cfg.IdleTimeout.String(),
+		"until_shutdown":   (s.cfg.IdleTimeout - idle).Round(time.Second).String(),
+		"requests_total":   s.requests.Load(),
+		"requests_blocked": s.blocked.Load(),
+		"cold_starts":      s.starts.Load(),
+	})
+}
+
+// ForceStart manually triggers a worker start
+func (s *Scaler) ForceStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	go s.startWorker()
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":  "starting",
+		"message": "Worker start initiated",
+	})
+}
+
+// ForceStop manually triggers a worker stop
+func (s *Scaler) ForceStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	go s.stopWorker()
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":  "stopping",
+		"message": "Worker stop initiated",
+	})
+}
+
+// RunIdleWatcher checks for idle timeout and stops the worker
+func (s *Scaler) RunIdleWatcher() {
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
+
+	for range tick.C {
+		if !s.isReady() {
+			continue
+		}
+
+		s.mu.RLock()
+		idle := time.Since(s.lastActivity)
+		s.mu.RUnlock()
+
+		log.Printf("⏱️  Idle: %s / %s", idle.Round(time.Second), s.cfg.IdleTimeout)
+
+		if idle >= s.cfg.IdleTimeout {
+			log.Printf("💤 Idle timeout reached, stopping worker...")
+			s.stopWorker()
+		}
+	}
+}
+
+// ServeMetrics exposes Prometheus metrics on a dedicated server
+func (s *Scaler) ServeMetrics() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
+		s.mu.RLock()
+		idle := time.Since(s.lastActivity).Seconds()
+		state := s.state
+		s.mu.RUnlock()
+
+		up := 0
+		if s.isReady() {
+			up = 1
+		}
+
+		starting := 0
+		if state == StateStarting {
+			starting = 1
+		}
+
+		// Worker state
+		fmt.Fprintf(w, "# HELP llm_scaler_worker_up Worker is running and ready\n")
+		fmt.Fprintf(w, "# TYPE llm_scaler_worker_up gauge\n")
+		fmt.Fprintf(w, "llm_scaler_worker_up %d\n\n", up)
+
+		fmt.Fprintf(w, "# HELP llm_scaler_worker_starting Worker is currently starting\n")
+		fmt.Fprintf(w, "# TYPE llm_scaler_worker_starting gauge\n")
+		fmt.Fprintf(w, "llm_scaler_worker_starting %d\n\n", starting)
+
+		// Request metrics
+		fmt.Fprintf(w, "# HELP llm_scaler_requests_total Total requests received\n")
+		fmt.Fprintf(w, "# TYPE llm_scaler_requests_total counter\n")
+		fmt.Fprintf(w, "llm_scaler_requests_total %d\n\n", s.requests.Load())
+
+		fmt.Fprintf(w, "# HELP llm_scaler_requests_blocked Requests that triggered cold start\n")
+		fmt.Fprintf(w, "# TYPE llm_scaler_requests_blocked counter\n")
+		fmt.Fprintf(w, "llm_scaler_requests_blocked %d\n\n", s.blocked.Load())
+
+		fmt.Fprintf(w, "# HELP llm_scaler_cold_starts_total Cold starts triggered\n")
+		fmt.Fprintf(w, "# TYPE llm_scaler_cold_starts_total counter\n")
+		fmt.Fprintf(w, "llm_scaler_cold_starts_total %d\n\n", s.starts.Load())
+
+		// Idle metrics
+		fmt.Fprintf(w, "# HELP llm_scaler_idle_seconds Seconds since last request\n")
+		fmt.Fprintf(w, "# TYPE llm_scaler_idle_seconds gauge\n")
+		fmt.Fprintf(w, "llm_scaler_idle_seconds %.0f\n\n", idle)
+
+		fmt.Fprintf(w, "# HELP llm_scaler_idle_timeout_seconds Configured idle timeout\n")
+		fmt.Fprintf(w, "# TYPE llm_scaler_idle_timeout_seconds gauge\n")
+		fmt.Fprintf(w, "llm_scaler_idle_timeout_seconds %.0f\n\n", s.cfg.IdleTimeout.Seconds())
+
+		fmt.Fprintf(w, "# HELP llm_scaler_warmup_timeout_seconds Configured warmup timeout\n")
+		fmt.Fprintf(w, "# TYPE llm_scaler_warmup_timeout_seconds gauge\n")
+		fmt.Fprintf(w, "llm_scaler_warmup_timeout_seconds %.0f\n", s.cfg.WarmupTimeout.Seconds())
+	})
+
+	log.Printf("   Metrics on %s/metrics", s.cfg.MetricsAddr)
+	if err := http.ListenAndServe(s.cfg.MetricsAddr, mux); err != nil {
+		log.Printf("Metrics server error: %v", err)
+	}
+}
+
+// isReady checks if worker is responding
+func (s *Scaler) isReady() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", s.cfg.OllamaURL+"/api/tags", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		s.setState(StateRunning)
+		return true
+	}
+	return false
+}
+
+// ensureRunning starts the worker if needed and waits for it
+func (s *Scaler) ensureRunning(ctx context.Context) error {
+	if s.isReady() {
+		return nil
+	}
+
+	s.mu.Lock()
+
+	// Already starting? Wait for it
+	if s.state == StateStarting {
+		done := s.startDone
+		s.mu.Unlock()
+
+		select {
+		case <-done:
+			if s.isReady() {
+				return nil
+			}
+			return fmt.Errorf("start completed but worker not ready")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	// Initiate start
+	s.state = StateStarting
+	s.startDone = make(chan struct{})
+	done := s.startDone
+	s.mu.Unlock()
+
+	s.starts.Add(1)
+	log.Printf("🔥 Cold start #%d initiated", s.starts.Load())
+
+	// Start worker
+	go func() {
+		defer close(done)
+		if err := s.startWorker(); err != nil {
+			log.Printf("❌ Start failed: %v", err)
+			s.setState(StateStopped)
+		}
+	}()
+
+	// Wait for ready
+	select {
+	case <-done:
+		if s.isReady() {
+			return nil
+		}
+		return fmt.Errorf("start completed but worker not ready")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// startWorker executes the worker script with "warm" command
+func (s *Scaler) startWorker() error {
+	log.Printf("▶️  Starting worker...")
+
+	cmd := exec.Command(s.cfg.WorkerScript, "warm")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("Start failed: %v\n%s", err, out.String())
+		return err
+	}
+
+	log.Printf("✅ Worker started")
+	s.setState(StateRunning)
+	s.touch()
+	return nil
+}
+
+// stopWorker executes the worker script with "stop" command
+func (s *Scaler) stopWorker() error {
+	log.Printf("⏹️  Stopping worker...")
+	s.setState(StateStopping)
+
+	cmd := exec.Command(s.cfg.WorkerScript, "stop")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("Stop failed: %v\n%s", err, out.String())
+		s.setState(StateUnknown)
+		return err
+	}
+
+	log.Printf("✅ Worker stopped")
+	s.setState(StateStopped)
+	return nil
+}
+
+func (s *Scaler) getState() State {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.state
+}
+
+func (s *Scaler) setState(state State) {
+	s.mu.Lock()
+	s.state = state
+	s.mu.Unlock()
+}
+
+func (s *Scaler) touch() {
+	s.mu.Lock()
+	s.lastActivity = time.Now()
+	s.mu.Unlock()
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}

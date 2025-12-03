@@ -1,5 +1,6 @@
 ---
-# IngressRoute for Catalyst LLM API
+# IngressRoute for Catalyst LLM API via scaler (scale-to-zero)
+# Routes through llm-scaler which manages EC2 worker lifecycle
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -8,6 +9,8 @@ metadata:
   labels:
     app.kubernetes.io/name: catalyst-llm
     app.kubernetes.io/component: ingress
+  annotations:
+    description: "Scale-to-zero LLM proxy - auto starts/stops EC2 worker"
 spec:
   entryPoints:
     - web
@@ -15,10 +18,10 @@ spec:
     - match: Host(`llm.talos00`)
       kind: Rule
       services:
-        - name: ollama-remote
-          port: 11434
+        - name: llm-scaler
+          port: 8080
 ---
-# IngressRoute for direct Ollama access
+# IngressRoute for Ollama via scaler (scale-to-zero)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -27,11 +30,34 @@ metadata:
   labels:
     app.kubernetes.io/name: catalyst-llm
     app.kubernetes.io/component: ingress
+  annotations:
+    description: "Scale-to-zero Ollama - auto starts/stops EC2 worker"
 spec:
   entryPoints:
     - web
   routes:
     - match: Host(`ollama.talos00`)
+      kind: Rule
+      services:
+        - name: llm-scaler
+          port: 8080
+---
+# IngressRoute for direct Ollama access (bypasses scaler, worker must be running)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ollama-direct
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: catalyst-llm
+    app.kubernetes.io/component: ingress
+  annotations:
+    description: "Direct Ollama access - bypasses scaler, worker must be running"
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`ollama-direct.talos00`)
       kind: Rule
       services:
         - name: ollama-remote
