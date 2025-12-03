@@ -111,8 +111,15 @@ HOSTKEY
 
 chmod 600 /etc/nebula/host.key
 
-# Get public IP for config
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+# Get public IP for config (using IMDSv2 with token)
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: \$TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+
+# Fallback to Elastic IP if metadata fails
+if [[ -z "\$PUBLIC_IP" ]]; then
+    echo "WARNING: Could not get public IP from metadata service"
+    PUBLIC_IP="ELASTIC_IP_PLACEHOLDER"
+fi
 
 # Write Nebula config
 cat > /etc/nebula/config.yaml << EOF
