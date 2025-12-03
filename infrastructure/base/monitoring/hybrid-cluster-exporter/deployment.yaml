@@ -1,0 +1,238 @@
+---
+# Hybrid Cluster Metrics Exporter
+# Exposes metrics for Nebula mesh, AWS instances, and Ollama
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hybrid-cluster-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: hybrid-cluster-exporter
+    app.kubernetes.io/component: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hybrid-cluster-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hybrid-cluster-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: hybrid-cluster-exporter
+      containers:
+        - name: exporter
+          image: python:3.12-alpine
+          command:
+            - sh
+            - -c
+            - |
+              pip install prometheus_client requests boto3 && python /app/exporter.py
+          ports:
+            - name: metrics
+              containerPort: 9090
+          env:
+            - name: NEBULA_LIGHTHOUSE_IP
+              value: "10.42.0.1"
+            - name: NEBULA_WORKER_IP
+              value: "10.42.2.1"
+            - name: NEBULA_HOMELAB_IP
+              value: "10.42.1.1"
+            - name: OLLAMA_ENDPOINT
+              value: "http://10.42.2.1:11434"
+            - name: AWS_REGION
+              value: "us-west-2"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-credentials
+                  key: secret-access-key
+                  optional: true
+          volumeMounts:
+            - name: exporter-script
+              mountPath: /app
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+      volumes:
+        - name: exporter-script
+          configMap:
+            name: hybrid-cluster-exporter-script
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hybrid-cluster-exporter-script
+  namespace: monitoring
+data:
+  exporter.py: |
+    #!/usr/bin/env python3
+    """
+    Hybrid Cluster Metrics Exporter
+    Exposes Prometheus metrics for Nebula mesh, AWS instances, and Ollama
+    """
+    import os
+    import time
+    import socket
+    import subprocess
+    from prometheus_client import start_http_server, Gauge, Counter
+    import requests
+
+    # Metrics
+    nebula_nodes_up = Gauge('nebula_nodes_up', 'Number of Nebula nodes responding', ['node_type'])
+    nebula_latency_ms = Gauge('nebula_mesh_latency_ms', 'Latency to Nebula peer in ms', ['peer'])
+    nebula_lighthouse_connected = Gauge('nebula_lighthouse_connected', 'Whether lighthouse is reachable')
+
+    aws_llm_worker_running = Gauge('aws_llm_worker_running', 'Whether AWS LLM worker is running')
+    aws_llm_worker_instance_type = Gauge('aws_llm_worker_info', 'AWS LLM worker instance info', ['instance_type', 'instance_id', 'az'])
+
+    ollama_up = Gauge('ollama_up', 'Whether Ollama API is responding')
+    ollama_models_loaded = Gauge('ollama_models_loaded', 'Number of models loaded in Ollama')
+    ollama_requests_total = Counter('ollama_requests_total', 'Total requests to Ollama')
+
+    def ping_host(host, timeout=2):
+        """Ping a host and return latency in ms, or -1 if unreachable"""
+        try:
+            result = subprocess.run(
+                ['ping', '-c', '1', '-W', str(timeout), host],
+                capture_output=True, text=True, timeout=timeout+1
+            )
+            if result.returncode == 0:
+                # Parse time from ping output
+                for line in result.stdout.split('\n'):
+                    if 'time=' in line:
+                        time_str = line.split('time=')[1].split(' ')[0]
+                        return float(time_str)
+            return -1
+        except Exception:
+            return -1
+
+    def check_nebula_mesh():
+        """Check Nebula mesh connectivity"""
+        lighthouse_ip = os.environ.get('NEBULA_LIGHTHOUSE_IP', '10.42.0.1')
+        worker_ip = os.environ.get('NEBULA_WORKER_IP', '10.42.2.1')
+        homelab_ip = os.environ.get('NEBULA_HOMELAB_IP', '10.42.1.1')
+
+        nodes_up = 0
+
+        # Check lighthouse
+        latency = ping_host(lighthouse_ip)
+        if latency >= 0:
+            nebula_lighthouse_connected.set(1)
+            nebula_latency_ms.labels(peer='lighthouse').set(latency)
+            nodes_up += 1
+        else:
+            nebula_lighthouse_connected.set(0)
+            nebula_latency_ms.labels(peer='lighthouse').set(-1)
+
+        # Check worker
+        latency = ping_host(worker_ip)
+        if latency >= 0:
+            nebula_latency_ms.labels(peer='worker').set(latency)
+            aws_llm_worker_running.set(1)
+            nodes_up += 1
+        else:
+            nebula_latency_ms.labels(peer='worker').set(-1)
+            aws_llm_worker_running.set(0)
+
+        nebula_nodes_up.labels(node_type='all').set(nodes_up)
+
+    def check_ollama():
+        """Check Ollama API status"""
+        endpoint = os.environ.get('OLLAMA_ENDPOINT', 'http://10.42.2.1:11434')
+        try:
+            resp = requests.get(f'{endpoint}/api/tags', timeout=5)
+            if resp.status_code == 200:
+                ollama_up.set(1)
+                data = resp.json()
+                models = data.get('models', [])
+                ollama_models_loaded.set(len(models))
+            else:
+                ollama_up.set(0)
+                ollama_models_loaded.set(0)
+        except Exception:
+            ollama_up.set(0)
+            ollama_models_loaded.set(0)
+
+    def check_aws_instance():
+        """Check AWS instance status using boto3 if available"""
+        try:
+            import boto3
+            region = os.environ.get('AWS_REGION', 'us-west-2')
+            ec2 = boto3.client('ec2', region_name=region)
+
+            # Look for instances tagged with Project=hybrid-llm
+            response = ec2.describe_instances(
+                Filters=[
+                    {'Name': 'tag:Project', 'Values': ['hybrid-llm']},
+                    {'Name': 'instance-state-name', 'Values': ['running', 'stopped']}
+                ]
+            )
+
+            for reservation in response.get('Reservations', []):
+                for instance in reservation.get('Instances', []):
+                    state = instance.get('State', {}).get('Name', 'unknown')
+                    instance_id = instance.get('InstanceId', 'unknown')
+                    instance_type = instance.get('InstanceType', 'unknown')
+                    az = instance.get('Placement', {}).get('AvailabilityZone', 'unknown')
+
+                    aws_llm_worker_info = 1 if state == 'running' else 0
+                    aws_llm_worker_instance_type.labels(
+                        instance_type=instance_type,
+                        instance_id=instance_id,
+                        az=az
+                    ).set(aws_llm_worker_info)
+        except ImportError:
+            pass  # boto3 not available
+        except Exception as e:
+            print(f"Error checking AWS: {e}")
+
+    def collect_metrics():
+        """Collect all metrics"""
+        check_nebula_mesh()
+        check_ollama()
+        check_aws_instance()
+
+    if __name__ == '__main__':
+        # Start metrics server
+        start_http_server(9090)
+        print("Hybrid Cluster Exporter started on :9090")
+
+        while True:
+            collect_metrics()
+            time.sleep(30)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hybrid-cluster-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: hybrid-cluster-exporter
+spec:
+  selector:
+    app.kubernetes.io/name: hybrid-cluster-exporter
+  ports:
+    - name: metrics
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hybrid-cluster-exporter
+  namespace: monitoring
