@@ -626,61 +626,24 @@ spec:
           "gridPos": {"h": 1, "w": 24, "x": 0, "y": 36},
           "id": 104,
           "panels": [],
-          "title": "Recommendations",
+          "title": "Right-Sizing Recommendations (24h P95 + 20% headroom)",
           "type": "row"
         },
         {
           "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "thresholds"},
-              "custom": {
-                "align": "auto",
-                "cellOptions": {"type": "auto"},
-                "inspect": false
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [{"color": "blue", "value": null}]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {"id": "byName", "options": "Namespace"},
-                "properties": [{"id": "custom.width", "value": 150}]
-              },
-              {
-                "matcher": {"id": "byName", "options": "Pod"},
-                "properties": [{"id": "custom.width", "value": 300}]
-              },
-              {
-                "matcher": {"id": "byName", "options": "Suggested CPU (cores)"},
-                "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 3}]
-              },
-              {
-                "matcher": {"id": "byName", "options": "Current Request (cores)"},
-                "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 3}]
-              },
-              {
-                "matcher": {"id": "byName", "options": "P95 Usage (cores)"},
-                "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 3}]
-              }
-            ]
-          },
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 37},
+          "gridPos": {"h": 14, "w": 24, "x": 0, "y": 37},
           "id": 40,
           "options": {
             "cellHeight": "sm",
             "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
             "showHeader": true,
-            "sortBy": [{"desc": false, "displayName": "Efficiency %"}]
+            "sortBy": [{"desc": false, "displayName": "CPU Eff %"}]
           },
           "pluginVersion": "10.0.0",
           "targets": [
             {
               "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "quantile_over_time(0.95, sum(rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m])) by (namespace, pod)[24h:5m])",
+              "expr": "quantile_over_time(0.95, sum(rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m])) by (namespace, container)[24h:5m]) * 1.2",
               "format": "table",
               "instant": true,
               "legendFormat": "__auto",
@@ -688,7 +651,7 @@ spec:
             },
             {
               "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "sum(kube_pod_container_resource_requests{resource=\"cpu\"}) by (namespace, pod)",
+              "expr": "sum(kube_pod_container_resource_requests{resource=\"cpu\", container!=\"\"}) by (namespace, container)",
               "format": "table",
               "instant": true,
               "legendFormat": "__auto",
@@ -696,7 +659,7 @@ spec:
             },
             {
               "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "quantile_over_time(0.95, sum(rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m])) by (namespace, pod)[24h:5m]) * 1.2",
+              "expr": "(quantile_over_time(0.95, sum(rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m])) by (namespace, container)[24h:5m]) * 1.2) / sum(kube_pod_container_resource_requests{resource=\"cpu\", container!=\"\"}) by (namespace, container) * 100",
               "format": "table",
               "instant": true,
               "legendFormat": "__auto",
@@ -704,18 +667,47 @@ spec:
             },
             {
               "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "(quantile_over_time(0.95, sum(rate(container_cpu_usage_seconds_total{container!=\"\", container!=\"POD\"}[5m])) by (namespace, pod)[24h:5m]) * 1.2) / sum(kube_pod_container_resource_requests{resource=\"cpu\"}) by (namespace, pod) * 100",
+              "expr": "quantile_over_time(0.95, sum(container_memory_working_set_bytes{container!=\"\", container!=\"POD\"}) by (namespace, container)[24h:5m]) * 1.2",
               "format": "table",
               "instant": true,
               "legendFormat": "__auto",
               "refId": "D"
+            },
+            {
+              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+              "expr": "sum(kube_pod_container_resource_requests{resource=\"memory\", container!=\"\"}) by (namespace, container)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "__auto",
+              "refId": "E"
+            },
+            {
+              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
+              "expr": "(quantile_over_time(0.95, sum(container_memory_working_set_bytes{container!=\"\", container!=\"POD\"}) by (namespace, container)[24h:5m]) * 1.2) / sum(kube_pod_container_resource_requests{resource=\"memory\", container!=\"\"}) by (namespace, container) * 100",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "__auto",
+              "refId": "F"
             }
           ],
-          "title": "CPU Right-Sizing Recommendations (24h P95 + 20% headroom)",
-          "description": "Suggested CPU requests based on P95 usage over 24h with 20% headroom. Efficiency: Green=good (60-120%), Yellow=review (20-60% or 120-200%), Red=action needed (<20% or >200%)",
+          "title": "Resource Right-Sizing Recommendations",
+          "description": "CPU & Memory recommendations per container based on 24h P95 usage + 20% headroom. Efficiency gauges: Green (60-120%) = well-tuned, Yellow = review needed, Red = action required.",
           "transformations": [
             {"id": "merge", "options": {}},
-            {"id": "organize", "options": {"excludeByName": {"Time": true, "Time 1": true, "Time 2": true, "Time 3": true}, "renameByName": {"Value #A": "P95 Usage (cores)", "Value #B": "Current Request (cores)", "Value #C": "Suggested CPU (cores)", "Value #D": "Efficiency %", "namespace": "Namespace", "pod": "Pod"}}}
+            {"id": "organize", "options": {
+              "excludeByName": {"Time": true, "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "Time 5": true},
+              "indexByName": {"namespace": 0, "container": 1, "Value #A": 2, "Value #B": 3, "Value #C": 4, "Value #D": 5, "Value #E": 6, "Value #F": 7},
+              "renameByName": {
+                "namespace": "Namespace",
+                "container": "Container",
+                "Value #A": "Suggested CPU",
+                "Value #B": "Current CPU",
+                "Value #C": "CPU Eff %",
+                "Value #D": "Suggested Mem",
+                "Value #E": "Current Mem",
+                "Value #F": "Mem Eff %"
+              }
+            }}
           ],
           "fieldConfig": {
             "defaults": {
@@ -725,14 +717,22 @@ spec:
               "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
             },
             "overrides": [
-              {"matcher": {"id": "byName", "options": "Namespace"}, "properties": [{"id": "custom.width", "value": 150}]},
-              {"matcher": {"id": "byName", "options": "Pod"}, "properties": [{"id": "custom.width", "value": 300}]},
-              {"matcher": {"id": "byName", "options": "Suggested CPU (cores)"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 3}]},
-              {"matcher": {"id": "byName", "options": "Current Request (cores)"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 3}]},
-              {"matcher": {"id": "byName", "options": "P95 Usage (cores)"}, "properties": [{"id": "unit", "value": "short"}, {"id": "decimals", "value": 3}]},
-              {"matcher": {"id": "byName", "options": "Efficiency %"}, "properties": [
+              {"matcher": {"id": "byName", "options": "Namespace"}, "properties": [{"id": "custom.width", "value": 120}]},
+              {"matcher": {"id": "byName", "options": "Container"}, "properties": [{"id": "custom.width", "value": 200}]},
+              {"matcher": {"id": "byName", "options": "Suggested CPU"}, "properties": [
+                {"id": "unit", "value": "short"},
+                {"id": "decimals", "value": 3},
+                {"id": "custom.width", "value": 100}
+              ]},
+              {"matcher": {"id": "byName", "options": "Current CPU"}, "properties": [
+                {"id": "unit", "value": "short"},
+                {"id": "decimals", "value": 3},
+                {"id": "custom.width", "value": 100}
+              ]},
+              {"matcher": {"id": "byName", "options": "CPU Eff %"}, "properties": [
                 {"id": "unit", "value": "percent"},
                 {"id": "decimals", "value": 0},
+                {"id": "custom.width", "value": 140},
                 {"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "gauge"}},
                 {"id": "min", "value": 0},
                 {"id": "max", "value": 200},
@@ -745,78 +745,21 @@ spec:
                   {"color": "yellow", "value": 150},
                   {"color": "red", "value": 200}
                 ]}}
-              ]}
-            ]
-          },
-          "type": "table"
-        },
-        {
-          "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 47},
-          "id": 41,
-          "options": {
-            "cellHeight": "sm",
-            "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
-            "showHeader": true,
-            "sortBy": [{"desc": false, "displayName": "Efficiency %"}]
-          },
-          "pluginVersion": "10.0.0",
-          "targets": [
-            {
-              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "quantile_over_time(0.95, sum(container_memory_working_set_bytes{container!=\"\", container!=\"POD\"}) by (namespace, pod)[24h:5m])",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "A"
-            },
-            {
-              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "sum(kube_pod_container_resource_requests{resource=\"memory\"}) by (namespace, pod)",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "B"
-            },
-            {
-              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "quantile_over_time(0.95, sum(container_memory_working_set_bytes{container!=\"\", container!=\"POD\"}) by (namespace, pod)[24h:5m]) * 1.2",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "C"
-            },
-            {
-              "datasource": {"type": "prometheus", "uid": "PBFA97CFB590B2093"},
-              "expr": "(quantile_over_time(0.95, sum(container_memory_working_set_bytes{container!=\"\", container!=\"POD\"}) by (namespace, pod)[24h:5m]) * 1.2) / sum(kube_pod_container_resource_requests{resource=\"memory\"}) by (namespace, pod) * 100",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "D"
-            }
-          ],
-          "title": "Memory Right-Sizing Recommendations (24h P95 + 20% headroom)",
-          "description": "Suggested memory requests based on P95 usage over 24h with 20% headroom. Efficiency: Green=good (60-120%), Yellow=review (20-60% or 120-200%), Red=action needed (<20% or >200%)",
-          "transformations": [
-            {"id": "merge", "options": {}},
-            {"id": "organize", "options": {"excludeByName": {"Time": true, "Time 1": true, "Time 2": true, "Time 3": true}, "renameByName": {"Value #A": "P95 Usage (bytes)", "Value #B": "Current Request (bytes)", "Value #C": "Suggested Mem (bytes)", "Value #D": "Efficiency %", "namespace": "Namespace", "pod": "Pod"}}}
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "thresholds"},
-              "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
-              "mappings": [],
-              "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}
-            },
-            "overrides": [
-              {"matcher": {"id": "byName", "options": "Namespace"}, "properties": [{"id": "custom.width", "value": 150}]},
-              {"matcher": {"id": "byName", "options": "Pod"}, "properties": [{"id": "custom.width", "value": 300}]},
-              {"matcher": {"id": "byName", "options": "Suggested Mem (bytes)"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "decimals", "value": 0}]},
-              {"matcher": {"id": "byName", "options": "Current Request (bytes)"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "decimals", "value": 0}]},
-              {"matcher": {"id": "byName", "options": "P95 Usage (bytes)"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "decimals", "value": 0}]},
-              {"matcher": {"id": "byName", "options": "Efficiency %"}, "properties": [
+              ]},
+              {"matcher": {"id": "byName", "options": "Suggested Mem"}, "properties": [
+                {"id": "unit", "value": "bytes"},
+                {"id": "decimals", "value": 0},
+                {"id": "custom.width", "value": 100}
+              ]},
+              {"matcher": {"id": "byName", "options": "Current Mem"}, "properties": [
+                {"id": "unit", "value": "bytes"},
+                {"id": "decimals", "value": 0},
+                {"id": "custom.width", "value": 100}
+              ]},
+              {"matcher": {"id": "byName", "options": "Mem Eff %"}, "properties": [
                 {"id": "unit", "value": "percent"},
                 {"id": "decimals", "value": 0},
+                {"id": "custom.width", "value": 140},
                 {"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "gauge"}},
                 {"id": "min", "value": 0},
                 {"id": "max", "value": 200},
@@ -836,7 +779,7 @@ spec:
         },
         {
           "datasource": {"type": "datasource", "uid": "-- Dashboard --"},
-          "gridPos": {"h": 4, "w": 24, "x": 0, "y": 57},
+          "gridPos": {"h": 4, "w": 24, "x": 0, "y": 51},
           "id": 50,
           "options": {
             "code": {"language": "plaintext", "showLineNumbers": false, "showMiniMap": false},
