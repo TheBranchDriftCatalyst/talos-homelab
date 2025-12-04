@@ -32,3 +32,22 @@ spec:
   resources:
     requests:
       storage: 10Gi
+---
+# PVC for LLM Scaler state persistence
+# Stores worker-state.json (EC2 instance_id, volume_id) across pod restarts
+# Uses NFS to survive node failures
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: llm-scaler-state
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: llm-scaler
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 100Mi
