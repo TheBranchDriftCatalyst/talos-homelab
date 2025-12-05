@@ -30,6 +30,9 @@ spec:
       labels:
         app: graylog
     spec:
+      # Target worker node for observability workloads
+      nodeSelector:
+        node-role.kubernetes.io/worker: ''
       securityContext:
         fsGroup: 1100
         runAsUser: 1100
@@ -127,13 +130,18 @@ spec:
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
+          # JVM requires proper heap allocation - set via GRAYLOG_SERVER_JAVA_OPTS
+          # Memory limit should be ~1.5x the heap size to account for off-heap
+          env:
+            - name: GRAYLOG_SERVER_JAVA_OPTS
+              value: '-Xms4g -Xmx4g -XX:+UseG1GC -XX:MaxGCPauseMillis=200'
           resources:
             requests:
-              cpu: 50m
-              memory: 512Mi
+              cpu: 500m
+              memory: 4Gi
             limits:
-              cpu: 1000m
-              memory: 1536Mi
+              cpu: 4000m
+              memory: 6Gi
       volumes:
         - name: data
           persistentVolumeClaim:
