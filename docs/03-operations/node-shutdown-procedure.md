@@ -10,15 +10,15 @@ This guide covers safely shutting down your Talos node for hardware maintenance 
 
 ## Safe Shutdown Procedure
 
-### Step 1: Drain the Node (Optional)
+### Step 1: Drain the Node (Recommended)
 
-For single-node clusters, draining won't move workloads, but it ensures graceful pod termination:
+Draining the node ensures workloads are migrated to other nodes and pods terminate gracefully:
 
 ```bash
 kubectl drain talos00 --ignore-daemonsets --delete-emptydir-data
 ```
 
-**Note:** You can skip this step on single-node clusters since there's nowhere else for pods to go.
+**Note:** For single-node clusters or when shutting down the entire cluster, you can skip this step since there's nowhere else for pods to go.
 
 ### Step 2: Shutdown via Talos
 
@@ -178,7 +178,7 @@ talosctl service kubelet restart
 # Check etcd status
 talosctl etcd status
 
-# Re-bootstrap etcd (CAUTION: only for single-node clusters)
+# Re-bootstrap etcd (CAUTION: only for single control-plane clusters or when all control planes are down)
 talosctl bootstrap
 ```
 
@@ -208,11 +208,11 @@ This performs a clean reboot cycle automatically without manual power cycling.
 
 ## Important Notes
 
-### Single-Node Cluster Considerations
+### Multi-Node Cluster Considerations
 
-- **Expect downtime** - All services will be unavailable during shutdown
-- **No high availability** - Control plane is unavailable during maintenance
-- **Plan maintenance windows** accordingly
+- **Worker node maintenance** - Workloads will migrate to other nodes automatically
+- **Control plane maintenance** - If shutting down talos00, control plane will be unavailable unless you have multiple control plane nodes
+- **Plan maintenance windows** accordingly for control plane operations
 
 ### Data Persistence
 
@@ -277,6 +277,6 @@ talosctl reset --graceful=false --reboot
 
 ## Related Documentation
 
-- [Talos Provisioning Steps](TALOS-PROVISIONING-STEPS.md) - Complete cluster setup
-- [Quick Start Guide](../QUICKSTART.md) - Common operational commands
-- [Dual GitOps Architecture](DUAL-GITOPS.md) - Understanding the deployment model
+- [Provisioning Guide](provisioning.md) - Complete cluster setup
+- [Quick Start Guide](../../QUICKSTART.md) - Common operational commands
+- [Dual GitOps Architecture](../02-architecture/dual-gitops.md) - Understanding the deployment model
