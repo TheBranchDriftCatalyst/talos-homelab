@@ -74,7 +74,7 @@ After provisioning, your cluster will have:
 - **Flannel** - CNI networking
 - **CoreDNS** - DNS resolution
 - **Kubernetes Dashboard** - Web UI
-- **Single-node** - Control plane with scheduling enabled
+- **Multi-node** - Control plane (talos00) + workers (talos01, etc.)
 
 ## Project Structure
 
@@ -116,7 +116,7 @@ scripts/        # Helper scripts
 **Can't schedule pods?**
 
 - Check taints: `kubectl --kubeconfig ./.output/kubeconfig get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints`
-- Should show `<none>` for single-node setup
+- Control plane should show `<none>` for scheduling enabled
 
 **Need to reset?**
 

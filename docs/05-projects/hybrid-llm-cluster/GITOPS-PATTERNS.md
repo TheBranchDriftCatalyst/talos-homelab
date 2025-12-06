@@ -94,7 +94,7 @@ talos-homelab/
 │               └── nvidia-plugin.yaml   # GPU driver config
 │
 ├── clusters/
-│   └── homelab-single/
+│   └── catalyst-cluster/
 │       └── hybrid-llm.yaml       # Flux Kustomization
 │
 └── scripts/
@@ -107,7 +107,7 @@ talos-homelab/
 ## Flux Configuration (Homelab)
 
 ```yaml
-# clusters/homelab-single/hybrid-llm.yaml
+# clusters/catalyst-cluster/hybrid-llm.yaml
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
