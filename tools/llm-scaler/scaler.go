@@ -36,6 +36,7 @@ type Scaler struct {
 	lastActivity time.Time
 	startOnce    *sync.Once
 	startDone    chan struct{}
+	paused       bool // When true, disable auto-scaling (idle shutdown)
 
 	// Metrics (atomic for lock-free reads)
 	requests atomic.Int64
@@ -121,11 +122,13 @@ func (s *Scaler) Ready(w http.ResponseWriter, r *http.Request) {
 func (s *Scaler) Status(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	idle := time.Since(s.lastActivity)
+	paused := s.paused
 	s.mu.RUnlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"worker_state":     s.getState(),
 		"worker_ready":     s.isReady(),
+		"paused":           paused,
 		"idle":             idle.Round(time.Second).String(),
 		"idle_timeout":     s.cfg.IdleTimeout.String(),
 		"until_shutdown":   (s.cfg.IdleTimeout - idle).Round(time.Second).String(),
@@ -163,6 +166,43 @@ func (s *Scaler) ForceStop(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Pause disables automatic idle shutdown
+func (s *Scaler) Pause(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.Lock()
+	s.paused = true
+	s.mu.Unlock()
+
+	log.Printf("⏸️  Scaler PAUSED - idle shutdown disabled")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "paused",
+		"message": "Auto-scaling paused. Worker will not auto-shutdown.",
+	})
+}
+
+// Resume re-enables automatic idle shutdown
+func (s *Scaler) Resume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s.mu.Lock()
+	s.paused = false
+	s.lastActivity = time.Now() // Reset idle timer on resume
+	s.mu.Unlock()
+
+	log.Printf("▶️  Scaler RESUMED - idle shutdown enabled")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "resumed",
+		"message": "Auto-scaling resumed. Idle timer reset.",
+	})
+}
+
 // RunIdleWatcher checks for idle timeout and stops the worker
 func (s *Scaler) RunIdleWatcher() {
 	tick := time.NewTicker(time.Minute)
@@ -175,7 +215,13 @@ func (s *Scaler) RunIdleWatcher() {
 
 		s.mu.RLock()
 		idle := time.Since(s.lastActivity)
+		paused := s.paused
 		s.mu.RUnlock()
+
+		if paused {
+			log.Printf("⏸️  Idle: %s (PAUSED - no auto-shutdown)", idle.Round(time.Second))
+			continue
+		}
 
 		log.Printf("⏱️  Idle: %s / %s", idle.Round(time.Second), s.cfg.IdleTimeout)
 

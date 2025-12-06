@@ -1,7 +1,7 @@
 # FluxCD Migration Assessment
 
 **Date**: 2025-11-11
-**Cluster**: homelab-single (Talos v1.11.1 / Kubernetes v1.34.0)
+**Cluster**: catalyst-cluster (Talos v1.11.1 / Kubernetes v1.34.0)
 **Purpose**: Assess readiness for FluxCD deployment alongside existing resources
 
 ---
@@ -132,7 +132,7 @@ When you run `flux bootstrap`, it will:
 
 1. **Install Flux components** in `flux-system` namespace
 2. **Create GitRepository** pointing to your repo
-3. **Create Kustomization** to sync `clusters/homelab-single/`
+3. **Create Kustomization** to sync `clusters/catalyst-cluster/`
 4. **Apply resources** using `kubectl apply` (same as manual)
 5. **Adopt existing resources** that match manifests in Git
 
@@ -261,7 +261,7 @@ flux bootstrap github \
   --owner=$GITHUB_USER \
   --repository=talos-fix \
   --branch=main \
-  --path=clusters/homelab-single \
+  --path=clusters/catalyst-cluster \
   --personal
 
 # 2. Flux installs to flux-system namespace
@@ -393,7 +393,7 @@ infrastructure/base/observability/fluent-bit/helmrelease.yaml
 
 ```bash
 # Verify manifests are valid
-kustomize build clusters/homelab-single/flux-system/
+kustomize build clusters/catalyst-cluster/flux-system/
 ```
 
 ### Step 3: Deploy Flux (10 min)
@@ -409,7 +409,7 @@ flux bootstrap github \
   --owner=$GITHUB_USER \
   --repository=$GITHUB_REPO \
   --branch=main \
-  --path=clusters/homelab-single \
+  --path=clusters/catalyst-cluster \
   --personal
 ```
 

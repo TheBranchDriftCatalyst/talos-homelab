@@ -22,6 +22,7 @@ func main() {
 	log.Printf("   Proxy: %s -> %s", cfg.ListenAddr, cfg.OllamaURL)
 	log.Printf("   Idle timeout: %s", cfg.IdleTimeout)
 	log.Printf("   Warmup timeout: %s", cfg.WarmupTimeout)
+	log.Printf("   Dashboard: http://localhost%s/_/ui", cfg.ListenAddr)
 
 	scaler := NewScaler(cfg)
 	go scaler.RunIdleWatcher()
@@ -33,6 +34,9 @@ func main() {
 	mux.HandleFunc("/_/status", scaler.Status)
 	mux.HandleFunc("/_/start", scaler.ForceStart)
 	mux.HandleFunc("/_/stop", scaler.ForceStop)
+	mux.HandleFunc("/_/pause", scaler.Pause)
+	mux.HandleFunc("/_/resume", scaler.Resume)
+	mux.HandleFunc("/_/ui", scaler.UI)
 	mux.HandleFunc("/", scaler.Proxy)
 
 	log.Printf("   Listening on %s", cfg.ListenAddr)

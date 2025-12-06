@@ -189,7 +189,7 @@ Level 5: Reference        → Deep technical details
 
 | Document                                                                        | Description                 | Length | Status  |
 | ------------------------------------------------------------------------------- | --------------------------- | ------ | ------- |
-| [Flux Migration](06-project-management/migration-assessments/flux-migration.md) | FluxCD deployment readiness | Deep   | Pending |
+| [Flux Migration](_archive/flux-migration.md) | FluxCD deployment readiness | Deep   | Pending |
 
 **Use these for:** Tracking project progress, planning, decision logging.
 

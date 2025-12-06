@@ -101,7 +101,7 @@ spec:
 
 ## Variable Substitution
 
-Storage files use Flux postBuild substitution from `clusters/homelab-single/cluster-settings.yaml`:
+Storage files use Flux postBuild substitution from `clusters/catalyst-cluster/cluster-settings.yaml`:
 
 ```yaml
 # cluster-settings.yaml

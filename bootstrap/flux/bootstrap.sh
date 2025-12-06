@@ -15,9 +15,9 @@ echo ""
 
 # Check prerequisites
 if ! command -v flux &> /dev/null; then
-    echo "❌ Flux CLI not installed"
-    echo "Install with: brew install fluxcd/tap/flux"
-    exit 1
+  echo "❌ Flux CLI not installed"
+  echo "Install with: brew install fluxcd/tap/flux"
+  exit 1
 fi
 
 echo "✅ Flux CLI installed"
@@ -25,14 +25,14 @@ echo ""
 
 # Check if Git repo is configured
 if [ -z "${GITHUB_USER:-}" ] || [ -z "${GITHUB_REPO:-}" ]; then
-    echo "⚠️  Environment variables not set:"
-    echo "   export GITHUB_USER=your-github-username"
-    echo "   export GITHUB_REPO=talos-fix"
-    echo ""
-    read -p "Enter GitHub username: " GITHUB_USER
-    read -p "Enter GitHub repo name [talos-fix]: " GITHUB_REPO
-    GITHUB_REPO=${GITHUB_REPO:-talos-fix}
-    export GITHUB_USER GITHUB_REPO
+  echo "⚠️  Environment variables not set:"
+  echo "   export GITHUB_USER=your-github-username"
+  echo "   export GITHUB_REPO=talos-fix"
+  echo ""
+  read -p "Enter GitHub username: " GITHUB_USER
+  read -p "Enter GitHub repo name [talos-fix]: " GITHUB_REPO
+  GITHUB_REPO=${GITHUB_REPO:-talos-fix}
+  export GITHUB_USER GITHUB_REPO
 fi
 
 echo "Repository: ${GITHUB_USER}/${GITHUB_REPO}"
@@ -44,7 +44,7 @@ flux bootstrap github \
   --owner="${GITHUB_USER}" \
   --repository="${GITHUB_REPO}" \
   --branch=main \
-  --path=clusters/homelab-single \
+  --path=clusters/catalyst-cluster \
   --personal \
   --read-write-key
 

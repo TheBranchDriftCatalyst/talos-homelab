@@ -140,7 +140,7 @@ flux bootstrap github \
   --owner=$GITHUB_USER \
   --repository=$GITHUB_REPO \
   --branch=main \
-  --path=clusters/homelab-single \
+  --path=clusters/catalyst-cluster \
   --personal
 ```
 
@@ -178,7 +178,7 @@ open http://argocd.talos00
 
 ### FluxCD Workflow (Infrastructure)
 
-1. **Flux monitors** `clusters/homelab-single/flux-system/` in Git
+1. **Flux monitors** `clusters/catalyst-cluster/flux-system/` in Git
 2. **Detects changes** to infrastructure manifests
 3. **Auto-reconciles** every 1 minute (configurable)
 4. **Applies changes** to cluster (namespaces, storage, monitoring)
@@ -311,7 +311,7 @@ talos-fix/
 │       ├── values.yaml          # ArgoCD Helm values
 │       └── ingressroute.yaml    # ArgoCD ingress
 ├── clusters/
-│   └── homelab-single/
+│   └── catalyst-cluster/
 │       └── flux-system/
 │           └── kustomization.yaml   # Flux entry point
 ├── infrastructure/              # ← Managed by Flux
@@ -416,7 +416,7 @@ argocd app diff <app-name>
 
 ```bash
 # Bootstrap
-flux bootstrap github --owner=USER --repository=REPO --path=clusters/homelab-single
+flux bootstrap github --owner=USER --repository=REPO --path=clusters/catalyst-cluster
 
 # Status
 flux check

@@ -574,7 +574,7 @@ load('ext://k8s_attach', 'k8s_attach')
 dotenv()
 
 # Configure kubectl context
-allow_k8s_contexts('admin@homelab-single')
+allow_k8s_contexts('admin@catalyst-cluster')
 
 # ============================================
 # k8s_attach - View logs for Flux-managed resources

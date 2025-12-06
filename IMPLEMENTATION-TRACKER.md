@@ -477,7 +477,7 @@ media-prod, monitoring, observability, registry, traefik
 **2025-11-09**: Namespace-based Environments
 
 - **Dev + Prod** in same cluster
-- **Benefit**: Simpler for single-node, adequate isolation
+- **Benefit**: Adequate isolation for multi-node cluster
 
 **2025-11-22**: Added External Secrets Operator
 
@@ -513,7 +513,7 @@ media-prod, monitoring, observability, registry, traefik
 ### Resolved Issues
 
 1. ✅ **Storage Class**: Using `local-path` as default, `nfs` available
-2. ✅ **Control Plane Scheduling**: Working (single-node cluster)
+2. ✅ **Control Plane Scheduling**: Working (allows workloads on control plane)
 3. ✅ **Graylog Deployment**: Fixed with Recreate strategy
 4. ✅ **Prometheus Storage**: Configured with proper retention
 5. ✅ **Fluent Bit**: Running but may have collection issues (1 pod)
@@ -524,7 +524,7 @@ None - all core infrastructure operational
 
 ### Known Risks
 
-1. **Single-Node**: No HA, need good backups
+1. **Backup Important**: Etcd runs on control plane, need good backups
 2. **Resource Usage**: Monitor with Grafana/Goldilocks
 3. **SQLite on NFS**: Apps using local-path for configs (correct approach)
 

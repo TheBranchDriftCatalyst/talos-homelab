@@ -18,7 +18,7 @@ flux bootstrap github \
   --owner=<your-github-username> \
   --repository=<your-repo-name> \
   --branch=main \
-  --path=clusters/homelab-single \
+  --path=clusters/catalyst-cluster \
   --personal
 ```
 
@@ -28,7 +28,7 @@ After bootstrap, Flux will manage:
 
 - `infrastructure/` - Infrastructure components (storage, networking, monitoring)
 - `applications/` - Application deployments (arr stack, media servers)
-- `clusters/homelab-single/` - Cluster-specific configuration
+- `clusters/catalyst-cluster/` - Cluster-specific configuration
 
 ## Components Managed by Flux
 
@@ -59,10 +59,10 @@ flux install --export > bootstrap/flux/flux-components.yaml
 kubectl apply -f bootstrap/flux/flux-components.yaml
 
 # Create GitRepository source
-kubectl apply -f clusters/homelab-single/flux-system/sources/git-repo.yaml
+kubectl apply -f clusters/catalyst-cluster/flux-system/sources/git-repo.yaml
 
 # Create root Kustomization
-kubectl apply -f clusters/homelab-single/flux-system/kustomizations/root.yaml
+kubectl apply -f clusters/catalyst-cluster/flux-system/kustomizations/root.yaml
 ```
 
 ## Verification

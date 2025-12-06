@@ -7,6 +7,7 @@ COPY *.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o llm-scaler .
 
+# TODO: we want ot use catalyst-images:hacker probably for this right now with go
 # Runtime stage
 FROM alpine:3.19
 
