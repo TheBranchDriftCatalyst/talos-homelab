@@ -1,0 +1,75 @@
+---
+# PodMonitor for Cilium Agent metrics
+# Scrapes the cilium-agent DaemonSet pods directly (no Service exists)
+# Metrics exposed on port 9962
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cilium-agent
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: cilium
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: cilium
+spec:
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  selector:
+    matchLabels:
+      k8s-app: cilium
+  podMetricsEndpoints:
+    - port: prometheus
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+# PodMonitor for Cilium Operator metrics
+# Scrapes the cilium-operator deployment pods directly
+# Metrics exposed on port 9963
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cilium-operator
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: cilium-operator
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/part-of: cilium
+spec:
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  selector:
+    matchLabels:
+      io.cilium/app: operator
+  podMetricsEndpoints:
+    - port: prometheus
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+# ServiceMonitor for Cilium Envoy proxy metrics
+# cilium-envoy has a headless Service with envoy-metrics port
+# Metrics exposed on port 9964
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cilium-envoy
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: cilium-envoy
+    app.kubernetes.io/component: envoy
+    app.kubernetes.io/part-of: cilium
+spec:
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  selector:
+    matchLabels:
+      k8s-app: cilium-envoy
+  endpoints:
+    - port: envoy-metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
