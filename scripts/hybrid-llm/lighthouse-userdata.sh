@@ -1,6 +1,12 @@
 #!/bin/bash
-# Nebula Lighthouse Userdata Generator
+# Nebula Lighthouse + k3s Control Plane + Liqo Provider Userdata Generator
 # Reads certificates from .output/nebula/ and outputs a complete EC2 userdata script
+#
+# This creates an always-on AWS control plane that:
+# - Runs Nebula lighthouse for mesh coordination
+# - Runs k3s server as the AWS cluster control plane
+# - Runs Liqo provider to peer with homelab (Talos)
+# - GPU workers join this cluster as k3s agents
 #
 # Prerequisites:
 #   ./scripts/hybrid-llm/nebula-certs.sh init        # Generate CA
@@ -55,19 +61,27 @@ check_certs
 # Output the userdata script with embedded certificates
 cat << 'HEADER'
 #!/bin/bash
-# Nebula Lighthouse Bootstrap Script
+# Nebula Lighthouse + k3s + Liqo Bootstrap Script
 # Auto-generated - certificates embedded from .output/nebula/
 # This runs on first boot of the EC2 instance
 
 set -euo pipefail
-exec > >(tee /var/log/nebula-bootstrap.log) 2>&1
+exec > >(tee /var/log/lighthouse-bootstrap.log) 2>&1
 
-echo "=== Starting Nebula Lighthouse Bootstrap ==="
+echo "=== Starting Lighthouse Bootstrap (Nebula + k3s + Liqo) ==="
+echo "Timestamp: $(date)"
 
-# Install dependencies
-dnf install -y tar gzip
+#############################################
+# PHASE 0: Install dependencies
+#############################################
+echo "=== Phase 0: Installing dependencies ==="
+dnf install -y --allowerasing tar gzip curl jq git
 
-# Download and install Nebula
+#############################################
+# PHASE 1: Install Nebula
+#############################################
+echo "=== Phase 1: Installing Nebula ==="
+
 NEBULA_VERSION="1.9.5"
 cd /tmp
 curl -LO "https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/nebula-linux-amd64.tar.gz"
@@ -180,20 +194,30 @@ firewall:
     - port: any
       proto: icmp
       host: any
+
+    # k3s API server (for GPU workers to join)
+    - port: 6443
+      proto: tcp
+      host: any
+
+    # Kubelet API
+    - port: 10250
+      proto: tcp
+      host: any
 EOF
 
-# Create systemd service
+# Create systemd service for Nebula
 cat > /etc/systemd/system/nebula.service << 'SVCEOF'
 [Unit]
 Description=Nebula Mesh VPN
 Wants=basic.target network-online.target
 After=basic.target network-online.target
-Before=sshd.service
+Before=sshd.service k3s.service
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yaml
-ExecReload=/bin/kill -HUP $MAINPID
+ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
 RestartSec=5
 
@@ -206,7 +230,161 @@ systemctl daemon-reload
 systemctl enable nebula
 systemctl start nebula
 
-echo "=== Nebula Lighthouse Bootstrap Complete ==="
-echo "Public IP: ${PUBLIC_IP}"
-echo "Nebula IP: 10.42.0.1"
+# Wait for Nebula to establish interface
+echo "Waiting for Nebula interface..."
+for i in {1..30}; do
+    if ip addr show nebula1 2>/dev/null | grep -q "10.42.0.1"; then
+        echo "Nebula connected: 10.42.0.1"
+        break
+    fi
+    sleep 2
+done
+
+#############################################
+# PHASE 2: Install k3s (Server Mode)
+#############################################
+echo "=== Phase 2: Installing k3s Server ==="
+
+# Install k3s as server (control plane)
+# - Binds to Nebula mesh IP for cluster communication
+# - Disables traefik/servicelb (we use homelab's Traefik)
+# - Uses Nebula interface for flannel CNI
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
+    --disable=traefik \
+    --disable=servicelb \
+    --node-ip=10.42.0.1 \
+    --advertise-address=10.42.0.1 \
+    --flannel-iface=nebula1 \
+    --write-kubeconfig-mode=644 \
+    --node-label=topology.kubernetes.io/region=aws \
+    --node-label=topology.kubernetes.io/zone=us-west-2 \
+    --node-label=node-type=control-plane" sh -
+
+# Wait for k3s to be ready (node Ready + API responsive)
+echo "Waiting for k3s to be ready..."
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+echo "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> /root/.bashrc
+
+# Wait for node to be Ready
+for i in {1..60}; do
+    if /usr/local/bin/kubectl get nodes 2>/dev/null | grep -q "Ready"; then
+        echo "k3s node is Ready"
+        break
+    fi
+    echo "  Waiting for node... (attempt $i/60)"
+    sleep 5
+done
+
+# Wait for API server to be fully responsive (all system pods ready)
+echo "Waiting for k3s API to be fully ready..."
+for i in {1..30}; do
+    if /usr/local/bin/kubectl get pods -n kube-system 2>/dev/null | grep -v "NAME" | grep -v "Running\|Completed" | wc -l | grep -q "^0$"; then
+        echo "k3s API is fully ready"
+        break
+    fi
+    echo "  Waiting for system pods... (attempt $i/30)"
+    sleep 10
+done
+
+# Final API health check
+echo "Verifying API health..."
+/usr/local/bin/kubectl cluster-info || echo "Warning: cluster-info check failed"
+
+# Create a script to get the node token (for GPU workers to join)
+cat > /usr/local/bin/get-k3s-token << 'TOKENSCRIPT'
+#!/bin/bash
+cat /var/lib/rancher/k3s/server/node-token
+TOKENSCRIPT
+chmod +x /usr/local/bin/get-k3s-token
+
+#############################################
+# PHASE 3: Install Helm
+#############################################
+echo "=== Phase 3: Installing Helm ==="
+
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+#############################################
+# PHASE 4: Install Liqo
+#############################################
+echo "=== Phase 4: Installing Liqo ==="
+
+# Add Liqo Helm repo
+helm repo add liqo https://helm.liqo.io/
+helm repo update
+
+# Install Liqo as provider cluster with retry logic
+# This will peer with homelab (Talos) to share GPU resources
+echo "Installing Liqo (with retry)..."
+for attempt in 1 2 3; do
+    echo "  Attempt $attempt/3..."
+    if helm install liqo liqo/liqo \
+        --namespace liqo-system \
+        --create-namespace \
+        --set discovery.config.clusterName=aws-gpu-cluster \
+        --set networking.internal=true \
+        --set ipam.podCIDR="10.43.0.0/16" \
+        --set ipam.serviceCIDR="10.44.0.0/16" \
+        --set auth.config.enableAuthentication=false \
+        --set controllerManager.config.resourceSharingPercentage=90 \
+        --timeout=5m 2>&1; then
+        echo "Liqo installed successfully"
+        break
+    else
+        echo "  Liqo install attempt $attempt failed"
+        if [ $attempt -lt 3 ]; then
+            echo "  Waiting 30s before retry..."
+            sleep 30
+            helm uninstall liqo -n liqo-system 2>/dev/null || true
+        fi
+    fi
+done
+
+# Wait for Liqo pods to be ready
+echo "Waiting for Liqo pods to be ready..."
+/usr/local/bin/kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=liqo -n liqo-system --timeout=300s || true
+
+# Install liqoctl for easier management
+LIQO_VERSION="v1.0.1"
+curl -Lo /usr/local/bin/liqoctl "https://github.com/liqotech/liqo/releases/download/${LIQO_VERSION}/liqoctl-linux-amd64"
+chmod +x /usr/local/bin/liqoctl
+
+# Generate peering info for homelab
+echo "=== Generating Liqo Peering Information ==="
+mkdir -p /root/liqo-peering
+/usr/local/bin/liqoctl generate peer-command --only-command > /root/liqo-peering/peer-command.txt 2>/dev/null || echo "Peering command will be available after Liqo is fully initialized"
+
+#############################################
+# PHASE 5: Label node for GPU workers
+#############################################
+echo "=== Phase 5: Configuring node labels ==="
+
+# Label this node as control-plane only (no GPU workloads here)
+/usr/local/bin/kubectl label node \$(hostname) node-type=control-plane --overwrite
+/usr/local/bin/kubectl taint node \$(hostname) node-role.kubernetes.io/control-plane=:NoSchedule --overwrite || true
+
+#############################################
+# Summary
+#############################################
+echo ""
+echo "=== Lighthouse Bootstrap Complete ==="
+echo ""
+echo "Nebula:"
+echo "  Public IP: \${PUBLIC_IP}"
+echo "  Mesh IP:   10.42.0.1"
+echo ""
+echo "k3s:"
+echo "  API Server: https://10.42.0.1:6443"
+echo "  Kubeconfig: /etc/rancher/k3s/k3s.yaml"
+echo "  Node Token: /var/lib/rancher/k3s/server/node-token"
+echo ""
+echo "Liqo:"
+echo "  Cluster:   aws-gpu-cluster"
+echo "  Namespace: liqo-system"
+echo "  Peering:   /root/liqo-peering/peer-command.txt"
+echo ""
+echo "To join GPU workers:"
+echo "  K3S_TOKEN=\$(cat /var/lib/rancher/k3s/server/node-token)"
+echo "  curl -sfL https://get.k3s.io | K3S_URL=https://10.42.0.1:6443 K3S_TOKEN=\\\$K3S_TOKEN sh -s - agent"
+echo ""
 FOOTER
