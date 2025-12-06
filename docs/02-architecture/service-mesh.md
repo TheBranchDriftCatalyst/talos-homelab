@@ -49,7 +49,7 @@ This document tracks the service mesh implementation strategy for the talos-home
 - Simple installation and operation
 - Automatic mTLS with zero config
 - Low learning curve
-- Great for single-node + hybrid setups
+- Great for multi-node + hybrid setups
 
 **Cons:**
 - Fewer advanced features than Istio
@@ -109,7 +109,7 @@ This document tracks the service mesh implementation strategy for the talos-home
 1. **Hybrid-friendly**: Works well with multi-cluster setups
 2. **Liqo compatible**: Can mesh across virtual nodes
 3. **Nebula synergy**: Defense-in-depth (Nebula encrypts node traffic, Linkerd encrypts pod traffic)
-4. **Low overhead**: Important for single-node cluster
+4. **Low overhead**: Important for homelab cluster
 5. **gRPC native**: Optimized for gRPC traffic (like our scratch examples)
 
 ## Implementation Plan
@@ -287,7 +287,7 @@ Linkerd provides official Grafana dashboards:
 | 10 meshed pods | 100m | 200Mi |
 | **Total (10 pods)** | **200m** | **400Mi** |
 
-Acceptable for single-node homelab cluster.
+Acceptable for homelab cluster with distributed workload.
 
 ## Open Questions
 

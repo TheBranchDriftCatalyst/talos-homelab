@@ -21,7 +21,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
    talosctl gen secrets -o configs/secrets.yaml
 
    # Generate machine configs
-   talosctl gen config homelab https://192.168.1.54:6443 \
+   talosctl gen config catalyst https://192.168.1.54:6443 \
      --config-patch @configs/patches/controlplane.yaml \
      --output configs/
 
@@ -53,7 +53,7 @@ Complete guide for provisioning the Talos Kubernetes homelab environment from sc
    ./scripts/kubeconfig-merge.sh
 
    # Switch context
-   kubectx homelab-single
+   kubectx catalyst-cluster
    ```
 
 4. **Set Node Hostname**
@@ -554,7 +554,7 @@ argocd app get prowlarr-dev
 kubectx
 
 # Switch to homelab
-kubectx homelab-single
+kubectx catalyst-cluster
 
 # Switch to local test cluster
 kubectx talos-local

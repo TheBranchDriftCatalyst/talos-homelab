@@ -43,7 +43,7 @@ See: [docs/02-architecture/dual-gitops.md](../../../docs/02-architecture/dual-gi
 ### Core Components
 
 - **Deployment Type:** DaemonSet (for hostPort binding)
-- **Replicas:** 1 (single-node cluster)
+- **Replicas:** Auto-scaled based on node count
 - **Service Type:** ClusterIP
 - **Host Ports:** 80 (HTTP), 443 (HTTPS), 9000 (Dashboard)
 
@@ -105,7 +105,7 @@ See: [docs/02-architecture/dual-gitops.md](../../../docs/02-architecture/dual-gi
 
 ```yaml
 deployment:
-  kind: DaemonSet # Single-node hostPort binding
+  kind: DaemonSet # hostPort binding on all nodes
   replicas: 1
 
 service:
@@ -477,8 +477,8 @@ traefik_tls_certs_not_after
 
 ### Resource Usage (Current)
 
-- **CPU:** ~100m (low, single-node)
-- **Memory:** ~50Mi (minimal)
+- **CPU:** ~100m per pod (low overhead)
+- **Memory:** ~50Mi per pod (minimal)
 - **Storage:** None (stateless)
 
 ### Resource Limits
@@ -495,9 +495,9 @@ resources:
 
 ### Scalability
 
-- **Current:** 1 replica (DaemonSet on single node)
-- **Target:** 1 replica (single-node cluster)
-- **Multi-node:** Switch to Deployment with multiple replicas
+- **Current:** DaemonSet (runs on all nodes)
+- **Multi-node:** Automatically scales with node count
+- **Alternative:** Can switch to Deployment with multiple replicas for specific node targeting
 
 ### Load Testing
 

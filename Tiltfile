@@ -31,7 +31,7 @@ cfg = config.parse()
 
 # Settings
 settings = {
-    'k8s_context': cfg.get('k8s_context', 'admin@homelab-single'),
+    'k8s_context': cfg.get('k8s_context', 'admin@catalyst-cluster'),
     'flux_suspend': cfg.get('flux-suspend', False),
 }
 

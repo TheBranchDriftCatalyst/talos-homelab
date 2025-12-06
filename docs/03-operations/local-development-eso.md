@@ -6,7 +6,7 @@ This guide shows how to develop and test External Secrets Operator (ESO) with 1P
 
 **Local Stack:**
 
-- **Talos Local Cluster** - Docker-based single-node Talos cluster
+- **Talos Local Cluster** - Docker-based Talos cluster for development
 - **Tilt** - Local development tool with live reload
 - **External Secrets Operator** - Deployed via Helm in Tilt
 - **1Password Connect** - Optional, for testing secret sync

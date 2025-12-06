@@ -139,7 +139,7 @@ User visits sonarr.talos00
 
 ### Recommendation: Start with Authelia
 
-- Lower resource footprint (important for single-node cluster)
+- Lower resource footprint (important for homelab cluster)
 - Simple file-based configuration
 - Can upgrade to Authentik later if needed
 
