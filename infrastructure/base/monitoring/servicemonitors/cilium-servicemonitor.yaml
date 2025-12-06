@@ -1,7 +1,7 @@
 ---
 # PodMonitor for Cilium Agent metrics
 # Scrapes the cilium-agent DaemonSet pods directly (no Service exists)
-# Metrics exposed on port 9962
+# Metrics exposed on port 9962 (containerPort: prometheus)
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -19,6 +19,7 @@ spec:
     matchLabels:
       k8s-app: cilium
   podMetricsEndpoints:
+    # Uses named port "prometheus" defined in Helm-generated manifest
     - port: prometheus
       path: /metrics
       interval: 30s
@@ -26,7 +27,7 @@ spec:
 ---
 # PodMonitor for Cilium Operator metrics
 # Scrapes the cilium-operator deployment pods directly
-# Metrics exposed on port 9963
+# Metrics exposed on port 9963 (containerPort: prometheus)
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -44,7 +45,34 @@ spec:
     matchLabels:
       io.cilium/app: operator
   podMetricsEndpoints:
+    # Uses named port "prometheus" defined in Helm-generated manifest
     - port: prometheus
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+---
+# PodMonitor for Hubble metrics
+# Scrapes hubble metrics from Cilium agent pods
+# Metrics exposed on port 9965 (containerPort: hubble-metrics)
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: hubble
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: hubble
+    app.kubernetes.io/component: observability
+    app.kubernetes.io/part-of: cilium
+spec:
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  selector:
+    matchLabels:
+      k8s-app: cilium
+  podMetricsEndpoints:
+    # Uses named port "hubble-metrics" defined in Helm-generated manifest
+    - port: hubble-metrics
       path: /metrics
       interval: 30s
       scrapeTimeout: 10s
