@@ -8,7 +8,7 @@ ArgoCD will be automatically deployed by Flux once the Flux bootstrap is complet
 
 ## Access ArgoCD UI
 
-1. **Via Traefik IngressRoute**: http://argocd.lab (configure DNS or /etc/hosts)
+1. **Via Traefik IngressRoute**: http://argocd.talos00 (configure DNS or /etc/hosts)
 
 2. **Get initial admin password**:
 
@@ -25,7 +25,7 @@ Default credentials:
 
 ```bash
 # Login to ArgoCD CLI
-argocd login argocd.lab
+argocd login argocd.talos00
 
 # Update password
 argocd account update-password

@@ -43,8 +43,8 @@
 
 ### Environments
 
-- **Dev**: `media-dev` namespace, `*.dev.lab` domains
-- **Prod**: `media-prod` namespace, `*.lab` domains
+- **Dev**: `media-dev` namespace, `*.dev.talos00` domains
+- **Prod**: `media-prod` namespace, `*.talos00` domains
 
 ---
 
@@ -94,7 +94,7 @@ talos-fix/
 │       └── overlays/
 │           ├── dev/
 │           └── prod/
-├── clusters/homelab-single/
+├── clusters/catalyst-cluster/
 ├── argocd-apps/
 └── docs/
 ```
@@ -138,8 +138,8 @@ talos-fix/
 - [ ] Create `media-dev` namespace with resource quotas
 - [ ] Create `media-prod` namespace with resource quotas
 - [ ] Configure Traefik for multi-env routing
-- [ ] Create dev overlay (\*.dev.lab domains)
-- [ ] Create prod overlay (\*.lab domains)
+- [ ] Create dev overlay (\*.dev.talos00 domains)
+- [ ] Create prod overlay (\*.talos00 domains)
 - [ ] Test routing isolation
 
 ---
@@ -194,7 +194,7 @@ talos-fix/
 - [ ] Create kube-Prometheus-stack HelmRelease
 - [ ] Configure Prometheus storage (20Gi PVC)
 - [ ] Configure Grafana admin password
-- [ ] Create IngressRoutes (Grafana.dev.lab, Prometheus.dev.lab)
+- [ ] Create IngressRoutes (Grafana.dev.talos00, Prometheus.dev.talos00)
 - [ ] Import arr stack dashboards
 - [ ] Create custom dashboards for Plex/Jellyfin comparison
 - [ ] Configure ServiceMonitors for arr apps
@@ -225,19 +225,19 @@ talos-fix/
 
 **Dev Environment**:
 
-- `prowlarr.dev.lab` → Prowlarr
-- `sonarr.dev.lab` → Sonarr
-- `radarr.dev.lab` → Radarr
-- `plex.dev.lab` → Plex
-- `jellyfin.dev.lab` → Jellyfin
+- `prowlarr.dev.talos00` → Prowlarr
+- `sonarr.dev.talos00` → Sonarr
+- `radarr.dev.talos00` → Radarr
+- `plex.dev.talos00` → Plex
+- `jellyfin.dev.talos00` → Jellyfin
 
 **Prod Environment**:
 
-- `prowlarr.lab` → Prowlarr
-- `sonarr.lab` → Sonarr
-- `radarr.lab` → Radarr
-- `plex.lab` → Plex
-- `jellyfin.lab` → Jellyfin
+- `prowlarr.talos00` → Prowlarr
+- `sonarr.talos00` → Sonarr
+- `radarr.talos00` → Radarr
+- `plex.talos00` → Plex
+- `jellyfin.talos00` → Jellyfin
 
 ### Tasks
 
@@ -302,7 +302,7 @@ task jellyfin-ui
 ### Dev Environment (`media-dev`)
 
 - **Namespace**: `media-dev`
-- **Domains**: `*.dev.lab`
+- **Domains**: `*.dev.talos00`
 - **Resources**: Lower limits for testing
 - **Logging**: DEBUG level
 - **Purpose**: Testing new configurations
@@ -310,7 +310,7 @@ task jellyfin-ui
 ### Prod Environment (`media-prod`)
 
 - **Namespace**: `media-prod`
-- **Domains**: `*.lab`
+- **Domains**: `*.talos00`
 - **Resources**: Higher limits for performance
 - **Logging**: INFO level
 - **Purpose**: Stable media consumption

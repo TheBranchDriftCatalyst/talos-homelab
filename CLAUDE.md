@@ -171,7 +171,7 @@ task lint                # → dev:lint
 task --summary talos:health
 ```
 
-**Full documentation**: See [docs/taskfile-organization.md](docs/taskfile-organization.md) for complete task reference.
+**Full documentation**: See [docs/07-reference/taskfile-organization.md](docs/07-reference/taskfile-organization.md) for complete task reference.
 
 ## Essential Commands
 

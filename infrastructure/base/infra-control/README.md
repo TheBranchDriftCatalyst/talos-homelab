@@ -47,14 +47,11 @@ task infra:infra-control-logs TOOL=headlamp
 task infra:infra-control-delete
 ```
 
-## Documentation
+## Tools Included
 
-See [docs/infra-control-tools.md](/docs/infra-control-tools.md) for:
-
-- Detailed usage instructions
-- Feature descriptions
-- Troubleshooting
-- Integration with existing monitoring stack
+- **Headlamp** - Modern K8s UI
+- **Goldilocks** - VPA recommendations
+- **Kube-ops-view** - Cluster visualization
 
 ## Directory Structure
 
