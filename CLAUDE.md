@@ -1,102 +1,109 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## TL;DR
 
-## Repository Overview
+Talos Linux Kubernetes cluster infrastructure repo. Uses **beads** for task tracking, **dual GitOps** (Flux + ArgoCD), and **Taskfile** automation.
 
-This is a **Talos Linux single-node Kubernetes cluster** infrastructure repository using a dual GitOps pattern. It manages platform infrastructure (not applications) through manual, controlled deployments.
+**Quick Start:**
+```bash
+bd ready                    # Find work to do
+task talos:health           # Check cluster health
+task k8s:kubeconfig-merge   # Enable kubectl access
+```
 
-**Key Characteristics:**
+**Key Facts:**
+- Control Plane IP: `192.168.1.54` (or `$TALOS_NODE`)
+- Services: `http://<service>.talos00` (requires /etc/hosts)
+- Talos = immutable OS, no SSH, config via `talosctl`
 
-- Single-node cluster: Control plane scheduling enabled, no worker nodes
-- Talos Linux: Immutable Kubernetes OS (config via `talosctl`, not SSH)
-- Dual GitOps: This repo = infrastructure; App repos = ArgoCD-managed applications
-- Node IP: `192.168.1.54` (configurable via `TALOS_NODE` env var)
+---
 
-## Documentation Structure
+## Beads Workflow (Task Tracking)
 
-This repository maintains comprehensive documentation organized in multiple locations:
+This repo uses **beads** for issue tracking via MCP tools. NOT TodoWrite, NOT markdown TODOs.
 
-### Root-Level Documentation
+### Session Protocol
 
-- Quick-start guides and operational references
-- Platform-specific documentation (Traefik, Observability)
-- Implementation tracking
+```bash
+# Start of session
+bd ready                              # Find available work
 
-### `docs/` Directory
+# Working on task
+bd update CILIUM-xxx --status=in_progress  # Claim work
+# ... do the work ...
+bd close CILIUM-xxx                   # Mark complete
 
-- Architecture documentation
-- Deployment guides
-- Migration assessments
-- Progress tracking
+# End of session (CRITICAL - never skip)
+git status && git add <files>
+bd sync                               # Sync beads to git
+git commit -m "..."
+git push
+```
 
-### `bootstrap/` Directory
+### Essential Commands
 
-- Bootstrap-specific README files
-- Tool-specific setup guides (ArgoCD, Flux)
+| Command | Purpose |
+|---------|---------|
+| `bd ready` | Show unblocked issues ready to work |
+| `bd list --status=open` | All open issues |
+| `bd show <id>` | Detailed view with dependencies |
+| `bd create --title="..." --type=task` | Create issue |
+| `bd update <id> --status=in_progress` | Claim work |
+| `bd close <id>` | Mark complete |
+| `bd blocked` | Show blocked issues |
+| `bd stats` | Project health |
 
-### `configs/` Directory
+### Dependencies
 
-- Configuration documentation
-- Talos-specific configuration guides
+```bash
+bd dep add <issue> <depends-on>  # issue depends on depends-on
+```
 
-## Documentation Table of Contents
+### When to Create Issues
 
-### Root Documentation
+- Multi-step work spanning sessions → create issue
+- Quick fix done immediately → no issue needed
+- Discovery during work → create issue, link as dependency
 
-| Document                    | Description                                                                                    |
-| --------------------------- | ---------------------------------------------------------------------------------------------- |
-| `README.md`                 | Main repository documentation - Quick start guide, cluster overview, deployment workflows      |
-| `QUICKSTART.md`             | Quick reference guide - Essential commands and common tasks                                    |
-| `TRAEFIK.md`                | Traefik ingress controller documentation - IngressRoute configuration, hostnames, certificates |
-| `OBSERVABILITY.md`          | Monitoring and logging stack - Prometheus, Grafana, OpenSearch, Graylog, Fluent Bit            |
-| `IMPLEMENTATION-TRACKER.md` | Implementation progress tracking - Completed features, pending tasks                           |
-| `CLAUDE.md`                 | **THIS FILE** - Guidance for Claude Code instances working in this repository                  |
+---
 
-### docs/ - Detailed Documentation
+## Documentation Pattern
 
-| Document                            | Description                                                                                          |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `docs/AUTH-IMPLEMENTATION-GUIDE.md` | **PLANNING** - Authentication guide - LDAP, Authelia, Authentik, Kerberos comparison and implementation plan |
-| `docs/catalyst-ui-deployment.md`    | Catalyst UI deployment guide - Docker registry, ArgoCD application setup, troubleshooting            |
-| `docs/DUAL-GITOPS.md`               | **CRITICAL** - Dual GitOps architecture pattern, rules, and workflows                                |
-| `docs/DUAL-GITOPS-ARCHITECTURE.md`  | Additional GitOps architecture documentation and diagrams                                            |
-| `docs/ENHANCEMENT-ROADMAP.md`       | **Enhancement Roadmap** - MCP server and Tilt extension integration planning (2-stream project)      |
-| `docs/FLUX-MIGRATION-ASSESSMENT.md` | FluxCD migration assessment - Comparison with ArgoCD, pros/cons                                      |
-| `docs/GRAFANA-DASHBOARDS.md`        | **REFERENCE** - Grafana dashboard index - All dashboards, ServiceMonitors, troubleshooting           |
-| `docs/infra-testing-tools.md`       | Infrastructure testing UI tools - Headlamp, Kubeview, Kube-ops-view, Goldilocks deployment and usage |
-| `docs/kubernetes-ui-tools.md`       | Comprehensive guide to Kubernetes UI tools - Comparison and evaluation of available options          |
-| `docs/LOCAL-TESTING.md`             | Local testing guide - Testing infrastructure changes before deployment                               |
-| `docs/node-shutdown-procedure.md`   | Node shutdown and restart guide - Safe procedures for hardware maintenance and recovery              |
-| `docs/PROGRESS-SUMMARY.md`          | Progress summary - Session-by-session tracking of implementation work                                |
-| `docs/SERVICE-MESH.md`              | **PLANNING** - Service mesh strategy - Linkerd, Istio comparison, hybrid cluster integration         |
-| `docs/TALOS-PROVISIONING-STEPS.md`  | Talos provisioning steps - Detailed cluster setup and bootstrap process                              |
-| `docs/tilt-development-workflow.md` | Tilt development workflow - Hot-reload development environment for infrastructure manifests          |
+### Progressive Summarization
 
-### bootstrap/ - Bootstrap Documentation
+All docs should follow this structure:
+1. **TL;DR** - 1-2 sentences + bullets (30 sec read)
+2. **Quick Reference** - Common operations (5 min)
+3. **Deep Dive** - Full details (reference)
 
-| Document                     | Description                                                                 |
-| ---------------------------- | --------------------------------------------------------------------------- |
-| `bootstrap/argocd/README.md` | ArgoCD bootstrap documentation - Installation, configuration, initial setup |
-| `bootstrap/flux/README.md`   | Flux bootstrap documentation - Installation steps, repository structure     |
+### Section READMEs
 
-### configs/ - Configuration Documentation
+Parent READMEs (e.g., `docs/01-getting-started/README.md`) summarize children for drill-down navigation.
 
-| Document           | Description                                                                         |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| `configs/TALOS.md` | Talos configuration documentation - Machine config structure, customization options |
+### Related Issues Footer
 
-### **⚠️ MAINTENANCE INSTRUCTION ⚠️**
+Every doc should end with:
+```markdown
+---
+## Related Issues
+<!-- Beads tracking for this doc -->
+```
 
-**When adding new documentation or making changes to existing documentation:**
+### When to Update Docs
 
-1. **Update this CLAUDE.md file** with the new document entry in the appropriate table
-2. **Add a brief description** of what the document covers
-3. **Mark critical documents** with **CRITICAL** or other importance indicators
-4. **Keep the Table of Contents alphabetized** within each section for easy navigation
-5. **Update the "Documentation References" section** near the bottom of this file if adding important references
+- Changed code/config that docs describe → update docs
+- Found incorrect docs → fix or create beads issue
 
-This ensures future Claude Code instances can quickly locate and understand all available documentation.
+---
+
+## Key Documentation
+
+| Doc | Purpose |
+|-----|---------|
+| `QUICKSTART.md` | Essential commands reference |
+| `TRAEFIK.md` | Ingress configuration |
+| `OBSERVABILITY.md` | Monitoring/logging stack |
+| `docs/02-architecture/dual-gitops.md` | **CRITICAL** - GitOps pattern |
 
 ## Task Automation Structure
 
@@ -269,20 +276,20 @@ task etcd-status
 ## Repository Structure
 
 ```
-talos-fix/
+talos-homelab/
 ├── infrastructure/base/      # Platform infrastructure (modify these)
 │   ├── argocd/              # ArgoCD (GitOps controller for apps)
+│   ├── cilium/              # CNI (migrating from Flannel)
 │   ├── traefik/             # Ingress controller
-│   ├── registry/            # Docker registry
+│   ├── registry/            # Docker registry (Nexus)
 │   ├── monitoring/          # Prometheus, Grafana, Loki
 │   ├── observability/       # OpenSearch, FluentBit, Graylog
-│   ├── storage/             # Storage classes, PVCs
-│   └── namespaces/          # Infrastructure namespaces
-├── infrastructure/overlays/  # Environment-specific overrides
-├── applications/arr-stack/  # Media apps (Sonarr, Radarr, etc.)
+│   └── storage/             # Storage classes, NFS
+├── applications/            # App deployments (arr-stack, etc.)
+├── clusters/catalyst-cluster/ # Flux cluster config
 ├── scripts/                 # Deployment automation
-├── configs/                 # Talos machine configs (gitignored - sensitive)
-└── docs/                    # Documentation
+├── configs/                 # Talos machine configs (gitignored)
+└── docs/                    # Documentation (numbered sections)
 ```
 
 ### Key Files
@@ -333,11 +340,11 @@ Apply with: `kubectl apply -k path/to/kustomization/`
 - **Config application**: `talosctl apply-config` triggers node reboot
 - **API access**: Talos API on port 50000, Kubernetes API on 6443
 
-### Single-Node Considerations
+### Multi-Node Cluster
 
-- Control plane scheduling **enabled** by default (`allowSchedulingOnControlPlanes: true`)
-- No high availability - single point of failure
-- All workloads run on one node - watch resource limits
+- **Nodes**: Control plane (talos00 @ 192.168.1.54) + Worker (talos01 @ 192.168.1.177)
+- Control plane scheduling **enabled** (`allowSchedulingOnControlPlanes: true`)
+- Workloads can schedule on any node
 - Control plane taint **removed** during provisioning
 
 ### Configuration Management
@@ -364,7 +371,8 @@ All services accessible via hostname (requires `/etc/hosts` entry for `*.talos00
               alertmanager.talos00 graylog.talos00 registry.talos00 \
               nexus.talos00 npm.talos00 docker-proxy.talos00 \
               sonarr.talos00 radarr.talos00 prowlarr.talos00 \
-              plex.talos00 jellyfin.talos00 tdarr.talos00 catalyst.talos00
+              plex.talos00 jellyfin.talos00 tdarr.talos00 catalyst.talos00 \
+              hubble.talos00
 ```
 
 Access: `http://<service>.talos00`
@@ -527,7 +535,7 @@ npm publish
 
 ### Control Plane Scheduling
 
-- **Expected**: Workloads schedule on control plane (single-node cluster)
+- **Expected**: Workloads schedule on all nodes (control plane + workers)
 - **Verification**: `kubectl describe node | grep Taints` should show no taints
 
 ## Important File Locations
@@ -617,3 +625,11 @@ When adding applications:
 2. **Create ArgoCD Application** in this repo
 3. **Apply ArgoCD App**: `kubectl apply -f infrastructure/base/argocd/applications/<app>.yaml`
 4. **ArgoCD handles the rest** - automatic sync from app repo
+
+> **⚠️ Flux Warning**: This is a Flux-managed repo. Flux may reconcile over manual `kubectl apply` commands. Use Flux Kustomizations for persistent changes.
+
+---
+
+## Related Issues
+<!-- Beads tracking for CLAUDE.md -->
+- CILIUM-h2b - Initial restructure with beads workflow section

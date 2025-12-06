@@ -1,6 +1,13 @@
-# Talos Single-Node Cluster
+# Talos Homelab - Kubernetes Infrastructure
 
-This repository contains configuration and scripts for managing a single-node Talos Kubernetes cluster.
+## TL;DR
+
+Production-ready Kubernetes cluster on Talos Linux with dual GitOps (Flux + ArgoCD).
+
+- **Control Plane:** 192.168.1.54 (talos00)
+- **Dashboard:** http://grafana.talos00, http://argocd.talos00
+- **Quick Start:** `task kubeconfig-merge && kubectl get nodes`
+- **Architecture:** [TRAEFIK.md](TRAEFIK.md) | [Dual GitOps](docs/02-architecture/gitops-responsibilities.md)
 
 ## GitOps Architecture
 
@@ -14,7 +21,7 @@ This cluster uses a **dual GitOps pattern** with two distinct deployment workflo
    - Manages: Application workloads (e.g., catalyst-ui)
    - Method: ArgoCD watches and auto-syncs
 
-**📖 Full details**: See [docs/DUAL-GITOPS.md](docs/DUAL-GITOPS.md)
+**Full details**: See [docs/02-architecture/gitops-responsibilities.md](docs/02-architecture/gitops-responsibilities.md)
 
 ## Quick Start
 
@@ -46,13 +53,13 @@ brew install go-task/tap/go-task kubectx k9s helm
 1. **Generate Configuration** (if not already done):
 
    ```bash
-   talosctl gen config homelab-single https://$TALOS_NODE:6443 --output-dir . --force
+   talosctl gen config catalyst-cluster https://$TALOS_NODE:6443 --output-dir . --force
    ```
 
 2. **Provision the Cluster**:
 
    ```bash
-   ./provision.sh
+   ./scripts/provision.sh
    ```
 
    Or using Task:
@@ -63,11 +70,11 @@ brew install go-task/tap/go-task kubectx k9s helm
 
 ## Configuration Features
 
-### Single-Node Optimizations
+### Cluster Configuration
 
-- **Control Plane Scheduling**: Configured with `allowSchedulingOnControlPlanes: true` in `controlplane.yaml:551`
-- **No Taints**: Control-plane taint is removed automatically during provisioning
-- **All-in-One**: Single node acts as both control plane and worker
+- **Control Plane Scheduling**: Configured with `allowSchedulingOnControlPlanes: true` to allow workloads on control plane nodes
+- **Multi-Node Support**: Control plane (talos00) + worker nodes (talos01, etc.)
+- **No Control Plane Taints**: Control-plane taint is removed automatically during provisioning
 
 ### Included Services
 
@@ -75,7 +82,7 @@ brew install go-task/tap/go-task kubectx k9s helm
 - **Kubernetes Dashboard**: Web UI for cluster management (auto-deployed via extraManifests)
 - **CoreDNS**: DNS resolution (2 replicas)
 - **Flannel**: CNI networking
-- **etcd**: Single-node cluster
+- **etcd**: Distributed key-value store for cluster state
 
 ### Observability Stack
 
@@ -92,8 +99,8 @@ brew install go-task/tap/go-task kubectx k9s helm
 
 The Kubernetes Dashboard is automatically deployed during cluster bootstrap via:
 
-- `extraManifests` (controlplane.YAML:510-511) - Downloads dashboard YAML
-- `inlineManifests` (controlplane.YAML:514-534) - Creates admin-user ServiceAccount
+- `extraManifests` (controlplane.yaml:510-511) - Downloads dashboard YAML
+- `inlineManifests` (controlplane.yaml:514-534) - Creates admin-user ServiceAccount
 
 ## Deployment
 
@@ -118,7 +125,7 @@ DEPLOY_MONITORING=true DEPLOY_OBSERVABILITY=true ./scripts/deploy-stack.sh
 
 This will install:
 
-- Prometheus + Grafana + Alertmanager (kube-Prometheus-stack)
+- Prometheus + Grafana + Alertmanager (kube-prometheus-stack)
 - MongoDB + OpenSearch + Graylog (logging stack)
 - Fluent Bit (log collection)
 
@@ -165,7 +172,7 @@ task --list         # List all available tasks
 task --list-all     # Show all tasks with descriptions
 ```
 
-For complete documentation of all available tasks, see [docs/taskfile-organization.md](docs/taskfile-organization.md).
+For complete documentation of all available tasks, see [docs/07-reference/taskfile-organization.md](docs/07-reference/taskfile-organization.md).
 
 ### Cluster Management
 
@@ -203,7 +210,7 @@ kubectl get pods -A
 
 # Switch contexts with kubectx
 kubectx                    # List all contexts
-kubectx homelab-single     # Switch to this cluster
+kubectx catalyst-cluster   # Switch to this cluster
 kubectx -                  # Switch to previous context
 
 # Switch namespaces with kubens
@@ -247,24 +254,9 @@ kubectl top pods -A
 task audit
 ```
 
-### Kubernetes Dashboard
+### Dashboard Access
 
-1. **Get Access Token**:
-
-   ```bash
-   task dashboard-token
-   # Token is saved to ./dashboard-token.txt
-   ```
-
-2. **Start Proxy**:
-
-   ```bash
-   task dashboard-proxy
-   ```
-
-3. **Access Dashboard**:
-   - Open: http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
-   - Use the token from step 1 to login
+See [QUICKSTART.md](QUICKSTART.md#access-kubernetes-dashboard) for complete dashboard access instructions.
 
 ### Troubleshooting
 
@@ -304,15 +296,22 @@ task upgrade -- VERSION=v1.11.2
 .
 ├── configs/                         # Talos configuration files (gitignored - sensitive)
 │   ├── controlplane.yaml           # Control plane configuration
-│   ├── worker.yaml                 # Worker configuration (unused in single-node)
+│   ├── worker.yaml                 # Worker node configuration template
 │   └── talosconfig                 # Talos CLI configuration
-├── kubernetes/                      # Kubernetes manifests
-│   ├── dashboard-ingressroute.yaml # Dashboard ingress via Traefik
-│   ├── traefik-values.yaml         # Traefik Helm values
-│   └── whoami-ingressroute.yaml    # Test service with ingress
+├── infrastructure/base/             # Kubernetes infrastructure manifests
+│   ├── argocd/                     # ArgoCD GitOps controller
+│   ├── traefik/                    # Traefik ingress controller
+│   ├── monitoring/                 # Prometheus, Grafana, Alertmanager
+│   ├── observability/              # OpenSearch, Graylog, Fluent Bit
+│   ├── registry/                   # Nexus container registry
+│   ├── storage/                    # Storage classes and PVCs
+│   └── namespaces/                 # Namespace definitions
+├── applications/                    # Application workloads
+│   └── arr-stack/                  # Media management applications
 ├── scripts/                         # Automation scripts
 │   ├── provision.sh                # Complete cluster provisioning
-│   ├── setup-infrastructure.sh     # Install Traefik & metrics-server
+│   ├── deploy-stack.sh             # Deploy complete infrastructure stack
+│   ├── deploy-observability.sh     # Deploy monitoring and logging
 │   ├── cluster-audit.sh            # Generate Markdown audit report
 │   ├── dashboard-token.sh          # Retrieve dashboard access token
 │   └── kubeconfig-merge.sh         # Merge kubeconfig to ~/.kube/config
@@ -321,21 +320,35 @@ task upgrade -- VERSION=v1.11.2
 │   ├── dashboard-token.txt         # Latest dashboard token
 │   └── audit/                      # Cluster audit reports
 │       └── cluster-audit-*.md      # Timestamped audit reports
+├── docs/                            # Documentation
+│   ├── 01-getting-started/         # Quick start guides
+│   ├── 02-architecture/            # Architecture decisions and patterns
+│   ├── 03-operations/              # Operational procedures
+│   ├── 04-deployment/              # Deployment guides
+│   ├── 05-projects/                # Project-specific documentation
+│   ├── 06-project-management/      # Planning and progress tracking
+│   └── 07-reference/               # Reference documentation
 ├── .gitignore                      # Git ignore patterns
-├── Taskfile.yaml                   # Task automation definitions
+├── Taskfile.yaml                   # Root task orchestrator
+├── Taskfile.talos.yaml             # Talos-specific tasks
+├── Taskfile.k8s.yaml               # Kubernetes-specific tasks
+├── Taskfile.dev.yaml               # Development tooling tasks
+├── Taskfile.infra.yaml             # Infrastructure deployment tasks
 ├── README.md                       # This file
 ├── QUICKSTART.md                   # Quick reference guide
-└── TRAEFIK.md                      # Traefik documentation
+├── TRAEFIK.md                      # Traefik ingress documentation
+├── IMPLEMENTATION-TRACKER.md       # Implementation progress tracking
+└── CLAUDE.md                       # Claude Code agent guidance
 ```
 
 ## Important Notes
 
-### Single-Node Considerations
+### Multi-Node Considerations
 
-1. **No High Availability**: Single point of failure
-2. **Resource Constraints**: All workloads run on one node
-3. **Control Plane Scheduling**: Enabled by default for single-node setup
-4. **Backup Important**: Etcd runs on single node - backup regularly
+1. **Nodes**: Control plane (talos00 @ 192.168.1.54) + Worker (talos01 @ 192.168.1.177)
+2. **Control Plane Scheduling**: Enabled to allow workloads on control plane
+3. **Workload Distribution**: Pods can schedule on any node without taints
+4. **Backup Important**: Etcd runs on control plane - backup regularly
 
 ### Security
 
@@ -354,13 +367,13 @@ task upgrade -- VERSION=v1.11.2
 
 ### Key Configuration Settings
 
-**configs/controlplane.YAML:551** - Allow scheduling on control plane:
+**configs/controlplane.yaml:551** - Allow scheduling on control plane:
 
 ```yaml
 allowSchedulingOnControlPlanes: true
 ```
 
-**configs/controlplane.YAML:510-534** - Auto-deploy Dashboard:
+**configs/controlplane.yaml:510-534** - Auto-deploy Dashboard:
 
 ```yaml
 extraManifests:
@@ -382,57 +395,33 @@ task clean
 task clean-all
 ```
 
-## Dashboard Access Instructions
-
-The kubectl proxy **must run on your local machine** (not the Talos node):
-
-1. **Get Token** (on your Mac):
-
-   ```bash
-   task dashboard-token
-   # Or: ./scripts/dashboard-token.sh
-   ```
-
-2. **Start Proxy** (on your Mac):
-
-   ```bash
-   task dashboard-proxy
-   # Or: kubectl --kubeconfig ./.output/kubeconfig proxy
-   ```
-
-3. **Access Dashboard** (on your Mac browser):
-   - URL: http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
-   - Login with token from step 1
-
-**Note**: The proxy creates a tunnel from your local machine to the cluster. The dashboard is NOT accessible directly from the node IP.
-
 ## Useful Commands
 
 ### Direct talosctl Commands
 
 ```bash
 # Configure endpoints
-talosctl config endpoint $TALOS_NODE --talosconfig ./talosconfig
-talosctl config node $TALOS_NODE --talosconfig ./talosconfig
+talosctl config endpoint $TALOS_NODE --talosconfig ./configs/talosconfig
+talosctl config node $TALOS_NODE --talosconfig ./configs/talosconfig
 
 # Health check
-talosctl --talosconfig ./talosconfig --nodes $TALOS_NODE health --server=false
+talosctl --talosconfig ./configs/talosconfig --nodes $TALOS_NODE health --server=false
 
 # Bootstrap (only needed once)
-talosctl --talosconfig ./talosconfig --nodes $TALOS_NODE bootstrap
+talosctl --talosconfig ./configs/talosconfig --nodes $TALOS_NODE bootstrap
 ```
 
 ### Direct kubectl Commands
 
 ```bash
 # Check node taints
-kubectl --kubeconfig ./kubeconfig describe node | grep -A 5 "Taints:"
+kubectl --kubeconfig ./.output/kubeconfig describe node | grep -A 5 "Taints:"
 
 # Remove control-plane taint (if needed)
-kubectl --kubeconfig ./kubeconfig taint nodes <node-name> node-role.kubernetes.io/control-plane:NoSchedule-
+kubectl --kubeconfig ./.output/kubeconfig taint nodes <node-name> node-role.kubernetes.io/control-plane:NoSchedule-
 
 # View all resources
-kubectl --kubeconfig ./kubeconfig get all -A
+kubectl --kubeconfig ./.output/kubeconfig get all -A
 ```
 
 ## Support
@@ -445,3 +434,9 @@ For Kubernetes documentation: https://kubernetes.io/docs/
 - Talos: v1.11.1
 - Kubernetes: v1.34.0
 - Dashboard: v2.7.0
+
+## Related Issues
+
+This README was restructured as part of the Cilium migration documentation effort:
+
+- **CILIUM-3l7**: Restructure README.md (root) - Updated paths, added TL;DR, removed duplication

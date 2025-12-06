@@ -7,7 +7,7 @@
 ```
 talos-homelab/
 ├── clusters/
-│   ├── homelab-single/           # Existing - Talos homelab control plane
+│   ├── catalyst-cluster/           # Existing - Talos homelab control plane
 │   │   ├── flux-system/
 │   │   ├── cluster-settings.yaml
 │   │   └── hybrid-llm.yaml       # NEW - Kustomization for hybrid-llm
@@ -169,7 +169,7 @@ aws-gpu branch     → AWS GPU cluster
 ### Recommended: Overlay Pattern with Cluster Selectors
 
 ```yaml
-# clusters/homelab-single/hybrid-llm.yaml
+# clusters/catalyst-cluster/hybrid-llm.yaml
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
