@@ -1,0 +1,93 @@
+# Cilium CNI values for Talos Linux cluster
+# Generated for catalyst-cluster multi-node setup
+
+# Replace kube-proxy with Cilium's eBPF implementation
+kubeProxyReplacement: true
+
+# Kubernetes API server endpoint
+k8sServiceHost: 192.168.1.54
+k8sServicePort: 6443
+
+# =============================================================================
+# Prometheus Metrics Configuration
+# =============================================================================
+# Enable Prometheus metrics for observability
+# Reference: https://docs.cilium.io/en/stable/observability/metrics/
+
+# Cilium Agent metrics (port 9962)
+prometheus:
+  enabled: true
+  port: 9962
+  serviceMonitor:
+    enabled: false  # We use PodMonitor instead (no Service exists)
+
+# Single replica for operator (can scale later)
+operator:
+  replicas: 1
+  # Cilium Operator metrics (port 9963)
+  prometheus:
+    enabled: true
+    port: 9963
+    serviceMonitor:
+      enabled: false  # We use PodMonitor instead
+
+# Use Kubernetes IPAM (compatible with existing pod CIDR)
+ipam:
+  mode: kubernetes
+
+# Hubble observability
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+  ui:
+    enabled: true
+  # Hubble metrics (port 9965)
+  metrics:
+    enabled:
+      - dns
+      - drop
+      - tcp
+      - flow
+      - port-distribution
+      - icmp
+      - httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction
+    port: 9965
+    enableOpenMetrics: true
+    serviceMonitor:
+      enabled: false  # We use PodMonitor instead
+
+# Talos-specific security context
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+
+# Talos uses cgroupv2
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+
+# Resource limits to prevent flannel-style throttling issues
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
