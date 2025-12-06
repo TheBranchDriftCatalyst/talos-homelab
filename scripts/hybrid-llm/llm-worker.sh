@@ -19,7 +19,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Configuration
 AWS_REGION="${AWS_REGION:-us-west-2}"
-INSTANCE_TYPE="${LLM_INSTANCE_TYPE:-r5.2xlarge}"  # 8 vCPU, 64GB RAM
+# GPU Instance Types (g4dn = NVIDIA T4, g5 = NVIDIA A10G):
+#   g4dn.xlarge:  4 vCPU, 16GB RAM, 1x T4 (~$0.526/hr on-demand, ~$0.16/hr spot)
+#   g4dn.2xlarge: 8 vCPU, 32GB RAM, 1x T4 (~$0.752/hr on-demand)
+#   g4dn.4xlarge: 16 vCPU, 64GB RAM, 1x T4 (~$1.204/hr on-demand)
+#   g5.xlarge:    4 vCPU, 16GB RAM, 1x A10G (~$1.006/hr on-demand)
+#   g5.2xlarge:   8 vCPU, 32GB RAM, 1x A10G (~$1.212/hr on-demand)
+INSTANCE_TYPE="${LLM_INSTANCE_TYPE:-g4dn.4xlarge}"  # 16 vCPU, 64GB RAM, 1x T4 GPU
 USE_SPOT="${LLM_USE_SPOT:-false}"  # Default to on-demand for reliability
 KEY_NAME="hybrid-llm-key"
 SG_NAME="nebula-lighthouse"  # Reuse lighthouse security group

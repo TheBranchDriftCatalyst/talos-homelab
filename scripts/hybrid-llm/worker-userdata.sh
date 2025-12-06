@@ -1,10 +1,17 @@
 #!/bin/bash
-# LLM Worker Userdata Generator
+# LLM Worker (k3s Agent) Userdata Generator
 # Reads certificates from .output/nebula/ and outputs a complete EC2 userdata script
-# Installs: Nebula + k3s + Ollama
+# Installs: Nebula + k3s agent (joins lighthouse control plane) + Ollama
+#
+# The worker joins the lighthouse's k3s cluster as an agent node.
+# This allows Liqo to see and schedule GPU workloads on this node.
+#
+# Prerequisites:
+#   - Lighthouse must be running with k3s server
+#   - K3S_TOKEN must be set (from lighthouse: cat /var/lib/rancher/k3s/server/node-token)
 #
 # Usage:
-#   ./scripts/hybrid-llm/worker-userdata.sh > /tmp/worker-userdata.sh
+#   K3S_TOKEN="xxx" ./scripts/hybrid-llm/worker-userdata.sh > /tmp/worker-userdata.sh
 #   aws ec2 run-instances --user-data file:///tmp/worker-userdata.sh ...
 
 set -euo pipefail
@@ -29,13 +36,35 @@ else
     exit 1
 fi
 
-# Lighthouse IP (from state file or default)
+# Lighthouse config (from state file or default)
 STATE_FILE="$REPO_ROOT/.output/lighthouse-state.json"
 if [[ -f "$STATE_FILE" ]]; then
-    LIGHTHOUSE_IP=$(jq -r '.elastic_ip // "52.13.210.163"' "$STATE_FILE")
+    LIGHTHOUSE_PUBLIC_IP=$(jq -r '.elastic_ip // "52.13.210.163"' "$STATE_FILE")
 else
-    LIGHTHOUSE_IP="52.13.210.163"
+    LIGHTHOUSE_PUBLIC_IP="${LIGHTHOUSE_PUBLIC_IP:-52.13.210.163}"
 fi
+
+# k3s token for joining the cluster
+# Can be set via environment or read from a file
+K3S_TOKEN_FILE="$REPO_ROOT/.output/k3s-token"
+if [[ -z "${K3S_TOKEN:-}" ]]; then
+    if [[ -f "$K3S_TOKEN_FILE" ]]; then
+        K3S_TOKEN=$(cat "$K3S_TOKEN_FILE")
+    else
+        echo "ERROR: K3S_TOKEN not set and $K3S_TOKEN_FILE not found" >&2
+        echo "" >&2
+        echo "Get the token from the lighthouse:" >&2
+        echo "  ssh -i .output/ssh/hybrid-llm-key.pem ec2-user@$LIGHTHOUSE_PUBLIC_IP 'sudo cat /var/lib/rancher/k3s/server/node-token'" >&2
+        echo "" >&2
+        echo "Then either:" >&2
+        echo "  1. Set K3S_TOKEN environment variable" >&2
+        echo "  2. Save to $K3S_TOKEN_FILE" >&2
+        exit 1
+    fi
+fi
+
+# Lighthouse Nebula mesh IP (always 10.42.0.1)
+LIGHTHOUSE_MESH_IP="10.42.0.1"
 
 # Output the userdata script with embedded certificates
 cat << 'HEADER'
@@ -155,7 +184,7 @@ pki:
   key: /etc/nebula/host.key
 
 static_host_map:
-  "10.42.0.1": ["${LIGHTHOUSE_IP}:4242"]
+  "10.42.0.1": ["${LIGHTHOUSE_PUBLIC_IP}:4242"]
 
 lighthouse:
   am_lighthouse: false
@@ -252,24 +281,47 @@ for i in {1..30}; do
 done
 
 #############################################
-# PHASE 2: Install k3s
+# PHASE 2: Install k3s Agent
 #############################################
-echo "=== Phase 2: Installing k3s ==="
+echo "=== Phase 2: Installing k3s Agent ==="
 
-# Install k3s (single node, no traefik - we use the mesh)
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
-    --disable=traefik \
-    --disable=servicelb \
-    --node-ip=10.42.2.1 \
-    --flannel-iface=nebula1 \
-    --write-kubeconfig-mode=644" sh -
+# k3s server URL and token (embedded at userdata generation time)
+K3S_URL="https://10.42.0.1:6443"
+K3S_TOKEN="${K3S_TOKEN}"
 
-# Wait for k3s to be ready
-echo "Waiting for k3s to be ready..."
-until kubectl get nodes 2>/dev/null | grep -q "Ready"; do
+# Wait for lighthouse k3s API to be reachable via Nebula
+echo "Waiting for k3s API server at \$K3S_URL..."
+for i in {1..60}; do
+    if curl -sk "\$K3S_URL/healthz" 2>/dev/null | grep -q "ok"; then
+        echo "k3s API server is reachable"
+        break
+    fi
+    echo "  Attempt \$i/60 - waiting for k3s API..."
     sleep 5
 done
-echo "k3s is ready"
+
+# Install k3s as AGENT (joins lighthouse's cluster)
+# - Uses Nebula mesh for cluster communication
+# - Labeled as GPU node for Liqo/scheduler targeting
+curl -sfL https://get.k3s.io | K3S_URL="\$K3S_URL" K3S_TOKEN="\$K3S_TOKEN" \
+    INSTALL_K3S_EXEC="agent \
+    --node-ip=10.42.2.1 \
+    --flannel-iface=nebula1 \
+    --node-label=node-type=gpu \
+    --node-label=topology.kubernetes.io/region=aws \
+    --node-label=topology.kubernetes.io/zone=us-west-2 \
+    --node-label=nvidia.com/gpu.present=true" sh -
+
+# Wait for this node to be Ready in the cluster
+echo "Waiting for node to join cluster..."
+for i in {1..60}; do
+    if curl -sk "\$K3S_URL/api/v1/nodes" -H "Authorization: Bearer \$K3S_TOKEN" 2>/dev/null | grep -q "gpu-worker"; then
+        echo "Node joined cluster successfully"
+        break
+    fi
+    sleep 5
+done
+echo "k3s agent is ready"
 
 #############################################
 # PHASE 3: Install Ollama
@@ -310,41 +362,52 @@ echo "Pre-pulling llama3.2 model (this may take a while)..."
 ollama pull llama3.2 || echo "Model pull failed - can be done manually later"
 
 #############################################
-# PHASE 4: Create Kubernetes resources
+# PHASE 4: Install NVIDIA drivers (if GPU instance)
 #############################################
-echo "=== Phase 4: Creating Kubernetes resources ==="
+echo "=== Phase 4: Checking for GPU and installing drivers ==="
 
-# Create Ollama service for k3s
-cat << 'K8SEOF' | kubectl apply -f -
-apiVersion: v1
-kind: Service
-metadata:
-  name: ollama
-  namespace: default
-spec:
-  type: ClusterIP
-  ports:
-    - port: 11434
-      targetPort: 11434
-      name: http
-  selector:
-    app: ollama-external
----
-apiVersion: v1
-kind: Endpoints
-metadata:
-  name: ollama
-  namespace: default
-subsets:
-  - addresses:
-      - ip: 10.42.2.1
-    ports:
-      - port: 11434
-        name: http
-K8SEOF
+# Check if this is a GPU instance
+if lspci | grep -i nvidia > /dev/null 2>&1; then
+    echo "NVIDIA GPU detected - installing drivers..."
 
+    # Install NVIDIA drivers (Amazon Linux 2023)
+    dnf install -y kernel-devel kernel-headers
+    dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/amzn2023/x86_64/cuda-amzn2023.repo
+    dnf install -y nvidia-driver nvidia-driver-cuda
+
+    # Install NVIDIA container toolkit for k3s
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | \
+        tee /etc/yum.repos.d/nvidia-container-toolkit.repo
+    dnf install -y nvidia-container-toolkit
+
+    # Configure containerd for NVIDIA
+    nvidia-ctk runtime configure --runtime=containerd
+    systemctl restart containerd || true
+
+    echo "NVIDIA drivers installed"
+else
+    echo "No NVIDIA GPU detected - skipping driver installation"
+fi
+
+#############################################
+# Summary
+#############################################
+echo ""
 echo "=== LLM Worker Bootstrap Complete ==="
-echo "Nebula IP: 10.42.2.1"
-echo "Ollama API: http://10.42.2.1:11434"
-echo "k3s kubeconfig: /etc/rancher/k3s/k3s.yaml"
+echo ""
+echo "Nebula:"
+echo "  Mesh IP: 10.42.2.1"
+echo "  Lighthouse: 10.42.0.1"
+echo ""
+echo "k3s Agent:"
+echo "  Joined cluster at: https://10.42.0.1:6443"
+echo "  Node labels: node-type=gpu"
+echo ""
+echo "Ollama:"
+echo "  API: http://10.42.2.1:11434"
+echo "  Models: /var/lib/ollama/models"
+echo ""
+echo "This node is now part of the aws-gpu-cluster and visible via Liqo."
+echo "Workloads with nodeSelector 'node-type: gpu' will schedule here."
+echo ""
 MIDDLE3

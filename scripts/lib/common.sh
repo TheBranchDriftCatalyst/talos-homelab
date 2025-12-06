@@ -157,7 +157,7 @@ export SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$_LIB_DIR/.." && pwd)}"
 # ══════════════════════════════════════════════════════════════════════════════
 export TALOS_NODE="${TALOS_NODE:-192.168.1.54}"
 export DOMAIN="${DOMAIN:-talos00}"
-export CLUSTER_NAME="${CLUSTER_NAME:-homelab-single}"
+export CLUSTER_NAME="${CLUSTER_NAME:-catalyst-cluster}"
 export TALOSCONFIG="${TALOSCONFIG:-${PROJECT_ROOT}/configs/talosconfig}"
 export OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/.output}"
 

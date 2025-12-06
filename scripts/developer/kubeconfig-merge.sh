@@ -84,8 +84,8 @@ SKIPPED_COUNT=0
 for KUBECONFIG_PATH in "${FOUND_CONFIGS[@]}"; do
   # Derive context name from path
   if [[ "$KUBECONFIG_PATH" == "${OUTPUT_DIR}/kubeconfig" ]]; then
-    CONTEXT_NAME="homelab-single"
-    CLUSTER_NAME="homelab-single"
+    CONTEXT_NAME="catalyst-cluster"
+    CLUSTER_NAME="catalyst-cluster"
     ENV_NAME="production"
   else
     ENV_DIR=$(echo "$KUBECONFIG_PATH" | sed "s|^${OUTPUT_DIR}/||" | sed 's|/kubeconfig$||')
@@ -179,8 +179,8 @@ fi
 # Set default context
 if [[ $MERGED_COUNT -gt 0 ]]; then
   # Prefer production if available
-  if kubectl config get-contexts homelab-single &>/dev/null; then
-    DEFAULT_CONTEXT="homelab-single"
+  if kubectl config get-contexts catalyst-cluster &>/dev/null; then
+    DEFAULT_CONTEXT="catalyst-cluster"
   elif kubectl config get-contexts talos-local &>/dev/null; then
     DEFAULT_CONTEXT="talos-local"
   else
@@ -205,7 +205,7 @@ echo ""
 print_section "CONTEXT SWITCHING"
 if command -v kubectx &>/dev/null; then
   echo -e "  ${CYAN}kubectx${RESET}                    ${DIM}# List contexts${RESET}"
-  echo -e "  ${CYAN}kubectx homelab-single${RESET}     ${DIM}# Switch to production${RESET}"
+  echo -e "  ${CYAN}kubectx catalyst-cluster${RESET}     ${DIM}# Switch to production${RESET}"
   echo -e "  ${CYAN}kubectx talos-local${RESET}        ${DIM}# Switch to local test${RESET}"
   echo -e "  ${CYAN}kubectx -${RESET}                  ${DIM}# Switch to previous${RESET}"
 else

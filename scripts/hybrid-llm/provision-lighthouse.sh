@@ -19,7 +19,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Configuration
 AWS_REGION="${AWS_REGION:-us-west-2}"
-INSTANCE_TYPE="${LIGHTHOUSE_INSTANCE_TYPE:-t3.micro}"
+# NOTE: t3.small (2GB RAM) recommended for k3s + Liqo
+# t3.micro (1GB) works but is tight on memory
+INSTANCE_TYPE="${LIGHTHOUSE_INSTANCE_TYPE:-t3.small}"
 KEY_NAME="hybrid-llm-key"
 SG_NAME="nebula-lighthouse"
 
@@ -241,14 +243,34 @@ if [[ "$existing_sg" == "None" || -z "$existing_sg" ]]; then
             --output text --query 'GroupId')
 
         # Add rules
+        # Nebula UDP (mesh traffic)
         aws ec2 authorize-security-group-ingress \
             --group-id "$SG_ID" \
             --protocol udp --port 4242 --cidr 0.0.0.0/0 \
             --region "$AWS_REGION"
 
+        # SSH access
         aws ec2 authorize-security-group-ingress \
             --group-id "$SG_ID" \
             --protocol tcp --port 22 --cidr 0.0.0.0/0 \
+            --region "$AWS_REGION"
+
+        # k3s API server (for GPU workers to join via Nebula mesh)
+        aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol tcp --port 6443 --cidr 10.42.0.0/16 \
+            --region "$AWS_REGION"
+
+        # Kubelet API (for cluster communication)
+        aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol tcp --port 10250 --cidr 10.42.0.0/16 \
+            --region "$AWS_REGION"
+
+        # Flannel VXLAN (k3s CNI)
+        aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol udp --port 8472 --cidr 10.42.0.0/16 \
             --region "$AWS_REGION"
 
         save_state "security_group_id" "$SG_ID"
@@ -396,6 +418,7 @@ log_info "=== Provisioning Complete ==="
 echo ""
 echo "Resources created:"
 echo "  Instance ID:    ${INSTANCE_ID:-DRY-RUN}"
+echo "  Instance Type:  $INSTANCE_TYPE"
 echo "  Elastic IP:     ${EIP:-DRY-RUN}"
 echo "  Security Group: ${SG_ID:-DRY-RUN}"
 echo "  SSH Key:        $SSH_DIR/$KEY_NAME.pem"
@@ -404,8 +427,22 @@ echo "Nebula Mesh:"
 echo "  Lighthouse IP:  $EIP:4242"
 echo "  Mesh IP:        10.42.0.1"
 echo ""
+echo "k3s Cluster (after cloud-init completes):"
+echo "  API Server:     https://10.42.0.1:6443"
+echo "  Cluster Name:   aws-gpu-cluster"
+echo ""
+echo "Liqo Federation:"
+echo "  Provider Cluster: aws-gpu-cluster"
+echo "  Peering info:     /root/liqo-peering/peer-command.txt"
+echo ""
 echo "SSH Access:"
 echo "  ssh -i $SSH_DIR/$KEY_NAME.pem ec2-user@$EIP"
+echo ""
+echo "Next Steps:"
+echo "  1. Wait for cloud-init to complete (~5 min for k3s + Liqo install)"
+echo "  2. Fetch k3s token: ./scripts/hybrid-llm/fetch-k3s-token.sh --save"
+echo "  3. Peer with homelab: ssh to lighthouse and run liqoctl commands"
+echo "  4. Provision GPU worker when needed"
 echo ""
 echo "State file: $STATE_FILE"
 echo ""

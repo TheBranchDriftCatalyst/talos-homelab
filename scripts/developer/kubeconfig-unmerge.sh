@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Kubeconfig Unmerge Script
-# Removes the homelab-single context from ~/.kube/config
+# Removes the catalyst-cluster context from ~/.kube/config
 
 set -e
 
@@ -9,8 +9,8 @@ set -e
 cd "$(dirname "$0")/.."
 
 DEFAULT_KUBECONFIG="${HOME}/.kube/config"
-CONTEXT_NAME="${CONTEXT_NAME:-homelab-single}"
-CLUSTER_NAME="${CLUSTER_NAME:-homelab-single}"
+CONTEXT_NAME="${CONTEXT_NAME:-catalyst-cluster}"
+CLUSTER_NAME="${CLUSTER_NAME:-catalyst-cluster}"
 
 echo "🗑️  Kubeconfig Unmerge Utility"
 echo "=============================="
