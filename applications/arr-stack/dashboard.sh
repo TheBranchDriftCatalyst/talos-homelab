@@ -27,6 +27,7 @@ COPY_INDEX=""
 LIST_MODE=false
 
 # Parse arguments
+SUMMARY_MODE=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --copy | -c)
@@ -36,6 +37,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --list | -l)
       LIST_MODE=true
+      shift
+      ;;
+    --summary | -s)
+      SUMMARY_MODE=true
+      shift
+      ;;
+    --full | -f)
+      SUMMARY_MODE=false
       shift
       ;;
     *)
@@ -238,9 +247,38 @@ print_pod_status() {
 }
 
 # ============================================================================
+# Summary mode output
+# ============================================================================
+print_summary_mode() {
+  dashboard_init
+
+  if ! namespace_exists "$NAMESPACE"; then
+    echo -e "    ARR Stack: ${RED}✗${RESET} namespace not found"
+    return 0
+  fi
+
+  fetch_namespace_data "$NAMESPACE"
+
+  local total running
+  total=$(jq '.items | length' "$CACHE_DIR/pods.json" 2> /dev/null || echo "0")
+  running=$(jq '[.items[] | select(.status.phase == "Running")] | length' "$CACHE_DIR/pods.json" 2> /dev/null || echo "0")
+
+  local status_icon="${GREEN}✓${RESET}"
+  [[ "$running" != "$total" ]] && status_icon="${YELLOW}⚠${RESET}"
+
+  echo -e "    ARR Stack: ${status_icon} ${running}/${total} pods │ sonarr/radarr/prowlarr"
+}
+
+# ============================================================================
 # Main dashboard
 # ============================================================================
 main() {
+  # Handle summary mode first
+  if [[ "$SUMMARY_MODE" == "true" ]]; then
+    print_summary_mode
+    return 0
+  fi
+
   # Initialize (checks kubectl, kubeconfig, creates cache dir)
   dashboard_init
 

@@ -1,0 +1,45 @@
+---
+# Intel Device Plugins Operator - Manages Intel hardware device plugins
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: intel
+  namespace: flux-system
+spec:
+  interval: 24h
+  url: https://intel.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: intel-device-plugins-operator
+  namespace: intel-device-plugins
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: intel-device-plugins-operator
+      version: "0.30.*"  # Use latest 0.30.x
+      sourceRef:
+        kind: HelmRepository
+        name: intel
+        namespace: flux-system
+      interval: 12h
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    # Operator manages GPU, QAT, SGX plugins via CRDs
+    operator:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi

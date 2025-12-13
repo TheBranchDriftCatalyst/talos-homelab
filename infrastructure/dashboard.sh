@@ -418,9 +418,57 @@ print_credentials() {
 }
 
 # ============================================================================
+# Summary mode output
+# ============================================================================
+print_summary() {
+  dashboard_init
+
+  local pod_count running_count flux_ready flux_total
+  pod_count=$(kubectl get pods -A --no-headers 2> /dev/null | wc -l | tr -d ' ')
+  running_count=$(kubectl get pods -A --no-headers 2> /dev/null | grep -c "Running" || echo "0")
+
+  if command -v flux &> /dev/null; then
+    flux_total=$(flux get kustomization --no-header 2> /dev/null | wc -l | tr -d ' ')
+    flux_ready=$(flux get kustomization --no-header 2> /dev/null | grep -c "True" || echo "0")
+  else
+    flux_total="?"
+    flux_ready="?"
+  fi
+
+  local status_icon="${GREEN}✓${RESET}"
+  [[ "$running_count" != "$pod_count" ]] && status_icon="${YELLOW}⚠${RESET}"
+
+  echo -e "    Infrastructure: ${status_icon} ${running_count} pods running │ Flux: ${flux_ready}/${flux_total} ready"
+}
+
+# ============================================================================
 # Main dashboard
 # ============================================================================
 main() {
+  local mode="full"
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --summary | -s)
+        mode="summary"
+        shift
+        ;;
+      --full | -f)
+        mode="full"
+        shift
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+
+  if [[ "$mode" == "summary" ]]; then
+    print_summary
+    return 0
+  fi
+
   # Initialize (checks kubectl, kubeconfig, creates cache dir)
   dashboard_init
 

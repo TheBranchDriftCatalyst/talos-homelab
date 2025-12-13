@@ -58,11 +58,11 @@ fetch_llm_data() {
   fi
 
   # Fetch K8s data in parallel
-  kubectl get svc -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/services.json" 2>/dev/null &
-  kubectl get endpoints -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/endpoints.json" 2>/dev/null &
-  kubectl get pods -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/pods.json" 2>/dev/null &
-  kubectl get pvc -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/pvcs.json" 2>/dev/null &
-  kubectl get ingressroute -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/ingressroutes.json" 2>/dev/null &
+  kubectl get svc -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/services.json" 2> /dev/null &
+  kubectl get endpoints -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/endpoints.json" 2> /dev/null &
+  kubectl get pods -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/pods.json" 2> /dev/null &
+  kubectl get pvc -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/pvcs.json" 2> /dev/null &
+  kubectl get ingressroute -n "$LLM_NAMESPACE" -o json > "$CACHE_DIR/ingressroutes.json" 2> /dev/null &
 
   wait
 
@@ -77,7 +77,7 @@ test_nebula_connectivity() {
   local timeout_sec=3
 
   # Test if we can reach the Nebula worker IP
-  if timeout "$timeout_sec" nc -z "$NEBULA_WORKER_IP" "$OLLAMA_PORT" 2>/dev/null; then
+  if timeout "$timeout_sec" nc -z "$NEBULA_WORKER_IP" "$OLLAMA_PORT" 2> /dev/null; then
     echo "connected"
   else
     echo "unreachable"
@@ -93,9 +93,9 @@ test_ollama_api() {
 
   # Test basic API connectivity
   local response
-  response=$(timeout "$timeout_sec" curl -s "http://$endpoint/api/tags" 2>/dev/null) || true
+  response=$(timeout "$timeout_sec" curl -s "http://$endpoint/api/tags" 2> /dev/null) || true
 
-  if [[ -n "$response" ]] && echo "$response" | jq -e '.models' &>/dev/null; then
+  if [[ -n "$response" ]] && echo "$response" | jq -e '.models' &> /dev/null; then
     echo "healthy"
   else
     echo "unhealthy"
@@ -110,10 +110,10 @@ get_ollama_models() {
   local timeout_sec=5
 
   local response
-  response=$(timeout "$timeout_sec" curl -s "http://$endpoint/api/tags" 2>/dev/null) || true
+  response=$(timeout "$timeout_sec" curl -s "http://$endpoint/api/tags" 2> /dev/null) || true
 
   if [[ -n "$response" ]]; then
-    echo "$response" | jq -r '.models[]? | .name + "|" + .size' 2>/dev/null
+    echo "$response" | jq -r '.models[]? | .name + "|" + .size' 2> /dev/null
   fi
 }
 
@@ -125,10 +125,10 @@ get_running_models() {
   local timeout_sec=5
 
   local response
-  response=$(timeout "$timeout_sec" curl -s "http://$endpoint/api/ps" 2>/dev/null) || true
+  response=$(timeout "$timeout_sec" curl -s "http://$endpoint/api/ps" 2> /dev/null) || true
 
   if [[ -n "$response" ]]; then
-    echo "$response" | jq -r '.models[]? | .name' 2>/dev/null
+    echo "$response" | jq -r '.models[]? | .name' 2> /dev/null
   fi
 }
 
@@ -146,15 +146,15 @@ print_llm_service() {
   local status_color=$RED
 
   case "$status" in
-    connected|healthy|Running|configured)
+    connected | healthy | Running | configured)
       status_icon="${ICON_SUCCESS}"
       status_color=$GREEN
       ;;
-    pending|unknown|no-endpoints)
+    pending | unknown | no-endpoints)
       status_icon="${ICON_PENDING}"
       status_color=$YELLOW
       ;;
-    unreachable|unhealthy)
+    unreachable | unhealthy)
       status_icon="${ICON_FAILURE}"
       status_color=$RED
       ;;
@@ -190,7 +190,7 @@ print_k8s_services() {
 
   # Get services
   local services
-  services=$(jq -r '.items[] | .metadata.name + "|" + .spec.type + "|" + (.spec.ports[0].port | tostring)' "$CACHE_DIR/services.json" 2>/dev/null)
+  services=$(jq -r '.items[] | .metadata.name + "|" + .spec.type + "|" + (.spec.ports[0].port | tostring)' "$CACHE_DIR/services.json" 2> /dev/null)
 
   if [[ -z "$services" ]]; then
     echo -e "  ${DIM}No services found${RESET}"
@@ -210,7 +210,7 @@ print_k8s_services() {
     # Check endpoint status
     local endpoint_status="unknown"
     local endpoint_ip
-    endpoint_ip=$(jq -r ".items[] | select(.metadata.name == \"$name\") | .subsets[0].addresses[0].ip // empty" "$CACHE_DIR/endpoints.json" 2>/dev/null)
+    endpoint_ip=$(jq -r ".items[] | select(.metadata.name == \"$name\") | .subsets[0].addresses[0].ip // empty" "$CACHE_DIR/endpoints.json" 2> /dev/null)
 
     if [[ -n "$endpoint_ip" ]]; then
       endpoint_status="configured"
@@ -281,7 +281,7 @@ print_models() {
     # Convert size to human readable
     local size_hr=""
     if [[ -n "$size" ]]; then
-      size_hr=$(numfmt --to=iec-i --suffix=B "$size" 2>/dev/null || echo "${size}B")
+      size_hr=$(numfmt --to=iec-i --suffix=B "$size" 2> /dev/null || echo "${size}B")
     fi
     echo -e "  ${CYAN}•${RESET} ${name} ${DIM}(${size_hr})${RESET}"
   done <<< "$models"
@@ -313,7 +313,7 @@ print_ingress() {
   fi
 
   local routes
-  routes=$(jq -r '.items[] | .metadata.name + "|" + .spec.routes[0].match' "$CACHE_DIR/ingressroutes.json" 2>/dev/null)
+  routes=$(jq -r '.items[] | .metadata.name + "|" + .spec.routes[0].match' "$CACHE_DIR/ingressroutes.json" 2> /dev/null)
 
   if [[ -z "$routes" ]]; then
     echo -e "  ${DIM}No ingress routes found${RESET}"
@@ -372,7 +372,7 @@ run_api_test() {
   echo ""
 
   echo -e "${DIM}1. Testing Nebula connectivity to ${NEBULA_WORKER_IP}:${OLLAMA_PORT}...${RESET}"
-  if timeout 3 nc -z "$NEBULA_WORKER_IP" "$OLLAMA_PORT" 2>/dev/null; then
+  if timeout 3 nc -z "$NEBULA_WORKER_IP" "$OLLAMA_PORT" 2> /dev/null; then
     echo -e "   ${GREEN}${ICON_SUCCESS} Connected${RESET}"
   else
     echo -e "   ${RED}${ICON_FAILURE} Unreachable${RESET}"
@@ -382,9 +382,9 @@ run_api_test() {
   echo ""
   echo -e "${DIM}2. Testing Ollama API...${RESET}"
   local response
-  response=$(curl -s "http://${NEBULA_WORKER_IP}:${OLLAMA_PORT}/api/tags" 2>/dev/null) || true
+  response=$(curl -s "http://${NEBULA_WORKER_IP}:${OLLAMA_PORT}/api/tags" 2> /dev/null) || true
 
-  if [[ -n "$response" ]] && echo "$response" | jq -e '.models' &>/dev/null; then
+  if [[ -n "$response" ]] && echo "$response" | jq -e '.models' &> /dev/null; then
     echo -e "   ${GREEN}${ICON_SUCCESS} API responding${RESET}"
     echo ""
     echo -e "${DIM}3. Available models:${RESET}"
@@ -399,14 +399,44 @@ run_api_test() {
 }
 
 # ============================================================================
+# Summary mode output
+# ============================================================================
+print_summary() {
+  dashboard_init
+
+  if ! namespace_exists "$LLM_NAMESPACE"; then
+    echo -e "    Catalyst LLM: ${RED}✗${RESET} namespace not found"
+    return 0
+  fi
+
+  # Quick connectivity test
+  local nebula_status="unreachable"
+  if timeout 2 nc -z "$NEBULA_WORKER_IP" "$OLLAMA_PORT" 2> /dev/null; then
+    nebula_status="connected"
+  fi
+
+  local status_icon="${GREEN}✓${RESET}"
+  [[ "$nebula_status" != "connected" ]] && status_icon="${YELLOW}⚠${RESET}"
+
+  echo -e "    Catalyst LLM: ${status_icon} nebula: ${nebula_status} │ worker: ${NEBULA_WORKER_IP}"
+}
+
+# ============================================================================
 # Main dashboard
 # ============================================================================
 main() {
   # Handle flags
-  if [[ "${1:-}" == "--test" ]]; then
-    run_api_test
-    exit 0
-  fi
+  case "${1:-}" in
+    --test)
+      run_api_test
+      exit 0
+      ;;
+    --summary | -s)
+      print_summary
+      exit 0
+      ;;
+    --full | -f | *) ;;
+  esac
 
   # Initialize
   dashboard_init
