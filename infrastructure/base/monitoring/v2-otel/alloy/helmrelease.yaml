@@ -56,8 +56,7 @@ spec:
             send_batch_size = 1024
 
             output {
-              // Metrics: Drop for now - Prometheus scrapes via ServiceMonitors
-              // metrics = [] - removed since we're not using Mimir
+              metrics = [otelcol.exporter.otlphttp.mimir.input]
               logs    = [otelcol.exporter.loki.default.input]
               traces  = [otelcol.exporter.otlp.tempo.input]
             }
@@ -82,6 +81,16 @@ spec:
           otelcol.exporter.otlp "tempo" {
             client {
               endpoint = "tempo.monitoring.svc:4317"
+              tls {
+                insecure = true
+              }
+            }
+          }
+
+          // Metrics -> Mimir (via OTLP HTTP)
+          otelcol.exporter.otlphttp "mimir" {
+            client {
+              endpoint = "http://mimir-nginx.monitoring.svc:80/otlp"
               tls {
                 insecure = true
               }

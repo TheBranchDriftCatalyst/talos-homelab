@@ -72,12 +72,28 @@ spec:
           enable_api: true
           external_url: http://alertmanager.talos00
 
-        # Storage - filesystem for homelab (S3 for production)
+        # Storage - S3 via MinIO
         common:
           storage:
-            backend: filesystem
-            filesystem:
-              dir: /data/mimir
+            backend: s3
+            s3:
+              endpoint: minio.minio.svc:9000
+              bucket_name: mimir
+              access_key_id: minio
+              secret_access_key: minio123
+              insecure: true
+
+        # Blocks storage configuration
+        blocks_storage:
+          backend: s3
+          s3:
+            endpoint: minio.minio.svc:9000
+            bucket_name: mimir
+            access_key_id: minio
+            secret_access_key: minio123
+            insecure: true
+          bucket_store:
+            sync_dir: /data/mimir-sync
 
         # OTLP ingestion is enabled by default in Mimir 2.9+
         # Access via /otlp/v1/metrics endpoint
@@ -174,7 +190,7 @@ spec:
         storageClass: local-path
         size: 5Gi
 
-    # Disable minio - using filesystem
+    # Disable built-in minio - using external MinIO instance
     minio:
       enabled: false
 
