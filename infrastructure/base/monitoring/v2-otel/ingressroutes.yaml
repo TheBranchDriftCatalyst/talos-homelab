@@ -1,0 +1,65 @@
+---
+# IngressRoute for Alloy OTLP HTTP endpoint
+# Allows Claude Code on Mac to send telemetry to cluster
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: alloy-otlp
+  namespace: monitoring
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`otel.talos00`)
+      kind: Rule
+      services:
+        - name: alloy
+          port: 4318
+---
+# IngressRoute for Mimir (Prometheus-compatible API)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: mimir
+  namespace: monitoring
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`mimir.talos00`)
+      kind: Rule
+      services:
+        - name: mimir-nginx
+          port: 80
+---
+# IngressRoute for Tempo (Jaeger UI)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: tempo-jaeger
+  namespace: monitoring
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`tempo.talos00`)
+      kind: Rule
+      services:
+        - name: tempo-jaegerui
+          port: 16686
+---
+# IngressRoute for Loki (direct query access)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: loki-v2
+  namespace: monitoring
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`loki.talos00`)
+      kind: Rule
+      services:
+        - name: loki
+          port: 3100

@@ -1,0 +1,30 @@
+---
+# Flux Kustomization for V2 OTEL Monitoring Stack
+# Parallel deployment alongside v1 for evaluation
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: monitoring-v2-otel
+  namespace: flux-system
+spec:
+  interval: 30m
+  timeout: 10m
+  path: ./infrastructure/base/monitoring/v2-otel
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  # Depends on monitoring namespace and Grafana operator
+  dependsOn:
+    - name: monitoring
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: opentelemetry-operator
+      namespace: monitoring
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: tempo-operator
+      namespace: monitoring
+  # V2 OTEL stack - ACTIVE
+  suspend: false

@@ -1,0 +1,201 @@
+---
+# Grafana Mimir - Scalable metrics backend
+# Replaces Prometheus for long-term metrics storage with native OTLP support
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mimir
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: mimir-distributed
+      version: "5.5.1"
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Single-zone deployment for homelab
+    mimir:
+      structuredConfig:
+        # Multi-tenancy disabled for simplicity
+        multitenancy_enabled: false
+
+        # Limits
+        limits:
+          # Increase default limits for homelab use
+          ingestion_rate: 100000
+          ingestion_burst_size: 200000
+          max_global_series_per_user: 1000000
+          max_fetched_series_per_query: 100000
+
+        # Compactor
+        compactor:
+          data_dir: /data/compactor
+          sharding_ring:
+            kvstore:
+              store: memberlist
+
+        # Ingester
+        ingester:
+          ring:
+            replication_factor: 1
+            kvstore:
+              store: memberlist
+
+        # Store gateway
+        store_gateway:
+          sharding_ring:
+            replication_factor: 1
+            kvstore:
+              store: memberlist
+
+        # Ruler (alerting)
+        ruler:
+          enable_api: true
+          ring:
+            kvstore:
+              store: memberlist
+
+        # Alertmanager
+        alertmanager:
+          data_dir: /data/alertmanager
+          enable_api: true
+          external_url: http://alertmanager.talos00
+
+        # Storage - filesystem for homelab (S3 for production)
+        common:
+          storage:
+            backend: filesystem
+            filesystem:
+              dir: /data/mimir
+
+        # OTLP ingestion enabled
+        distributor:
+          otlp_config:
+            convert_all_attributes: true
+
+    # Component sizing for homelab (minimal)
+    ingester:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          memory: 2Gi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 20Gi
+      zoneAwareReplication:
+        enabled: false
+
+    distributor:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          memory: 512Mi
+
+    querier:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          memory: 1Gi
+
+    query_frontend:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 512Mi
+
+    store_gateway:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          memory: 1Gi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 10Gi
+      zoneAwareReplication:
+        enabled: false
+
+    compactor:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          memory: 1Gi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 20Gi
+
+    # Disable components not needed for homelab
+    ruler:
+      enabled: true
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+
+    alertmanager:
+      enabled: true
+      replicas: 1
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 5Gi
+
+    # Disable minio - using filesystem
+    minio:
+      enabled: false
+
+    # Nginx gateway
+    nginx:
+      enabled: true
+      replicas: 1
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+
+    # Monitoring
+    metaMonitoring:
+      serviceMonitor:
+        enabled: true
+        labels:
+          release: kube-prometheus-stack
+
+    # Gateway for external access
+    gateway:
+      enabledNonEnterprise: true

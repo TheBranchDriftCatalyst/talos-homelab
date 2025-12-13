@@ -1,0 +1,164 @@
+---
+# Grafana Alloy - Unified telemetry collector
+# Replaces: OTEL Collector, Fluent Bit, Grafana Agent
+# Native support for Loki, Tempo, Mimir, Prometheus
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: alloy
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: alloy
+      version: "0.10.0"
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Alloy configuration
+    alloy:
+      configMap:
+        create: true
+        content: |
+          // ============================================
+          // OTLP Receivers - Accept telemetry from apps
+          // ============================================
+          otelcol.receiver.otlp "default" {
+            grpc {
+              endpoint = "0.0.0.0:4317"
+            }
+            http {
+              endpoint = "0.0.0.0:4318"
+            }
+
+            output {
+              metrics = [otelcol.processor.batch.default.input]
+              logs    = [otelcol.processor.batch.default.input]
+              traces  = [otelcol.processor.batch.default.input]
+            }
+          }
+
+          // ============================================
+          // Processors
+          // ============================================
+          otelcol.processor.batch "default" {
+            timeout = "10s"
+            send_batch_size = 1024
+
+            output {
+              metrics = [otelcol.exporter.prometheus.mimir.input]
+              logs    = [otelcol.exporter.loki.default.input]
+              traces  = [otelcol.exporter.otlp.tempo.input]
+            }
+          }
+
+          // ============================================
+          // Exporters
+          // ============================================
+
+          // Metrics -> Mimir (via Prometheus remote write)
+          otelcol.exporter.prometheus "mimir" {
+            forward_to = [prometheus.remote_write.mimir.receiver]
+          }
+
+          prometheus.remote_write "mimir" {
+            endpoint {
+              url = "http://mimir-nginx.monitoring.svc:80/api/v1/push"
+            }
+          }
+
+          // Logs -> Loki
+          otelcol.exporter.loki "default" {
+            forward_to = [loki.write.default.receiver]
+          }
+
+          loki.write "default" {
+            endpoint {
+              url = "http://loki.monitoring.svc:3100/loki/api/v1/push"
+            }
+          }
+
+          // Traces -> Tempo
+          otelcol.exporter.otlp "tempo" {
+            client {
+              endpoint = "tempo.monitoring.svc:4317"
+              tls {
+                insecure = true
+              }
+            }
+          }
+
+          // ============================================
+          // Kubernetes Discovery - Scrape cluster metrics
+          // ============================================
+          discovery.kubernetes "pods" {
+            role = "pod"
+          }
+
+          discovery.kubernetes "nodes" {
+            role = "node"
+          }
+
+          // ============================================
+          // Cluster Log Collection
+          // ============================================
+          loki.source.kubernetes "pods" {
+            targets    = discovery.kubernetes.pods.targets
+            forward_to = [loki.write.default.receiver]
+          }
+
+          // ============================================
+          // Self-monitoring
+          // ============================================
+          prometheus.exporter.self "alloy" {}
+
+          prometheus.scrape "alloy" {
+            targets    = prometheus.exporter.self.alloy.targets
+            forward_to = [prometheus.remote_write.mimir.receiver]
+          }
+
+      # Extra ports for OTLP
+      extraPorts:
+        - name: otlp-grpc
+          port: 4317
+          targetPort: 4317
+          protocol: TCP
+        - name: otlp-http
+          port: 4318
+          targetPort: 4318
+          protocol: TCP
+
+    # Controller settings
+    controller:
+      type: deployment
+      replicas: 1
+
+    # Resources
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    # Service
+    service:
+      enabled: true
+      type: ClusterIP
+
+    # ServiceMonitor
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: kube-prometheus-stack

@@ -1,0 +1,105 @@
+---
+# Grafana Loki - Log aggregation
+# Native OTLP support via /otlp/v1/logs endpoint
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: loki
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: loki
+      version: "6.23.0"
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Deployment mode - single binary for homelab
+    deploymentMode: SingleBinary
+
+    loki:
+      # Disable multi-tenancy
+      auth_enabled: false
+
+      # Common config
+      commonConfig:
+        replication_factor: 1
+
+      # Schema - TSDB with v13 for OTLP support
+      schemaConfig:
+        configs:
+          - from: "2024-01-01"
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+      # Storage
+      storage:
+        type: filesystem
+
+      # Limits
+      limits_config:
+        retention_period: 336h  # 14 days
+        ingestion_rate_mb: 20
+        ingestion_burst_size_mb: 30
+        max_streams_per_user: 10000
+        max_query_series: 500
+
+      # Compactor for retention
+      compactor:
+        retention_enabled: true
+        delete_request_store: filesystem
+
+      # OTLP endpoint enabled by default in Loki 3.x
+      # Accessible at /otlp/v1/logs
+
+    # Single binary config
+    singleBinary:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 1Gi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 30Gi
+
+    # Disable distributed components
+    backend:
+      replicas: 0
+    read:
+      replicas: 0
+    write:
+      replicas: 0
+
+    # Gateway disabled - direct access
+    gateway:
+      enabled: false
+
+    # Monitoring
+    serviceMonitor:
+      enabled: true
+      labels:
+        release: kube-prometheus-stack
+
+    # Disable extras
+    test:
+      enabled: false
+    lokiCanary:
+      enabled: false
