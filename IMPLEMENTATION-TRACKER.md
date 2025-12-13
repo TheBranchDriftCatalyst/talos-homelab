@@ -1,8 +1,11 @@
 # Homelab GitOps + Arr Stack Implementation Tracker
 
 **Project Start**: 2025-11-09
-**Last Updated**: 2025-11-24
+**Last Updated**: 2025-12-12
 **Status**: ✅ Phase 6 Complete - Full Stack Operational
+
+> **Note**: This document is historical reference for the initial implementation phases.
+> Ongoing work is tracked in **beads** - see [beads-index.md](beads-index.md) or run `bd ready`.
 
 ---
 

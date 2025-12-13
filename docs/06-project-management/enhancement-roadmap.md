@@ -1,9 +1,15 @@
 # Talos Homelab Enhancement Roadmap
 
 **Date:** 2025-11-25
-**Last Updated:** 2025-11-26
+**Last Updated:** 2025-12-12
 **Status:** Stream 2 In Progress, Stream 1 Planning
-**Tracking:** Two parallel implementation streams
+**Tracking:** Beads issue tracker (see below)
+
+> **Beads Migration**: Active tasks from this roadmap are now tracked in beads:
+> - `TALOS-7fu` - MCP Server Integration (Stream 1)
+> - `TALOS-w1k` - Tilt Development Workflow (Stream 2)
+>
+> Run `bd ready` to see available work.
 
 ---
 
