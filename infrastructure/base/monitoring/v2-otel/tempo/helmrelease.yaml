@@ -1,0 +1,79 @@
+---
+# Tempo - Distributed Tracing Backend
+# Using Helm chart instead of tempo-operator (operator requires cert-manager)
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  interval: 1h
+  url: https://grafana.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: tempo
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: tempo
+      version: "1.10.3"
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Single binary mode (appropriate for homelab)
+    tempo:
+      metricsGenerator:
+        enabled: true
+        remoteWriteUrl: "http://mimir-nginx.monitoring.svc:80/api/v1/push"
+
+    # Enable OTLP receivers
+    traces:
+      otlp:
+        grpc:
+          enabled: true
+        http:
+          enabled: true
+      zipkin:
+        enabled: false
+      jaeger:
+        thriftHttp:
+          enabled: false
+
+    # Storage - local filesystem with PVC
+    persistence:
+      enabled: true
+      size: 30Gi
+      storageClassName: local-path
+
+    # Resources
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 2Gi
+
+    # ServiceMonitor for Prometheus scraping
+    serviceMonitor:
+      enabled: true
+
+    # Search configuration
+    search:
+      enabled: true
+
+    # Service configuration for internal access
+    service:
+      type: ClusterIP
