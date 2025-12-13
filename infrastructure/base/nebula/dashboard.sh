@@ -5,7 +5,7 @@
 #   ./dashboard.sh              # Show full dashboard
 #   ./dashboard.sh --summary    # Compact one-line summary
 #
-# shellcheck disable=SC2016,SC2034
+# shellcheck disable=SC1091,SC2016,SC2034
 
 set -euo pipefail
 
@@ -80,8 +80,8 @@ get_lighthouse_ip() {
   local config_data
   config_data=$(jq -r '.items[] | select(.metadata.name == "nebula-config") | .data["config.yaml"] // empty' "$CACHE_DIR/configmaps.json" 2> /dev/null)
   if [[ -n "$config_data" ]]; then
-    # Extract lighthouse IP from static_host_map
-    echo "$config_data" | grep -A1 "static_host_map:" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    # Extract lighthouse IP from static_host_map (look for 10.42.x.x pattern)
+    echo "$config_data" | grep -oE '10\.42\.[0-9]+\.[0-9]+' | head -1
   fi
 }
 
