@@ -1,0 +1,27 @@
+---
+# Flux Kustomization for V2 OTEL Operators (must install first for CRDs)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: monitoring-v2-operators
+  namespace: flux-system
+spec:
+  interval: 30m
+  timeout: 10m
+  path: ./infrastructure/base/monitoring/v2-otel/operators
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  dependsOn:
+    - name: namespaces
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: opentelemetry-operator
+      namespace: monitoring
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: tempo-operator
+      namespace: monitoring
+  suspend: false
