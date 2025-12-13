@@ -56,7 +56,8 @@ spec:
             send_batch_size = 1024
 
             output {
-              metrics = [otelcol.exporter.prometheus.mimir.input]
+              // Metrics: Drop for now - Prometheus scrapes via ServiceMonitors
+              // metrics = [] - removed since we're not using Mimir
               logs    = [otelcol.exporter.loki.default.input]
               traces  = [otelcol.exporter.otlp.tempo.input]
             }
@@ -65,17 +66,6 @@ spec:
           // ============================================
           // Exporters
           // ============================================
-
-          // Metrics -> Mimir (via Prometheus remote write)
-          otelcol.exporter.prometheus "mimir" {
-            forward_to = [prometheus.remote_write.mimir.receiver]
-          }
-
-          prometheus.remote_write "mimir" {
-            endpoint {
-              url = "http://mimir-nginx.monitoring.svc:80/api/v1/push"
-            }
-          }
 
           // Logs -> Loki
           otelcol.exporter.loki "default" {
@@ -118,14 +108,9 @@ spec:
           }
 
           // ============================================
-          // Self-monitoring
+          // Self-monitoring - Prometheus scrapes via ServiceMonitor
           // ============================================
           prometheus.exporter.self "alloy" {}
-
-          prometheus.scrape "alloy" {
-            targets    = prometheus.exporter.self.alloy.targets
-            forward_to = [prometheus.remote_write.mimir.receiver]
-          }
 
       # Extra ports for OTLP
       extraPorts:

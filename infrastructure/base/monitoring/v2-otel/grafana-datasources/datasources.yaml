@@ -1,24 +1,23 @@
 ---
-# Mimir datasource - Metrics (replaces Prometheus)
+# Prometheus datasource - Metrics (keeping existing Prometheus from kube-prometheus-stack)
+# Mimir was too complex for homelab (requires S3 storage)
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource
 metadata:
-  name: mimir
+  name: prometheus-v2
   namespace: monitoring
 spec:
   instanceSelector:
     matchLabels:
       dashboards: "grafana"
   datasource:
-    name: Mimir
+    name: Prometheus
     type: prometheus
     access: proxy
-    url: http://mimir-nginx.monitoring.svc:80/prometheus
+    url: http://prometheus-kube-prometheus-stack-prometheus.monitoring.svc:9090
     isDefault: true
     jsonData:
       httpMethod: POST
-      prometheusType: Mimir
-      prometheusVersion: "2.9.0"
     editable: false
 ---
 # Loki datasource - Logs
@@ -71,7 +70,7 @@ spec:
         query: '{exporter="OTLP"} | trace_id="$${__trace.traceId}"'
       # Trace to metrics correlation
       tracesToMetrics:
-        datasourceUid: mimir
+        datasourceUid: prometheus-v2
         spanStartTimeShift: "-1h"
         spanEndTimeShift: "1h"
         tags:
@@ -80,7 +79,7 @@ spec:
           - key: job
       # Service graph
       serviceMap:
-        datasourceUid: mimir
+        datasourceUid: prometheus-v2
       # Node graph
       nodeGraph:
         enabled: true
