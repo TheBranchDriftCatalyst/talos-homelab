@@ -1,6 +1,6 @@
 ---
-# Grafana CR that points to the existing kube-prometheus-stack Grafana
-# This allows GrafanaDashboard CRs to provision dashboards to it
+# Grafana instance managed by grafana-operator
+# Replaces kube-prometheus-stack bundled Grafana
 apiVersion: grafana.integreatly.org/v1beta1
 kind: Grafana
 metadata:
@@ -9,12 +9,47 @@ metadata:
   labels:
     dashboards: "grafana"
 spec:
-  # External Grafana - we're not deploying a new one, just referencing existing
-  external:
-    url: http://kube-prometheus-stack-grafana.monitoring.svc:80
-    adminUser:
-      name: kube-prometheus-stack-grafana
-      key: admin-user
-    adminPassword:
-      name: kube-prometheus-stack-grafana
-      key: admin-password
+  # Deploy Grafana (not external reference)
+  deployment:
+    spec:
+      replicas: 1
+      template:
+        spec:
+          containers:
+            - name: grafana
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+
+  # Grafana configuration
+  config:
+    server:
+      root_url: http://grafana.talos00
+    auth.anonymous:
+      enabled: "true"
+      org_role: Viewer
+    log:
+      mode: console
+      level: info
+
+  # Persistence for dashboards and settings
+  persistentVolumeClaim:
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+      storageClassName: local-path
+
+  # Service configuration
+  service:
+    spec:
+      type: ClusterIP
+      ports:
+        - name: grafana
+          port: 3000
+          targetPort: 3000
