@@ -98,7 +98,7 @@ spec:
           }
 
           // ============================================
-          // Kubernetes Discovery - Scrape cluster metrics
+          // Kubernetes Discovery
           // ============================================
           discovery.kubernetes "pods" {
             role = "pod"
@@ -106,6 +106,14 @@ spec:
 
           discovery.kubernetes "nodes" {
             role = "node"
+          }
+
+          discovery.kubernetes "services" {
+            role = "service"
+          }
+
+          discovery.kubernetes "endpoints" {
+            role = "endpoints"
           }
 
           // ============================================
@@ -117,9 +125,152 @@ spec:
           }
 
           // ============================================
-          // Self-monitoring - Prometheus scrapes via ServiceMonitor
+          // Prometheus Scraping - Cluster Metrics
+          // ============================================
+
+          // Relabel rules for kubelet metrics
+          discovery.relabel "kubelet" {
+            targets = discovery.kubernetes.nodes.targets
+
+            rule {
+              target_label = "__address__"
+              replacement  = "kubernetes.default.svc:443"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              regex         = "(.+)"
+              target_label  = "__metrics_path__"
+              replacement   = "/api/v1/nodes/$1/proxy/metrics"
+            }
+          }
+
+          // Scrape kubelet metrics
+          prometheus.scrape "kubelet" {
+            targets         = discovery.relabel.kubelet.output
+            scheme          = "https"
+            scrape_interval = "60s"
+            bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            tls_config {
+              ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              insecure_skip_verify = true
+            }
+            forward_to = [prometheus.remote_write.mimir.receiver]
+          }
+
+          // Relabel rules for cAdvisor metrics
+          discovery.relabel "cadvisor" {
+            targets = discovery.kubernetes.nodes.targets
+
+            rule {
+              target_label = "__address__"
+              replacement  = "kubernetes.default.svc:443"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              regex         = "(.+)"
+              target_label  = "__metrics_path__"
+              replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
+            }
+          }
+
+          // Scrape cAdvisor metrics (container metrics)
+          prometheus.scrape "cadvisor" {
+            targets         = discovery.relabel.cadvisor.output
+            scheme          = "https"
+            scrape_interval = "60s"
+            bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            tls_config {
+              ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              insecure_skip_verify = true
+            }
+            forward_to = [prometheus.remote_write.mimir.receiver]
+          }
+
+          // Relabel rules for annotated pods (prometheus.io/scrape: "true")
+          discovery.relabel "pods" {
+            targets = discovery.kubernetes.pods.targets
+
+            // Only scrape pods with prometheus.io/scrape annotation
+            rule {
+              source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+              regex         = "true"
+              action        = "keep"
+            }
+            // Use custom path if specified
+            rule {
+              source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+              regex         = "(.+)"
+              target_label  = "__metrics_path__"
+            }
+            // Use custom port if specified
+            rule {
+              source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+              regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+              replacement   = "$1:$2"
+              target_label  = "__address__"
+            }
+            // Add pod labels
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_container_name"]
+              target_label  = "container"
+            }
+          }
+
+          // Scrape annotated pods
+          prometheus.scrape "pods" {
+            targets         = discovery.relabel.pods.output
+            scrape_interval = "60s"
+            forward_to      = [prometheus.remote_write.mimir.receiver]
+          }
+
+          // Scrape kube-state-metrics if available
+          discovery.relabel "kube_state_metrics" {
+            targets = discovery.kubernetes.services.targets
+
+            rule {
+              source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+              regex         = "kube-state-metrics"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+          }
+
+          prometheus.scrape "kube_state_metrics" {
+            targets         = discovery.relabel.kube_state_metrics.output
+            scrape_interval = "60s"
+            forward_to      = [prometheus.remote_write.mimir.receiver]
+          }
+
+          // ============================================
+          // Remote Write to Mimir
+          // ============================================
+          prometheus.remote_write "mimir" {
+            endpoint {
+              url = "http://mimir-nginx.monitoring.svc:80/api/v1/push"
+            }
+          }
+
+          // ============================================
+          // Self-monitoring
           // ============================================
           prometheus.exporter.self "alloy" {}
+
+          prometheus.scrape "self" {
+            targets         = prometheus.exporter.self.alloy.targets
+            scrape_interval = "60s"
+            forward_to      = [prometheus.remote_write.mimir.receiver]
+          }
 
       # Extra ports for OTLP
       extraPorts:
@@ -137,14 +288,25 @@ spec:
       type: deployment
       replicas: 1
 
-    # Resources
+    # RBAC for Kubernetes API access (scraping kubelet, pods, etc.)
+    rbac:
+      create: true
+
+    serviceAccount:
+      create: true
+
+    # ClusterRole rules for Prometheus scraping
+    crds:
+      create: false
+
+    # Resources - increased for Prometheus scraping
     resources:
       requests:
         cpu: 100m
-        memory: 256Mi
-      limits:
-        cpu: 500m
         memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
 
     # Service
     service:
