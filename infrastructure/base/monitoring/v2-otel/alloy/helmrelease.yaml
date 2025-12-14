@@ -127,11 +127,16 @@ spec:
           // ============================================
           // Prometheus Scraping - Cluster Metrics
           // ============================================
+          // Comprehensive labeling for dashboard compatibility
+          // Based on kube-prometheus-stack patterns
 
-          // Relabel rules for kubelet metrics
+          // ----------------------------------------
+          // Kubelet Metrics
+          // ----------------------------------------
           discovery.relabel "kubelet" {
             targets = discovery.kubernetes.nodes.targets
 
+            // Route through k8s API
             rule {
               target_label = "__address__"
               replacement  = "kubernetes.default.svc:443"
@@ -142,10 +147,24 @@ spec:
               target_label  = "__metrics_path__"
               replacement   = "/api/v1/nodes/$1/proxy/metrics"
             }
+            // Standard labels for dashboards
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "node"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "instance"
+            }
+            // Cluster label for multi-cluster dashboards
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
           }
 
-          // Scrape kubelet metrics
           prometheus.scrape "kubelet" {
+            job_name        = "kubelet"
             targets         = discovery.relabel.kubelet.output
             scheme          = "https"
             scrape_interval = "60s"
@@ -154,10 +173,12 @@ spec:
               ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
               insecure_skip_verify = true
             }
-            forward_to = [prometheus.remote_write.mimir.receiver]
+            forward_to = [prometheus.relabel.add_cluster.receiver]
           }
 
-          // Relabel rules for cAdvisor metrics
+          // ----------------------------------------
+          // cAdvisor Metrics (container-level)
+          // ----------------------------------------
           discovery.relabel "cadvisor" {
             targets = discovery.kubernetes.nodes.targets
 
@@ -171,10 +192,24 @@ spec:
               target_label  = "__metrics_path__"
               replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
             }
+            // Node label for node-level aggregation
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "node"
+            }
+            // Instance as node name (not IP)
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "instance"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
           }
 
-          // Scrape cAdvisor metrics (container metrics)
           prometheus.scrape "cadvisor" {
+            job_name        = "cadvisor"
             targets         = discovery.relabel.cadvisor.output
             scheme          = "https"
             scrape_interval = "60s"
@@ -183,10 +218,12 @@ spec:
               ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
               insecure_skip_verify = true
             }
-            forward_to = [prometheus.remote_write.mimir.receiver]
+            forward_to = [prometheus.relabel.add_cluster.receiver]
           }
 
-          // Relabel rules for annotated pods (prometheus.io/scrape: "true")
+          // ----------------------------------------
+          // Pod Metrics (prometheus.io/scrape annotated)
+          // ----------------------------------------
           discovery.relabel "pods" {
             targets = discovery.kubernetes.pods.targets
 
@@ -209,7 +246,7 @@ spec:
               replacement   = "$1:$2"
               target_label  = "__address__"
             }
-            // Add pod labels
+            // Standard Kubernetes labels
             rule {
               source_labels = ["__meta_kubernetes_namespace"]
               target_label  = "namespace"
@@ -222,16 +259,36 @@ spec:
               source_labels = ["__meta_kubernetes_pod_container_name"]
               target_label  = "container"
             }
+            // Node for node-level aggregation
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // App labels for service discovery
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app"]
+              target_label  = "app"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              target_label  = "app_kubernetes_io_name"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
           }
 
-          // Scrape annotated pods
           prometheus.scrape "pods" {
+            job_name        = "kubernetes-pods"
             targets         = discovery.relabel.pods.output
             scrape_interval = "60s"
-            forward_to      = [prometheus.remote_write.mimir.receiver]
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
           }
 
-          // Scrape kube-state-metrics if available
+          // ----------------------------------------
+          // kube-state-metrics
+          // ----------------------------------------
           discovery.relabel "kube_state_metrics" {
             targets = discovery.kubernetes.services.targets
 
@@ -244,15 +301,22 @@ spec:
               source_labels = ["__meta_kubernetes_namespace"]
               target_label  = "namespace"
             }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
           }
 
           prometheus.scrape "kube_state_metrics" {
+            job_name        = "kube-state-metrics"
             targets         = discovery.relabel.kube_state_metrics.output
             scrape_interval = "60s"
-            forward_to      = [prometheus.remote_write.mimir.receiver]
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
           }
 
-          // Scrape node-exporter for node hardware/OS metrics
+          // ----------------------------------------
+          // Node Exporter (node hardware/OS metrics)
+          // ----------------------------------------
           discovery.relabel "node_exporter" {
             targets = discovery.kubernetes.endpoints.targets
 
@@ -261,23 +325,35 @@ spec:
               regex         = "prometheus-node-exporter"
               action        = "keep"
             }
+            // Use node name as instance (instead of IP:port)
             rule {
-              source_labels = ["__meta_kubernetes_namespace"]
-              target_label  = "namespace"
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "instance"
             }
             rule {
               source_labels = ["__meta_kubernetes_pod_node_name"]
               target_label  = "node"
             }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
           }
 
           prometheus.scrape "node_exporter" {
+            job_name        = "node-exporter"
             targets         = discovery.relabel.node_exporter.output
             scrape_interval = "60s"
-            forward_to      = [prometheus.remote_write.mimir.receiver]
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
           }
 
-          // Scrape all ServiceMonitor-like services (prometheus.io labels)
+          // ----------------------------------------
+          // Service Monitors (prometheus.io annotated services)
+          // ----------------------------------------
           discovery.relabel "service_monitors" {
             targets = discovery.kubernetes.endpoints.targets
 
@@ -286,6 +362,12 @@ spec:
               source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_scrape"]
               regex         = "true"
               action        = "keep"
+            }
+            // Exclude node-exporter (handled separately)
+            rule {
+              source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+              regex         = "prometheus-node-exporter"
+              action        = "drop"
             }
             // Use custom port if specified
             rule {
@@ -308,12 +390,34 @@ spec:
               source_labels = ["__meta_kubernetes_service_name"]
               target_label  = "service"
             }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
           }
 
           prometheus.scrape "service_monitors" {
+            job_name        = "kubernetes-service-endpoints"
             targets         = discovery.relabel.service_monitors.output
             scrape_interval = "60s"
-            forward_to      = [prometheus.remote_write.mimir.receiver]
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Common Metric Relabeling
+          // ----------------------------------------
+          // Add cluster label to all metrics (fallback)
+          prometheus.relabel "add_cluster" {
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+              action       = "replace"
+            }
+            forward_to = [prometheus.remote_write.mimir.receiver]
           }
 
           // ============================================

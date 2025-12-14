@@ -1,0 +1,61 @@
+---
+# Node Exporter - Hardware and OS metrics from cluster nodes
+# Scraped by Alloy, stored in Mimir
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: prometheus-node-exporter
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: prometheus-node-exporter
+      version: "4.43.1"
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: monitoring
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # DaemonSet runs on all nodes
+    fullnameOverride: prometheus-node-exporter
+
+    # Pod annotations for Alloy discovery
+    # Alloy looks for app.kubernetes.io/name: prometheus-node-exporter
+    service:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9100"
+
+    # Resources for homelab
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+
+    # Tolerations to run on all nodes including control plane
+    tolerations:
+      - effect: NoSchedule
+        operator: Exists
+
+    # Host network and PID for accurate metrics
+    hostNetwork: true
+    hostPID: true
+    hostRootFsMount:
+      enabled: true
+      mountPropagation: HostToContainer
+
+    # Collectors configuration
+    extraArgs:
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+      - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$
