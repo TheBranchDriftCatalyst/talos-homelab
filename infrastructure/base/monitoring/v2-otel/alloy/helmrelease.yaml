@@ -461,6 +461,23 @@ spec:
           }
 
           // ============================================
+          // Mimir Rules Sync (PrometheusRule CRDs -> Mimir Ruler)
+          // ============================================
+          // Watches PrometheusRule CRDs and syncs them to Mimir's ruler API
+          // This allows recording rules defined in app repos to be automatically
+          // provisioned to Mimir when deployed via ArgoCD/Flux
+          mimir.rules.kubernetes "rules" {
+            address = "http://mimir-nginx.monitoring.svc:80"
+            tenant_id = "anonymous"
+
+            // Sync rules every 30 seconds
+            sync_interval = "30s"
+
+            // Watch all PrometheusRule CRDs in the cluster
+            // No selector = sync all rules
+          }
+
+          // ============================================
           // Self-monitoring
           // ============================================
           prometheus.exporter.self "alloy" {}
