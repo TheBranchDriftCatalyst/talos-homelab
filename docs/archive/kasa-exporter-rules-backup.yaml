@@ -1,0 +1,97 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"monitoring.coreos.com/v1","kind":"PrometheusRule","metadata":{"annotations":{},"labels":{"app":"kasa-exporter","app.kubernetes.io/name":"kasa-exporter","argocd.argoproj.io/instance":"kasa-exporter","prometheus":"kube-prometheus-stack","release":"prometheus"},"name":"kasa-exporter-rules","namespace":"monitoring"},"spec":{"groups":[{"interval":"5s","name":"kasa_tou_metrics","rules":[{"expr":"consumption_cost\n* on(device_id) group_left(rate_class, season)\n(\n  current_energy_rate\n  == on(device_id) group_left()\n  max by(device_id) (current_energy_rate)\n)\n","record":"consumption_cost_with_rate_class"},{"expr":"sum(consumption_cost)","record":"consumption_cost:total"},{"expr":"sum by (rate_class) (consumption_cost_with_rate_class)","record":"consumption_cost:by_rate_class"},{"expr":"sum by (alias) (consumption_cost)","record":"consumption_cost:by_device"},{"expr":"sum by (alias, rate_class) (consumption_cost_with_rate_class)","record":"consumption_cost:by_device_and_rate_class"},{"expr":"sum(current_consumption)","record":"current_consumption:total"},{"expr":"max by (alias) (current_consumption)","record":"current_consumption:by_device"},{"expr":"(consumption_cost / current_consumption)\n* 1000\n","record":"cost_efficiency:by_device"},{"expr":"(current_consumption:by_device / consumption_cost:total)\n* 100\n","record":"power_utilization:by_device"},{"expr":"avg_over_time(consumption_cost:total[5m])","record":"consumption_cost:avg_5m"},{"expr":"avg_over_time(consumption_cost:total[1h])","record":"consumption_cost:avg_1h"},{"expr":"avg_over_time(consumption_cost:total[24h])","record":"consumption_cost:avg_24h"},{"expr":"avg_over_time(current_consumption:total[5m])","record":"current_consumption:avg_5m"},{"expr":"avg_over_time(current_consumption:total[1h])","record":"current_consumption:avg_1h"},{"expr":"max(current_energy_rate)","record":"current_energy_rate:current"},{"expr":"(\n  (max(current_energy_rate{rate_class=\"super_off_peak\"}) by (rate_class, season) * 0 + 1)\n  or\n  (max(current_energy_rate{rate_class=\"off_peak\"}) by (rate_class, season) * 0 + 2)\n  or\n  (max(current_energy_rate{rate_class=\"on_peak\"}) by (rate_class, season) * 0 + 3)\n)\n","record":"rate_class:numeric"},{"expr":"consumption_cost:total * 1","record":"consumption_cost:projected_hour"},{"expr":"consumption_cost:total * 24","record":"consumption_cost:projected_day"},{"expr":"consumption_cost:total * 730","record":"consumption_cost:projected_month"},{"expr":"consumption_cost:total -\n(current_consumption:total / 1000 * max(current_energy_rate{rate_class=\"super_off_peak\"}))\n","record":"consumption_cost:potential_savings_super_off_peak"},{"expr":"consumption_cost:total -\n(current_consumption:total / 1000 * max(current_energy_rate{rate_class=\"off_peak\"}))\n","record":"consumption_cost:potential_savings_off_peak"},{"expr":"stddev_over_time(consumption_cost:total[1h])","record":"consumption_cost:stddev_1h"},{"expr":"(\n  consumption_cost:total - consumption_cost:avg_1h\n) / consumption_cost:stddev_1h\n","record":"consumption_cost:zscore"},{"expr":"abs(consumption_cost:zscore) \u003e 2","record":"consumption_cost:anomaly"}]}]}}
+    prometheus-operator-validated: "true"
+  creationTimestamp: "2025-12-02T04:32:57Z"
+  generation: 1
+  labels:
+    app: kasa-exporter
+    app.kubernetes.io/name: kasa-exporter
+    argocd.argoproj.io/instance: kasa-exporter
+    prometheus: kube-prometheus-stack
+    release: prometheus
+  name: kasa-exporter-rules
+  namespace: monitoring
+  resourceVersion: "3959029"
+  uid: bde0afb5-3e83-45bd-b705-e6ac0fbb6ef8
+spec:
+  groups:
+  - interval: 5s
+    name: kasa_tou_metrics
+    rules:
+    - expr: |
+        consumption_cost
+        * on(device_id) group_left(rate_class, season)
+        (
+          current_energy_rate
+          == on(device_id) group_left()
+          max by(device_id) (current_energy_rate)
+        )
+      record: consumption_cost_with_rate_class
+    - expr: sum(consumption_cost)
+      record: consumption_cost:total
+    - expr: sum by (rate_class) (consumption_cost_with_rate_class)
+      record: consumption_cost:by_rate_class
+    - expr: sum by (alias) (consumption_cost)
+      record: consumption_cost:by_device
+    - expr: sum by (alias, rate_class) (consumption_cost_with_rate_class)
+      record: consumption_cost:by_device_and_rate_class
+    - expr: sum(current_consumption)
+      record: current_consumption:total
+    - expr: max by (alias) (current_consumption)
+      record: current_consumption:by_device
+    - expr: |
+        (consumption_cost / current_consumption)
+        * 1000
+      record: cost_efficiency:by_device
+    - expr: |
+        (current_consumption:by_device / consumption_cost:total)
+        * 100
+      record: power_utilization:by_device
+    - expr: avg_over_time(consumption_cost:total[5m])
+      record: consumption_cost:avg_5m
+    - expr: avg_over_time(consumption_cost:total[1h])
+      record: consumption_cost:avg_1h
+    - expr: avg_over_time(consumption_cost:total[24h])
+      record: consumption_cost:avg_24h
+    - expr: avg_over_time(current_consumption:total[5m])
+      record: current_consumption:avg_5m
+    - expr: avg_over_time(current_consumption:total[1h])
+      record: current_consumption:avg_1h
+    - expr: max(current_energy_rate)
+      record: current_energy_rate:current
+    - expr: |
+        (
+          (max(current_energy_rate{rate_class="super_off_peak"}) by (rate_class, season) * 0 + 1)
+          or
+          (max(current_energy_rate{rate_class="off_peak"}) by (rate_class, season) * 0 + 2)
+          or
+          (max(current_energy_rate{rate_class="on_peak"}) by (rate_class, season) * 0 + 3)
+        )
+      record: rate_class:numeric
+    - expr: consumption_cost:total * 1
+      record: consumption_cost:projected_hour
+    - expr: consumption_cost:total * 24
+      record: consumption_cost:projected_day
+    - expr: consumption_cost:total * 730
+      record: consumption_cost:projected_month
+    - expr: |
+        consumption_cost:total -
+        (current_consumption:total / 1000 * max(current_energy_rate{rate_class="super_off_peak"}))
+      record: consumption_cost:potential_savings_super_off_peak
+    - expr: |
+        consumption_cost:total -
+        (current_consumption:total / 1000 * max(current_energy_rate{rate_class="off_peak"}))
+      record: consumption_cost:potential_savings_off_peak
+    - expr: stddev_over_time(consumption_cost:total[1h])
+      record: consumption_cost:stddev_1h
+    - expr: |
+        (
+          consumption_cost:total - consumption_cost:avg_1h
+        ) / consumption_cost:stddev_1h
+      record: consumption_cost:zscore
+    - expr: abs(consumption_cost:zscore) > 2
+      record: consumption_cost:anomaly
