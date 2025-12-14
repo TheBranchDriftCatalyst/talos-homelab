@@ -156,6 +156,16 @@ spec:
               source_labels = ["__meta_kubernetes_node_name"]
               target_label  = "instance"
             }
+            // kubernetes_io_hostname for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "kubernetes_io_hostname"
+            }
+            // kubernetes_node for legacy dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "kubernetes_node"
+            }
             // Cluster label for multi-cluster dashboards
             rule {
               target_label = "cluster"
@@ -201,6 +211,16 @@ spec:
             rule {
               source_labels = ["__meta_kubernetes_node_name"]
               target_label  = "instance"
+            }
+            // kubernetes_io_hostname for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "kubernetes_io_hostname"
+            }
+            // kubernetes_node for legacy dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "kubernetes_node"
             }
             rule {
               target_label = "cluster"
@@ -334,6 +354,16 @@ spec:
               source_labels = ["__meta_kubernetes_pod_node_name"]
               target_label  = "node"
             }
+            // kubernetes_io_hostname for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "kubernetes_io_hostname"
+            }
+            // kubernetes_node for legacy dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "kubernetes_node"
+            }
             rule {
               source_labels = ["__meta_kubernetes_namespace"]
               target_label  = "namespace"
@@ -345,7 +375,8 @@ spec:
           }
 
           prometheus.scrape "node_exporter" {
-            job_name        = "node-exporter"
+            // Use kubernetes-service-endpoints job name for dashboard compatibility
+            job_name        = "kubernetes-service-endpoints"
             targets         = discovery.relabel.node_exporter.output
             scrape_interval = "60s"
             forward_to      = [prometheus.relabel.add_cluster.receiver]
