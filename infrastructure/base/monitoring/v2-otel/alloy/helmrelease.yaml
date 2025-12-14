@@ -252,6 +252,70 @@ spec:
             forward_to      = [prometheus.remote_write.mimir.receiver]
           }
 
+          // Scrape node-exporter for node hardware/OS metrics
+          discovery.relabel "node_exporter" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            rule {
+              source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+              regex         = "prometheus-node-exporter"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+          }
+
+          prometheus.scrape "node_exporter" {
+            targets         = discovery.relabel.node_exporter.output
+            scrape_interval = "60s"
+            forward_to      = [prometheus.remote_write.mimir.receiver]
+          }
+
+          // Scrape all ServiceMonitor-like services (prometheus.io labels)
+          discovery.relabel "service_monitors" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep services with prometheus.io/scrape annotation
+            rule {
+              source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_scrape"]
+              regex         = "true"
+              action        = "keep"
+            }
+            // Use custom port if specified
+            rule {
+              source_labels = ["__address__", "__meta_kubernetes_service_annotation_prometheus_io_port"]
+              regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+              replacement   = "$1:$2"
+              target_label  = "__address__"
+            }
+            // Use custom path if specified
+            rule {
+              source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_path"]
+              regex         = "(.+)"
+              target_label  = "__metrics_path__"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+          }
+
+          prometheus.scrape "service_monitors" {
+            targets         = discovery.relabel.service_monitors.output
+            scrape_interval = "60s"
+            forward_to      = [prometheus.remote_write.mimir.receiver]
+          }
+
           // ============================================
           // Remote Write to Mimir
           // ============================================
