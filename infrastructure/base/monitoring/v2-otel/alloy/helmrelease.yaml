@@ -496,6 +496,108 @@ spec:
           }
 
           // ----------------------------------------
+          // ArgoCD Metrics
+          // ----------------------------------------
+          discovery.relabel "argocd" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only argocd-*-metrics services
+            rule {
+              source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_service_name"]
+              regex         = "argocd;argocd-.*-metrics"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "argocd" {
+            job_name        = "argocd"
+            targets         = discovery.relabel.argocd.output
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Blackbox Exporter (probe metrics)
+          // ----------------------------------------
+          discovery.relabel "blackbox" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only blackbox exporter service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "prometheus-blackbox-exporter"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "blackbox" {
+            job_name        = "blackbox"
+            targets         = discovery.relabel.blackbox.output
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // Blackbox probe targets - scrape blackbox exporter with target params
+          // Uses static targets with relabeling to set probe targets
+          discovery.relabel "blackbox_probes" {
+            targets = [
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://grafana-service.monitoring:3000", "instance" = "grafana" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://mimir-nginx.monitoring:80/ready", "instance" = "mimir" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://loki.monitoring:3100/ready", "instance" = "loki" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://tempo.monitoring:3200/ready", "instance" = "tempo" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://traefik.traefik:9000/dashboard/", "instance" = "traefik" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://argocd-server.argocd:80", "instance" = "argocd" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://hubble-ui.kube-system:80", "instance" = "hubble-ui" },
+            ]
+
+            rule {
+              source_labels = ["__param_target"]
+              target_label  = "target"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "blackbox_probes" {
+            job_name        = "blackbox-probes"
+            scrape_interval = "60s"
+            metrics_path    = "/probe"
+            params          = { "module" = ["http_2xx"] }
+            targets         = discovery.relabel.blackbox_probes.output
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
           // Service Monitors (prometheus.io annotated services)
           // ----------------------------------------
           discovery.relabel "service_monitors" {
