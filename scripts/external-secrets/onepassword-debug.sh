@@ -157,7 +157,7 @@ if kubectl get deployment -n "$NAMESPACE" "$ONEPASSWORD_CONNECT_SVC" &> /dev/nul
 else
   echo -e "${YELLOW}⚠ 1Password Connect not deployed${RESET}"
   echo -e "  ${DIM}Deploy with: kubectl apply -k infrastructure/base/external-secrets/onepassword-connect${RESET}"
-  echo -e "  ${DIM}Setup first: ./scripts/setup-1password-connect.sh${RESET}"
+  echo -e "  ${DIM}Setup first: ./scripts/external-secrets/setup-1password-connect.sh${RESET}"
 fi
 
 # Check secrets
@@ -309,7 +309,7 @@ if kubectl get deployment -n "$NAMESPACE" external-secrets &> /dev/null 2>&1; th
     echo ""
     echo -e "${CYAN}Next steps:${RESET}"
     echo -e "  1. Setup 1Password Connect:"
-    echo -e "     ${DIM}./scripts/setup-1password-connect.sh${RESET}"
+    echo -e "     ${DIM}./scripts/external-secrets/setup-1password-connect.sh${RESET}"
     echo -e "  2. Deploy SecretStores:"
     echo -e "     ${DIM}kubectl apply -k infrastructure/base/external-secrets/secretstores${RESET}"
   fi

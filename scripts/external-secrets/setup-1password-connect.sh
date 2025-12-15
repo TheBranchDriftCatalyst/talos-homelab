@@ -14,7 +14,7 @@ set -euo pipefail
 #   - ./1password-credentials.json file (or OP_CREDENTIALS_FILE env var)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 NAMESPACE="external-secrets"
 AUTO_MODE=true
 FORCE_RECREATE=false
