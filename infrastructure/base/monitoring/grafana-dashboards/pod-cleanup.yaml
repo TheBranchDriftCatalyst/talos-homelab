@@ -137,7 +137,7 @@ spec:
           "targets": [
             {
               "datasource": {"type": "prometheus", "uid": "mimir"},
-              "expr": "pod_cleanup_last_run_timestamp_seconds{job=\"pod_cleanup\"} * 1000",
+              "expr": "timestamp(pod_cleanup_job_success{job=\"pod_cleanup\"}) * 1000",
               "legendFormat": "Last Run",
               "refId": "A"
             }
@@ -244,7 +244,7 @@ spec:
               {"matcher": {"id": "byName", "options": "Orphan ReplicaSets"}, "properties": [{"id": "color", "value": {"fixedColor": "semi-dark-blue", "mode": "fixed"}}]}
             ]
           },
-          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 4},
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 4},
           "id": 6,
           "options": {
             "displayLabels": ["name", "value"],
@@ -268,80 +268,7 @@ spec:
         },
         {
           "datasource": {"type": "prometheus", "uid": "mimir"},
-          "description": "Individual stats for each cleanup category",
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "thresholds"},
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {"color": "text", "value": null},
-                  {"color": "green", "value": 1}
-                ]
-              },
-              "unit": "short"
-            },
-            "overrides": []
-          },
-          "gridPos": {"h": 4, "w": 16, "x": 8, "y": 4},
-          "id": 7,
-          "options": {
-            "colorMode": "value",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "horizontal",
-            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-            "textMode": "value_and_name"
-          },
-          "pluginVersion": "10.0.0",
-          "targets": [
-            {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_succeeded_pods{job=\"pod_cleanup\"}", "legendFormat": "Succeeded", "refId": "A"},
-            {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_failed_pods{job=\"pod_cleanup\"}", "legendFormat": "Failed", "refId": "B"},
-            {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_evicted_pods{job=\"pod_cleanup\"}", "legendFormat": "Evicted", "refId": "C"},
-            {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_imagepull_pods{job=\"pod_cleanup\"}", "legendFormat": "ImagePull", "refId": "D"}
-          ],
-          "title": "Pod Cleanup Counts",
-          "type": "stat"
-        },
-        {
-          "datasource": {"type": "prometheus", "uid": "mimir"},
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "thresholds"},
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {"color": "text", "value": null},
-                  {"color": "blue", "value": 1}
-                ]
-              },
-              "unit": "short"
-            },
-            "overrides": []
-          },
-          "gridPos": {"h": 4, "w": 16, "x": 8, "y": 8},
-          "id": 8,
-          "options": {
-            "colorMode": "value",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "horizontal",
-            "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
-            "textMode": "value_and_name"
-          },
-          "pluginVersion": "10.0.0",
-          "targets": [
-            {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_crashloop_pods{job=\"pod_cleanup\"}", "legendFormat": "CrashLoop", "refId": "A"},
-            {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_completed_jobs{job=\"pod_cleanup\"}", "legendFormat": "Jobs", "refId": "B"},
-            {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_orphan_replicasets{job=\"pod_cleanup\"}", "legendFormat": "ReplicaSets", "refId": "C"}
-          ],
-          "title": "Other Resource Cleanup Counts",
-          "type": "stat"
-        },
-        {
-          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "description": "Discrete data points from each job run (via Mimir remote_write)",
           "fieldConfig": {
             "defaults": {
               "color": {"mode": "palette-classic"},
@@ -382,7 +309,7 @@ spec:
             ]
           },
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
-          "id": 9,
+          "id": 7,
           "options": {
             "legend": {"calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true},
             "tooltip": {"mode": "multi", "sort": "desc"}

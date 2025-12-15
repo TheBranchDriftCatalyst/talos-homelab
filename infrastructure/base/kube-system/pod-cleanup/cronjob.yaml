@@ -36,15 +36,14 @@ metadata:
 data:
   cleanup.py: |
     #!/usr/bin/env python3
-    """Kubernetes resource cleanup script with metrics."""
-    import json, os, subprocess, time
+    """Kubernetes resource cleanup script with metrics via Mimir remote_write."""
+    import json, os, subprocess, time, struct, snappy
     from datetime import datetime, timezone
     from urllib.request import urlopen, Request
-    from urllib.error import URLError
 
     DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
     EXCLUDED_NS = set(os.environ.get("EXCLUDED_NAMESPACES", "kube-system,kube-public,kube-node-lease").split(","))
-    PUSHGATEWAY = os.environ.get("PUSHGATEWAY_URL", "http://prometheus-pushgateway.monitoring.svc.cluster.local:9091")
+    MIMIR_URL = os.environ.get("MIMIR_URL", "http://mimir-nginx.monitoring.svc:80/api/v1/push")
     FAILED_AGE = int(os.environ.get("FAILED_POD_AGE_THRESHOLD", "3600"))
     EVICTED_AGE = int(os.environ.get("EVICTED_POD_AGE_THRESHOLD", "1800"))
     IMAGEPULL_AGE = int(os.environ.get("IMAGEPULL_AGE_THRESHOLD", "7200"))
@@ -159,15 +158,52 @@ data:
         print(f"[INFO] Orphaned ReplicaSets: {c}")
         return c
 
-    def push_metrics(m):
+    # Minimal protobuf encoder for Prometheus remote_write
+    def encode_varint(n):
+        b = []
+        while n > 127:
+            b.append((n & 0x7f) | 0x80)
+            n >>= 7
+        b.append(n)
+        return bytes(b)
+
+    def encode_string(field, s):
+        b = s.encode()
+        return bytes([field << 3 | 2]) + encode_varint(len(b)) + b
+
+    def encode_label(name, value):
+        return bytes([0x0a]) + encode_varint(len(encode_string(1, name) + encode_string(2, value))) + encode_string(1, name) + encode_string(2, value)
+
+    def encode_sample(ts_ms, value):
+        # field 1: value (double), field 2: timestamp (int64)
+        return bytes([0x12]) + encode_varint(16) + bytes([0x09]) + struct.pack('<d', value) + bytes([0x10]) + encode_varint(ts_ms)
+
+    def encode_timeseries(labels, ts_ms, value):
+        label_bytes = b''.join(encode_label(k, v) for k, v in labels.items())
+        sample_bytes = encode_sample(ts_ms, value)
+        return bytes([0x0a]) + encode_varint(len(label_bytes + sample_bytes)) + label_bytes + sample_bytes
+
+    def push_to_mimir(metrics):
+        """Push metrics directly to Mimir via remote_write (no pushgateway)."""
+        ts_ms = int(time.time() * 1000)
+        timeseries = []
+        for name, value in metrics.items():
+            labels = {"__name__": name, "job": "pod_cleanup", "instance": "talos00"}
+            timeseries.append(encode_timeseries(labels, ts_ms, float(value)))
+
+        # WriteRequest message
+        write_request = b''.join(timeseries)
+        compressed = snappy.compress(write_request)
+
         try:
-            body = "\n".join(f"{k} {v}" for k, v in m.items()) + "\n"
-            req = Request(f"{PUSHGATEWAY}/metrics/job/pod_cleanup/instance/talos00", data=body.encode(), method="POST")
-            req.add_header("Content-Type", "text/plain")
-            urlopen(req, timeout=10)
-            print("Metrics pushed")
+            req = Request(MIMIR_URL, data=compressed, method="POST")
+            req.add_header("Content-Type", "application/x-protobuf")
+            req.add_header("Content-Encoding", "snappy")
+            req.add_header("X-Prometheus-Remote-Write-Version", "0.1.0")
+            with urlopen(req, timeout=10) as resp:
+                print(f"Metrics pushed to Mimir ({resp.status})")
         except Exception as e:
-            print(f"Metrics push failed: {e}")
+            print(f"Mimir push failed: {e}")
 
     if __name__ == "__main__":
         start = time.time()
@@ -181,11 +217,19 @@ data:
         print(f"\n=== Summary ({duration}s) ===")
         print(f"Succeeded:{succeeded} Failed:{failed} Evicted:{evicted} ImagePull:{imagepull} CrashLoop:{crashloop} Jobs:{jobs} RS:{rs}")
         print(f"TOTAL: {total}")
-        push_metrics({"pod_cleanup_last_run_timestamp_seconds": int(time.time()), "pod_cleanup_duration_seconds": duration,
-            "pod_cleanup_dry_run": 1 if DRY_RUN else 0, "pod_cleanup_resources_total": total,
-            "pod_cleanup_succeeded_pods": succeeded, "pod_cleanup_failed_pods": failed, "pod_cleanup_evicted_pods": evicted,
-            "pod_cleanup_imagepull_pods": imagepull, "pod_cleanup_crashloop_pods": crashloop,
-            "pod_cleanup_completed_jobs": jobs, "pod_cleanup_orphan_replicasets": rs, "pod_cleanup_job_success": 1})
+        push_to_mimir({
+            "pod_cleanup_duration_seconds": duration,
+            "pod_cleanup_dry_run": 1 if DRY_RUN else 0,
+            "pod_cleanup_resources_total": total,
+            "pod_cleanup_succeeded_pods": succeeded,
+            "pod_cleanup_failed_pods": failed,
+            "pod_cleanup_evicted_pods": evicted,
+            "pod_cleanup_imagepull_pods": imagepull,
+            "pod_cleanup_crashloop_pods": crashloop,
+            "pod_cleanup_completed_jobs": jobs,
+            "pod_cleanup_orphan_replicasets": rs,
+            "pod_cleanup_job_success": 1
+        })
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -231,16 +275,16 @@ spec:
                 - configMapRef:
                     name: pod-cleanup-config
               env:
-                - name: PUSHGATEWAY_URL
-                  value: 'http://prometheus-pushgateway.monitoring.svc.cluster.local:9091'
+                - name: MIMIR_URL
+                  value: 'http://mimir-nginx.monitoring.svc:80/api/v1/push'
                 - name: PATH
-                  value: '/shared:/usr/local/bin:/usr/bin:/bin'
+                  value: '/shared:/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin'
               volumeMounts:
                 - name: script
                   mountPath: /scripts
                 - name: shared
                   mountPath: /shared
-              command: ["python3", "/scripts/cleanup.py"]
+              command: ["/bin/sh", "-c", "apk add --no-cache gcc musl-dev snappy-dev >/dev/null 2>&1 && pip install --quiet python-snappy && python3 /scripts/cleanup.py"]
               resources:
                 requests:
                   cpu: 50m
