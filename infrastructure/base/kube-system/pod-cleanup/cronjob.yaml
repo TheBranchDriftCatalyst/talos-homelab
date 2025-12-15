@@ -1,6 +1,5 @@
 ---
 # ConfigMap for pod-cleanup configuration
-# Allows tuning cleanup behavior without modifying the script
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,39 +9,24 @@ metadata:
     app.kubernetes.io/name: pod-cleanup
     app.kubernetes.io/component: maintenance
 data:
-  # Dry-run mode: "true" = only log what would be deleted, "false" = actually delete
   DRY_RUN: "false"
-
-  # Age thresholds in seconds (resources younger than this are skipped)
-  FAILED_POD_AGE_THRESHOLD: "3600"       # 1 hour for failed pods
-  EVICTED_POD_AGE_THRESHOLD: "1800"      # 30 minutes for evicted pods
-  IMAGEPULL_AGE_THRESHOLD: "7200"        # 2 hours for ImagePullBackOff
-  CRASHLOOP_AGE_THRESHOLD: "14400"       # 4 hours for CrashLoopBackOff
-  COMPLETED_JOB_AGE_THRESHOLD: "86400"   # 24 hours for completed jobs
-  ORPHAN_RS_AGE_THRESHOLD: "86400"       # 24 hours for orphaned ReplicaSets
-
-  # Enable/disable cleanup categories
+  FAILED_POD_AGE_THRESHOLD: "3600"
+  EVICTED_POD_AGE_THRESHOLD: "1800"
+  IMAGEPULL_AGE_THRESHOLD: "7200"
+  CRASHLOOP_AGE_THRESHOLD: "14400"
+  COMPLETED_JOB_AGE_THRESHOLD: "86400"
+  ORPHAN_RS_AGE_THRESHOLD: "86400"
   CLEANUP_SUCCEEDED_PODS: "true"
   CLEANUP_FAILED_PODS: "true"
   CLEANUP_EVICTED_PODS: "true"
   CLEANUP_IMAGEPULL_PODS: "true"
-  CLEANUP_CRASHLOOP_PODS: "false"        # Disabled by default - risky
+  CLEANUP_CRASHLOOP_PODS: "false"
   CLEANUP_COMPLETED_JOBS: "true"
   CLEANUP_ORPHAN_REPLICASETS: "true"
-
-  # Namespace exclusions (comma-separated)
-  # These namespaces are NEVER cleaned, regardless of other settings
   EXCLUDED_NAMESPACES: "kube-system,kube-public,kube-node-lease"
-
-  # Label-based exclusion: pods/resources with this label are skipped
   EXCLUSION_LABEL: "cleanup.kubernetes.io/ignore"
-
-  # CrashLoopBackOff restart count threshold (only delete if restarts > this)
   CRASHLOOP_RESTART_THRESHOLD: "10"
 ---
-# CronJob for comprehensive Kubernetes resource cleanup
-# Cleans up terminated pods, completed jobs, and orphaned resources
-# Runs every 2 hours with configurable behavior via ConfigMap
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -80,292 +64,135 @@ spec:
                 - -c
                 - |
                   set -e
-
-                  # Initialize counters
                   START_TIME=$(date +%s)
-                  SUCCEEDED_COUNT=0
-                  FAILED_COUNT=0
-                  EVICTED_COUNT=0
-                  IMAGEPULL_COUNT=0
-                  CRASHLOOP_COUNT=0
-                  JOBS_COUNT=0
-                  RS_COUNT=0
-                  TOTAL_CLEANED=0
-                  JOB_STATUS="success"
 
-                  # Helper functions
+                  # Single temp file for candidates
+                  CANDIDATES=$(mktemp)
+                  trap "rm -f $CANDIDATES" EXIT
+
                   log_info() { echo "[INFO] $1"; }
                   log_warn() { echo "[WARN] $1"; }
-                  log_action() {
-                    if [ "$DRY_RUN" = "true" ]; then
-                      echo "[DRY-RUN] Would delete: $1"
-                    else
-                      echo "[DELETE] $1"
-                    fi
+
+                  is_excluded_ns() {
+                    echo "$EXCLUDED_NAMESPACES" | tr ',' '\n' | grep -qx "$1"
                   }
 
-                  is_excluded_namespace() {
-                    ns="$1"
-                    echo "$EXCLUDED_NAMESPACES" | tr ',' '\n' | grep -qx "$ns"
+                  # Delete resources from candidates file, returns count
+                  cleanup_resources() {
+                    kind=$1
+                    count=0
+                    while IFS=' ' read -r ns name; do
+                      [ -z "$ns" ] || [ -z "$name" ] && continue
+                      is_excluded_ns "$ns" && continue
+                      if [ "$DRY_RUN" = "true" ]; then
+                        echo "[DRY-RUN] Would delete $kind $ns/$name"
+                      else
+                        kubectl delete "$kind" -n "$ns" "$name" --ignore-not-found --wait=false 2>/dev/null && \
+                          echo "[DELETE] $kind $ns/$name"
+                      fi
+                      count=$((count + 1))
+                    done < "$CANDIDATES"
+                    echo $count
                   }
 
-                  has_exclusion_label() {
-                    ns="$1"
-                    name="$2"
-                    kind="${3:-pod}"
-                    kubectl get "$kind" -n "$ns" "$name" -o jsonpath="{.metadata.labels['${EXCLUSION_LABEL}']}" 2>/dev/null | grep -q "true"
-                  }
-
-                  is_old_enough() {
-                    timestamp="$1"
-                    threshold="$2"
-                    if [ -z "$timestamp" ]; then return 0; fi
-                    ts_epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
-                    now=$(date +%s)
-                    age=$((now - ts_epoch))
-                    [ "$age" -gt "$threshold" ]
-                  }
-
-                  delete_resource() {
-                    kind="$1"
-                    ns="$2"
-                    name="$3"
-                    if [ "$DRY_RUN" = "true" ]; then
-                      log_action "$kind $ns/$name"
-                      return 0
-                    else
-                      log_action "$kind $ns/$name"
-                      kubectl delete "$kind" -n "$ns" "$name" --ignore-not-found --wait=false
-                    fi
-                  }
-
-                  echo "=============================================="
-                  echo "=== Kubernetes Cleanup Job Started ==="
-                  echo "=== $(date) ==="
-                  echo "=============================================="
-                  echo ""
-                  log_info "Configuration:"
-                  log_info "  DRY_RUN: $DRY_RUN"
-                  log_info "  EXCLUDED_NAMESPACES: $EXCLUDED_NAMESPACES"
-                  log_info "  EXCLUSION_LABEL: $EXCLUSION_LABEL"
-                  echo ""
-
-                  # ============================================
-                  # 1. SUCCEEDED PODS
-                  # ============================================
-                  if [ "$CLEANUP_SUCCEEDED_PODS" = "true" ]; then
-                    log_info "--- Cleaning Succeeded/Completed Pods ---"
-                    kubectl get pods -A --field-selector=status.phase==Succeeded -o json 2>/dev/null | \
-                      jq -r '.items[] | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
-                      while read ns name; do
-                        [ -z "$ns" ] || [ -z "$name" ] && continue
-                        if is_excluded_namespace "$ns"; then
-                          log_warn "Skipping (excluded ns): $ns/$name"
-                          continue
-                        fi
-                        if has_exclusion_label "$ns" "$name"; then
-                          log_warn "Skipping (exclusion label): $ns/$name"
-                          continue
-                        fi
-                        delete_resource "pod" "$ns" "$name"
-                        SUCCEEDED_COUNT=$((SUCCEEDED_COUNT + 1))
-                      done
-                    log_info "Succeeded pods processed: $SUCCEEDED_COUNT"
-                  fi
-                  echo ""
-
-                  # ============================================
-                  # 2. FAILED PODS (older than threshold)
-                  # ============================================
-                  if [ "$CLEANUP_FAILED_PODS" = "true" ]; then
-                    log_info "--- Cleaning Failed Pods (>${FAILED_POD_AGE_THRESHOLD}s old) ---"
-                    kubectl get pods -A --field-selector=status.phase==Failed -o json 2>/dev/null | \
-                      jq -r --argjson threshold "$FAILED_POD_AGE_THRESHOLD" \
-                        '.items[] | select((now - (.status.startTime | fromdateiso8601 // 0)) > $threshold) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
-                      while read ns name; do
-                        [ -z "$ns" ] || [ -z "$name" ] && continue
-                        if is_excluded_namespace "$ns"; then continue; fi
-                        if has_exclusion_label "$ns" "$name"; then continue; fi
-                        delete_resource "pod" "$ns" "$name"
-                        FAILED_COUNT=$((FAILED_COUNT + 1))
-                      done
-                    log_info "Failed pods processed: $FAILED_COUNT"
-                  fi
-                  echo ""
-
-                  # ============================================
-                  # 3. EVICTED PODS
-                  # ============================================
-                  if [ "$CLEANUP_EVICTED_PODS" = "true" ]; then
-                    log_info "--- Cleaning Evicted Pods (>${EVICTED_POD_AGE_THRESHOLD}s old) ---"
-                    kubectl get pods -A -o json 2>/dev/null | \
-                      jq -r --argjson threshold "$EVICTED_POD_AGE_THRESHOLD" \
-                        '.items[] | select(.status.reason == "Evicted") | select((now - (.status.startTime | fromdateiso8601 // 0)) > $threshold) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
-                      while read ns name; do
-                        [ -z "$ns" ] || [ -z "$name" ] && continue
-                        if is_excluded_namespace "$ns"; then continue; fi
-                        if has_exclusion_label "$ns" "$name"; then continue; fi
-                        delete_resource "pod" "$ns" "$name"
-                        EVICTED_COUNT=$((EVICTED_COUNT + 1))
-                      done
-                    log_info "Evicted pods processed: $EVICTED_COUNT"
-                  fi
-                  echo ""
-
-                  # ============================================
-                  # 4. IMAGEPULLBACKOFF PODS
-                  # ============================================
-                  if [ "$CLEANUP_IMAGEPULL_PODS" = "true" ]; then
-                    log_info "--- Cleaning ImagePullBackOff Pods (>${IMAGEPULL_AGE_THRESHOLD}s old) ---"
-                    kubectl get pods -A -o json 2>/dev/null | \
-                      jq -r --argjson threshold "$IMAGEPULL_AGE_THRESHOLD" \
-                        '.items[] | select(.status.containerStatuses[]?.state.waiting.reason == "ImagePullBackOff" or .status.containerStatuses[]?.state.waiting.reason == "ErrImagePull") | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $threshold) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
-                      sort -u | \
-                      while read ns name; do
-                        [ -z "$ns" ] || [ -z "$name" ] && continue
-                        if is_excluded_namespace "$ns"; then continue; fi
-                        if has_exclusion_label "$ns" "$name"; then continue; fi
-                        delete_resource "pod" "$ns" "$name"
-                        IMAGEPULL_COUNT=$((IMAGEPULL_COUNT + 1))
-                      done
-                    log_info "ImagePullBackOff pods processed: $IMAGEPULL_COUNT"
-                  fi
-                  echo ""
-
-                  # ============================================
-                  # 5. CRASHLOOPBACKOFF PODS (disabled by default)
-                  # ============================================
-                  if [ "$CLEANUP_CRASHLOOP_PODS" = "true" ]; then
-                    log_info "--- Cleaning CrashLoopBackOff Pods (>${CRASHLOOP_AGE_THRESHOLD}s old, >${CRASHLOOP_RESTART_THRESHOLD} restarts) ---"
-                    kubectl get pods -A -o json 2>/dev/null | \
-                      jq -r --argjson threshold "$CRASHLOOP_AGE_THRESHOLD" --argjson restarts "$CRASHLOOP_RESTART_THRESHOLD" \
-                        '.items[] | select(.status.containerStatuses[]?.state.waiting.reason == "CrashLoopBackOff") | select(.status.containerStatuses[].restartCount > $restarts) | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $threshold) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
-                      sort -u | \
-                      while read ns name; do
-                        [ -z "$ns" ] || [ -z "$name" ] && continue
-                        if is_excluded_namespace "$ns"; then continue; fi
-                        if has_exclusion_label "$ns" "$name"; then continue; fi
-                        delete_resource "pod" "$ns" "$name"
-                        CRASHLOOP_COUNT=$((CRASHLOOP_COUNT + 1))
-                      done
-                    log_info "CrashLoopBackOff pods processed: $CRASHLOOP_COUNT"
-                  else
-                    log_info "--- Skipping CrashLoopBackOff cleanup (disabled) ---"
-                  fi
-                  echo ""
-
-                  # ============================================
-                  # 6. COMPLETED JOBS
-                  # ============================================
-                  if [ "$CLEANUP_COMPLETED_JOBS" = "true" ]; then
-                    log_info "--- Cleaning Completed Jobs (>${COMPLETED_JOB_AGE_THRESHOLD}s old) ---"
-                    kubectl get jobs -A -o json 2>/dev/null | \
-                      jq -r --argjson threshold "$COMPLETED_JOB_AGE_THRESHOLD" \
-                        '.items[] | select(.status.succeeded >= 1 or .status.failed >= 1) | select(.status.completionTime != null) | select((now - (.status.completionTime | fromdateiso8601 // 0)) > $threshold) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
-                      while read ns name; do
-                        [ -z "$ns" ] || [ -z "$name" ] && continue
-                        if is_excluded_namespace "$ns"; then continue; fi
-                        if has_exclusion_label "$ns" "$name" "job"; then continue; fi
-                        # Skip jobs owned by CronJobs (let CronJob handle cleanup)
-                        owner=$(kubectl get job -n "$ns" "$name" -o jsonpath='{.metadata.ownerReferences[0].kind}' 2>/dev/null || echo "")
-                        if [ "$owner" = "CronJob" ]; then
-                          log_warn "Skipping (owned by CronJob): $ns/$name"
-                          continue
-                        fi
-                        delete_resource "job" "$ns" "$name"
-                        JOBS_COUNT=$((JOBS_COUNT + 1))
-                      done
-                    log_info "Completed jobs processed: $JOBS_COUNT"
-                  fi
-                  echo ""
-
-                  # ============================================
-                  # 7. ORPHANED REPLICASETS (0 replicas, old)
-                  # ============================================
-                  if [ "$CLEANUP_ORPHAN_REPLICASETS" = "true" ]; then
-                    log_info "--- Cleaning Orphaned ReplicaSets (0 replicas, >${ORPHAN_RS_AGE_THRESHOLD}s old) ---"
-                    kubectl get replicasets -A -o json 2>/dev/null | \
-                      jq -r --argjson threshold "$ORPHAN_RS_AGE_THRESHOLD" \
-                        '.items[] | select(.spec.replicas == 0 and .status.replicas == 0) | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $threshold) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | \
-                      while read ns name; do
-                        [ -z "$ns" ] || [ -z "$name" ] && continue
-                        if is_excluded_namespace "$ns"; then continue; fi
-                        if has_exclusion_label "$ns" "$name" "replicaset"; then continue; fi
-                        delete_resource "replicaset" "$ns" "$name"
-                        RS_COUNT=$((RS_COUNT + 1))
-                      done
-                    log_info "Orphaned ReplicaSets processed: $RS_COUNT"
-                  fi
-                  echo ""
-
-                  # ============================================
-                  # SUMMARY & METRICS
-                  # ============================================
-                  END_TIME=$(date +%s)
-                  DURATION=$((END_TIME - START_TIME))
-                  TOTAL_CLEANED=$((SUCCEEDED_COUNT + FAILED_COUNT + EVICTED_COUNT + IMAGEPULL_COUNT + CRASHLOOP_COUNT + JOBS_COUNT + RS_COUNT))
-
-                  echo "=============================================="
-                  echo "=== Cleanup Job Summary ==="
-                  echo "=============================================="
-                  echo "Duration: ${DURATION}s"
+                  echo "=== Kubernetes Cleanup Job - $(date) ==="
                   echo "Mode: $([ "$DRY_RUN" = "true" ] && echo "DRY-RUN" || echo "LIVE")"
                   echo ""
-                  echo "Resources processed:"
-                  echo "  Succeeded pods:      $SUCCEEDED_COUNT"
-                  echo "  Failed pods:         $FAILED_COUNT"
-                  echo "  Evicted pods:        $EVICTED_COUNT"
-                  echo "  ImagePullBackOff:    $IMAGEPULL_COUNT"
-                  echo "  CrashLoopBackOff:    $CRASHLOOP_COUNT"
-                  echo "  Completed jobs:      $JOBS_COUNT"
-                  echo "  Orphaned ReplicaSets: $RS_COUNT"
-                  echo "  ─────────────────────────"
-                  echo "  TOTAL:               $TOTAL_CLEANED"
-                  echo ""
 
-                  # Push metrics to Pushgateway
-                  log_info "Pushing metrics to Pushgateway..."
-                  cat <<METRICS | curl --data-binary @- "${PUSHGATEWAY_URL}/metrics/job/pod_cleanup/instance/talos00" 2>/dev/null && log_info "Metrics pushed successfully" || log_warn "Failed to push metrics"
-                  # HELP pod_cleanup_last_run_timestamp_seconds Unix timestamp of the last cleanup run
-                  # TYPE pod_cleanup_last_run_timestamp_seconds gauge
+                  # 1. Succeeded Pods
+                  SUCCEEDED=0
+                  if [ "$CLEANUP_SUCCEEDED_PODS" = "true" ]; then
+                    log_info "Cleaning Succeeded Pods..."
+                    kubectl get pods -A --field-selector=status.phase==Succeeded -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' > "$CANDIDATES" 2>/dev/null || true
+                    SUCCEEDED=$(cleanup_resources pod)
+                    log_info "Succeeded pods: $SUCCEEDED"
+                  fi
+
+                  # 2. Failed Pods
+                  FAILED=0
+                  if [ "$CLEANUP_FAILED_PODS" = "true" ]; then
+                    log_info "Cleaning Failed Pods (>${FAILED_POD_AGE_THRESHOLD}s)..."
+                    kubectl get pods -A --field-selector=status.phase==Failed -o json 2>/dev/null | \
+                      jq -r --argjson t "$FAILED_POD_AGE_THRESHOLD" '.items[] | select((now - (.status.startTime | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' > "$CANDIDATES" 2>/dev/null || true
+                    FAILED=$(cleanup_resources pod)
+                    log_info "Failed pods: $FAILED"
+                  fi
+
+                  # 3. Evicted Pods
+                  EVICTED=0
+                  if [ "$CLEANUP_EVICTED_PODS" = "true" ]; then
+                    log_info "Cleaning Evicted Pods..."
+                    kubectl get pods -A -o json 2>/dev/null | \
+                      jq -r --argjson t "$EVICTED_POD_AGE_THRESHOLD" '.items[] | select(.status.reason == "Evicted") | select((now - (.status.startTime | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' > "$CANDIDATES" 2>/dev/null || true
+                    EVICTED=$(cleanup_resources pod)
+                    log_info "Evicted pods: $EVICTED"
+                  fi
+
+                  # 4. ImagePullBackOff Pods
+                  IMAGEPULL=0
+                  if [ "$CLEANUP_IMAGEPULL_PODS" = "true" ]; then
+                    log_info "Cleaning ImagePullBackOff Pods..."
+                    kubectl get pods -A -o json 2>/dev/null | \
+                      jq -r --argjson t "$IMAGEPULL_AGE_THRESHOLD" '.items[] | select(.status.containerStatuses[]?.state.waiting.reason == "ImagePullBackOff" or .status.containerStatuses[]?.state.waiting.reason == "ErrImagePull") | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | sort -u > "$CANDIDATES" || true
+                    IMAGEPULL=$(cleanup_resources pod)
+                    log_info "ImagePullBackOff pods: $IMAGEPULL"
+                  fi
+
+                  # 5. CrashLoopBackOff Pods (disabled by default)
+                  CRASHLOOP=0
+                  if [ "$CLEANUP_CRASHLOOP_PODS" = "true" ]; then
+                    log_info "Cleaning CrashLoopBackOff Pods..."
+                    kubectl get pods -A -o json 2>/dev/null | \
+                      jq -r --argjson t "$CRASHLOOP_AGE_THRESHOLD" --argjson r "$CRASHLOOP_RESTART_THRESHOLD" '.items[] | select(.status.containerStatuses[]?.state.waiting.reason == "CrashLoopBackOff") | select(.status.containerStatuses[].restartCount > $r) | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | sort -u > "$CANDIDATES" || true
+                    CRASHLOOP=$(cleanup_resources pod)
+                    log_info "CrashLoopBackOff pods: $CRASHLOOP"
+                  fi
+
+                  # 6. Completed Jobs (not owned by CronJobs)
+                  JOBS=0
+                  if [ "$CLEANUP_COMPLETED_JOBS" = "true" ]; then
+                    log_info "Cleaning Completed Jobs..."
+                    kubectl get jobs -A -o json 2>/dev/null | \
+                      jq -r --argjson t "$COMPLETED_JOB_AGE_THRESHOLD" '.items[] | select(.status.succeeded >= 1 or .status.failed >= 1) | select(.status.completionTime != null) | select((now - (.status.completionTime | fromdateiso8601 // 0)) > $t) | select(.metadata.ownerReferences == null or (.metadata.ownerReferences | map(.kind) | contains(["CronJob"]) | not)) | "\(.metadata.namespace) \(.metadata.name)"' > "$CANDIDATES" 2>/dev/null || true
+                    JOBS=$(cleanup_resources job)
+                    log_info "Completed jobs: $JOBS"
+                  fi
+
+                  # 7. Orphaned ReplicaSets
+                  REPLICASETS=0
+                  if [ "$CLEANUP_ORPHAN_REPLICASETS" = "true" ]; then
+                    log_info "Cleaning Orphaned ReplicaSets..."
+                    kubectl get replicasets -A -o json 2>/dev/null | \
+                      jq -r --argjson t "$ORPHAN_RS_AGE_THRESHOLD" '.items[] | select(.spec.replicas == 0 and .status.replicas == 0) | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' > "$CANDIDATES" 2>/dev/null || true
+                    REPLICASETS=$(cleanup_resources replicaset)
+                    log_info "Orphaned ReplicaSets: $REPLICASETS"
+                  fi
+
+                  # Summary
+                  END_TIME=$(date +%s)
+                  DURATION=$((END_TIME - START_TIME))
+                  TOTAL=$((SUCCEEDED + FAILED + EVICTED + IMAGEPULL + CRASHLOOP + JOBS + REPLICASETS))
+
+                  echo ""
+                  echo "=== Summary (${DURATION}s) ==="
+                  echo "Succeeded:$SUCCEEDED Failed:$FAILED Evicted:$EVICTED ImagePull:$IMAGEPULL CrashLoop:$CRASHLOOP Jobs:$JOBS RS:$REPLICASETS"
+                  echo "TOTAL: $TOTAL"
+
+                  # Push metrics
+                  cat <<EOF | curl -s --data-binary @- "${PUSHGATEWAY_URL}/metrics/job/pod_cleanup/instance/talos00" && echo "Metrics pushed" || echo "Metrics push failed"
                   pod_cleanup_last_run_timestamp_seconds $END_TIME
-                  # HELP pod_cleanup_duration_seconds Duration of the cleanup job in seconds
-                  # TYPE pod_cleanup_duration_seconds gauge
                   pod_cleanup_duration_seconds $DURATION
-                  # HELP pod_cleanup_dry_run Whether the job ran in dry-run mode (1) or live mode (0)
-                  # TYPE pod_cleanup_dry_run gauge
                   pod_cleanup_dry_run $([ "$DRY_RUN" = "true" ] && echo 1 || echo 0)
-                  # HELP pod_cleanup_resources_total Total resources processed in the last run
-                  # TYPE pod_cleanup_resources_total gauge
-                  pod_cleanup_resources_total $TOTAL_CLEANED
-                  # HELP pod_cleanup_succeeded_pods Number of succeeded pods cleaned
-                  # TYPE pod_cleanup_succeeded_pods gauge
-                  pod_cleanup_succeeded_pods $SUCCEEDED_COUNT
-                  # HELP pod_cleanup_failed_pods Number of failed pods cleaned
-                  # TYPE pod_cleanup_failed_pods gauge
-                  pod_cleanup_failed_pods $FAILED_COUNT
-                  # HELP pod_cleanup_evicted_pods Number of evicted pods cleaned
-                  # TYPE pod_cleanup_evicted_pods gauge
-                  pod_cleanup_evicted_pods $EVICTED_COUNT
-                  # HELP pod_cleanup_imagepull_pods Number of ImagePullBackOff pods cleaned
-                  # TYPE pod_cleanup_imagepull_pods gauge
-                  pod_cleanup_imagepull_pods $IMAGEPULL_COUNT
-                  # HELP pod_cleanup_crashloop_pods Number of CrashLoopBackOff pods cleaned
-                  # TYPE pod_cleanup_crashloop_pods gauge
-                  pod_cleanup_crashloop_pods $CRASHLOOP_COUNT
-                  # HELP pod_cleanup_completed_jobs Number of completed jobs cleaned
-                  # TYPE pod_cleanup_completed_jobs gauge
-                  pod_cleanup_completed_jobs $JOBS_COUNT
-                  # HELP pod_cleanup_orphan_replicasets Number of orphaned ReplicaSets cleaned
-                  # TYPE pod_cleanup_orphan_replicasets gauge
-                  pod_cleanup_orphan_replicasets $RS_COUNT
-                  # HELP pod_cleanup_job_success Whether the cleanup job succeeded (1) or failed (0)
-                  # TYPE pod_cleanup_job_success gauge
+                  pod_cleanup_resources_total $TOTAL
+                  pod_cleanup_succeeded_pods $SUCCEEDED
+                  pod_cleanup_failed_pods $FAILED
+                  pod_cleanup_evicted_pods $EVICTED
+                  pod_cleanup_imagepull_pods $IMAGEPULL
+                  pod_cleanup_crashloop_pods $CRASHLOOP
+                  pod_cleanup_completed_jobs $JOBS
+                  pod_cleanup_orphan_replicasets $REPLICASETS
                   pod_cleanup_job_success 1
-                  METRICS
-
-                  echo ""
-                  log_info "Cleanup job completed successfully"
+                  EOF
               resources:
                 requests:
                   cpu: 50m
