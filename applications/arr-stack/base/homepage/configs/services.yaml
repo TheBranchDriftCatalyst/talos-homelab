@@ -134,33 +134,38 @@
         description: Metrics Visualization
         widget:
           type: grafana
-          url: http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local
+          url: http://grafana-service.monitoring.svc.cluster.local:3000
           username: '{{HOMEPAGE_VAR_GRAFANA_USER}}'
           password: '{{HOMEPAGE_VAR_GRAFANA_PASS}}'
           fields: ['dashboards', 'datasources', 'totalalerts']
 
-    - Prometheus:
+    - Mimir:
         icon: prometheus.png
-        href: http://prometheus.talos00
-        description: Metrics Collection
+        href: http://grafana.talos00/explore?orgId=1&left=%7B%22datasource%22:%22mimir%22%7D
+        description: Metrics (Prometheus-compatible)
         widget:
           type: prometheus
-          url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          url: http://mimir-nginx.monitoring.svc.cluster.local:80/prometheus
           fields: ['targets_up', 'targets_down', 'targets_total']
 
     - Alertmanager:
         icon: alertmanager.png
-        href: http://alertmanager.talos00
-        description: Alert Management
-        server: talos-node
-        container: alertmanager
+        href: http://grafana.talos00/alerting/list
+        description: Alert Management (via Grafana)
+        widget:
+          type: customapi
+          url: http://mimir-alertmanager.monitoring.svc.cluster.local:8080/alertmanager/api/v2/status
+          mappings:
+            - field: uptime
+              label: Uptime
+            - field: cluster.status
+              label: Status
 
     - Graylog:
         icon: graylog.png
         href: http://graylog.talos00
-        description: Log Management
-        server: talos-node
-        container: graylog
+        description: Log Management (Disabled)
+        # NOTE: Graylog is currently scaled to 0
 
 # Testing & Admin Tools
 - Testing Tools:
