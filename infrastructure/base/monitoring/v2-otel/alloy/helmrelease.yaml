@@ -598,6 +598,41 @@ spec:
           }
 
           // ----------------------------------------
+          // Pushgateway Metrics (batch job metrics)
+          // ----------------------------------------
+          discovery.relabel "pushgateway" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only pushgateway service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "prometheus-pushgateway"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "pushgateway" {
+            job_name        = "pushgateway"
+            targets         = discovery.relabel.pushgateway.output
+            scrape_interval = "60s"
+            // Honor labels from pushed metrics (preserves job="pod_cleanup" etc)
+            honor_labels    = true
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
           // Service Monitors (prometheus.io annotated services)
           // ----------------------------------------
           discovery.relabel "service_monitors" {
@@ -619,6 +654,12 @@ spec:
             rule {
               source_labels = ["__meta_kubernetes_service_name"]
               regex         = "hubble-metrics"
+              action        = "drop"
+            }
+            // Exclude pushgateway (handled separately with honor_labels)
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "prometheus-pushgateway"
               action        = "drop"
             }
             // Use custom port if specified
