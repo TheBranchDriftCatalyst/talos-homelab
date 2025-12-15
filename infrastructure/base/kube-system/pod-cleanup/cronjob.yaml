@@ -1,5 +1,4 @@
 ---
-# ConfigMap for pod-cleanup configuration
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -24,8 +23,169 @@ data:
   CLEANUP_COMPLETED_JOBS: "true"
   CLEANUP_ORPHAN_REPLICASETS: "true"
   EXCLUDED_NAMESPACES: "kube-system,kube-public,kube-node-lease"
-  EXCLUSION_LABEL: "cleanup.kubernetes.io/ignore"
   CRASHLOOP_RESTART_THRESHOLD: "10"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-cleanup-script
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: pod-cleanup
+    app.kubernetes.io/component: maintenance
+data:
+  cleanup.py: |
+    #!/usr/bin/env python3
+    """Kubernetes resource cleanup script with metrics."""
+    import json, os, subprocess, time
+    from datetime import datetime, timezone
+    from urllib.request import urlopen, Request
+    from urllib.error import URLError
+
+    DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+    EXCLUDED_NS = set(os.environ.get("EXCLUDED_NAMESPACES", "kube-system,kube-public,kube-node-lease").split(","))
+    PUSHGATEWAY = os.environ.get("PUSHGATEWAY_URL", "http://prometheus-pushgateway.monitoring.svc.cluster.local:9091")
+    FAILED_AGE = int(os.environ.get("FAILED_POD_AGE_THRESHOLD", "3600"))
+    EVICTED_AGE = int(os.environ.get("EVICTED_POD_AGE_THRESHOLD", "1800"))
+    IMAGEPULL_AGE = int(os.environ.get("IMAGEPULL_AGE_THRESHOLD", "7200"))
+    CRASHLOOP_AGE = int(os.environ.get("CRASHLOOP_AGE_THRESHOLD", "14400"))
+    CRASHLOOP_RESTARTS = int(os.environ.get("CRASHLOOP_RESTART_THRESHOLD", "10"))
+    JOB_AGE = int(os.environ.get("COMPLETED_JOB_AGE_THRESHOLD", "86400"))
+    RS_AGE = int(os.environ.get("ORPHAN_RS_AGE_THRESHOLD", "86400"))
+    DO_SUCCEEDED = os.environ.get("CLEANUP_SUCCEEDED_PODS", "true").lower() == "true"
+    DO_FAILED = os.environ.get("CLEANUP_FAILED_PODS", "true").lower() == "true"
+    DO_EVICTED = os.environ.get("CLEANUP_EVICTED_PODS", "true").lower() == "true"
+    DO_IMAGEPULL = os.environ.get("CLEANUP_IMAGEPULL_PODS", "true").lower() == "true"
+    DO_CRASHLOOP = os.environ.get("CLEANUP_CRASHLOOP_PODS", "false").lower() == "true"
+    DO_JOBS = os.environ.get("CLEANUP_COMPLETED_JOBS", "true").lower() == "true"
+    DO_RS = os.environ.get("CLEANUP_ORPHAN_REPLICASETS", "true").lower() == "true"
+
+    def kubectl_json(*args):
+        r = subprocess.run(["kubectl"] + list(args), capture_output=True, text=True)
+        return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"items": []}
+
+    def age(ts):
+        if not ts: return float('inf')
+        try: return time.time() - datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+        except: return float('inf')
+
+    def delete(kind, ns, name):
+        if ns in EXCLUDED_NS: return False
+        if DRY_RUN:
+            print(f"[DRY-RUN] Would delete {kind} {ns}/{name}")
+            return True
+        r = subprocess.run(["kubectl", "delete", kind, "-n", ns, name, "--ignore-not-found", "--wait=false"], capture_output=True)
+        if r.returncode == 0:
+            print(f"[DELETE] {kind} {ns}/{name}")
+            return True
+        return False
+
+    def clean_succeeded():
+        if not DO_SUCCEEDED: return 0
+        print("[INFO] Cleaning Succeeded Pods...")
+        data = kubectl_json("get", "pods", "-A", "--field-selector=status.phase==Succeeded", "-o", "json")
+        c = sum(1 for p in data.get("items", []) if delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]))
+        print(f"[INFO] Succeeded pods: {c}")
+        return c
+
+    def clean_failed():
+        if not DO_FAILED: return 0
+        print(f"[INFO] Cleaning Failed Pods (>{FAILED_AGE}s)...")
+        data = kubectl_json("get", "pods", "-A", "--field-selector=status.phase==Failed", "-o", "json")
+        c = sum(1 for p in data.get("items", []) if age(p.get("status", {}).get("startTime")) > FAILED_AGE and delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]))
+        print(f"[INFO] Failed pods: {c}")
+        return c
+
+    def clean_evicted():
+        if not DO_EVICTED: return 0
+        print("[INFO] Cleaning Evicted Pods...")
+        data = kubectl_json("get", "pods", "-A", "-o", "json")
+        c = sum(1 for p in data.get("items", []) if p.get("status", {}).get("reason") == "Evicted" and age(p.get("status", {}).get("startTime")) > EVICTED_AGE and delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]))
+        print(f"[INFO] Evicted pods: {c}")
+        return c
+
+    def clean_imagepull():
+        if not DO_IMAGEPULL: return 0
+        print("[INFO] Cleaning ImagePullBackOff Pods...")
+        data = kubectl_json("get", "pods", "-A", "-o", "json")
+        c = 0
+        for p in data.get("items", []):
+            for cs in p.get("status", {}).get("containerStatuses", []):
+                if cs.get("state", {}).get("waiting", {}).get("reason") in ("ImagePullBackOff", "ErrImagePull"):
+                    if age(p["metadata"].get("creationTimestamp")) > IMAGEPULL_AGE:
+                        if delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]): c += 1
+                    break
+        print(f"[INFO] ImagePullBackOff pods: {c}")
+        return c
+
+    def clean_crashloop():
+        if not DO_CRASHLOOP: return 0
+        print("[INFO] Cleaning CrashLoopBackOff Pods...")
+        data = kubectl_json("get", "pods", "-A", "-o", "json")
+        c = 0
+        for p in data.get("items", []):
+            for cs in p.get("status", {}).get("containerStatuses", []):
+                if cs.get("state", {}).get("waiting", {}).get("reason") == "CrashLoopBackOff":
+                    if cs.get("restartCount", 0) > CRASHLOOP_RESTARTS and age(p["metadata"].get("creationTimestamp")) > CRASHLOOP_AGE:
+                        if delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]): c += 1
+                    break
+        print(f"[INFO] CrashLoopBackOff pods: {c}")
+        return c
+
+    def clean_jobs():
+        if not DO_JOBS: return 0
+        print("[INFO] Cleaning Completed Jobs...")
+        data = kubectl_json("get", "jobs", "-A", "-o", "json")
+        c = 0
+        for j in data.get("items", []):
+            s = j.get("status", {})
+            if not s.get("completionTime"): continue
+            if s.get("succeeded", 0) < 1 and s.get("failed", 0) < 1: continue
+            if age(s.get("completionTime")) <= JOB_AGE: continue
+            if any(o.get("kind") == "CronJob" for o in j.get("metadata", {}).get("ownerReferences", [])): continue
+            if delete("job", j["metadata"]["namespace"], j["metadata"]["name"]): c += 1
+        print(f"[INFO] Completed jobs: {c}")
+        return c
+
+    def clean_rs():
+        if not DO_RS: return 0
+        print("[INFO] Cleaning Orphaned ReplicaSets...")
+        data = kubectl_json("get", "replicasets", "-A", "-o", "json")
+        c = 0
+        for rs in data.get("items", []):
+            if rs.get("spec", {}).get("replicas", 1) == 0 and rs.get("status", {}).get("replicas", 1) == 0:
+                if age(rs["metadata"].get("creationTimestamp")) > RS_AGE:
+                    if delete("replicaset", rs["metadata"]["namespace"], rs["metadata"]["name"]): c += 1
+        print(f"[INFO] Orphaned ReplicaSets: {c}")
+        return c
+
+    def push_metrics(m):
+        try:
+            body = "\n".join(f"{k} {v}" for k, v in m.items()) + "\n"
+            req = Request(f"{PUSHGATEWAY}/metrics/job/pod_cleanup/instance/talos00", data=body.encode(), method="POST")
+            req.add_header("Content-Type", "text/plain")
+            urlopen(req, timeout=10)
+            print("Metrics pushed")
+        except Exception as e:
+            print(f"Metrics push failed: {e}")
+
+    if __name__ == "__main__":
+        start = time.time()
+        print(f"=== Kubernetes Cleanup Job - {datetime.now(timezone.utc).isoformat()} ===")
+        print(f"Mode: {'DRY-RUN' if DRY_RUN else 'LIVE'}\n")
+        succeeded, failed, evicted = clean_succeeded(), clean_failed(), clean_evicted()
+        imagepull, crashloop = clean_imagepull(), clean_crashloop()
+        jobs, rs = clean_jobs(), clean_rs()
+        duration = int(time.time() - start)
+        total = succeeded + failed + evicted + imagepull + crashloop + jobs + rs
+        print(f"\n=== Summary ({duration}s) ===")
+        print(f"Succeeded:{succeeded} Failed:{failed} Evicted:{evicted} ImagePull:{imagepull} CrashLoop:{crashloop} Jobs:{jobs} RS:{rs}")
+        print(f"TOTAL: {total}")
+        push_metrics({"pod_cleanup_last_run_timestamp_seconds": int(time.time()), "pod_cleanup_duration_seconds": duration,
+            "pod_cleanup_dry_run": 1 if DRY_RUN else 0, "pod_cleanup_resources_total": total,
+            "pod_cleanup_succeeded_pods": succeeded, "pod_cleanup_failed_pods": failed, "pod_cleanup_evicted_pods": evicted,
+            "pod_cleanup_imagepull_pods": imagepull, "pod_cleanup_crashloop_pods": crashloop,
+            "pod_cleanup_completed_jobs": jobs, "pod_cleanup_orphan_replicasets": rs, "pod_cleanup_job_success": 1})
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -50,149 +210,37 @@ spec:
         spec:
           serviceAccountName: pod-cleanup
           restartPolicy: OnFailure
+          volumes:
+            - name: script
+              configMap:
+                name: pod-cleanup-script
+                defaultMode: 0755
+            - name: shared
+              emptyDir: {}
+          initContainers:
+            - name: install-kubectl
+              image: bitnami/kubectl:latest
+              command: ["cp", "/opt/bitnami/kubectl/bin/kubectl", "/shared/kubectl"]
+              volumeMounts:
+                - name: shared
+                  mountPath: /shared
           containers:
             - name: cleanup
-              image: bitnami/kubectl:latest
+              image: python:3.11-alpine
               envFrom:
                 - configMapRef:
                     name: pod-cleanup-config
               env:
                 - name: PUSHGATEWAY_URL
                   value: 'http://prometheus-pushgateway.monitoring.svc.cluster.local:9091'
-              command:
-                - /bin/sh
-                - -c
-                - |
-                  set -e
-                  START_TIME=$(date +%s)
-
-                  # Single temp file for candidates
-                  CANDIDATES=$(mktemp)
-                  trap "rm -f $CANDIDATES" EXIT
-
-                  log_info() { echo "[INFO] $1"; }
-                  log_warn() { echo "[WARN] $1"; }
-
-                  is_excluded_ns() {
-                    echo "$EXCLUDED_NAMESPACES" | tr ',' '\n' | grep -qx "$1"
-                  }
-
-                  # Delete resources from candidates file, returns count
-                  cleanup_resources() {
-                    kind=$1
-                    count=0
-                    while IFS=' ' read -r ns name; do
-                      [ -z "$ns" ] || [ -z "$name" ] && continue
-                      is_excluded_ns "$ns" && continue
-                      if [ "$DRY_RUN" = "true" ]; then
-                        echo "[DRY-RUN] Would delete $kind $ns/$name"
-                      else
-                        kubectl delete "$kind" -n "$ns" "$name" --ignore-not-found --wait=false 2>/dev/null && \
-                          echo "[DELETE] $kind $ns/$name"
-                      fi
-                      count=$((count + 1))
-                    done < "$CANDIDATES"
-                    echo $count
-                  }
-
-                  echo "=== Kubernetes Cleanup Job - $(date) ==="
-                  echo "Mode: $([ "$DRY_RUN" = "true" ] && echo "DRY-RUN" || echo "LIVE")"
-                  echo ""
-
-                  # 1. Succeeded Pods
-                  SUCCEEDED=0
-                  if [ "$CLEANUP_SUCCEEDED_PODS" = "true" ]; then
-                    log_info "Cleaning Succeeded Pods..."
-                    kubectl get pods -A --field-selector=status.phase==Succeeded -o jsonpath='{range .items[*]}{.metadata.namespace} {.metadata.name}{"\n"}{end}' > "$CANDIDATES" 2>/dev/null || true
-                    SUCCEEDED=$(cleanup_resources pod)
-                    log_info "Succeeded pods: $SUCCEEDED"
-                  fi
-
-                  # 2. Failed Pods
-                  FAILED=0
-                  if [ "$CLEANUP_FAILED_PODS" = "true" ]; then
-                    log_info "Cleaning Failed Pods (>${FAILED_POD_AGE_THRESHOLD}s)..."
-                    kubectl get pods -A --field-selector=status.phase==Failed -o json 2>/dev/null | \
-                      jq -r --argjson t "$FAILED_POD_AGE_THRESHOLD" '.items[] | select((now - (.status.startTime | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' > "$CANDIDATES" 2>/dev/null || true
-                    FAILED=$(cleanup_resources pod)
-                    log_info "Failed pods: $FAILED"
-                  fi
-
-                  # 3. Evicted Pods
-                  EVICTED=0
-                  if [ "$CLEANUP_EVICTED_PODS" = "true" ]; then
-                    log_info "Cleaning Evicted Pods..."
-                    kubectl get pods -A -o json 2>/dev/null | \
-                      jq -r --argjson t "$EVICTED_POD_AGE_THRESHOLD" '.items[] | select(.status.reason == "Evicted") | select((now - (.status.startTime | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' > "$CANDIDATES" 2>/dev/null || true
-                    EVICTED=$(cleanup_resources pod)
-                    log_info "Evicted pods: $EVICTED"
-                  fi
-
-                  # 4. ImagePullBackOff Pods
-                  IMAGEPULL=0
-                  if [ "$CLEANUP_IMAGEPULL_PODS" = "true" ]; then
-                    log_info "Cleaning ImagePullBackOff Pods..."
-                    kubectl get pods -A -o json 2>/dev/null | \
-                      jq -r --argjson t "$IMAGEPULL_AGE_THRESHOLD" '.items[] | select(.status.containerStatuses[]?.state.waiting.reason == "ImagePullBackOff" or .status.containerStatuses[]?.state.waiting.reason == "ErrImagePull") | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | sort -u > "$CANDIDATES" || true
-                    IMAGEPULL=$(cleanup_resources pod)
-                    log_info "ImagePullBackOff pods: $IMAGEPULL"
-                  fi
-
-                  # 5. CrashLoopBackOff Pods (disabled by default)
-                  CRASHLOOP=0
-                  if [ "$CLEANUP_CRASHLOOP_PODS" = "true" ]; then
-                    log_info "Cleaning CrashLoopBackOff Pods..."
-                    kubectl get pods -A -o json 2>/dev/null | \
-                      jq -r --argjson t "$CRASHLOOP_AGE_THRESHOLD" --argjson r "$CRASHLOOP_RESTART_THRESHOLD" '.items[] | select(.status.containerStatuses[]?.state.waiting.reason == "CrashLoopBackOff") | select(.status.containerStatuses[].restartCount > $r) | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null | sort -u > "$CANDIDATES" || true
-                    CRASHLOOP=$(cleanup_resources pod)
-                    log_info "CrashLoopBackOff pods: $CRASHLOOP"
-                  fi
-
-                  # 6. Completed Jobs (not owned by CronJobs)
-                  JOBS=0
-                  if [ "$CLEANUP_COMPLETED_JOBS" = "true" ]; then
-                    log_info "Cleaning Completed Jobs..."
-                    kubectl get jobs -A -o json 2>/dev/null | \
-                      jq -r --argjson t "$COMPLETED_JOB_AGE_THRESHOLD" '.items[] | select(.status.succeeded >= 1 or .status.failed >= 1) | select(.status.completionTime != null) | select((now - (.status.completionTime | fromdateiso8601 // 0)) > $t) | select(.metadata.ownerReferences == null or (.metadata.ownerReferences | map(.kind) | contains(["CronJob"]) | not)) | "\(.metadata.namespace) \(.metadata.name)"' > "$CANDIDATES" 2>/dev/null || true
-                    JOBS=$(cleanup_resources job)
-                    log_info "Completed jobs: $JOBS"
-                  fi
-
-                  # 7. Orphaned ReplicaSets
-                  REPLICASETS=0
-                  if [ "$CLEANUP_ORPHAN_REPLICASETS" = "true" ]; then
-                    log_info "Cleaning Orphaned ReplicaSets..."
-                    kubectl get replicasets -A -o json 2>/dev/null | \
-                      jq -r --argjson t "$ORPHAN_RS_AGE_THRESHOLD" '.items[] | select(.spec.replicas == 0 and .status.replicas == 0) | select((now - (.metadata.creationTimestamp | fromdateiso8601 // 0)) > $t) | "\(.metadata.namespace) \(.metadata.name)"' > "$CANDIDATES" 2>/dev/null || true
-                    REPLICASETS=$(cleanup_resources replicaset)
-                    log_info "Orphaned ReplicaSets: $REPLICASETS"
-                  fi
-
-                  # Summary
-                  END_TIME=$(date +%s)
-                  DURATION=$((END_TIME - START_TIME))
-                  TOTAL=$((SUCCEEDED + FAILED + EVICTED + IMAGEPULL + CRASHLOOP + JOBS + REPLICASETS))
-
-                  echo ""
-                  echo "=== Summary (${DURATION}s) ==="
-                  echo "Succeeded:$SUCCEEDED Failed:$FAILED Evicted:$EVICTED ImagePull:$IMAGEPULL CrashLoop:$CRASHLOOP Jobs:$JOBS RS:$REPLICASETS"
-                  echo "TOTAL: $TOTAL"
-
-                  # Push metrics
-                  cat <<EOF | curl -s --data-binary @- "${PUSHGATEWAY_URL}/metrics/job/pod_cleanup/instance/talos00" && echo "Metrics pushed" || echo "Metrics push failed"
-                  pod_cleanup_last_run_timestamp_seconds $END_TIME
-                  pod_cleanup_duration_seconds $DURATION
-                  pod_cleanup_dry_run $([ "$DRY_RUN" = "true" ] && echo 1 || echo 0)
-                  pod_cleanup_resources_total $TOTAL
-                  pod_cleanup_succeeded_pods $SUCCEEDED
-                  pod_cleanup_failed_pods $FAILED
-                  pod_cleanup_evicted_pods $EVICTED
-                  pod_cleanup_imagepull_pods $IMAGEPULL
-                  pod_cleanup_crashloop_pods $CRASHLOOP
-                  pod_cleanup_completed_jobs $JOBS
-                  pod_cleanup_orphan_replicasets $REPLICASETS
-                  pod_cleanup_job_success 1
-                  EOF
+                - name: PATH
+                  value: '/shared:/usr/local/bin:/usr/bin:/bin'
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                - name: shared
+                  mountPath: /shared
+              command: ["python3", "/scripts/cleanup.py"]
               resources:
                 requests:
                   cpu: 50m
