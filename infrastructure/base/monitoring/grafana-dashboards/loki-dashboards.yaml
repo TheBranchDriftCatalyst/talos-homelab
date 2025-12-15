@@ -1,14 +1,14 @@
 ---
 # Loki Logging Dashboards for Kubernetes
-# Provides log exploration and analysis via Loki datasource
+# Best-of-breed dashboards for V2 OTEL stack (Mimir + Loki + Alloy)
 
-# Loki Kubernetes Logs Dashboard (ID: 15141)
-# Comprehensive log viewer for Kubernetes workloads
-# Requires: Loki datasource
+# Kubernetes General Dashboard with Mimir+Loki (ID: 21173)
+# Perfect for V2 OTEL stack - uses both Mimir and Loki datasources
+# Features: Drill-down from cluster overview to pod details, metrics + logs
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
-  name: loki-kubernetes-logs
+  name: kubernetes-general-mimir-loki
   namespace: monitoring
 spec:
   folder: "Logging"
@@ -16,7 +16,28 @@ spec:
     matchLabels:
       dashboards: "grafana"
   grafanaCom:
-    id: 15141
+    id: 21173
+  datasources:
+    - inputName: "DS_PROMETHEUS"
+      datasourceName: "Mimir"
+    - inputName: "DS_LOKI"
+      datasourceName: "Loki"
+---
+# Kubernetes Logs from Loki (ID: 18494)
+# Improved log browser with namespace/pod filters and regex search
+# Better than 15141 - works out of the box
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: kubernetes-logs-loki
+  namespace: monitoring
+spec:
+  folder: "Logging"
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  grafanaCom:
+    id: 18494
   datasources:
     - inputName: "DS_LOKI"
       datasourceName: "Loki"
@@ -42,18 +63,13 @@ spec:
     - inputName: "DS_LOKI"
       datasourceName: "Loki"
 ---
-# REMOVED: loki-promtail (ID: 10880)
-# Reason: Promtail deprecated - using Grafana Alloy for log collection
-# REMOVED: fluent-bit (ID: 7752)
-# Reason: Fluent Bit deprecated - using Grafana Alloy for log collection
----
-# Loki Logs Quick Search (ID: 12019)
-# Quick namespace/pod log browser
-# Requires: Loki + Prometheus datasources
+# Logging Dashboard via Loki v2 (ID: 18042)
+# Universal and flexible logging dashboard
+# Good fallback if other dashboards have issues
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
-  name: loki-logs-quick
+  name: logging-loki-v2
   namespace: monitoring
 spec:
   folder: "Logging"
@@ -61,9 +77,7 @@ spec:
     matchLabels:
       dashboards: "grafana"
   grafanaCom:
-    id: 12019
+    id: 18042
   datasources:
     - inputName: "DS_LOKI"
       datasourceName: "Loki"
-    - inputName: "DS_PROMETHEUS"
-      datasourceName: "Mimir"

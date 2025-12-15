@@ -119,8 +119,54 @@ spec:
           // ============================================
           // Cluster Log Collection
           // ============================================
+          // Relabel pod targets to add proper Kubernetes labels for Loki
+          discovery.relabel "pod_logs" {
+            targets = discovery.kubernetes.pods.targets
+
+            // Extract namespace
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            // Extract pod name
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            // Extract container name
+            rule {
+              source_labels = ["__meta_kubernetes_pod_container_name"]
+              target_label  = "container"
+            }
+            // Extract node name
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // Extract app label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app"]
+              target_label  = "app"
+            }
+            // Extract app.kubernetes.io/name label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              target_label  = "app_kubernetes_io_name"
+            }
+            // Add cluster label
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+            // Add job label for consistency
+            rule {
+              target_label = "job"
+              replacement  = "kubernetes-pods"
+            }
+          }
+
           loki.source.kubernetes "pods" {
-            targets    = discovery.kubernetes.pods.targets
+            targets    = discovery.relabel.pod_logs.output
             forward_to = [loki.write.default.receiver]
           }
 
