@@ -1,0 +1,131 @@
+# GPU Encoding Test Job
+# Validates Intel GPU hardware transcoding (VAAPI) is working correctly
+#
+# Usage:
+#   kubectl apply -f gpu-test-job.yaml
+#   kubectl logs job/gpu-encode-test -n intel-device-plugins
+#   kubectl delete job gpu-encode-test -n intel-device-plugins
+#
+# Or use the comparison script:
+#   ./scripts/gpu-vs-cpu-test.sh
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-encode-test
+  namespace: intel-device-plugins
+  labels:
+    app.kubernetes.io/name: gpu-encode-test
+    app.kubernetes.io/component: testing
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gpu-encode-test
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: ffmpeg-test
+          image: linuxserver/ffmpeg:latest
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "=== GPU Encoding Test ==="
+              echo "Node: $(hostname)"
+              echo ""
+
+              echo "=== GPU Device Check ==="
+              ls -la /dev/dri/
+
+              echo ""
+              echo "=== VA-API Info ==="
+              if command -v vainfo &> /dev/null; then
+                vainfo 2>&1 || echo "vainfo not available or failed"
+              else
+                echo "vainfo command not found (normal for this image)"
+              fi
+
+              echo ""
+              echo "=== FFmpeg Hardware Encoders ==="
+              ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "(qsv|vaapi)" || echo "No QSV/VAAPI encoders found"
+
+              echo ""
+              echo "=== Creating 5-second 1080p Test Video ==="
+              ffmpeg -hide_banner -f lavfi \
+                -i testsrc=duration=5:size=1920x1080:rate=30 \
+                -c:v rawvideo -pix_fmt yuv420p /tmp/test_input.yuv
+
+              echo ""
+              echo "=== Testing VAAPI H.264 Encoding ==="
+              START=$(date +%s)
+              if ffmpeg -hide_banner -vaapi_device /dev/dri/renderD128 \
+                -f rawvideo -pix_fmt yuv420p -s 1920x1080 -i /tmp/test_input.yuv \
+                -vf 'format=nv12,hwupload' -c:v h264_vaapi -y /tmp/test_vaapi.mp4 2>&1; then
+                END=$(date +%s)
+                echo ""
+                echo "SUCCESS: VAAPI H.264 encoding works! ($(( END - START ))s)"
+                ls -lh /tmp/test_vaapi.mp4
+              else
+                echo ""
+                echo "FAILED: VAAPI H.264 encoding failed"
+              fi
+
+              echo ""
+              echo "=== Testing VAAPI HEVC Encoding ==="
+              START=$(date +%s)
+              if ffmpeg -hide_banner -vaapi_device /dev/dri/renderD128 \
+                -f rawvideo -pix_fmt yuv420p -s 1920x1080 -i /tmp/test_input.yuv \
+                -vf 'format=nv12,hwupload' -c:v hevc_vaapi -y /tmp/test_hevc.mp4 2>&1; then
+                END=$(date +%s)
+                echo ""
+                echo "SUCCESS: VAAPI HEVC encoding works! ($(( END - START ))s)"
+                ls -lh /tmp/test_hevc.mp4
+              else
+                echo ""
+                echo "FAILED: VAAPI HEVC encoding not supported or failed"
+              fi
+
+              echo ""
+              echo "=== Testing VAAPI AV1 Encoding ==="
+              START=$(date +%s)
+              if ffmpeg -hide_banner -vaapi_device /dev/dri/renderD128 \
+                -f rawvideo -pix_fmt yuv420p -s 1920x1080 -i /tmp/test_input.yuv \
+                -vf 'format=nv12,hwupload' -c:v av1_vaapi -y /tmp/test_av1.mp4 2>&1; then
+                END=$(date +%s)
+                echo ""
+                echo "SUCCESS: VAAPI AV1 encoding works! ($(( END - START ))s)"
+                ls -lh /tmp/test_av1.mp4
+              else
+                echo ""
+                echo "FAILED: VAAPI AV1 encoding not supported (requires Arc GPU)"
+              fi
+
+              echo ""
+              echo "=== GPU Encoding Test Complete ==="
+          resources:
+            limits:
+              gpu.intel.com/i915: "1"
+          securityContext:
+            capabilities:
+              add:
+                - SYS_ADMIN
+          volumeMounts:
+            - name: dri
+              mountPath: /dev/dri
+      volumes:
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: intel.feature.node.kubernetes.io/gpu
+                    operator: In
+                    values:
+                      - "true"
