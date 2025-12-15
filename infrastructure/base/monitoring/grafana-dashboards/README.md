@@ -5,6 +5,7 @@
 Grafana dashboards are managed as **GrafanaDashboard CRDs** via the grafana-operator. Dashboards are imported from grafana.com and automatically provisioned to Grafana instances with the `dashboards: "grafana"` label. No manual dashboard creation needed - just apply YAML and the operator syncs them.
 
 **Key Facts:**
+
 - **Deployment:** `kubectl apply -k infrastructure/base/monitoring/grafana-dashboards/`
 - **Access:** http://grafana.talos00 (admin / prom-operator)
 - **Auto-sync:** 10-minute resync period
@@ -45,89 +46,89 @@ kubectl describe grafanadashboard -n monitoring cilium-agent
 
 ### Cilium CNI & Hubble (5 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| cilium-agent | cilium-dashboards.yaml | 16611 | Cilium agent pods, BPF operations, endpoint management |
-| cilium-operator | cilium-dashboards.yaml | 16612 | Cilium operator, CRD management, IPAM |
-| cilium-hubble | cilium-dashboards.yaml | 16613 | Hubble flow metrics, network observability |
-| cilium-hubble-flows | cilium-dashboards.yaml | 21327 | Detailed flow analysis, L3/L4/L7 traffic |
-| cilium-policy-verdicts | cilium-dashboards.yaml | 21328 | Network policy verdicts, security decisions |
+| Dashboard              | File                   | Grafana.com ID | Description                                            |
+| ---------------------- | ---------------------- | -------------- | ------------------------------------------------------ |
+| cilium-agent           | cilium-dashboards.yaml | 16611          | Cilium agent pods, BPF operations, endpoint management |
+| cilium-operator        | cilium-dashboards.yaml | 16612          | Cilium operator, CRD management, IPAM                  |
+| cilium-hubble          | cilium-dashboards.yaml | 16613          | Hubble flow metrics, network observability             |
+| cilium-hubble-flows    | cilium-dashboards.yaml | 21327          | Detailed flow analysis, L3/L4/L7 traffic               |
+| cilium-policy-verdicts | cilium-dashboards.yaml | 21328          | Network policy verdicts, security decisions            |
 
 ### Kubernetes Core (7 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| k8s-cluster-monitoring | kubernetes-dashboards.yaml | 315 | Overall cluster health, node/pod status |
-| k8s-comprehensive | kubernetes-dashboards.yaml | 15661 | Comprehensive K8s metrics - nodes, pods, resources |
-| k8s-pods-view | kubernetes-dashboards.yaml | 15760 | Pod-level metrics, CPU/memory by pod |
-| k8s-monitoring-overview | kubernetes-dashboards.yaml | 14623 | Quick overview of cluster state |
-| k8s-pvc | kubernetes-dashboards.yaml | 13646 | Persistent volume claims, storage usage |
-| k8s-volumes | kubernetes-dashboards.yaml | 11454 | Volume metrics, PV/PVC details |
-| cluster-overview-dashboard | cluster-overview-dashboard.yaml | Custom | Unified cluster overview with key metrics |
+| Dashboard                  | File                            | Grafana.com ID | Description                                        |
+| -------------------------- | ------------------------------- | -------------- | -------------------------------------------------- |
+| k8s-cluster-monitoring     | kubernetes-dashboards.yaml      | 315            | Overall cluster health, node/pod status            |
+| k8s-comprehensive          | kubernetes-dashboards.yaml      | 15661          | Comprehensive K8s metrics - nodes, pods, resources |
+| k8s-pods-view              | kubernetes-dashboards.yaml      | 15760          | Pod-level metrics, CPU/memory by pod               |
+| k8s-monitoring-overview    | kubernetes-dashboards.yaml      | 14623          | Quick overview of cluster state                    |
+| k8s-pvc                    | kubernetes-dashboards.yaml      | 13646          | Persistent volume claims, storage usage            |
+| k8s-volumes                | kubernetes-dashboards.yaml      | 11454          | Volume metrics, PV/PVC details                     |
+| cluster-overview-dashboard | cluster-overview-dashboard.yaml | Custom         | Unified cluster overview with key metrics          |
 
 ### Infrastructure (2 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| node-exporter-full | infrastructure-dashboards.yaml | 1860 | Node hardware metrics (CPU, memory, disk, network) |
-| postgresql-database | infrastructure-dashboards.yaml | 9628 | PostgreSQL database metrics |
+| Dashboard           | File                           | Grafana.com ID | Description                                        |
+| ------------------- | ------------------------------ | -------------- | -------------------------------------------------- |
+| node-exporter-full  | infrastructure-dashboards.yaml | 1860           | Node hardware metrics (CPU, memory, disk, network) |
+| postgresql-database | infrastructure-dashboards.yaml | 9628           | PostgreSQL database metrics                        |
 
 ### Traefik Ingress (2 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| traefik-services | traefik-dashboards.yaml | 17347 | Traefik service metrics, request rates |
-| traefik-v2-alt | traefik-dashboards.yaml | 4475 | Alternative Traefik v2 dashboard |
+| Dashboard        | File                    | Grafana.com ID | Description                            |
+| ---------------- | ----------------------- | -------------- | -------------------------------------- |
+| traefik-services | traefik-dashboards.yaml | 17347          | Traefik service metrics, request rates |
+| traefik-v2-alt   | traefik-dashboards.yaml | 4475           | Alternative Traefik v2 dashboard       |
 
 ### GitOps & ArgoCD (2 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| argocd-notifications | argocd-dashboards.yaml | 19975 | ArgoCD notification delivery status |
-| goldilocks-vpa | gitops-dashboards.yaml | Custom | VPA recommendations for resource optimization |
+| Dashboard            | File                   | Grafana.com ID | Description                                   |
+| -------------------- | ---------------------- | -------------- | --------------------------------------------- |
+| argocd-notifications | argocd-dashboards.yaml | 19975          | ArgoCD notification delivery status           |
+| goldilocks-vpa       | gitops-dashboards.yaml | Custom         | VPA recommendations for resource optimization |
 
 ### Linkerd Service Mesh (5 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| linkerd-top-line | linkerd-dashboards.yaml | 15474 | Top-line service mesh metrics |
-| linkerd-deployment | linkerd-dashboards.yaml | 15475 | Deployment-level mesh metrics |
-| linkerd-route | linkerd-dashboards.yaml | 15481 | Route-level traffic analysis |
-| linkerd-service | linkerd-dashboards.yaml | 15484 | Service-level mesh metrics |
-| linkerd-daemonset | linkerd-dashboards.yaml | 14274 | DaemonSet mesh metrics |
+| Dashboard          | File                    | Grafana.com ID | Description                   |
+| ------------------ | ----------------------- | -------------- | ----------------------------- |
+| linkerd-top-line   | linkerd-dashboards.yaml | 15474          | Top-line service mesh metrics |
+| linkerd-deployment | linkerd-dashboards.yaml | 15475          | Deployment-level mesh metrics |
+| linkerd-route      | linkerd-dashboards.yaml | 15481          | Route-level traffic analysis  |
+| linkerd-service    | linkerd-dashboards.yaml | 15484          | Service-level mesh metrics    |
+| linkerd-daemonset  | linkerd-dashboards.yaml | 14274          | DaemonSet mesh metrics        |
 
 **Note:** Linkerd dashboards require `linkerd-viz` to be installed.
 
 ### Observability Stack (3 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| graylog-metrics | observability-dashboards.yaml | 12642 | Graylog log ingestion, processing metrics |
-| mongodb-cluster-summary | observability-dashboards.yaml | 2583 | MongoDB cluster health (Graylog backend) |
-| mongodb-instance-summary | observability-dashboards.yaml | 2584 | MongoDB instance-level metrics |
-| opensearch-exporter | observability-dashboards.yaml | 14086 | OpenSearch cluster metrics |
+| Dashboard                | File                          | Grafana.com ID | Description                               |
+| ------------------------ | ----------------------------- | -------------- | ----------------------------------------- |
+| graylog-metrics          | observability-dashboards.yaml | 12642          | Graylog log ingestion, processing metrics |
+| mongodb-cluster-summary  | observability-dashboards.yaml | 2583           | MongoDB cluster health (Graylog backend)  |
+| mongodb-instance-summary | observability-dashboards.yaml | 2584           | MongoDB instance-level metrics            |
+| opensearch-exporter      | observability-dashboards.yaml | 14086          | OpenSearch cluster metrics                |
 
 ### Hybrid Cluster (3 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| hybrid-cluster-overview | hybrid-cluster-dashboards.yaml | Custom | Multi-cluster overview (Liqo peering) |
-| liqo-overview | hybrid-cluster-dashboards.yaml | Custom | Liqo multi-cluster metrics |
-| aws-ec2-instances | hybrid-cluster-dashboards.yaml | 15310 | AWS EC2 instance monitoring |
+| Dashboard               | File                           | Grafana.com ID | Description                           |
+| ----------------------- | ------------------------------ | -------------- | ------------------------------------- |
+| hybrid-cluster-overview | hybrid-cluster-dashboards.yaml | Custom         | Multi-cluster overview (Liqo peering) |
+| liqo-overview           | hybrid-cluster-dashboards.yaml | Custom         | Liqo multi-cluster metrics            |
+| aws-ec2-instances       | hybrid-cluster-dashboards.yaml | 15310          | AWS EC2 instance monitoring           |
 
 ### Custom Application Dashboards (8 dashboards)
 
-| Dashboard | File | Grafana.com ID | Description |
-|-----------|------|----------------|-------------|
-| llm-scaler | llm-scaler-dashboard.yaml | Custom | LLM workload scale-to-zero monitoring |
-| kasa-real-time-monitoring | observability-dashboards.yaml | Custom | Kasa smart plug real-time metrics |
-| kasa-alerts-monitoring | observability-dashboards.yaml | Custom | Kasa alert and anomaly detection |
-| kasa-battery-sizing | observability-dashboards.yaml | Custom | Battery sizing calculations |
-| kasa-comparative-analytics | observability-dashboards.yaml | Custom | Multi-device comparison |
-| kasa-forecasting-analytics | observability-dashboards.yaml | Custom | Power usage forecasting |
-| kasa-tou-cost-optimization | observability-dashboards.yaml | Custom | Time-of-use cost optimization |
-| pod-cleanup | pod-cleanup.yaml | Custom | Pod eviction and cleanup monitoring |
-| resource-efficiency | resource-efficiency.yaml | Custom | Cluster-wide resource efficiency analysis |
+| Dashboard                  | File                          | Grafana.com ID | Description                               |
+| -------------------------- | ----------------------------- | -------------- | ----------------------------------------- |
+| llm-scaler                 | llm-scaler-dashboard.yaml     | Custom         | LLM workload scale-to-zero monitoring     |
+| kasa-real-time-monitoring  | observability-dashboards.yaml | Custom         | Kasa smart plug real-time metrics         |
+| kasa-alerts-monitoring     | observability-dashboards.yaml | Custom         | Kasa alert and anomaly detection          |
+| kasa-battery-sizing        | observability-dashboards.yaml | Custom         | Battery sizing calculations               |
+| kasa-comparative-analytics | observability-dashboards.yaml | Custom         | Multi-device comparison                   |
+| kasa-forecasting-analytics | observability-dashboards.yaml | Custom         | Power usage forecasting                   |
+| kasa-tou-cost-optimization | observability-dashboards.yaml | Custom         | Time-of-use cost optimization             |
+| pod-cleanup                | pod-cleanup.yaml              | Custom         | Pod eviction and cleanup monitoring       |
+| resource-efficiency        | resource-efficiency.yaml      | Custom         | Cluster-wide resource efficiency analysis |
 
 ## Adding a New Dashboard
 
@@ -144,17 +145,17 @@ metadata:
   namespace: monitoring
   labels:
     app.kubernetes.io/component: dashboard
-    dashboard-category: custom  # Use appropriate category
+    dashboard-category: custom # Use appropriate category
 spec:
   instanceSelector:
     matchLabels:
-      dashboards: "grafana"  # REQUIRED: Selects Grafana instances
+      dashboards: 'grafana' # REQUIRED: Selects Grafana instances
   grafanaCom:
-    id: 12345  # Dashboard ID from grafana.com
+    id: 12345 # Dashboard ID from grafana.com
   datasources:
-    - inputName: "DS_PROMETHEUS"
-      datasourceName: "Prometheus"
-  resyncPeriod: 10m  # Auto-sync interval (default: 10m)
+    - inputName: 'DS_PROMETHEUS'
+      datasourceName: 'Prometheus'
+  resyncPeriod: 10m # Auto-sync interval (default: 10m)
 ```
 
 **Steps:**
@@ -183,7 +184,7 @@ metadata:
 spec:
   instanceSelector:
     matchLabels:
-      dashboards: "grafana"
+      dashboards: 'grafana'
   json: |
     {
       "dashboard": {
@@ -214,15 +215,18 @@ spec:
 ### Dashboard Organization Best Practices
 
 **File Naming:**
+
 - Group related dashboards in a single file (e.g., `cilium-dashboards.yaml`)
 - Use descriptive names: `<category>-dashboards.yaml`
 - Custom dashboards: Use specific names (e.g., `llm-scaler-dashboard.yaml`)
 
 **Label Standards:**
+
 - `dashboard-category`: Use consistent categories (cilium, kubernetes, infrastructure, traefik, argocd, linkerd, observability, hybrid-cluster, custom)
 - `app.kubernetes.io/component: dashboard`: Required for all dashboards
 
 **kustomization.yaml:**
+
 - Add comments for each resource group
 - Organize by category (see current file for reference)
 
@@ -255,12 +259,14 @@ kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
 ```
 
 **Common Causes:**
+
 - ServiceMonitor not created for the service
 - Metrics not exposed by the service
 - Incorrect Prometheus datasource mapping
 - Service not running or not labeled correctly
 
 **Fix:**
+
 1. Create ServiceMonitor for the service (see monitoring stack docs)
 2. Verify service exposes metrics endpoint
 3. Check datasource mapping in GrafanaDashboard spec
@@ -282,12 +288,14 @@ kubectl get grafana -n monitoring -o yaml | grep -A3 labels
 ```
 
 **Common Causes:**
+
 - `instanceSelector` doesn't match Grafana instance labels
 - Grafana-operator not running
 - Invalid JSON in dashboard spec
 - Namespace mismatch
 
 **Fix:**
+
 1. Ensure `instanceSelector.matchLabels.dashboards: "grafana"` is set
 2. Check grafana-operator deployment status
 3. Validate dashboard JSON with a JSON linter
@@ -310,12 +318,14 @@ kubectl logs -n monitoring -l app.kubernetes.io/name=grafana --tail=100
 ```
 
 **Common Causes:**
+
 - Datasource name mismatch (`DS_PROMETHEUS` vs actual datasource name)
 - PromQL query errors
 - Time range issues
 - Variable configuration problems
 
 **Fix:**
+
 1. Verify datasource mapping in GrafanaDashboard spec
 2. Test PromQL queries in Prometheus UI
 3. Check dashboard variables configuration
@@ -329,7 +339,7 @@ kubectl logs -n monitoring -l app.kubernetes.io/name=grafana --tail=100
 
 ```yaml
 spec:
-  resyncPeriod: 30m  # Increase from default 10m
+  resyncPeriod: 30m # Increase from default 10m
 ```
 
 ### Deleting Dashboards
@@ -403,4 +413,5 @@ These scripts apply the kustomization and wait for dashboards to sync.
 ## Related Issues
 
 <!-- Beads tracking -->
+
 - [CILIUM-01c] - Initial restructure with progressive summarization

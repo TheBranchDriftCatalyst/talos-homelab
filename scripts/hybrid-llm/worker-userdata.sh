@@ -23,44 +23,44 @@ CA_DIR="$HOME/.nebula-ca"
 
 # Certificate paths - check both locations
 if [[ -f "$OUTPUT_DIR/worker/host.crt" ]]; then
-    CA_CRT="$OUTPUT_DIR/ca.crt"
-    HOST_CRT="$OUTPUT_DIR/worker/host.crt"
-    HOST_KEY="$OUTPUT_DIR/worker/host.key"
+  CA_CRT="$OUTPUT_DIR/ca.crt"
+  HOST_CRT="$OUTPUT_DIR/worker/host.crt"
+  HOST_KEY="$OUTPUT_DIR/worker/host.key"
 elif [[ -f "$CA_DIR/aws-gpu-worker.crt" ]]; then
-    CA_CRT="$CA_DIR/ca.crt"
-    HOST_CRT="$CA_DIR/aws-gpu-worker.crt"
-    HOST_KEY="$CA_DIR/aws-gpu-worker.key"
+  CA_CRT="$CA_DIR/ca.crt"
+  HOST_CRT="$CA_DIR/aws-gpu-worker.crt"
+  HOST_KEY="$CA_DIR/aws-gpu-worker.key"
 else
-    echo "ERROR: Worker certificates not found" >&2
-    echo "Generate with: nebula-cert sign -name aws-gpu-worker -ip 10.42.2.1/16 -groups kubernetes,infrastructure,gpu-compute" >&2
-    exit 1
+  echo "ERROR: Worker certificates not found" >&2
+  echo "Generate with: nebula-cert sign -name aws-gpu-worker -ip 10.42.2.1/16 -groups kubernetes,infrastructure,gpu-compute" >&2
+  exit 1
 fi
 
 # Lighthouse config (from state file or default)
 STATE_FILE="$REPO_ROOT/.output/lighthouse-state.json"
 if [[ -f "$STATE_FILE" ]]; then
-    LIGHTHOUSE_PUBLIC_IP=$(jq -r '.elastic_ip // "52.13.210.163"' "$STATE_FILE")
+  LIGHTHOUSE_PUBLIC_IP=$(jq -r '.elastic_ip // "52.13.210.163"' "$STATE_FILE")
 else
-    LIGHTHOUSE_PUBLIC_IP="${LIGHTHOUSE_PUBLIC_IP:-52.13.210.163}"
+  LIGHTHOUSE_PUBLIC_IP="${LIGHTHOUSE_PUBLIC_IP:-52.13.210.163}"
 fi
 
 # k3s token for joining the cluster
 # Can be set via environment or read from a file
 K3S_TOKEN_FILE="$REPO_ROOT/.output/k3s-token"
 if [[ -z "${K3S_TOKEN:-}" ]]; then
-    if [[ -f "$K3S_TOKEN_FILE" ]]; then
-        K3S_TOKEN=$(cat "$K3S_TOKEN_FILE")
-    else
-        echo "ERROR: K3S_TOKEN not set and $K3S_TOKEN_FILE not found" >&2
-        echo "" >&2
-        echo "Get the token from the lighthouse:" >&2
-        echo "  ssh -i .output/ssh/hybrid-llm-key.pem ec2-user@$LIGHTHOUSE_PUBLIC_IP 'sudo cat /var/lib/rancher/k3s/server/node-token'" >&2
-        echo "" >&2
-        echo "Then either:" >&2
-        echo "  1. Set K3S_TOKEN environment variable" >&2
-        echo "  2. Save to $K3S_TOKEN_FILE" >&2
-        exit 1
-    fi
+  if [[ -f "$K3S_TOKEN_FILE" ]]; then
+    K3S_TOKEN=$(cat "$K3S_TOKEN_FILE")
+  else
+    echo "ERROR: K3S_TOKEN not set and $K3S_TOKEN_FILE not found" >&2
+    echo "" >&2
+    echo "Get the token from the lighthouse:" >&2
+    echo "  ssh -i .output/ssh/hybrid-llm-key.pem ec2-user@$LIGHTHOUSE_PUBLIC_IP 'sudo cat /var/lib/rancher/k3s/server/node-token'" >&2
+    echo "" >&2
+    echo "Then either:" >&2
+    echo "  1. Set K3S_TOKEN environment variable" >&2
+    echo "  2. Save to $K3S_TOKEN_FILE" >&2
+    exit 1
+  fi
 fi
 
 # Lighthouse Nebula mesh IP (always 10.42.0.1)

@@ -5,9 +5,11 @@ Cool K8s tools, operators, and integrations to consider for the catalyst-cluster
 ## Workload Management
 
 ### Descheduler
+
 **What**: Evicts pods to rebalance cluster based on policies
 **Why**: K8s scheduler only acts at pod creation - descheduler handles drift
 **Use cases**:
+
 - Rebalance after adding new nodes (talos01, future nodes)
 - Evict pods violating affinity rules
 - Remove pods from overutilized nodes
@@ -18,6 +20,7 @@ helm install descheduler descheduler/descheduler -n kube-system
 ```
 
 **Policies to consider**:
+
 - `RemoveDuplicates` - spread replicas across nodes
 - `LowNodeUtilization` - move pods from busy to idle nodes
 - `RemovePodsViolatingNodeAffinity` - enforce affinity rules
@@ -26,10 +29,12 @@ helm install descheduler descheduler/descheduler -n kube-system
 ---
 
 ### Keda (Kubernetes Event-Driven Autoscaling)
+
 **What**: Scale workloads based on external metrics (not just CPU/memory)
 **Why**: HPA is limited to basic metrics; KEDA scales on queues, cron, custom metrics
 
 **Scale triggers**:
+
 - Prometheus metrics
 - Cron schedules
 - Message queues (RabbitMQ, Kafka)
@@ -45,11 +50,11 @@ spec:
   scaleTargetRef:
     name: llm-worker
   triggers:
-  - type: prometheus
-    metadata:
-      serverAddress: http://prometheus.monitoring:9090
-      metricName: pending_llm_requests
-      threshold: '5'
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        metricName: pending_llm_requests
+        threshold: '5'
 ```
 
 **Relevant for**: LLM scaler could use KEDA instead of custom Go code
@@ -57,10 +62,12 @@ spec:
 ---
 
 ### Karpenter
+
 **What**: Just-in-time node provisioning based on pod requirements
 **Why**: Cluster Autoscaler is reactive; Karpenter is proactive and faster
 
 **Note**: Primarily for cloud providers (AWS, Azure). For bare-metal/hybrid:
+
 - Could work with AWS GPU nodes in hybrid-llm setup
 - Not directly applicable to Talos bare-metal nodes
 
@@ -69,10 +76,12 @@ spec:
 ## Networking & Service Mesh
 
 ### Cilium
+
 **What**: eBPF-based CNI with advanced networking features
 **Why**: Better performance, network policies, observability
 
 **Features**:
+
 - Network policies with L7 filtering
 - Transparent encryption (WireGuard)
 - Hubble for network observability
@@ -83,10 +92,12 @@ spec:
 ---
 
 ### Linkerd
+
 **What**: Lightweight service mesh
 **Why**: mTLS, traffic splitting, retries, observability
 
 **Lighter than Istio**, good for:
+
 - Secure service-to-service communication
 - Traffic mirroring for testing
 - Canary deployments
@@ -99,6 +110,7 @@ spec:
 ## GitOps & Deployment
 
 ### Argo Rollouts
+
 **What**: Progressive delivery controller
 **Why**: Blue-green, canary deployments with analysis
 
@@ -109,14 +121,14 @@ spec:
   strategy:
     canary:
       steps:
-      - setWeight: 20
-      - pause: {duration: 1h}
-      - setWeight: 50
-      - pause: {duration: 1h}
-      - setWeight: 100
+        - setWeight: 20
+        - pause: { duration: 1h }
+        - setWeight: 50
+        - pause: { duration: 1h }
+        - setWeight: 100
       analysis:
         templates:
-        - templateName: success-rate
+          - templateName: success-rate
 ```
 
 **Integrates with**: ArgoCD (already deployed)
@@ -124,10 +136,12 @@ spec:
 ---
 
 ### Argo Workflows
+
 **What**: Kubernetes-native workflow engine
 **Why**: CI/CD pipelines, data processing, ML pipelines
 
 **Use cases**:
+
 - Build pipelines (alternative to GitHub Actions)
 - Data ETL jobs
 - ML training workflows
@@ -136,6 +150,7 @@ spec:
 ---
 
 ### Argo Events
+
 **What**: Event-driven workflow automation
 **Why**: Trigger workflows from external events
 
@@ -147,10 +162,12 @@ spec:
 ## Observability & Debugging
 
 ### Pixie (by New Relic)
+
 **What**: eBPF-powered observability without instrumentation
 **Why**: Auto-telemetry for services, no code changes needed
 
 **Features**:
+
 - Automatic request tracing
 - CPU/memory flamegraphs
 - Network traffic analysis
@@ -159,6 +176,7 @@ spec:
 ---
 
 ### OpenTelemetry Operator
+
 **What**: Auto-instrument applications for tracing
 **Why**: Unified observability (traces + metrics + logs)
 
@@ -175,16 +193,18 @@ spec:
     - baggage
   sampler:
     type: parentbased_traceidratio
-    argument: "0.1"
+    argument: '0.1'
 ```
 
 ---
 
 ### Robusta
+
 **What**: Kubernetes troubleshooting and automation platform
 **Why**: Auto-remediation, enriched alerts, ChatOps
 
 **Features**:
+
 - Enriched Prometheus alerts (adds pod logs, events)
 - Automated runbooks
 - Slack/Teams integration
@@ -195,10 +215,12 @@ spec:
 ## Security
 
 ### Falco
+
 **What**: Runtime security and threat detection
 **Why**: Detect anomalous behavior in containers
 
 **Detects**:
+
 - Shell spawned in container
 - Sensitive file access
 - Network anomalies
@@ -212,10 +234,12 @@ helm install falco falcosecurity/falco -n falco-system
 ---
 
 ### Trivy Operator
+
 **What**: Continuous vulnerability scanning
 **Why**: Scan images, configs, secrets in-cluster
 
 **Scans**:
+
 - Container images (CVEs)
 - Kubernetes manifests (misconfigs)
 - Secrets (exposed credentials)
@@ -224,10 +248,12 @@ helm install falco falcosecurity/falco -n falco-system
 ---
 
 ### Kyverno
+
 **What**: Policy engine for Kubernetes
 **Why**: Enforce standards, mutate resources, generate configs
 
 **Example policies**:
+
 - Require resource limits
 - Enforce image registry whitelist
 - Add default labels
@@ -241,22 +267,23 @@ metadata:
 spec:
   validationFailureAction: Enforce
   rules:
-  - name: require-team-label
-    match:
-      resources:
-        kinds:
-        - Pod
-    validate:
-      message: "label 'team' is required"
-      pattern:
-        metadata:
-          labels:
-            team: "?*"
+    - name: require-team-label
+      match:
+        resources:
+          kinds:
+            - Pod
+      validate:
+        message: "label 'team' is required"
+        pattern:
+          metadata:
+            labels:
+              team: '?*'
 ```
 
 ---
 
 ### External Secrets Operator
+
 **What**: Sync secrets from external providers
 **Why**: Keep secrets out of git, centralize secret management
 
@@ -267,6 +294,7 @@ spec:
 ## Storage & Data
 
 ### Velero
+
 **What**: Backup and disaster recovery
 **Why**: Backup cluster state, PVs, migrate between clusters
 
@@ -283,10 +311,12 @@ velero restore create --from-backup full-backup
 ---
 
 ### Longhorn
+
 **What**: Distributed block storage
 **Why**: Replicated storage across nodes, snapshots, backups
 
 **Features**:
+
 - Storage replication (2-3 replicas)
 - Scheduled backups to S3
 - Volume snapshots
@@ -297,10 +327,12 @@ velero restore create --from-backup full-backup
 ---
 
 ### MinIO
+
 **What**: S3-compatible object storage
 **Why**: Local S3 for backups, artifacts, ML models
 
 **Use cases**:
+
 - Velero backup target
 - ML model storage
 - Artifact repository
@@ -311,6 +343,7 @@ velero restore create --from-backup full-backup
 ## Cost & Resource Optimization
 
 ### Goldilocks
+
 **What**: VPA recommendations dashboard
 **Why**: Right-size resource requests/limits
 
@@ -319,10 +352,12 @@ velero restore create --from-backup full-backup
 ---
 
 ### Kubecost
+
 **What**: Cost monitoring and optimization
 **Why**: Track resource costs, identify waste
 
 **Features**:
+
 - Cost allocation by namespace/label
 - Idle resource detection
 - Right-sizing recommendations
@@ -331,6 +366,7 @@ velero restore create --from-backup full-backup
 ---
 
 ### Kube-green
+
 **What**: Automatic scale-down during off-hours
 **Why**: Save resources on dev/test workloads
 
@@ -340,10 +376,10 @@ kind: SleepInfo
 metadata:
   name: dev-sleep
 spec:
-  weekdays: "1-5"
-  sleepAt: "20:00"
-  wakeUpAt: "08:00"
-  timeZone: "America/New_York"
+  weekdays: '1-5'
+  sleepAt: '20:00'
+  wakeUpAt: '08:00'
+  timeZone: 'America/New_York'
   suspendCronJobs: true
 ```
 
@@ -352,6 +388,7 @@ spec:
 ## ML/AI Infrastructure
 
 ### KubeRay
+
 **What**: Ray cluster operator for distributed computing
 **Why**: Distributed ML training, hyperparameter tuning
 
@@ -360,6 +397,7 @@ spec:
 ---
 
 ### Nvidia GPU Operator
+
 **What**: Automate GPU driver and runtime setup
 **Why**: Simplify GPU node management
 
@@ -368,6 +406,7 @@ spec:
 ---
 
 ### vLLM / Text Generation Inference
+
 **What**: Optimized LLM serving
 **Why**: Better throughput than naive inference
 
@@ -378,6 +417,7 @@ spec:
 ## Developer Experience
 
 ### Telepresence
+
 **What**: Local-to-cluster development
 **Why**: Debug services locally while connected to cluster
 
@@ -389,6 +429,7 @@ telepresence intercept my-service --port 8080
 ---
 
 ### Skaffold
+
 **What**: Continuous development for Kubernetes
 **Why**: Fast build-deploy-test loop
 
@@ -397,6 +438,7 @@ telepresence intercept my-service --port 8080
 ---
 
 ### Garden
+
 **What**: Development and testing orchestration
 **Why**: Define development workflows as code
 
@@ -405,19 +447,22 @@ telepresence intercept my-service --port 8080
 ## Priority Implementation List
 
 ### High Priority (Immediate Value)
+
 1. **Descheduler** - Essential for multi-node balancing (talos00 + talos01)
 2. **Velero** - Backup solution (currently no DR)
 3. **Kyverno** - Policy enforcement (security baseline)
 
 ### Medium Priority (Nice to Have)
-4. **KEDA** - Could simplify LLM scaler
-5. **Argo Rollouts** - Better deployments
-6. **Longhorn** - Distributed storage for resilience
+
+1. **KEDA** - Could simplify LLM scaler
+2. **Argo Rollouts** - Better deployments
+3. **Longhorn** - Distributed storage for resilience
 
 ### Lower Priority (Future Exploration)
-7. **Cilium** - CNI upgrade (complex migration)
-8. **Linkerd** - Service mesh (adds complexity)
-9. **Falco** - Runtime security
+
+1. **Cilium** - CNI upgrade (complex migration)
+2. **Linkerd** - Service mesh (adds complexity)
+3. **Falco** - Runtime security
 
 ---
 

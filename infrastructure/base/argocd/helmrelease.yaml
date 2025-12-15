@@ -25,24 +25,20 @@ spec:
         name: argocd
         namespace: argocd
       interval: 12h
-
   install:
     crds: Create
     createNamespace: false
     remediation:
       retries: 3
-
   upgrade:
     crds: CreateReplace
     cleanupOnFail: true
     remediation:
       retries: 3
-
   values:
     # Global settings
     global:
       domain: argocd.talos00
-
     # Redis
     redis:
       enabled: true
@@ -53,11 +49,9 @@ spec:
         limits:
           cpu: 200m
           memory: 128Mi
-
     # Argo CD Server
     server:
       replicas: 1
-
       resources:
         requests:
           cpu: 100m
@@ -65,19 +59,15 @@ spec:
         limits:
           cpu: 500m
           memory: 256Mi
-
       # Allow insecure mode (we're behind Traefik)
       extraArgs:
         - --insecure
-
       # Ingress configuration
       ingress:
         enabled: false # We'll use Traefik IngressRoute
-
     # Repo Server
     repoServer:
       replicas: 1
-
       resources:
         requests:
           cpu: 10m
@@ -85,11 +75,9 @@ spec:
         limits:
           cpu: 200m
           memory: 256Mi
-
     # Application Controller
     controller:
       replicas: 1
-
       resources:
         requests:
           cpu: 50m
@@ -97,11 +85,9 @@ spec:
         limits:
           cpu: 500m
           memory: 512Mi
-
     # ApplicationSet Controller
     applicationSet:
       enabled: true
-
       resources:
         requests:
           cpu: 50m
@@ -109,16 +95,13 @@ spec:
         limits:
           cpu: 200m
           memory: 128Mi
-
     # Notifications Controller
     notifications:
       enabled: true
-
       # Use secret created by ExternalSecret
       secret:
         create: false
         name: argocd-notifications-secret
-
       # Notification services configuration
       notifiers:
         service.webhook.discord: |
@@ -126,7 +109,6 @@ spec:
           headers:
             - name: Content-Type
               value: application/json
-
       # Subscription for all applications - on-sync-succeeded and on-sync-failed
       subscriptions:
         - recipients:
@@ -135,7 +117,6 @@ spec:
             - on-sync-succeeded
             - on-sync-failed
             - on-health-degraded
-
       # Notification templates - Synthwave Cyberpunk Catalyst Edition
       templates:
         template.app-sync-succeeded: |
@@ -163,7 +144,6 @@ spec:
                     "timestamp": "{{.app.status.operationState.finishedAt}}"
                   }]
                 }
-
         template.app-sync-failed: |
           webhook:
             discord:
@@ -188,7 +168,6 @@ spec:
                     "timestamp": "{{.app.status.operationState.finishedAt}}"
                   }]
                 }
-
         template.app-health-degraded: |
           webhook:
             discord:
@@ -213,7 +192,6 @@ spec:
                     "timestamp": "{{.app.status.operationState.finishedAt}}"
                   }]
                 }
-
         template.app-deployed: |
           webhook:
             discord:
@@ -236,7 +214,6 @@ spec:
                     "timestamp": "{{.app.metadata.creationTimestamp}}"
                   }]
                 }
-
       # Triggers
       triggers:
         trigger.on-sync-succeeded: |
@@ -251,26 +228,21 @@ spec:
         trigger.on-deployed: |
           - when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy' and time.Now().Sub(time.Parse(app.metadata.creationTimestamp)).Minutes() < 2
             send: [app-deployed]
-
     # Dex (SSO) - disabled for homelab
     dex:
       enabled: false
-
     # Admin password managed via ExternalSecret (argocd-admin-credentials)
     # The ExternalSecret merges admin.password into the argocd-secret
     configs:
       secret:
         # Don't create default password - managed by ExternalSecret
         createSecret: false
-
       # Repository credentials (will be added via kubectl later)
       repositories: {}
-
       # Default project settings
       params:
         server.insecure: true
         application.instanceLabelKey: argocd.argoproj.io/instance
-
     # RBAC Configuration
     rbac:
       policy.default: role:readonly

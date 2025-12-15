@@ -32,19 +32,20 @@ This document tracks the service mesh implementation strategy for the talos-home
 
 ## Network Layer Stack
 
-| Layer | Component | Purpose |
-|-------|-----------|---------|
-| L7 (Application) | **Service Mesh** (TBD) | mTLS, observability, traffic management |
-| L7 (Ingress) | Traefik | External access, IngressRoutes |
-| L4-L7 (Multi-cluster) | Liqo | Virtual nodes, pod offloading, cross-cluster networking |
-| L3 (Overlay) | Flannel CNI | Pod-to-pod networking within cluster |
-| L3 (Underlay) | Nebula VPN | Encrypted node-to-node tunnels across internet |
+| Layer                 | Component              | Purpose                                                 |
+| --------------------- | ---------------------- | ------------------------------------------------------- |
+| L7 (Application)      | **Service Mesh** (TBD) | mTLS, observability, traffic management                 |
+| L7 (Ingress)          | Traefik                | External access, IngressRoutes                          |
+| L4-L7 (Multi-cluster) | Liqo                   | Virtual nodes, pod offloading, cross-cluster networking |
+| L3 (Overlay)          | Flannel CNI            | Pod-to-pod networking within cluster                    |
+| L3 (Underlay)         | Nebula VPN             | Encrypted node-to-node tunnels across internet          |
 
 ## Service Mesh Options Analysis
 
 ### Option 1: Linkerd (Recommended)
 
 **Pros:**
+
 - Lightweight (~20MB per proxy)
 - Simple installation and operation
 - Automatic mTLS with zero config
@@ -52,38 +53,45 @@ This document tracks the service mesh implementation strategy for the talos-home
 - Great for multi-node + hybrid setups
 
 **Cons:**
+
 - Fewer advanced features than Istio
 - Less ecosystem tooling
 
 **Resource Impact:**
+
 - Control plane: ~200MB RAM
 - Per-pod proxy: ~20MB RAM
 
 ### Option 2: Istio
 
 **Pros:**
+
 - Feature-rich (traffic management, security policies)
 - Large ecosystem
 - Advanced observability
 
 **Cons:**
+
 - Heavy resource footprint (~100MB per proxy)
 - Complex configuration
 - Overkill for homelab
 
 **Resource Impact:**
+
 - Control plane: ~1GB RAM
 - Per-pod proxy: ~50-100MB RAM
 
 ### Option 3: Cilium (eBPF-based)
 
 **Pros:**
+
 - eBPF-based (no sidecars for some features)
 - Can replace CNI + provide mesh features
 - Network policies built-in
 - Lower overhead than sidecar-based meshes
 
 **Cons:**
+
 - Requires Linux kernel 5.4+
 - More complex to understand
 - Talos compatibility needs verification
@@ -91,11 +99,13 @@ This document tracks the service mesh implementation strategy for the talos-home
 ### Option 4: No Service Mesh (Current State)
 
 **Current Security:**
+
 - Nebula: Node-to-node encryption
 - Liqo: Cross-cluster networking
 - No pod-to-pod mTLS within cluster
 
 **When this is sufficient:**
+
 - Trusted internal network
 - No compliance requirements
 - Acceptable to trust pod-to-pod traffic
@@ -104,7 +114,7 @@ This document tracks the service mesh implementation strategy for the talos-home
 
 **Start with Linkerd** for the scratch namespace as a learning exercise, then evaluate for broader adoption.
 
-### Why Linkerd for this setup:
+### Why Linkerd for this setup
 
 1. **Hybrid-friendly**: Works well with multi-cluster setups
 2. **Liqo compatible**: Can mesh across virtual nodes
@@ -115,6 +125,7 @@ This document tracks the service mesh implementation strategy for the talos-home
 ## Implementation Plan
 
 ### Phase 1: Scratch Namespace PoC ✅ COMPLETE
+
 - [x] Install Linkerd control plane
 - [x] Inject into scratch namespace only
 - [x] Verify gRPC services work with mTLS (grpc-go ↔ grpc-python)
@@ -122,12 +133,14 @@ This document tracks the service mesh implementation strategy for the talos-home
 - [ ] Document learnings
 
 ### Phase 2: Evaluate for Hybrid
+
 - [ ] Test with Liqo virtual nodes
 - [ ] Verify cross-cluster mTLS works
 - [ ] Measure latency impact (homelab <-> EC2)
 - [ ] Test failure scenarios
 
 ### Phase 3: Production Rollout (if successful)
+
 - [ ] Inject into media namespace
 - [ ] Inject into monitoring namespace
 - [ ] Configure traffic policies
@@ -169,12 +182,14 @@ Pod A (scratch) ──► Linkerd Proxy ──► Nebula Tunnel ──► Linker
 ```
 
 Both encryption layers are complementary:
+
 - **Nebula**: Protects against network-level attacks between nodes
 - **Linkerd**: Protects against compromised pods, provides identity verification
 
 ### Liqo + Linkerd
 
 Liqo creates virtual nodes that represent the AWS cluster. Linkerd should:
+
 1. Inject sidecars into pods regardless of where they're scheduled
 2. Establish mTLS connections across the Liqo network fabric
 3. Provide end-to-end encryption for offloaded pods
@@ -190,6 +205,7 @@ Internet ──► Traefik (Ingress) ──► Linkerd Proxy ──► Service
 ```
 
 Options:
+
 1. **Traefik outside mesh**: Traefik terminates external TLS, forwards to Linkerd-meshed services
 2. **Traefik inside mesh**: Inject Linkerd into Traefik pods for full mesh coverage
 
@@ -200,6 +216,7 @@ Recommend Option 1 initially for simplicity.
 ### mTLS Certificate Management
 
 Linkerd uses its own CA for mTLS certificates:
+
 - Auto-generated on install
 - Can integrate with cert-manager for production
 - Certificates rotate automatically
@@ -237,7 +254,7 @@ spec:
             matchLabels:
               name: monitoring
       ports:
-        - port: 9090  # Prometheus scrape
+        - port: 9090 # Prometheus scrape
 ```
 
 ## Observability Integration
@@ -245,6 +262,7 @@ spec:
 ### Prometheus Metrics
 
 Linkerd exposes Prometheus metrics:
+
 - `linkerd_proxy_*` - Proxy-level metrics
 - `request_total` - Request counts by route
 - `response_latency_ms` - Latency histograms
@@ -271,6 +289,7 @@ spec:
 ### Grafana Dashboards
 
 Linkerd provides official Grafana dashboards:
+
 - Linkerd Health
 - Linkerd Top Line
 - Linkerd Deployment
@@ -280,12 +299,12 @@ Linkerd provides official Grafana dashboards:
 
 ### Resource Usage (Linkerd)
 
-| Component | CPU | Memory |
-|-----------|-----|--------|
-| Control Plane (total) | 100m | 200Mi |
-| Per-pod proxy | 10m | 20Mi |
-| 10 meshed pods | 100m | 200Mi |
-| **Total (10 pods)** | **200m** | **400Mi** |
+| Component             | CPU      | Memory    |
+| --------------------- | -------- | --------- |
+| Control Plane (total) | 100m     | 200Mi     |
+| Per-pod proxy         | 10m      | 20Mi      |
+| 10 meshed pods        | 100m     | 200Mi     |
+| **Total (10 pods)**   | **200m** | **400Mi** |
 
 Acceptable for homelab cluster with distributed workload.
 

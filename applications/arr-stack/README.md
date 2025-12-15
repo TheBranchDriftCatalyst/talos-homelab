@@ -85,16 +85,16 @@ tilt down
 
 **Port Forwards:**
 
-| Service   | Local Port | URL                         |
-| --------- | ---------- | --------------------------- |
-| Prowlarr  | 9696       | http://localhost:9696       |
-| Sonarr    | 8989       | http://localhost:8989       |
-| Radarr    | 7878       | http://localhost:7878       |
-| Overseerr | 5055       | http://localhost:5055       |
-| Plex      | 32400      | http://localhost:32400/web  |
-| Jellyfin  | 8096       | http://localhost:8096       |
-| Tdarr     | 8265       | http://localhost:8265       |
-| Homepage  | 3000       | http://localhost:3000       |
+| Service   | Local Port | URL                        |
+| --------- | ---------- | -------------------------- |
+| Prowlarr  | 9696       | http://localhost:9696      |
+| Sonarr    | 8989       | http://localhost:8989      |
+| Radarr    | 7878       | http://localhost:7878      |
+| Overseerr | 5055       | http://localhost:5055      |
+| Plex      | 32400      | http://localhost:32400/web |
+| Jellyfin  | 8096       | http://localhost:8096      |
+| Tdarr     | 8265       | http://localhost:8265      |
+| Homepage  | 3000       | http://localhost:3000      |
 
 ### 2. dashboard.sh - Status Dashboard
 

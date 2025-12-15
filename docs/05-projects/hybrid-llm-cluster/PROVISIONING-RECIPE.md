@@ -21,6 +21,7 @@ This document captures the complete provisioning workflow for the Nebula mesh VP
 ```
 
 The orchestration script:
+
 1. Tears down existing lighthouse (if any)
 2. Provisions new lighthouse with Nebula + k3s + Liqo
 3. Waits for cloud-init, k3s, and Liqo to be ready
@@ -47,6 +48,7 @@ If you only need to provision the AWS lighthouse (without peering):
 ```
 
 The script:
+
 1. Generates Nebula CA and host certificates
 2. Creates AWS SSH key pair
 3. Creates security group (UDP 4242, SSH)
@@ -310,6 +312,7 @@ sudo bash /tmp/lighthouse-userdata.sh
 ### Certificate Path Errors
 
 If cloud-init shows certificate path errors like:
+
 ```
 ERROR: CA certificate not found at /var/lib/cloud/.output/nebula/ca.crt
 ```
@@ -334,30 +337,30 @@ ssh-keygen -R 52.13.210.163
 
 ## Reference Values
 
-| Resource | Value |
-|----------|-------|
-| AWS Region | us-west-2 |
-| Security Group | sg-073072d5da52ae513 |
-| SSH Key | hybrid-llm-key |
-| AMI | ami-0b6d6dacf350ebc82 (AL2023) |
-| Instance ID | i-0ae1ab612e0bf1e57 |
-| Elastic IP | 52.13.210.163 |
-| Allocation ID | eipalloc-0e2b103851019ac96 |
-| Nebula Lighthouse IP | 10.42.0.1 |
-| Talos Homelab Nebula IP | 10.42.1.1 |
-| AWS GPU Worker Nebula IP | 10.42.2.1 |
+| Resource                 | Value                          |
+| ------------------------ | ------------------------------ |
+| AWS Region               | us-west-2                      |
+| Security Group           | sg-073072d5da52ae513           |
+| SSH Key                  | hybrid-llm-key                 |
+| AMI                      | ami-0b6d6dacf350ebc82 (AL2023) |
+| Instance ID              | i-0ae1ab612e0bf1e57            |
+| Elastic IP               | 52.13.210.163                  |
+| Allocation ID            | eipalloc-0e2b103851019ac96     |
+| Nebula Lighthouse IP     | 10.42.0.1                      |
+| Talos Homelab Nebula IP  | 10.42.1.1                      |
+| AWS GPU Worker Nebula IP | 10.42.2.1                      |
 
 ## File Locations
 
-| File | Path |
-|------|------|
-| CA Certificate | ~/.nebula-ca/ca.crt |
-| CA Key | ~/.nebula-ca/ca.key (backup in 1Password) |
-| Lighthouse Cert | ~/.nebula-ca/lighthouse.crt |
-| Lighthouse Key | ~/.nebula-ca/lighthouse.key |
-| SSH Key | .output/ssh/hybrid-llm-key.pem |
-| Generated Userdata | /tmp/lighthouse-userdata.sh |
-| State File | .output/lighthouse-state.json |
+| File               | Path                                      |
+| ------------------ | ----------------------------------------- |
+| CA Certificate     | ~/.nebula-ca/ca.crt                       |
+| CA Key             | ~/.nebula-ca/ca.key (backup in 1Password) |
+| Lighthouse Cert    | ~/.nebula-ca/lighthouse.crt               |
+| Lighthouse Key     | ~/.nebula-ca/lighthouse.key               |
+| SSH Key            | .output/ssh/hybrid-llm-key.pem            |
+| Generated Userdata | /tmp/lighthouse-userdata.sh               |
+| State File         | .output/lighthouse-state.json             |
 
 ---
 
@@ -422,6 +425,7 @@ kubectl get networks.ipam.liqo.io -n liqo
 ⚠️ **Requires AWS GPU Instance Quota Approval**
 
 Check quota status:
+
 ```bash
 aws service-quotas get-service-quota \
   --service-code ec2 \
@@ -455,22 +459,24 @@ nebula-cert sign -name "aws-gpu-worker" \
 
 The homelab and AWS clusters have Liqo in **different namespaces**:
 
-| Cluster | Liqo Namespace | Installation Method |
-|---------|----------------|---------------------|
-| Homelab (Talos) | `liqo` | Flux HelmRelease |
-| AWS (k3s) | `liqo-system` | Helm/liqoctl direct |
+| Cluster         | Liqo Namespace | Installation Method |
+| --------------- | -------------- | ------------------- |
+| Homelab (Talos) | `liqo`         | Flux HelmRelease    |
+| AWS (k3s)       | `liqo-system`  | Helm/liqoctl direct |
 
 This difference **MUST** be specified when peering.
 
 ### 7.2 Pre-requisites
 
 1. **Nebula mesh working**: Verify connectivity from homelab to AWS
+
    ```bash
    # From homelab (inside a pod with nebula access)
    ping 10.42.0.1
    ```
 
 2. **AWS kubeconfig available**: Should point to mesh IP
+
    ```bash
    # Verify kubeconfig uses mesh IP
    cat .output/aws-cluster-secrets/kubeconfig | grep server
@@ -578,12 +584,12 @@ kubectl delete pod test-offload-aws
 
 ### 7.7 Common Peering Errors
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `configmaps 'configmaps' not found` | Missing namespace flags | Add `--namespace liqo --remote-namespace liqo-system` |
-| `tenants.authentication.liqo.io not found` | Peering not established | Re-run `liqoctl peer` with correct flags |
-| `failed getting quota` | Tenant missing on provider | Re-run `liqoctl peer` - Quota is auto-generated |
-| `untolerated taint` | Wrong toleration effect | Use `effect: "NoExecute"` not `"NoSchedule"` |
+| Error                                      | Cause                      | Fix                                                   |
+| ------------------------------------------ | -------------------------- | ----------------------------------------------------- |
+| `configmaps 'configmaps' not found`        | Missing namespace flags    | Add `--namespace liqo --remote-namespace liqo-system` |
+| `tenants.authentication.liqo.io not found` | Peering not established    | Re-run `liqoctl peer` with correct flags              |
+| `failed getting quota`                     | Tenant missing on provider | Re-run `liqoctl peer` - Quota is auto-generated       |
+| `untolerated taint`                        | Wrong toleration effect    | Use `effect: "NoExecute"` not `"NoSchedule"`          |
 
 ### 7.8 Re-peering After AWS Reprovisioning
 
@@ -618,13 +624,13 @@ Instead of using Liqo for pod offloading between separate clusters, AWS nodes co
 
 ### Advantages
 
-| Aspect | Liqo (Current) | Direct Membership |
-|--------|---------------|-------------------|
-| Complexity | Two clusters + federation | Single cluster |
-| Pod Scheduling | Virtual node abstraction | Native scheduler |
-| Networking | Liqo network fabric | Native CNI |
-| Storage | Limited cross-cluster | Full PV support |
-| Management | Two kubeconfigs | One kubeconfig |
+| Aspect         | Liqo (Current)            | Direct Membership |
+| -------------- | ------------------------- | ----------------- |
+| Complexity     | Two clusters + federation | Single cluster    |
+| Pod Scheduling | Virtual node abstraction  | Native scheduler  |
+| Networking     | Liqo network fabric       | Native CNI        |
+| Storage        | Limited cross-cluster     | Full PV support   |
+| Management     | Two kubeconfigs           | One kubeconfig    |
 
 ### Challenges
 
@@ -657,11 +663,13 @@ talosctl apply-config --insecure --nodes <aws-nebula-ip> --file worker.yaml
 ### Recommended Approach
 
 For GPU workloads specifically, **keep Liqo** because:
+
 - GPU nodes are typically scale-to-zero (not always-on)
 - Liqo's pod offloading model fits burst compute patterns
 - Avoids etcd membership churn when GPU node stops/starts
 
 For **always-on AWS workers** (e.g., 3rd etcd voter, persistent services):
+
 - Direct cluster membership via Nebula could simplify architecture
 - Requires stable, always-running instance
 
@@ -673,18 +681,18 @@ For **always-on AWS workers** (e.g., 3rd etcd voter, persistent services):
 
 ## Current Status
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Nebula CA | ✅ Complete | Stored in ~/.nebula-ca/ and 1Password |
-| AWS Lighthouse | ✅ Running | EC2 t3.small, Elastic IP |
-| Talos Nebula | ✅ Connected | 10.42.1.1 via DaemonSet |
-| Mesh Connectivity | ✅ Working | ~37ms latency between homelab and AWS |
-| Liqo (Homelab) | ✅ Installed | Namespace: `liqo` (Flux HelmRelease) |
-| Liqo (AWS) | ✅ Installed | Namespace: `liqo-system` (Helm) |
-| Liqo Peering | ✅ Working | Virtual node visible on homelab |
-| Pod Offloading | ✅ Verified | Pods can run on AWS via Liqo |
-| GPU Quota | ⏳ Pending | Requested G-type instance quota |
-| GPU Worker | ⏳ Blocked | Waiting for quota approval |
+| Component         | Status       | Notes                                 |
+| ----------------- | ------------ | ------------------------------------- |
+| Nebula CA         | ✅ Complete  | Stored in ~/.nebula-ca/ and 1Password |
+| AWS Lighthouse    | ✅ Running   | EC2 t3.small, Elastic IP              |
+| Talos Nebula      | ✅ Connected | 10.42.1.1 via DaemonSet               |
+| Mesh Connectivity | ✅ Working   | ~37ms latency between homelab and AWS |
+| Liqo (Homelab)    | ✅ Installed | Namespace: `liqo` (Flux HelmRelease)  |
+| Liqo (AWS)        | ✅ Installed | Namespace: `liqo-system` (Helm)       |
+| Liqo Peering      | ✅ Working   | Virtual node visible on homelab       |
+| Pod Offloading    | ✅ Verified  | Pods can run on AWS via Liqo          |
+| GPU Quota         | ⏳ Pending   | Requested G-type instance quota       |
+| GPU Worker        | ⏳ Blocked   | Waiting for quota approval            |
 
 ---
 

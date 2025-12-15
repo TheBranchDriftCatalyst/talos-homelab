@@ -88,17 +88,17 @@ Level 5: Reference        → Deep technical details
 
 **Target Audience:** Cluster operators, DevOps engineers
 
-| Document                                                            | Description                   | Length    | Use Case       |
-| ------------------------------------------------------------------- | ----------------------------- | --------- | -------------- |
-| [Operations Overview](03-operations/README.md)                      | Day-to-day operations guide   | Overview  | Daily ops      |
-| [Cluster Provisioning](03-operations/provisioning.md)               | Complete cluster setup        | Deep      | Initial setup  |
-| [Talos Configuration](03-operations/talos-configuration.md)         | Talos config management       | Deep      | Config changes |
-| [Kubernetes Operations](03-operations/kubernetes-operations.md)     | K8s operational tasks         | Mid       | Daily ops      |
-| [Monitoring Operations](03-operations/monitoring-operations.md)     | Observability management      | Mid       | Ops            |
-| [Node Shutdown Procedure](03-operations/node-shutdown-procedure.md) | Safe shutdown/restart         | Mid       | Maintenance    |
-| [Local Development ESO](03-operations/local-development-eso.md)     | External Secrets dev workflow | Mid       | Development    |
-| [Development Tools](03-operations/development-tools.md)             | Git hooks, linters, formatters| Mid       | Dev setup      |
-| [Troubleshooting Guide](03-operations/troubleshooting.md)           | Common issues & solutions     | Reference | When stuck     |
+| Document                                                            | Description                    | Length    | Use Case       |
+| ------------------------------------------------------------------- | ------------------------------ | --------- | -------------- |
+| [Operations Overview](03-operations/README.md)                      | Day-to-day operations guide    | Overview  | Daily ops      |
+| [Cluster Provisioning](03-operations/provisioning.md)               | Complete cluster setup         | Deep      | Initial setup  |
+| [Talos Configuration](03-operations/talos-configuration.md)         | Talos config management        | Deep      | Config changes |
+| [Kubernetes Operations](03-operations/kubernetes-operations.md)     | K8s operational tasks          | Mid       | Daily ops      |
+| [Monitoring Operations](03-operations/monitoring-operations.md)     | Observability management       | Mid       | Ops            |
+| [Node Shutdown Procedure](03-operations/node-shutdown-procedure.md) | Safe shutdown/restart          | Mid       | Maintenance    |
+| [Local Development ESO](03-operations/local-development-eso.md)     | External Secrets dev workflow  | Mid       | Development    |
+| [Development Tools](03-operations/development-tools.md)             | Git hooks, linters, formatters | Mid       | Dev setup      |
+| [Troubleshooting Guide](03-operations/troubleshooting.md)           | Common issues & solutions      | Reference | When stuck     |
 
 **Use these for:** Provisioning new clusters, managing existing clusters, troubleshooting.
 
@@ -161,14 +161,14 @@ Level 5: Reference        → Deep technical details
 
 ### Hybrid LLM Cluster
 
-| Document                                                               | Description                    | Length | Purpose       |
-| ---------------------------------------------------------------------- | ------------------------------ | ------ | ------------- |
-| [Discovery](05-projects/hybrid-llm-cluster/DISCOVERY.md)               | Project discovery & research   | Mid    | Planning      |
-| [Project Structure](05-projects/hybrid-llm-cluster/PROJECT-STRUCTURE.md) | Repository & component layout | Mid    | Architecture  |
-| [GitOps Patterns](05-projects/hybrid-llm-cluster/GITOPS-PATTERNS.md)   | Multi-cluster GitOps approach  | Mid    | Architecture  |
-| [Storage Strategy](05-projects/hybrid-llm-cluster/STORAGE-STRATEGY.md) | S3 + local storage design      | Mid    | Architecture  |
-| [AWS EC2 Instance Types](05-projects/hybrid-llm-cluster/AWS-EC2-INSTANCE-TYPES.md) | GPU instance research | Mid | Reference |
-| [Next Steps](05-projects/hybrid-llm-cluster/NEXT-STEPS.md)             | Implementation roadmap         | Quick  | Planning      |
+| Document                                                                           | Description                   | Length | Purpose      |
+| ---------------------------------------------------------------------------------- | ----------------------------- | ------ | ------------ |
+| [Discovery](05-projects/hybrid-llm-cluster/DISCOVERY.md)                           | Project discovery & research  | Mid    | Planning     |
+| [Project Structure](05-projects/hybrid-llm-cluster/PROJECT-STRUCTURE.md)           | Repository & component layout | Mid    | Architecture |
+| [GitOps Patterns](05-projects/hybrid-llm-cluster/GITOPS-PATTERNS.md)               | Multi-cluster GitOps approach | Mid    | Architecture |
+| [Storage Strategy](05-projects/hybrid-llm-cluster/STORAGE-STRATEGY.md)             | S3 + local storage design     | Mid    | Architecture |
+| [AWS EC2 Instance Types](05-projects/hybrid-llm-cluster/AWS-EC2-INSTANCE-TYPES.md) | GPU instance research         | Mid    | Reference    |
+| [Next Steps](05-projects/hybrid-llm-cluster/NEXT-STEPS.md)                         | Implementation roadmap        | Quick  | Planning     |
 
 **Use these for:** Working on specific features, understanding project scope.
 
@@ -187,8 +187,8 @@ Level 5: Reference        → Deep technical details
 
 ### Migration Assessments
 
-| Document                                                                        | Description                 | Length | Status  |
-| ------------------------------------------------------------------------------- | --------------------------- | ------ | ------- |
+| Document                                     | Description                 | Length | Status  |
+| -------------------------------------------- | --------------------------- | ------ | ------- |
 | [Flux Migration](_archive/flux-migration.md) | FluxCD deployment readiness | Deep   | Pending |
 
 **Use these for:** Tracking project progress, planning, decision logging.
@@ -199,14 +199,14 @@ Level 5: Reference        → Deep technical details
 
 **Target Audience:** Advanced users, system architects
 
-| Document                                                       | Description               | Length    | Use Case    |
-| -------------------------------------------------------------- | ------------------------- | --------- | ----------- |
-| [Reference Overview](07-reference/README.md)                   | Technical reference index | Overview  | Navigation  |
-| [Taskfile Organization](07-reference/taskfile-organization.md) | Task automation structure | Mid       | Tooling     |
-| [Talos Config Spec](07-reference/talos-config-spec.md)         | Machine config deep dive  | Deep      | Config      |
-| [Kustomize Patterns](07-reference/kustomize-patterns.md)       | Kustomize examples        | Mid       | Templates   |
-| [API References](07-reference/api-references.md)               | API documentation         | Reference | Integration |
-| [Reorganization Summary](07-reference/REORGANIZATION-COMPLETE.md) | Doc restructure details | Deep      | Historical  |
+| Document                                                          | Description               | Length    | Use Case    |
+| ----------------------------------------------------------------- | ------------------------- | --------- | ----------- |
+| [Reference Overview](07-reference/README.md)                      | Technical reference index | Overview  | Navigation  |
+| [Taskfile Organization](07-reference/taskfile-organization.md)    | Task automation structure | Mid       | Tooling     |
+| [Talos Config Spec](07-reference/talos-config-spec.md)            | Machine config deep dive  | Deep      | Config      |
+| [Kustomize Patterns](07-reference/kustomize-patterns.md)          | Kustomize examples        | Mid       | Templates   |
+| [API References](07-reference/api-references.md)                  | API documentation         | Reference | Integration |
+| [Reorganization Summary](07-reference/REORGANIZATION-COMPLETE.md) | Doc restructure details   | Deep      | Historical  |
 
 ### Helm Values
 

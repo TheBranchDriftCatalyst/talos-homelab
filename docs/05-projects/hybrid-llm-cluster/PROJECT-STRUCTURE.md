@@ -97,6 +97,7 @@ talos-homelab/
 ### Challenge: Two Clusters, One Repo
 
 We have:
+
 1. **Homelab Cluster** (Talos) - Control plane, Liqo consumer
 2. **AWS GPU Cluster** (k3s) - Worker, Liqo provider
 
@@ -129,6 +130,7 @@ infrastructure/
 ```
 
 **How it works:**
+
 - Base manifests are shared
 - Overlays customize per cluster
 - Each cluster's Flux/ArgoCD points to its overlay
@@ -151,6 +153,7 @@ aws-gpu-cluster/            # Separate repo for AWS
 ```
 
 **When to use:**
+
 - Different teams own each cluster
 - Different security boundaries
 - Very different release cycles
@@ -260,9 +263,9 @@ spec:
         # This ensures scheduling on Liqo virtual node
         # which offloads to AWS GPU cluster
       tolerations:
-        - key: "nvidia.com/gpu"
-          operator: "Exists"
-          effect: "NoSchedule"
+        - key: 'nvidia.com/gpu'
+          operator: 'Exists'
+          effect: 'NoSchedule'
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

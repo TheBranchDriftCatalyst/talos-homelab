@@ -10,14 +10,14 @@
 
 ## Quick Stats
 
-| Metric | Count |
-|--------|-------|
-| Total Issues | 32 |
-| Open | 17 |
-| In Progress | 0 |
-| Closed | 15 |
-| Blocked | 6 |
-| Ready to Work | 11 |
+| Metric        | Count |
+| ------------- | ----- |
+| Total Issues  | 32    |
+| Open          | 17    |
+| In Progress   | 0     |
+| Closed        | 15    |
+| Blocked       | 6     |
+| Ready to Work | 11    |
 
 ---
 
@@ -29,11 +29,11 @@
 
 Configure ASUS NUC 15 Pro as GPU-enabled worker for Plex/Tdarr transcoding.
 
-| Task | Priority | Status |
-|------|----------|--------|
-| `TALOS-y1c` Boot with custom Talos image | P1 | ready |
-| `TALOS-dfv` Verify GPU device and NFD labels | P2 | blocked |
-| `TALOS-9ku` Configure Plex/Tdarr for GPU | P2 | blocked |
+| Task                                         | Priority | Status  |
+| -------------------------------------------- | -------- | ------- |
+| `TALOS-y1c` Boot with custom Talos image     | P1       | ready   |
+| `TALOS-dfv` Verify GPU device and NFD labels | P2       | blocked |
+| `TALOS-9ku` Configure Plex/Tdarr for GPU     | P2       | blocked |
 
 **Note:** `intel-gpu` Flux kustomization suspended until ready.
 
@@ -43,20 +43,20 @@ Configure ASUS NUC 15 Pro as GPU-enabled worker for Plex/Tdarr transcoding.
 
 **Native notifications for cluster events via ntfy.sh**
 
-| Task | Priority | Status |
-|------|----------|--------|
-| `TALOS-26f` Investigate notification sources & classes | P1 | ready |
-| `TALOS-dv3` Deploy ntfy Provider | P2 | blocked |
-| `TALOS-q4s` Configure Flux Alert CRDs | P2 | blocked |
-| `TALOS-v3a` Set up ntfy-desktop on Mac | P3 | blocked |
-| `TALOS-m0x` Create Mac provisioning (Homebrew/Ansible) | P3 | blocked |
-| `TALOS-ag3` Alertmanager integration (stretch) | P3 | ready |
+| Task                                                   | Priority | Status  |
+| ------------------------------------------------------ | -------- | ------- |
+| `TALOS-26f` Investigate notification sources & classes | P1       | ready   |
+| `TALOS-dv3` Deploy ntfy Provider                       | P2       | blocked |
+| `TALOS-q4s` Configure Flux Alert CRDs                  | P2       | blocked |
+| `TALOS-v3a` Set up ntfy-desktop on Mac                 | P3       | blocked |
+| `TALOS-m0x` Create Mac provisioning (Homebrew/Ansible) | P3       | blocked |
+| `TALOS-ag3` Alertmanager integration (stretch)         | P3       | ready   |
 
 ---
 
 ### Media Stack Configuration (`TALOS-a23`) - P3
 
-**Configure deployed *arr applications**
+**Configure deployed \*arr applications**
 
 - Prowlarr indexers
 - Sonarr/Radarr connections
@@ -89,16 +89,16 @@ Multi-phase project for distributed LLM inference. Currently suspended.
 
 ### Infrastructure
 
-| ID | Title | Type | Priority | Status |
-|----|-------|------|----------|--------|
-| `TALOS-8ey` | Implement backup strategy for etcd/PVCs | feature | P2 | ready |
-| `TALOS-i11` | Add HTTPS/TLS to Traefik | feature | P3 | ready |
+| ID          | Title                                   | Type    | Priority | Status |
+| ----------- | --------------------------------------- | ------- | -------- | ------ |
+| `TALOS-8ey` | Implement backup strategy for etcd/PVCs | feature | P2       | ready  |
+| `TALOS-i11` | Add HTTPS/TLS to Traefik                | feature | P3       | ready  |
 
 ### Development
 
-| ID | Title | Type | Priority | Status |
-|----|-------|------|----------|--------|
-| `TALOS-w1k` | Complete Tilt workflow integration | task | P3 | ready |
+| ID          | Title                              | Type | Priority | Status |
+| ----------- | ---------------------------------- | ---- | -------- | ------ |
+| `TALOS-w1k` | Complete Tilt workflow integration | task | P3       | ready  |
 
 ---
 
@@ -110,19 +110,19 @@ Issues with no blockers - pick one up!
 bd ready
 ```
 
-| ID | Title | Priority |
-|----|-------|----------|
-| `TALOS-y1c` | Boot talos02-gpu with custom Talos image | P1 |
-| `TALOS-26f` | Investigate notification sources | P1 |
-| `TALOS-fpp` | GPU node epic | P1 |
-| `TALOS-8ey` | Backup strategy | P2 |
-| `TALOS-8uv` | Notifications epic | P2 |
-| `TALOS-w1k` | Tilt integration | P3 |
-| `TALOS-7fu` | MCP servers | P3 |
-| `TALOS-i11` | HTTPS/TLS | P3 |
-| `TALOS-a23` | Media stack config | P3 |
-| `TALOS-ag3` | Alertmanager integration | P3 |
-| `TALOS-aev` | LLM cluster (suspended) | P4 |
+| ID          | Title                                    | Priority |
+| ----------- | ---------------------------------------- | -------- |
+| `TALOS-y1c` | Boot talos02-gpu with custom Talos image | P1       |
+| `TALOS-26f` | Investigate notification sources         | P1       |
+| `TALOS-fpp` | GPU node epic                            | P1       |
+| `TALOS-8ey` | Backup strategy                          | P2       |
+| `TALOS-8uv` | Notifications epic                       | P2       |
+| `TALOS-w1k` | Tilt integration                         | P3       |
+| `TALOS-7fu` | MCP servers                              | P3       |
+| `TALOS-i11` | HTTPS/TLS                                | P3       |
+| `TALOS-a23` | Media stack config                       | P3       |
+| `TALOS-ag3` | Alertmanager integration                 | P3       |
+| `TALOS-aev` | LLM cluster (suspended)                  | P4       |
 
 ---
 

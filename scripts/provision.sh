@@ -44,7 +44,7 @@ echo ""
 # ══════════════════════════════════════════════════════════════════════════════
 log_step "1" "Checking Network Connectivity"
 
-if ! ping -c 2 "$TALOS_NODE" >/dev/null 2>&1; then
+if ! ping -c 2 "$TALOS_NODE" > /dev/null 2>&1; then
   error "Node $TALOS_NODE is not reachable"
   exit 1
 fi
@@ -100,7 +100,7 @@ log_step "5" "Testing Connection to Node"
 
 RETRY=0
 while [[ $RETRY -lt $MAX_RETRIES ]]; do
-  if talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version >/dev/null 2>&1; then
+  if talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version > /dev/null 2>&1; then
     success "Connection successful!"
     talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version
     break
@@ -159,12 +159,12 @@ echo ""
 # ══════════════════════════════════════════════════════════════════════════════
 log_step "8.5" "Removing Control-Plane Taint (single-node cluster)"
 
-sleep 10  # Give k8s a moment to settle
+sleep 10 # Give k8s a moment to settle
 export KUBECONFIG="${OUTPUT_DIR}/kubeconfig"
-NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}' 2> /dev/null || echo "")
 
 if [[ -n "$NODE_NAME" ]]; then
-  if kubectl taint nodes "$NODE_NAME" node-role.kubernetes.io/control-plane:NoSchedule- 2>/dev/null; then
+  if kubectl taint nodes "$NODE_NAME" node-role.kubernetes.io/control-plane:NoSchedule- 2> /dev/null; then
     success "Control-plane taint removed from $NODE_NAME"
   else
     warn "Taint already removed or not present"

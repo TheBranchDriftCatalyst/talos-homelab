@@ -15,6 +15,7 @@
 ## Quick Reference
 
 The project covers:
+
 - Phase 1: Nebula Infrastructure (CA, lighthouse, Talos node)
 - Phase 2: AWS Infrastructure (VPC, EC2 Spot, GPU bootstrap)
 - Phase 3: Liqo Federation (peering, namespace offloading)

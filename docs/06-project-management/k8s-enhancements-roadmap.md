@@ -12,14 +12,15 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you need it:** You currently have no backup solution. If something goes wrong with your cluster or storage, you could lose all your configurations and data.
 
-| Resource | Link |
-|----------|------|
-| Website | https://velero.io/ |
-| GitHub | https://github.com/vmware-tanzu/velero |
+| Resource   | Link                                                                |
+| ---------- | ------------------------------------------------------------------- |
+| Website    | https://velero.io/                                                  |
+| GitHub     | https://github.com/vmware-tanzu/velero                              |
 | Helm Chart | https://github.com/vmware-tanzu/helm-charts/tree/main/charts/velero |
-| Docs | https://velero.io/docs/ |
+| Docs       | https://velero.io/docs/                                             |
 
 **Status:** Not Started
+
 - [ ] Install Velero
 - [ ] Configure S3-compatible backend (MinIO or Synology)
 - [ ] Set up scheduled backups
@@ -33,15 +34,16 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you need it:** Enforce best practices across your cluster automatically. Prevent misconfigurations before they're deployed. Great for learning K8s best practices.
 
-| Resource | Link |
-|----------|------|
-| Website | https://kyverno.io/ |
-| GitHub | https://github.com/kyverno/kyverno |
-| Helm Chart | https://artifacthub.io/packages/helm/kyverno/kyverno |
-| Policy Library | https://kyverno.io/policies/ |
-| Docs | https://kyverno.io/docs/ |
+| Resource       | Link                                                 |
+| -------------- | ---------------------------------------------------- |
+| Website        | https://kyverno.io/                                  |
+| GitHub         | https://github.com/kyverno/kyverno                   |
+| Helm Chart     | https://artifacthub.io/packages/helm/kyverno/kyverno |
+| Policy Library | https://kyverno.io/policies/                         |
+| Docs           | https://kyverno.io/docs/                             |
 
 **Status:** Not Started
+
 - [ ] Install Kyverno
 - [ ] Create baseline policies (require labels, resource limits)
 - [ ] Add security policies (no privileged containers, etc.)
@@ -56,13 +58,14 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you need it:** Currently when you update a ConfigMap or Secret, pods don't automatically pick up the changes. You have to manually restart them. Reloader automates this.
 
-| Resource | Link |
-|----------|------|
-| GitHub | https://github.com/stakater/Reloader |
-| Helm Chart | https://artifacthub.io/packages/helm/stakater/reloader |
-| Docs | https://github.com/stakater/Reloader#how-to-use-reloader |
+| Resource   | Link                                                     |
+| ---------- | -------------------------------------------------------- |
+| GitHub     | https://github.com/stakater/Reloader                     |
+| Helm Chart | https://artifacthub.io/packages/helm/stakater/reloader   |
+| Docs       | https://github.com/stakater/Reloader#how-to-use-reloader |
 
 **Status:** Not Started
+
 - [ ] Install Reloader
 - [ ] Annotate deployments that need auto-reload
 
@@ -74,15 +77,16 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you need it:** You have Graylog but Loki is simpler, lighter, and integrates directly with your existing Grafana. Same label-based approach as Prometheus makes correlation easy.
 
-| Resource | Link |
-|----------|------|
-| Website | https://grafana.com/oss/loki/ |
-| GitHub | https://github.com/grafana/loki |
+| Resource   | Link                                              |
+| ---------- | ------------------------------------------------- |
+| Website    | https://grafana.com/oss/loki/                     |
+| GitHub     | https://github.com/grafana/loki                   |
 | Helm Chart | https://artifacthub.io/packages/helm/grafana/loki |
-| Docs | https://grafana.com/docs/loki/latest/ |
-| LogQL | https://grafana.com/docs/loki/latest/query/ |
+| Docs       | https://grafana.com/docs/loki/latest/             |
+| LogQL      | https://grafana.com/docs/loki/latest/query/       |
 
 **Status:** Not Started
+
 - [ ] Evaluate vs current Graylog setup
 - [ ] Install Loki + Promtail
 - [ ] Configure Grafana datasource
@@ -96,14 +100,15 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you need it:** Know if your running containers have known CVEs. Identify security misconfigurations before they become problems.
 
-| Resource | Link |
-|----------|------|
-| Website | https://aquasecurity.github.io/trivy-operator/ |
-| GitHub | https://github.com/aquasecurity/trivy-operator |
+| Resource   | Link                                                               |
+| ---------- | ------------------------------------------------------------------ |
+| Website    | https://aquasecurity.github.io/trivy-operator/                     |
+| GitHub     | https://github.com/aquasecurity/trivy-operator                     |
 | Helm Chart | https://artifacthub.io/packages/helm/trivy-operator/trivy-operator |
-| Docs | https://aquasecurity.github.io/trivy-operator/latest/ |
+| Docs       | https://aquasecurity.github.io/trivy-operator/latest/              |
 
 **Status:** Not Started
+
 - [ ] Install Trivy Operator
 - [ ] Configure scan policies
 - [ ] Set up alerts for critical vulnerabilities
@@ -116,15 +121,16 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you need it:** Automated HTTPS for all your services without manual certificate management. Let's Encrypt integration means free, auto-renewing certificates.
 
-| Resource | Link |
-|----------|------|
-| Website | https://cert-manager.io/ |
-| GitHub | https://github.com/cert-manager/cert-manager |
-| Helm Chart | https://artifacthub.io/packages/helm/cert-manager/cert-manager |
-| Docs | https://cert-manager.io/docs/ |
-| Let's Encrypt Setup | https://cert-manager.io/docs/tutorials/acme/nginx-ingress/ |
+| Resource            | Link                                                           |
+| ------------------- | -------------------------------------------------------------- |
+| Website             | https://cert-manager.io/                                       |
+| GitHub              | https://github.com/cert-manager/cert-manager                   |
+| Helm Chart          | https://artifacthub.io/packages/helm/cert-manager/cert-manager |
+| Docs                | https://cert-manager.io/docs/                                  |
+| Let's Encrypt Setup | https://cert-manager.io/docs/tutorials/acme/nginx-ingress/     |
 
 **Status:** Not Started
+
 - [ ] Install cert-manager
 - [ ] Configure ClusterIssuer (Let's Encrypt)
 - [ ] Migrate IngressRoutes to use cert-manager
@@ -139,12 +145,12 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** Debug slow requests, understand service dependencies, identify which service is causing latency in a request chain.
 
-| Resource | Link |
-|----------|------|
-| Website | https://grafana.com/oss/tempo/ |
-| GitHub | https://github.com/grafana/tempo |
+| Resource   | Link                                               |
+| ---------- | -------------------------------------------------- |
+| Website    | https://grafana.com/oss/tempo/                     |
+| GitHub     | https://github.com/grafana/tempo                   |
 | Helm Chart | https://artifacthub.io/packages/helm/grafana/tempo |
-| Docs | https://grafana.com/docs/tempo/latest/ |
+| Docs       | https://grafana.com/docs/tempo/latest/             |
 
 **Status:** Not Started
 
@@ -156,12 +162,12 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** Single collector for all observability data instead of separate agents. Standardized instrumentation across all your apps.
 
-| Resource | Link |
-|----------|------|
-| Website | https://opentelemetry.io/docs/collector/ |
-| GitHub | https://github.com/open-telemetry/opentelemetry-collector |
+| Resource   | Link                                                                            |
+| ---------- | ------------------------------------------------------------------------------- |
+| Website    | https://opentelemetry.io/docs/collector/                                        |
+| GitHub     | https://github.com/open-telemetry/opentelemetry-collector                       |
 | Helm Chart | https://artifacthub.io/packages/helm/opentelemetry-helm/opentelemetry-collector |
-| Docs | https://opentelemetry.io/docs/ |
+| Docs       | https://opentelemetry.io/docs/                                                  |
 
 **Status:** Not Started
 
@@ -173,11 +179,11 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** When you add new nodes, existing pods don't automatically redistribute. Descheduler handles this.
 
-| Resource | Link |
-|----------|------|
-| GitHub | https://github.com/kubernetes-sigs/descheduler |
-| Helm Chart | https://artifacthub.io/packages/helm/descheduler/descheduler |
-| Docs | https://github.com/kubernetes-sigs/descheduler#policy-and-strategies |
+| Resource   | Link                                                                 |
+| ---------- | -------------------------------------------------------------------- |
+| GitHub     | https://github.com/kubernetes-sigs/descheduler                       |
+| Helm Chart | https://artifacthub.io/packages/helm/descheduler/descheduler         |
+| Docs       | https://github.com/kubernetes-sigs/descheduler#policy-and-strategies |
 
 **Status:** Not Started
 
@@ -189,13 +195,13 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** Scale based on actual demand rather than just CPU/memory. Scale workers based on queue depth, scale to zero when not needed.
 
-| Resource | Link |
-|----------|------|
-| Website | https://keda.sh/ |
-| GitHub | https://github.com/kedacore/keda |
-| Helm Chart | https://artifacthub.io/packages/helm/kedacore/keda |
-| Scalers List | https://keda.sh/docs/latest/scalers/ |
-| Docs | https://keda.sh/docs/latest/ |
+| Resource     | Link                                               |
+| ------------ | -------------------------------------------------- |
+| Website      | https://keda.sh/                                   |
+| GitHub       | https://github.com/kedacore/keda                   |
+| Helm Chart   | https://artifacthub.io/packages/helm/kedacore/keda |
+| Scalers List | https://keda.sh/docs/latest/scalers/               |
+| Docs         | https://keda.sh/docs/latest/                       |
 
 **Status:** Not Started
 
@@ -207,12 +213,12 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** Understand which workloads use the most resources. Get recommendations for right-sizing. Useful even for homelab to optimize resource usage.
 
-| Resource | Link |
-|----------|------|
-| Website | https://www.kubecost.com/ |
-| GitHub | https://github.com/kubecost/cost-analyzer-helm-chart |
+| Resource   | Link                                                        |
+| ---------- | ----------------------------------------------------------- |
+| Website    | https://www.kubecost.com/                                   |
+| GitHub     | https://github.com/kubecost/cost-analyzer-helm-chart        |
 | Helm Chart | https://artifacthub.io/packages/helm/kubecost/cost-analyzer |
-| Docs | https://docs.kubecost.com/ |
+| Docs       | https://docs.kubecost.com/                                  |
 
 **Status:** Not Started
 
@@ -224,12 +230,12 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** HA storage that survives node failures. Built-in backup to S3. Alternative to relying solely on NFS.
 
-| Resource | Link |
-|----------|------|
-| Website | https://longhorn.io/ |
-| GitHub | https://github.com/longhorn/longhorn |
+| Resource   | Link                                                   |
+| ---------- | ------------------------------------------------------ |
+| Website    | https://longhorn.io/                                   |
+| GitHub     | https://github.com/longhorn/longhorn                   |
 | Helm Chart | https://artifacthub.io/packages/helm/longhorn/longhorn |
-| Docs | https://longhorn.io/docs/ |
+| Docs       | https://longhorn.io/docs/                              |
 
 **Status:** Not Started
 
@@ -241,12 +247,12 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** Prerequisite for Velero and Loki. Local S3-compatible storage without cloud dependency.
 
-| Resource | Link |
-|----------|------|
-| Website | https://min.io/ |
-| GitHub | https://github.com/minio/minio |
+| Resource   | Link                                                      |
+| ---------- | --------------------------------------------------------- |
+| Website    | https://min.io/                                           |
+| GitHub     | https://github.com/minio/minio                            |
 | Helm Chart | https://artifacthub.io/packages/helm/minio-official/minio |
-| Docs | https://min.io/docs/minio/kubernetes/upstream/ |
+| Docs       | https://min.io/docs/minio/kubernetes/upstream/            |
 
 **Status:** Not Started
 
@@ -258,13 +264,13 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** Detect if a container is compromised. Alert on suspicious activity in real-time.
 
-| Resource | Link |
-|----------|------|
-| Website | https://falco.org/ |
-| GitHub | https://github.com/falcosecurity/falco |
+| Resource   | Link                                                     |
+| ---------- | -------------------------------------------------------- |
+| Website    | https://falco.org/                                       |
+| GitHub     | https://github.com/falcosecurity/falco                   |
 | Helm Chart | https://artifacthub.io/packages/helm/falcosecurity/falco |
-| Rules | https://falco.org/docs/rules/ |
-| Docs | https://falco.org/docs/ |
+| Rules      | https://falco.org/docs/rules/                            |
+| Docs       | https://falco.org/docs/                                  |
 
 **Status:** Not Started
 
@@ -276,13 +282,13 @@ Tracking document for future cluster improvements and tooling additions.
 
 **Why you might need it:** Keep your Helm charts and container images up to date automatically. Get PRs for updates instead of manually checking for new versions.
 
-| Resource | Link |
-|----------|------|
-| Website | https://www.mend.io/renovate/ |
-| GitHub | https://github.com/renovatebot/renovate |
-| GitHub App | https://github.com/apps/renovate |
-| Docs | https://docs.renovatebot.com/ |
-| Presets | https://docs.renovatebot.com/presets-default/ |
+| Resource   | Link                                          |
+| ---------- | --------------------------------------------- |
+| Website    | https://www.mend.io/renovate/                 |
+| GitHub     | https://github.com/renovatebot/renovate       |
+| GitHub App | https://github.com/apps/renovate              |
+| Docs       | https://docs.renovatebot.com/                 |
+| Presets    | https://docs.renovatebot.com/presets-default/ |
 
 **Status:** Not Started
 
@@ -306,6 +312,7 @@ Tracking document for future cluster improvements and tooling additions.
 ## Implementation Notes
 
 ### Recommended Order
+
 1. **MinIO** - Backend storage for other tools
 2. **Velero** - Backup (depends on MinIO or S3)
 3. **cert-manager** - TLS automation
@@ -315,11 +322,13 @@ Tracking document for future cluster improvements and tooling additions.
 7. **Loki** - Consider replacing Graylog
 
 ### Dependencies
+
 - Velero requires S3-compatible storage (MinIO, Synology S3, or cloud)
 - Loki benefits from object storage for long-term retention
 - Tempo pairs well with OpenTelemetry Collector
 
 ### Considerations
+
 - Start Kyverno policies in `audit` mode before switching to `enforce`
 - Loki could potentially replace Graylog for simpler architecture
 - Consider resource impact - some tools are heavier than others

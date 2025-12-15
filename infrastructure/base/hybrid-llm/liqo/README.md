@@ -5,6 +5,7 @@
 ## Overview
 
 Liqo enables dynamic Kubernetes multi-cluster topologies by:
+
 - Creating virtual nodes representing remote clusters
 - Transparently offloading pods to remote clusters
 - Providing cross-cluster networking (pod-to-pod, pod-to-service)
@@ -57,6 +58,7 @@ Liqo enables dynamic Kubernetes multi-cluster topologies by:
 ### Authentication Flow
 
 When peering is established, Liqo creates:
+
 1. **Tenant** - Identity for the consumer cluster on the provider
 2. **Identity** - Signed credentials for API access
 3. **ResourceSlice** - Negotiated resource allocation
@@ -65,6 +67,7 @@ When peering is established, Liqo creates:
 ### Namespace Offloading
 
 To offload pods to remote clusters:
+
 1. Create a `NamespaceOffloading` resource in the source namespace
 2. Liqo creates a "twin namespace" on the remote cluster
 3. Pods scheduled on virtual nodes are reflected as ShadowPods remotely
@@ -100,10 +103,10 @@ liqoctl install k3s \
 
 **The most common error is incorrect namespace flags.** Each cluster may have Liqo in different namespaces:
 
-| Cluster | Liqo Namespace |
-|---------|----------------|
-| Homelab (Talos) | `liqo` |
-| AWS (k3s) | `liqo-system` |
+| Cluster         | Liqo Namespace |
+| --------------- | -------------- |
+| Homelab (Talos) | `liqo`         |
+| AWS (k3s)       | `liqo-system`  |
 
 ### Peering Command
 
@@ -197,13 +200,13 @@ spec:
   nodeSelector:
     liqo.io/type: virtual-node
   tolerations:
-  - key: "virtual-node.liqo.io/not-allowed"
-    operator: "Exists"
-    effect: "NoExecute"     # IMPORTANT: Must be NoExecute, not NoSchedule
+    - key: 'virtual-node.liqo.io/not-allowed'
+      operator: 'Exists'
+      effect: 'NoExecute' # IMPORTANT: Must be NoExecute, not NoSchedule
   containers:
-  - name: app
-    image: busybox
-    command: ["sh", "-c", "sleep 3600"]
+    - name: app
+      image: busybox
+      command: ['sh', '-c', 'sleep 3600']
 ```
 
 ### Key Points
@@ -215,12 +218,14 @@ spec:
 ## Resource Allocation
 
 Default resources shared by provider (configurable):
+
 - **CPU**: 4 cores
 - **Memory**: 8Gi
 - **Pods**: 110
 - **Ephemeral Storage**: 20Gi
 
 To customize, use `liqoctl peer` flags:
+
 ```bash
 liqoctl peer ... --cpu=8 --memory=16Gi --pods=50
 ```
@@ -238,6 +243,7 @@ tenants.authentication.liqo.io "xxx" not found
 **Cause**: Peering was not properly established.
 
 **Fix**: Re-run peering with correct namespace flags:
+
 ```bash
 liqoctl peer \
   --remote-kubeconfig /path/to/aws-kubeconfig \
@@ -261,6 +267,7 @@ admission webhook "shadowpod.validate.liqo.io" denied the request: failed gettin
 **Cause**: Usually namespace offloading not ready or RBAC issues.
 
 **Check**:
+
 ```bash
 # Check namespace offloading status
 kubectl get namespaceoffloading -n <namespace> -o yaml
@@ -274,6 +281,7 @@ kubectl logs -n liqo deployment/liqo-crd-replicator --tail=50
 **Cause**: Virtual kubelet can't reach remote cluster.
 
 **Check**:
+
 ```bash
 # Check virtual kubelet logs
 kubectl logs -n liqo-tenant-<cluster-id> deployment/vk-<cluster-id> --tail=50
@@ -308,10 +316,10 @@ kubectl logs -n liqo deployment/liqo-crd-replicator --tail=100
 
 We use Nebula mesh VPN for cross-cluster networking instead of Liqo's built-in network fabric:
 
-| Component | IP |
-|-----------|-----|
-| AWS Lighthouse | 10.42.0.1 |
-| Homelab | 10.42.1.1 |
+| Component           | IP        |
+| ------------------- | --------- |
+| AWS Lighthouse      | 10.42.0.1 |
+| Homelab             | 10.42.1.1 |
 | GPU Worker (future) | 10.42.2.1 |
 
 The `--networking-disabled` flag tells Liqo to skip its network setup since we handle it via Nebula.

@@ -5,6 +5,7 @@
 Talos Linux Kubernetes cluster infrastructure repo. Uses **beads** for task tracking, **dual GitOps** (Flux + ArgoCD), and **Taskfile** automation.
 
 **Quick Start:**
+
 ```bash
 bd ready                    # Find work to do
 task talos:health           # Check cluster health
@@ -12,6 +13,7 @@ task k8s:kubeconfig-merge   # Enable kubectl access
 ```
 
 **Key Facts:**
+
 - Control Plane IP: `192.168.1.54` (or `$TALOS_NODE`)
 - Services: `http://<service>.talos00` (requires /etc/hosts)
 - Talos = immutable OS, no SSH, config via `talosctl`
@@ -42,16 +44,16 @@ git push
 
 ### Essential Commands
 
-| Command | Purpose |
-|---------|---------|
-| `bd ready` | Show unblocked issues ready to work |
-| `bd list --status=open` | All open issues |
-| `bd show <id>` | Detailed view with dependencies |
-| `bd create --title="..." --type=task` | Create issue |
-| `bd update <id> --status=in_progress` | Claim work |
-| `bd close <id>` | Mark complete |
-| `bd blocked` | Show blocked issues |
-| `bd stats` | Project health |
+| Command                               | Purpose                             |
+| ------------------------------------- | ----------------------------------- |
+| `bd ready`                            | Show unblocked issues ready to work |
+| `bd list --status=open`               | All open issues                     |
+| `bd show <id>`                        | Detailed view with dependencies     |
+| `bd create --title="..." --type=task` | Create issue                        |
+| `bd update <id> --status=in_progress` | Claim work                          |
+| `bd close <id>`                       | Mark complete                       |
+| `bd blocked`                          | Show blocked issues                 |
+| `bd stats`                            | Project health                      |
 
 ### Dependencies
 
@@ -72,6 +74,7 @@ bd dep add <issue> <depends-on>  # issue depends on depends-on
 ### Progressive Summarization
 
 All docs should follow this structure:
+
 1. **TL;DR** - 1-2 sentences + bullets (30 sec read)
 2. **Quick Reference** - Common operations (5 min)
 3. **Deep Dive** - Full details (reference)
@@ -83,9 +86,12 @@ Parent READMEs (e.g., `docs/01-getting-started/README.md`) summarize children fo
 ### Related Issues Footer
 
 Every doc should end with:
+
 ```markdown
 ---
+
 ## Related Issues
+
 <!-- Beads tracking for this doc -->
 ```
 
@@ -98,11 +104,11 @@ Every doc should end with:
 
 ## Key Documentation
 
-| Doc | Purpose |
-|-----|---------|
-| `QUICKSTART.md` | Essential commands reference |
-| `TRAEFIK.md` | Ingress configuration |
-| `OBSERVABILITY.md` | Monitoring/logging stack |
+| Doc                                   | Purpose                       |
+| ------------------------------------- | ----------------------------- |
+| `QUICKSTART.md`                       | Essential commands reference  |
+| `TRAEFIK.md`                          | Ingress configuration         |
+| `OBSERVABILITY.md`                    | Monitoring/logging stack      |
 | `docs/02-architecture/dual-gitops.md` | **CRITICAL** - GitOps pattern |
 
 ## Task Automation Structure
@@ -631,5 +637,7 @@ When adding applications:
 ---
 
 ## Related Issues
+
 <!-- Beads tracking for CLAUDE.md -->
+
 - CILIUM-h2b - Initial restructure with beads workflow section

@@ -167,14 +167,14 @@ kubectl get shadowpods.offloading.liqo.io -A
 
 ## Results Summary
 
-| Metric | Result |
-|--------|--------|
-| Teardown Clean | [PENDING] |
-| Re-peering Success | [PENDING] |
+| Metric               | Result    |
+| -------------------- | --------- |
+| Teardown Clean       | [PENDING] |
+| Re-peering Success   | [PENDING] |
 | Virtual Node Created | [PENDING] |
 | Pod Offloading Works | [PENDING] |
-| Orphaned Resources | [PENDING] |
-| Total Time | [PENDING] |
+| Orphaned Resources   | [PENDING] |
+| Total Time           | [PENDING] |
 
 ## Issues Found
 

@@ -81,25 +81,26 @@ The GPU worker instance only runs when needed, scaling down to zero cost when id
 
 ## Cost Analysis
 
-| State | Duration | Cost |
-|-------|----------|------|
-| Idle | 720 hrs/mo | $7/mo (lighthouse only) |
-| Active (spot) | Per hour | ~$0.16/hr |
+| State         | Duration   | Cost                    |
+| ------------- | ---------- | ----------------------- |
+| Idle          | 720 hrs/mo | $7/mo (lighthouse only) |
+| Active (spot) | Per hour   | ~$0.16/hr               |
 
 **Example usage patterns:**
 
-| Usage | Hours/Month | Monthly Cost |
-|-------|-------------|--------------|
-| Light (2 hr/day) | 60 hrs | $7 + $9.60 = **$17/mo** |
-| Medium (4 hr/day) | 120 hrs | $7 + $19.20 = **$26/mo** |
-| Heavy (8 hr/day) | 240 hrs | $7 + $38.40 = **$45/mo** |
-| Always-on | 720 hrs | $7 + $115 = **$122/mo** |
+| Usage             | Hours/Month | Monthly Cost             |
+| ----------------- | ----------- | ------------------------ |
+| Light (2 hr/day)  | 60 hrs      | $7 + $9.60 = **$17/mo**  |
+| Medium (4 hr/day) | 120 hrs     | $7 + $19.20 = **$26/mo** |
+| Heavy (8 hr/day)  | 240 hrs     | $7 + $38.40 = **$45/mo** |
+| Always-on         | 720 hrs     | $7 + $115 = **$122/mo**  |
 
 ## Components
 
 ### 1. GPU Scaler Controller (runs on homelab)
 
 A Kubernetes controller that:
+
 - Watches for pods with `nvidia.com/gpu` resource requests
 - Starts/stops the GPU EC2 instance via AWS API
 - Manages idle timeout
@@ -127,18 +128,20 @@ spec:
                   name: aws-gpu-config
                   key: instance_id
             - name: IDLE_TIMEOUT
-              value: "15m"
+              value: '15m'
 ```
 
 ### 2. GPU Worker Instance (EC2)
 
 Pre-configured AMI with:
+
 - k3s (lightweight Kubernetes)
 - Nebula (joins mesh on boot)
 - NVIDIA drivers + container runtime
 - Liqo agent (peers with homelab)
 
 **Userdata flow on start:**
+
 ```bash
 #!/bin/bash
 # 1. Start Nebula (connect to mesh)
@@ -237,6 +240,7 @@ func reconcile(pod *v1.Pod) {
 ### Option C: Karpenter (If using EKS)
 
 Karpenter can auto-provision nodes, but:
+
 - Requires EKS (not k3s)
 - More complex networking with Nebula
 - Overkill for single-node GPU
@@ -245,15 +249,15 @@ Karpenter can auto-provision nodes, but:
 
 ## Startup Time Breakdown
 
-| Phase | Time | Notes |
-|-------|------|-------|
-| EC2 Start | 30-60s | Instance state: stopped → running |
-| OS Boot | 30-45s | Amazon Linux 2023 boot |
-| Nebula Connect | 5-10s | Join mesh, handshake |
-| k3s Ready | 30-45s | API server, kubelet ready |
-| Liqo Peer | 10-20s | Virtual node appears |
-| Pod Schedule | 5-10s | Ollama container starts |
-| **Total** | **2-3 min** | Cold start to first inference |
+| Phase          | Time        | Notes                             |
+| -------------- | ----------- | --------------------------------- |
+| EC2 Start      | 30-60s      | Instance state: stopped → running |
+| OS Boot        | 30-45s      | Amazon Linux 2023 boot            |
+| Nebula Connect | 5-10s       | Join mesh, handshake              |
+| k3s Ready      | 30-45s      | API server, kubelet ready         |
+| Liqo Peer      | 10-20s      | Virtual node appears              |
+| Pod Schedule   | 5-10s       | Ollama container starts           |
+| **Total**      | **2-3 min** | Cold start to first inference     |
 
 ## Reducing Cold Start
 
@@ -283,7 +287,7 @@ kind: Pod
 metadata:
   name: ollama
   labels:
-    hybrid-llm/gpu-required: "true"
+    hybrid-llm/gpu-required: 'true'
 spec:
   nodeSelector:
     # Liqo virtual node

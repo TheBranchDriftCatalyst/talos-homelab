@@ -117,7 +117,7 @@ wait_for_ssh() {
   local max_attempts="${2:-30}"
 
   log_info "Waiting for SSH access to $ip..."
-  for i in $(seq 1 $max_attempts); do
+  for i in $(seq 1 "$max_attempts"); do
     if ssh_lighthouse "$ip" "echo 'SSH OK'" 2> /dev/null; then
       log_info "SSH is available"
       return 0
@@ -135,7 +135,7 @@ wait_for_cloud_init() {
   local max_attempts="${2:-60}"
 
   log_info "Waiting for cloud-init to complete (this may take 5-10 minutes)..."
-  for i in $(seq 1 $max_attempts); do
+  for i in $(seq 1 "$max_attempts"); do
     status=$(ssh_lighthouse "$ip" "sudo cloud-init status" 2> /dev/null || echo "unknown")
     if echo "$status" | grep -q "done"; then
       log_info "Cloud-init completed successfully"
@@ -159,7 +159,7 @@ wait_for_k3s() {
   local max_attempts="${2:-30}"
 
   log_info "Waiting for k3s to be ready..."
-  for i in $(seq 1 $max_attempts); do
+  for i in $(seq 1 "$max_attempts"); do
     if ssh_lighthouse "$ip" "sudo kubectl get nodes 2>/dev/null | grep -q Ready"; then
       log_info "k3s is ready"
       return 0
@@ -177,7 +177,7 @@ wait_for_liqo() {
   local max_attempts="${2:-30}"
 
   log_info "Waiting for Liqo pods to be ready..."
-  for i in $(seq 1 $max_attempts); do
+  for i in $(seq 1 "$max_attempts"); do
     ready=$(ssh_lighthouse "$ip" "sudo kubectl get pods -n liqo-system --no-headers 2>/dev/null | grep -c Running" || echo "0")
     total=$(ssh_lighthouse "$ip" "sudo kubectl get pods -n liqo-system --no-headers 2>/dev/null | wc -l" || echo "0")
 
@@ -456,7 +456,7 @@ step_establish_peering() {
   # Verify virtual node appears
   log_info "Checking for virtual node..."
   local max_attempts=12
-  for i in $(seq 1 $max_attempts); do
+  for i in $(seq 1 "$max_attempts"); do
     if kubectl get nodes -l liqo.io/type=virtual-node --no-headers 2> /dev/null | grep -q .; then
       log_info "✅ Virtual node created successfully!"
       kubectl get nodes -l liqo.io/type=virtual-node

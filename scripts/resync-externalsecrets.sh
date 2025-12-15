@@ -12,36 +12,36 @@ TIMESTAMP=$(date +%s)
 ONEPASSWORD_ONLY=false
 
 if [[ "${1:-}" == "--onepassword-only" ]]; then
-    ONEPASSWORD_ONLY=true
+  ONEPASSWORD_ONLY=true
 fi
 
 if [[ "$ONEPASSWORD_ONLY" == "true" ]]; then
-    echo "Finding ExternalSecrets using 1Password..."
-    SECRETS=$(kubectl get externalsecrets -A -o json | jq -r '.items[] | select(.spec.secretStoreRef.name == "onepassword") | "\(.metadata.namespace)/\(.metadata.name)"')
+  echo "Finding ExternalSecrets using 1Password..."
+  SECRETS=$(kubectl get externalsecrets -A -o json | jq -r '.items[] | select(.spec.secretStoreRef.name == "onepassword") | "\(.metadata.namespace)/\(.metadata.name)"')
 else
-    echo "Finding all ExternalSecrets..."
-    SECRETS=$(kubectl get externalsecrets -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name)"')
+  echo "Finding all ExternalSecrets..."
+  SECRETS=$(kubectl get externalsecrets -A -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name)"')
 fi
 
 if [[ -z "$SECRETS" ]]; then
-    echo "No ExternalSecrets found"
-    exit 0
+  echo "No ExternalSecrets found"
+  exit 0
 fi
 
 echo ""
 echo "Forcing resync on:"
 echo "$SECRETS" | while read -r secret; do
-    echo "  - $secret"
+  echo "  - $secret"
 done
 echo ""
 
 # Annotate each ExternalSecret to force resync
 echo "$SECRETS" | while read -r secret; do
-    NAMESPACE=$(echo "$secret" | cut -d'/' -f1)
-    NAME=$(echo "$secret" | cut -d'/' -f2)
+  NAMESPACE=$(echo "$secret" | cut -d'/' -f1)
+  NAME=$(echo "$secret" | cut -d'/' -f2)
 
-    echo "Resyncing $NAMESPACE/$NAME..."
-    kubectl annotate externalsecret "$NAME" -n "$NAMESPACE" force-sync="$TIMESTAMP" --overwrite
+  echo "Resyncing $NAMESPACE/$NAME..."
+  kubectl annotate externalsecret "$NAME" -n "$NAMESPACE" force-sync="$TIMESTAMP" --overwrite
 done
 
 echo ""

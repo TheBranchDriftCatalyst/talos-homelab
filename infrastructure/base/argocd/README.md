@@ -56,11 +56,11 @@ kubectl port-forward svc/argocd-server -n argocd 8080:443
 
 ArgoCD applications are defined in `applications/` directory:
 
-| Application        | Repository                                        | Path | Auto-Sync |
-| ------------------ | ------------------------------------------------- | ---- | --------- |
-| `catalyst-ui`      | github.com/TheBranchDriftCatalyst/catalyst-ui.git | k8s/ | ✅        |
-| `arr-stack-private`| Private media stack repository                    | k8s/ | ✅        |
-| `kasa-exporter`    | github.com/TheBranchDriftCatalyst/kasa-exporter   | k8s/ | ✅        |
+| Application         | Repository                                        | Path | Auto-Sync |
+| ------------------- | ------------------------------------------------- | ---- | --------- |
+| `catalyst-ui`       | github.com/TheBranchDriftCatalyst/catalyst-ui.git | k8s/ | ✅        |
+| `arr-stack-private` | Private media stack repository                    | k8s/ | ✅        |
+| `kasa-exporter`     | github.com/TheBranchDriftCatalyst/kasa-exporter   | k8s/ | ✅        |
 
 ### Creating New Applications
 
@@ -96,8 +96,8 @@ spec:
     namespace: my-namespace
   syncPolicy:
     automated:
-      prune: true       # Remove resources not in Git
-      selfHeal: true    # Auto-sync on drift detection
+      prune: true # Remove resources not in Git
+      selfHeal: true # Auto-sync on drift detection
     syncOptions:
       - CreateNamespace=true
 ```
@@ -171,12 +171,12 @@ kubectl describe pod -n <namespace> <pod-name> | grep -A 10 Events
 
 ### Common Issues
 
-| Issue | Symptom | Solution |
-|-------|---------|----------|
-| **Sync fails** | "OutOfSync" status persists | Check repo credentials, verify manifests are valid |
-| **Image pull error** | Pod stuck in `ImagePullBackOff` | Verify image exists, check registry credentials |
-| **503 UI error** | ArgoCD UI unreachable | Check `argocd-server` pod, verify IngressRoute |
-| **Slow sync** | Application takes >5min to sync | Check `argocd-application-controller` resources |
+| Issue                | Symptom                         | Solution                                           |
+| -------------------- | ------------------------------- | -------------------------------------------------- |
+| **Sync fails**       | "OutOfSync" status persists     | Check repo credentials, verify manifests are valid |
+| **Image pull error** | Pod stuck in `ImagePullBackOff` | Verify image exists, check registry credentials    |
+| **503 UI error**     | ArgoCD UI unreachable           | Check `argocd-server` pod, verify IngressRoute     |
+| **Slow sync**        | Application takes >5min to sync | Check `argocd-application-controller` resources    |
 
 ---
 
@@ -185,6 +185,7 @@ kubectl describe pod -n <namespace> <pod-name> | grep -A 10 Events
 → See [STATUS.md](STATUS.md) for comprehensive status, configuration details, and known issues.
 
 **STATUS.md includes:**
+
 - Current deployment status and health metrics
 - Detailed component breakdown
 - Configuration files and structure

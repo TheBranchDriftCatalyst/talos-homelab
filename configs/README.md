@@ -21,22 +21,23 @@ configs/
 
 ## Node Inventory
 
-| Node | Role | IP | Purpose | Special Config |
-|------|------|-----|---------|----------------|
-| talos00 | Control Plane | 192.168.1.54 | Cluster control, workloads | - |
-| talos01 | Worker | 192.168.1.177 | Observability workloads | NVMe disk |
-| talos02-gpu | Worker | TBD | GPU transcoding (Plex, Tdarr) | Intel Arc GPU |
+| Node        | Role          | IP            | Purpose                       | Special Config |
+| ----------- | ------------- | ------------- | ----------------------------- | -------------- |
+| talos00     | Control Plane | 192.168.1.54  | Cluster control, workloads    | -              |
+| talos01     | Worker        | 192.168.1.177 | Observability workloads       | NVMe disk      |
+| talos02-gpu | Worker        | TBD           | GPU transcoding (Plex, Tdarr) | Intel Arc GPU  |
 
 ## Configuration Patterns
 
 ### Machine Types
 
 - **controlplane.yaml** - Full cluster config including secrets, etcd, API server settings
-- **worker-*.yaml** - Worker configs inherit cluster identity but exclude control plane specifics
+- **worker-\*.yaml** - Worker configs inherit cluster identity but exclude control plane specifics
 
 ### Common Customizations
 
 Each node config typically includes:
+
 - `machine.network.hostname` - Unique hostname
 - `machine.install.disk` - Node-specific boot disk
 - `machine.kubelet.nodeIP.validSubnets` - Force LAN IP for Prometheus
@@ -45,6 +46,7 @@ Each node config typically includes:
 ### Patches Directory
 
 Use `patches/` for reusable configuration snippets:
+
 ```bash
 # Apply patch to existing config
 talosctl machineconfig patch configs/nodes/worker-talos01.yaml --patch @configs/patches/gpu.yaml

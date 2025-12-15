@@ -61,14 +61,14 @@ The architecture allows LLM workloads to be scheduled from the homelab cluster a
 
 #### Key Features
 
-| Feature | Description |
-|---------|-------------|
-| **Peer-to-Peer** | Direct connections between nodes, no hub-and-spoke bottleneck |
-| **NAT Traversal** | UDP hole punching works through most firewalls/NATs |
-| **Certificate-Based** | Mutual authentication via signed certificates |
-| **Encryption** | ECDH key exchange + AES-256-GCM |
-| **Lightweight** | Single static binary, minimal resource usage |
-| **Cross-Platform** | Linux, macOS, Windows, iOS, Android |
+| Feature               | Description                                                   |
+| --------------------- | ------------------------------------------------------------- |
+| **Peer-to-Peer**      | Direct connections between nodes, no hub-and-spoke bottleneck |
+| **NAT Traversal**     | UDP hole punching works through most firewalls/NATs           |
+| **Certificate-Based** | Mutual authentication via signed certificates                 |
+| **Encryption**        | ECDH key exchange + AES-256-GCM                               |
+| **Lightweight**       | Single static binary, minimal resource usage                  |
+| **Cross-Platform**    | Linux, macOS, Windows, iOS, Android                           |
 
 #### Architecture Components
 
@@ -90,12 +90,12 @@ The architecture allows LLM workloads to be scheduled from the homelab cluster a
 
 #### Why Nebula over Alternatives?
 
-| Solution | Pros | Cons |
-|----------|------|------|
-| **Nebula** | Self-hosted, no dependencies, performant, Slack-proven | More manual setup |
-| **Tailscale** | Easy setup, managed | Dependency on Tailscale infra, costs at scale |
-| **WireGuard** | Native in Talos, fast | No built-in discovery, more manual config |
-| **OpenVPN** | Widely supported | Slower, heavier, hub-and-spoke |
+| Solution      | Pros                                                   | Cons                                          |
+| ------------- | ------------------------------------------------------ | --------------------------------------------- |
+| **Nebula**    | Self-hosted, no dependencies, performant, Slack-proven | More manual setup                             |
+| **Tailscale** | Easy setup, managed                                    | Dependency on Tailscale infra, costs at scale |
+| **WireGuard** | Native in Talos, fast                                  | No built-in discovery, more manual config     |
+| **OpenVPN**   | Widely supported                                       | Slower, heavier, hub-and-spoke                |
 
 #### Nebula IP Addressing
 
@@ -231,19 +231,20 @@ liqoctl offload namespace llm-inference \
 
 #### Recommended Instance Types for Ollama
 
-| Instance | GPU | VRAM | Spot Price* | Use Case |
-|----------|-----|------|-------------|----------|
-| **g4dn.xlarge** | 1x T4 | 16GB | ~$0.16/hr | Small models (7B) |
-| **g4dn.2xlarge** | 1x T4 | 16GB | ~$0.23/hr | More CPU/RAM |
-| **g5.xlarge** | 1x A10G | 24GB | ~$0.40/hr | Medium models (13B) |
-| **g5.2xlarge** | 1x A10G | 24GB | ~$0.48/hr | More CPU/RAM |
-| **p3.2xlarge** | 1x V100 | 16GB | ~$0.92/hr | Fastest inference |
+| Instance         | GPU     | VRAM | Spot Price\* | Use Case            |
+| ---------------- | ------- | ---- | ------------ | ------------------- |
+| **g4dn.xlarge**  | 1x T4   | 16GB | ~$0.16/hr    | Small models (7B)   |
+| **g4dn.2xlarge** | 1x T4   | 16GB | ~$0.23/hr    | More CPU/RAM        |
+| **g5.xlarge**    | 1x A10G | 24GB | ~$0.40/hr    | Medium models (13B) |
+| **g5.2xlarge**   | 1x A10G | 24GB | ~$0.48/hr    | More CPU/RAM        |
+| **p3.2xlarge**   | 1x V100 | 16GB | ~$0.92/hr    | Fastest inference   |
 
-*Spot prices vary by region and time. Can be 60-90% off on-demand.
+\*Spot prices vary by region and time. Can be 60-90% off on-demand.
 
 #### Deep Learning AMIs
 
 Use AWS Deep Learning AMIs (pre-installed NVIDIA drivers + CUDA):
+
 - **Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)**
 - Saves 30+ minutes of driver installation
 
@@ -259,22 +260,22 @@ spec:
   template:
     spec:
       requirements:
-        - key: "karpenter.sh/capacity-type"
+        - key: 'karpenter.sh/capacity-type'
           operator: In
-          values: ["spot"]
-        - key: "node.kubernetes.io/instance-type"
+          values: ['spot']
+        - key: 'node.kubernetes.io/instance-type'
           operator: In
-          values: ["g4dn.xlarge", "g4dn.2xlarge", "g5.xlarge"]
-        - key: "kubernetes.io/arch"
+          values: ['g4dn.xlarge', 'g4dn.2xlarge', 'g5.xlarge']
+        - key: 'kubernetes.io/arch'
           operator: In
-          values: ["amd64"]
+          values: ['amd64']
       nodeClassRef:
         name: gpu-node-class
   limits:
-    nvidia.com/gpu: 2  # Max 2 GPUs across all nodes
+    nvidia.com/gpu: 2 # Max 2 GPUs across all nodes
   disruption:
     consolidationPolicy: WhenEmpty
-    consolidateAfter: 5m  # Terminate if unused for 5 minutes
+    consolidateAfter: 5m # Terminate if unused for 5 minutes
 ```
 
 ---
@@ -391,26 +392,26 @@ curl http://ollama.llm-inference.svc.cluster.local:11434/api/generate \
 
 ### Always-On Costs
 
-| Component | Instance | Monthly Cost |
-|-----------|----------|--------------|
-| Nebula Lighthouse | t3.micro | ~$8 |
-| Elastic IP | 1x | ~$4 |
-| **Total Always-On** | | **~$12/month** |
+| Component           | Instance | Monthly Cost   |
+| ------------------- | -------- | -------------- |
+| Nebula Lighthouse   | t3.micro | ~$8            |
+| Elastic IP          | 1x       | ~$4            |
+| **Total Always-On** |          | **~$12/month** |
 
 ### On-Demand GPU Costs (Spot)
 
-| Usage Pattern | Instance | Hours/Month | Monthly Cost |
-|---------------|----------|-------------|--------------|
-| Light (2hr/day) | g4dn.xlarge | 60 | ~$10 |
-| Medium (8hr/day) | g4dn.xlarge | 240 | ~$38 |
-| Heavy (24/7) | g4dn.xlarge | 720 | ~$115 |
+| Usage Pattern    | Instance    | Hours/Month | Monthly Cost |
+| ---------------- | ----------- | ----------- | ------------ |
+| Light (2hr/day)  | g4dn.xlarge | 60          | ~$10         |
+| Medium (8hr/day) | g4dn.xlarge | 240         | ~$38         |
+| Heavy (24/7)     | g4dn.xlarge | 720         | ~$115        |
 
 ### Storage Costs
 
-| Component | Size | Monthly Cost |
-|-----------|------|--------------|
-| EBS gp3 (models) | 100GB | ~$8 |
-| S3 (model cache) | 50GB | ~$1 |
+| Component        | Size  | Monthly Cost |
+| ---------------- | ----- | ------------ |
+| EBS gp3 (models) | 100GB | ~$8          |
+| S3 (model cache) | 50GB  | ~$1          |
 
 **Estimated Total: $30-150/month** depending on usage.
 
@@ -418,13 +419,13 @@ curl http://ollama.llm-inference.svc.cluster.local:11434/api/generate \
 
 ## Risks & Mitigations
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Spot instance interruption | LLM inference fails | Use spot fleet with multiple instance types; persist models to EBS |
-| Nebula VPN instability | Cluster partitions | Multiple lighthouses; health monitoring |
-| Liqo complexity | Debugging difficulty | Start simple; good logging/monitoring |
-| Latency (coast-to-coast) | Slow inference | Choose AWS region close to home |
-| Cost overrun | Budget exceeded | Set billing alarms; enforce scale-to-zero |
+| Risk                       | Impact               | Mitigation                                                         |
+| -------------------------- | -------------------- | ------------------------------------------------------------------ |
+| Spot instance interruption | LLM inference fails  | Use spot fleet with multiple instance types; persist models to EBS |
+| Nebula VPN instability     | Cluster partitions   | Multiple lighthouses; health monitoring                            |
+| Liqo complexity            | Debugging difficulty | Start simple; good logging/monitoring                              |
+| Latency (coast-to-coast)   | Slow inference       | Choose AWS region close to home                                    |
+| Cost overrun               | Budget exceeded      | Set billing alarms; enforce scale-to-zero                          |
 
 ---
 
@@ -445,22 +446,26 @@ curl http://ollama.llm-inference.svc.cluster.local:11434/api/generate \
 ## References
 
 ### Nebula
+
 - [Nebula GitHub](https://github.com/slackhq/nebula)
 - [Nebula Documentation](https://nebula.defined.net/docs/)
 - [Slack Engineering Blog: Introducing Nebula](https://slack.engineering/introducing-nebula-the-open-source-global-overlay-network-from-slack/)
 
 ### Liqo
+
 - [Liqo Documentation](https://docs.liqo.io/)
 - [Liqo GitHub](https://github.com/liqotech/liqo)
 - [Liqo Offloading Guide](https://docs.liqo.io/en/stable/features/offloading.html)
 - [Offloading with Policies](https://docs.liqo.io/en/stable/examples/offloading-with-policies.html)
 
 ### AWS GPU
+
 - [AWS GPU Instance Types](https://aws.amazon.com/ec2/instance-types/#gpu-instances)
 - [Running GPU Workloads on EKS](https://aws.amazon.com/blogs/compute/running-gpu-accelerated-kubernetes-workloads-on-p3-and-p2-ec2-instances-with-amazon-eks/)
 - [Karpenter for Spot Instances](https://docs.aws.amazon.com/eks/latest/best-practices/aiml-compute.html)
 
 ### Ollama
+
 - [Ollama GitHub](https://github.com/ollama/ollama)
 - [Installing Ollama on AWS EC2](https://developer.searchblox.com/docs/installing-ollama-on-aws-ec2)
 

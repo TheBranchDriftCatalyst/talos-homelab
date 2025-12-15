@@ -6,43 +6,45 @@
 
 ## Hardware Specifications
 
-| Spec | Value |
-|------|-------|
-| **Model** | ASUS NUC 15 Pro (RNUC15U5) |
-| **CPU** | Intel Core Ultra 5 225H (Arrow Lake) |
-| **GPU** | Intel Arc (integrated Xe2 graphics) |
-| **Year** | 2025 |
-| **Purpose** | GPU transcoding workhorse |
+| Spec        | Value                                |
+| ----------- | ------------------------------------ |
+| **Model**   | ASUS NUC 15 Pro (RNUC15U5)           |
+| **CPU**     | Intel Core Ultra 5 225H (Arrow Lake) |
+| **GPU**     | Intel Arc (integrated Xe2 graphics)  |
+| **Year**    | 2025                                 |
+| **Purpose** | GPU transcoding workhorse            |
 
 ## Network Configuration
 
-| Setting | Value |
-|---------|-------|
-| **Hostname** | talos02-gpu |
+| Setting         | Value                                    |
+| --------------- | ---------------------------------------- |
+| **Hostname**    | talos02-gpu                              |
 | **Expected IP** | 192.168.1.XXX (DHCP - update when known) |
-| **Node Role** | Worker |
+| **Node Role**   | Worker                                   |
 
 ## Progress Tracking
 
-| Task | Status | Beads ID |
-|------|--------|----------|
-| Config directory reorganization | DONE | TALOS-wbb |
-| GPU worker config created | DONE | TALOS-2b2 |
-| Image Factory schematic | DONE | TALOS-akv |
-| Flux infrastructure (NFD + Intel GPU) | DONE | TALOS-34t |
-| Boot node with custom image | PENDING | TALOS-y1c |
-| Verify GPU device & labels | BLOCKED | TALOS-dfv |
-| Configure Plex/Tdarr | BLOCKED | TALOS-9ku |
+| Task                                  | Status  | Beads ID  |
+| ------------------------------------- | ------- | --------- |
+| Config directory reorganization       | DONE    | TALOS-wbb |
+| GPU worker config created             | DONE    | TALOS-2b2 |
+| Image Factory schematic               | DONE    | TALOS-akv |
+| Flux infrastructure (NFD + Intel GPU) | DONE    | TALOS-34t |
+| Boot node with custom image           | PENDING | TALOS-y1c |
+| Verify GPU device & labels            | BLOCKED | TALOS-dfv |
+| Configure Plex/Tdarr                  | BLOCKED | TALOS-9ku |
 
 ## GPU Configuration
 
 ### Talos Requirements
 
 This node requires a **custom Talos image** with the following extensions:
+
 - `siderolabs/i915` - Intel GPU firmware and kernel modules
 - `siderolabs/intel-ucode` - Intel CPU microcode updates
 
 **Generate Image:**
+
 ```bash
 # Get schematic ID
 curl -X POST --data-binary @configs/nodes/talos02-gpu-schematic.yaml \
@@ -55,6 +57,7 @@ curl -X POST --data-binary @configs/nodes/talos02-gpu-schematic.yaml \
 ### Kernel Driver
 
 The Intel Core Ultra 5 225H uses the newer **Xe2 architecture**, which requires:
+
 - **Kernel driver**: `xe` (new upstream driver for Xe2+)
 - **Fallback**: `i915` for older Intel GPUs
 
@@ -63,21 +66,23 @@ Both modules are configured to load in `worker-talos02-gpu.yaml`.
 ### Device Access
 
 GPU will be exposed via:
+
 - `/dev/dri/card0` - DRM device
 - `/dev/dri/renderD128` - Render node (used by applications)
 
 ### Kubernetes Labels (Applied by NFD)
 
 ```yaml
-intel.feature.node.kubernetes.io/gpu: "true"
-gpu.intel.com/device-id.present: "true"
-node-role.kubernetes.io/gpu-worker: ""  # Pre-configured in machine config
-node.kubernetes.io/workload-type: media-transcoding  # Pre-configured
+intel.feature.node.kubernetes.io/gpu: 'true'
+gpu.intel.com/device-id.present: 'true'
+node-role.kubernetes.io/gpu-worker: '' # Pre-configured in machine config
+node.kubernetes.io/workload-type: media-transcoding # Pre-configured
 ```
 
 ## Workload Affinity
 
 This node is the **priority target** for:
+
 - **Plex** - Hardware transcoding (QSV/VA-API)
 - **Tdarr** - Video encoding/transcoding
 - **Jellyfin** - Alternative media server
@@ -88,14 +93,14 @@ This node is the **priority target** for:
 ```yaml
 spec:
   nodeSelector:
-    intel.feature.node.kubernetes.io/gpu: "true"
+    intel.feature.node.kubernetes.io/gpu: 'true'
   containers:
     - name: plex
       resources:
         limits:
-          gpu.intel.com/i915: "1"
+          gpu.intel.com/i915: '1'
         requests:
-          gpu.intel.com/i915: "1"
+          gpu.intel.com/i915: '1'
       volumeMounts:
         - name: dri
           mountPath: /dev/dri
@@ -121,13 +126,13 @@ spec:
 
 ## Files Created
 
-| File | Purpose |
-|------|---------|
-| `configs/nodes/worker-talos02-gpu.yaml` | Machine configuration |
-| `configs/nodes/talos02-gpu-schematic.yaml` | Image Factory schematic |
-| `configs/nodes/talos02-gpu.md` | This documentation |
-| `infrastructure/base/intel-gpu/` | Flux-managed NFD + Intel GPU plugin |
-| `clusters/catalyst-cluster/intel-gpu.yaml` | Flux Kustomization |
+| File                                       | Purpose                             |
+| ------------------------------------------ | ----------------------------------- |
+| `configs/nodes/worker-talos02-gpu.yaml`    | Machine configuration               |
+| `configs/nodes/talos02-gpu-schematic.yaml` | Image Factory schematic             |
+| `configs/nodes/talos02-gpu.md`             | This documentation                  |
+| `infrastructure/base/intel-gpu/`           | Flux-managed NFD + Intel GPU plugin |
+| `clusters/catalyst-cluster/intel-gpu.yaml` | Flux Kustomization                  |
 
 ## References
 
@@ -137,7 +142,9 @@ spec:
 - [Talos GPU Discussion](https://github.com/siderolabs/talos/discussions/7026)
 
 ---
+
 ## Related Issues
+
 - TALOS-fpp - Epic: Set up talos02-gpu worker node with Intel Arc
 - TALOS-y1c - Boot talos02-gpu with custom Talos image (NEXT)
 - TALOS-dfv - Verify GPU device and NFD labels

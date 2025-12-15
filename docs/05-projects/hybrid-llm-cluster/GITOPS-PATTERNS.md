@@ -6,10 +6,10 @@
 
 We have two distinct clusters:
 
-| Cluster | Location | Lifecycle | GitOps Tool | Role |
-|---------|----------|-----------|-------------|------|
-| **Homelab** | On-prem (Talos) | Always-on | Flux | Liqo Consumer |
-| **AWS GPU** | Cloud (k3s) | On-demand | None/Manual | Liqo Provider |
+| Cluster     | Location        | Lifecycle | GitOps Tool | Role          |
+| ----------- | --------------- | --------- | ----------- | ------------- |
+| **Homelab** | On-prem (Talos) | Always-on | Flux        | Liqo Consumer |
+| **AWS GPU** | Cloud (k3s)     | On-demand | None/Manual | Liqo Provider |
 
 The AWS cluster is ephemeral - it spins up when needed and shuts down when idle. This creates unique GitOps challenges.
 
@@ -129,7 +129,7 @@ spec:
       name: nebula
       namespace: nebula-system
   dependsOn:
-    - name: external-secrets  # For Nebula certs
+    - name: external-secrets # For Nebula certs
 ```
 
 ---
@@ -281,7 +281,7 @@ spec:
               - matchExpressions:
                   - key: topology.liqo.io/type
                     operator: NotIn
-                    values: ["virtual-node"]
+                    values: ['virtual-node']
 ```
 
 ### Run on AWS GPU Only (via Liqo)
@@ -299,11 +299,11 @@ spec:
               - matchExpressions:
                   - key: topology.liqo.io/type
                     operator: In
-                    values: ["virtual-node"]
+                    values: ['virtual-node']
       tolerations:
-        - key: "nvidia.com/gpu"
-          operator: "Exists"
-          effect: "NoSchedule"
+        - key: 'nvidia.com/gpu'
+          operator: 'Exists'
+          effect: 'NoSchedule'
 ```
 
 ### Run on Either (Prefer GPU)
@@ -320,7 +320,7 @@ spec:
                 matchExpressions:
                   - key: node-type
                     operator: In
-                    values: ["gpu"]
+                    values: ['gpu']
 ```
 
 ---
@@ -375,15 +375,14 @@ aws secretsmanager create-secret \
 ```
 
 EC2 IAM role policy:
+
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": [
-        "secretsmanager:GetSecretValue"
-      ],
+      "Action": ["secretsmanager:GetSecretValue"],
       "Resource": "arn:aws:secretsmanager:us-west-2:*:secret:nebula/*"
     }
   ]
@@ -518,13 +517,13 @@ aws events put-rule \
 
 ## Summary
 
-| Aspect | Homelab | AWS GPU |
-|--------|---------|---------|
-| GitOps Tool | Flux CD | Bootstrap script |
-| Manifest Sync | Continuous | On-start only |
-| Secrets | 1Password + ESO | AWS Secrets Manager |
-| Lifecycle | Permanent | Ephemeral |
-| Monitoring | Full Prometheus | Push to homelab |
-| Updates | Git push → Flux | Re-bootstrap |
+| Aspect        | Homelab         | AWS GPU             |
+| ------------- | --------------- | ------------------- |
+| GitOps Tool   | Flux CD         | Bootstrap script    |
+| Manifest Sync | Continuous      | On-start only       |
+| Secrets       | 1Password + ESO | AWS Secrets Manager |
+| Lifecycle     | Permanent       | Ephemeral           |
+| Monitoring    | Full Prometheus | Push to homelab     |
+| Updates       | Git push → Flux | Re-bootstrap        |
 
 This asymmetric approach balances the benefits of GitOps on the permanent homelab cluster with the practical needs of an ephemeral GPU cluster.

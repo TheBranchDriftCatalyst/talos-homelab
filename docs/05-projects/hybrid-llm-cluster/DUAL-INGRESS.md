@@ -23,11 +23,11 @@ Add a second entry point into the hybrid cluster via AWS Traefik, enabling direc
 
 ## Traffic Patterns
 
-| Pattern | Flow |
-|---------|------|
-| **AWS Direct** | User → AWS EIP → Traefik → k3s Pod |
-| **Homelab via Liqo** | User → Homelab → Traefik → Liqo → Nebula → AWS Pod |
-| **AWS to Homelab** | User → AWS EIP → Traefik → ExternalName → Nebula → Homelab Pod |
+| Pattern              | Flow                                                           |
+| -------------------- | -------------------------------------------------------------- |
+| **AWS Direct**       | User → AWS EIP → Traefik → k3s Pod                             |
+| **Homelab via Liqo** | User → Homelab → Traefik → Liqo → Nebula → AWS Pod             |
+| **AWS to Homelab**   | User → AWS EIP → Traefik → ExternalName → Nebula → Homelab Pod |
 
 ## Stack
 
@@ -37,26 +37,26 @@ Add a second entry point into the hybrid cluster via AWS Traefik, enabling direc
 
 ## Tasks
 
-| ID | Task | Depends On |
-|----|------|------------|
-| CILIUM-lug | Update AWS security group (ports 80/443) | - |
-| CILIUM-3q6 | Deploy Traefik on AWS k3s | CILIUM-lug |
-| CILIUM-30v | Configure Cloudflare DNS + proxy | - |
-| CILIUM-7cp | Install cert-manager + Let's Encrypt | CILIUM-3q6, CILIUM-30v |
-| CILIUM-ctp | Deploy whoami test service | CILIUM-7cp |
-| CILIUM-e28 | Add Ollama IngressRoute | CILIUM-ctp |
-| CILIUM-0hk | Update lighthouse-userdata.sh | CILIUM-ctp |
+| ID         | Task                                     | Depends On             |
+| ---------- | ---------------------------------------- | ---------------------- |
+| CILIUM-lug | Update AWS security group (ports 80/443) | -                      |
+| CILIUM-3q6 | Deploy Traefik on AWS k3s                | CILIUM-lug             |
+| CILIUM-30v | Configure Cloudflare DNS + proxy         | -                      |
+| CILIUM-7cp | Install cert-manager + Let's Encrypt     | CILIUM-3q6, CILIUM-30v |
+| CILIUM-ctp | Deploy whoami test service               | CILIUM-7cp             |
+| CILIUM-e28 | Add Ollama IngressRoute                  | CILIUM-ctp             |
+| CILIUM-0hk | Update lighthouse-userdata.sh            | CILIUM-ctp             |
 
 ## Files
 
-| File | Description |
-|------|-------------|
-| `scripts/hybrid-llm/update-sg-for-ingress.sh` | Add 80/443 to existing SG |
-| `scripts/hybrid-llm/provision-lighthouse.sh` | Add 80/443 rules (new instances) |
-| `infrastructure/overlays/aws-gpu/traefik/values.yaml` | AWS Traefik Helm values |
-| `infrastructure/overlays/aws-gpu/cert-manager/` | ClusterIssuer + Certificate |
-| `infrastructure/overlays/aws-gpu/test-services/whoami.yaml` | Test deployment |
-| `infrastructure/overlays/aws-gpu/catalyst-llm/ingressroute.yaml` | Ollama IngressRoute |
+| File                                                             | Description                      |
+| ---------------------------------------------------------------- | -------------------------------- |
+| `scripts/hybrid-llm/update-sg-for-ingress.sh`                    | Add 80/443 to existing SG        |
+| `scripts/hybrid-llm/provision-lighthouse.sh`                     | Add 80/443 rules (new instances) |
+| `infrastructure/overlays/aws-gpu/traefik/values.yaml`            | AWS Traefik Helm values          |
+| `infrastructure/overlays/aws-gpu/cert-manager/`                  | ClusterIssuer + Certificate      |
+| `infrastructure/overlays/aws-gpu/test-services/whoami.yaml`      | Test deployment                  |
+| `infrastructure/overlays/aws-gpu/catalyst-llm/ingressroute.yaml` | Ollama IngressRoute              |
 
 ## Quick Start
 
@@ -83,6 +83,7 @@ curl https://test.aws.yourdomain.com
 ## Configuration Reference
 
 ### Traefik Values (AWS)
+
 ```yaml
 deployment:
   kind: Deployment
@@ -102,6 +103,7 @@ resources:
 ```
 
 ### ClusterIssuer (Let's Encrypt + Cloudflare)
+
 ```yaml
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer

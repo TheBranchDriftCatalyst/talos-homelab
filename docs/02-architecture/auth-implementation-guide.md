@@ -46,11 +46,11 @@ This document tracks authentication options for the Talos homelab cluster, inclu
 
 ### What Each Does
 
-| Technology | What It Is | Use Case |
-|------------|-----------|----------|
-| **LDAP** | Directory database protocol | Store users/groups/attributes. Apps query it to validate credentials |
-| **Auth Gateway** | HTTP middleware | Intercept web requests, redirect to login, manage sessions, SSO |
-| **Kerberos** | Ticket-based auth protocol | Enterprise networks, Windows domains, SSH without passwords |
+| Technology       | What It Is                  | Use Case                                                             |
+| ---------------- | --------------------------- | -------------------------------------------------------------------- |
+| **LDAP**         | Directory database protocol | Store users/groups/attributes. Apps query it to validate credentials |
+| **Auth Gateway** | HTTP middleware             | Intercept web requests, redirect to login, manage sessions, SSO      |
+| **Kerberos**     | Ticket-based auth protocol  | Enterprise networks, Windows domains, SSH without passwords          |
 
 ### How They Relate
 
@@ -127,15 +127,15 @@ User visits sonarr.talos00
 
 ### Authelia vs Authentik
 
-| Feature | Authelia | Authentik |
-|---------|----------|-----------|
-| Resource usage | ~50MB RAM | ~500MB+ RAM |
-| Setup complexity | Simple YAML | Web UI config |
-| User storage | File/LDAP | Built-in DB/LDAP |
-| OIDC provider | Yes | Yes |
-| 2FA | TOTP, WebAuthn | TOTP, WebAuthn, SMS |
-| Dependencies | Redis (optional) | PostgreSQL, Redis |
-| Best for | Simple homelab | Multiple users, complex flows |
+| Feature          | Authelia         | Authentik                     |
+| ---------------- | ---------------- | ----------------------------- |
+| Resource usage   | ~50MB RAM        | ~500MB+ RAM                   |
+| Setup complexity | Simple YAML      | Web UI config                 |
+| User storage     | File/LDAP        | Built-in DB/LDAP              |
+| OIDC provider    | Yes              | Yes                           |
+| 2FA              | TOTP, WebAuthn   | TOTP, WebAuthn, SMS           |
+| Dependencies     | Redis (optional) | PostgreSQL, Redis             |
+| Best for         | Simple homelab   | Multiple users, complex flows |
 
 ### Recommendation: Start with Authelia
 
@@ -182,11 +182,11 @@ access_control:
   default_policy: one_factor
   rules:
     # Public services (no auth)
-    - domain: "plex.talos00"
+    - domain: 'plex.talos00'
       policy: bypass
 
     # Protected services
-    - domain: "*.talos00"
+    - domain: '*.talos00'
       policy: one_factor
 
 session:
@@ -210,8 +210,8 @@ notifier:
 # authelia/users_database.yml
 users:
   admin:
-    displayname: "Admin User"
-    password: "$argon2id$v=19$m=65536,t=3,p=4$..."  # Generate with authelia hash-password
+    displayname: 'Admin User'
+    password: '$argon2id$v=19$m=65536,t=3,p=4$...' # Generate with authelia hash-password
     email: admin@talos00
     groups:
       - admins
@@ -303,22 +303,22 @@ spec:
 
 ## Glossary
 
-| Term | Definition |
-|------|------------|
-| **LDAP** | Lightweight Directory Access Protocol - protocol for accessing directory services |
-| **OIDC** | OpenID Connect - authentication layer on top of OAuth 2.0 |
-| **SAML** | Security Assertion Markup Language - XML-based auth standard |
-| **SSO** | Single Sign-On - one login for multiple services |
-| **ForwardAuth** | Traefik middleware that delegates auth to external service |
-| **2FA/MFA** | Two-Factor/Multi-Factor Authentication |
-| **TOTP** | Time-based One-Time Password (e.g., Google Authenticator) |
-| **WebAuthn** | Web Authentication API (hardware keys, biometrics) |
+| Term            | Definition                                                                        |
+| --------------- | --------------------------------------------------------------------------------- |
+| **LDAP**        | Lightweight Directory Access Protocol - protocol for accessing directory services |
+| **OIDC**        | OpenID Connect - authentication layer on top of OAuth 2.0                         |
+| **SAML**        | Security Assertion Markup Language - XML-based auth standard                      |
+| **SSO**         | Single Sign-On - one login for multiple services                                  |
+| **ForwardAuth** | Traefik middleware that delegates auth to external service                        |
+| **2FA/MFA**     | Two-Factor/Multi-Factor Authentication                                            |
+| **TOTP**        | Time-based One-Time Password (e.g., Google Authenticator)                         |
+| **WebAuthn**    | Web Authentication API (hardware keys, biometrics)                                |
 
 ## Decision Log
 
-| Date | Decision | Rationale |
-|------|----------|-----------|
-| 2024-11-28 | Skip LDAP initially | Single-user homelab, unnecessary complexity |
-| 2024-11-28 | Skip Kerberos | Enterprise/Windows focused, not applicable |
-| 2024-11-28 | Plan for Authelia | Lightweight, simple config, low resource usage |
+| Date       | Decision               | Rationale                                           |
+| ---------- | ---------------------- | --------------------------------------------------- |
+| 2024-11-28 | Skip LDAP initially    | Single-user homelab, unnecessary complexity         |
+| 2024-11-28 | Skip Kerberos          | Enterprise/Windows focused, not applicable          |
+| 2024-11-28 | Plan for Authelia      | Lightweight, simple config, low resource usage      |
 | 2024-11-28 | File-based users first | Simplest starting point, can migrate to LLDAP later |

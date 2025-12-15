@@ -5,6 +5,7 @@
 Traefik is our cluster's HTTP router and ingress controller, managing all external access to services. Currently deployed as a DaemonSet with HTTP-only access (no TLS). All services are accessible via `*.talos00` hostname pattern.
 
 **Quick Facts:**
+
 - Dashboard: http://traefik.talos00
 - 45+ IngressRoutes active across 15+ namespaces
 - EntryPoints: web (80), websecure (443), traefik (9000), metrics (9100)
@@ -72,7 +73,7 @@ metadata:
   namespace: my-namespace
 spec:
   entryPoints:
-    - web                          # HTTP (use 'websecure' when TLS is enabled)
+    - web # HTTP (use 'websecure' when TLS is enabled)
   routes:
     - match: Host(`my-app.talos00`)
       kind: Rule
@@ -123,6 +124,7 @@ spec:
 ### Hostname Pattern
 
 All cluster services use the **`*.talos00`** hostname pattern:
+
 - Pattern: `<service-name>.talos00`
 - Examples: `grafana.talos00`, `argocd.talos00`, `ollama.talos00`
 
@@ -154,12 +156,12 @@ sudo brew services start dnsmasq
 
 ### EntryPoints
 
-| EntryPoint  | Port | Protocol | Purpose               |
-|-------------|------|----------|-----------------------|
-| `web`       | 80   | HTTP     | Primary HTTP traffic  |
-| `websecure` | 443  | HTTPS    | TLS (not active yet)  |
-| `traefik`   | 9000 | HTTP     | Dashboard             |
-| `metrics`   | 9100 | HTTP     | Prometheus metrics    |
+| EntryPoint  | Port | Protocol | Purpose              |
+| ----------- | ---- | -------- | -------------------- |
+| `web`       | 80   | HTTP     | Primary HTTP traffic |
+| `websecure` | 443  | HTTPS    | TLS (not active yet) |
+| `traefik`   | 9000 | HTTP     | Dashboard            |
+| `metrics`   | 9100 | HTTP     | Prometheus metrics   |
 
 ## Troubleshooting
 
@@ -270,6 +272,7 @@ kubectl describe nodes | grep Taints
 ## Deep Dive
 
 For comprehensive documentation including:
+
 - Full deployment configuration and Helm values
 - Security considerations and hardening recommendations
 - Middleware examples (auth, rate limiting, redirects)
@@ -290,7 +293,9 @@ For comprehensive documentation including:
 ---
 
 ## Related Issues
+
 <!-- Beads tracking for this documentation domain -->
+
 - [CILIUM-7w6] - Initial creation of root-level TRAEFIK.md
 
 **Last Updated:** 2025-12-06

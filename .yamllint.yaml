@@ -11,6 +11,13 @@ yaml-files:
   - '.yamllint'
 
 # Ignore patterns
+# Files with embedded content that can't be wrapped:
+# - grafana-dashboards/: Embedded JSON dashboards (28k+ char lines)
+# - hybrid-cluster-exporter/: Embedded Python code
+# - v2-otel/alloy/: Embedded River config
+# - kube-system/pod-cleanup/: Embedded shell scripts
+# - argocd/helmrelease.yaml: Long annotation values, SSO config URLs
+# - argocd/image-updater/: Generated RBAC with long resource names
 ignore: |
   .output/
   .git/
@@ -19,10 +26,24 @@ ignore: |
   **/.venv/
   tools/*/.venv/
   charts/*/templates/*.yaml
-  configs/*.yaml
+  configs/
   clusters/catalyst-cluster/flux-system/
+  docs/archive/
+  infrastructure/base/monitoring/grafana-dashboards/
+  infrastructure/base/monitoring/hybrid-cluster-exporter/
+  infrastructure/base/monitoring/v2-otel/alloy/
+  infrastructure/base/kube-system/pod-cleanup/
+  infrastructure/base/argocd/helmrelease.yaml
+  infrastructure/base/argocd/image-updater/
 
 rules:
+  # Braces - allow spaces inside braces (compatible with Prettier)
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+    min-spaces-inside-empty: 0
+    max-spaces-inside-empty: 0
+
   # Line length - allow longer lines for readability
   line-length:
     max: 120

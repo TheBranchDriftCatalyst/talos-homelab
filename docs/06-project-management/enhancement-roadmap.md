@@ -6,6 +6,7 @@
 **Tracking:** Beads issue tracker (see below)
 
 > **Beads Migration**: Active tasks from this roadmap are now tracked in beads:
+>
 > - `TALOS-7fu` - MCP Server Integration (Stream 1)
 > - `TALOS-w1k` - Tilt Development Workflow (Stream 2)
 >

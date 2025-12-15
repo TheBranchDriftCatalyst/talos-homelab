@@ -43,7 +43,7 @@ log_step "1" "Discovering Kubeconfigs in $OUTPUT_DIR"
 FOUND_CONFIGS=()
 while IFS= read -r -d '' config_path; do
   FOUND_CONFIGS+=("$config_path")
-done < <(find "$OUTPUT_DIR" -type f -name "kubeconfig" -print0 2>/dev/null)
+done < <(find "$OUTPUT_DIR" -type f -name "kubeconfig" -print0 2> /dev/null)
 
 if [[ ${#FOUND_CONFIGS[@]} -eq 0 ]]; then
   warn "No kubeconfig files found in $OUTPUT_DIR"
@@ -101,12 +101,12 @@ for KUBECONFIG_PATH in "${FOUND_CONFIGS[@]}"; do
 
   # Check if context already exists
   if [[ -f "$DEFAULT_KUBECONFIG" ]]; then
-    if kubectl config get-contexts "$CONTEXT_NAME" &>/dev/null; then
+    if kubectl config get-contexts "$CONTEXT_NAME" &> /dev/null; then
       warn "Context '$CONTEXT_NAME' already exists"
       if confirm "    Remove and re-merge?"; then
         info "Removing existing context..."
-        kubectl config delete-context "$CONTEXT_NAME" 2>/dev/null || true
-        kubectl config delete-cluster "$CLUSTER_NAME" 2>/dev/null || true
+        kubectl config delete-context "$CONTEXT_NAME" 2> /dev/null || true
+        kubectl config delete-cluster "$CLUSTER_NAME" 2> /dev/null || true
       else
         warn "Skipping"
         echo ""
@@ -117,7 +117,7 @@ for KUBECONFIG_PATH in "${FOUND_CONFIGS[@]}"; do
   fi
 
   # Read original context name
-  ORIGINAL_CONTEXT=$(kubectl --kubeconfig="$KUBECONFIG_PATH" config current-context 2>/dev/null || echo "")
+  ORIGINAL_CONTEXT=$(kubectl --kubeconfig="$KUBECONFIG_PATH" config current-context 2> /dev/null || echo "")
 
   if [[ -z "$ORIGINAL_CONTEXT" ]]; then
     warn "No current context found, using first available"
@@ -140,11 +140,11 @@ for KUBECONFIG_PATH in "${FOUND_CONFIGS[@]}"; do
 
   # Rename context if needed
   if [[ "$ORIGINAL_CONTEXT" != "$CONTEXT_NAME" ]]; then
-    kubectl config rename-context "$ORIGINAL_CONTEXT" "$CONTEXT_NAME" 2>/dev/null || true
+    kubectl config rename-context "$ORIGINAL_CONTEXT" "$CONTEXT_NAME" 2> /dev/null || true
   fi
 
   # Update cluster name
-  kubectl config set-context "$CONTEXT_NAME" --cluster="$CLUSTER_NAME" 2>/dev/null || true
+  kubectl config set-context "$CONTEXT_NAME" --cluster="$CLUSTER_NAME" 2> /dev/null || true
 
   # Flatten and write
   kubectl config view --flatten > "${DEFAULT_KUBECONFIG}.tmp"
@@ -179,9 +179,9 @@ fi
 # Set default context
 if [[ $MERGED_COUNT -gt 0 ]]; then
   # Prefer production if available
-  if kubectl config get-contexts catalyst-cluster &>/dev/null; then
+  if kubectl config get-contexts catalyst-cluster &> /dev/null; then
     DEFAULT_CONTEXT="catalyst-cluster"
-  elif kubectl config get-contexts talos-local &>/dev/null; then
+  elif kubectl config get-contexts talos-local &> /dev/null; then
     DEFAULT_CONTEXT="talos-local"
   else
     DEFAULT_CONTEXT=$(kubectl config get-contexts -o name | head -1)
@@ -203,7 +203,7 @@ echo ""
 
 # Context switching
 print_section "CONTEXT SWITCHING"
-if command -v kubectx &>/dev/null; then
+if command -v kubectx &> /dev/null; then
   echo -e "  ${CYAN}kubectx${RESET}                    ${DIM}# List contexts${RESET}"
   echo -e "  ${CYAN}kubectx catalyst-cluster${RESET}     ${DIM}# Switch to production${RESET}"
   echo -e "  ${CYAN}kubectx talos-local${RESET}        ${DIM}# Switch to local test${RESET}"
@@ -215,7 +215,7 @@ fi
 echo ""
 
 # Namespace switching
-if command -v kubens &>/dev/null; then
+if command -v kubens &> /dev/null; then
   print_section "NAMESPACE SWITCHING"
   echo -e "  ${CYAN}kubens${RESET}                     ${DIM}# List namespaces${RESET}"
   echo -e "  ${CYAN}kubens media${RESET}               ${DIM}# Switch to media${RESET}"
@@ -224,7 +224,7 @@ if command -v kubens &>/dev/null; then
 fi
 
 # K9s
-if command -v k9s &>/dev/null; then
+if command -v k9s &> /dev/null; then
   print_section "K9S TUI"
   echo -e "  ${CYAN}k9s${RESET}                        ${DIM}# Launch interactive manager${RESET}"
   echo -e "  ${CYAN}k9s --context <name>${RESET}       ${DIM}# Launch for specific context${RESET}"

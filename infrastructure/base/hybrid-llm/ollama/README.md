@@ -5,6 +5,7 @@
 ## Overview
 
 Ollama provides a simple way to run large language models locally. In this setup:
+
 - Ollama runs on AWS GPU instances via Liqo offloading
 - Models are stored in S3 Intelligent-Tiering (cost-optimized)
 - Access via IngressRoute from homelab
@@ -60,13 +61,13 @@ Ollama provides a simple way to run large language models locally. In this setup
 
 ## Components
 
-| File | Description |
-|------|-------------|
-| `kustomization.yaml` | Kustomize entrypoint |
-| `deployment.yaml` | Ollama deployment with GPU |
-| `service.yaml` | ClusterIP service |
-| `ingressroute.yaml` | Traefik IngressRoute |
-| `pvc-models.yaml` | S3 Mountpoint PVC for models |
+| File                 | Description                  |
+| -------------------- | ---------------------------- |
+| `kustomization.yaml` | Kustomize entrypoint         |
+| `deployment.yaml`    | Ollama deployment with GPU   |
+| `service.yaml`       | ClusterIP service            |
+| `ingressroute.yaml`  | Traefik IngressRoute         |
+| `pvc-models.yaml`    | S3 Mountpoint PVC for models |
 
 ## Prerequisites
 
@@ -140,12 +141,12 @@ curl http://ollama.talos00/api/generate -d '{
 
 ## Resource Requirements
 
-| Model | VRAM | RAM | Instance |
-|-------|------|-----|----------|
-| Llama2 7B | ~4GB | 8GB | g4dn.xlarge |
-| Llama2 13B | ~8GB | 16GB | g4dn.xlarge |
-| CodeLlama 34B | ~18GB | 32GB | g5.xlarge |
-| Llama2 70B | ~40GB | 64GB | g5.12xlarge |
+| Model         | VRAM  | RAM  | Instance    |
+| ------------- | ----- | ---- | ----------- |
+| Llama2 7B     | ~4GB  | 8GB  | g4dn.xlarge |
+| Llama2 13B    | ~8GB  | 16GB | g4dn.xlarge |
+| CodeLlama 34B | ~18GB | 32GB | g5.xlarge   |
+| Llama2 70B    | ~40GB | 64GB | g5.12xlarge |
 
 ## GPU Scheduling
 
@@ -157,9 +158,9 @@ nodeSelector:
   topology.liqo.io/type: virtual-node
 
 tolerations:
-  - key: "nvidia.com/gpu"
-    operator: "Exists"
-    effect: "NoSchedule"
+  - key: 'nvidia.com/gpu'
+    operator: 'Exists'
+    effect: 'NoSchedule'
 
 resources:
   limits:
@@ -167,6 +168,7 @@ resources:
 ```
 
 This ensures:
+
 1. Only schedules on GPU-labeled nodes
 2. Only schedules on Liqo virtual node (→ AWS)
 3. Requests exactly 1 GPU
@@ -180,9 +182,9 @@ Ollama uses memory-mapped files for model loading:
 ```yaml
 env:
   - name: OLLAMA_FLASH_ATTENTION
-    value: "1"
+    value: '1'
   - name: OLLAMA_NUM_PARALLEL
-    value: "2"
+    value: '2'
 ```
 
 ### Keep-Alive
@@ -192,7 +194,7 @@ For faster repeated queries:
 ```yaml
 env:
   - name: OLLAMA_KEEP_ALIVE
-    value: "5m"  # Keep model in memory for 5 minutes
+    value: '5m' # Keep model in memory for 5 minutes
 ```
 
 ## Troubleshooting
@@ -213,12 +215,12 @@ kubectl exec -n llm-inference deploy/ollama -- ollama list
 
 ### Common Issues
 
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| Pod pending | No GPU available | Check spot instance is running |
-| OOMKilled | Model too large | Use smaller model or larger instance |
-| Slow inference | First load from S3 | Pre-cache popular models |
-| Connection refused | Service not ready | Wait for pod to be Running |
+| Issue              | Cause              | Solution                             |
+| ------------------ | ------------------ | ------------------------------------ |
+| Pod pending        | No GPU available   | Check spot instance is running       |
+| OOMKilled          | Model too large    | Use smaller model or larger instance |
+| Slow inference     | First load from S3 | Pre-cache popular models             |
+| Connection refused | Service not ready  | Wait for pod to be Running           |
 
 ## References
 

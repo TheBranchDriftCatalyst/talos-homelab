@@ -8,7 +8,11 @@ $directory\
 $git_branch\
 $git_status\
 $git_metrics\
-$custom\
+${custom.flux}\
+${custom.talos}\
+${custom.argocd}\
+${custom.nodes}\
+${custom.pods}\
 $fill\
 $kubernetes\
 $docker_context\
@@ -64,21 +68,23 @@ deleted_style = "bold red"
 # ═══════════════════════════════════════════════════════════════════════════════
 
 [custom.flux]
-description = "Flux GitOps: ✓=healthy ⏸=suspended ✘=failed"
+description = "Flux GitOps: ✓=ready ⏸=suspended ✘=failed"
 disabled = false
 when = "test -d flux-system || test -d bootstrap/flux || test -f .flux.yaml"
 command = """
-flux get kustomizations 2>/dev/null | awk '
-NR>1 {
+flux get kustomizations 2>/dev/null | awk -F'\t' '
+BEGIN { ready=0; failed=0; suspended=0 }
+NR>1 && $1 ~ /[a-z]/ {
+  gsub(/ /, "", $3); gsub(/ /, "", $4)
   if ($3 == "True") suspended++
-  else if ($4 == "False") failed++
-  else ready++
+  else if ($4 == "True") ready++
+  else failed++
 }
 END {
+  if (ready > 0) printf "✓%d", ready
+  if (failed > 0) printf "✘%d", failed
   if (suspended > 0) printf "⏸%d", suspended
-  else if (failed > 0) printf "✘%d", failed
-  else if (ready > 0) printf "✓%d", ready
-  else printf "?"
+  if (ready == 0 && failed == 0 && suspended == 0) printf "?"
 }'
 """
 format = "[ƒ$output]($style) "
@@ -110,6 +116,46 @@ fi
 """
 format = "[⎈$output]($style) "
 style = "bold #8be9fd"
+shell = ["bash", "--noprofile", "--norc"]
+
+[custom.nodes]
+description = "K8s Nodes: ready/total"
+disabled = false
+when = "kubectl config current-context 2>/dev/null | grep -q ."
+command = """
+kubectl get nodes --no-headers 2>/dev/null | awk '
+{
+  total++
+  if ($2 == "Ready") ready++
+}
+END {
+  if (total == 0) print "?"
+  else if (ready == total) printf "✓%d", total
+  else printf "%d/%d", ready, total
+}'
+"""
+format = "[⬡$output]($style) "
+style = "bold #50fa7b"
+shell = ["bash", "--noprofile", "--norc"]
+
+[custom.pods]
+description = "Pod health: running/total (only shown if issues)"
+disabled = false
+when = "kubectl config current-context 2>/dev/null | grep -q ."
+command = """
+kubectl get pods -A --no-headers 2>/dev/null | awk '
+{
+  total++
+  if ($4 == "Running" || $4 == "Completed" || $4 == "Succeeded") healthy++
+}
+END {
+  if (total == 0) print ""
+  else if (healthy == total) print ""
+  else printf "%d/%d", healthy, total
+}'
+"""
+format = "[●$output]($style) "
+style = "bold #ff5555"
 shell = ["bash", "--noprofile", "--norc"]
 
 # Fill space between left and right

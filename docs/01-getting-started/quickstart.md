@@ -146,6 +146,7 @@ Deploy a test application to verify everything works:
 **Symptoms**: Can't access Kubernetes Dashboard at localhost:8001
 
 **Solutions**:
+
 - Ensure `kubectl proxy` is running: `task k8s:dashboard-proxy`
 - Verify the proxy is listening on localhost:8001
 - URL must be `localhost:8001`, NOT the node IP
@@ -156,6 +157,7 @@ Deploy a test application to verify everything works:
 **Symptoms**: `task talos:health` fails with connection errors
 
 **Solutions**:
+
 ```bash
 # Verify TALOS_NODE is set
 echo $TALOS_NODE
@@ -175,6 +177,7 @@ ping $TALOS_NODE
 **Symptoms**: Pods stuck in `Pending` state
 
 **Solutions**:
+
 ```bash
 # Check node taints (should show <none> for control plane scheduling)
 kubectl --kubeconfig ./.output/kubeconfig get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints

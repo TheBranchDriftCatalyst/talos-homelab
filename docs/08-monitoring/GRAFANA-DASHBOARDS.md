@@ -16,43 +16,47 @@ Complete reference for all Grafana dashboards available in the homelab cluster.
 
 ### Core Kubernetes Dashboards
 
-| ID | Name | Status | Description |
-|----|------|--------|-------------|
-| 315 | Kubernetes Cluster Monitoring | Active | Classic cluster overview with node, pod, and container metrics |
-| 15661 | K8S Dashboard (2025) | Active | Comprehensive Kubernetes resources overview |
-| 15760 | Kubernetes / Views / Pods | Active | Detailed pod-level metrics and resource usage |
-| 14623 | Kubernetes Monitoring Overview | Active | High-level cluster health with gauges and graphs |
-| 13646 | Kubernetes PVC Dashboard | Active | Persistent Volume Claim monitoring |
-| 11454 | Kubernetes Volumes Dashboard | Active | Volume usage and capacity tracking |
+| ID    | Name                           | Status | Description                                                    |
+| ----- | ------------------------------ | ------ | -------------------------------------------------------------- |
+| 315   | Kubernetes Cluster Monitoring  | Active | Classic cluster overview with node, pod, and container metrics |
+| 15661 | K8S Dashboard (2025)           | Active | Comprehensive Kubernetes resources overview                    |
+| 15760 | Kubernetes / Views / Pods      | Active | Detailed pod-level metrics and resource usage                  |
+| 14623 | Kubernetes Monitoring Overview | Active | High-level cluster health with gauges and graphs               |
+| 13646 | Kubernetes PVC Dashboard       | Active | Persistent Volume Claim monitoring                             |
+| 11454 | Kubernetes Volumes Dashboard   | Active | Volume usage and capacity tracking                             |
 
 **Data Sources Required:**
+
 - kube-state-metrics (included in kube-prometheus-stack)
 - prometheus-node-exporter (included in kube-prometheus-stack)
 - kubelet metrics (enabled by default)
 
 ### Infrastructure Dashboards
 
-| ID | Name | Status | Description |
-|----|------|--------|-------------|
-| 1860 | Node Exporter Full | Active | Comprehensive node-level metrics (CPU, memory, disk, network) |
-| 9628 | PostgreSQL Database | Planned | PostgreSQL monitoring (requires postgres-exporter) |
+| ID   | Name                | Status  | Description                                                   |
+| ---- | ------------------- | ------- | ------------------------------------------------------------- |
+| 1860 | Node Exporter Full  | Active  | Comprehensive node-level metrics (CPU, memory, disk, network) |
+| 9628 | PostgreSQL Database | Planned | PostgreSQL monitoring (requires postgres-exporter)            |
 
 **Data Sources Required:**
+
 - prometheus-node-exporter
 - postgres-exporter (for PostgreSQL dashboard)
 
 ### Traefik Ingress Dashboards
 
-| ID | Name | Status | Data Source |
-|----|------|--------|-------------|
+| ID    | Name                        | Status | Data Source         |
+| ----- | --------------------------- | ------ | ------------------- |
 | 17347 | Traefik Official Kubernetes | Active | traefik-metrics job |
-| 4475 | Traefik v2 | Active | Alternative view |
+| 4475  | Traefik v2                  | Active | Alternative view    |
 
 **Data Sources Required:**
+
 - Traefik ServiceMonitor (auto-created by Helm chart)
 - Metrics exposed on port 9100
 
 **Verification:**
+
 ```bash
 # Check Traefik metrics are being scraped
 kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
@@ -61,48 +65,53 @@ kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
 
 ### Linkerd Service Mesh Dashboards
 
-| ID | Name | Status | Description |
-|----|------|--------|-------------|
-| 15474 | Linkerd Top Line | Requires Setup | Service mesh overview |
-| 15475 | Linkerd Deployment | Requires Setup | Deployment-level metrics |
-| 15481 | Linkerd Route | Requires Setup | Route and path metrics |
-| 15484 | Linkerd DaemonSet | Requires Setup | DaemonSet workload metrics |
-| 14274 | Linkerd Service | Requires Setup | Service-level golden signals |
+| ID    | Name               | Status         | Description                  |
+| ----- | ------------------ | -------------- | ---------------------------- |
+| 15474 | Linkerd Top Line   | Requires Setup | Service mesh overview        |
+| 15475 | Linkerd Deployment | Requires Setup | Deployment-level metrics     |
+| 15481 | Linkerd Route      | Requires Setup | Route and path metrics       |
+| 15484 | Linkerd DaemonSet  | Requires Setup | DaemonSet workload metrics   |
+| 14274 | Linkerd Service    | Requires Setup | Service-level golden signals |
 
 **Prerequisites:**
+
 1. Linkerd control plane installed: `./scripts/deploy-linkerd.sh install`
 2. Linkerd Viz extension: `./scripts/deploy-linkerd-viz.sh install`
 
 **Data Sources Required:**
+
 - Linkerd proxy sidecar metrics (PodMonitor)
 - Linkerd control plane metrics (ServiceMonitor)
 
 ### ArgoCD GitOps Dashboards
 
-| ID | Name | Status | Description |
-|----|------|--------|-------------|
-| - | ArgoCD | Provisioned | Main ArgoCD overview (included in Helm chart) |
-| - | ArgoCD / Application / Overview | Provisioned | Application sync status |
-| - | ArgoCD / Operational / Overview | Provisioned | Operational metrics |
-| 14584 | ArgoCD Application Overview | Alternative | Community dashboard |
-| 19993 | ArgoCD Operational Dashboard | Alternative | Community dashboard |
+| ID    | Name                            | Status      | Description                                   |
+| ----- | ------------------------------- | ----------- | --------------------------------------------- |
+| -     | ArgoCD                          | Provisioned | Main ArgoCD overview (included in Helm chart) |
+| -     | ArgoCD / Application / Overview | Provisioned | Application sync status                       |
+| -     | ArgoCD / Operational / Overview | Provisioned | Operational metrics                           |
+| 14584 | ArgoCD Application Overview     | Alternative | Community dashboard                           |
+| 19993 | ArgoCD Operational Dashboard    | Alternative | Community dashboard                           |
 
 **Data Sources Required:**
+
 - argocd-server-metrics ServiceMonitor (port 8083)
 - argocd-application-controller-metrics ServiceMonitor (port 8082)
 - argocd-repo-server-metrics ServiceMonitor (port 8084)
 
 ### Liqo Multi-Cluster Dashboards
 
-| ID | Name | Status | Description |
-|----|------|--------|-------------|
-| - | Liqo Network | Planned | Cross-cluster throughput and latency |
+| ID  | Name         | Status  | Description                          |
+| --- | ------------ | ------- | ------------------------------------ |
+| -   | Liqo Network | Planned | Cross-cluster throughput and latency |
 
 **Prerequisites:**
+
 1. Liqo installed with `--enable-metrics` flag
 2. ServiceMonitor/PodMonitor resources created by Liqo
 
 **Metrics Available:**
+
 - `liqo_peer_receive_bytes_total` - Bytes received from remote cluster
 - `liqo_peer_transmit_bytes_total` - Bytes transmitted to remote cluster
 - `liqo_peer_latency_us` - RTT latency in microseconds
@@ -110,12 +119,13 @@ kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
 
 ### Nebula VPN Dashboards
 
-| ID | Name | Status | Description |
-|----|------|--------|-------------|
-| - | Custom | Planned | Nebula mesh monitoring |
+| ID  | Name   | Status  | Description            |
+| --- | ------ | ------- | ---------------------- |
+| -   | Custom | Planned | Nebula mesh monitoring |
 
 **Prerequisites:**
 Configure Nebula with Prometheus metrics:
+
 ```yaml
 stats:
   type: prometheus
@@ -127,35 +137,35 @@ Then create a ServiceMonitor targeting the metrics endpoint.
 
 ### Observability Stack Dashboards
 
-| ID | Name | Status | Description |
-|----|------|--------|-------------|
-| - | OpenSearch | Built-in | Comes with kube-prometheus-stack |
-| - | Graylog | Built-in | Graylog System Dashboard |
-| - | MongoDB | Built-in | MongoDB metrics |
+| ID  | Name       | Status   | Description                      |
+| --- | ---------- | -------- | -------------------------------- |
+| -   | OpenSearch | Built-in | Comes with kube-prometheus-stack |
+| -   | Graylog    | Built-in | Graylog System Dashboard         |
+| -   | MongoDB    | Built-in | MongoDB metrics                  |
 
 ## Current Prometheus Scrape Jobs
 
 These are the metrics sources currently being scraped:
 
-| Job Name | Namespace | Status | Notes |
-|----------|-----------|--------|-------|
-| apiserver | kube-system | Active | Kubernetes API server |
-| argocd-server-metrics | argocd | Active | ArgoCD server metrics |
-| argocd-application-controller-metrics | argocd | Active | ArgoCD app controller |
-| argocd-repo-server-metrics | argocd | Active | ArgoCD repo server |
-| coredns | kube-system | Active | DNS metrics |
-| external-secrets-* | external-secrets | Active | ESO metrics |
-| graylog | observability | Down | Log management (check pod) |
-| kube-controller-manager | kube-system | Down | Talos doesn't expose this |
-| kube-proxy | kube-system | Down | Talos doesn't expose this |
-| kube-scheduler | kube-system | Down | Talos doesn't expose this |
-| kube-state-metrics | monitoring | Active | K8s resource states |
-| kubelet | * | Active | Container metrics |
-| mongodb | observability | Down | Graylog backend (check pod) |
-| node-exporter | monitoring | Active | Node metrics |
-| opensearch | observability | Down | Search/logging (check pod) |
-| prometheus-blackbox-exporter | monitoring | Active | Endpoint probing |
-| traefik-metrics | traefik | Active | Ingress metrics |
+| Job Name                              | Namespace        | Status | Notes                       |
+| ------------------------------------- | ---------------- | ------ | --------------------------- |
+| apiserver                             | kube-system      | Active | Kubernetes API server       |
+| argocd-server-metrics                 | argocd           | Active | ArgoCD server metrics       |
+| argocd-application-controller-metrics | argocd           | Active | ArgoCD app controller       |
+| argocd-repo-server-metrics            | argocd           | Active | ArgoCD repo server          |
+| coredns                               | kube-system      | Active | DNS metrics                 |
+| external-secrets-\*                   | external-secrets | Active | ESO metrics                 |
+| graylog                               | observability    | Down   | Log management (check pod)  |
+| kube-controller-manager               | kube-system      | Down   | Talos doesn't expose this   |
+| kube-proxy                            | kube-system      | Down   | Talos doesn't expose this   |
+| kube-scheduler                        | kube-system      | Down   | Talos doesn't expose this   |
+| kube-state-metrics                    | monitoring       | Active | K8s resource states         |
+| kubelet                               | \*               | Active | Container metrics           |
+| mongodb                               | observability    | Down   | Graylog backend (check pod) |
+| node-exporter                         | monitoring       | Active | Node metrics                |
+| opensearch                            | observability    | Down   | Search/logging (check pod)  |
+| prometheus-blackbox-exporter          | monitoring       | Active | Endpoint probing            |
+| traefik-metrics                       | traefik          | Active | Ingress metrics             |
 
 **Note:** `kube-controller-manager`, `kube-proxy`, and `kube-scheduler` are down because Talos Linux runs these as static pods that don't expose metrics externally. This is expected behavior.
 
@@ -175,6 +185,7 @@ kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
 ### Dashboard Shows "No Data"
 
 1. **Check if metrics exist:**
+
    ```bash
    # Query Prometheus for a metric
    kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
@@ -182,11 +193,13 @@ kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
    ```
 
 2. **Check ServiceMonitor:**
+
    ```bash
    kubectl get servicemonitor -A
    ```
 
 3. **Check Prometheus targets:**
+
    ```bash
    # Access Prometheus UI
    kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
@@ -199,12 +212,12 @@ kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
 
 ### Common Issues
 
-| Issue | Solution |
-|-------|----------|
+| Issue                   | Solution                                                   |
+| ----------------------- | ---------------------------------------------------------- |
 | Traefik metrics missing | Check `traefik-metrics` service exists with correct labels |
-| Linkerd metrics missing | Install linkerd-viz extension |
-| Pod metrics not working | Ensure kubelet ServiceMonitor is active |
-| Node metrics gaps | Check node-exporter DaemonSet |
+| Linkerd metrics missing | Install linkerd-viz extension                              |
+| Pod metrics not working | Ensure kubelet ServiceMonitor is active                    |
+| Node metrics gaps       | Check node-exporter DaemonSet                              |
 
 ## Adding Custom Dashboards
 
@@ -219,9 +232,9 @@ metadata:
   name: my-custom-dashboard
   namespace: monitoring
   labels:
-    grafana_dashboard: "1"
+    grafana_dashboard: '1'
   annotations:
-    grafana_folder: "Custom"
+    grafana_folder: 'Custom'
 data:
   my-dashboard.json: |
     {
@@ -253,9 +266,9 @@ apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: my-app
-  namespace: monitoring  # Must be in monitoring namespace
+  namespace: monitoring # Must be in monitoring namespace
   labels:
-    prometheus: kube-prometheus  # Optional but helpful
+    prometheus: kube-prometheus # Optional but helpful
 spec:
   namespaceSelector:
     matchNames:

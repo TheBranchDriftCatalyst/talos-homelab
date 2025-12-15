@@ -12,15 +12,15 @@ This document outlines the process for migrating the homelab Kubernetes cluster 
 
 ### Node Information
 
-| Property | Value |
-|----------|-------|
-| Node Name | talos00 |
-| IP Address | 192.168.1.54 |
-| Mesh IP | 10.42.1.1 |
-| Talos Version | v1.11.1 |
-| Kubernetes Version | v1.34.0 |
-| Container Runtime | containerd://2.1.4 |
-| Cluster Age | 23 days |
+| Property           | Value              |
+| ------------------ | ------------------ |
+| Node Name          | talos00            |
+| IP Address         | 192.168.1.54       |
+| Mesh IP            | 10.42.1.1          |
+| Talos Version      | v1.11.1            |
+| Kubernetes Version | v1.34.0            |
+| Container Runtime  | containerd://2.1.4 |
+| Cluster Age        | 23 days            |
 
 ### Workload Summary
 
@@ -31,12 +31,12 @@ This document outlines the process for migrating the homelab Kubernetes cluster 
 
 ### Storage Classes
 
-| Storage Class | Type | Usage |
-|---------------|------|-------|
-| `local-path` | Local SSD | Prometheus, Grafana, OpenSearch, MongoDB |
-| `fatboy-nfs-appdata` | NFS (TrueNAS) | App configs (Plex, Jellyfin, *arr, etc.) |
-| `synology-nfs` | NFS (Synology) | Large media storage |
-| `truenas-nfs` | NFS (TrueNAS) | Large media storage |
+| Storage Class        | Type           | Usage                                     |
+| -------------------- | -------------- | ----------------------------------------- |
+| `local-path`         | Local SSD      | Prometheus, Grafana, OpenSearch, MongoDB  |
+| `fatboy-nfs-appdata` | NFS (TrueNAS)  | App configs (Plex, Jellyfin, \*arr, etc.) |
+| `synology-nfs`       | NFS (Synology) | Large media storage                       |
+| `truenas-nfs`        | NFS (TrueNAS)  | Large media storage                       |
 
 ### Critical Components
 
@@ -100,7 +100,7 @@ cp configs/talosconfig .output/backup/talosconfig-$(date +%Y%m%d)
 ### 2. Document External Dependencies
 
 - [ ] NFS server IPs (TrueNAS, Synology)
-- [ ] DNS/hosts entries for *.talos00
+- [ ] DNS/hosts entries for \*.talos00
 - [ ] 1Password Connect credentials
 - [ ] AWS Elastic IP and security groups
 - [ ] Nebula certificates and lighthouse config
@@ -314,34 +314,34 @@ curl -H "Host: argocd.talos00" http://192.168.1.54
 
 ## Data That WILL Be Lost
 
-| Component | Data Lost | Recovery Method |
-|-----------|-----------|-----------------|
-| etcd | Cluster state | Flux/ArgoCD reconciles |
-| local-path PVs | Pod data (Prometheus, Grafana history) | Redeploys from scratch |
-| In-memory caches | All cached data | Automatic rebuild |
+| Component        | Data Lost                              | Recovery Method        |
+| ---------------- | -------------------------------------- | ---------------------- |
+| etcd             | Cluster state                          | Flux/ArgoCD reconciles |
+| local-path PVs   | Pod data (Prometheus, Grafana history) | Redeploys from scratch |
+| In-memory caches | All cached data                        | Automatic rebuild      |
 
 ## Data That WILL Be Preserved
 
-| Component | Location | Notes |
-|-----------|----------|-------|
-| NFS PVs | External NAS | survives migration |
-| App configs | fatboy-nfs-appdata | survives migration |
-| Media files | synology-nfs, truenas-nfs | survives migration |
-| Git repos | GitHub | Source of truth for GitOps |
-| 1Password secrets | 1Password | External Secrets will re-sync |
+| Component         | Location                  | Notes                         |
+| ----------------- | ------------------------- | ----------------------------- |
+| NFS PVs           | External NAS              | survives migration            |
+| App configs       | fatboy-nfs-appdata        | survives migration            |
+| Media files       | synology-nfs, truenas-nfs | survives migration            |
+| Git repos         | GitHub                    | Source of truth for GitOps    |
+| 1Password secrets | 1Password                 | External Secrets will re-sync |
 
 ---
 
 ## Timeline Estimate
 
-| Phase | Duration |
-|-------|----------|
-| Pre-migration backup | 15 min |
-| Graceful shutdown | 10 min |
-| Hardware swap | 30+ min |
-| Talos provisioning | 15 min |
-| GitOps reconciliation | 20-30 min |
-| Verification | 15 min |
+| Phase                  | Duration     |
+| ---------------------- | ------------ |
+| Pre-migration backup   | 15 min       |
+| Graceful shutdown      | 10 min       |
+| Hardware swap          | 30+ min      |
+| Talos provisioning     | 15 min       |
+| GitOps reconciliation  | 20-30 min    |
+| Verification           | 15 min       |
 | **Total (Scenario A)** | **~2 hours** |
 
 ---

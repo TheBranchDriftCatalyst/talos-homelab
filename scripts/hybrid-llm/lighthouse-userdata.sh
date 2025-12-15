@@ -33,27 +33,27 @@ HOST_KEY="$OUTPUT_DIR/lighthouse/host.key"
 
 # Verify certificates exist
 check_certs() {
-    local missing=0
-    if [[ ! -f "$CA_CRT" ]]; then
-        echo "ERROR: CA certificate not found at $CA_CRT" >&2
-        missing=1
-    fi
-    if [[ ! -f "$HOST_CRT" ]]; then
-        echo "ERROR: Lighthouse certificate not found at $HOST_CRT" >&2
-        missing=1
-    fi
-    if [[ ! -f "$HOST_KEY" ]]; then
-        echo "ERROR: Lighthouse key not found at $HOST_KEY" >&2
-        missing=1
-    fi
+  local missing=0
+  if [[ ! -f "$CA_CRT" ]]; then
+    echo "ERROR: CA certificate not found at $CA_CRT" >&2
+    missing=1
+  fi
+  if [[ ! -f "$HOST_CRT" ]]; then
+    echo "ERROR: Lighthouse certificate not found at $HOST_CRT" >&2
+    missing=1
+  fi
+  if [[ ! -f "$HOST_KEY" ]]; then
+    echo "ERROR: Lighthouse key not found at $HOST_KEY" >&2
+    missing=1
+  fi
 
-    if [[ $missing -eq 1 ]]; then
-        echo "" >&2
-        echo "Generate certificates first:" >&2
-        echo "  $SCRIPT_DIR/nebula-certs.sh init" >&2
-        echo "  $SCRIPT_DIR/nebula-certs.sh lighthouse" >&2
-        exit 1
-    fi
+  if [[ $missing -eq 1 ]]; then
+    echo "" >&2
+    echo "Generate certificates first:" >&2
+    echo "  $SCRIPT_DIR/nebula-certs.sh init" >&2
+    echo "  $SCRIPT_DIR/nebula-certs.sh lighthouse" >&2
+    exit 1
+  fi
 }
 
 check_certs

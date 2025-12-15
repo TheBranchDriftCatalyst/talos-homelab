@@ -5,12 +5,14 @@
 Nexus Repository OSS provides artifact storage for Docker images, npm packages, and more. Two registries are available:
 
 **Primary (Nexus):**
+
 - **Nexus UI:** http://nexus.talos00 (login: admin)
 - **Docker Registry:** http://registry.talos00 (push/pull via Nexus)
 - **Docker Proxy:** http://docker-proxy.talos00 (Docker Hub cache)
 - **npm Registry:** http://npm.talos00
 
 **Legacy (Docker Registry v2):**
+
 - **Docker Registry:** http://docker.talos00
 - **Registry UI:** http://docker-ui.talos00
 
@@ -45,13 +47,13 @@ kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password
 
 ## Available Registries
 
-| Registry        | URL                         | Service         | Port | Type   | Description                |
-| --------------- | --------------------------- | --------------- | ---- | ------ | -------------------------- |
-| Nexus UI        | http://nexus.talos00        | nexus           | 8081 | Web UI | Repository management      |
-| Docker (Nexus)  | http://registry.talos00     | nexus-docker    | 5000 | Hosted | Private Docker images      |
+| Registry        | URL                         | Service            | Port | Type   | Description                |
+| --------------- | --------------------------- | ------------------ | ---- | ------ | -------------------------- |
+| Nexus UI        | http://nexus.talos00        | nexus              | 8081 | Web UI | Repository management      |
+| Docker (Nexus)  | http://registry.talos00     | nexus-docker       | 5000 | Hosted | Private Docker images      |
 | Docker Proxy    | http://docker-proxy.talos00 | nexus-docker-proxy | 5001 | Proxy  | Docker Hub cache           |
-| npm Registry    | http://npm.talos00          | nexus-npm       | 8082 | Hosted | Private npm packages       |
-| Docker (Legacy) | http://docker.talos00       | docker-registry | 5000 | Hosted | Legacy registry:2 instance |
+| npm Registry    | http://npm.talos00          | nexus-npm          | 8082 | Hosted | Private npm packages       |
+| Docker (Legacy) | http://docker.talos00       | docker-registry    | 5000 | Hosted | Legacy registry:2 instance |
 | Docker UI       | http://docker-ui.talos00    | docker-registry-ui | 80   | Web UI | Legacy registry browser    |
 
 ## Initial Setup
@@ -112,10 +114,7 @@ Direct push via `registry.talos00` requires Docker daemon configuration:
 
 ```json
 {
-  "insecure-registries": [
-    "registry.talos00",
-    "localhost:5000"
-  ]
+  "insecure-registries": ["registry.talos00", "localhost:5000"]
 }
 ```
 

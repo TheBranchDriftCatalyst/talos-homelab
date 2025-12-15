@@ -1,7 +1,9 @@
 # Observability Stack
 
 ## TL;DR
+
 The observability stack provides metrics, logging, and alerting for the cluster:
+
 - **Prometheus** - Metrics collection and alerting (monitoring namespace)
 - **Grafana** - Visualization dashboards
 - **Graylog** - Log aggregation and search (observability namespace)
@@ -9,6 +11,7 @@ The observability stack provides metrics, logging, and alerting for the cluster:
 - **Fluent Bit** - Log collection from all pods
 
 **Quick Access:**
+
 - Grafana: http://grafana.talos00
 - Prometheus: http://prometheus.talos00
 - Graylog: http://graylog.talos00
@@ -565,6 +568,9 @@ Filter logs in Graylog by:
 - [Exportarr GitHub](https://github.com/onedr0p/exportarr)
 
 ---
+
 ## Related Issues
+
 <!-- Beads tracking for this documentation domain -->
+
 - [CILIUM-rwr] - Moved from docs/02-architecture/ to root level

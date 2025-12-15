@@ -36,38 +36,38 @@ DRY_RUN=false
 PRINT_ONLY=false
 
 for arg in "$@"; do
-    case $arg in
-        --dry-run|-n)
-            DRY_RUN=true
-            ;;
-        --print|-p)
-            PRINT_ONLY=true
-            ;;
-        --help|-h)
-            echo "Usage: $0 [--dry-run|--print]"
-            echo ""
-            echo "Options:"
-            echo "  --dry-run, -n  Show what would be changed without modifying /etc/hosts"
-            echo "  --print, -p    Just print the hosts block to stdout"
-            echo "  --help, -h     Show this help message"
-            echo ""
-            echo "Environment:"
-            echo "  TALOS_NODE     Cluster IP address (default: 192.168.1.54)"
-            exit 0
-            ;;
-    esac
+  case $arg in
+    --dry-run | -n)
+      DRY_RUN=true
+      ;;
+    --print | -p)
+      PRINT_ONLY=true
+      ;;
+    --help | -h)
+      echo "Usage: $0 [--dry-run|--print]"
+      echo ""
+      echo "Options:"
+      echo "  --dry-run, -n  Show what would be changed without modifying /etc/hosts"
+      echo "  --print, -p    Just print the hosts block to stdout"
+      echo "  --help, -h     Show this help message"
+      echo ""
+      echo "Environment:"
+      echo "  TALOS_NODE     Cluster IP address (default: 192.168.1.54)"
+      exit 0
+      ;;
+  esac
 done
 
 # Check for kubectl
 if ! command -v kubectl &> /dev/null; then
-    log_error "kubectl is required but not installed"
-    exit 1
+  log_error "kubectl is required but not installed"
+  exit 1
 fi
 
 # Check cluster connectivity
 if ! kubectl cluster-info &> /dev/null; then
-    log_error "Cannot connect to Kubernetes cluster. Check your kubeconfig."
-    exit 1
+  log_error "Cannot connect to Kubernetes cluster. Check your kubeconfig."
+  exit 1
 fi
 
 # Fetch all IngressRoute hosts from the cluster
@@ -75,28 +75,28 @@ log_info "Fetching IngressRoute hostnames from cluster..."
 
 # Get hosts from Traefik IngressRoutes (traefik.io/v1alpha1 and traefik.containo.us/v1alpha1)
 # Extract Host(`hostname`) patterns using jq and sed (macOS compatible)
-HOSTS=$(kubectl get ingressroutes.traefik.io --all-namespaces -o json 2>/dev/null | \
-    jq -r '.items[].spec.routes[].match // empty' 2>/dev/null | \
-    sed -n 's/.*Host(`\([^`]*\)`).*/\1/p' | \
-    sort -u || true)
+HOSTS=$(kubectl get ingressroutes.traefik.io --all-namespaces -o json 2> /dev/null |
+  jq -r '.items[].spec.routes[].match // empty' 2> /dev/null |
+  sed -n 's/.*Host(`\([^`]*\)`).*/\1/p' |
+  sort -u || true)
 
 # Also check for traefik.containo.us API version (older)
-HOSTS_OLD=$(kubectl get ingressroutes.traefik.containo.us --all-namespaces -o json 2>/dev/null | \
-    jq -r '.items[].spec.routes[].match // empty' 2>/dev/null | \
-    sed -n 's/.*Host(`\([^`]*\)`).*/\1/p' | \
-    sort -u 2>/dev/null || true)
+HOSTS_OLD=$(kubectl get ingressroutes.traefik.containo.us --all-namespaces -o json 2> /dev/null |
+  jq -r '.items[].spec.routes[].match // empty' 2> /dev/null |
+  sed -n 's/.*Host(`\([^`]*\)`).*/\1/p' |
+  sort -u 2> /dev/null || true)
 
 # Also get standard Kubernetes Ingress hosts
-HOSTS_INGRESS=$(kubectl get ingress --all-namespaces -o json 2>/dev/null | \
-    jq -r '.items[].spec.rules[].host // empty' 2>/dev/null | \
-    sort -u || true)
+HOSTS_INGRESS=$(kubectl get ingress --all-namespaces -o json 2> /dev/null |
+  jq -r '.items[].spec.rules[].host // empty' 2> /dev/null |
+  sort -u || true)
 
 # Combine all hosts
 ALL_HOSTS=$(echo -e "${HOSTS}\n${HOSTS_OLD}\n${HOSTS_INGRESS}" | grep -v '^$' | sort -u)
 
 if [[ -z "$ALL_HOSTS" ]]; then
-    log_warn "No IngressRoute or Ingress hosts found in the cluster"
-    exit 0
+  log_warn "No IngressRoute or Ingress hosts found in the cluster"
+  exit 0
 fi
 
 # Count hosts
@@ -105,25 +105,25 @@ log_info "Found ${HOST_COUNT} unique hostnames"
 
 # Generate the hosts block
 generate_hosts_block() {
-    echo "$FENCE_START"
-    echo "# Generated: $(date '+%Y-%m-%d %H:%M:%S')"
-    echo "# Cluster IP: $CLUSTER_IP"
-    echo "# Hostnames: $HOST_COUNT"
-    echo "#"
-    while IFS= read -r host; do
-        if [[ -n "$host" ]]; then
-            printf "%-16s %s\n" "$CLUSTER_IP" "$host"
-        fi
-    done <<< "$ALL_HOSTS"
-    echo "$FENCE_END"
+  echo "$FENCE_START"
+  echo "# Generated: $(date '+%Y-%m-%d %H:%M:%S')"
+  echo "# Cluster IP: $CLUSTER_IP"
+  echo "# Hostnames: $HOST_COUNT"
+  echo "#"
+  while IFS= read -r host; do
+    if [[ -n "$host" ]]; then
+      printf "%-16s %s\n" "$CLUSTER_IP" "$host"
+    fi
+  done <<< "$ALL_HOSTS"
+  echo "$FENCE_END"
 }
 
 HOSTS_BLOCK=$(generate_hosts_block)
 
 # Print only mode
 if [[ "$PRINT_ONLY" == true ]]; then
-    echo "$HOSTS_BLOCK"
-    exit 0
+  echo "$HOSTS_BLOCK"
+  exit 0
 fi
 
 # Show what will be added
@@ -136,36 +136,36 @@ echo ""
 
 # Dry run mode
 if [[ "$DRY_RUN" == true ]]; then
-    log_info "Dry run mode - no changes made"
+  log_info "Dry run mode - no changes made"
 
-    if grep -q "$FENCE_START" "$HOSTS_FILE" 2>/dev/null; then
-        log_info "Existing fenced block found in $HOSTS_FILE - would be replaced"
-    else
-        log_info "No existing block found - would be appended to $HOSTS_FILE"
-    fi
-    exit 0
+  if grep -q "$FENCE_START" "$HOSTS_FILE" 2> /dev/null; then
+    log_info "Existing fenced block found in $HOSTS_FILE - would be replaced"
+  else
+    log_info "No existing block found - would be appended to $HOSTS_FILE"
+  fi
+  exit 0
 fi
 
 # Check if we need sudo
 if [[ ! -w "$HOSTS_FILE" ]]; then
-    log_info "Root privileges required to modify $HOSTS_FILE"
-    SUDO="sudo"
+  log_info "Root privileges required to modify $HOSTS_FILE"
+  SUDO="sudo"
 else
-    SUDO=""
+  SUDO=""
 fi
 
 # Create a temporary file with the new content
 TEMP_FILE=$(mktemp)
-trap "rm -f $TEMP_FILE" EXIT
+trap 'rm -f "$TEMP_FILE"' EXIT
 
 # Remove existing fenced block and add new one
-if grep -q "$FENCE_START" "$HOSTS_FILE" 2>/dev/null; then
-    log_info "Replacing existing hosts block..."
-    # Remove lines between fence markers (inclusive)
-    $SUDO sed "/$FENCE_START/,/$FENCE_END/d" "$HOSTS_FILE" > "$TEMP_FILE"
+if grep -q "$FENCE_START" "$HOSTS_FILE" 2> /dev/null; then
+  log_info "Replacing existing hosts block..."
+  # Remove lines between fence markers (inclusive)
+  $SUDO sed "/$FENCE_START/,/$FENCE_END/d" "$HOSTS_FILE" > "$TEMP_FILE"
 else
-    log_info "Adding new hosts block..."
-    cat "$HOSTS_FILE" > "$TEMP_FILE"
+  log_info "Adding new hosts block..."
+  cat "$HOSTS_FILE" > "$TEMP_FILE"
 fi
 
 # Append the new hosts block
@@ -179,7 +179,7 @@ log_success "Successfully updated $HOSTS_FILE with ${HOST_COUNT} hostnames"
 echo ""
 echo "You can now access your services at:"
 while IFS= read -r host; do
-    if [[ -n "$host" ]]; then
-        echo "  http://${host}"
-    fi
+  if [[ -n "$host" ]]; then
+    echo "  http://${host}"
+  fi
 done <<< "$ALL_HOSTS"

@@ -21,13 +21,14 @@ A demonstration of gRPC communication between a Go service and a Python service,
 ```
 
 Both services:
+
 - Implement the `EchoService` (unary + streaming)
 - Periodically call each other to demonstrate cross-service communication
 - Expose Prometheus metrics
 
 ## Prerequisites
 
-### For local proto generation:
+### For local proto generation
 
 ```bash
 # Install protoc
@@ -41,7 +42,7 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 pip install grpcio-tools
 ```
 
-### For testing:
+### For testing
 
 ```bash
 # Install grpcurl
@@ -160,7 +161,6 @@ Both services have ServiceMonitors configured for Prometheus scraping:
 ```yaml
 # Verify ServiceMonitors are picked up
 kubectl get servicemonitors -n scratch
-
 # Check Prometheus targets
 # Navigate to http://prometheus.talos00/targets
 # Look for scratch/grpc-go and scratch/grpc-python
@@ -188,9 +188,9 @@ message EchoResponse {
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SERVICE_NAME` | go-service / python-service | Service identifier in responses |
-| `GRPC_PORT` | 50051 / 50052 | gRPC server port |
-| `METRICS_PORT` | 9090 / 9091 | Prometheus metrics port |
-| `PEER_ADDRESS` | (empty) | Address of peer service for demo calls |
+| Variable       | Default                     | Description                            |
+| -------------- | --------------------------- | -------------------------------------- |
+| `SERVICE_NAME` | go-service / python-service | Service identifier in responses        |
+| `GRPC_PORT`    | 50051 / 50052               | gRPC server port                       |
+| `METRICS_PORT` | 9090 / 9091                 | Prometheus metrics port                |
+| `PEER_ADDRESS` | (empty)                     | Address of peer service for demo calls |

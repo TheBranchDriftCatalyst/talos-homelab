@@ -12,16 +12,16 @@ This document outlines the migration path from Flannel to Cilium CNI on Talos Li
 
 ### Advantages over Flannel
 
-| Feature | Flannel | Cilium |
-|---------|---------|--------|
-| eBPF-based networking | No | Yes |
-| Network policies | Basic | Advanced (L3-L7) |
-| Observability | None | Hubble UI/CLI |
-| Service mesh | No | Yes (sidecar-free) |
-| Load balancing | kube-proxy | Native eBPF |
-| Bandwidth management | No | Yes |
-| Multi-cluster | No | ClusterMesh |
-| Resource efficiency | Moderate | Better (eBPF) |
+| Feature               | Flannel    | Cilium             |
+| --------------------- | ---------- | ------------------ |
+| eBPF-based networking | No         | Yes                |
+| Network policies      | Basic      | Advanced (L3-L7)   |
+| Observability         | None       | Hubble UI/CLI      |
+| Service mesh          | No         | Yes (sidecar-free) |
+| Load balancing        | kube-proxy | Native eBPF        |
+| Bandwidth management  | No         | Yes                |
+| Multi-cluster         | No         | ClusterMesh        |
+| Resource efficiency   | Moderate   | Better (eBPF)      |
 
 ### Cilium Benefits for This Cluster
 
@@ -39,6 +39,7 @@ Best for: Planned maintenance windows, minimal data to migrate
 **Steps:**
 
 1. **Backup critical data**
+
    ```bash
    # Export PVCs, secrets, configmaps
    kubectl get pvc -A -o yaml > backup/pvcs.yaml
@@ -46,14 +47,16 @@ Best for: Planned maintenance windows, minimal data to migrate
    ```
 
 2. **Update Talos machine config**
+
    ```yaml
    cluster:
      network:
        cni:
-         name: none  # Disable default flannel
+         name: none # Disable default flannel
    ```
 
 3. **Prepare Cilium inline manifest**
+
    ```yaml
    cluster:
      inlineManifests:
@@ -64,6 +67,7 @@ Best for: Planned maintenance windows, minimal data to migrate
    ```
 
 4. **Reset and reprovision cluster**
+
    ```bash
    task reset
    task provision
@@ -80,11 +84,13 @@ Best for: Cannot afford downtime, willing to accept risk
 **Steps:**
 
 1. **Scale down workloads**
+
    ```bash
    kubectl scale deployment --all --replicas=0 -A
    ```
 
 2. **Install Cilium alongside Flannel**
+
    ```bash
    helm repo add cilium https://helm.cilium.io/
    helm install cilium cilium/cilium \
@@ -95,12 +101,14 @@ Best for: Cannot afford downtime, willing to accept risk
    ```
 
 3. **Verify Cilium is running**
+
    ```bash
    cilium status
    kubectl get pods -n kube-system -l k8s-app=cilium
    ```
 
 4. **Update Talos config to disable flannel**
+
    ```yaml
    cluster:
      network:
@@ -109,11 +117,13 @@ Best for: Cannot afford downtime, willing to accept risk
    ```
 
 5. **Apply config (triggers reboot)**
+
    ```bash
    talosctl apply-config --nodes 192.168.1.54 --file configs/controlplane.yaml
    ```
 
 6. **Delete flannel resources**
+
    ```bash
    kubectl delete ds kube-flannel -n kube-system
    kubectl delete cm kube-flannel-cfg -n kube-system
@@ -182,7 +192,7 @@ machine:
 cluster:
   network:
     cni:
-      name: none  # Critical: disable default flannel
+      name: none # Critical: disable default flannel
     podSubnets:
       - 10.244.0.0/16
     serviceSubnets:
@@ -229,19 +239,22 @@ kubectl run test --image=busybox --rm -it -- wget -qO- http://service.namespace.
 If migration fails:
 
 1. **Revert Talos config**
+
    ```yaml
    cluster:
      network:
        cni:
-         name: flannel  # Re-enable flannel
+         name: flannel # Re-enable flannel
    ```
 
 2. **Apply config**
+
    ```bash
    talosctl apply-config --nodes 192.168.1.54 --file configs/controlplane.yaml
    ```
 
 3. **Delete Cilium**
+
    ```bash
    helm uninstall cilium -n kube-system
    ```
@@ -260,13 +273,13 @@ If migration fails:
 
 ## Decision Matrix
 
-| Scenario | Recommended Approach |
-|----------|---------------------|
-| Fresh cluster setup | Option 1 (Fresh Install) |
-| Single-node homelab | Option 1 or stay with Flannel + CronJob |
-| Multi-node production | Option 3 (Gradual) |
-| Dev/test cluster | Option 2 (In-Place) |
-| Need zero downtime | Stay with Flannel + CronJob workaround |
+| Scenario              | Recommended Approach                    |
+| --------------------- | --------------------------------------- |
+| Fresh cluster setup   | Option 1 (Fresh Install)                |
+| Single-node homelab   | Option 1 or stay with Flannel + CronJob |
+| Multi-node production | Option 3 (Gradual)                      |
+| Dev/test cluster      | Option 2 (In-Place)                     |
+| Need zero downtime    | Stay with Flannel + CronJob workaround  |
 
 ## Current Recommendation
 

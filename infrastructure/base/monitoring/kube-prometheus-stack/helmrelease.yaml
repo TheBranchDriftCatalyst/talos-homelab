@@ -25,24 +25,20 @@ spec:
         name: prometheus-community
         namespace: monitoring
       interval: 12h
-
   # Ensure CRDs are managed
   install:
     crds: Create
     createNamespace: false
     remediation:
       retries: 3
-
   upgrade:
     crds: CreateReplace
     cleanupOnFail: true
     remediation:
       retries: 3
-
   values:
     # Global settings
     fullnameOverride: 'kube-prometheus-stack'
-
     # Prometheus Operator
     prometheusOperator:
       enabled: true
@@ -57,11 +53,9 @@ spec:
         limits:
           cpu: 200m
           memory: 256Mi
-
     # Prometheus
     prometheus:
       enabled: true
-
       prometheusSpec:
         # Target worker node for monitoring workloads
         nodeSelector:
@@ -69,7 +63,6 @@ spec:
         # Retention and storage
         retention: 30d
         retentionSize: '45GB'
-
         # Storage configuration (using local-path)
         storageSpec:
           volumeClaimTemplate:
@@ -79,7 +72,6 @@ spec:
               resources:
                 requests:
                   storage: 50Gi
-
         # Resource limits - increased for worker node capacity
         resources:
           requests:
@@ -88,30 +80,24 @@ spec:
           limits:
             cpu: 4000m
             memory: 8Gi
-
         # Service monitors
         serviceMonitorSelectorNilUsesHelmValues: false
         podMonitorSelectorNilUsesHelmValues: false
         probeSelectorNilUsesHelmValues: false
         ruleSelectorNilUsesHelmValues: false
-
         # Enable all service monitors
         serviceMonitorSelector: {}
         podMonitorSelector: {}
-
         # Scrape intervals
         scrapeInterval: 30s
         evaluationInterval: 30s
-
         # Enable features
         enableAdminAPI: true
         enableRemoteWriteReceiver: false
-
         # Additional scrape configs for services without ServiceMonitors
         # NOTE: Graylog, OpenSearch, and MongoDB now use dedicated exporters with ServiceMonitors
         # See infrastructure/base/observability/*/exporter.yaml
         additionalScrapeConfigs: []
-
         # Security context - run as root for NFS compatibility
         securityContext:
           runAsNonRoot: false
@@ -119,11 +105,9 @@ spec:
           fsGroup: 0
           seccompProfile:
             type: RuntimeDefault
-
     # Alertmanager
     alertmanager:
       enabled: true
-
       alertmanagerSpec:
         # Target worker node for monitoring workloads
         nodeSelector:
@@ -137,7 +121,6 @@ spec:
               resources:
                 requests:
                   storage: 10Gi
-
         # Resource limits - increased for worker node capacity
         resources:
           requests:
@@ -146,7 +129,6 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
-
         # Security context
         securityContext:
           runAsNonRoot: true
@@ -155,28 +137,23 @@ spec:
           fsGroup: 65534
           seccompProfile:
             type: RuntimeDefault
-
     # Grafana
     grafana:
       enabled: true
-
       # Target worker node for monitoring workloads
       nodeSelector:
         node-role.kubernetes.io/worker: ''
-
       # Admin credentials managed via ExternalSecret (grafana-admin-credentials)
       admin:
         existingSecret: kube-prometheus-stack-grafana
         userKey: admin-user
         passwordKey: admin-password
-
       # Persistence
       persistence:
         enabled: true
         storageClassName: local-path
         accessModes: ['ReadWriteOnce']
         size: 10Gi
-
       # Resource limits - increased for worker node capacity
       resources:
         requests:
@@ -185,7 +162,6 @@ spec:
         limits:
           cpu: 1000m
           memory: 1Gi
-
       # Datasources - configured statically via Helm values (simpler for single-node homelab)
       # Sidecar datasource discovery is disabled to avoid duplicate default datasource errors
       sidecar:
@@ -195,8 +171,7 @@ spec:
           labelValue: '1'
           searchNamespace: ALL
         datasources:
-          enabled: false  # Disabled - using static datasources below instead
-
+          enabled: false # Disabled - using static datasources below instead
       # Static datasource configuration
       datasources:
         datasources.yaml:
@@ -215,7 +190,6 @@ spec:
               editable: true
               jsonData:
                 implementation: prometheus
-
       # Default dashboards
       dashboardProviders:
         dashboardproviders.yaml:
@@ -229,11 +203,9 @@ spec:
               editable: true
               options:
                 path: /var/lib/grafana/dashboards/default
-
       # Dashboards are managed via GrafanaDashboard CRDs
       # See infrastructure/base/monitoring/grafana-dashboards/
       dashboards: {}
-
       # Grafana.ini customizations
       grafana.ini:
         server:
@@ -242,7 +214,6 @@ spec:
           check_for_updates: false
         security:
           allow_embedding: true
-
     # Node Exporter
     nodeExporter:
       enabled: true
@@ -253,8 +224,8 @@ spec:
         limits:
           cpu: 200m
           memory: 128Mi
-
     # Kube State Metrics
+    # Note: VPA metrics collected via VPA recommender, not kube-state-metrics
     kube-state-metrics:
       enabled: true
       resources:
@@ -264,9 +235,6 @@ spec:
         limits:
           cpu: 200m
           memory: 256Mi
-      # Note: VPA metrics are collected via VPA recommender directly, not kube-state-metrics
-      # kube-state-metrics v2.13.0 requires custom resource state config for VPA which is complex
-
     # Default rules and alerts
     defaultRules:
       create: true
@@ -301,26 +269,19 @@ spec:
         nodeExporterRecording: true
         prometheus: true
         prometheusOperator: true
-
     # Component-specific service monitors
     coreDns:
       enabled: true
-
     kubeDns:
       enabled: false
-
     kubeEtcd:
       enabled: true
-
     # Disabled on Talos Linux - these components don't expose metrics on standard ports
     kubeControllerManager:
       enabled: false
-
     kubeScheduler:
       enabled: false
-
     kubeProxy:
       enabled: false
-
     kubeApiServer:
       enabled: true

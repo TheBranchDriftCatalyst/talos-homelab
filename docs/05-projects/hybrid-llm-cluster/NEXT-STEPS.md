@@ -11,6 +11,7 @@
   - Set up billing alerts: $50, $100, $200
 
 - [ ] **IAM User/Role**
+
   ```bash
   # Create IAM user for Terraform
   aws iam create-user --user-name talos-hybrid-llm
@@ -28,15 +29,16 @@
   ```
 
 - [ ] **AWS Region Selection**
-  | Region | GPU Spot Availability | Latency to West Coast |
-  |--------|----------------------|----------------------|
-  | us-west-2 | Good | ~20ms |
-  | us-east-1 | Best | ~70ms |
-  | us-east-2 | Good | ~60ms |
+      | Region | GPU Spot Availability | Latency to West Coast |
+      |--------|----------------------|----------------------|
+      | us-west-2 | Good | ~20ms |
+      | us-east-1 | Best | ~70ms |
+      | us-east-2 | Good | ~60ms |
 
   **Recommendation**: `us-west-2` for lowest latency
 
 - [ ] **Spot Instance Limits**
+
   ```bash
   # Check current vCPU limits
   aws service-quotas get-service-quota \
@@ -107,16 +109,19 @@ op item create \
 ### 0.3 Nebula Lighthouse Decision
 
 **Option A: Homelab (Free but less reliable)**
+
 - Requires static IP or DDNS
 - Requires port forwarding (UDP 4242)
 - Depends on home internet uptime
 
 **Option B: AWS t3.micro (Recommended - ~$8/month)**
+
 - Always available
 - Elastic IP for static address
 - Reliable for NAT traversal
 
 For Option B:
+
 ```bash
 # Quick deploy lighthouse (before Terraform)
 aws ec2 run-instances \
@@ -194,6 +199,7 @@ sudo nano /etc/nebula/config.yaml
 ```
 
 Lighthouse config:
+
 ```yaml
 pki:
   ca: /etc/nebula/ca.crt
@@ -201,7 +207,7 @@ pki:
   key: /etc/nebula/host.key
 
 static_host_map:
-  "10.42.0.1": ["<ELASTIC_IP>:4242"]
+  '10.42.0.1': ['<ELASTIC_IP>:4242']
 
 lighthouse:
   am_lighthouse: true
@@ -230,6 +236,7 @@ firewall:
 ```
 
 Start Nebula:
+
 ```bash
 # Create systemd service
 sudo nano /etc/systemd/system/nebula.service
@@ -276,6 +283,7 @@ op item create --category=document --title="Nebula Talos Key" \
 ### 1.4 Test Connectivity
 
 From homelab (once Nebula is deployed):
+
 ```bash
 # Ping lighthouse
 ping 10.42.0.1
@@ -328,6 +336,7 @@ aws s3 sync ~/.ollama/models s3://ollama-models-xxx/ \
 See `terraform/hybrid-llm/` for full Terraform config.
 
 Quick manual setup:
+
 ```bash
 # Create VPC
 VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query 'Vpc.VpcId' --output text)
@@ -397,26 +406,26 @@ terraform version
 
 Before proceeding, decide on these:
 
-| Question | Options | Recommendation |
-|----------|---------|----------------|
-| AWS Region | us-west-2, us-east-1 | us-west-2 (latency) |
-| Lighthouse location | Homelab, AWS t3.micro | AWS (reliability) |
-| K8s on AWS GPU | k3s, kubeadm, EKS | k3s (simplicity) |
-| Model storage | S3 mount, init sync | S3 mount (cost) |
-| Scale trigger | Manual, KEDA, Lambda | Manual first, then KEDA |
+| Question            | Options               | Recommendation          |
+| ------------------- | --------------------- | ----------------------- |
+| AWS Region          | us-west-2, us-east-1  | us-west-2 (latency)     |
+| Lighthouse location | Homelab, AWS t3.micro | AWS (reliability)       |
+| K8s on AWS GPU      | k3s, kubeadm, EKS     | k3s (simplicity)        |
+| Model storage       | S3 mount, init sync   | S3 mount (cost)         |
+| Scale trigger       | Manual, KEDA, Lambda  | Manual first, then KEDA |
 
 ---
 
 ## Estimated Timeline
 
-| Phase | Tasks | Time |
-|-------|-------|------|
-| Phase 0 | AWS setup, Nebula CA | 1-2 hours |
-| Phase 1 | Lighthouse, homelab Nebula | 2-3 hours |
-| Phase 2 | AWS VPC, GPU instance | 2-3 hours |
-| Phase 3 | Liqo federation | 1-2 hours |
-| Phase 4 | Ollama deployment | 1-2 hours |
-| **Total** | | **8-12 hours** |
+| Phase     | Tasks                      | Time           |
+| --------- | -------------------------- | -------------- |
+| Phase 0   | AWS setup, Nebula CA       | 1-2 hours      |
+| Phase 1   | Lighthouse, homelab Nebula | 2-3 hours      |
+| Phase 2   | AWS VPC, GPU instance      | 2-3 hours      |
+| Phase 3   | Liqo federation            | 1-2 hours      |
+| Phase 4   | Ollama deployment          | 1-2 hours      |
+| **Total** |                            | **8-12 hours** |
 
 ---
 

@@ -15,27 +15,30 @@ NC='\033[0m'
 
 log() { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-error() { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
+error() {
+  echo -e "${RED}[ERROR]${NC} $1"
+  exit 1
+}
 
 # Check prerequisites
 check_prerequisites() {
-    log "Checking prerequisites..."
+  log "Checking prerequisites..."
 
-    command -v helm >/dev/null 2>&1 || error "helm is required"
-    command -v kubectl >/dev/null 2>&1 || error "kubectl is required"
+  command -v helm > /dev/null 2>&1 || error "helm is required"
+  command -v kubectl > /dev/null 2>&1 || error "kubectl is required"
 
-    # Check if Linkerd is installed
-    kubectl get namespace linkerd >/dev/null 2>&1 || error "Linkerd not installed. Run ./scripts/deploy-linkerd.sh first"
-    kubectl get deployment -n linkerd linkerd-destination >/dev/null 2>&1 || error "Linkerd control plane not installed"
+  # Check if Linkerd is installed
+  kubectl get namespace linkerd > /dev/null 2>&1 || error "Linkerd not installed. Run ./scripts/deploy-linkerd.sh first"
+  kubectl get deployment -n linkerd linkerd-destination > /dev/null 2>&1 || error "Linkerd control plane not installed"
 
-    log "Prerequisites OK"
+  log "Prerequisites OK"
 }
 
 # Create namespace with PSS labels (Linkerd requires NET_ADMIN capability)
 create_namespace() {
-    log "Creating linkerd-viz namespace with privileged PSS..."
+  log "Creating linkerd-viz namespace with privileged PSS..."
 
-    kubectl apply -f - <<EOF
+  kubectl apply -f - << EOF
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -48,41 +51,41 @@ metadata:
     pod-security.kubernetes.io/warn: privileged
 EOF
 
-    log "Namespace created with privileged PSS"
+  log "Namespace created with privileged PSS"
 }
 
 # Install Linkerd Viz
 install_viz() {
-    log "Installing Linkerd Viz extension..."
+  log "Installing Linkerd Viz extension..."
 
-    # Add Helm repo if not present
-    helm repo add linkerd-edge https://helm.linkerd.io/edge 2>/dev/null || true
-    helm repo update linkerd-edge
+  # Add Helm repo if not present
+  helm repo add linkerd-edge https://helm.linkerd.io/edge 2> /dev/null || true
+  helm repo update linkerd-edge
 
-    # Install with external Prometheus
-    # Our existing Prometheus at monitoring/prometheus-kube-prometheus-stack-prometheus
-    PROMETHEUS_URL="http://prometheus-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+  # Install with external Prometheus
+  # Our existing Prometheus at monitoring/prometheus-kube-prometheus-stack-prometheus
+  PROMETHEUS_URL="http://prometheus-kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
 
-    helm upgrade --install linkerd-viz linkerd-edge/linkerd-viz \
-        --namespace linkerd-viz \
-        --set prometheus.enabled=false \
-        --set prometheusUrl="$PROMETHEUS_URL" \
-        --set dashboard.enforcedHostRegexp=".*" \
-        --set grafana.enabled=false \
-        --set tap.enabled=true \
-        --set tapInjector.enabled=true \
-        --set metricsAPI.enabled=true \
-        --wait \
-        --timeout 5m
+  helm upgrade --install linkerd-viz linkerd-edge/linkerd-viz \
+    --namespace linkerd-viz \
+    --set prometheus.enabled=false \
+    --set prometheusUrl="$PROMETHEUS_URL" \
+    --set dashboard.enforcedHostRegexp=".*" \
+    --set grafana.enabled=false \
+    --set tap.enabled=true \
+    --set tapInjector.enabled=true \
+    --set metricsAPI.enabled=true \
+    --wait \
+    --timeout 5m
 
-    log "Linkerd Viz installed"
+  log "Linkerd Viz installed"
 }
 
 # Create PodMonitor for Linkerd proxies
 create_podmonitor() {
-    log "Creating PodMonitor for Linkerd proxy metrics..."
+  log "Creating PodMonitor for Linkerd proxy metrics..."
 
-    kubectl apply -f - <<EOF
+  kubectl apply -f - << EOF
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -114,14 +117,14 @@ spec:
           targetLabel: deployment
 EOF
 
-    log "PodMonitor created"
+  log "PodMonitor created"
 }
 
 # Create ServiceMonitor for Linkerd control plane
 create_servicemonitor() {
-    log "Creating ServiceMonitor for Linkerd control plane..."
+  log "Creating ServiceMonitor for Linkerd control plane..."
 
-    kubectl apply -f - <<EOF
+  kubectl apply -f - << EOF
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -141,74 +144,74 @@ spec:
       interval: 30s
 EOF
 
-    log "ServiceMonitor created"
+  log "ServiceMonitor created"
 }
 
 # Verify installation
 verify_installation() {
-    log "Verifying Linkerd Viz installation..."
+  log "Verifying Linkerd Viz installation..."
 
-    kubectl wait --for=condition=available --timeout=120s deployment -l linkerd.io/extension=viz -n linkerd-viz 2>/dev/null || warn "Some Viz components not ready"
+  kubectl wait --for=condition=available --timeout=120s deployment -l linkerd.io/extension=viz -n linkerd-viz 2> /dev/null || warn "Some Viz components not ready"
 
-    log "Linkerd Viz pods:"
-    kubectl get pods -n linkerd-viz
+  log "Linkerd Viz pods:"
+  kubectl get pods -n linkerd-viz
 
-    if command -v linkerd >/dev/null 2>&1; then
-        linkerd viz check || warn "Some Linkerd Viz checks failed"
-    fi
+  if command -v linkerd > /dev/null 2>&1; then
+    linkerd viz check || warn "Some Linkerd Viz checks failed"
+  fi
 }
 
 # Enable dashboard import
 enable_dashboards() {
-    log "To import Linkerd Grafana dashboards, run:"
-    log "  ./scripts/import-grafana-dashboards.sh"
-    log ""
-    log "Or import manually from grafana.com:"
-    log "  - 15474: Linkerd Top Line"
-    log "  - 15475: Linkerd Deployment"
-    log "  - 15481: Linkerd Route"
-    log "  - 15484: Linkerd DaemonSet"
-    log "  - 14274: Linkerd Service"
+  log "To import Linkerd Grafana dashboards, run:"
+  log "  ./scripts/import-grafana-dashboards.sh"
+  log ""
+  log "Or import manually from grafana.com:"
+  log "  - 15474: Linkerd Top Line"
+  log "  - 15475: Linkerd Deployment"
+  log "  - 15481: Linkerd Route"
+  log "  - 15484: Linkerd DaemonSet"
+  log "  - 14274: Linkerd Service"
 }
 
 # Main
 main() {
-    local action="${1:-install}"
+  local action="${1:-install}"
 
-    case "$action" in
-        install)
-            check_prerequisites
-            create_namespace
-            install_viz
-            create_podmonitor
-            create_servicemonitor
-            verify_installation
-            enable_dashboards
-            log ""
-            log "Linkerd Viz installed successfully!"
-            log ""
-            log "Access the dashboard with:"
-            log "  linkerd viz dashboard"
-            ;;
-        uninstall)
-            log "Uninstalling Linkerd Viz..."
-            helm uninstall linkerd-viz -n linkerd-viz 2>/dev/null || true
-            kubectl delete namespace linkerd-viz 2>/dev/null || true
-            kubectl delete podmonitor linkerd-proxy -n monitoring 2>/dev/null || true
-            kubectl delete servicemonitor linkerd-control-plane -n monitoring 2>/dev/null || true
-            log "Linkerd Viz uninstalled"
-            ;;
-        status)
-            kubectl get pods -n linkerd-viz
-            if command -v linkerd >/dev/null 2>&1; then
-                linkerd viz check
-            fi
-            ;;
-        *)
-            echo "Usage: $0 {install|uninstall|status}"
-            exit 1
-            ;;
-    esac
+  case "$action" in
+    install)
+      check_prerequisites
+      create_namespace
+      install_viz
+      create_podmonitor
+      create_servicemonitor
+      verify_installation
+      enable_dashboards
+      log ""
+      log "Linkerd Viz installed successfully!"
+      log ""
+      log "Access the dashboard with:"
+      log "  linkerd viz dashboard"
+      ;;
+    uninstall)
+      log "Uninstalling Linkerd Viz..."
+      helm uninstall linkerd-viz -n linkerd-viz 2> /dev/null || true
+      kubectl delete namespace linkerd-viz 2> /dev/null || true
+      kubectl delete podmonitor linkerd-proxy -n monitoring 2> /dev/null || true
+      kubectl delete servicemonitor linkerd-control-plane -n monitoring 2> /dev/null || true
+      log "Linkerd Viz uninstalled"
+      ;;
+    status)
+      kubectl get pods -n linkerd-viz
+      if command -v linkerd > /dev/null 2>&1; then
+        linkerd viz check
+      fi
+      ;;
+    *)
+      echo "Usage: $0 {install|uninstall|status}"
+      exit 1
+      ;;
+  esac
 }
 
 main "$@"

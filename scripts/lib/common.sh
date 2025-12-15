@@ -375,8 +375,8 @@ start_spinner() {
 stop_spinner() {
   local status="${1:-success}"
   if [[ -n "$_SPINNER_PID" ]]; then
-    kill "$_SPINNER_PID" 2>/dev/null || true
-    wait "$_SPINNER_PID" 2>/dev/null || true
+    kill "$_SPINNER_PID" 2> /dev/null || true
+    wait "$_SPINNER_PID" 2> /dev/null || true
     _SPINNER_PID=""
   fi
 
@@ -468,7 +468,7 @@ print_table_header() {
 require_cmd() {
   local cmd="$1"
   local msg="${2:-$cmd is required but not installed}"
-  if ! command -v "$cmd" &>/dev/null; then
+  if ! command -v "$cmd" &> /dev/null; then
     log_error "$msg"
     return 1
   fi
@@ -480,7 +480,7 @@ require_cmd() {
 require_cmds() {
   local missing=()
   for cmd in "$@"; do
-    if ! command -v "$cmd" &>/dev/null; then
+    if ! command -v "$cmd" &> /dev/null; then
       missing+=("$cmd")
     fi
   done
@@ -495,7 +495,7 @@ require_cmds() {
 # Check if cluster is accessible
 # Usage: require_cluster || exit 1
 require_cluster() {
-  if ! kubectl cluster-info &>/dev/null; then
+  if ! kubectl cluster-info &> /dev/null; then
     log_error "Cannot connect to Kubernetes cluster"
     log_note "Make sure your kubeconfig is correct: $KUBECONFIG"
     log_note "Or run: task kubeconfig-merge"
@@ -507,7 +507,7 @@ require_cluster() {
 # Check if Talos is accessible
 # Usage: require_talos || exit 1
 require_talos() {
-  if ! talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version &>/dev/null; then
+  if ! talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version &> /dev/null; then
     log_error "Cannot connect to Talos node: $TALOS_NODE"
     log_note "Check that the node is running and talosconfig is correct"
     return 1
@@ -519,7 +519,7 @@ require_talos() {
 # Usage: require_namespace "monitoring" || exit 1
 require_namespace() {
   local namespace="$1"
-  if ! kubectl get namespace "$namespace" &>/dev/null; then
+  if ! kubectl get namespace "$namespace" &> /dev/null; then
     log_error "Namespace '$namespace' not found"
     return 1
   fi
@@ -539,7 +539,7 @@ wait_for_resource() {
 
   log_info "Waiting for $resource in $namespace (timeout: ${timeout}s)..."
 
-  if kubectl wait --for=condition=ready "$resource" -n "$namespace" --timeout="${timeout}s" 2>/dev/null; then
+  if kubectl wait --for=condition=ready "$resource" -n "$namespace" --timeout="${timeout}s" 2> /dev/null; then
     log_success "$resource is ready"
     return 0
   else
@@ -569,7 +569,7 @@ get_secret() {
   local namespace="$1"
   local secret_name="$2"
   local key="$3"
-  kubectl get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.$key}" 2>/dev/null | base64 -d 2>/dev/null
+  kubectl get secret "$secret_name" -n "$namespace" -o jsonpath="{.data.$key}" 2> /dev/null | base64 -d 2> /dev/null
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -582,7 +582,7 @@ helm_repo_add() {
   local name="$1"
   local url="$2"
 
-  if helm repo list 2>/dev/null | grep -q "^${name}"; then
+  if helm repo list 2> /dev/null | grep -q "^${name}"; then
     log_debug "Helm repo '$name' already exists"
   else
     log_info "Adding Helm repo: $name"
@@ -729,7 +729,7 @@ retry() {
     if [[ $attempt -lt $max_attempts ]]; then
       log_warning "Command failed, retrying in ${delay}s..."
       sleep "$delay"
-      delay=$((delay * 2))  # Exponential backoff
+      delay=$((delay * 2)) # Exponential backoff
     fi
 
     attempt=$((attempt + 1))
@@ -755,7 +755,7 @@ register_cleanup() {
 # Run all cleanup functions
 _run_cleanup() {
   for func in "${_CLEANUP_FUNCTIONS[@]}"; do
-    eval "$func" 2>/dev/null || true
+    eval "$func" 2> /dev/null || true
   done
 }
 

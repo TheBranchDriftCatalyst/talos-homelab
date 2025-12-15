@@ -57,22 +57,22 @@ check_health() {
 log_step "1" "Gathering Cluster Data"
 
 info "Collecting version information..."
-TALOS_VERSION=$(talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version 2>/dev/null | grep 'Tag:' | head -1 | awk '{print $2}')
-K8S_VERSION=$(kubectl version --short 2>/dev/null | grep Server | awk '{print $3}' || kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}' 2>/dev/null)
+TALOS_VERSION=$(talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version 2> /dev/null | grep 'Tag:' | head -1 | awk '{print $2}')
+K8S_VERSION=$(kubectl version --short 2> /dev/null | grep Server | awk '{print $3}' || kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}' 2> /dev/null)
 
 info "Collecting pod statistics..."
-TOTAL_PODS=$(kubectl get pods -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-RUNNING_PODS=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Running || echo 0)
-PENDING_PODS=$(kubectl get pods -A --no-headers 2>/dev/null | grep -c Pending || echo 0)
-FAILED_PODS=$(kubectl get pods -A --no-headers 2>/dev/null | grep -cE '(Error|CrashLoop|Failed)' || echo 0)
+TOTAL_PODS=$(kubectl get pods -A --no-headers 2> /dev/null | wc -l | tr -d ' ')
+RUNNING_PODS=$(kubectl get pods -A --no-headers 2> /dev/null | grep -c Running || echo 0)
+PENDING_PODS=$(kubectl get pods -A --no-headers 2> /dev/null | grep -c Pending || echo 0)
+FAILED_PODS=$(kubectl get pods -A --no-headers 2> /dev/null | grep -cE '(Error|CrashLoop|Failed)' || echo 0)
 
 info "Collecting resource counts..."
-TOTAL_NAMESPACES=$(kubectl get namespaces --no-headers 2>/dev/null | wc -l | tr -d ' ')
-TOTAL_DEPLOYMENTS=$(kubectl get deployments -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-TOTAL_SERVICES=$(kubectl get svc -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
-TOTAL_CRDS=$(kubectl get crd --no-headers 2>/dev/null | wc -l | tr -d ' ')
-TRAEFIK_CRDS=$(kubectl get crd --no-headers 2>/dev/null | grep -c traefik || echo 0)
-HELM_RELEASES=$(helm list -A --no-headers 2>/dev/null | wc -l | tr -d ' ')
+TOTAL_NAMESPACES=$(kubectl get namespaces --no-headers 2> /dev/null | wc -l | tr -d ' ')
+TOTAL_DEPLOYMENTS=$(kubectl get deployments -A --no-headers 2> /dev/null | wc -l | tr -d ' ')
+TOTAL_SERVICES=$(kubectl get svc -A --no-headers 2> /dev/null | wc -l | tr -d ' ')
+TOTAL_CRDS=$(kubectl get crd --no-headers 2> /dev/null | wc -l | tr -d ' ')
+TRAEFIK_CRDS=$(kubectl get crd --no-headers 2> /dev/null | grep -c traefik || echo 0)
+HELM_RELEASES=$(helm list -A --no-headers 2> /dev/null | wc -l | tr -d ' ')
 
 info "Checking health status..."
 HEALTH_STATUS=$(check_health)
@@ -124,18 +124,18 @@ EOF
   echo "### Talos Version Information"
   echo ""
   echo '```'
-  talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version 2>/dev/null
+  talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" version 2> /dev/null
   echo '```'
   echo ""
   echo "### Kubernetes Nodes"
   echo ""
   echo '```'
-  kubectl get nodes -o wide 2>/dev/null
+  kubectl get nodes -o wide 2> /dev/null
   echo '```'
   echo ""
   echo "**Node Taints:**"
   echo '```'
-  kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints 2>/dev/null
+  kubectl get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints 2> /dev/null
   echo '```'
   echo ""
   echo "---"
@@ -151,7 +151,7 @@ EOF
   echo "## ⚙️ System Services"
   echo ""
   echo '```'
-  talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" services 2>/dev/null
+  talosctl --talosconfig "$TALOSCONFIG" --nodes "$TALOS_NODE" services 2> /dev/null
   echo '```'
   echo ""
   echo "---"
@@ -159,7 +159,7 @@ EOF
   echo "## 🏷️ Namespaces"
   echo ""
   echo '```'
-  kubectl get namespaces 2>/dev/null
+  kubectl get namespaces 2> /dev/null
   echo '```'
   echo ""
   echo "---"
@@ -178,7 +178,7 @@ EOF
   echo "### All Pods"
   echo ""
   echo '```'
-  kubectl get pods -A -o wide 2>/dev/null
+  kubectl get pods -A -o wide 2> /dev/null
   echo '```'
   echo ""
   echo "---"
@@ -188,13 +188,13 @@ EOF
   echo "### Deployments"
   echo ""
   echo '```'
-  kubectl get deployments -A 2>/dev/null
+  kubectl get deployments -A 2> /dev/null
   echo '```'
   echo ""
   echo "### DaemonSets"
   echo ""
   echo '```'
-  kubectl get daemonsets -A 2>/dev/null
+  kubectl get daemonsets -A 2> /dev/null
   echo '```'
   echo ""
   echo "---"
@@ -204,13 +204,13 @@ EOF
   echo "### Services"
   echo ""
   echo '```'
-  kubectl get svc -A 2>/dev/null
+  kubectl get svc -A 2> /dev/null
   echo '```'
   echo ""
   echo "### IngressRoutes"
   echo ""
   echo '```'
-  kubectl get ingressroute -A 2>/dev/null || echo "No IngressRoutes found"
+  kubectl get ingressroute -A 2> /dev/null || echo "No IngressRoutes found"
   echo '```'
   echo ""
   echo "---"
@@ -220,13 +220,13 @@ EOF
   echo "### Persistent Volumes & Claims"
   echo ""
   echo '```'
-  kubectl get pv,pvc -A 2>/dev/null || echo "No PVs or PVCs"
+  kubectl get pv,pvc -A 2> /dev/null || echo "No PVs or PVCs"
   echo '```'
   echo ""
   echo "### Storage Classes"
   echo ""
   echo '```'
-  kubectl get storageclasses 2>/dev/null || echo "No StorageClasses"
+  kubectl get storageclasses 2> /dev/null || echo "No StorageClasses"
   echo '```'
   echo ""
   echo "---"
@@ -234,7 +234,7 @@ EOF
   echo "## 📦 Helm Releases"
   echo ""
   echo '```'
-  helm list -A 2>/dev/null
+  helm list -A 2> /dev/null
   echo '```'
   echo ""
   echo "---"
@@ -247,7 +247,7 @@ EOF
   echo ""
   if [[ "$TRAEFIK_CRDS" -gt 0 ]]; then
     echo '```'
-    kubectl get crd 2>/dev/null | grep traefik
+    kubectl get crd 2> /dev/null | grep traefik
     echo '```'
   fi
   echo ""
@@ -280,7 +280,7 @@ EOF
   echo "## 📝 Recent Events (Last 20)"
   echo ""
   echo '```'
-  kubectl get events -A --sort-by='.lastTimestamp' 2>/dev/null | tail -20 || echo "No recent events"
+  kubectl get events -A --sort-by='.lastTimestamp' 2> /dev/null | tail -20 || echo "No recent events"
   echo '```'
   echo ""
   echo "---"

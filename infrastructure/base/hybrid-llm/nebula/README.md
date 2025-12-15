@@ -5,6 +5,7 @@
 ## Overview
 
 Nebula is a scalable overlay networking tool created by Slack. It provides:
+
 - Mutual authentication via certificates
 - Encrypted P2P tunnels (AES-256-GCM)
 - NAT traversal via UDP hole punching
@@ -27,12 +28,12 @@ Nebula is a scalable overlay networking tool created by Slack. It provides:
 
 ## Components
 
-| File | Description |
-|------|-------------|
-| `kustomization.yaml` | Kustomize entrypoint |
-| `namespace.yaml` | nebula-system namespace |
-| `configmap.yaml` | Nebula configuration (non-sensitive) |
-| `daemonset.yaml` | Nebula agent running on each node |
+| File                   | Description                                  |
+| ---------------------- | -------------------------------------------- |
+| `kustomization.yaml`   | Kustomize entrypoint                         |
+| `namespace.yaml`       | nebula-system namespace                      |
+| `configmap.yaml`       | Nebula configuration (non-sensitive)         |
+| `daemonset.yaml`       | Nebula agent running on each node            |
 | `external-secret.yaml` | CA cert and node certificates from 1Password |
 
 ## Prerequisites
@@ -71,6 +72,7 @@ nebula-cert sign \
 See `configmap.yaml` for the Nebula configuration template.
 
 Key settings:
+
 - `static_host_map`: Lighthouse public IP
 - `lighthouse.am_lighthouse`: true for lighthouse, false for others
 - `firewall`: Allow traffic based on groups
@@ -78,6 +80,7 @@ Key settings:
 ## Deployment on Talos
 
 Nebula can run as:
+
 1. **DaemonSet** - Preferred for Kubernetes integration
 2. **Talos Extension** - Native Talos integration (requires image rebuild)
 
