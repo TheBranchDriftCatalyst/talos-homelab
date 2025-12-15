@@ -1,0 +1,38 @@
+---
+# GPU Overlay for Media Transcoding Services
+# Adds Intel GPU support to Plex, Tdarr, and Jellyfin
+#
+# Prerequisites:
+#   - Intel GPU Device Plugin deployed (infrastructure/base/intel-gpu/)
+#   - Node with Intel GPU and label: intel.feature.node.kubernetes.io/gpu=true
+#
+# Usage:
+#   kubectl apply -k applications/arr-stack/overlays/gpu/
+#   OR reference this overlay in your ArgoCD Application
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: media
+
+resources:
+  - ../../base
+
+# GPU patches for transcoding services
+patches:
+  # Plex - Hardware transcoding
+  - target:
+      kind: Deployment
+      name: plex
+    path: plex-gpu-patch.yaml
+
+  # Tdarr - Media processing/transcoding
+  - target:
+      kind: Deployment
+      name: tdarr
+    path: tdarr-gpu-patch.yaml
+
+  # Jellyfin - Hardware transcoding
+  - target:
+      kind: Deployment
+      name: jellyfin
+    path: jellyfin-gpu-patch.yaml

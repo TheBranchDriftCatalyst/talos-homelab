@@ -1,0 +1,41 @@
+---
+# Plex GPU Patch - Intel QuickSync hardware transcoding
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plex
+spec:
+  template:
+    spec:
+      # Prefer GPU nodes but don't require them
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: intel.feature.node.kubernetes.io/gpu
+                    operator: In
+                    values:
+                      - 'true'
+      containers:
+        - name: plex
+          # Request GPU resource from Intel device plugin
+          resources:
+            limits:
+              gpu.intel.com/i915: '1'
+          # Mount GPU device (automatically handled by device plugin)
+          # securityContext needed for GPU access
+          securityContext:
+            privileged: false
+            capabilities:
+              add:
+                - SYS_ADMIN # For GPU memory management
+          volumeMounts:
+            - name: dri
+              mountPath: /dev/dri
+      volumes:
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory

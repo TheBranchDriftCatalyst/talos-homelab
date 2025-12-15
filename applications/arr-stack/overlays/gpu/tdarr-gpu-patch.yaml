@@ -1,0 +1,44 @@
+---
+# Tdarr GPU Patch - Intel QuickSync hardware transcoding
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tdarr
+spec:
+  template:
+    spec:
+      # Prefer GPU nodes but don't require them
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: intel.feature.node.kubernetes.io/gpu
+                    operator: In
+                    values:
+                      - 'true'
+      containers:
+        - name: tdarr
+          # Request GPU resource from Intel device plugin
+          resources:
+            limits:
+              gpu.intel.com/i915: '1'
+          # GPU environment variables for Tdarr/FFmpeg
+          env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: 'void'  # Disable NVIDIA (not used)
+          # securityContext for GPU access
+          securityContext:
+            privileged: false
+            capabilities:
+              add:
+                - SYS_ADMIN
+          volumeMounts:
+            - name: dri
+              mountPath: /dev/dri
+      volumes:
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
