@@ -439,6 +439,63 @@ spec:
           }
 
           // ----------------------------------------
+          // Hubble Metrics (Cilium network flow metrics)
+          // ----------------------------------------
+          discovery.relabel "hubble_metrics" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only hubble-metrics service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "hubble-metrics"
+              action        = "keep"
+            }
+            // Pod name label for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            // Node label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // Instance as pod name for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "instance"
+            }
+            // k8s_app label for Cilium/Hubble dashboards
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+              target_label  = "k8s_app"
+            }
+            // Namespace
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            // Service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            // Cluster label
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "hubble_metrics" {
+            job_name        = "hubble"
+            targets         = discovery.relabel.hubble_metrics.output
+            // 30s interval for compatibility with dashboard rate[1m] windows
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
           // Service Monitors (prometheus.io annotated services)
           // ----------------------------------------
           discovery.relabel "service_monitors" {
@@ -454,6 +511,12 @@ spec:
             rule {
               source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
               regex         = "prometheus-node-exporter"
+              action        = "drop"
+            }
+            // Exclude hubble-metrics (handled separately with pod labels)
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "hubble-metrics"
               action        = "drop"
             }
             // Use custom port if specified

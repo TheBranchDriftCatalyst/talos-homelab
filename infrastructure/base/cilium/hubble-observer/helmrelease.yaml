@@ -1,0 +1,74 @@
+---
+# Hubble Observer - Streams Hubble flows to stdout for Loki collection
+# Enables the Cilium Flows dashboard (ID 23862) in Grafana
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hubble-observer
+  namespace: kube-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: helm/hubble-observer
+      sourceRef:
+        kind: GitRepository
+        name: hubble-observer
+        namespace: kube-system
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Deploy in kube-system with Cilium
+    namespace: kube-system
+
+    # Single replica
+    replicaCount: 1
+
+    # Hubble container image
+    image:
+      repository: quay.io/cilium/hubble
+      tag: v1.16.4
+      pullPolicy: IfNotPresent
+
+    # Hubble Relay connection
+    hubbleRelay:
+      service: hubble-relay.kube-system.svc.cluster.local
+      port: 80
+
+    # Observe all flows (set to "none" to disable verdict filtering)
+    # Options: none, FORWARDED, DROPPED, ERROR, AUDIT, REDIRECTED, TRACED, TRANSLATED
+    verdictFilter: "none"
+
+    # Resources
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+    # Probes - increase timeouts for stability
+    startupProbe:
+      enabled: true
+      timeoutSeconds: 10  # Default 1s is too tight for hubble status
+      failureThreshold: 20
+      periodSeconds: 5
+      initialDelaySeconds: 5
+
+    livenessProbe:
+      enabled: true
+      timeoutSeconds: 10
+
+    readinessProbe:
+      enabled: true
+      timeoutSeconds: 10
+
+    # Disable dashboard (we manage it separately via GrafanaDashboard CRD)
+    dashboard:
+      enabled: false
