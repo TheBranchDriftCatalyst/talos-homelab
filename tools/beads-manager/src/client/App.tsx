@@ -15,6 +15,9 @@ function App() {
     status: [] as string[],
     type: [] as string[],
     priority: [] as number[],
+    labels: [] as string[],
+    epic: [] as string[],
+    search: '',
   });
 
   // WebSocket for real-time updates
@@ -32,6 +35,34 @@ function App() {
       if (filters.status.length > 0 && !filters.status.includes(issue.status)) return false;
       if (filters.type.length > 0 && !filters.type.includes(issue.issue_type)) return false;
       if (filters.priority.length > 0 && !filters.priority.includes(issue.priority)) return false;
+      // Label filter: show issue if it has ANY of the selected labels (OR logic)
+      if (filters.labels.length > 0 && !filters.labels.some(label => issue.labels.includes(label))) return false;
+
+      // Epic filter: show issue if it's one of the selected epics OR a child of a selected epic
+      if (filters.epic.length > 0) {
+        const isSelectedEpic = filters.epic.includes(issue.id);
+        const isChildOfSelectedEpic = issue.dependencies.some(dep =>
+          dep.type === 'parent-child' && filters.epic.includes(dep.depends_on_id)
+        );
+        if (!isSelectedEpic && !isChildOfSelectedEpic) return false;
+      }
+
+      // Search filter: search across multiple fields
+      if (filters.search) {
+        const searchLower = filters.search.toLowerCase();
+        const searchableText = [
+          issue.id,
+          issue.title,
+          issue.description || '',
+          issue.design || '',
+          issue.acceptance_criteria || '',
+          issue.notes || '',
+          ...issue.labels,
+        ].join(' ').toLowerCase();
+
+        if (!searchableText.includes(searchLower)) return false;
+      }
+
       return true;
     });
   }, [issues, filters]);

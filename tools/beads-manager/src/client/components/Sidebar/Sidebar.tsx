@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import type { Issue, IssueType } from '../../lib/types';
 import { STATUS_LABELS, TYPE_LABELS } from '../../lib/types';
 import { getStatusColor, getTypeColor } from '../../lib/transformers';
@@ -10,8 +10,11 @@ interface SidebarProps {
     status: string[];
     type: string[];
     priority: number[];
+    labels: string[];
+    epic: string[];
+    search: string;
   };
-  onFiltersChange: (filters: { status: string[]; type: string[]; priority: number[] }) => void;
+  onFiltersChange: (filters: { status: string[]; type: string[]; priority: number[]; labels: string[]; epic: string[]; search: string }) => void;
   issues: Issue[];
   onCreateIssue: (issue: Partial<Issue>) => Promise<Issue | null>;
 }
@@ -29,13 +32,39 @@ export function Sidebar({
   const [newType, setNewType] = useState<IssueType>('task');
   const [creating, setCreating] = useState(false);
 
-  const toggleFilter = (category: 'status' | 'type', value: string) => {
+  const toggleFilter = (category: 'status' | 'type' | 'labels' | 'epic', value: string) => {
     const current = filters[category];
     const updated = current.includes(value)
       ? current.filter((v) => v !== value)
       : [...current, value];
     onFiltersChange({ ...filters, [category]: updated });
   };
+
+  // Derive unique labels with counts
+  const labelStats = useMemo(() => {
+    const labelCounts = new Map<string, number>();
+    issues.forEach((issue) => {
+      issue.labels.forEach((label) => {
+        labelCounts.set(label, (labelCounts.get(label) || 0) + 1);
+      });
+    });
+    // Sort by count descending, then alphabetically
+    return Array.from(labelCounts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [issues]);
+
+  // Derive epics with child counts
+  const epicStats = useMemo(() => {
+    const epics = issues.filter((issue) => issue.issue_type === 'epic');
+    return epics.map((epic) => {
+      const childCount = issues.filter((issue) =>
+        issue.dependencies.some(
+          (dep) => dep.type === 'parent-child' && dep.depends_on_id === epic.id
+        )
+      ).length;
+      return { epic, childCount };
+    });
+  }, [issues]);
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return;
@@ -119,6 +148,22 @@ export function Sidebar({
         </div>
       </div>
 
+      {/* Search */}
+      <div className="p-4 border-b border-slate-700">
+        <input
+          type="text"
+          value={filters.search}
+          onChange={(e) => onFiltersChange({ ...filters, search: e.target.value })}
+          placeholder="Search issues..."
+          className="w-full px-3 py-2 bg-slate-700 border border-slate-600 rounded text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+        />
+        {filters.search && (
+          <p className="text-xs text-slate-400 mt-1">
+            Searching: title, description, design, criteria, labels, ID
+          </p>
+        )}
+      </div>
+
       {/* Filters */}
       <div className="p-4 border-b border-slate-700 flex-1 overflow-y-auto">
         <h2 className="text-sm font-medium text-slate-400 mb-2">Filter by Status</h2>
@@ -139,7 +184,7 @@ export function Sidebar({
         </div>
 
         <h2 className="text-sm font-medium text-slate-400 mb-2">Filter by Type</h2>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 mb-4">
           {Object.entries(TYPE_LABELS).map(([value, label]) => (
             <button
               key={value}
@@ -155,12 +200,54 @@ export function Sidebar({
           ))}
         </div>
 
-        {(filters.status.length > 0 || filters.type.length > 0) && (
+        <h2 className="text-sm font-medium text-slate-400 mb-2">Filter by Labels</h2>
+        {labelStats.length > 0 ? (
+          <div className="flex flex-wrap gap-2 mb-4">
+            {labelStats.map(([label, count]) => (
+              <button
+                key={label}
+                onClick={() => toggleFilter('labels', label)}
+                className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${
+                  filters.labels.includes(label)
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-transparent border border-slate-600 text-slate-400 hover:border-slate-500'
+                }`}
+              >
+                {label} ({count})
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500 italic mb-4">No labels found</p>
+        )}
+
+        <h2 className="text-sm font-medium text-slate-400 mb-2">Filter by Epic</h2>
+        {epicStats.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {epicStats.map(({ epic, childCount }) => (
+              <button
+                key={epic.id}
+                onClick={() => toggleFilter('epic', epic.id)}
+                className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                  filters.epic.includes(epic.id)
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                }`}
+              >
+                {epic.title} ({childCount})
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-slate-500 italic">No epics found</p>
+        )}
+
+        {(filters.status.length > 0 || filters.type.length > 0 || filters.labels.length > 0 || filters.epic.length > 0 || filters.search) && (
           <button
-            onClick={() => onFiltersChange({ status: [], type: [], priority: [] })}
+            onClick={() => onFiltersChange({ status: [], type: [], priority: [], labels: [], epic: [], search: '' })}
             className="mt-4 text-sm text-slate-400 hover:text-slate-200"
           >
-            Clear filters
+            Clear all filters
           </button>
         )}
       </div>
