@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useState } from 'react';
 import {
   ReactFlow,
   Node,
@@ -67,6 +67,9 @@ type IssueNodeData = {
   priority: number;
   issue_type: string;
   assignee?: string;
+  childCount: number;
+  isCollapsed: boolean;
+  onToggleCollapse?: () => void;
   [key: string]: unknown;
 };
 
@@ -75,6 +78,11 @@ function IssueNode({ data, selected }: NodeProps<Node<IssueNodeData>>) {
   const status = STATUS_COLORS[data.status] || STATUS_COLORS.open;
   const typeBadge = TYPE_BADGES[data.issue_type] || TYPE_BADGES.task;
   const priorityColor = PRIORITY_COLORS[data.priority] || PRIORITY_COLORS[3];
+
+  const handleCollapseClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    data.onToggleCollapse?.();
+  };
 
   return (
     <div
@@ -101,6 +109,16 @@ function IssueNode({ data, selected }: NodeProps<Node<IssueNodeData>>) {
       <div className="flex items-center justify-between mb-1">
         <span className="text-xs font-mono text-slate-400">{data.id}</span>
         <div className="flex items-center gap-1">
+          {/* Collapse/Expand button */}
+          {data.childCount > 0 && (
+            <button
+              onClick={handleCollapseClick}
+              className="flex items-center justify-center w-5 h-5 rounded bg-slate-700/80 hover:bg-slate-600 text-slate-300 text-[10px] font-bold transition-colors"
+              title={data.isCollapsed ? `Expand ${data.childCount} children` : `Collapse ${data.childCount} children`}
+            >
+              {data.isCollapsed ? `+${data.childCount}` : '−'}
+            </button>
+          )}
           <span
             className="w-2 h-2 rounded-full"
             style={{ backgroundColor: priorityColor }}
@@ -119,7 +137,7 @@ function IssueNode({ data, selected }: NodeProps<Node<IssueNodeData>>) {
         {data.title}
       </div>
 
-      {/* Status badge */}
+      {/* Status badge and collapsed indicator */}
       <div className="mt-1 flex items-center gap-2">
         <span
           className="text-[10px] px-1.5 py-0.5 rounded capitalize"
@@ -130,7 +148,12 @@ function IssueNode({ data, selected }: NodeProps<Node<IssueNodeData>>) {
         >
           {data.status.replace('_', ' ')}
         </span>
-        {data.assignee && (
+        {data.isCollapsed && data.childCount > 0 && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-300">
+            📁 {data.childCount} hidden
+          </span>
+        )}
+        {data.assignee && !data.isCollapsed && (
           <span className="text-[10px] text-slate-400 truncate">
             @{data.assignee}
           </span>
@@ -158,6 +181,10 @@ function getLayoutedElements(
   edges: Edge[],
   direction: 'TB' | 'LR' = 'TB'
 ) {
+  if (nodes.length === 0) {
+    return { nodes: [], edges: [] };
+  }
+
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
   dagreGraph.setGraph({ rankdir: direction, nodesep: 50, ranksep: 80 });
@@ -190,30 +217,95 @@ function getLayoutedElements(
   return { nodes: layoutedNodes, edges };
 }
 
-// Transform issues to React Flow format
-function issuesToReactFlow(issues: Issue[], selectedIssueId?: string) {
-  const nodes: Node[] = issues.map((issue) => ({
-    id: issue.id,
-    type: 'issue',
-    position: { x: 0, y: 0 }, // Will be set by dagre
-    data: {
-      id: issue.id,
-      title: issue.title,
-      status: issue.status,
-      priority: issue.priority,
-      issue_type: issue.issue_type,
-      assignee: issue.assignee,
-    },
-    selected: issue.id === selectedIssueId,
-  }));
-
-  const edges: Edge[] = [];
-  const issueIds = new Set(issues.map((i) => i.id));
+// Build dependency graph structure
+function buildDependencyTree(issues: Issue[]) {
+  const childrenMap = new Map<string, Set<string>>();
+  const parentMap = new Map<string, string>();
 
   issues.forEach((issue) => {
     issue.dependencies?.forEach((dep) => {
-      // Only add edge if both nodes exist in filtered set
-      if (issueIds.has(dep.depends_on_id)) {
+      // For "blocks" type: the depends_on_id blocks this issue
+      // So depends_on_id is the "parent" and issue.id is the "child"
+      if (dep.type === 'blocks' || dep.type === 'parent-child') {
+        const parentId = dep.depends_on_id;
+        if (!childrenMap.has(parentId)) {
+          childrenMap.set(parentId, new Set());
+        }
+        childrenMap.get(parentId)!.add(issue.id);
+        parentMap.set(issue.id, parentId);
+      }
+    });
+  });
+
+  return { childrenMap, parentMap };
+}
+
+// Get all descendants of a node (recursively)
+function getDescendants(nodeId: string, childrenMap: Map<string, Set<string>>): Set<string> {
+  const descendants = new Set<string>();
+  const children = childrenMap.get(nodeId);
+
+  if (children) {
+    children.forEach((childId) => {
+      descendants.add(childId);
+      getDescendants(childId, childrenMap).forEach((d) => descendants.add(d));
+    });
+  }
+
+  return descendants;
+}
+
+// Transform issues to React Flow format
+function issuesToReactFlow(
+  issues: Issue[],
+  selectedIssueId: string | undefined,
+  collapsedNodes: Set<string>,
+  onToggleCollapse: (nodeId: string) => void
+) {
+  const { childrenMap } = buildDependencyTree(issues);
+  const issueIds = new Set(issues.map((i) => i.id));
+
+  // Calculate which nodes should be hidden (descendants of collapsed nodes)
+  const hiddenNodes = new Set<string>();
+  collapsedNodes.forEach((collapsedId) => {
+    getDescendants(collapsedId, childrenMap).forEach((descendant) => {
+      hiddenNodes.add(descendant);
+    });
+  });
+
+  // Filter out hidden nodes
+  const visibleIssues = issues.filter((issue) => !hiddenNodes.has(issue.id));
+
+  const nodes: Node[] = visibleIssues.map((issue) => {
+    const childCount = childrenMap.get(issue.id)?.size || 0;
+    const isCollapsed = collapsedNodes.has(issue.id);
+
+    return {
+      id: issue.id,
+      type: 'issue',
+      position: { x: 0, y: 0 }, // Will be set by dagre
+      data: {
+        id: issue.id,
+        title: issue.title,
+        status: issue.status,
+        priority: issue.priority,
+        issue_type: issue.issue_type,
+        assignee: issue.assignee,
+        childCount,
+        isCollapsed,
+        onToggleCollapse: () => onToggleCollapse(issue.id),
+      },
+      selected: issue.id === selectedIssueId,
+    };
+  });
+
+  const visibleIds = new Set(visibleIssues.map((i) => i.id));
+  const edges: Edge[] = [];
+
+  visibleIssues.forEach((issue) => {
+    issue.dependencies?.forEach((dep) => {
+      // Only add edge if both nodes exist and are visible
+      if (issueIds.has(dep.depends_on_id) && visibleIds.has(dep.depends_on_id)) {
         const edgeStyle = EDGE_STYLES[dep.type] || EDGE_STYLES.blocks;
         edges.push({
           id: `${issue.id}-${dep.depends_on_id}`,
@@ -245,21 +337,41 @@ export function DependencyGraph({
   selectedIssueId,
   onCreateDependency,
 }: DependencyGraphProps) {
+  // Track collapsed nodes
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+
+  const toggleCollapse = useCallback((nodeId: string) => {
+    setCollapsedNodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
+
   // Transform issues to React Flow format
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => issuesToReactFlow(issues, selectedIssueId),
-    [issues, selectedIssueId]
+    () => issuesToReactFlow(issues, selectedIssueId, collapsedNodes, toggleCollapse),
+    [issues, selectedIssueId, collapsedNodes, toggleCollapse]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
-  // Update nodes when issues change
+  // Update nodes when issues or collapsed state changes
   useMemo(() => {
-    const { nodes: newNodes, edges: newEdges } = issuesToReactFlow(issues, selectedIssueId);
+    const { nodes: newNodes, edges: newEdges } = issuesToReactFlow(
+      issues,
+      selectedIssueId,
+      collapsedNodes,
+      toggleCollapse
+    );
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [issues, selectedIssueId, setNodes, setEdges]);
+  }, [issues, selectedIssueId, collapsedNodes, toggleCollapse, setNodes, setEdges]);
 
   // Handle node click
   const handleNodeClick = useCallback(
@@ -283,6 +395,22 @@ export function DependencyGraph({
   const nodeColor = useCallback((node: Node) => {
     const status = node.data?.status as string;
     return STATUS_COLORS[status]?.border || '#6b7280';
+  }, []);
+
+  // Collapse/Expand all
+  const collapseAll = useCallback(() => {
+    const { childrenMap } = buildDependencyTree(issues);
+    const nodesWithChildren = new Set<string>();
+    childrenMap.forEach((children, parentId) => {
+      if (children.size > 0) {
+        nodesWithChildren.add(parentId);
+      }
+    });
+    setCollapsedNodes(nodesWithChildren);
+  }, [issues]);
+
+  const expandAll = useCallback(() => {
+    setCollapsedNodes(new Set());
   }, []);
 
   return (
@@ -344,14 +472,31 @@ export function DependencyGraph({
             </div>
           ))}
         </div>
-        <div className="mt-3 pt-2 border-t border-slate-700 text-slate-500">
-          Drag between handles to create dependencies
+
+        {/* Collapse/Expand controls */}
+        <div className="mt-3 pt-2 border-t border-slate-700 flex gap-2">
+          <button
+            onClick={collapseAll}
+            className="flex-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 transition-colors"
+          >
+            📁 Collapse
+          </button>
+          <button
+            onClick={expandAll}
+            className="flex-1 px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 transition-colors"
+          >
+            📂 Expand
+          </button>
+        </div>
+
+        <div className="mt-2 text-slate-500">
+          Click +N on nodes to toggle
         </div>
       </div>
 
       {/* Stats */}
       <div className="absolute bottom-4 left-4 bg-slate-800/95 backdrop-blur rounded-lg px-3 py-2 shadow-lg z-10 text-xs text-slate-400 border border-slate-700">
-        {nodes.length} issues, {edges.length} dependencies
+        {nodes.length} visible, {issues.length - nodes.length} collapsed, {edges.length} edges
       </div>
     </div>
   );
