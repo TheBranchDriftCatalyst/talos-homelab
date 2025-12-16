@@ -9,6 +9,7 @@ import {
   getRelativeTime,
 } from '../../lib/transformers';
 import { MarkdownEditor } from './MarkdownEditor';
+import { MarkdownDisplay } from './MarkdownDisplay';
 
 interface IssueDetailProps {
   issue: Issue;
@@ -53,7 +54,7 @@ export function IssueDetail({ issue, onClose, onUpdate, onCloseIssue }: IssueDet
   };
 
   return (
-    <div className="w-96 bg-slate-800 border-l border-slate-700 flex flex-col h-full">
+    <div className="w-[32rem] bg-slate-800 border-l border-slate-700 flex flex-col h-full">
       {/* Header */}
       <div className="p-4 border-b border-slate-700 flex items-start justify-between">
         <div className="flex-1 min-w-0">
@@ -198,7 +199,11 @@ export function IssueDetail({ issue, onClose, onUpdate, onCloseIssue }: IssueDet
               className="text-sm text-slate-400 cursor-pointer hover:text-slate-300 min-h-[2rem]"
               onClick={() => startEdit('description', issue.description || '')}
             >
-              {issue.description || 'No description'}
+              {issue.description ? (
+                <MarkdownDisplay content={issue.description} />
+              ) : (
+                'No description'
+              )}
             </div>
           )}
         </div>
@@ -244,7 +249,11 @@ export function IssueDetail({ issue, onClose, onUpdate, onCloseIssue }: IssueDet
               className="text-sm text-slate-400 cursor-pointer hover:text-slate-300 min-h-[2rem]"
               onClick={() => startEdit('design', issue.design || '')}
             >
-              {issue.design || 'No design notes'}
+              {issue.design ? (
+                <MarkdownDisplay content={issue.design} />
+              ) : (
+                'No design notes'
+              )}
             </div>
           )}
         </div>
@@ -290,7 +299,11 @@ export function IssueDetail({ issue, onClose, onUpdate, onCloseIssue }: IssueDet
               className="text-sm text-slate-400 cursor-pointer hover:text-slate-300 min-h-[2rem]"
               onClick={() => startEdit('acceptance_criteria', issue.acceptance_criteria || '')}
             >
-              {issue.acceptance_criteria || 'No acceptance criteria'}
+              {issue.acceptance_criteria ? (
+                <MarkdownDisplay content={issue.acceptance_criteria} />
+              ) : (
+                'No acceptance criteria'
+              )}
             </div>
           )}
         </div>
