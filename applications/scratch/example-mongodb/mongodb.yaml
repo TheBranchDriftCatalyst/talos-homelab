@@ -7,6 +7,35 @@ metadata:
   name: mongodb-database
   namespace: scratch
 ---
+# Role to allow MongoDB agent to patch pods (set annotations)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mongodb-database
+  namespace: scratch
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+# RoleBinding for MongoDB agent
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mongodb-database
+  namespace: scratch
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mongodb-database
+subjects:
+  - kind: ServiceAccount
+    name: mongodb-database
+    namespace: scratch
+---
 # Example MongoDB using MongoDB Community Operator
 # Docs: https://github.com/mongodb/mongodb-kubernetes-operator/blob/master/docs/users/README.md
 apiVersion: mongodbcommunity.mongodb.com/v1
