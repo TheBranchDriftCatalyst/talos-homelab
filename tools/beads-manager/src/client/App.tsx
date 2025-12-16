@@ -8,7 +8,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import type { Issue } from './lib/types';
 
 function App() {
-  const { issues, loading, error, refresh, createIssue, updateIssue, closeIssue } = useIssues();
+  const { issues, loading, error, refresh, createIssue, updateIssue, closeIssue, addDependency } = useIssues();
   const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
   const [view, setView] = useState<'graph' | 'list'>('graph');
   const [filters, setFilters] = useState({
@@ -41,6 +41,10 @@ function App() {
 
   const handleCloseDetail = () => {
     setSelectedIssue(null);
+  };
+
+  const handleCreateDependency = async (issueId: string, dependsOnId: string) => {
+    await addDependency(issueId, dependsOnId, 'blocks');
   };
 
   const handleUpdateIssue = async (id: string, changes: Partial<Issue>): Promise<Issue | null> => {
@@ -85,6 +89,7 @@ function App() {
             issues={filteredIssues}
             onNodeClick={handleNodeClick}
             selectedIssueId={selectedIssue?.id}
+            onCreateDependency={handleCreateDependency}
           />
         ) : (
           <IssueList
