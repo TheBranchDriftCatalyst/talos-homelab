@@ -1,0 +1,96 @@
+# Beads Manager - Development Environment
+# Run with: tilt up
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+WORKSPACE_ROOT = os.path.dirname(os.path.dirname(os.getcwd()))
+
+# ============================================================================
+# Bridge Server (Express + WebSocket)
+# ============================================================================
+
+local_resource(
+    'beads-server',
+    serve_cmd='yarn dev:server',
+    serve_dir='.',
+    serve_env={
+        'PORT': '3001',
+        'BEADS_WORKSPACE': WORKSPACE_ROOT,
+    },
+    deps=[
+        './src/server',
+        './package.json',
+    ],
+    labels=['backend'],
+    resource_deps=[],
+)
+
+# ============================================================================
+# Vite Dev Server (React Frontend)
+# ============================================================================
+
+local_resource(
+    'beads-client',
+    serve_cmd='yarn dev:client',
+    serve_dir='.',
+    deps=[
+        './src/client',
+        './index.html',
+        './vite.config.ts',
+        './tailwind.config.js',
+    ],
+    labels=['frontend'],
+    links=[
+        link('http://localhost:5173', 'Beads Manager UI'),
+    ],
+    resource_deps=['beads-server'],
+)
+
+# ============================================================================
+# Install Dependencies (one-time)
+# ============================================================================
+
+local_resource(
+    'yarn-install',
+    cmd='yarn install',
+    dir='.',
+    deps=['./package.json'],
+    labels=['setup'],
+    allow_parallel=True,
+)
+
+# ============================================================================
+# Buttons
+# ============================================================================
+
+# Refresh issues from bd
+local_resource(
+    'refresh-issues',
+    cmd='bd list --json > /dev/null',
+    dir=WORKSPACE_ROOT,
+    labels=['actions'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+)
+
+# Show bd stats
+local_resource(
+    'bd-stats',
+    cmd='bd stats',
+    dir=WORKSPACE_ROOT,
+    labels=['actions'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+)
+
+# Show ready issues
+local_resource(
+    'bd-ready',
+    cmd='bd ready',
+    dir=WORKSPACE_ROOT,
+    labels=['actions'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+)
