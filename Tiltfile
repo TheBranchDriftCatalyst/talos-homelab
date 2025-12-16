@@ -207,6 +207,17 @@ k8s_attach('tdarr', 'deployment/tdarr', namespace='media',
 k8s_attach('homepage', 'deployment/homepage', namespace='media',
            port_forwards=['3001:3000'], labels=[LABEL_MEDIA])
 
+cmd_button(
+    name='btn-sync-api-keys',
+    resource='homepage',
+    argv=['sh', '-c', '''./applications/arr-stack/scripts/sync-api-keys.sh && \
+        kubectl rollout restart deployment homepage -n media && \
+        kubectl rollout status deployment homepage -n media --timeout=60s && \
+        echo "" && echo "✓ Homepage restarted with updated API keys"'''],
+    text='Sync API Keys',
+    icon_name='sync'
+)
+
 # ============================================
 # PLATFORM - Core infrastructure
 # ============================================
