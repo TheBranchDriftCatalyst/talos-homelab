@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState } from 'react';
+import { useMemo, useCallback, useState, useEffect } from 'react';
 import {
   ReactFlow,
   Node,
@@ -13,10 +13,15 @@ import {
   NodeProps,
   Handle,
   Position,
+  useReactFlow,
+  ReactFlowProvider,
 } from '@xyflow/react';
-import dagre from 'dagre';
+import ELK, { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
 import type { Issue } from '../../lib/types';
 import '@xyflow/react/dist/style.css';
+
+// ELK instance
+const elk = new ELK();
 
 interface DependencyGraphProps {
   issues: Issue[];
@@ -240,46 +245,389 @@ const nodeTypes = {
   epicGroup: EpicGroupNode,
 };
 
-// Dagre layout helper
-function getLayoutedElements(
+// Node dimensions
+const NODE_WIDTH = 200;
+const NODE_HEIGHT = 80;
+const GROUP_PADDING = 50;
+
+// ELK layout options
+const elkOptions = {
+  'elk.algorithm': 'layered',
+  'elk.direction': 'DOWN',
+  'elk.spacing.nodeNode': '50',
+  'elk.layered.spacing.nodeNodeBetweenLayers': '80',
+  'elk.layered.spacing.edgeNodeBetweenLayers': '30',
+  'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+  'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+  'elk.padding': '[top=60,left=20,bottom=20,right=20]',
+};
+
+// Convert React Flow nodes/edges to ELK graph format
+function toElkGraph(nodes: Node[], edges: Edge[]): ElkNode {
+  // Separate group nodes and regular nodes
+  const groupNodes = nodes.filter((n) => n.type === 'epicGroup');
+  const regularNodes = nodes.filter((n) => n.type !== 'epicGroup');
+
+  // Build children map for groups
+  const childrenByParent = new Map<string, Node[]>();
+  regularNodes.forEach((node) => {
+    const parentId = node.parentId;
+    if (parentId) {
+      if (!childrenByParent.has(parentId)) {
+        childrenByParent.set(parentId, []);
+      }
+      childrenByParent.get(parentId)!.push(node);
+    }
+  });
+
+  // Create ELK nodes for groups with their children
+  const elkGroupNodes: ElkNode[] = groupNodes.map((group) => {
+    const children = childrenByParent.get(group.id) || [];
+    return {
+      id: group.id,
+      width: Math.max(350, children.length * 130),
+      height: Math.max(200, Math.ceil(children.length / 2) * 120 + GROUP_PADDING),
+      layoutOptions: {
+        'elk.padding': '[top=60,left=20,bottom=20,right=20]',
+      },
+      children: children.map((child) => ({
+        id: child.id,
+        width: NODE_WIDTH,
+        height: NODE_HEIGHT,
+      })),
+    };
+  });
+
+  // Create ELK nodes for ungrouped regular nodes
+  const ungroupedNodes = regularNodes.filter((n) => !n.parentId);
+  const elkUngroupedNodes: ElkNode[] = ungroupedNodes.map((node) => ({
+    id: node.id,
+    width: NODE_WIDTH,
+    height: NODE_HEIGHT,
+  }));
+
+  // Create ELK edges
+  const elkEdges: ElkExtendedEdge[] = edges.map((edge) => ({
+    id: edge.id,
+    sources: [edge.source],
+    targets: [edge.target],
+  }));
+
+  return {
+    id: 'root',
+    layoutOptions: elkOptions,
+    children: [...elkGroupNodes, ...elkUngroupedNodes],
+    edges: elkEdges,
+  };
+}
+
+// Apply ELK layout positions back to React Flow nodes
+function applyElkLayout(nodes: Node[], elkGraph: ElkNode): Node[] {
+  const positionMap = new Map<string, { x: number; y: number }>();
+  const sizeMap = new Map<string, { width: number; height: number }>();
+
+  // Extract positions from ELK result
+  function extractPositions(elkNode: ElkNode, offsetX = 0, offsetY = 0) {
+    if (elkNode.x !== undefined && elkNode.y !== undefined) {
+      positionMap.set(elkNode.id, {
+        x: elkNode.x + offsetX,
+        y: elkNode.y + offsetY,
+      });
+      if (elkNode.width && elkNode.height) {
+        sizeMap.set(elkNode.id, {
+          width: elkNode.width,
+          height: elkNode.height,
+        });
+      }
+    }
+
+    // Process children with parent offset
+    elkNode.children?.forEach((child) => {
+      const childOffsetX = elkNode.id === 'root' ? 0 : (elkNode.x || 0) + offsetX;
+      const childOffsetY = elkNode.id === 'root' ? 0 : (elkNode.y || 0) + offsetY;
+      extractPositions(child, childOffsetX, childOffsetY);
+    });
+  }
+
+  extractPositions(elkGraph);
+
+  return nodes.map((node) => {
+    const position = positionMap.get(node.id);
+    const size = sizeMap.get(node.id);
+
+    if (position) {
+      // For child nodes, position is relative to parent
+      if (node.parentId) {
+        const parentPos = positionMap.get(node.parentId);
+        if (parentPos) {
+          return {
+            ...node,
+            position: {
+              x: position.x - parentPos.x,
+              y: position.y - parentPos.y,
+            },
+          };
+        }
+      }
+
+      return {
+        ...node,
+        position,
+        ...(node.type === 'epicGroup' && size
+          ? { style: { ...node.style, width: size.width, height: size.height } }
+          : {}),
+      };
+    }
+
+    return node;
+  });
+}
+
+// Find connected components (isolated subtrees) in the graph
+// Returns components sorted by size (largest first), with nodes in parent-before-child order
+function findConnectedComponents(nodes: Node[], edges: Edge[]): Node[][] {
+  const nodeIds = new Set(nodes.map((n) => n.id));
+  const visited = new Set<string>();
+  const components: Node[][] = [];
+
+  // Build directed adjacency (parent -> children) for hierarchy ordering
+  const childrenOf = new Map<string, Set<string>>();
+  const parentsOf = new Map<string, Set<string>>();
+  nodes.forEach((n) => {
+    childrenOf.set(n.id, new Set());
+    parentsOf.set(n.id, new Set());
+  });
+
+  // Edges represent: source blocks target, so source is "parent" in the hierarchy
+  edges.forEach((edge) => {
+    if (nodeIds.has(edge.source) && nodeIds.has(edge.target)) {
+      childrenOf.get(edge.source)?.add(edge.target);
+      parentsOf.get(edge.target)?.add(edge.source);
+    }
+  });
+
+  // Also handle React Flow parentId (for group nodes)
+  nodes.forEach((node) => {
+    if (node.parentId && nodeIds.has(node.parentId)) {
+      childrenOf.get(node.parentId)?.add(node.id);
+      parentsOf.get(node.id)?.add(node.parentId);
+    }
+  });
+
+  // Build undirected adjacency for finding components
+  const adjacency = new Map<string, Set<string>>();
+  nodes.forEach((n) => adjacency.set(n.id, new Set()));
+
+  edges.forEach((edge) => {
+    if (nodeIds.has(edge.source) && nodeIds.has(edge.target)) {
+      adjacency.get(edge.source)?.add(edge.target);
+      adjacency.get(edge.target)?.add(edge.source);
+    }
+  });
+
+  nodes.forEach((node) => {
+    if (node.parentId && nodeIds.has(node.parentId)) {
+      adjacency.get(node.id)?.add(node.parentId);
+      adjacency.get(node.parentId)?.add(node.id);
+    }
+  });
+
+  // Find root nodes (no parents in this component)
+  function findRoots(componentIds: Set<string>): string[] {
+    return Array.from(componentIds).filter((id) => {
+      const parents = parentsOf.get(id);
+      return !parents || Array.from(parents).every((p) => !componentIds.has(p));
+    });
+  }
+
+  // BFS from roots to get parent-before-child ordering
+  function orderByHierarchy(componentIds: Set<string>): Node[] {
+    const roots = findRoots(componentIds);
+    const ordered: Node[] = [];
+    const orderVisited = new Set<string>();
+
+    // Start with roots, then BFS through children
+    const queue = [...roots];
+
+    while (queue.length > 0) {
+      const nodeId = queue.shift()!;
+      if (orderVisited.has(nodeId)) continue;
+      orderVisited.add(nodeId);
+
+      const node = nodes.find((n) => n.id === nodeId);
+      if (node) ordered.push(node);
+
+      // Add children to queue
+      const children = childrenOf.get(nodeId);
+      if (children) {
+        children.forEach((childId) => {
+          if (componentIds.has(childId) && !orderVisited.has(childId)) {
+            queue.push(childId);
+          }
+        });
+      }
+    }
+
+    // Add any remaining nodes (disconnected within component)
+    componentIds.forEach((id) => {
+      if (!orderVisited.has(id)) {
+        const node = nodes.find((n) => n.id === id);
+        if (node) ordered.push(node);
+      }
+    });
+
+    return ordered;
+  }
+
+  // DFS to find connected components
+  function collectComponent(startId: string): Set<string> {
+    const componentIds = new Set<string>();
+    const stack = [startId];
+
+    while (stack.length > 0) {
+      const nodeId = stack.pop()!;
+      if (visited.has(nodeId)) continue;
+      visited.add(nodeId);
+      componentIds.add(nodeId);
+
+      adjacency.get(nodeId)?.forEach((neighbor) => {
+        if (!visited.has(neighbor)) {
+          stack.push(neighbor);
+        }
+      });
+    }
+
+    return componentIds;
+  }
+
+  // Find all components
+  nodes.forEach((node) => {
+    if (!visited.has(node.id)) {
+      const componentIds = collectComponent(node.id);
+      if (componentIds.size > 0) {
+        // Order nodes within component by hierarchy (parents first)
+        const orderedNodes = orderByHierarchy(componentIds);
+        components.push(orderedNodes);
+      }
+    }
+  });
+
+  // Sort components by size (largest first for prominent display)
+  components.sort((a, b) => b.length - a.length);
+
+  return components;
+}
+
+// Layout a single component and return positioned nodes
+async function layoutComponent(
+  componentNodes: Node[],
+  allEdges: Edge[]
+): Promise<Node[]> {
+  const nodeIds = new Set(componentNodes.map((n) => n.id));
+
+  // Filter edges to only those within this component
+  const componentEdges = allEdges.filter(
+    (e) => nodeIds.has(e.source) && nodeIds.has(e.target)
+  );
+
+  try {
+    const elkGraph = toElkGraph(componentNodes, componentEdges);
+    const layoutedGraph = await elk.layout(elkGraph);
+    return applyElkLayout(componentNodes, layoutedGraph);
+  } catch (error) {
+    console.error('ELK layout error for component:', error);
+    // Fallback: grid layout for this component
+    return componentNodes.map((node, index) => ({
+      ...node,
+      position: { x: (index % 3) * 250, y: Math.floor(index / 3) * 120 },
+    }));
+  }
+}
+
+// Calculate bounding box of positioned nodes
+function getBoundingBox(nodes: Node[]): { width: number; height: number } {
+  if (nodes.length === 0) return { width: 0, height: 0 };
+
+  let maxX = 0;
+  let maxY = 0;
+
+  nodes.forEach((node) => {
+    const nodeWidth = (node.style?.width as number) || NODE_WIDTH;
+    const nodeHeight = (node.style?.height as number) || NODE_HEIGHT;
+    maxX = Math.max(maxX, (node.position?.x || 0) + nodeWidth);
+    maxY = Math.max(maxY, (node.position?.y || 0) + nodeHeight);
+  });
+
+  return { width: maxX, height: maxY };
+}
+
+// Async ELK layout function with isolated subtree support
+async function getLayoutedElements(
   nodes: Node[],
-  edges: Edge[],
-  direction: 'TB' | 'LR' = 'TB'
-) {
+  edges: Edge[]
+): Promise<{ nodes: Node[]; edges: Edge[] }> {
   if (nodes.length === 0) {
     return { nodes: [], edges: [] };
   }
 
-  const dagreGraph = new dagre.graphlib.Graph();
-  dagreGraph.setDefaultEdgeLabel(() => ({}));
-  dagreGraph.setGraph({ rankdir: direction, nodesep: 50, ranksep: 80 });
+  try {
+    // Find connected components
+    const components = findConnectedComponents(nodes, edges);
 
-  // Add nodes to dagre
-  nodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: 200, height: 80 });
-  });
+    // Layout each component independently
+    const layoutedComponents = await Promise.all(
+      components.map((component) => layoutComponent(component, edges))
+    );
 
-  // Add edges to dagre
-  edges.forEach((edge) => {
-    dagreGraph.setEdge(edge.source, edge.target);
-  });
+    // Arrange components in a grid
+    const GAP = 100; // Gap between components
+    const MAX_ROW_WIDTH = 2000; // Max width before wrapping
 
-  // Calculate layout
-  dagre.layout(dagreGraph);
+    let currentX = 0;
+    let currentY = 0;
+    let rowMaxHeight = 0;
 
-  // Apply positions to nodes
-  const layoutedNodes = nodes.map((node) => {
-    const nodeWithPosition = dagreGraph.node(node.id);
+    const allLayoutedNodes: Node[] = [];
+
+    layoutedComponents.forEach((componentNodes) => {
+      const bbox = getBoundingBox(componentNodes);
+
+      // Check if we need to wrap to next row
+      if (currentX > 0 && currentX + bbox.width > MAX_ROW_WIDTH) {
+        currentX = 0;
+        currentY += rowMaxHeight + GAP;
+        rowMaxHeight = 0;
+      }
+
+      // Offset all nodes in this component
+      const offsetNodes = componentNodes.map((node) => ({
+        ...node,
+        position: {
+          x: (node.position?.x || 0) + currentX,
+          y: (node.position?.y || 0) + currentY,
+        },
+      }));
+
+      allLayoutedNodes.push(...offsetNodes);
+
+      // Update position for next component
+      currentX += bbox.width + GAP;
+      rowMaxHeight = Math.max(rowMaxHeight, bbox.height);
+    });
+
+    return { nodes: allLayoutedNodes, edges };
+  } catch (error) {
+    console.error('ELK layout error:', error);
+    // Fallback: return nodes with default positions
     return {
-      ...node,
-      position: {
-        x: nodeWithPosition.x - 100, // center node
-        y: nodeWithPosition.y - 40,
-      },
+      nodes: nodes.map((node, index) => ({
+        ...node,
+        position: { x: (index % 5) * 250, y: Math.floor(index / 5) * 120 },
+      })),
+      edges,
     };
-  });
-
-  return { nodes: layoutedNodes, edges };
+  }
 }
 
 // Build dependency graph structure
@@ -477,19 +825,24 @@ function issuesToReactFlow(
     });
   });
 
-  return getLayoutedElements(nodes, edges);
+  return { nodes, edges };
 }
 
-export function DependencyGraph({
+// Inner component that uses React Flow hooks
+function DependencyGraphInner({
   issues,
   onNodeClick,
   selectedIssueId,
   onCreateDependency,
 }: DependencyGraphProps) {
+  const { fitView } = useReactFlow();
+
   // Track collapsed nodes
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
   // Track group by epic mode
   const [groupByEpic, setGroupByEpic] = useState(false);
+  // Loading state for async layout
+  const [isLayouting, setIsLayouting] = useState(false);
 
   const toggleCollapse = useCallback((nodeId: string) => {
     setCollapsedNodes((prev) => {
@@ -506,27 +859,41 @@ export function DependencyGraph({
   // Check if there are any epics to group by
   const hasEpics = useMemo(() => issues.some((i) => i.issue_type === 'epic'), [issues]);
 
-  // Transform issues to React Flow format
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(
+  // Get raw nodes/edges without layout
+  const { nodes: rawNodes, edges: rawEdges } = useMemo(
     () => issuesToReactFlow(issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic),
     [issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic]
   );
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState(rawNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(rawEdges);
 
-  // Update nodes when issues or collapsed state changes
-  useMemo(() => {
-    const { nodes: newNodes, edges: newEdges } = issuesToReactFlow(
-      issues,
-      selectedIssueId,
-      collapsedNodes,
-      toggleCollapse,
-      groupByEpic
-    );
-    setNodes(newNodes);
-    setEdges(newEdges);
-  }, [issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic, setNodes, setEdges]);
+  // Run ELK layout asynchronously when raw nodes/edges change
+  useEffect(() => {
+    let cancelled = false;
+
+    async function runLayout() {
+      setIsLayouting(true);
+      const { nodes: layoutedNodes, edges: layoutedEdges } = await getLayoutedElements(
+        rawNodes,
+        rawEdges
+      );
+
+      if (!cancelled) {
+        setNodes(layoutedNodes);
+        setEdges(layoutedEdges);
+        setIsLayouting(false);
+        // Fit view after layout
+        setTimeout(() => fitView({ padding: 0.2 }), 50);
+      }
+    }
+
+    runLayout();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rawNodes, rawEdges, setNodes, setEdges, fitView]);
 
   // Handle node click
   const handleNodeClick = useCallback(
@@ -570,6 +937,11 @@ export function DependencyGraph({
 
   return (
     <div className="w-full h-full bg-slate-900">
+      {isLayouting && (
+        <div className="absolute inset-0 bg-slate-900/50 z-20 flex items-center justify-center">
+          <div className="text-slate-300 text-sm">Calculating layout...</div>
+        </div>
+      )}
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -670,5 +1042,14 @@ export function DependencyGraph({
         {nodes.length} visible, {issues.length - nodes.length} collapsed, {edges.length} edges
       </div>
     </div>
+  );
+}
+
+// Wrapper component with ReactFlowProvider (required for useReactFlow hook)
+export function DependencyGraph(props: DependencyGraphProps) {
+  return (
+    <ReactFlowProvider>
+      <DependencyGraphInner {...props} />
+    </ReactFlowProvider>
   );
 }
