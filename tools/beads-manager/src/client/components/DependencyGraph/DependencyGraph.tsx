@@ -73,6 +73,70 @@ type IssueNodeData = {
   [key: string]: unknown;
 };
 
+// Epic group node data type
+type EpicGroupData = {
+  label: string;
+  epicId: string;
+  childCount: number;
+  status: string;
+  [key: string]: unknown;
+};
+
+// Epic group colors
+const EPIC_GROUP_COLORS = [
+  { bg: 'rgba(139, 92, 246, 0.15)', border: '#8b5cf6' },  // purple
+  { bg: 'rgba(59, 130, 246, 0.15)', border: '#3b82f6' },  // blue
+  { bg: 'rgba(16, 185, 129, 0.15)', border: '#10b981' },  // emerald
+  { bg: 'rgba(245, 158, 11, 0.15)', border: '#f59e0b' },  // amber
+  { bg: 'rgba(236, 72, 153, 0.15)', border: '#ec4899' },  // pink
+  { bg: 'rgba(99, 102, 241, 0.15)', border: '#6366f1' },  // indigo
+];
+
+// Custom Epic Group Node Component (container for children)
+function EpicGroupNode({ data }: NodeProps<Node<EpicGroupData>>) {
+  const colorIndex = Math.abs(data.epicId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)) % EPIC_GROUP_COLORS.length;
+  const colors = EPIC_GROUP_COLORS[colorIndex];
+  const status = STATUS_COLORS[data.status] || STATUS_COLORS.open;
+
+  return (
+    <div
+      className="rounded-xl min-w-[300px] min-h-[200px]"
+      style={{
+        backgroundColor: colors.bg,
+        borderWidth: 2,
+        borderStyle: 'dashed',
+        borderColor: colors.border,
+        padding: '40px 20px 20px 20px',
+      }}
+    >
+      {/* Epic header */}
+      <div
+        className="absolute top-2 left-3 right-3 flex items-center justify-between"
+        style={{ color: colors.border }}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🎯</span>
+          <span className="font-semibold text-sm">{data.label}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded capitalize"
+            style={{
+              backgroundColor: `${status.border}33`,
+              color: status.text,
+            }}
+          >
+            {data.status.replace('_', ' ')}
+          </span>
+          <span className="text-xs opacity-70">
+            {data.childCount} {data.childCount === 1 ? 'issue' : 'issues'}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Custom Issue Node Component
 function IssueNode({ data, selected }: NodeProps<Node<IssueNodeData>>) {
   const status = STATUS_COLORS[data.status] || STATUS_COLORS.open;
@@ -173,6 +237,7 @@ function IssueNode({ data, selected }: NodeProps<Node<IssueNodeData>>) {
 // Node types registry
 const nodeTypes = {
   issue: IssueNode,
+  epicGroup: EpicGroupNode,
 };
 
 // Dagre layout helper
@@ -255,12 +320,26 @@ function getDescendants(nodeId: string, childrenMap: Map<string, Set<string>>): 
   return descendants;
 }
 
+// Get Epic parent for an issue (via parent-child dependency)
+function getEpicParent(issue: Issue, issues: Issue[]): Issue | null {
+  const parentChildDep = issue.dependencies?.find((dep) => dep.type === 'parent-child');
+  if (!parentChildDep) return null;
+
+  const parent = issues.find((i) => i.id === parentChildDep.depends_on_id);
+  if (parent?.issue_type === 'epic') return parent;
+
+  // Check if parent has an epic ancestor
+  if (parent) return getEpicParent(parent, issues);
+  return null;
+}
+
 // Transform issues to React Flow format
 function issuesToReactFlow(
   issues: Issue[],
   selectedIssueId: string | undefined,
   collapsedNodes: Set<string>,
-  onToggleCollapse: (nodeId: string) => void
+  onToggleCollapse: (nodeId: string) => void,
+  groupByEpic: boolean = false
 ) {
   const { childrenMap } = buildDependencyTree(issues);
   const issueIds = new Set(issues.map((i) => i.id));
@@ -276,14 +355,72 @@ function issuesToReactFlow(
   // Filter out hidden nodes
   const visibleIssues = issues.filter((issue) => !hiddenNodes.has(issue.id));
 
-  const nodes: Node[] = visibleIssues.map((issue) => {
+  const nodes: Node[] = [];
+  const epicGroups = new Map<string, { epic: Issue; children: Issue[] }>();
+
+  // If grouping by epic, identify epics and their children
+  if (groupByEpic) {
+    visibleIssues.forEach((issue) => {
+      if (issue.issue_type === 'epic') {
+        if (!epicGroups.has(issue.id)) {
+          epicGroups.set(issue.id, { epic: issue, children: [] });
+        }
+      } else {
+        const epicParent = getEpicParent(issue, issues);
+        if (epicParent && visibleIssues.some((i) => i.id === epicParent.id)) {
+          if (!epicGroups.has(epicParent.id)) {
+            epicGroups.set(epicParent.id, { epic: epicParent, children: [] });
+          }
+          epicGroups.get(epicParent.id)!.children.push(issue);
+        }
+      }
+    });
+
+    // Create Epic group nodes
+    epicGroups.forEach(({ epic, children }, epicId) => {
+      nodes.push({
+        id: `epic-group-${epicId}`,
+        type: 'epicGroup',
+        position: { x: 0, y: 0 },
+        data: {
+          label: epic.title,
+          epicId: epicId,
+          childCount: children.length,
+          status: epic.status,
+        },
+        style: {
+          width: Math.max(350, children.length * 120),
+          height: Math.max(250, Math.ceil(children.length / 2) * 120),
+        },
+      });
+    });
+  }
+
+  // Create issue nodes
+  visibleIssues.forEach((issue) => {
     const childCount = childrenMap.get(issue.id)?.size || 0;
     const isCollapsed = collapsedNodes.has(issue.id);
 
-    return {
+    // Determine if this issue belongs to an epic group
+    let parentId: string | undefined;
+    if (groupByEpic && issue.issue_type !== 'epic') {
+      const epicParent = getEpicParent(issue, issues);
+      if (epicParent && epicGroups.has(epicParent.id)) {
+        parentId = `epic-group-${epicParent.id}`;
+      }
+    }
+
+    // Skip epic issues when grouping (they become group headers)
+    if (groupByEpic && issue.issue_type === 'epic') {
+      return;
+    }
+
+    nodes.push({
       id: issue.id,
       type: 'issue',
       position: { x: 0, y: 0 }, // Will be set by dagre
+      parentId,
+      extent: parentId ? 'parent' as const : undefined,
       data: {
         id: issue.id,
         title: issue.title,
@@ -296,7 +433,7 @@ function issuesToReactFlow(
         onToggleCollapse: () => onToggleCollapse(issue.id),
       },
       selected: issue.id === selectedIssueId,
-    };
+    });
   });
 
   const visibleIds = new Set(visibleIssues.map((i) => i.id));
@@ -304,8 +441,20 @@ function issuesToReactFlow(
 
   visibleIssues.forEach((issue) => {
     issue.dependencies?.forEach((dep) => {
+      // Skip parent-child edges when grouping by epic (visual grouping replaces them)
+      if (groupByEpic && dep.type === 'parent-child') {
+        const parent = issues.find((i) => i.id === dep.depends_on_id);
+        if (parent?.issue_type === 'epic') return;
+      }
+
       // Only add edge if both nodes exist and are visible
       if (issueIds.has(dep.depends_on_id) && visibleIds.has(dep.depends_on_id)) {
+        // Skip edges to/from epics when grouping
+        if (groupByEpic) {
+          const sourceIssue = issues.find((i) => i.id === dep.depends_on_id);
+          if (sourceIssue?.issue_type === 'epic') return;
+        }
+
         const edgeStyle = EDGE_STYLES[dep.type] || EDGE_STYLES.blocks;
         edges.push({
           id: `${issue.id}-${dep.depends_on_id}`,
@@ -339,6 +488,8 @@ export function DependencyGraph({
 }: DependencyGraphProps) {
   // Track collapsed nodes
   const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set());
+  // Track group by epic mode
+  const [groupByEpic, setGroupByEpic] = useState(false);
 
   const toggleCollapse = useCallback((nodeId: string) => {
     setCollapsedNodes((prev) => {
@@ -352,10 +503,13 @@ export function DependencyGraph({
     });
   }, []);
 
+  // Check if there are any epics to group by
+  const hasEpics = useMemo(() => issues.some((i) => i.issue_type === 'epic'), [issues]);
+
   // Transform issues to React Flow format
   const { nodes: initialNodes, edges: initialEdges } = useMemo(
-    () => issuesToReactFlow(issues, selectedIssueId, collapsedNodes, toggleCollapse),
-    [issues, selectedIssueId, collapsedNodes, toggleCollapse]
+    () => issuesToReactFlow(issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic),
+    [issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -367,11 +521,12 @@ export function DependencyGraph({
       issues,
       selectedIssueId,
       collapsedNodes,
-      toggleCollapse
+      toggleCollapse,
+      groupByEpic
     );
     setNodes(newNodes);
     setEdges(newEdges);
-  }, [issues, selectedIssueId, collapsedNodes, toggleCollapse, setNodes, setEdges]);
+  }, [issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic, setNodes, setEdges]);
 
   // Handle node click
   const handleNodeClick = useCallback(
@@ -472,6 +627,22 @@ export function DependencyGraph({
             </div>
           ))}
         </div>
+
+        {/* Group by Epic toggle */}
+        {hasEpics && (
+          <div className="mt-3 pt-2 border-t border-slate-700">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={groupByEpic}
+                onChange={(e) => setGroupByEpic(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-800"
+              />
+              <span className="text-slate-300">Group by Epic</span>
+              <span className="text-lg">🎯</span>
+            </label>
+          </div>
+        )}
 
         {/* Collapse/Expand controls */}
         <div className="mt-3 pt-2 border-t border-slate-700 flex gap-2">
