@@ -24,7 +24,12 @@ local_resource(
         './package.json',
     ],
     labels=['backend'],
-    resource_deps=[],
+    resource_deps=['yarn-install'],
+    readiness_probe=probe(
+        http_get=http_get_action(port=3001, path='/api/stats'),
+        initial_delay_secs=2,
+        period_secs=2,
+    ),
 )
 
 # ============================================================================
@@ -45,7 +50,7 @@ local_resource(
     links=[
         link('http://localhost:5173', 'Beads Manager UI'),
     ],
-    resource_deps=['beads-server'],
+    resource_deps=['beads-server', 'yarn-install'],
 )
 
 # ============================================================================
