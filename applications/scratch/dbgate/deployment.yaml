@@ -1,0 +1,67 @@
+---
+# DbGate - Lightweight web-based database management UI
+# Supports PostgreSQL, MongoDB, MySQL, SQLite
+# Docs: https://dbgate.org/
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dbgate
+  namespace: scratch
+  labels:
+    app.kubernetes.io/name: dbgate
+    app.kubernetes.io/component: database-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dbgate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dbgate
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: dbgate
+          image: dbgate/dbgate:5.5.6
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            # Enable web mode
+            - name: WEB_ROOT
+              value: "/"
+            # Disable login for scratch environment
+            - name: LOGINS
+              value: ""
+          volumeMounts:
+            - name: data
+              mountPath: /root/.dbgate
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dbgate-data

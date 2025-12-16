@@ -1,0 +1,131 @@
+---
+# MinIO Tenant - Operator-managed S3 storage
+# Replaces standalone HelmRelease with operator-managed tenant
+# Provides S3 backend for: Mimir, Tempo, Loki
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-env-config
+  namespace: minio
+type: Opaque
+stringData:
+  config.env: |
+    export MINIO_ROOT_USER="minio"
+    export MINIO_ROOT_PASSWORD="minio123"
+---
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: storage
+spec:
+  # Tenant configuration secret
+  configuration:
+    name: minio-env-config
+
+  # Image configuration
+  image: quay.io/minio/minio:RELEASE.2024-11-07T00-52-20Z
+  imagePullPolicy: IfNotPresent
+
+  # Pool configuration - single server for homelab
+  pools:
+    - name: pool-0
+      servers: 1
+      volumesPerServer: 1
+      volumeClaimTemplate:
+        metadata:
+          name: data
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          storageClassName: fatboy-nfs-appdata
+          resources:
+            requests:
+              storage: 100Gi
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+  # Mount path
+  mountPath: /export
+
+  # Disable automatic TLS (homelab)
+  requestAutoCert: false
+
+  # Expose services
+  exposeServices:
+    minio: true
+    console: true
+
+  # Features
+  features:
+    bucketDNS: false
+
+  # Prometheus metrics
+  prometheusOperator: false
+
+  # Environment variables
+  env:
+    - name: MINIO_PROMETHEUS_URL
+      value: "http://mimir-nginx.monitoring.svc:80/prometheus"
+    - name: MINIO_PROMETHEUS_JOB_ID
+      value: "minio"
+---
+# Service account for tenant
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: minio-sa
+  namespace: minio
+---
+# Job to create buckets after tenant is ready
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-buckets
+  namespace: minio
+  annotations:
+    # Run after tenant is ready
+    helm.sh/hook-weight: "1"
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 10
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Wait for MinIO to be ready
+              echo "Waiting for MinIO to be ready..."
+              sleep 60
+
+              # Configure mc alias using tenant service
+              # Tenant creates service named 'minio' in same namespace
+              mc alias set local http://minio.minio.svc.cluster.local minio minio123 --api S3v4
+
+              # Create buckets for OTEL stack
+              mc mb local/mimir --ignore-existing
+              mc mb local/tempo --ignore-existing
+              mc mb local/loki --ignore-existing
+
+              echo "Buckets created successfully!"
+              mc ls local/
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

@@ -1,0 +1,93 @@
+---
+# Example MongoDB using MongoDB Community Operator
+# Docs: https://github.com/mongodb/mongodb-kubernetes-operator/blob/master/docs/users/README.md
+apiVersion: mongodbcommunity.mongodb.com/v1
+kind: MongoDBCommunity
+metadata:
+  name: scratch-mongodb
+  namespace: scratch
+  labels:
+    app.kubernetes.io/name: scratch-mongodb
+    app.kubernetes.io/component: database
+spec:
+  # Number of members (1 for scratch, 3 for HA production)
+  members: 1
+  type: ReplicaSet
+  version: "7.0.14"
+
+  # Security configuration
+  security:
+    authentication:
+      modes: ["SCRAM"]
+
+  # Users to create
+  users:
+    - name: scratch_user
+      db: scratch_db
+      passwordSecretRef:
+        name: scratch-mongodb-password
+      roles:
+        - name: readWrite
+          db: scratch_db
+        - name: clusterAdmin
+          db: admin
+      scramCredentialsSecretName: scratch-mongodb-scram
+
+  # Storage configuration
+  statefulSet:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: mongod
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+            - name: mongodb-agent
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+      volumeClaimTemplates:
+        - metadata:
+            name: data-volume
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: fatboy-nfs-appdata
+            resources:
+              requests:
+                storage: 5Gi
+        - metadata:
+            name: logs-volume
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: fatboy-nfs-appdata
+            resources:
+              requests:
+                storage: 1Gi
+
+  # Additional MongoDB configuration
+  additionalMongodConfig:
+    storage.wiredTiger.engineConfig.journalCompressor: zlib
+---
+# Service for external access to MongoDB
+apiVersion: v1
+kind: Service
+metadata:
+  name: scratch-mongodb-external
+  namespace: scratch
+spec:
+  type: ClusterIP
+  selector:
+    app: scratch-mongodb-svc
+  ports:
+    - name: mongodb
+      port: 27017
+      targetPort: 27017

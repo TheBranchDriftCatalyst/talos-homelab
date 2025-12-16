@@ -1,0 +1,77 @@
+---
+# Example PostgreSQL Cluster using CloudNativePG operator
+# Docs: https://cloudnative-pg.io/documentation/current/
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: scratch-postgres
+  namespace: scratch
+  labels:
+    app.kubernetes.io/name: scratch-postgres
+    app.kubernetes.io/component: database
+spec:
+  # Number of instances (1 for scratch, 3 for HA production)
+  instances: 1
+
+  # PostgreSQL version
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+
+  # Bootstrap configuration - initialize with a database
+  bootstrap:
+    initdb:
+      database: scratch_db
+      owner: scratch_app
+      secret:
+        name: scratch-postgres-app
+      postInitSQL:
+        - |
+          CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+        - |
+          CREATE TABLE IF NOT EXISTS example_table (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+          );
+        - |
+          INSERT INTO example_table (name) VALUES
+            ('Sample Row 1'),
+            ('Sample Row 2'),
+            ('Sample Row 3');
+
+  # Superuser credentials
+  superuserSecret:
+    name: scratch-postgres-superuser
+
+  # Storage configuration
+  storage:
+    size: 5Gi
+    storageClass: fatboy-nfs-appdata
+
+  # Resource limits for scratch environment
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  # Monitoring - enable Prometheus metrics
+  monitoring:
+    enablePodMonitor: true
+
+  # PostgreSQL configuration
+  postgresql:
+    parameters:
+      # Memory settings for small instance
+      shared_buffers: "128MB"
+      effective_cache_size: "256MB"
+      work_mem: "16MB"
+      maintenance_work_mem: "64MB"
+      # Logging for debugging
+      log_statement: "all"
+      log_min_duration_statement: "1000"
+    pg_hba:
+      # Allow connections from scratch namespace
+      - host all all 10.0.0.0/8 md5
+      - host all all 192.168.0.0/16 md5

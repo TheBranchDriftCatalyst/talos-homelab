@@ -1,0 +1,26 @@
+---
+# Database Operators - Centralized database provisioning layer
+# Provides CRDs: Cluster (PostgreSQL), MongoDBCommunity, Tenant (MinIO)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: databases
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/databases
+  prune: true
+  wait: true
+  dependsOn:
+    - name: namespaces
+    - name: storage
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: cloudnative-pg
+      namespace: databases
