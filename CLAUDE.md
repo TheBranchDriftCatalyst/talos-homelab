@@ -385,9 +385,9 @@ Access: `http://<service>.talos00`
 
 ### Default Credentials
 
-- **Grafana**: admin / prom-operator
+- **Grafana**: admin / (get via `kubectl get secret -n monitoring grafana-admin-credentials -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d`)
 - **Graylog**: admin / admin
-- **ArgoCD**: admin / (get via `kubectl -n argocd get secret argocd-initial-admin-secret`)
+- **ArgoCD**: admin / (get via `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`)
 - **Nexus**: admin / (get via `kubectl exec -n registry deploy/nexus -- cat /nexus-data/admin.password`)
 
 ## Common Patterns & Workflows

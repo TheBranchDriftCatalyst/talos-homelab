@@ -131,9 +131,9 @@ This will install:
 
 Access URLs after deployment:
 
-- Grafana: http://grafana.talos00 (admin / prom-operator)
-- Prometheus: http://prometheus.talos00
-- Alertmanager: http://alertmanager.talos00
+- Grafana: http://grafana.talos00 (admin / see `kubectl get secret -n monitoring grafana-admin-credentials -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d`)
+- Prometheus: http://prometheus.talos00 (via Mimir at http://mimir.talos00)
+- Alertmanager: http://alertmanager.talos00 (via Grafana alerting)
 - Graylog: http://graylog.talos00 (admin / admin)
 
 ### Deploy Applications (arr stack)
