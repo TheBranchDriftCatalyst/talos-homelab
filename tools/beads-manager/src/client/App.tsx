@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Sidebar } from './components/Sidebar/Sidebar';
 import { DependencyGraph } from './components/DependencyGraph/DependencyGraph';
 import { IssueDetail } from './components/IssueDetail/IssueDetail';
@@ -27,12 +27,21 @@ function App() {
   });
 
   // Filter issues
-  const filteredIssues = issues.filter((issue) => {
-    if (filters.status.length > 0 && !filters.status.includes(issue.status)) return false;
-    if (filters.type.length > 0 && !filters.type.includes(issue.issue_type)) return false;
-    if (filters.priority.length > 0 && !filters.priority.includes(issue.priority)) return false;
-    return true;
-  });
+  const filteredIssues = useMemo(() => {
+    return issues.filter((issue) => {
+      if (filters.status.length > 0 && !filters.status.includes(issue.status)) return false;
+      if (filters.type.length > 0 && !filters.type.includes(issue.issue_type)) return false;
+      if (filters.priority.length > 0 && !filters.priority.includes(issue.priority)) return false;
+      return true;
+    });
+  }, [issues, filters]);
+
+  // Clear selected issue when it's no longer in filtered results
+  useEffect(() => {
+    if (selectedIssue && !filteredIssues.some((i) => i.id === selectedIssue.id)) {
+      setSelectedIssue(null);
+    }
+  }, [filteredIssues, selectedIssue]);
 
   const handleNodeClick = (issueId: string) => {
     const issue = issues.find((i) => i.id === issueId);

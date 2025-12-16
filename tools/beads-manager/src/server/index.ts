@@ -44,7 +44,15 @@ function parseIssuesFromJsonl(): any[] {
   try {
     const content = fs.readFileSync(JSONL_PATH, 'utf-8');
     const lines = content.trim().split('\n').filter(Boolean);
-    return lines.map((line: string) => JSON.parse(line));
+    return lines.map((line: string) => {
+      const issue = JSON.parse(line);
+      // Normalize data to ensure arrays are never undefined
+      return {
+        ...issue,
+        labels: issue.labels ?? [],
+        dependencies: issue.dependencies ?? [],
+      };
+    });
   } catch (error) {
     console.error('[Server] Error reading JSONL:', error);
     return [];

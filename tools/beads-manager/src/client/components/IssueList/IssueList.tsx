@@ -162,7 +162,7 @@ export function IssueList({ issues, onIssueClick, onUpdateIssue }: IssueListProp
                     <span className="text-sm text-slate-200 truncate max-w-md">
                       {issue.title}
                     </span>
-                    {issue.labels.length > 0 && (
+                    {(issue.labels?.length ?? 0) > 0 && (
                       <div className="flex gap-1">
                         {issue.labels.slice(0, 2).map((label) => (
                           <span
