@@ -54,7 +54,7 @@ export function IssueDetail({ issue, onClose, onUpdate, onCloseIssue }: IssueDet
   };
 
   return (
-    <div className="w-[32rem] bg-slate-800 border-l border-slate-700 flex flex-col h-full">
+    <div className="w-[48rem] bg-slate-800 border-l border-slate-700 flex flex-col h-full">
       {/* Header */}
       <div className="p-4 border-b border-slate-700 flex items-start justify-between">
         <div className="flex-1 min-w-0">
