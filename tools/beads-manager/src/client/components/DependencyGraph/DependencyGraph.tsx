@@ -18,6 +18,7 @@ import {
 } from '@xyflow/react';
 import ELK, { ElkNode, ElkExtendedEdge } from 'elkjs/lib/elk.bundled.js';
 import type { Issue } from '../../lib/types';
+import { ElkSettingsModal, ElkSettings, DEFAULT_ELK_SETTINGS } from './ElkSettingsModal';
 import '@xyflow/react/dist/style.css';
 
 // ELK instance
@@ -84,6 +85,8 @@ type EpicGroupData = {
   epicId: string;
   childCount: number;
   status: string;
+  width?: number;
+  height?: number;
   [key: string]: unknown;
 };
 
@@ -103,20 +106,28 @@ function EpicGroupNode({ data }: NodeProps<Node<EpicGroupData>>) {
   const colors = EPIC_GROUP_COLORS[colorIndex];
   const status = STATUS_COLORS[data.status] || STATUS_COLORS.open;
 
+  // Use the calculated dimensions from data (set by layout), with generous fallbacks
+  const nodeWidth = data.width || 450;
+  const nodeHeight = data.height || 300;
+
   return (
     <div
-      className="rounded-xl min-w-[300px] min-h-[200px]"
+      className="rounded-xl relative"
       style={{
+        width: nodeWidth,
+        height: nodeHeight,
+        minWidth: 450,
+        minHeight: 300,
         backgroundColor: colors.bg,
         borderWidth: 2,
         borderStyle: 'dashed',
         borderColor: colors.border,
-        padding: '40px 20px 20px 20px',
+        boxSizing: 'border-box',
       }}
     >
-      {/* Epic header */}
+      {/* Epic header - positioned at top of group */}
       <div
-        className="absolute top-2 left-3 right-3 flex items-center justify-between"
+        className="absolute top-3 left-4 right-4 flex items-center justify-between"
         style={{ color: colors.border }}
       >
         <div className="flex items-center gap-2">
@@ -248,26 +259,39 @@ const nodeTypes = {
 // Node dimensions
 const NODE_WIDTH = 200;
 const NODE_HEIGHT = 80;
-const GROUP_PADDING = 50;
 
-// ELK layout options
-const elkOptions = {
-  'elk.algorithm': 'layered',
-  'elk.direction': 'DOWN',
-  'elk.spacing.nodeNode': '50',
-  'elk.layered.spacing.nodeNodeBetweenLayers': '80',
-  'elk.layered.spacing.edgeNodeBetweenLayers': '30',
-  'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
-  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-  'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-  'elk.padding': '[top=60,left=20,bottom=20,right=20]',
-};
+// Build ELK layout options from settings
+function buildElkOptions(settings: ElkSettings): Record<string, string> {
+  const padding = settings.groupPadding;
+  const headerHeight = settings.groupHeaderHeight;
+
+  return {
+    'elk.algorithm': settings.algorithm,
+    'elk.direction': settings.direction,
+    'elk.spacing.nodeNode': String(settings.nodeNodeSpacing),
+    'elk.layered.spacing.nodeNodeBetweenLayers': String(settings.nodeNodeBetweenLayers),
+    'elk.layered.spacing.edgeNodeBetweenLayers': String(settings.edgeNodeBetweenLayers),
+    'elk.spacing.componentComponent': String(settings.componentSpacing),
+    'elk.layered.nodePlacement.strategy': settings.nodePlacement,
+    'elk.layered.crossingMinimization.strategy': settings.crossingMinimization,
+    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+    'elk.padding': `[top=${headerHeight + padding},left=${padding},bottom=${padding},right=${padding}]`,
+    // Force algorithm options
+    'elk.force.iterations': '300',
+    'elk.force.repulsivePower': '1',
+    // Stress algorithm options
+    'elk.stress.desiredEdgeLength': String(settings.nodeNodeBetweenLayers),
+  };
+}
 
 // Convert React Flow nodes/edges to ELK graph format
-function toElkGraph(nodes: Node[], edges: Edge[]): ElkNode {
+function toElkGraph(nodes: Node[], edges: Edge[], settings: ElkSettings): ElkNode {
   // Separate group nodes and regular nodes
   const groupNodes = nodes.filter((n) => n.type === 'epicGroup');
   const regularNodes = nodes.filter((n) => n.type !== 'epicGroup');
+
+  const groupPadding = settings.groupPadding;
+  const groupHeaderHeight = settings.groupHeaderHeight;
 
   // Build children map for groups
   const childrenByParent = new Map<string, Node[]>();
@@ -284,12 +308,18 @@ function toElkGraph(nodes: Node[], edges: Edge[]): ElkNode {
   // Create ELK nodes for groups with their children
   const elkGroupNodes: ElkNode[] = groupNodes.map((group) => {
     const children = childrenByParent.get(group.id) || [];
+    // Calculate initial size based on children count with spacing from settings
+    const cols = Math.min(3, Math.max(1, children.length)); // Max 3 columns
+    const rows = Math.ceil(children.length / cols);
+    const initialWidth = cols * (NODE_WIDTH + settings.nodeNodeSpacing) + groupPadding * 2;
+    const initialHeight = rows * (NODE_HEIGHT + settings.nodeNodeBetweenLayers) + groupHeaderHeight + groupPadding * 2;
+
     return {
       id: group.id,
-      width: Math.max(350, children.length * 130),
-      height: Math.max(200, Math.ceil(children.length / 2) * 120 + GROUP_PADDING),
+      width: Math.max(450, initialWidth),
+      height: Math.max(300, initialHeight),
       layoutOptions: {
-        'elk.padding': '[top=60,left=20,bottom=20,right=20]',
+        'elk.padding': `[top=${groupHeaderHeight + groupPadding},left=${groupPadding},bottom=${groupPadding},right=${groupPadding}]`,
       },
       children: children.map((child) => ({
         id: child.id,
@@ -316,14 +346,14 @@ function toElkGraph(nodes: Node[], edges: Edge[]): ElkNode {
 
   return {
     id: 'root',
-    layoutOptions: elkOptions,
+    layoutOptions: buildElkOptions(settings),
     children: [...elkGroupNodes, ...elkUngroupedNodes],
     edges: elkEdges,
   };
 }
 
 // Apply ELK layout positions back to React Flow nodes
-function applyElkLayout(nodes: Node[], elkGraph: ElkNode): Node[] {
+function applyElkLayout(nodes: Node[], elkGraph: ElkNode, settings: ElkSettings): Node[] {
   const positionMap = new Map<string, { x: number; y: number }>();
   const sizeMap = new Map<string, { width: number; height: number }>();
 
@@ -352,7 +382,8 @@ function applyElkLayout(nodes: Node[], elkGraph: ElkNode): Node[] {
 
   extractPositions(elkGraph);
 
-  return nodes.map((node) => {
+  // First pass: compute relative positions for children
+  const processedNodes = nodes.map((node) => {
     const position = positionMap.get(node.id);
     const size = sizeMap.get(node.id);
 
@@ -380,6 +411,60 @@ function applyElkLayout(nodes: Node[], elkGraph: ElkNode): Node[] {
       };
     }
 
+    return node;
+  });
+
+  // Second pass: recalculate group sizes based on actual child positions
+  const childrenByParent = new Map<string, Node[]>();
+  processedNodes.forEach((node) => {
+    if (node.parentId) {
+      if (!childrenByParent.has(node.parentId)) {
+        childrenByParent.set(node.parentId, []);
+      }
+      childrenByParent.get(node.parentId)!.push(node);
+    }
+  });
+
+  return processedNodes.map((node) => {
+    if (node.type === 'epicGroup') {
+      const children = childrenByParent.get(node.id) || [];
+      if (children.length > 0) {
+        // Calculate bounding box of children (positions are relative to parent)
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = 0;
+        let maxY = 0;
+        children.forEach((child) => {
+          const x = child.position?.x || 0;
+          const y = child.position?.y || 0;
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x + NODE_WIDTH);
+          maxY = Math.max(maxY, y + NODE_HEIGHT);
+        });
+
+        // Calculate dimensions with generous padding for breathing room
+        const contentWidth = maxX - Math.min(0, minX);
+        const contentHeight = maxY - Math.min(0, minY);
+        const groupPadding = settings.groupPadding;
+        const newWidth = Math.max(450, contentWidth + groupPadding * 3);
+        const newHeight = Math.max(300, contentHeight + groupPadding * 3);
+
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            width: newWidth,
+            height: newHeight,
+          },
+          style: {
+            ...node.style,
+            width: newWidth,
+            height: newHeight,
+          },
+        };
+      }
+    }
     return node;
   });
 }
@@ -426,10 +511,24 @@ function findConnectedComponents(nodes: Node[], edges: Edge[]): Node[][] {
     }
   });
 
+  // CRITICAL: Connect nodes to their React Flow parents (group nodes)
+  // This ensures group nodes and their children stay in the same connected component
   nodes.forEach((node) => {
     if (node.parentId && nodeIds.has(node.parentId)) {
       adjacency.get(node.id)?.add(node.parentId);
       adjacency.get(node.parentId)?.add(node.id);
+    }
+  });
+
+  // Also connect based on hierarchy from edges (for non-grouped mode)
+  childrenOf.forEach((children, parentId) => {
+    if (nodeIds.has(parentId)) {
+      children.forEach((childId) => {
+        if (nodeIds.has(childId)) {
+          adjacency.get(parentId)?.add(childId);
+          adjacency.get(childId)?.add(parentId);
+        }
+      });
     }
   });
 
@@ -522,7 +621,8 @@ function findConnectedComponents(nodes: Node[], edges: Edge[]): Node[][] {
 // Layout a single component and return positioned nodes
 async function layoutComponent(
   componentNodes: Node[],
-  allEdges: Edge[]
+  allEdges: Edge[],
+  settings: ElkSettings
 ): Promise<Node[]> {
   const nodeIds = new Set(componentNodes.map((n) => n.id));
 
@@ -532,9 +632,9 @@ async function layoutComponent(
   );
 
   try {
-    const elkGraph = toElkGraph(componentNodes, componentEdges);
+    const elkGraph = toElkGraph(componentNodes, componentEdges, settings);
     const layoutedGraph = await elk.layout(elkGraph);
-    return applyElkLayout(componentNodes, layoutedGraph);
+    return applyElkLayout(componentNodes, layoutedGraph, settings);
   } catch (error) {
     console.error('ELK layout error for component:', error);
     // Fallback: grid layout for this component
@@ -565,7 +665,8 @@ function getBoundingBox(nodes: Node[]): { width: number; height: number } {
 // Async ELK layout function with isolated subtree support
 async function getLayoutedElements(
   nodes: Node[],
-  edges: Edge[]
+  edges: Edge[],
+  settings: ElkSettings
 ): Promise<{ nodes: Node[]; edges: Edge[] }> {
   if (nodes.length === 0) {
     return { nodes: [], edges: [] };
@@ -577,11 +678,11 @@ async function getLayoutedElements(
 
     // Layout each component independently
     const layoutedComponents = await Promise.all(
-      components.map((component) => layoutComponent(component, edges))
+      components.map((component) => layoutComponent(component, edges, settings))
     );
 
     // Arrange components in a grid
-    const GAP = 100; // Gap between components
+    const GAP = settings.componentSpacing; // Gap between components
     const MAX_ROW_WIDTH = 2000; // Max width before wrapping
 
     let currentX = 0;
@@ -591,7 +692,9 @@ async function getLayoutedElements(
     const allLayoutedNodes: Node[] = [];
 
     layoutedComponents.forEach((componentNodes) => {
-      const bbox = getBoundingBox(componentNodes);
+      // Only consider top-level nodes (not children) for bounding box
+      const topLevelNodes = componentNodes.filter((n) => !n.parentId);
+      const bbox = getBoundingBox(topLevelNodes);
 
       // Check if we need to wrap to next row
       if (currentX > 0 && currentX + bbox.width > MAX_ROW_WIDTH) {
@@ -600,14 +703,20 @@ async function getLayoutedElements(
         rowMaxHeight = 0;
       }
 
-      // Offset all nodes in this component
-      const offsetNodes = componentNodes.map((node) => ({
-        ...node,
-        position: {
-          x: (node.position?.x || 0) + currentX,
-          y: (node.position?.y || 0) + currentY,
-        },
-      }));
+      // Offset top-level nodes; child nodes keep their relative positions
+      const offsetNodes = componentNodes.map((node) => {
+        // Child nodes should NOT be offset - their position is relative to their parent
+        if (node.parentId) {
+          return node;
+        }
+        return {
+          ...node,
+          position: {
+            x: (node.position?.x || 0) + currentX,
+            y: (node.position?.y || 0) + currentY,
+          },
+        };
+      });
 
       allLayoutedNodes.push(...offsetNodes);
 
@@ -687,7 +796,8 @@ function issuesToReactFlow(
   selectedIssueId: string | undefined,
   collapsedNodes: Set<string>,
   onToggleCollapse: (nodeId: string) => void,
-  groupByEpic: boolean = false
+  groupByEpic: boolean = false,
+  settings: ElkSettings = DEFAULT_ELK_SETTINGS
 ) {
   const { childrenMap } = buildDependencyTree(issues);
   const issueIds = new Set(issues.map((i) => i.id));
@@ -724,8 +834,15 @@ function issuesToReactFlow(
       }
     });
 
-    // Create Epic group nodes
+    // Create Epic group nodes with sizing based on settings
     epicGroups.forEach(({ epic, children }, epicId) => {
+      const cols = Math.min(3, Math.max(1, children.length));
+      const rows = Math.ceil(children.length / cols);
+      const groupPadding = settings.groupPadding;
+      const groupHeaderHeight = settings.groupHeaderHeight;
+      const initialWidth = Math.max(450, cols * (NODE_WIDTH + settings.nodeNodeSpacing) + groupPadding * 2);
+      const initialHeight = Math.max(300, rows * (NODE_HEIGHT + settings.nodeNodeBetweenLayers) + groupHeaderHeight + groupPadding * 2);
+
       nodes.push({
         id: `epic-group-${epicId}`,
         type: 'epicGroup',
@@ -735,10 +852,12 @@ function issuesToReactFlow(
           epicId: epicId,
           childCount: children.length,
           status: epic.status,
+          width: initialWidth,
+          height: initialHeight,
         },
         style: {
-          width: Math.max(350, children.length * 120),
-          height: Math.max(250, Math.ceil(children.length / 2) * 120),
+          width: initialWidth,
+          height: initialHeight,
         },
       });
     });
@@ -843,6 +962,10 @@ function DependencyGraphInner({
   const [groupByEpic, setGroupByEpic] = useState(false);
   // Loading state for async layout
   const [isLayouting, setIsLayouting] = useState(false);
+  // ELK layout settings
+  const [elkSettings, setElkSettings] = useState<ElkSettings>(DEFAULT_ELK_SETTINGS);
+  // Settings modal state
+  const [showSettings, setShowSettings] = useState(false);
 
   const toggleCollapse = useCallback((nodeId: string) => {
     setCollapsedNodes((prev) => {
@@ -861,14 +984,14 @@ function DependencyGraphInner({
 
   // Get raw nodes/edges without layout
   const { nodes: rawNodes, edges: rawEdges } = useMemo(
-    () => issuesToReactFlow(issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic),
-    [issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic]
+    () => issuesToReactFlow(issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic, elkSettings),
+    [issues, selectedIssueId, collapsedNodes, toggleCollapse, groupByEpic, elkSettings]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(rawNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(rawEdges);
 
-  // Run ELK layout asynchronously when raw nodes/edges change
+  // Run ELK layout asynchronously when raw nodes/edges or settings change
   useEffect(() => {
     let cancelled = false;
 
@@ -876,7 +999,8 @@ function DependencyGraphInner({
       setIsLayouting(true);
       const { nodes: layoutedNodes, edges: layoutedEdges } = await getLayoutedElements(
         rawNodes,
-        rawEdges
+        rawEdges,
+        elkSettings
       );
 
       if (!cancelled) {
@@ -893,7 +1017,7 @@ function DependencyGraphInner({
     return () => {
       cancelled = true;
     };
-  }, [rawNodes, rawEdges, setNodes, setEdges, fitView]);
+  }, [rawNodes, rawEdges, elkSettings, setNodes, setEdges, fitView]);
 
   // Handle node click
   const handleNodeClick = useCallback(
@@ -1032,6 +1156,20 @@ function DependencyGraphInner({
           </button>
         </div>
 
+        {/* Settings button */}
+        <div className="mt-3 pt-2 border-t border-slate-700">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="w-full px-2 py-1.5 bg-slate-700 hover:bg-slate-600 rounded text-slate-300 transition-colors flex items-center justify-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Layout Settings
+          </button>
+        </div>
+
         <div className="mt-2 text-slate-500">
           Click +N on nodes to toggle
         </div>
@@ -1041,6 +1179,14 @@ function DependencyGraphInner({
       <div className="absolute bottom-4 left-4 bg-slate-800/95 backdrop-blur rounded-lg px-3 py-2 shadow-lg z-10 text-xs text-slate-400 border border-slate-700">
         {nodes.length} visible, {issues.length - nodes.length} collapsed, {edges.length} edges
       </div>
+
+      {/* ELK Settings Modal */}
+      <ElkSettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        settings={elkSettings}
+        onSettingsChange={setElkSettings}
+      />
     </div>
   );
 }
