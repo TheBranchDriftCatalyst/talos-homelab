@@ -32,6 +32,65 @@ spec:
   upgrade:
     remediation:
       retries: 3
+  # PostRenderer to fix buggy chart output - removes unsupported "defaults: {}" from overrides
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: ConfigMap
+              name: tempo
+            patch: |
+              - op: replace
+                path: /data/tempo.yaml
+                value: |
+                  multitenancy_enabled: false
+                  usage_report:
+                    reporting_enabled: true
+                  compactor:
+                    compaction:
+                      block_retention: 24h
+                  distributor:
+                    receivers:
+                      otlp:
+                        protocols:
+                          grpc:
+                            endpoint: 0.0.0.0:4317
+                          http:
+                            endpoint: 0.0.0.0:4318
+                  ingester: {}
+                  server:
+                    http_listen_port: 3200
+                  storage:
+                    trace:
+                      backend: s3
+                      s3:
+                        bucket: tempo
+                        endpoint: minio.minio.svc:9000
+                        access_key: minio
+                        secret_key: minio123
+                        insecure: true
+                      local:
+                        path: /var/tempo/traces
+                      wal:
+                        path: /var/tempo/wal
+                  querier: {}
+                  query_frontend: {}
+                  overrides:
+                    per_tenant_override_config: /conf/overrides.yaml
+                    metrics_generator_processors:
+                      - service-graphs
+                      - span-metrics
+                      - local-blocks
+                  metrics_generator:
+                    storage:
+                      path: /tmp/tempo
+                      remote_write:
+                        - url: http://mimir-nginx.monitoring.svc:80/api/v1/push
+                    traces_storage:
+                      path: /tmp/traces
+                    processor:
+                      local_blocks:
+                        flush_to_storage: true
   values:
     # Single binary mode (appropriate for homelab)
     tempo:
@@ -48,17 +107,6 @@ spec:
             access_key: minio
             secret_key: minio123
             insecure: true
-      # Enable local-blocks processor for TraceQL metrics (Grafana Traces Drilldown)
-      overrides:
-        defaults:
-          metrics_generator:
-            processors:
-              - service-graphs
-              - span-metrics
-              - local-blocks
-            processor:
-              local_blocks:
-                flush_to_storage: true
 
     # Enable OTLP receivers
     traces:
