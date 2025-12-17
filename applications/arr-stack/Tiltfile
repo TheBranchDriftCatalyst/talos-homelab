@@ -14,65 +14,64 @@ allow_k8s_contexts('admin@homelab-single')
 # Configuration
 namespace = 'media'
 
-# Use consistent label for UI grouping (matches root Tiltfile)
-# Note: Labels must be alphanumeric with '-', '_', '.' only (no colons)
-LABEL = 'apps-media'
+# Labels for UI grouping (sorted alphabetically in Tilt sidebar)
+LABEL_DB = '1-database'
+LABEL_ARR = '2-arr-automation'
+LABEL_SERVERS = '3-media-servers'
+LABEL_PLEX_TOOLS = '4-plex-tools'
+LABEL_DASH = '5-dashboard'
 
 # ============================================
 # Database
 # ============================================
 
 k8s_attach('postgresql', 'deployment/postgresql', namespace='media',
-           labels=[LABEL])
+           labels=[LABEL_DB])
 
 # ============================================
-# Indexer
+# Arr Automation (Indexer + *arr apps)
 # ============================================
 
 k8s_attach('prowlarr', 'deployment/prowlarr', namespace='media',
-           port_forwards=['9696:9696'], labels=[LABEL])
-
-# ============================================
-# Automation (*arr apps)
-# ============================================
+           port_forwards=['9696:9696'], labels=[LABEL_ARR])
 
 k8s_attach('sonarr', 'deployment/sonarr', namespace='media',
-           port_forwards=['8989:8989'], labels=[LABEL])
+           port_forwards=['8989:8989'], labels=[LABEL_ARR])
 
 k8s_attach('radarr', 'deployment/radarr', namespace='media',
-           port_forwards=['7878:7878'], labels=[LABEL])
+           port_forwards=['7878:7878'], labels=[LABEL_ARR])
 
 k8s_attach('overseerr', 'deployment/overseerr', namespace='media',
-           port_forwards=['5055:5055'], labels=[LABEL])
+           port_forwards=['5055:5055'], labels=[LABEL_ARR])
 
 # ============================================
 # Media Servers
 # ============================================
 
 k8s_attach('plex', 'deployment/plex', namespace='media',
-           port_forwards=['32400:32400'], labels=[LABEL])
+           port_forwards=['32400:32400'], labels=[LABEL_SERVERS])
 
 k8s_attach('jellyfin', 'deployment/jellyfin', namespace='media',
-           port_forwards=['8096:8096'], labels=[LABEL])
+           port_forwards=['8096:8096'], labels=[LABEL_SERVERS])
 
 k8s_attach('tdarr', 'deployment/tdarr', namespace='media',
-           port_forwards=['8265:8265'], labels=[LABEL])
+           port_forwards=['8265:8265'], labels=[LABEL_SERVERS])
 
 # ============================================
-# Plex Companion Apps
+# Plex Tools (Metadata & Posters)
 # ============================================
 
 k8s_attach('tautulli', 'deployment/tautulli', namespace='media',
-           port_forwards=['8181:8181'], labels=[LABEL])
+           port_forwards=['8181:8181'], labels=[LABEL_PLEX_TOOLS])
 
 k8s_attach('posterr', 'deployment/posterr', namespace='media',
-           port_forwards=['3002:3000'], labels=[LABEL])
+           port_forwards=['3002:3000'], labels=[LABEL_PLEX_TOOLS])
 
 k8s_attach('kometa', 'deployment/kometa', namespace='media',
-           labels=[LABEL])
+           labels=[LABEL_PLEX_TOOLS])
 
 k8s_attach('posterizarr', 'deployment/posterizarr', namespace='media',
-           port_forwards=['8000:8000'], labels=[LABEL])
+           port_forwards=['8000:8000'], labels=[LABEL_PLEX_TOOLS])
 
 # Kometa ops buttons
 cmd_button(
@@ -116,7 +115,7 @@ cmd_button(
 # ============================================
 
 k8s_attach('homepage', 'deployment/homepage', namespace='media',
-           port_forwards=['3001:3000'], labels=[LABEL])
+           port_forwards=['3001:3000'], labels=[LABEL_DASH])
 
 cmd_button(
     name='btn-sync-api-keys',
