@@ -1,125 +1,130 @@
 # Arr-Stack Tiltfile
 # Media automation stack (Sonarr, Radarr, Plex, etc.)
 #
-# This is included by the root Tiltfile - don't run directly.
-# All resources use the 'apps-media' label for sidebar grouping.
+# Can run standalone or be included by root Tiltfile.
+# Observe-only mode - Flux manages all deployments.
+
+# Load extensions
+load('ext://uibutton', 'cmd_button', 'location')
+load('ext://k8s_attach', 'k8s_attach')
+
+# Allow homelab context
+allow_k8s_contexts('admin@homelab-single')
 
 # Configuration
 namespace = 'media'
-
-# Apply manifests
-k8s_yaml(kustomize('base/'))
-watch_file('base/')
 
 # Use consistent label for UI grouping (matches root Tiltfile)
 # Note: Labels must be alphanumeric with '-', '_', '.' only (no colons)
 LABEL = 'apps-media'
 
 # ============================================
-# Database (dependency for *arr apps)
+# Database
 # ============================================
 
-k8s_resource(
-    'postgresql',
-    labels=[LABEL]
-)
+k8s_attach('postgresql', 'deployment/postgresql', namespace='media',
+           labels=[LABEL])
 
 # ============================================
 # Indexer
 # ============================================
 
-k8s_resource(
-    'prowlarr',
-    port_forwards=['9696:9696'],
-    labels=[LABEL],
-    resource_deps=['postgresql'],
-    links=[
-        link('http://prowlarr.talos00', 'Prowlarr (Traefik)'),
-        link('http://localhost:9696', 'Prowlarr (local)')
-    ]
-)
+k8s_attach('prowlarr', 'deployment/prowlarr', namespace='media',
+           port_forwards=['9696:9696'], labels=[LABEL])
 
 # ============================================
 # Automation (*arr apps)
 # ============================================
 
-k8s_resource(
-    'sonarr',
-    port_forwards=['8989:8989'],
-    labels=[LABEL],
-    resource_deps=['postgresql', 'prowlarr'],
-    links=[
-        link('http://sonarr.talos00', 'Sonarr (Traefik)'),
-        link('http://localhost:8989', 'Sonarr (local)')
-    ]
-)
+k8s_attach('sonarr', 'deployment/sonarr', namespace='media',
+           port_forwards=['8989:8989'], labels=[LABEL])
 
-k8s_resource(
-    'radarr',
-    port_forwards=['7878:7878'],
-    labels=[LABEL],
-    resource_deps=['postgresql', 'prowlarr'],
-    links=[
-        link('http://radarr.talos00', 'Radarr (Traefik)'),
-        link('http://localhost:7878', 'Radarr (local)')
-    ]
-)
+k8s_attach('radarr', 'deployment/radarr', namespace='media',
+           port_forwards=['7878:7878'], labels=[LABEL])
 
-k8s_resource(
-    'overseerr',
-    port_forwards=['5055:5055'],
-    labels=[LABEL],
-    resource_deps=['sonarr', 'radarr'],
-    links=[
-        link('http://overseerr.talos00', 'Overseerr (Traefik)'),
-        link('http://localhost:5055', 'Overseerr (local)')
-    ]
-)
+k8s_attach('overseerr', 'deployment/overseerr', namespace='media',
+           port_forwards=['5055:5055'], labels=[LABEL])
 
 # ============================================
 # Media Servers
 # ============================================
 
-k8s_resource(
-    'plex',
-    port_forwards=['32400:32400'],
-    labels=[LABEL],
-    links=[
-        link('http://plex.talos00', 'Plex (Traefik)'),
-        link('http://localhost:32400/web', 'Plex (local)')
-    ]
+k8s_attach('plex', 'deployment/plex', namespace='media',
+           port_forwards=['32400:32400'], labels=[LABEL])
+
+k8s_attach('jellyfin', 'deployment/jellyfin', namespace='media',
+           port_forwards=['8096:8096'], labels=[LABEL])
+
+k8s_attach('tdarr', 'deployment/tdarr', namespace='media',
+           port_forwards=['8265:8265'], labels=[LABEL])
+
+# ============================================
+# Plex Companion Apps
+# ============================================
+
+k8s_attach('tautulli', 'deployment/tautulli', namespace='media',
+           port_forwards=['8181:8181'], labels=[LABEL])
+
+k8s_attach('posterr', 'deployment/posterr', namespace='media',
+           port_forwards=['3002:3000'], labels=[LABEL])
+
+k8s_attach('kometa', 'deployment/kometa', namespace='media',
+           labels=[LABEL])
+
+k8s_attach('posterizarr', 'deployment/posterizarr', namespace='media',
+           port_forwards=['8000:8000'], labels=[LABEL])
+
+# Kometa ops buttons
+cmd_button(
+    name='btn-kometa-run',
+    resource='kometa',
+    argv=['sh', '-c', '''
+        echo "Starting Kometa run..." && \
+        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run && \
+        echo "Kometa run complete"
+    '''],
+    text='Run Now',
+    icon_name='play_arrow'
 )
 
-k8s_resource(
-    'jellyfin',
-    port_forwards=['8096:8096'],
-    labels=[LABEL],
-    links=[
-        link('http://jellyfin.talos00', 'Jellyfin (Traefik)'),
-        link('http://localhost:8096', 'Jellyfin (local)')
-    ]
+cmd_button(
+    name='btn-kometa-overlays',
+    resource='kometa',
+    argv=['sh', '-c', '''
+        echo "Running Kometa overlays only..." && \
+        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run --overlays-only && \
+        echo "Overlays complete"
+    '''],
+    text='Overlays Only',
+    icon_name='layers'
 )
 
-k8s_resource(
-    'tdarr',
-    port_forwards=['8265:8265', '8266:8266'],
-    labels=[LABEL],
-    links=[
-        link('http://tdarr.talos00', 'Tdarr (Traefik)'),
-        link('http://localhost:8265', 'Tdarr (local)')
-    ]
+cmd_button(
+    name='btn-kometa-collections',
+    resource='kometa',
+    argv=['sh', '-c', '''
+        echo "Running Kometa collections only..." && \
+        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run --collections-only && \
+        echo "Collections complete"
+    '''],
+    text='Collections Only',
+    icon_name='folder_special'
 )
 
 # ============================================
 # Dashboard
 # ============================================
 
-k8s_resource(
-    'homepage',
-    port_forwards=['3000:3000'],
-    labels=[LABEL],
-    links=[
-        link('http://homepage.talos00', 'Homepage (Traefik)'),
-        link('http://localhost:3000', 'Homepage (local)')
-    ]
+k8s_attach('homepage', 'deployment/homepage', namespace='media',
+           port_forwards=['3001:3000'], labels=[LABEL])
+
+cmd_button(
+    name='btn-sync-api-keys',
+    resource='homepage',
+    argv=['sh', '-c', '''./applications/arr-stack/scripts/sync-api-keys.sh && \
+        kubectl rollout restart deployment homepage -n media && \
+        kubectl rollout status deployment homepage -n media --timeout=60s && \
+        echo "" && echo "Homepage restarted with updated API keys"'''],
+    text='Sync API Keys',
+    icon_name='sync'
 )
