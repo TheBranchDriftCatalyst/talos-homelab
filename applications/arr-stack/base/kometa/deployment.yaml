@@ -1,0 +1,52 @@
+---
+# Kometa (formerly Plex Meta Manager)
+# Runs continuously with built-in scheduler
+# Configure schedule in config.yml (default: 5am daily)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kometa
+  labels:
+    app: kometa
+    app.kubernetes.io/name: kometa
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kometa
+  template:
+    metadata:
+      labels:
+        app: kometa
+        app.kubernetes.io/name: kometa
+    spec:
+      containers:
+        - name: kometa
+          image: kometateam/kometa:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: 'America/Los_Angeles'
+            # Run with built-in scheduler (default: 5am daily)
+            - name: KOMETA_RUN
+              value: 'true'
+            # Time to run (24h format, e.g., 05:00 for 5am)
+            - name: KOMETA_TIME
+              value: '03:00'
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: kometa-config
