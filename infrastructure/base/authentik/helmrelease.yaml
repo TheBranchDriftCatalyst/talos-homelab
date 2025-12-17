@@ -1,0 +1,113 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: authentik
+  namespace: authentik
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: authentik
+      version: ">=2025.10.0 <2026.0.0"
+      sourceRef:
+        kind: HelmRepository
+        name: authentik
+        namespace: authentik
+      interval: 12h
+  install:
+    createNamespace: false
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Global settings
+    global:
+      env:
+        - name: AUTHENTIK_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: authentik-secrets
+              key: AUTHENTIK_SECRET_KEY
+        - name: AUTHENTIK_POSTGRESQL__PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: authentik-secrets
+              key: AUTHENTIK_POSTGRESQL__PASSWORD
+
+    # Authentik server
+    authentik:
+      error_reporting:
+        enabled: false
+      postgresql:
+        host: authentik-postgresql
+        name: authentik
+        user: authentik
+      redis:
+        host: authentik-redis-master
+
+    server:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          cpu: 1
+          memory: 1Gi
+      ingress:
+        enabled: false  # We'll use Traefik IngressRoute
+
+    worker:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+    # Embedded PostgreSQL
+    postgresql:
+      enabled: true
+      auth:
+        database: authentik
+        username: authentik
+        existingSecret: authentik-secrets
+        secretKeys:
+          adminPasswordKey: AUTHENTIK_POSTGRESQL__PASSWORD
+          userPasswordKey: AUTHENTIK_POSTGRESQL__PASSWORD
+      primary:
+        persistence:
+          enabled: true
+          size: 8Gi
+          storageClass: local-path
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+    # Embedded Redis
+    redis:
+      enabled: true
+      architecture: standalone
+      auth:
+        enabled: false
+      master:
+        persistence:
+          enabled: true
+          size: 2Gi
+          storageClass: local-path
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
