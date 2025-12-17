@@ -1,5 +1,61 @@
 ---
-# whoami with Authelia authentication - test e2e TLS + auth flow
+# TEST 1: HTTP only (no TLS, no auth) - basic connectivity test
+# Access: http://whoami.talos00 or curl http://192.168.1.54 -H "Host: whoami.talos00"
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami-http-noauth
+  namespace: default
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`whoami.talos00`)
+      kind: Rule
+      services:
+        - name: whoami
+          port: 80
+---
+# TEST 2: HTTPS only (TLS, no auth) - TLS test
+# Access: https://whoami-tls.talos00
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami-https-noauth
+  namespace: default
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`whoami-tls.talos00`)
+      kind: Rule
+      services:
+        - name: whoami
+          port: 80
+  tls: {}
+---
+# TEST 3: HTTPS with Authentik auth - full auth flow test
+# Access: https://whoami-auth.talos00
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami-https-auth
+  namespace: default
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`whoami-auth.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: whoami
+          port: 80
+  tls: {}
+---
+# PRODUCTION: whoami with Authentik on external domain
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -19,7 +75,7 @@ spec:
           port: 80
   tls: {}  # Uses TLSStore default certificate
 ---
-# HTTP redirect to HTTPS
+# HTTP redirect to HTTPS for external domain
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
