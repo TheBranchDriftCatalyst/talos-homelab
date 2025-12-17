@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Get tokens for all cluster dashboards and UIs
+# TODO: meeds to get other stuff as well
 
 set -e
 
