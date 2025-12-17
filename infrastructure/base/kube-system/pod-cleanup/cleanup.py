@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Kubernetes resource cleanup script with metrics."""
+"""Kubernetes resource cleanup script with Mimir metrics."""
 
 import json
 import os
+import struct
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -12,7 +13,7 @@ from urllib.error import URLError
 # Config from environment
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 EXCLUDED_NAMESPACES = set(os.environ.get("EXCLUDED_NAMESPACES", "kube-system,kube-public,kube-node-lease").split(","))
-PUSHGATEWAY_URL = os.environ.get("PUSHGATEWAY_URL", "http://prometheus-pushgateway.monitoring.svc.cluster.local:9091")
+MIMIR_URL = os.environ.get("MIMIR_URL", "http://mimir-nginx.monitoring.svc:80/api/v1/push")
 
 # Thresholds in seconds
 FAILED_POD_AGE = int(os.environ.get("FAILED_POD_AGE_THRESHOLD", "3600"))
@@ -54,7 +55,7 @@ def parse_time(ts):
     try:
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         return dt.timestamp()
-    except:
+    except Exception:
         return 0
 
 
@@ -202,18 +203,71 @@ def cleanup_orphan_replicasets():
     return count
 
 
-def push_metrics(metrics):
-    """Push metrics to Pushgateway."""
-    lines = [f"{k} {v}" for k, v in metrics.items()]
-    body = "\n".join(lines) + "\n"
-    url = f"{PUSHGATEWAY_URL}/metrics/job/pod_cleanup/instance/talos00"
+# Minimal protobuf encoder for Prometheus remote_write
+def _encode_varint(n):
+    """Encode integer as varint."""
+    b = []
+    while n > 127:
+        b.append((n & 0x7F) | 0x80)
+        n >>= 7
+    b.append(n)
+    return bytes(b)
+
+
+def _encode_string(field, s):
+    """Encode string field."""
+    b = s.encode()
+    return bytes([field << 3 | 2]) + _encode_varint(len(b)) + b
+
+
+def _encode_label(name, value):
+    """Encode a label pair."""
+    inner = _encode_string(1, name) + _encode_string(2, value)
+    return bytes([0x0A]) + _encode_varint(len(inner)) + inner
+
+
+def _encode_sample(ts_ms, value):
+    """Encode a sample (timestamp + value)."""
+    # field 1: value (double), field 2: timestamp (int64)
+    inner = bytes([0x09]) + struct.pack("<d", value) + bytes([0x10]) + _encode_varint(ts_ms)
+    return bytes([0x12]) + _encode_varint(len(inner)) + inner
+
+
+def _encode_timeseries(labels, ts_ms, value):
+    """Encode a complete timeseries."""
+    label_bytes = b"".join(_encode_label(k, v) for k, v in labels.items())
+    sample_bytes = _encode_sample(ts_ms, value)
+    inner = label_bytes + sample_bytes
+    return bytes([0x0A]) + _encode_varint(len(inner)) + inner
+
+
+def push_metrics_to_mimir(metrics):
+    """Push metrics directly to Mimir via remote_write."""
     try:
-        req = Request(url, data=body.encode(), method="POST")
-        req.add_header("Content-Type", "text/plain")
+        import snappy
+    except ImportError:
+        print("[WARN] python-snappy not installed, skipping metrics push")
+        return
+
+    ts_ms = int(time.time() * 1000)
+    timeseries = []
+    for name, value in metrics.items():
+        labels = {"__name__": name, "job": "pod_cleanup", "instance": "talos00"}
+        timeseries.append(_encode_timeseries(labels, ts_ms, float(value)))
+
+    # WriteRequest message
+    write_request = b"".join(timeseries)
+    compressed = snappy.compress(write_request)
+
+    try:
+        req = Request(MIMIR_URL, data=compressed, method="POST")
+        req.add_header("Content-Type", "application/x-protobuf")
+        req.add_header("Content-Encoding", "snappy")
+        req.add_header("X-Prometheus-Remote-Write-Version", "0.1.0")
         with urlopen(req, timeout=10) as resp:
-            print("Metrics pushed")
+            print(f"[INFO] Metrics pushed to Mimir ({resp.status})")
     except URLError as e:
-        print(f"Metrics push failed: {e}")
+        print(f"[WARN] Mimir push failed: {e}")
 
 
 def main():
@@ -239,8 +293,7 @@ def main():
     print(f"Succeeded:{succeeded} Failed:{failed} Evicted:{evicted} ImagePull:{imagepull} CrashLoop:{crashloop} Jobs:{jobs} RS:{replicasets}")
     print(f"TOTAL: {total}")
 
-    push_metrics({
-        "pod_cleanup_last_run_timestamp_seconds": int(end_time),
+    push_metrics_to_mimir({
         "pod_cleanup_duration_seconds": duration,
         "pod_cleanup_dry_run": 1 if DRY_RUN else 0,
         "pod_cleanup_resources_total": total,

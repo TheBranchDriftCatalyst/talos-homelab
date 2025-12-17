@@ -25,212 +25,6 @@ data:
   EXCLUDED_NAMESPACES: "kube-system,kube-public,kube-node-lease"
   CRASHLOOP_RESTART_THRESHOLD: "10"
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: pod-cleanup-script
-  namespace: kube-system
-  labels:
-    app.kubernetes.io/name: pod-cleanup
-    app.kubernetes.io/component: maintenance
-data:
-  cleanup.py: |
-    #!/usr/bin/env python3
-    """Kubernetes resource cleanup script with metrics via Mimir remote_write."""
-    import json, os, subprocess, time, struct, snappy
-    from datetime import datetime, timezone
-    from urllib.request import urlopen, Request
-
-    DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
-    EXCLUDED_NS = set(os.environ.get("EXCLUDED_NAMESPACES", "kube-system,kube-public,kube-node-lease").split(","))
-    MIMIR_URL = os.environ.get("MIMIR_URL", "http://mimir-nginx.monitoring.svc:80/api/v1/push")
-    FAILED_AGE = int(os.environ.get("FAILED_POD_AGE_THRESHOLD", "3600"))
-    EVICTED_AGE = int(os.environ.get("EVICTED_POD_AGE_THRESHOLD", "1800"))
-    IMAGEPULL_AGE = int(os.environ.get("IMAGEPULL_AGE_THRESHOLD", "7200"))
-    CRASHLOOP_AGE = int(os.environ.get("CRASHLOOP_AGE_THRESHOLD", "14400"))
-    CRASHLOOP_RESTARTS = int(os.environ.get("CRASHLOOP_RESTART_THRESHOLD", "10"))
-    JOB_AGE = int(os.environ.get("COMPLETED_JOB_AGE_THRESHOLD", "86400"))
-    RS_AGE = int(os.environ.get("ORPHAN_RS_AGE_THRESHOLD", "86400"))
-    DO_SUCCEEDED = os.environ.get("CLEANUP_SUCCEEDED_PODS", "true").lower() == "true"
-    DO_FAILED = os.environ.get("CLEANUP_FAILED_PODS", "true").lower() == "true"
-    DO_EVICTED = os.environ.get("CLEANUP_EVICTED_PODS", "true").lower() == "true"
-    DO_IMAGEPULL = os.environ.get("CLEANUP_IMAGEPULL_PODS", "true").lower() == "true"
-    DO_CRASHLOOP = os.environ.get("CLEANUP_CRASHLOOP_PODS", "false").lower() == "true"
-    DO_JOBS = os.environ.get("CLEANUP_COMPLETED_JOBS", "true").lower() == "true"
-    DO_RS = os.environ.get("CLEANUP_ORPHAN_REPLICASETS", "true").lower() == "true"
-
-    def kubectl_json(*args):
-        r = subprocess.run(["kubectl"] + list(args), capture_output=True, text=True)
-        return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else {"items": []}
-
-    def age(ts):
-        if not ts: return float('inf')
-        try: return time.time() - datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-        except: return float('inf')
-
-    def delete(kind, ns, name):
-        if ns in EXCLUDED_NS: return False
-        if DRY_RUN:
-            print(f"[DRY-RUN] Would delete {kind} {ns}/{name}")
-            return True
-        r = subprocess.run(["kubectl", "delete", kind, "-n", ns, name, "--ignore-not-found", "--wait=false"], capture_output=True)
-        if r.returncode == 0:
-            print(f"[DELETE] {kind} {ns}/{name}")
-            return True
-        return False
-
-    def clean_succeeded():
-        if not DO_SUCCEEDED: return 0
-        print("[INFO] Cleaning Succeeded Pods...")
-        data = kubectl_json("get", "pods", "-A", "--field-selector=status.phase==Succeeded", "-o", "json")
-        c = sum(1 for p in data.get("items", []) if delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]))
-        print(f"[INFO] Succeeded pods: {c}")
-        return c
-
-    def clean_failed():
-        if not DO_FAILED: return 0
-        print(f"[INFO] Cleaning Failed Pods (>{FAILED_AGE}s)...")
-        data = kubectl_json("get", "pods", "-A", "--field-selector=status.phase==Failed", "-o", "json")
-        c = sum(1 for p in data.get("items", []) if age(p.get("status", {}).get("startTime")) > FAILED_AGE and delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]))
-        print(f"[INFO] Failed pods: {c}")
-        return c
-
-    def clean_evicted():
-        if not DO_EVICTED: return 0
-        print("[INFO] Cleaning Evicted Pods...")
-        data = kubectl_json("get", "pods", "-A", "-o", "json")
-        c = sum(1 for p in data.get("items", []) if p.get("status", {}).get("reason") == "Evicted" and age(p.get("status", {}).get("startTime")) > EVICTED_AGE and delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]))
-        print(f"[INFO] Evicted pods: {c}")
-        return c
-
-    def clean_imagepull():
-        if not DO_IMAGEPULL: return 0
-        print("[INFO] Cleaning ImagePullBackOff Pods...")
-        data = kubectl_json("get", "pods", "-A", "-o", "json")
-        c = 0
-        for p in data.get("items", []):
-            for cs in p.get("status", {}).get("containerStatuses", []):
-                if cs.get("state", {}).get("waiting", {}).get("reason") in ("ImagePullBackOff", "ErrImagePull"):
-                    if age(p["metadata"].get("creationTimestamp")) > IMAGEPULL_AGE:
-                        if delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]): c += 1
-                    break
-        print(f"[INFO] ImagePullBackOff pods: {c}")
-        return c
-
-    def clean_crashloop():
-        if not DO_CRASHLOOP: return 0
-        print("[INFO] Cleaning CrashLoopBackOff Pods...")
-        data = kubectl_json("get", "pods", "-A", "-o", "json")
-        c = 0
-        for p in data.get("items", []):
-            for cs in p.get("status", {}).get("containerStatuses", []):
-                if cs.get("state", {}).get("waiting", {}).get("reason") == "CrashLoopBackOff":
-                    if cs.get("restartCount", 0) > CRASHLOOP_RESTARTS and age(p["metadata"].get("creationTimestamp")) > CRASHLOOP_AGE:
-                        if delete("pod", p["metadata"]["namespace"], p["metadata"]["name"]): c += 1
-                    break
-        print(f"[INFO] CrashLoopBackOff pods: {c}")
-        return c
-
-    def clean_jobs():
-        if not DO_JOBS: return 0
-        print("[INFO] Cleaning Completed Jobs...")
-        data = kubectl_json("get", "jobs", "-A", "-o", "json")
-        c = 0
-        for j in data.get("items", []):
-            s = j.get("status", {})
-            if not s.get("completionTime"): continue
-            if s.get("succeeded", 0) < 1 and s.get("failed", 0) < 1: continue
-            if age(s.get("completionTime")) <= JOB_AGE: continue
-            if any(o.get("kind") == "CronJob" for o in j.get("metadata", {}).get("ownerReferences", [])): continue
-            if delete("job", j["metadata"]["namespace"], j["metadata"]["name"]): c += 1
-        print(f"[INFO] Completed jobs: {c}")
-        return c
-
-    def clean_rs():
-        if not DO_RS: return 0
-        print("[INFO] Cleaning Orphaned ReplicaSets...")
-        data = kubectl_json("get", "replicasets", "-A", "-o", "json")
-        c = 0
-        for rs in data.get("items", []):
-            if rs.get("spec", {}).get("replicas", 1) == 0 and rs.get("status", {}).get("replicas", 1) == 0:
-                if age(rs["metadata"].get("creationTimestamp")) > RS_AGE:
-                    if delete("replicaset", rs["metadata"]["namespace"], rs["metadata"]["name"]): c += 1
-        print(f"[INFO] Orphaned ReplicaSets: {c}")
-        return c
-
-    # Minimal protobuf encoder for Prometheus remote_write
-    def encode_varint(n):
-        b = []
-        while n > 127:
-            b.append((n & 0x7f) | 0x80)
-            n >>= 7
-        b.append(n)
-        return bytes(b)
-
-    def encode_string(field, s):
-        b = s.encode()
-        return bytes([field << 3 | 2]) + encode_varint(len(b)) + b
-
-    def encode_label(name, value):
-        return bytes([0x0a]) + encode_varint(len(encode_string(1, name) + encode_string(2, value))) + encode_string(1, name) + encode_string(2, value)
-
-    def encode_sample(ts_ms, value):
-        # field 1: value (double), field 2: timestamp (int64)
-        return bytes([0x12]) + encode_varint(16) + bytes([0x09]) + struct.pack('<d', value) + bytes([0x10]) + encode_varint(ts_ms)
-
-    def encode_timeseries(labels, ts_ms, value):
-        label_bytes = b''.join(encode_label(k, v) for k, v in labels.items())
-        sample_bytes = encode_sample(ts_ms, value)
-        return bytes([0x0a]) + encode_varint(len(label_bytes + sample_bytes)) + label_bytes + sample_bytes
-
-    def push_to_mimir(metrics):
-        """Push metrics directly to Mimir via remote_write (no pushgateway)."""
-        ts_ms = int(time.time() * 1000)
-        timeseries = []
-        for name, value in metrics.items():
-            labels = {"__name__": name, "job": "pod_cleanup", "instance": "talos00"}
-            timeseries.append(encode_timeseries(labels, ts_ms, float(value)))
-
-        # WriteRequest message
-        write_request = b''.join(timeseries)
-        compressed = snappy.compress(write_request)
-
-        try:
-            req = Request(MIMIR_URL, data=compressed, method="POST")
-            req.add_header("Content-Type", "application/x-protobuf")
-            req.add_header("Content-Encoding", "snappy")
-            req.add_header("X-Prometheus-Remote-Write-Version", "0.1.0")
-            with urlopen(req, timeout=10) as resp:
-                print(f"Metrics pushed to Mimir ({resp.status})")
-        except Exception as e:
-            print(f"Mimir push failed: {e}")
-
-    if __name__ == "__main__":
-        start = time.time()
-        print(f"=== Kubernetes Cleanup Job - {datetime.now(timezone.utc).isoformat()} ===")
-        print(f"Mode: {'DRY-RUN' if DRY_RUN else 'LIVE'}\n")
-        succeeded, failed, evicted = clean_succeeded(), clean_failed(), clean_evicted()
-        imagepull, crashloop = clean_imagepull(), clean_crashloop()
-        jobs, rs = clean_jobs(), clean_rs()
-        duration = int(time.time() - start)
-        total = succeeded + failed + evicted + imagepull + crashloop + jobs + rs
-        print(f"\n=== Summary ({duration}s) ===")
-        print(f"Succeeded:{succeeded} Failed:{failed} Evicted:{evicted} ImagePull:{imagepull} CrashLoop:{crashloop} Jobs:{jobs} RS:{rs}")
-        print(f"TOTAL: {total}")
-        push_to_mimir({
-            "pod_cleanup_duration_seconds": duration,
-            "pod_cleanup_dry_run": 1 if DRY_RUN else 0,
-            "pod_cleanup_resources_total": total,
-            "pod_cleanup_succeeded_pods": succeeded,
-            "pod_cleanup_failed_pods": failed,
-            "pod_cleanup_evicted_pods": evicted,
-            "pod_cleanup_imagepull_pods": imagepull,
-            "pod_cleanup_crashloop_pods": crashloop,
-            "pod_cleanup_completed_jobs": jobs,
-            "pod_cleanup_orphan_replicasets": rs,
-            "pod_cleanup_job_success": 1
-        })
----
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -240,7 +34,7 @@ metadata:
     app.kubernetes.io/name: pod-cleanup
     app.kubernetes.io/component: maintenance
 spec:
-  schedule: '0 */2 * * *'
+  schedule: "0 */2 * * *"
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
   concurrencyPolicy: Forbid
@@ -276,15 +70,21 @@ spec:
                     name: pod-cleanup-config
               env:
                 - name: MIMIR_URL
-                  value: 'http://mimir-nginx.monitoring.svc:80/api/v1/push'
+                  value: "http://mimir-nginx.monitoring.svc:80/api/v1/push"
                 - name: PATH
-                  value: '/shared:/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin'
+                  value: "/shared:/usr/local/bin:/usr/bin:/bin:/sbin:/usr/sbin"
               volumeMounts:
                 - name: script
                   mountPath: /scripts
                 - name: shared
                   mountPath: /shared
-              command: ["/bin/sh", "-c", "apk add --no-cache gcc musl-dev snappy-dev >/dev/null 2>&1 && pip install --quiet python-snappy && python3 /scripts/cleanup.py"]
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  apk add --no-cache gcc musl-dev snappy-dev >/dev/null 2>&1
+                  pip install --quiet python-snappy
+                  python3 /scripts/cleanup.py
               resources:
                 requests:
                   cpu: 50m
