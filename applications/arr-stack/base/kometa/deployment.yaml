@@ -1,7 +1,7 @@
 ---
 # Kometa (formerly Plex Meta Manager)
 # Runs continuously with built-in scheduler
-# Configure schedule in config.yml (default: 5am daily)
+# Configure schedule via KOMETA_TIME env var
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,6 +23,35 @@ spec:
         app: kometa
         app.kubernetes.io/name: kometa
     spec:
+      initContainers:
+        # Copy and substitute secrets into config.yml
+        - name: init-config
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              cp /config-template/config.yml /config/config.yml
+              sed -i "s|<<PLEX_TOKEN>>|$PLEX_TOKEN|g" /config/config.yml
+              sed -i "s|<<TMDB_APIKEY>>|$TMDB_APIKEY|g" /config/config.yml
+              mkdir -p /config/assets
+              echo "Config initialized"
+          env:
+            - name: PLEX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kometa-credentials
+                  key: plex-token
+            - name: TMDB_APIKEY
+              valueFrom:
+                secretKeyRef:
+                  name: kometa-credentials
+                  key: tmdb-apikey
+          volumeMounts:
+            - name: config-template
+              mountPath: /config-template
+            - name: config
+              mountPath: /config
       containers:
         - name: kometa
           image: kometateam/kometa:latest
@@ -30,10 +59,10 @@ spec:
           env:
             - name: TZ
               value: 'America/Los_Angeles'
-            # Run with built-in scheduler (default: 5am daily)
+            # Run with built-in scheduler
             - name: KOMETA_RUN
               value: 'true'
-            # Time to run (24h format, e.g., 05:00 for 5am)
+            # Time to run daily (24h format)
             - name: KOMETA_TIME
               value: '03:00'
           volumeMounts:
@@ -47,6 +76,9 @@ spec:
               cpu: 1000m
               memory: 2Gi
       volumes:
+        - name: config-template
+          configMap:
+            name: kometa-config
         - name: config
           persistentVolumeClaim:
             claimName: kometa-config
