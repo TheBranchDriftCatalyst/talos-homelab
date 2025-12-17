@@ -304,7 +304,7 @@ Tracking document for future cluster improvements and tooling additions.
 - [x] **Goldilocks/VPA** - Resource recommendations
 - [x] **Graylog/OpenSearch** - Log aggregation
 - [x] **Fluent Bit** - Log collection
-- [x] **Linkerd** - Service mesh
+- [x] ~~**Linkerd**~~ - Service mesh (removed Dec 2025, using Cilium mTLS instead)
 - [x] **Headlamp, Kubeview, Kube-ops-view** - Cluster visualization
 
 ---

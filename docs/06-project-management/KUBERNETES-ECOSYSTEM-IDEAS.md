@@ -91,19 +91,12 @@ spec:
 
 ---
 
-### Linkerd
+### ~~Linkerd~~ (Removed - Using Cilium)
 
-**What**: Lightweight service mesh
-**Why**: mTLS, traffic splitting, retries, observability
+**Status**: Removed in favor of Cilium eBPF service mesh (Dec 2025)
 
-**Lighter than Istio**, good for:
-
-- Secure service-to-service communication
-- Traffic mirroring for testing
-- Canary deployments
-- Golden metrics (latency, success rate, throughput)
-
-**See**: `docs/SERVICE-MESH.md` for detailed comparison
+Cilium provides equivalent mTLS capabilities natively via eBPF without sidecar overhead.
+See `docs/02-architecture/service-mesh.md` for current strategy.
 
 ---
 
@@ -460,8 +453,8 @@ telepresence intercept my-service --port 8080
 
 ### Lower Priority (Future Exploration)
 
-1. **Cilium** - CNI upgrade (complex migration)
-2. **Linkerd** - Service mesh (adds complexity)
+1. ~~**Cilium** - CNI upgrade~~ ✅ Completed (Dec 2024)
+2. ~~**Linkerd** - Service mesh~~ Removed - using Cilium mTLS instead
 3. **Falco** - Runtime security
 
 ---

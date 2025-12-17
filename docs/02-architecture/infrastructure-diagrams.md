@@ -118,7 +118,6 @@ flowchart TB
 ```mermaid
 flowchart TB
     subgraph L7["Layer 7 - Application"]
-        Linkerd[Linkerd Service Mesh<br/>mTLS, Observability]
         Traefik[Traefik Ingress<br/>IngressRoutes, TLS Term]
     end
 
@@ -126,8 +125,8 @@ flowchart TB
         Liqo[Liqo Federation<br/>Virtual Nodes<br/>Pod Offloading]
     end
 
-    subgraph L3Pod["Layer 3 - Pod Network"]
-        Flannel[Flannel CNI<br/>VXLAN<br/>10.244.0.0/16]
+    subgraph L3Pod["Layer 3 - Pod/Service Mesh"]
+        Cilium[Cilium CNI<br/>eBPF, mTLS, Network Policies<br/>10.244.0.0/16]
     end
 
     subgraph L3Node["Layer 3 - Node Overlay"]
@@ -139,29 +138,26 @@ flowchart TB
     end
 
     External[External Traffic] --> Traefik
-    Traefik --> Linkerd
-    Linkerd --> Flannel
-    Flannel --> Liqo
+    Traefik --> Cilium
+    Cilium --> Liqo
     Liqo --> Nebula
     Nebula --> Physical
 
-    style Linkerd fill:#2beda7,color:#000
+    style Cilium fill:#F8C517,color:#000
     style Traefik fill:#24a1c1,color:#fff
     style Liqo fill:#6366F1,color:#fff
-    style Flannel fill:#1e3a5f,color:#fff
     style Nebula fill:#7B68EE,color:#fff
 ```
 
 ### Network Layer Details
 
-| Layer        | Component | CIDR/Protocol   | Purpose                                                             |
-| ------------ | --------- | --------------- | ------------------------------------------------------------------- |
-| L7 (Mesh)    | Linkerd   | mTLS            | Service-to-service encryption, observability (active on scratch ns) |
-| L7 (Ingress) | Traefik   | HTTP/HTTPS      | External access, routing, TLS termination                           |
-| L4-L7        | Liqo      | Virtual Kubelet | Multi-cluster federation, pod offloading                            |
-| L3 (Pod)     | Flannel   | 10.244.0.0/16   | Intra-cluster pod networking                                        |
-| L3 (Overlay) | Nebula    | 10.42.0.0/16    | Encrypted inter-node tunnels                                        |
-| L2-L3        | Physical  | 192.168.1.0/24  | Home network                                                        |
+| Layer        | Component | CIDR/Protocol   | Purpose                                                  |
+| ------------ | --------- | --------------- | -------------------------------------------------------- |
+| L7 (Ingress) | Traefik   | HTTP/HTTPS      | External access, routing, TLS termination                |
+| L4-L7        | Liqo      | Virtual Kubelet | Multi-cluster federation, pod offloading                 |
+| L3 (CNI)     | Cilium    | 10.244.0.0/16   | Pod networking, eBPF, mTLS, network policies, Hubble     |
+| L3 (Overlay) | Nebula    | 10.42.0.0/16    | Encrypted inter-node tunnels                             |
+| L2-L3        | Physical  | 192.168.1.0/24  | Home network                                             |
 
 ---
 
@@ -199,7 +195,7 @@ flowchart TB
     subgraph HybridComponents["Hybrid Cluster Components"]
         NebulaAgent[Nebula Agent<br/>DaemonSet]
         LiqoCtrl[Liqo Controller<br/>Federation]
-        LinkerdCP[Linkerd<br/>Control Plane]
+        CiliumAgent[Cilium Agent<br/>eBPF CNI + Mesh]
         VirtualNode[Virtual Node<br/>liqo-aws-gpu]
     end
 
@@ -233,7 +229,6 @@ flowchart LR
         registry[registry]
         monitoring[monitoring]
         observability[observability]
-        linkerd[linkerd]
         nebula[nebula-system]
         liqo[liqo-system]
         eso[external-secrets]
@@ -514,41 +509,41 @@ flowchart LR
 
 ## Service Mesh Integration
 
-### Linkerd + Nebula + Liqo Stack
+### Cilium + Nebula + Liqo Stack
 
 ```mermaid
 flowchart TB
     subgraph HomelabCluster["Homelab Cluster"]
-        subgraph MeshedPods["Meshed Pods (scratch ns)"]
-            PodA[Pod A<br/>+ Linkerd Proxy]
-            PodB[Pod B<br/>+ Linkerd Proxy]
+        subgraph MeshedPods["Pods (Cilium eBPF)"]
+            PodA[Pod A]
+            PodB[Pod B]
         end
 
-        LinkerdCP2[Linkerd<br/>Control Plane]
+        CiliumAgent2[Cilium Agent<br/>eBPF + Hubble]
         LiqoVK[Liqo<br/>Virtual Kubelet]
         NebulaD[Nebula<br/>DaemonSet]
     end
 
     subgraph AWSCluster["AWS GPU Cluster"]
         subgraph OffloadedPods["Offloaded Pods"]
-            GPUPod[Ollama Pod<br/>+ Linkerd Proxy]
+            GPUPod[Ollama Pod]
         end
 
         LiqoProvider[Liqo<br/>Provider]
         NebulaD2[Nebula<br/>Agent]
     end
 
-    PodA <-->|mTLS| PodB
+    PodA <-->|eBPF mTLS| PodB
     PodA <-->|mTLS via Liqo| GPUPod
 
-    LinkerdCP2 -.->|Inject| MeshedPods
+    CiliumAgent2 -.->|eBPF Datapath| MeshedPods
     LiqoVK <-->|Peering| LiqoProvider
     NebulaD <-->|Encrypted Tunnel| NebulaD2
 
-    style PodA fill:#2beda7,color:#000
-    style PodB fill:#2beda7,color:#000
+    style PodA fill:#F8C517,color:#000
+    style PodB fill:#F8C517,color:#000
     style GPUPod fill:#FF9900,color:#fff
-    style LinkerdCP2 fill:#2beda7,color:#000
+    style CiliumAgent2 fill:#F8C517,color:#000
     style LiqoVK fill:#6366F1,color:#fff
     style NebulaD fill:#7B68EE,color:#fff
 ```
@@ -559,7 +554,7 @@ flowchart TB
 flowchart TB
     subgraph Encryption["Encryption Layers"]
         L1[Layer 1: Nebula<br/>Node-to-Node<br/>AES-256-GCM]
-        L2[Layer 2: Linkerd<br/>Pod-to-Pod<br/>mTLS]
+        L2[Layer 2: Cilium<br/>Pod-to-Pod<br/>eBPF mTLS]
         L3[Layer 3: Traefik<br/>Client-to-Ingress<br/>TLS 1.3]
     end
 
@@ -569,7 +564,7 @@ flowchart TB
     L1 --> Pod[Target Pod]
 
     style L1 fill:#7B68EE,color:#fff
-    style L2 fill:#2beda7,color:#000
+    style L2 fill:#F8C517,color:#000
     style L3 fill:#24a1c1,color:#fff
 ```
 

@@ -200,7 +200,6 @@ Largest savings opportunities:
 | Workload                              | Change                                        |
 | ------------------------------------- | --------------------------------------------- |
 | All media apps (sonarr, radarr, etc.) | Reduce CPU from 25m to 5m                     |
-| All linkerd components                | Keep as-is (low usage, low requests)          |
 | coredns (x2)                          | Reduce from 100m to 15m CPU, 70Mi to 35Mi mem |
 | flux controllers                      | Increase memory, decrease CPU                 |
 

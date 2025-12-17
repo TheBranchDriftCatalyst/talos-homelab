@@ -63,26 +63,6 @@ kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
   wget -qO- 'http://localhost:9090/api/v1/query?query=traefik_config_reloads_total'
 ```
 
-### Linkerd Service Mesh Dashboards
-
-| ID    | Name               | Status         | Description                  |
-| ----- | ------------------ | -------------- | ---------------------------- |
-| 15474 | Linkerd Top Line   | Requires Setup | Service mesh overview        |
-| 15475 | Linkerd Deployment | Requires Setup | Deployment-level metrics     |
-| 15481 | Linkerd Route      | Requires Setup | Route and path metrics       |
-| 15484 | Linkerd DaemonSet  | Requires Setup | DaemonSet workload metrics   |
-| 14274 | Linkerd Service    | Requires Setup | Service-level golden signals |
-
-**Prerequisites:**
-
-1. Linkerd control plane installed: `./scripts/deploy-linkerd.sh install`
-2. Linkerd Viz extension: `./scripts/deploy-linkerd-viz.sh install`
-
-**Data Sources Required:**
-
-- Linkerd proxy sidecar metrics (PodMonitor)
-- Linkerd control plane metrics (ServiceMonitor)
-
 ### ArgoCD GitOps Dashboards
 
 | ID    | Name                            | Status      | Description                                   |
@@ -215,7 +195,6 @@ kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
 | Issue                   | Solution                                                   |
 | ----------------------- | ---------------------------------------------------------- |
 | Traefik metrics missing | Check `traefik-metrics` service exists with correct labels |
-| Linkerd metrics missing | Install linkerd-viz extension                              |
 | Pod metrics not working | Ensure kubelet ServiceMonitor is active                    |
 | Node metrics gaps       | Check node-exporter DaemonSet                              |
 
@@ -310,7 +289,6 @@ spec:
 ## External Resources
 
 - [Grafana Dashboards](https://grafana.com/grafana/dashboards/)
-- [Linkerd Dashboards](https://grafana.com/orgs/linkerd/dashboards)
 - [Prometheus Operator](https://prometheus-operator.dev/)
 - [Liqo Metrics](https://docs.liqo.io/en/stable/usage/prometheus-metrics.html)
 - [Nebula Monitoring](https://deepwiki.com/slackhq/nebula/6.2-monitoring-and-metrics)
