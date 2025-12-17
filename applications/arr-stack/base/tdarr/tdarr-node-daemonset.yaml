@@ -1,0 +1,99 @@
+---
+# Tdarr CPU Worker Nodes
+# Runs on all non-GPU nodes to provide distributed CPU transcoding
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tdarr-node
+  labels:
+    app: tdarr-node
+    app.kubernetes.io/name: tdarr-node
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  selector:
+    matchLabels:
+      app: tdarr-node
+  template:
+    metadata:
+      labels:
+        app: tdarr-node
+        app.kubernetes.io/name: tdarr-node
+    spec:
+      # Don't run on GPU node (already has internal node)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/gpu-worker
+                    operator: DoesNotExist
+
+      containers:
+        - name: tdarr-node
+          image: ghcr.io/haveagitgat/tdarr_node:2.58.02
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: PUID
+              value: '1000'
+            - name: PGID
+              value: '1000'
+            - name: TZ
+              value: 'America/Los_Angeles'
+            # Connect to Tdarr server
+            - name: serverIP
+              value: 'tdarr.media.svc.cluster.local'
+            - name: serverPort
+              value: '8266'
+            - name: inContainer
+              value: 'true'
+            - name: ffmpegVersion
+              value: '6'
+            # Node name from hostname
+            - name: nodeName
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+
+          volumeMounts:
+            - name: transcode-cache
+              mountPath: /temp
+            # TrueNAS media libraries
+            - name: truenas-movies
+              mountPath: /media/truenas/movies
+            - name: truenas-tv
+              mountPath: /media/truenas/tv
+            # Synology media libraries
+            - name: synology-movies
+              mountPath: /media/synology/movies
+            - name: synology-tv
+              mountPath: /media/synology/tv
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+
+      volumes:
+        # Local transcode cache (memory-backed for speed)
+        - name: transcode-cache
+          emptyDir:
+            medium: Memory
+            sizeLimit: 4Gi
+        # TrueNAS media libraries
+        - name: truenas-movies
+          persistentVolumeClaim:
+            claimName: truenas-movies
+        - name: truenas-tv
+          persistentVolumeClaim:
+            claimName: truenas-tv
+        # Synology media libraries
+        - name: synology-movies
+          persistentVolumeClaim:
+            claimName: synology-movies
+        - name: synology-tv
+          persistentVolumeClaim:
+            claimName: synology-tv
