@@ -29,7 +29,7 @@ spec:
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
+            readOnlyRootFilesystem: false  # Authelia needs to write /app/.healthcheck.env
             capabilities:
               drop:
                 - ALL
@@ -38,6 +38,9 @@ spec:
               containerPort: 9091
               protocol: TCP
           env:
+            # Disable env var config parsing (K8s service discovery creates AUTHELIA_* vars)
+            - name: X_AUTHELIA_CONFIG_FILTERS
+              value: template
             - name: AUTHELIA_JWT_SECRET_FILE
               value: /secrets/JWT_SECRET
             - name: AUTHELIA_SESSION_SECRET_FILE
@@ -92,10 +95,11 @@ spec:
         - name: data
           emptyDir: {}
 ---
+# Service named 'auth' to avoid AUTHELIA_* env vars conflicting with config
 apiVersion: v1
 kind: Service
 metadata:
-  name: authelia
+  name: auth
   namespace: authelia
   labels:
     app: authelia
