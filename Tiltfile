@@ -206,6 +206,50 @@ k8s_attach('tdarr', 'deployment/tdarr', namespace='media',
            port_forwards=['8265:8265'], labels=[LABEL_MEDIA])
 k8s_attach('homepage', 'deployment/homepage', namespace='media',
            port_forwards=['3001:3000'], labels=[LABEL_MEDIA])
+k8s_attach('kometa', 'deployment/kometa', namespace='media', labels=[LABEL_MEDIA])
+k8s_attach('posterizarr', 'deployment/posterizarr', namespace='media',
+           port_forwards=['8000:8000'], labels=[LABEL_MEDIA])
+k8s_attach('tautulli', 'deployment/tautulli', namespace='media',
+           port_forwards=['8181:8181'], labels=[LABEL_MEDIA])
+k8s_attach('posterr', 'deployment/posterr', namespace='media',
+           port_forwards=['3002:3000'], labels=[LABEL_MEDIA])
+
+# Kometa ops buttons
+cmd_button(
+    name='btn-kometa-run',
+    resource='kometa',
+    argv=['sh', '-c', '''
+        echo "Starting Kometa run..." && \
+        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run && \
+        echo "Kometa run complete"
+    '''],
+    text='Run Now',
+    icon_name='play_arrow'
+)
+
+cmd_button(
+    name='btn-kometa-overlays',
+    resource='kometa',
+    argv=['sh', '-c', '''
+        echo "Running Kometa overlays only..." && \
+        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run --overlays-only && \
+        echo "Overlays complete"
+    '''],
+    text='Overlays Only',
+    icon_name='layers'
+)
+
+cmd_button(
+    name='btn-kometa-collections',
+    resource='kometa',
+    argv=['sh', '-c', '''
+        echo "Running Kometa collections only..." && \
+        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run --collections-only && \
+        echo "Collections complete"
+    '''],
+    text='Collections Only',
+    icon_name='folder_special'
+)
 
 cmd_button(
     name='btn-sync-api-keys',
