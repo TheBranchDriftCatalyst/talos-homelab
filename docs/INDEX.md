@@ -68,7 +68,7 @@ Level 5: Reference        → Deep technical details
 | [GitOps Responsibilities](02-architecture/gitops-responsibilities.md)     | Component breakdown                       | Mid      | ⭐⭐     |
 | [Networking & Ingress](02-architecture/networking.md)                     | Traefik, IngressRoutes                    | Deep     | ⭐⭐     |
 | [Observability Architecture](02-architecture/observability.md)            | Monitoring & logging design               | Deep     | ⭐⭐     |
-| [Service Mesh Strategy](02-architecture/service-mesh.md)                  | Linkerd, Istio, hybrid cluster mesh       | Deep     | ⭐       |
+| [Service Mesh Strategy](02-architecture/service-mesh.md)                  | Cilium mTLS, eBPF service mesh            | Deep     | ⭐       |
 | [Auth Implementation Guide](02-architecture/auth-implementation-guide.md) | LDAP, Authelia, Authentik planning        | Deep     | ⭐       |
 
 **Read these if:** You need to understand how the system works before making changes.
@@ -80,7 +80,7 @@ Level 5: Reference        → Deep technical details
 - Prometheus + Grafana + OpenSearch stack
 - Storage architecture
 - Nebula VPN + Liqo multi-cluster federation
-- Service mesh with Linkerd
+- Service mesh with Cilium (eBPF)
 
 ---
 

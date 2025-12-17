@@ -9,7 +9,7 @@ Grafana dashboards are managed as **GrafanaDashboard CRDs** via the grafana-oper
 - **Deployment:** `kubectl apply -k infrastructure/base/monitoring/grafana-dashboards/`
 - **Access:** http://grafana.talos00 (admin / prom-operator)
 - **Auto-sync:** 10-minute resync period
-- **Dashboard count:** 37 dashboards across 9 categories
+- **Dashboard count:** 32 dashboards across 8 categories
 
 ## Quick Reference
 
@@ -86,18 +86,6 @@ kubectl describe grafanadashboard -n monitoring cilium-agent
 | -------------------- | ---------------------- | -------------- | --------------------------------------------- |
 | argocd-notifications | argocd-dashboards.yaml | 19975          | ArgoCD notification delivery status           |
 | goldilocks-vpa       | gitops-dashboards.yaml | Custom         | VPA recommendations for resource optimization |
-
-### Linkerd Service Mesh (5 dashboards)
-
-| Dashboard          | File                    | Grafana.com ID | Description                   |
-| ------------------ | ----------------------- | -------------- | ----------------------------- |
-| linkerd-top-line   | linkerd-dashboards.yaml | 15474          | Top-line service mesh metrics |
-| linkerd-deployment | linkerd-dashboards.yaml | 15475          | Deployment-level mesh metrics |
-| linkerd-route      | linkerd-dashboards.yaml | 15481          | Route-level traffic analysis  |
-| linkerd-service    | linkerd-dashboards.yaml | 15484          | Service-level mesh metrics    |
-| linkerd-daemonset  | linkerd-dashboards.yaml | 14274          | DaemonSet mesh metrics        |
-
-**Note:** Linkerd dashboards require `linkerd-viz` to be installed.
 
 ### Observability Stack (3 dashboards)
 
@@ -222,7 +210,7 @@ spec:
 
 **Label Standards:**
 
-- `dashboard-category`: Use consistent categories (cilium, kubernetes, infrastructure, traefik, argocd, linkerd, observability, hybrid-cluster, custom)
+- `dashboard-category`: Use consistent categories (cilium, kubernetes, infrastructure, traefik, argocd, observability, hybrid-cluster, custom)
 - `app.kubernetes.io/component: dashboard`: Required for all dashboards
 
 **kustomization.yaml:**

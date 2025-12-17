@@ -13,7 +13,7 @@ This section documents the architectural patterns, design decisions, and infrast
 | [networking.md](networking.md)                               | Traefik v3 ingress controller architecture and IngressRoute configuration                     | Adding new services or configuring ingress routing           |
 | [observability.md](observability.md)                         | Monitoring and logging stack architecture (Prometheus, Grafana, OpenSearch, Graylog)          | Setting up monitoring or troubleshooting observability stack |
 | [infrastructure-diagrams.md](infrastructure-diagrams.md)     | Visual diagrams of cluster architecture and component relationships                           | Understanding overall system design                          |
-| [service-mesh.md](service-mesh.md)                           | **PLANNING** - Service mesh strategy (Linkerd, Istio) for hybrid cluster integration          | Evaluating service mesh implementation                       |
+| [service-mesh.md](service-mesh.md)                           | Service mesh strategy - Cilium eBPF mTLS for hybrid cluster integration                       | Understanding service mesh implementation                    |
 | [auth-implementation-guide.md](auth-implementation-guide.md) | **PLANNING** - Authentication and authorization patterns (LDAP, Authelia, Authentik)          | Implementing cluster-wide authentication                     |
 
 ## Key Concepts
@@ -47,7 +47,7 @@ This section documents the architectural patterns, design decisions, and infrast
 
 ### Planning Enhancements
 
-- [Service mesh evaluation](service-mesh.md) - Comparing Linkerd vs. Istio
+- [Service mesh strategy](service-mesh.md) - Cilium eBPF mTLS approach
 - [Authentication patterns](auth-implementation-guide.md) - LDAP, Authelia, Authentik comparison
 - [Infrastructure diagrams](infrastructure-diagrams.md) - Visualizing architecture
 

@@ -1,6 +1,12 @@
 # Service Mesh Strategy
 
-This document tracks the service mesh implementation strategy for the talos-homelab hybrid cluster.
+This document describes the service mesh implementation strategy for the talos-homelab hybrid cluster.
+
+## TL;DR
+
+**Cilium eBPF** is the chosen service mesh solution. It provides mTLS encryption using SPIFFE identities without sidecar proxies, leveraging eBPF at the kernel level for minimal overhead and seamless integration with our existing Cilium CNI.
+
+**Status**: Cilium CNI deployed, mTLS enablement pending (tracked in beads).
 
 ## Current Network Architecture
 
@@ -32,298 +38,244 @@ This document tracks the service mesh implementation strategy for the talos-home
 
 ## Network Layer Stack
 
-| Layer                 | Component              | Purpose                                                 |
-| --------------------- | ---------------------- | ------------------------------------------------------- |
-| L7 (Application)      | **Service Mesh** (TBD) | mTLS, observability, traffic management                 |
-| L7 (Ingress)          | Traefik                | External access, IngressRoutes                          |
-| L4-L7 (Multi-cluster) | Liqo                   | Virtual nodes, pod offloading, cross-cluster networking |
-| L3 (Overlay)          | Flannel CNI            | Pod-to-pod networking within cluster                    |
-| L3 (Underlay)         | Nebula VPN             | Encrypted node-to-node tunnels across internet          |
+| Layer                 | Component          | Purpose                                                 |
+| --------------------- | ------------------ | ------------------------------------------------------- |
+| L7 (Service Mesh)     | **Cilium mTLS**    | Pod-to-pod mTLS encryption via SPIFFE                   |
+| L7 (Ingress)          | Traefik            | External access, IngressRoutes                          |
+| L4-L7 (Multi-cluster) | Liqo               | Virtual nodes, pod offloading, cross-cluster networking |
+| L3 (CNI)              | Cilium             | Pod-to-pod networking, network policies, eBPF           |
+| L3 (Underlay)         | Nebula VPN         | Encrypted node-to-node tunnels across internet          |
 
-## Service Mesh Options Analysis
+## Why Cilium for Service Mesh
 
-### Option 1: Linkerd (Recommended)
+### Decision: Cilium over Linkerd
 
-**Pros:**
+After evaluating Linkerd in the scratch namespace, we decided to use Cilium's built-in service mesh capabilities instead:
 
-- Lightweight (~20MB per proxy)
-- Simple installation and operation
-- Automatic mTLS with zero config
-- Low learning curve
-- Great for multi-node + hybrid setups
+**Reasons for choosing Cilium:**
 
-**Cons:**
+1. **Already deployed as CNI** - No additional components needed
+2. **eBPF-based** - No sidecar proxies, lower resource overhead
+3. **Unified networking stack** - CNI + Network Policies + Service Mesh in one
+4. **Simpler operations** - Fewer moving parts to maintain
+5. **Better observability** - Hubble already provides deep network visibility
+6. **Lower latency** - No proxy hop for pod-to-pod traffic
 
-- Fewer advanced features than Istio
-- Less ecosystem tooling
+**Why Linkerd was removed:**
 
-**Resource Impact:**
+- Additional resource overhead (~400MB RAM for control plane + proxies)
+- Added operational complexity (separate control plane, sidecar injection)
+- Limited adoption in the cluster (only scratch namespace meshed)
+- Cilium provides equivalent mTLS capabilities natively
 
-- Control plane: ~200MB RAM
-- Per-pod proxy: ~20MB RAM
+### Comparison Matrix
 
-### Option 2: Istio
+| Feature              | Cilium          | Linkerd         | Istio        |
+| -------------------- | --------------- | --------------- | ------------ |
+| Architecture         | eBPF (kernel)   | Sidecar proxy   | Sidecar proxy|
+| mTLS Support         | SPIFFE          | Built-in        | Built-in     |
+| Resource Overhead    | Minimal         | ~20MB/pod       | ~100MB/pod   |
+| Control Plane Memory | N/A (integrated)| ~200MB          | ~1GB         |
+| Network Policies     | Native          | Separate        | Separate     |
+| Observability        | Hubble          | Linkerd-viz     | Kiali        |
+| Learning Curve       | Low (already CNI)| Medium         | High         |
 
-**Pros:**
+## Cilium mTLS Implementation
 
-- Feature-rich (traffic management, security policies)
-- Large ecosystem
-- Advanced observability
+### SPIFFE Identity
 
-**Cons:**
+Cilium uses SPIFFE (Secure Production Identity Framework for Everyone) for workload identity:
 
-- Heavy resource footprint (~100MB per proxy)
-- Complex configuration
-- Overkill for homelab
-
-**Resource Impact:**
-
-- Control plane: ~1GB RAM
-- Per-pod proxy: ~50-100MB RAM
-
-### Option 3: Cilium (eBPF-based)
-
-**Pros:**
-
-- eBPF-based (no sidecars for some features)
-- Can replace CNI + provide mesh features
-- Network policies built-in
-- Lower overhead than sidecar-based meshes
-
-**Cons:**
-
-- Requires Linux kernel 5.4+
-- More complex to understand
-- Talos compatibility needs verification
-
-### Option 4: No Service Mesh (Current State)
-
-**Current Security:**
-
-- Nebula: Node-to-node encryption
-- Liqo: Cross-cluster networking
-- No pod-to-pod mTLS within cluster
-
-**When this is sufficient:**
-
-- Trusted internal network
-- No compliance requirements
-- Acceptable to trust pod-to-pod traffic
-
-## Recommendation
-
-**Start with Linkerd** for the scratch namespace as a learning exercise, then evaluate for broader adoption.
-
-### Why Linkerd for this setup
-
-1. **Hybrid-friendly**: Works well with multi-cluster setups
-2. **Liqo compatible**: Can mesh across virtual nodes
-3. **Nebula synergy**: Defense-in-depth (Nebula encrypts node traffic, Linkerd encrypts pod traffic)
-4. **Low overhead**: Important for homelab cluster
-5. **gRPC native**: Optimized for gRPC traffic (like our scratch examples)
-
-## Implementation Plan
-
-### Phase 1: Scratch Namespace PoC ✅ COMPLETE
-
-- [x] Install Linkerd control plane
-- [x] Inject into scratch namespace only
-- [x] Verify gRPC services work with mTLS (grpc-go ↔ grpc-python)
-- [ ] Test observability (metrics, traces)
-- [ ] Document learnings
-
-### Phase 2: Evaluate for Hybrid
-
-- [ ] Test with Liqo virtual nodes
-- [ ] Verify cross-cluster mTLS works
-- [ ] Measure latency impact (homelab <-> EC2)
-- [ ] Test failure scenarios
-
-### Phase 3: Production Rollout (if successful)
-
-- [ ] Inject into media namespace
-- [ ] Inject into monitoring namespace
-- [ ] Configure traffic policies
-- [ ] Set up dashboards
-
-## Linkerd Installation (Phase 1)
-
-```bash
-# Install CLI
-curl -sL https://run.linkerd.io/install | sh
-export PATH=$PATH:$HOME/.linkerd2/bin
-
-# Verify cluster readiness
-linkerd check --pre
-
-# Install CRDs
-linkerd install --crds | kubectl apply -f -
-
-# Install control plane
-linkerd install | kubectl apply -f -
-
-# Verify installation
-linkerd check
-
-# Inject into scratch namespace
-kubectl annotate namespace scratch linkerd.io/inject=enabled
-
-# Restart deployments to get sidecars
-kubectl rollout restart deployment -n scratch
 ```
+spiffe://cluster.local/ns/<namespace>/sa/<service-account>
+```
+
+Each pod gets a cryptographic identity based on its Kubernetes service account.
+
+### Enabling mTLS
+
+To enable Cilium mTLS authentication, update the Cilium configuration:
+
+```yaml
+# configs/cilium-values.yaml
+authentication:
+  enabled: true
+  mutual:
+    spire:
+      enabled: true
+      install:
+        enabled: true
+```
+
+Or use Cilium Network Policies with authentication requirements:
+
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: require-mtls
+  namespace: catalyst-llm
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {}
+      authentication:
+        mode: required
+```
+
+### Deployment Steps (Pending)
+
+1. Update `configs/cilium-values.yaml` with authentication settings
+2. Regenerate Cilium manifest: `helm template cilium cilium/cilium ...`
+3. Apply updated manifest: `kubectl apply -f configs/cilium-manifest.yaml`
+4. Verify SPIRE agent is running: `kubectl get pods -n kube-system -l app=spire-agent`
+5. Apply CiliumNetworkPolicies to require mTLS for sensitive namespaces
 
 ## Integration with Existing Stack
 
-### Nebula + Linkerd
+### Nebula + Cilium mTLS
 
 ```
-Pod A (scratch) ──► Linkerd Proxy ──► Nebula Tunnel ──► Linkerd Proxy ──► Pod B (AWS)
-                    (mTLS L7)         (encrypted L3)    (mTLS L7)
+Pod A ──► Cilium (eBPF mTLS) ──► Nebula Tunnel ──► Cilium (eBPF mTLS) ──► Pod B
+          (encrypted L7)         (encrypted L3)    (encrypted L7)
 ```
 
 Both encryption layers are complementary:
 
 - **Nebula**: Protects against network-level attacks between nodes
-- **Linkerd**: Protects against compromised pods, provides identity verification
+- **Cilium mTLS**: Protects against compromised pods, provides identity verification
 
-### Liqo + Linkerd
+### Liqo + Cilium
 
-Liqo creates virtual nodes that represent the AWS cluster. Linkerd should:
+Liqo creates virtual nodes that represent the AWS cluster. Cilium should:
 
-1. Inject sidecars into pods regardless of where they're scheduled
+1. Provide network policies across Liqo peered clusters
 2. Establish mTLS connections across the Liqo network fabric
 3. Provide end-to-end encryption for offloaded pods
 
-**Testing needed**: Verify Linkerd's multi-cluster features work with Liqo's networking model.
+**Note**: Cross-cluster mTLS with Liqo requires testing.
 
-### Traefik + Linkerd
+### Traefik + Cilium
 
-Traefik handles north-south traffic (external ingress), Linkerd handles east-west (service-to-service):
+Traefik handles north-south traffic (external ingress), Cilium handles east-west (service-to-service):
 
 ```
-Internet ──► Traefik (Ingress) ──► Linkerd Proxy ──► Service
+Internet ──► Traefik (Ingress) ──► Cilium ──► Service
+                                   (mTLS)
 ```
 
-Options:
+## Observability
 
-1. **Traefik outside mesh**: Traefik terminates external TLS, forwards to Linkerd-meshed services
-2. **Traefik inside mesh**: Inject Linkerd into Traefik pods for full mesh coverage
+### Hubble Network Observability
 
-Recommend Option 1 initially for simplicity.
+Cilium includes Hubble for network observability:
 
-## Security Considerations
+```bash
+# Enable Hubble UI
+kubectl port-forward -n kube-system svc/hubble-ui 12000:80
+open http://localhost:12000
 
-### mTLS Certificate Management
-
-Linkerd uses its own CA for mTLS certificates:
-
-- Auto-generated on install
-- Can integrate with cert-manager for production
-- Certificates rotate automatically
-
-### Network Policies
-
-Consider adding network policies alongside service mesh:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: scratch-isolation
-  namespace: scratch
-spec:
-  podSelector: {}
-  policyTypes:
-    - Ingress
-    - Egress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              name: scratch
-        - namespaceSelector:
-            matchLabels:
-              name: traefik
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              name: scratch
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              name: monitoring
-      ports:
-        - port: 9090 # Prometheus scrape
-```
-
-## Observability Integration
-
-### Prometheus Metrics
-
-Linkerd exposes Prometheus metrics:
-
-- `linkerd_proxy_*` - Proxy-level metrics
-- `request_total` - Request counts by route
-- `response_latency_ms` - Latency histograms
-
-Add ServiceMonitor:
-
-```yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: linkerd
-  namespace: monitoring
-spec:
-  selector:
-    matchLabels:
-      linkerd.io/control-plane-ns: linkerd
-  namespaceSelector:
-    matchNames:
-      - linkerd
-  endpoints:
-    - port: admin-http
+# CLI access
+hubble observe --namespace catalyst-llm
+hubble observe --verdict DROPPED
 ```
 
 ### Grafana Dashboards
 
-Linkerd provides official Grafana dashboards:
+Cilium dashboards are deployed to Grafana:
 
-- Linkerd Health
-- Linkerd Top Line
-- Linkerd Deployment
-- Linkerd Route
+- `cilium-agent` - Agent pod metrics, BPF operations
+- `cilium-operator` - Operator metrics, IPAM
+- `cilium-hubble` - Flow metrics, network observability
+- `cilium-hubble-flows` - Detailed L3/L4/L7 traffic
+- `cilium-policy-verdicts` - Network policy decisions
+
+### Prometheus Metrics
+
+Cilium exposes Prometheus metrics via ServiceMonitor:
+
+```promql
+# Policy verdict rate
+sum(rate(cilium_policy_verdict_total[5m])) by (verdict)
+
+# mTLS connection status
+cilium_auth_mutual_count_total
+
+# Flow metrics
+hubble_flows_processed_total
+```
+
+## Security Considerations
+
+### Network Policies
+
+Cilium network policies provide L3-L7 filtering:
+
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: api-access
+  namespace: catalyst-llm
+spec:
+  endpointSelector:
+    matchLabels:
+      app: api-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: frontend
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+          rules:
+            http:
+              - method: GET
+                path: "/api/.*"
+```
+
+### Zero Trust Model
+
+With Cilium mTLS enabled:
+
+1. All pod-to-pod traffic is encrypted
+2. Pods are authenticated via SPIFFE identity
+3. Network policies can require authentication
+4. No implicit trust between pods
 
 ## Cost Impact
 
-### Resource Usage (Linkerd)
+### Resource Usage (Cilium mTLS)
 
-| Component             | CPU      | Memory    |
-| --------------------- | -------- | --------- |
-| Control Plane (total) | 100m     | 200Mi     |
-| Per-pod proxy         | 10m      | 20Mi      |
-| 10 meshed pods        | 100m     | 200Mi     |
-| **Total (10 pods)**   | **200m** | **400Mi** |
+| Component        | CPU     | Memory   |
+| ---------------- | ------- | -------- |
+| Cilium Agent     | 100m    | 300Mi    |
+| Hubble Relay     | 50m     | 100Mi    |
+| SPIRE Agent      | 50m     | 128Mi    |
+| **Per Node**     | ~200m   | ~530Mi   |
 
-Acceptable for homelab cluster with distributed workload.
+Compared to Linkerd:
 
-## Open Questions
+- No per-pod sidecar overhead
+- Control plane resources already allocated (Cilium agent)
+- Additional SPIRE agent for mTLS certificates
 
-1. **Liqo compatibility**: Does Linkerd multi-cluster work with Liqo's virtual node model?
-2. **Talos specifics**: Any Talos-specific configuration needed for Linkerd?
-3. **GPU pods**: Should Ollama/LLM pods be meshed? (probably not - adds latency)
-4. **Nebula interaction**: Ensure no MTU issues with double encryption
+## Related Beads Issues
+
+- **TALOS-cpl** - Enable Cilium mTLS service mesh (blocked by linkerd removal)
+- **TALOS-bxh** - Remove linkerd completely (completed)
 
 ## References
 
-- [Linkerd Documentation](https://linkerd.io/docs/)
-- [Linkerd Multi-cluster](https://linkerd.io/2.14/features/multicluster/)
-- [Liqo Documentation](https://docs.liqo.io/)
-- [Nebula VPN](https://github.com/slackhq/nebula)
+- [Cilium Service Mesh](https://docs.cilium.io/en/stable/network/servicemesh/)
+- [Cilium Authentication](https://docs.cilium.io/en/stable/network/servicemesh/mutual-authentication/)
+- [SPIFFE Documentation](https://spiffe.io/docs/)
+- [Hubble Documentation](https://docs.cilium.io/en/stable/observability/hubble/)
 
 ---
 
-**Last Updated**: 2025-11-30
-**Status**: Active (scratch namespace)
-**Current State**: Linkerd control plane running, scratch namespace pods have sidecars injected
+**Last Updated**: 2025-12-17
+**Status**: Cilium CNI deployed, mTLS pending
+**Previous State**: Linkerd removed (was in scratch namespace only)
