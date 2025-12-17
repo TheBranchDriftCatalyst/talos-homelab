@@ -1,0 +1,41 @@
+---
+# whoami with Authelia authentication - test e2e TLS + auth flow
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami
+  namespace: default
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`whoami.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - name: authelia
+          namespace: authelia
+      services:
+        - name: whoami
+          port: 80
+  tls:
+    # Reference secret from traefik namespace where the wildcard cert lives
+    secretName: traefik/knowledgedump-wildcard-tls
+---
+# HTTP redirect to HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami-http
+  namespace: default
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`whoami.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: whoami
+          port: 80
