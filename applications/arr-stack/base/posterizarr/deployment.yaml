@@ -1,0 +1,79 @@
+---
+# Posterizarr - Automated poster maker for Plex
+# Downloads textless posters from Fanart.tv, TMDB, TVDB
+# Integrates with Kometa for asset organization
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: posterizarr
+  labels:
+    app: posterizarr
+    app.kubernetes.io/name: posterizarr
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: posterizarr
+  template:
+    metadata:
+      labels:
+        app: posterizarr
+        app.kubernetes.io/name: posterizarr
+    spec:
+      containers:
+        - name: posterizarr
+          image: ghcr.io/fscorrupt/posterizarr:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: 'America/Los_Angeles'
+            - name: TERM
+              value: 'xterm'
+            # RUN_TIME: disabled = manual/webhook only, or set to "HH:MM" for scheduled
+            - name: RUN_TIME
+              value: 'disabled'
+            - name: PUID
+              value: '1000'
+            - name: PGID
+              value: '1000'
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            # Shared asset directory with Kometa
+            - name: kometa-config
+              mountPath: /assets
+              subPath: assets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: posterizarr-config
+        # Share Kometa's config PVC for asset directory
+        - name: kometa-config
+          persistentVolumeClaim:
+            claimName: kometa-config
