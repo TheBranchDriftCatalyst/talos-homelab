@@ -312,6 +312,12 @@ spec:
               regex         = "true"
               action        = "keep"
             }
+            // Exclude cilium-operator (handled by dedicated scraper with io_cilium_app label)
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              regex         = "cilium-operator"
+              action        = "drop"
+            }
             // Use custom path if specified
             rule {
               source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
@@ -500,6 +506,64 @@ spec:
             job_name        = "hubble"
             targets         = discovery.relabel.hubble_metrics.output
             // 30s interval for compatibility with dashboard rate[1m] windows
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Cilium Operator Metrics (port 9963)
+          // ----------------------------------------
+          discovery.relabel "cilium_operator" {
+            targets = discovery.kubernetes.pods.targets
+
+            // Keep only cilium-operator pods
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              regex         = "cilium-operator"
+              action        = "keep"
+            }
+            // Set metrics port to 9963
+            rule {
+              source_labels = ["__address__"]
+              regex         = "([^:]+)(?::\\d+)?"
+              replacement   = "$1:9963"
+              target_label  = "__address__"
+            }
+            // Pod name label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            // Node label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // Namespace
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            // Add io_cilium_app label for dashboard compatibility
+            rule {
+              target_label = "io_cilium_app"
+              replacement  = "operator"
+            }
+            // k8s_app label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+              target_label  = "k8s_app"
+            }
+            // Cluster label
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "cilium_operator" {
+            job_name        = "cilium-operator"
+            targets         = discovery.relabel.cilium_operator.output
             scrape_interval = "30s"
             forward_to      = [prometheus.relabel.add_cluster.receiver]
           }
