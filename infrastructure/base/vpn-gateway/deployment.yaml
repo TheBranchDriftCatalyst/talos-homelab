@@ -16,6 +16,10 @@ spec:
       labels:
         app.kubernetes.io/name: gluetun
         app.kubernetes.io/component: vpn-gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
         - name: gluetun
@@ -58,7 +62,7 @@ spec:
             - name: FIREWALL_OUTBOUND_SUBNETS
               value: "10.244.0.0/16,10.96.0.0/12"
             - name: FIREWALL_INPUT_PORTS
-              value: "8888,8388,9999,8000,1080"
+              value: "8888,8388,9999,8000,1080,9091"
             - name: HEALTH_SERVER_ADDRESS
               value: "0.0.0.0:9999"
             - name: HTTP_CONTROL_SERVER_ADDRESS
@@ -104,3 +108,31 @@ spec:
             limits:
               memory: "64Mi"
               cpu: "100m"
+        # Gluetun metrics exporter - exposes VPN status for Prometheus
+        - name: gluetun-exporter
+          image: busybox:1.36
+          command: ["/bin/sh", "/scripts/exporter.sh"]
+          ports:
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+          env:
+            - name: GLUETUN_API
+              value: "http://localhost:8000"
+            - name: METRICS_PORT
+              value: "9091"
+          volumeMounts:
+            - name: exporter-script
+              mountPath: /scripts
+          resources:
+            requests:
+              memory: "8Mi"
+              cpu: "5m"
+            limits:
+              memory: "32Mi"
+              cpu: "50m"
+      volumes:
+        - name: exporter-script
+          configMap:
+            name: gluetun-exporter-script
+            defaultMode: 493  # 0755 in decimal
