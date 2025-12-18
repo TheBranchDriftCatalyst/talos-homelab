@@ -20,6 +20,23 @@ spec:
         app: jellyfin
         app.kubernetes.io/name: jellyfin
     spec:
+      initContainers:
+        # Migrate SQLite databases from NFS to local storage
+        - name: migrate-db
+          image: busybox:latest
+          command: ["/bin/sh", "/scripts/migrate.sh"]
+          env:
+            - name: DB_SOURCE_PATH
+              value: "/config/data/data"
+            - name: DB_LOCAL_PATH
+              value: "/db-local"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: db-local
+              mountPath: /db-local
+            - name: migration-scripts
+              mountPath: /scripts
       containers:
         - name: jellyfin
           image: lscr.io/linuxserver/jellyfin:latest
@@ -64,6 +81,9 @@ spec:
             #   readOnly: true
             - name: transcode
               mountPath: /transcode
+            # Local storage for SQLite databases (symlinked from /config)
+            - name: db-local
+              mountPath: /db-local
           livenessProbe:
             httpGet:
               path: /health
@@ -114,3 +134,12 @@ spec:
         #     claimName: synology-music
         - name: transcode
           emptyDir: {}
+        # Local storage for SQLite databases - avoids NFS locking issues
+        - name: db-local
+          persistentVolumeClaim:
+            claimName: jellyfin-db-local
+        # Shared migration scripts
+        - name: migration-scripts
+          configMap:
+            name: sqlite-db-migration
+            defaultMode: "0755"

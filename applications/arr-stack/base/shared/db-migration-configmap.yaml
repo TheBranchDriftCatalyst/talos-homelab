@@ -1,0 +1,92 @@
+---
+# Shared ConfigMap for SQLite DB migration from NFS to local storage
+# Used by media apps (Plex, Jellyfin) to avoid NFS locking issues
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sqlite-db-migration
+  labels:
+    app.kubernetes.io/component: shared
+    app.kubernetes.io/part-of: arr-stack
+data:
+  migrate.sh: |
+    #!/bin/sh
+    set -e
+
+    # Required env vars:
+    # - DB_SOURCE_PATH: Path to database directory on NFS config volume
+    # - DB_LOCAL_PATH: Path to local storage mount
+    # - DB_FILE_PATTERN: Pattern to match database files (e.g., "*.db")
+
+    echo "=== SQLite DB Migration Init ==="
+    echo "Source: $DB_SOURCE_PATH"
+    echo "Local:  $DB_LOCAL_PATH"
+
+    # Check if local already has databases (not first run)
+    if ls "$DB_LOCAL_PATH"/*.db 1>/dev/null 2>&1; then
+      echo "Local databases exist, skipping migration"
+    else
+      echo "First run - migrating databases to local storage"
+
+      # Check if source databases exist on NFS
+      if [ -d "$DB_SOURCE_PATH" ] && ls "$DB_SOURCE_PATH"/*.db 1>/dev/null 2>&1; then
+        echo "Copying databases from NFS to local..."
+        cp -av "$DB_SOURCE_PATH"/* "$DB_LOCAL_PATH/" 2>/dev/null || true
+        echo "Migration complete"
+      else
+        echo "No existing databases found, app will create fresh ones"
+        mkdir -p "$DB_LOCAL_PATH"
+      fi
+    fi
+
+    # Backup original DB path and create symlink
+    if [ -d "$DB_SOURCE_PATH" ] && [ ! -L "$DB_SOURCE_PATH" ]; then
+      echo "Backing up original NFS database directory..."
+      mv "$DB_SOURCE_PATH" "${DB_SOURCE_PATH}.nfs-backup" || true
+    fi
+
+    # Create parent directory if needed
+    mkdir -p "$(dirname "$DB_SOURCE_PATH")"
+
+    # Create symlink from NFS config location to local storage
+    if [ ! -L "$DB_SOURCE_PATH" ]; then
+      echo "Creating symlink: $DB_SOURCE_PATH -> $DB_LOCAL_PATH"
+      ln -sf "$DB_LOCAL_PATH" "$DB_SOURCE_PATH"
+    fi
+
+    echo "=== Migration complete ==="
+    ls -la "$DB_SOURCE_PATH"
+
+  backup.sh: |
+    #!/bin/sh
+    set -e
+
+    # Required env vars:
+    # - DB_LOCAL_PATH: Path to local storage with databases
+    # - BACKUP_PATH: Path to NFS backup directory
+
+    TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+    echo "=== SQLite DB Backup: $TIMESTAMP ==="
+
+    # Create backup directory if it doesn't exist
+    mkdir -p "$BACKUP_PATH"
+
+    # Check if local databases exist
+    if ! ls "$DB_LOCAL_PATH"/*.db 1>/dev/null 2>&1; then
+      echo "ERROR: No local databases found to backup"
+      exit 1
+    fi
+
+    # Backup all database files
+    echo "Backing up databases..."
+    cp -av "$DB_LOCAL_PATH"/*.db "$BACKUP_PATH/" 2>/dev/null || true
+    cp -av "$DB_LOCAL_PATH"/*.db-shm "$BACKUP_PATH/" 2>/dev/null || true
+    cp -av "$DB_LOCAL_PATH"/*.db-wal "$BACKUP_PATH/" 2>/dev/null || true
+
+    # Clean old backups (keep last 5 days)
+    echo "Cleaning old backups..."
+    find "$BACKUP_PATH" -name "*.db-*" -mtime +5 -delete 2>/dev/null || true
+
+    echo "=== Backup complete ==="
+    ls -la "$BACKUP_PATH"
+    du -sh "$BACKUP_PATH"

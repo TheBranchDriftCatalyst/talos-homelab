@@ -22,59 +22,22 @@ spec:
     spec:
       hostNetwork: true # Required for Plex discovery
       initContainers:
-        # Migrate SQLite databases from NFS to local storage on first run
+        # Migrate SQLite databases from NFS to local storage
         - name: migrate-db
           image: busybox:latest
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-              DB_PATH="/config/Library/Application Support/Plex Media Server/Plug-in Support/Databases"
-              LOCAL_DB="/db-local"
-
-              echo "=== Plex DB Migration Init ==="
-
-              # Check if local already has databases (not first run)
-              if [ -f "$LOCAL_DB/com.plexapp.plugins.library.db" ]; then
-                echo "Local databases exist, skipping migration"
-                echo "Creating symlink from NFS to local..."
-              else
-                echo "First run - migrating databases to local storage"
-
-                # Check if source databases exist on NFS
-                if [ -d "$DB_PATH" ] && [ -f "$DB_PATH/com.plexapp.plugins.library.db" ]; then
-                  echo "Copying databases from NFS to local..."
-                  cp -av "$DB_PATH"/* "$LOCAL_DB/" || true
-                  echo "Migration complete"
-                else
-                  echo "No existing databases found, Plex will create fresh ones"
-                  mkdir -p "$LOCAL_DB"
-                fi
-              fi
-
-              # Backup original DB path and create symlink
-              if [ -d "$DB_PATH" ] && [ ! -L "$DB_PATH" ]; then
-                echo "Backing up original NFS databases directory..."
-                mv "$DB_PATH" "${DB_PATH}.nfs-backup" || true
-              fi
-
-              # Create parent directory if needed
-              mkdir -p "$(dirname "$DB_PATH")"
-
-              # Create symlink from NFS config location to local storage
-              if [ ! -L "$DB_PATH" ]; then
-                echo "Creating symlink: $DB_PATH -> $LOCAL_DB"
-                ln -sf "$LOCAL_DB" "$DB_PATH"
-              fi
-
-              echo "=== Migration complete ==="
-              ls -la "$DB_PATH"
+          command: ["/bin/sh", "/scripts/migrate.sh"]
+          env:
+            - name: DB_SOURCE_PATH
+              value: "/config/Library/Application Support/Plex Media Server/Plug-in Support/Databases"
+            - name: DB_LOCAL_PATH
+              value: "/db-local"
           volumeMounts:
             - name: config
               mountPath: /config
             - name: db-local
               mountPath: /db-local
+            - name: migration-scripts
+              mountPath: /scripts
       containers:
         - name: plex
           image: lscr.io/linuxserver/plex:latest
@@ -177,3 +140,8 @@ spec:
         - name: db-local
           persistentVolumeClaim:
             claimName: plex-db-local
+        # Shared migration scripts
+        - name: migration-scripts
+          configMap:
+            name: sqlite-db-migration
+            defaultMode: "0755"

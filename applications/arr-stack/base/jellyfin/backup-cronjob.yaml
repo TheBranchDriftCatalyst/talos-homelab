@@ -1,12 +1,12 @@
 ---
-# CronJob to backup Plex SQLite databases from local storage to NFS
+# CronJob to backup Jellyfin SQLite databases from local storage to NFS
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: plex-db-backup
+  name: jellyfin-db-backup
   labels:
-    app: plex
-    app.kubernetes.io/name: plex-db-backup
+    app: jellyfin
+    app.kubernetes.io/name: jellyfin-db-backup
     app.kubernetes.io/part-of: arr-stack
 spec:
   schedule: "0 */6 * * *" # Every 6 hours
@@ -26,7 +26,7 @@ spec:
                 - name: DB_LOCAL_PATH
                   value: "/db-local"
                 - name: BACKUP_PATH
-                  value: "/config-nfs/Library/Application Support/Plex Media Server/Plug-in Support/Databases.backup"
+                  value: "/config-nfs/data/data.backup"
               volumeMounts:
                 - name: config-nfs
                   mountPath: /config-nfs
@@ -38,10 +38,10 @@ spec:
           volumes:
             - name: config-nfs
               persistentVolumeClaim:
-                claimName: plex-config
+                claimName: jellyfin-config
             - name: db-local
               persistentVolumeClaim:
-                claimName: plex-db-local
+                claimName: jellyfin-db-local
             - name: backup-scripts
               configMap:
                 name: sqlite-db-migration
