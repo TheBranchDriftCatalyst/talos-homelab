@@ -1,0 +1,352 @@
+---
+# VPN Gateway Dashboard - Gluetun with ProtonVPN WireGuard
+# Monitors VPN tunnel traffic, proxy connections, and status
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: vpn-gateway
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: networking
+spec:
+  folder: 'Networking'
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "description": "VPN Gateway monitoring - Gluetun with ProtonVPN WireGuard",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+          "id": 100,
+          "panels": [],
+          "title": "VPN Status",
+          "type": "row"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "mappings": [
+                {"options": {"0": {"color": "red", "text": "DOWN"}}, "type": "value"},
+                {"options": {"1": {"color": "green", "text": "UP"}}, "type": "value"}
+              ],
+              "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}
+            }
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+          "id": 1,
+          "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "kube_deployment_status_replicas_ready{namespace=\"vpn-gateway\", deployment=\"gluetun\"}", "legendFormat": "VPN Gateway"}],
+          "title": "VPN Status",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+          "id": 2,
+          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "kube_pod_container_status_running{namespace=\"vpn-gateway\", container=\"gluetun\"} + kube_pod_container_status_running{namespace=\"vpn-gateway\", container=\"socks5-proxy\"}", "legendFormat": "Containers"}],
+          "title": "Running Containers",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+          "id": 3,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "sum(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"})", "legendFormat": "Total RX"}],
+          "title": "Total VPN Downloaded",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+          "id": 4,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "sum(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"})", "legendFormat": "Total TX"}],
+          "title": "Total VPN Uploaded",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]},
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+          "id": 5,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "kube_pod_container_status_restarts_total{namespace=\"vpn-gateway\", container=\"gluetun\"}", "legendFormat": "Restarts"}],
+          "title": "Container Restarts",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]},
+              "unit": "s"
+            }
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+          "id": 6,
+          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "time() - kube_pod_start_time{namespace=\"vpn-gateway\", pod=~\"gluetun.*\"}", "legendFormat": "Uptime"}],
+          "title": "Pod Uptime",
+          "type": "stat"
+        },
+        {
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+          "id": 101,
+          "panels": [],
+          "title": "VPN Tunnel Bandwidth (tun0)",
+          "type": "row"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 30, "gradientMode": "opacity", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}},
+              "unit": "Bps"
+            },
+            "overrides": [
+              {"matcher": {"id": "byRegexp", "options": ".*TX.*"}, "properties": [{"id": "custom.transform", "value": "negative-Y"}]}
+            ]
+          },
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 6},
+          "id": 10,
+          "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "targets": [
+            {"expr": "rate(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m])", "legendFormat": "VPN RX (Download)"},
+            {"expr": "rate(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m])", "legendFormat": "VPN TX (Upload)"}
+          ],
+          "title": "VPN Tunnel Bandwidth",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 16},
+          "id": 102,
+          "panels": [],
+          "title": "Pod Network Traffic (eth0)",
+          "type": "row"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 20, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}},
+              "unit": "Bps"
+            },
+            "overrides": [
+              {"matcher": {"id": "byRegexp", "options": ".*TX.*"}, "properties": [{"id": "custom.transform", "value": "negative-Y"}]}
+            ]
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 17},
+          "id": 20,
+          "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "targets": [
+            {"expr": "rate(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"eth0\"}[5m])", "legendFormat": "Pod RX"},
+            {"expr": "rate(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"eth0\"}[5m])", "legendFormat": "Pod TX"}
+          ],
+          "title": "Pod Network (Cluster Traffic)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 20, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}},
+              "unit": "pps"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 17},
+          "id": 21,
+          "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "targets": [
+            {"expr": "rate(container_network_receive_packets_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m])", "legendFormat": "VPN Packets RX"},
+            {"expr": "rate(container_network_transmit_packets_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m])", "legendFormat": "VPN Packets TX"}
+          ],
+          "title": "VPN Packet Rate",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25},
+          "id": 103,
+          "panels": [],
+          "title": "Resource Usage",
+          "type": "row"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 20, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}},
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
+          "id": 30,
+          "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "targets": [
+            {"expr": "rate(container_cpu_usage_seconds_total{namespace=\"vpn-gateway\", container=\"gluetun\"}[5m]) * 1000", "legendFormat": "gluetun CPU (millicores)"},
+            {"expr": "rate(container_cpu_usage_seconds_total{namespace=\"vpn-gateway\", container=\"socks5-proxy\"}[5m]) * 1000", "legendFormat": "socks5-proxy CPU (millicores)"}
+          ],
+          "title": "CPU Usage",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 20, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 26},
+          "id": 31,
+          "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "targets": [
+            {"expr": "container_memory_working_set_bytes{namespace=\"vpn-gateway\", container=\"gluetun\"}", "legendFormat": "gluetun Memory"},
+            {"expr": "container_memory_working_set_bytes{namespace=\"vpn-gateway\", container=\"socks5-proxy\"}", "legendFormat": "socks5-proxy Memory"}
+          ],
+          "title": "Memory Usage",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 34},
+          "id": 104,
+          "panels": [],
+          "title": "Network Errors",
+          "type": "row"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "smooth", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}},
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 6, "w": 12, "x": 0, "y": 35},
+          "id": 40,
+          "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "targets": [
+            {"expr": "rate(container_network_receive_errors_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m])", "legendFormat": "VPN RX Errors"},
+            {"expr": "rate(container_network_transmit_errors_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m])", "legendFormat": "VPN TX Errors"}
+          ],
+          "title": "VPN Tunnel Errors",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "custom": {"axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false}, "lineInterpolation": "smooth", "lineWidth": 1, "pointSize": 5, "scaleDistribution": {"type": "linear"}, "showPoints": "never", "spanNulls": true, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}},
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 6, "w": 12, "x": 12, "y": 35},
+          "id": 41,
+          "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+          "targets": [
+            {"expr": "rate(container_network_receive_packets_dropped_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m])", "legendFormat": "VPN RX Drops"},
+            {"expr": "rate(container_network_transmit_packets_dropped_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m])", "legendFormat": "VPN TX Drops"}
+          ],
+          "title": "VPN Dropped Packets",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "tags": ["vpn", "gluetun", "wireguard", "networking", "proxy"],
+      "templating": {
+        "list": [
+          {
+            "current": {},
+            "hide": 0,
+            "includeAll": false,
+            "label": "Data Source",
+            "multi": false,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "regex": "",
+            "skipUrlSync": false,
+            "type": "datasource"
+          }
+        ]
+      },
+      "time": {"from": "now-6h", "to": "now"},
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "VPN Gateway",
+      "uid": "vpn-gateway",
+      "version": 1,
+      "weekStart": ""
+    }
