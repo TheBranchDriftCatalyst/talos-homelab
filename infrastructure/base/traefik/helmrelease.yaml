@@ -43,12 +43,12 @@ spec:
     deployment:
       kind: DaemonSet # Use DaemonSet for hostPort binding
       replicas: 1
-      # Single-node cluster fix: allow killing old pod before new one starts
-      # Required when using hostPorts since two pods can't bind same port
+      # HostPort rollout fix: terminate all old pods before starting new ones
+      # Accepts brief downtime to avoid hostPort binding conflicts during rollouts
       updateStrategy:
         type: RollingUpdate
         rollingUpdate:
-          maxUnavailable: 1
+          maxUnavailable: "100%"  # All pods can be unavailable - recreate-like behavior
           maxSurge: 0
 
     # Service configuration
@@ -89,6 +89,13 @@ spec:
         exposedPort: 8080
         protocol: TCP
         hostPort: 8080
+        expose:
+          default: true
+      shadowsocks:
+        port: 8388
+        exposedPort: 8388
+        protocol: TCP
+        hostPort: 8388
         expose:
           default: true
 

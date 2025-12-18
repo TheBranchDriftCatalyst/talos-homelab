@@ -1,0 +1,207 @@
+---
+# SecureXNG - SearXNG with gluetun sidecar for transparent VPN routing
+# Uses same VPN credentials as main gateway for unified exit IP
+# VPN rotation: restart main gluetun or update credential secret
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: securexng
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+    app.kubernetes.io/component: secure-search
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: securexng
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: securexng
+        app.kubernetes.io/component: secure-search
+      annotations:
+        policy.cilium.io/proxy-visibility: "<Egress/443/TCP/HTTP>"
+    spec:
+      containers:
+        # Gluetun sidecar - same VPN server as main gateway
+        - name: gluetun
+          image: qmcgaw/gluetun:latest
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: "protonvpn"
+            - name: VPN_TYPE
+              value: "wireguard"
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: protonvpn-credentials
+                  key: se-de-1  # Different server from main gateway
+            - name: WIREGUARD_ADDRESSES
+              value: "10.2.0.2/32"
+            - name: SERVER_COUNTRIES
+              value: "Germany"
+            - name: HTTPPROXY
+              value: "off"
+            - name: SHADOWSOCKS
+              value: "off"
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              value: "10.244.0.0/16,10.96.0.0/12"
+            - name: FIREWALL_INPUT_PORTS
+              value: "8080"  # SearXNG port
+            - name: LOG_LEVEL
+              value: "info"
+            - name: DOT
+              value: "off"  # Fixes IPv6 rule error in Kubernetes
+          livenessProbe:
+            exec:
+              command: ["wget", "-q", "--spider", "https://ifconfig.me"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "25m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+
+        # SearXNG - all traffic routes through gluetun VPN
+        - name: searxng
+          image: searxng/searxng:latest
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SEARXNG_BASE_URL
+              value: "https://securexng.talos00"
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: securexng-secret
+                  key: secret
+                  optional: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/searxng
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+      volumes:
+        - name: config
+          emptyDir: {}  # Fresh config each restart for privacy
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: securexng
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: securexng
+---
+# Secret for SearXNG (generate random secret)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: securexng-secret
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+type: Opaque
+stringData:
+  secret: "securexng-vpn-protected-instance"
+---
+# TLS Certificate for mTLS (external clients)
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: mtls-strict
+  namespace: vpn-gateway
+spec:
+  minVersion: VersionTLS12
+  clientAuth:
+    # Require client certificate for external access
+    clientAuthType: RequireAndVerifyClientCert
+    # Reference to CA secret for client cert validation
+    secretNames:
+      - securexng-ca
+---
+# IngressRoute with mTLS - requires client certificate
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: securexng
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+    app.kubernetes.io/component: ingress
+  annotations:
+    description: "VPN-protected SearXNG with mTLS client authentication"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`securexng.talos00`)
+      kind: Rule
+      services:
+        - name: securexng
+          port: 8080
+  tls:
+    # Use mTLS options for external access
+    options:
+      name: mtls-strict
+      namespace: vpn-gateway
+---
+# HTTP endpoint for testing (can remove in production)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: securexng-http
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+    app.kubernetes.io/component: ingress
+  annotations:
+    description: "VPN-protected SearXNG - HTTP access for testing"
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`securexng.talos00`)
+      kind: Rule
+      services:
+        - name: securexng
+          port: 8080
+# NOTE: Cilium Network Policies for mTLS between pods would go here
+# Currently disabled - gluetun sidecar handles VPN routing internally
+# For pod-to-pod mTLS with central gateway, see TALOS-adp (dynamic proxy UI)
