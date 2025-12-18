@@ -653,6 +653,47 @@ spec:
           }
 
           // ----------------------------------------
+          // Traefik Metrics (Ingress controller)
+          // ----------------------------------------
+          discovery.relabel "traefik" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only traefik-metrics service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "traefik-metrics"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "traefik" {
+            job_name        = "traefik"
+            targets         = discovery.relabel.traefik.output
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
           // Service Monitors (prometheus.io annotated services)
           // ----------------------------------------
           discovery.relabel "service_monitors" {
