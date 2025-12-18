@@ -1,0 +1,70 @@
+---
+# CronJob to backup Plex SQLite databases from local storage to NFS
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: plex-db-backup
+  labels:
+    app: plex
+    app.kubernetes.io/name: plex-db-backup
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  schedule: "0 */6 * * *" # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: busybox:latest
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  PMS="/config-nfs/Library/Application Support/Plex Media Server"
+                  BACKUP_DIR="$PMS/Plug-in Support/Databases.backup"
+                  LOCAL_DB="/db-local"
+                  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+
+                  echo "=== Plex DB Backup: $TIMESTAMP ==="
+
+                  # Create backup directory if it doesn't exist
+                  mkdir -p "$BACKUP_DIR"
+
+                  # Check if local databases exist
+                  if [ ! -f "$LOCAL_DB/com.plexapp.plugins.library.db" ]; then
+                    echo "ERROR: No local databases found to backup"
+                    exit 1
+                  fi
+
+                  # Create timestamped backup
+                  echo "Backing up databases..."
+                  cp -av "$LOCAL_DB"/*.db "$BACKUP_DIR/" 2>/dev/null || true
+                  cp -av "$LOCAL_DB"/*.db-shm "$BACKUP_DIR/" 2>/dev/null || true
+                  cp -av "$LOCAL_DB"/*.db-wal "$BACKUP_DIR/" 2>/dev/null || true
+
+                  # Keep only last 5 days of backups (clean old timestamped dirs)
+                  echo "Cleaning old backups..."
+                  find "$BACKUP_DIR" -name "*.db-*" -mtime +5 -delete 2>/dev/null || true
+
+                  echo "=== Backup complete ==="
+                  ls -la "$BACKUP_DIR"
+                  du -sh "$BACKUP_DIR"
+              volumeMounts:
+                - name: config-nfs
+                  mountPath: /config-nfs
+                - name: db-local
+                  mountPath: /db-local
+                  readOnly: true
+          volumes:
+            - name: config-nfs
+              persistentVolumeClaim:
+                claimName: plex-config
+            - name: db-local
+              persistentVolumeClaim:
+                claimName: plex-db-local
