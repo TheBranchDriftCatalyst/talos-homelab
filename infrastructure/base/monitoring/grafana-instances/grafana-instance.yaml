@@ -9,7 +9,8 @@ metadata:
   labels:
     dashboards: 'grafana'
 spec:
-  # Deploy Grafana (not external reference)
+  # Use external secret for admin credentials (from 1Password via ESO)
+  # Disable auto-generated admin secret
   deployment:
     spec:
       replicas: 1
@@ -23,6 +24,17 @@ spec:
                   memory: 128Mi
                 limits:
                   memory: 512Mi
+              env:
+                - name: GF_SECURITY_ADMIN_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-admin-credentials
+                      key: GF_SECURITY_ADMIN_USER
+                - name: GF_SECURITY_ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-admin-credentials
+                      key: GF_SECURITY_ADMIN_PASSWORD
 
   # Grafana configuration
   config:
