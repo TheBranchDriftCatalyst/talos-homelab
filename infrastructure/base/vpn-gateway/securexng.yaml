@@ -42,7 +42,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: protonvpn-credentials
-                  key: se-de-1  # Different server from main gateway
+                  key: se-de-1  # Germany server - different from main gateway (Netherlands)
             - name: WIREGUARD_ADDRESSES
               value: "10.2.0.2/32"
             - name: SERVER_COUNTRIES
@@ -63,9 +63,11 @@ spec:
               value: "off"  # Fixes IPv6 rule error in Kubernetes
           livenessProbe:
             exec:
-              command: ["wget", "-q", "--spider", "https://ifconfig.me"]
-            initialDelaySeconds: 30
+              command: ["wget", "-q", "--spider", "-T", "10", "https://ifconfig.me"]
+            initialDelaySeconds: 60
             periodSeconds: 60
+            timeoutSeconds: 15
+            failureThreshold: 3
           resources:
             requests:
               memory: "64Mi"
