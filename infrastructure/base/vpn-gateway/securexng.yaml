@@ -61,13 +61,16 @@ spec:
               value: "info"
             - name: DOT
               value: "off"  # Fixes IPv6 rule error in Kubernetes
+          # Use internal gluetun health API instead of external site
+          # External checks (ifconfig.me) are unreliable and cause false restarts
           livenessProbe:
-            exec:
-              command: ["wget", "-q", "--spider", "-T", "10", "https://ifconfig.me"]
+            httpGet:
+              path: /v1/vpn/status
+              port: 8000
             initialDelaySeconds: 60
-            periodSeconds: 60
-            timeoutSeconds: 15
-            failureThreshold: 3
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
           resources:
             requests:
               memory: "64Mi"
