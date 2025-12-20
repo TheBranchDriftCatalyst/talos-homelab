@@ -124,9 +124,57 @@ Prevent KEDA and Descheduler from conflicting.
 3. PodDisruptionBudgets required for all rebalanced workloads
 4. Descheduler runs on schedule (not continuous) to avoid thrashing
 
+### Strategy 4: Control Plane Isolation
+
+Taint the control plane node to prevent non-core workloads from scheduling there.
+
+**Taint Configuration:**
+```yaml
+machine:
+  nodeTaints:
+    node-role.kubernetes.io/control-plane: "NoSchedule"
+```
+
+**Core Infrastructure (tolerations required):**
+| Namespace | Workloads | Notes |
+|-----------|-----------|-------|
+| kube-system | All | Already has default tolerations |
+| cert-manager | All | PKI management |
+| external-secrets | All | Secrets management |
+| flux-system | All | GitOps controller |
+| argocd | All | GitOps controller |
+| traefik | DaemonSet | Ingress (runs everywhere) |
+| liqo | All | Cluster federation |
+| cilium-spire | All | Service mesh identity |
+| local-path-storage | All | Storage provisioner |
+| node-feature-discovery | DaemonSet | Runs everywhere |
+
+**Workloads to Migrate (no tolerations):**
+| Namespace | Move To | Workloads |
+|-----------|---------|-----------|
+| catalyst, catalyst-llm | talos01/02 | Apps |
+| media, media-private | talos01/02/03 | Media apps |
+| monitoring | talos02-gpu | Observability (high memory) |
+| minio, registry | talos02-gpu | Storage (high memory) |
+| scratch | talos01 | Development |
+| vpn-gateway | talos01 | VPN |
+| authentik | talos01 | Auth |
+| infra-control | talos01 | Dashboards |
+
+**Implementation Order:**
+1. Add tolerations to core infrastructure deployments
+2. Apply taint via Talos machine config
+3. Restart/delete non-core pods to trigger rescheduling
+
 ---
 
 ## Implementation Plan
+
+### Phase 0: Control Plane Isolation (New)
+
+| Task | Beads ID | Status | Dependencies |
+|------|----------|--------|--------------|
+| Taint control plane | TALOS-84bs | Open | - |
 
 ### Phase 1: Foundation
 
@@ -245,9 +293,10 @@ From Goldilocks (subset of high-impact recommendations):
 
 | ID | Title | Type | Status |
 |----|-------|------|--------|
+| TALOS-84bs | Taint control plane to prevent non-core scheduling | task | open |
 | TALOS-b1gd | Integrate KEDA for event-driven autoscaling | feature | open |
 | TALOS-l13q | Create llm-scaler-v2 as KEDA-based POC | feature | open |
 | TALOS-txzj | Fix hybrid cluster (Liqo) connectivity | bug | open |
 | TALOS-hcv1 | Define KEDA + Descheduler coordination policy | task | open |
 | TALOS-4dz3 | Integrate Descheduler for workload rebalancing | feature | open |
-| TALOS-668 | (Duplicate) Descheduler integration | feature | open |
+| ~~TALOS-668~~ | ~~(Duplicate) Descheduler integration~~ | ~~feature~~ | closed |
