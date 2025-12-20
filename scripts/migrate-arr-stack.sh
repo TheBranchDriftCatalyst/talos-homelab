@@ -68,8 +68,8 @@ done
 
 # Validate APP
 case "$APP" in
-  sonarr|radarr|prowlarr|all) ;;
-  *) die "Invalid app: $APP. Must be sonarr, radarr, prowlarr, or all" ;;
+  sonarr|radarr|prowlarr|sabnzbd|all) ;;
+  *) die "Invalid app: $APP. Must be sonarr, radarr, prowlarr, sabnzbd, or all" ;;
 esac
 
 log "=== Arr-Stack Migration ==="
@@ -96,29 +96,34 @@ preflight_checks() {
   # Check source directories
   local apps_to_check=()
   case "$APP" in
-    all) apps_to_check=(sonarr radarr prowlarr) ;;
+    all) apps_to_check=(sonarr radarr prowlarr sabnzbd) ;;
     *) apps_to_check=("$APP") ;;
   esac
 
   for app in "${apps_to_check[@]}"; do
     local source_path
-    if [ "$app" = "prowlarr" ]; then
-      source_path="$DROGON_BASE/prowlarr"
-    else
-      source_path="$DROGON_BASE/arrs/$app"
-    fi
+    case "$app" in
+      prowlarr|sabnzbd) source_path="$DROGON_BASE/$app" ;;
+      *) source_path="$DROGON_BASE/arrs/$app" ;;
+    esac
 
     if [ ! -d "$source_path" ]; then
       die "Source not found: $source_path"
     fi
     success "Source exists: $source_path"
 
-    # Check for critical files
-    if [ ! -f "$source_path/config.xml" ]; then
-      warn "config.xml missing in $source_path"
-    fi
-    if [ ! -d "$source_path/asp" ]; then
-      warn "asp/ directory missing in $source_path (encrypted credentials won't work)"
+    # Check for critical files (sabnzbd uses .ini, others use config.xml)
+    if [ "$app" = "sabnzbd" ]; then
+      if [ ! -f "$source_path/sabnzbd.ini" ]; then
+        warn "sabnzbd.ini missing in $source_path"
+      fi
+    else
+      if [ ! -f "$source_path/config.xml" ]; then
+        warn "config.xml missing in $source_path"
+      fi
+      if [ ! -d "$source_path/asp" ]; then
+        warn "asp/ directory missing in $source_path (encrypted credentials won't work)"
+      fi
     fi
   done
 
@@ -210,31 +215,50 @@ copy_to_pvc() {
   kubectl wait --for=condition=ready pod "$pod_name" -n "$NAMESPACE" --timeout=60s
 
   # Create directories
-  kubectl exec "$pod_name" -n "$NAMESPACE" -- mkdir -p /config/asp /config/Backups/scheduled
+  kubectl exec "$pod_name" -n "$NAMESPACE" -- mkdir -p /config/asp /config/Backups/scheduled /config/admin
 
-  # Copy config.xml
-  if [ -f "$source_path/config.xml" ]; then
-    log "  Copying config.xml"
-    kubectl cp "$source_path/config.xml" "$NAMESPACE/$pod_name:/config/config.xml"
-  fi
+  # SABnzbd has different config structure
+  if [ "$app" = "sabnzbd" ]; then
+    # Copy sabnzbd.ini
+    if [ -f "$source_path/sabnzbd.ini" ]; then
+      log "  Copying sabnzbd.ini"
+      kubectl cp "$source_path/sabnzbd.ini" "$NAMESPACE/$pod_name:/config/sabnzbd.ini"
+    fi
+    # Copy admin directory
+    if [ -d "$source_path/admin" ]; then
+      log "  Copying admin directory"
+      for admin_file in "$source_path/admin/"*; do
+        if [ -f "$admin_file" ]; then
+          kubectl cp "$admin_file" "$NAMESPACE/$pod_name:/config/admin/$(basename "$admin_file")"
+        fi
+      done
+    fi
+  else
+    # *arr apps use config.xml and asp/
+    # Copy config.xml
+    if [ -f "$source_path/config.xml" ]; then
+      log "  Copying config.xml"
+      kubectl cp "$source_path/config.xml" "$NAMESPACE/$pod_name:/config/config.xml"
+    fi
 
-  # Copy asp/ encryption keys
-  if [ -d "$source_path/asp" ]; then
-    log "  Copying encryption keys (asp/)"
-    for key_file in "$source_path/asp/"*.xml; do
-      if [ -f "$key_file" ]; then
-        kubectl cp "$key_file" "$NAMESPACE/$pod_name:/config/asp/$(basename "$key_file")"
+    # Copy asp/ encryption keys
+    if [ -d "$source_path/asp" ]; then
+      log "  Copying encryption keys (asp/)"
+      for key_file in "$source_path/asp/"*.xml; do
+        if [ -f "$key_file" ]; then
+          kubectl cp "$key_file" "$NAMESPACE/$pod_name:/config/asp/$(basename "$key_file")"
+        fi
+      done
+    fi
+
+    # Copy latest backup
+    if [ -d "$source_path/Backups/scheduled" ]; then
+      local latest_backup
+      latest_backup=$(ls -t "$source_path/Backups/scheduled/"*.zip 2>/dev/null | head -1)
+      if [ -n "$latest_backup" ]; then
+        log "  Copying backup: $(basename "$latest_backup")"
+        kubectl cp "$latest_backup" "$NAMESPACE/$pod_name:/config/Backups/scheduled/$(basename "$latest_backup")"
       fi
-    done
-  fi
-
-  # Copy latest backup
-  if [ -d "$source_path/Backups/scheduled" ]; then
-    local latest_backup
-    latest_backup=$(ls -t "$source_path/Backups/scheduled/"*.zip 2>/dev/null | head -1)
-    if [ -n "$latest_backup" ]; then
-      log "  Copying backup: $(basename "$latest_backup")"
-      kubectl cp "$latest_backup" "$NAMESPACE/$pod_name:/config/Backups/scheduled/$(basename "$latest_backup")"
     fi
   fi
 
@@ -250,6 +274,14 @@ trigger_restore() {
 
   if $SKIP_RESTORE; then
     log "Skipping restore for $app (--skip-restore)"
+    return
+  fi
+
+  # SABnzbd doesn't have backup/restore - config is copied directly
+  if [ "$app" = "sabnzbd" ]; then
+    log "SABnzbd config copied directly (no restore step needed)"
+    log "Verify at: http://${app}.talos00"
+    echo ""
     return
   fi
 
@@ -270,11 +302,10 @@ migrate_app() {
   local app="$1"
   local source_path
 
-  if [ "$app" = "prowlarr" ]; then
-    source_path="$DROGON_BASE/prowlarr"
-  else
-    source_path="$DROGON_BASE/arrs/$app"
-  fi
+  case "$app" in
+    prowlarr|sabnzbd) source_path="$DROGON_BASE/$app" ;;
+    *) source_path="$DROGON_BASE/arrs/$app" ;;
+  esac
 
   log "=== Migrating $app ==="
 
@@ -301,6 +332,7 @@ main() {
       migrate_app "sonarr"
       migrate_app "radarr"
       migrate_app "prowlarr"
+      migrate_app "sabnzbd"
       ;;
     *)
       migrate_app "$APP"
