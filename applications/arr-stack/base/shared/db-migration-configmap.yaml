@@ -80,9 +80,26 @@ data:
     # Ensure local storage dir exists
     mkdir -p "$$DB_LOCAL_PATH"
 
+    # Helper: check if symlink exists and points to correct target
+    symlink_ok() {
+      [ -L "$$1" ] && [ "$$(readlink "$$1")" = "$$2" ]
+    }
+
+    # Check if symlinks are already correctly configured (idempotent check)
+    if symlink_ok "$$DB_FILE" "$$DB_LOCAL_PATH/$${APP_NAME}.db"; then
+      echo "Symlinks already configured correctly, nothing to do"
+      echo ""
+      echo "Config directory:"
+      ls -la "$$CONFIG_PATH"/*.db* 2>/dev/null || echo "No DB files yet"
+      echo ""
+      echo "Local storage:"
+      ls -la "$$DB_LOCAL_PATH/" 2>/dev/null || echo "Empty (app will create)"
+      exit 0
+    fi
+
     # Check if local already has the database (not first run)
     if [ -f "$$DB_LOCAL_PATH/$${APP_NAME}.db" ]; then
-      echo "Local database exists, checking symlink..."
+      echo "Local database exists, ensuring symlinks..."
     else
       echo "First run - checking for existing database on NFS..."
 
@@ -104,14 +121,22 @@ data:
       fi
     fi
 
-    # Create symlinks for database files
+    # Create/fix symlinks for database files (only if needed)
     for ext in "" "-shm" "-wal"; do
       src="$$DB_LOCAL_PATH/$${APP_NAME}.db$${ext}"
       dst="$$CONFIG_PATH/$${APP_NAME}.db$${ext}"
 
-      if [ ! -L "$$dst" ]; then
-        # Remove any existing file (shouldn't exist after backup)
-        rm -f "$$dst" 2>/dev/null || true
+      if symlink_ok "$$dst" "$$src"; then
+        echo "Symlink OK: $$dst -> $$src"
+      elif [ -L "$$dst" ]; then
+        echo "Fixing symlink: $$dst (was: $$(readlink "$$dst"), now: $$src)"
+        rm -f "$$dst"
+        ln -sf "$$src" "$$dst"
+      elif [ -f "$$dst" ]; then
+        echo "WARNING: $$dst is a real file, not a symlink - backing up and replacing"
+        mv "$$dst" "$${dst}.replaced-$$(date +%s)" 2>/dev/null || true
+        ln -sf "$$src" "$$dst"
+      else
         echo "Creating symlink: $$dst -> $$src"
         ln -sf "$$src" "$$dst"
       fi
