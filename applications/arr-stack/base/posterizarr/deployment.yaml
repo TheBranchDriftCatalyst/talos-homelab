@@ -28,6 +28,9 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
+      securityContext:
+        fsGroup: 1000
+        supplementalGroups: [100, 1000]
       initContainers:
         # Fix permissions on shared assets directory (both Posterizarr and Kometa need access)
         - name: fix-permissions
@@ -64,9 +67,10 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
-            # Shared asset directory with Kometa - mount full PVC, use /kometa-config/assets
+            # Posterizarr expects /assets - mount kometa's assets subdir there
             - name: kometa-config
-              mountPath: /kometa-config
+              mountPath: /assets
+              subPath: assets
           resources:
             requests:
               cpu: 200m
@@ -87,7 +91,7 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: posterizarr-config
-        # Share Kometa's config PVC for asset directory
+        # Kometa's config PVC - we mount the 'assets' subdir at /assets
         - name: kometa-config
           persistentVolumeClaim:
             claimName: kometa-config
