@@ -20,6 +20,25 @@ spec:
         app: sonarr
         app.kubernetes.io/name: sonarr
     spec:
+      initContainers:
+        # Migrate SQLite DB from NFS to local storage
+        - name: migrate-db
+          image: busybox:latest
+          command: ['/bin/sh', '/scripts/migrate-arr.sh']
+          env:
+            - name: APP_NAME
+              value: sonarr
+            - name: DB_LOCAL_PATH
+              value: /db-local
+            - name: CONFIG_PATH
+              value: /config
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: db-local
+              mountPath: /db-local
+            - name: migration-scripts
+              mountPath: /scripts
       containers:
         - name: sonarr
           image: lscr.io/linuxserver/sonarr:latest
@@ -34,6 +53,8 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
+            - name: db-local
+              mountPath: /db-local
             # TrueNAS media
             - name: truenas-tv
               mountPath: /data/truenas/tv
@@ -69,6 +90,13 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: sonarr-config
+        - name: db-local
+          persistentVolumeClaim:
+            claimName: sonarr-db-local
+        - name: migration-scripts
+          configMap:
+            name: sqlite-db-migration
+            defaultMode: 0755
         # TrueNAS TV library
         - name: truenas-tv
           persistentVolumeClaim:

@@ -20,6 +20,25 @@ spec:
         app: prowlarr
         app.kubernetes.io/name: prowlarr
     spec:
+      initContainers:
+        # Migrate SQLite DB from NFS to local storage
+        - name: migrate-db
+          image: busybox:latest
+          command: ['/bin/sh', '/scripts/migrate-arr.sh']
+          env:
+            - name: APP_NAME
+              value: prowlarr
+            - name: DB_LOCAL_PATH
+              value: /db-local
+            - name: CONFIG_PATH
+              value: /config
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: db-local
+              mountPath: /db-local
+            - name: migration-scripts
+              mountPath: /scripts
       containers:
         - name: prowlarr
           image: lscr.io/linuxserver/prowlarr:latest
@@ -34,6 +53,8 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
+            - name: db-local
+              mountPath: /db-local
           livenessProbe:
             httpGet:
               path: /ping
@@ -58,3 +79,10 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: prowlarr-config
+        - name: db-local
+          persistentVolumeClaim:
+            claimName: prowlarr-db-local
+        - name: migration-scripts
+          configMap:
+            name: sqlite-db-migration
+            defaultMode: 0755

@@ -1,6 +1,6 @@
 ---
 # Shared ConfigMap for SQLite DB migration from NFS to local storage
-# Used by media apps (Plex, Jellyfin) to avoid NFS locking issues
+# Used by media apps to avoid NFS locking issues with SQLite
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/component: shared
     app.kubernetes.io/part-of: arr-stack
 data:
+  # For apps with DB in subdirectory (Plex, Jellyfin)
   migrate.sh: |
     #!/bin/sh
     set -e
@@ -16,7 +17,6 @@ data:
     # Required env vars:
     # - DB_SOURCE_PATH: Path to database directory on NFS config volume
     # - DB_LOCAL_PATH: Path to local storage mount
-    # - DB_FILE_PATTERN: Pattern to match database files (e.g., "*.db")
 
     echo "=== SQLite DB Migration Init ==="
     echo "Source: $DB_SOURCE_PATH"
@@ -56,6 +56,72 @@ data:
 
     echo "=== Migration complete ==="
     ls -la "$DB_SOURCE_PATH"
+
+  # For *arr apps with DB at /config/app.db (Sonarr, Radarr, Prowlarr, etc.)
+  migrate-arr.sh: |
+    #!/bin/sh
+    set -e
+
+    # Required env vars:
+    # - APP_NAME: Name of the app (sonarr, radarr, prowlarr)
+    # - DB_LOCAL_PATH: Path to local storage mount (e.g., /db-local)
+    # - CONFIG_PATH: Path to config directory (e.g., /config)
+
+    CONFIG_PATH="${CONFIG_PATH:-/config}"
+    DB_FILE="${CONFIG_PATH}/${APP_NAME}.db"
+
+    echo "=== *arr SQLite DB Migration ==="
+    echo "App: $APP_NAME"
+    echo "Config: $CONFIG_PATH"
+    echo "DB File: $DB_FILE"
+    echo "Local Storage: $DB_LOCAL_PATH"
+
+    # Ensure local storage dir exists
+    mkdir -p "$DB_LOCAL_PATH"
+
+    # Check if local already has the database (not first run)
+    if [ -f "$DB_LOCAL_PATH/${APP_NAME}.db" ]; then
+      echo "Local database exists, checking symlink..."
+    else
+      echo "First run - checking for existing database on NFS..."
+
+      # Check if source database exists on NFS (and is not a symlink)
+      if [ -f "$DB_FILE" ] && [ ! -L "$DB_FILE" ]; then
+        echo "Copying database from NFS to local..."
+        cp -av "${DB_FILE}" "$DB_LOCAL_PATH/" 2>/dev/null || true
+        cp -av "${DB_FILE}-shm" "$DB_LOCAL_PATH/" 2>/dev/null || true
+        cp -av "${DB_FILE}-wal" "$DB_LOCAL_PATH/" 2>/dev/null || true
+
+        # Backup original files
+        echo "Backing up original NFS database files..."
+        mv "${DB_FILE}" "${DB_FILE}.nfs-backup" 2>/dev/null || true
+        mv "${DB_FILE}-shm" "${DB_FILE}-shm.nfs-backup" 2>/dev/null || true
+        mv "${DB_FILE}-wal" "${DB_FILE}-wal.nfs-backup" 2>/dev/null || true
+        echo "Migration complete"
+      else
+        echo "No existing database found, app will create fresh one on local storage"
+      fi
+    fi
+
+    # Create symlinks for database files
+    for ext in "" "-shm" "-wal"; do
+      src="${DB_LOCAL_PATH}/${APP_NAME}.db${ext}"
+      dst="${CONFIG_PATH}/${APP_NAME}.db${ext}"
+
+      if [ ! -L "$dst" ]; then
+        # Remove any existing file (shouldn't exist after backup)
+        rm -f "$dst" 2>/dev/null || true
+        echo "Creating symlink: $dst -> $src"
+        ln -sf "$src" "$dst"
+      fi
+    done
+
+    echo "=== Migration complete ==="
+    echo "Config directory:"
+    ls -la "$CONFIG_PATH"/*.db* 2>/dev/null || echo "No DB files yet"
+    echo ""
+    echo "Local storage:"
+    ls -la "$DB_LOCAL_PATH/" 2>/dev/null || echo "Empty (app will create)"
 
   backup.sh: |
     #!/bin/sh
