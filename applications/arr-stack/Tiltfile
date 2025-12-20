@@ -20,6 +20,7 @@ LABEL_ARR = '2-arr-automation'
 LABEL_SERVERS = '3-media-servers'
 LABEL_PLEX_TOOLS = '4-plex-tools'
 LABEL_DASH = '5-dashboard'
+LABEL_OPS = '0-operations'
 
 # ============================================
 # Database
@@ -126,4 +127,58 @@ cmd_button(
         echo "" && echo "Homepage restarted with updated API keys"'''],
     text='Sync API Keys',
     icon_name='sync'
+)
+
+# ============================================
+# Operations (Migration, Maintenance)
+# ============================================
+
+# Migration from Drogon (local docker-compose stack)
+local_resource(
+    name='migration-dry-run',
+    cmd='./scripts/migrate-arr-stack.sh --dry-run',
+    labels=[LABEL_OPS],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-migrate-all',
+    resource='migration-dry-run',
+    argv=['bash', '-c', '''
+        echo "=== Starting Full Migration ===" && \
+        echo "This will migrate Sonarr, Radarr, and Prowlarr from .drogon-app" && \
+        echo "" && \
+        ./scripts/migrate-arr-stack.sh --app=all
+    '''],
+    text='Migrate All Apps',
+    icon_name='cloud_upload',
+    requires_confirmation=True,
+)
+
+cmd_button(
+    name='btn-migrate-sonarr',
+    resource='migration-dry-run',
+    argv=['bash', '-c', './scripts/migrate-arr-stack.sh --app=sonarr'],
+    text='Migrate Sonarr',
+    icon_name='tv',
+    requires_confirmation=True,
+)
+
+cmd_button(
+    name='btn-migrate-radarr',
+    resource='migration-dry-run',
+    argv=['bash', '-c', './scripts/migrate-arr-stack.sh --app=radarr'],
+    text='Migrate Radarr',
+    icon_name='movie',
+    requires_confirmation=True,
+)
+
+cmd_button(
+    name='btn-migrate-prowlarr',
+    resource='migration-dry-run',
+    argv=['bash', '-c', './scripts/migrate-arr-stack.sh --app=prowlarr'],
+    text='Migrate Prowlarr',
+    icon_name='search',
+    requires_confirmation=True,
 )
