@@ -166,6 +166,37 @@ machine:
 2. Apply taint via Talos machine config
 3. Restart/delete non-core pods to trigger rescheduling
 
+### Strategy 5: Karpenter for Hybrid Cloud Scaling
+
+Use Karpenter to provision AWS GPU nodes on-demand for LLM workloads.
+
+**Architecture Flow:**
+```
+User Request → KEDA ScaledObject → Pod Pending (0→1)
+                                        ↓
+                              Karpenter detects unschedulable
+                                        ↓
+                              Provisions g4dn.xlarge spot
+                                        ↓
+                              Liqo federates node
+                                        ↓
+                              Pod schedules on GPU
+                                        ↓
+                              (idle timeout)
+                                        ↓
+                              Karpenter terminates instance
+```
+
+**Components:**
+| Component | Purpose |
+|-----------|---------|
+| KEDA ScaledObject | Triggers scale 0→1 on LLM request |
+| Karpenter NodePool | Defines g4dn.xlarge spot instances |
+| EC2NodeClass | AMI, security groups, IAM role |
+| Liqo | Federates AWS node into homelab |
+
+**This replaces:** Custom llm-scaler with standard Kubernetes primitives
+
 ---
 
 ## Implementation Plan
@@ -184,10 +215,11 @@ machine:
 | Fix Liqo connectivity | TALOS-txzj | Open | - |
 | Define coordination policy | TALOS-hcv1 | Open | TALOS-b1gd |
 
-### Phase 2: KEDA MVP
+### Phase 2: Hybrid Cloud Scaling (KEDA + Karpenter)
 
 | Task | Beads ID | Status | Dependencies |
 |------|----------|--------|--------------|
+| Integrate Karpenter | TALOS-qofw | Open | TALOS-b1gd, TALOS-txzj |
 | Create llm-scaler-v2 (KEDA) | TALOS-l13q | Open | TALOS-b1gd, TALOS-txzj |
 | Add KEDA ScaledObjects for media | - | Planned | TALOS-b1gd |
 
@@ -212,10 +244,14 @@ machine:
 ## Dependency Graph
 
 ```
-TALOS-b1gd: Integrate KEDA
-    │
-    ├──► TALOS-l13q: llm-scaler-v2 (KEDA POC)
-    │        └── blocked by: TALOS-txzj (Fix Liqo)
+TALOS-b1gd: Integrate KEDA ─────────────────────────────┐
+    │                                                   │
+    ├──► TALOS-qofw: Integrate Karpenter ◄──────────────┤
+    │        │                                          │
+    │        └── related: TALOS-l13q (llm-scaler-v2)    │
+    │                                                   │
+    ├──► TALOS-l13q: llm-scaler-v2 (KEDA POC)          │
+    │        └── blocked by: TALOS-txzj (Fix Liqo) ◄───┘
     │
     └──► TALOS-hcv1: KEDA + Descheduler coordination policy
              │
@@ -295,6 +331,7 @@ From Goldilocks (subset of high-impact recommendations):
 |----|-------|------|--------|
 | TALOS-84bs | Taint control plane to prevent non-core scheduling | task | open |
 | TALOS-b1gd | Integrate KEDA for event-driven autoscaling | feature | open |
+| TALOS-qofw | Integrate Karpenter for hybrid-llm node provisioning | feature | open |
 | TALOS-l13q | Create llm-scaler-v2 as KEDA-based POC | feature | open |
 | TALOS-txzj | Fix hybrid cluster (Liqo) connectivity | bug | open |
 | TALOS-hcv1 | Define KEDA + Descheduler coordination policy | task | open |

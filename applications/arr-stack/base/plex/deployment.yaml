@@ -21,6 +21,10 @@ spec:
         app.kubernetes.io/name: plex
     spec:
       hostNetwork: true # Required for Plex discovery
+
+      # GPU device access (Intel QSV on talos02-gpu)
+      securityContext:
+        fsGroup: 44  # video group for /dev/dri access
       initContainers:
         # Migrate SQLite databases from NFS to local storage
         - name: migrate-db
@@ -42,6 +46,11 @@ spec:
         - name: plex
           image: lscr.io/linuxserver/plex:latest
           imagePullPolicy: IfNotPresent
+
+          # Privileged for GPU device access
+          securityContext:
+            privileged: true
+
           env:
             - name: PUID
               value: '1000'
@@ -58,6 +67,9 @@ spec:
               containerPort: 32400
               protocol: TCP
           volumeMounts:
+            # GPU device for hardware transcoding (Intel QSV)
+            - name: dri
+              mountPath: /dev/dri
             - name: config
               mountPath: /config
             # TrueNAS media libraries (read/write for Plex to update metadata)
@@ -104,6 +116,11 @@ spec:
               cpu: 2000m
               memory: 2Gi
       volumes:
+        # GPU device for Intel QSV transcoding
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
         - name: config
           persistentVolumeClaim:
             claimName: plex-config
