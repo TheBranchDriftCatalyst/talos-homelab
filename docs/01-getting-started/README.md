@@ -9,7 +9,6 @@ This section provides essential guides for getting started with the Talos Kubern
 | Topic                                | Description                                           | When to Read                                                |
 | ------------------------------------ | ----------------------------------------------------- | ----------------------------------------------------------- |
 | [quickstart.md](quickstart.md)       | Fast-track cluster setup and common commands          | First time setup, daily operations reference                |
-| [local-testing.md](local-testing.md) | Running Talos cluster locally with Docker for testing | Testing infrastructure changes before deploying to hardware |
 
 ## Key Concepts
 

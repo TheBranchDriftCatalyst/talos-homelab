@@ -75,7 +75,7 @@ spec:
 
 ## Networking & Service Mesh
 
-### Cilium
+### Cilium [DONE]
 
 **What**: eBPF-based CNI with advanced networking features
 **Why**: Better performance, network policies, observability
@@ -408,6 +408,8 @@ spec:
 ---
 
 ## Developer Experience
+
+| We currently use tilt!!! how would that interact here?
 
 ### Telepresence
 
