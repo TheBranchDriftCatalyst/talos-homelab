@@ -22,10 +22,18 @@ spec:
         app: sabnzbd
         app.kubernetes.io/name: sabnzbd
     spec:
+      securityContext:
+        fsGroup: 1000
+        supplementalGroups:
+          - 100   # Synology 'users' group
+          - 1000  # abc user group
       containers:
         - name: sabnzbd
           image: lscr.io/linuxserver/sabnzbd:latest
           imagePullPolicy: IfNotPresent
+          env:
+            - name: HOST_WHITELIST
+              value: "sabnzbd.talos00,sabnzbd,localhost"
           envFrom:
             - configMapRef:
                 name: arr-common-env
