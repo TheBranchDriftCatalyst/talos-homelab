@@ -355,6 +355,69 @@ print_storage_summary() {
   echo ""
 }
 
+# Print detailed infrastructure storage by category (from cluster)
+print_infrastructure_storage() {
+  local prefix="${1:-}"
+
+  print_section "INFRASTRUCTURE STORAGE"
+
+  if [[ ! -f "$CACHE_DIR/${prefix}pvcs.json" ]]; then
+    echo -e "  ${DIM}No PVC data available${RESET}"
+    echo ""
+    return
+  fi
+
+  # Group PVCs by service pattern and display with sizes
+  local categories=(
+    "Indexer:prowlarr"
+    "Media Automation:sonarr radarr readarr overseerr"
+    "Media Servers:plex jellyfin"
+    "Transcoding:tdarr"
+    "Media Management:kometa posterizarr posterr tautulli"
+    "Infrastructure:postgresql homepage"
+  )
+
+  for category_def in "${categories[@]}"; do
+    local category_name="${category_def%%:*}"
+    local services="${category_def#*:}"
+    local found=false
+    local category_output=""
+
+    for service in $services; do
+      # Find all PVCs matching this service
+      local pvcs
+      pvcs=$(jq -r ".items[] | select(.metadata.name | contains(\"$service\")) | .metadata.name + \"|\" + .spec.resources.requests.storage + \"|\" + .status.phase" "$CACHE_DIR/${prefix}pvcs.json" 2> /dev/null)
+
+      if [[ -n "$pvcs" ]]; then
+        found=true
+        while IFS='|' read -r pvc_name size status; do
+          local status_icon="${GREEN}●${RESET}"
+          [[ "$status" != "Bound" ]] && status_icon="${YELLOW}○${RESET}"
+          category_output+="    ${status_icon} ${pvc_name}: ${CYAN}${size}${RESET}\n"
+        done <<< "$pvcs"
+      fi
+    done
+
+    if [[ "$found" == "true" ]]; then
+      echo -e "  ${BOLD}${category_name}${RESET}"
+      echo -e "$category_output"
+    fi
+  done
+
+  # Show transcode cache (emptyDir) info from deployments
+  echo -e "  ${BOLD}Transcode Cache (emptyDir)${RESET}"
+  if [[ -f "$CACHE_DIR/${prefix}deployments.json" ]]; then
+    local cache_info
+    cache_info=$(jq -r '.items[] | select(.metadata.name | contains("tdarr")) | .metadata.name + ":" + (.spec.template.spec.volumes[]? | select(.emptyDir != null) | .emptyDir.sizeLimit // "unlimited")' "$CACHE_DIR/${prefix}deployments.json" 2> /dev/null | sort -u)
+    if [[ -n "$cache_info" ]]; then
+      while IFS=':' read -r deploy_name size; do
+        echo -e "    ${BLUE}◆${RESET} ${deploy_name}: ${CYAN}${size}${RESET} ${DIM}(node-local disk)${RESET}"
+      done <<< "$cache_info"
+    fi
+  fi
+  echo ""
+}
+
 # Print cluster status line
 print_cluster_status() {
   if cluster_healthy; then

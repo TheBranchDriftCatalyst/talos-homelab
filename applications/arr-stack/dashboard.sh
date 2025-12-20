@@ -332,6 +332,9 @@ main() {
   # Storage Summary
   print_storage_summary
 
+  # Infrastructure Storage (detailed by category)
+  print_infrastructure_storage
+
   # Credentials Summary
   print_section "CREDENTIALS"
   print_credentials_table
