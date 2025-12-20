@@ -29,7 +29,7 @@ spec:
           }
         ]
       },
-      "description": "VPN Gateway monitoring - Gluetun with ProtonVPN WireGuard",
+      "description": "VPN Gateway monitoring - Gluetun with ProtonVPN WireGuard (vpn-gateway + media namespaces)",
       "editable": true,
       "fiscalYearStartMonth": 0,
       "graphTooltip": 1,
@@ -60,7 +60,7 @@ spec:
           "id": 1,
           "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "count(kube_pod_container_status_ready{namespace=\"vpn-gateway\", container=\"gluetun\", pod=~\"$service.*\"} == 1)", "legendFormat": "VPN Gateway"}],
+          "targets": [{"expr": "count(kube_pod_container_status_ready{namespace=~\"vpn-gateway|media\", container=\"gluetun\", pod=~\"$service.*\"} == 1)", "legendFormat": "VPN Gateway"}],
           "title": "VPN Status",
           "type": "stat"
         },
@@ -77,7 +77,7 @@ spec:
           "id": 2,
           "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "count(kube_pod_container_status_running{namespace=\"vpn-gateway\", pod=~\"$service.*\"})", "legendFormat": "Containers"}],
+          "targets": [{"expr": "count(kube_pod_container_status_running{namespace=~\"vpn-gateway|media\", pod=~\"$service.*\"})", "legendFormat": "Containers"}],
           "title": "Running Containers",
           "type": "stat"
         },
@@ -94,7 +94,7 @@ spec:
           "id": 3,
           "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "sum(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"})", "legendFormat": "Total RX"}],
+          "targets": [{"expr": "sum(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"})", "legendFormat": "Total RX"}],
           "title": "Total VPN Downloaded",
           "type": "stat"
         },
@@ -111,7 +111,7 @@ spec:
           "id": 4,
           "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "sum(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"})", "legendFormat": "Total TX"}],
+          "targets": [{"expr": "sum(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"})", "legendFormat": "Total TX"}],
           "title": "Total VPN Uploaded",
           "type": "stat"
         },
@@ -128,7 +128,7 @@ spec:
           "id": 5,
           "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "sum(kube_pod_container_status_restarts_total{namespace=\"vpn-gateway\", container=\"gluetun\", pod=~\"$service.*\"})", "legendFormat": "Restarts"}],
+          "targets": [{"expr": "sum(kube_pod_container_status_restarts_total{namespace=~\"vpn-gateway|media\", container=\"gluetun\", pod=~\"$service.*\"})", "legendFormat": "Restarts"}],
           "title": "Container Restarts",
           "type": "stat"
         },
@@ -145,7 +145,7 @@ spec:
           "id": 6,
           "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "min(time() - kube_pod_start_time{namespace=\"vpn-gateway\", pod=~\"$service.*\"})", "legendFormat": "Uptime"}],
+          "targets": [{"expr": "min(time() - kube_pod_start_time{namespace=~\"vpn-gateway|media\", pod=~\"$service.*\"})", "legendFormat": "Uptime"}],
           "title": "Pod Uptime",
           "type": "stat"
         },
@@ -168,15 +168,16 @@ spec:
             "overrides": [
               {"matcher": {"id": "byRegexp", "options": ".*TX.*"}, "properties": [{"id": "custom.transform", "value": "negative-Y"}]},
               {"matcher": {"id": "byRegexp", "options": "gluetun.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#73BF69", "mode": "fixed"}}]},
-              {"matcher": {"id": "byRegexp", "options": "securexng.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]}
+              {"matcher": {"id": "byRegexp", "options": "securexng.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+              {"matcher": {"id": "byRegexp", "options": "qbittorrent.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}]}
             ]
           },
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 6},
           "id": 10,
           "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
           "targets": [
-            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} RX"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} TX"}
+            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} RX"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} TX"}
           ],
           "title": "VPN Tunnel Bandwidth by Service",
           "type": "timeseries"
@@ -200,15 +201,16 @@ spec:
             "overrides": [
               {"matcher": {"id": "byRegexp", "options": ".*TX.*"}, "properties": [{"id": "custom.transform", "value": "negative-Y"}]},
               {"matcher": {"id": "byRegexp", "options": "gluetun.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#73BF69", "mode": "fixed"}}]},
-              {"matcher": {"id": "byRegexp", "options": "securexng.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]}
+              {"matcher": {"id": "byRegexp", "options": "securexng.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+              {"matcher": {"id": "byRegexp", "options": "qbittorrent.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}]}
             ]
           },
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 17},
           "id": 20,
           "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
           "targets": [
-            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"eth0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} RX"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"eth0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} TX"}
+            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"eth0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} RX"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"eth0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} TX"}
           ],
           "title": "Pod Network (Cluster Traffic)",
           "type": "timeseries"
@@ -224,15 +226,16 @@ spec:
             "overrides": [
               {"matcher": {"id": "byRegexp", "options": ".*TX.*"}, "properties": [{"id": "custom.transform", "value": "negative-Y"}]},
               {"matcher": {"id": "byRegexp", "options": "gluetun.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#73BF69", "mode": "fixed"}}]},
-              {"matcher": {"id": "byRegexp", "options": "securexng.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]}
+              {"matcher": {"id": "byRegexp", "options": "securexng.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+              {"matcher": {"id": "byRegexp", "options": "qbittorrent.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}]}
             ]
           },
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 17},
           "id": 21,
           "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
           "targets": [
-            {"expr": "sum by (service) (label_replace(rate(container_network_receive_packets_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} RX"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_packets_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} TX"}
+            {"expr": "sum by (service) (label_replace(rate(container_network_receive_packets_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} RX"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_packets_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} TX"}
           ],
           "title": "VPN Packet Rate",
           "type": "timeseries"
@@ -258,7 +261,7 @@ spec:
           "id": 30,
           "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
           "targets": [
-            {"expr": "sum by (service, container) (label_replace(rate(container_cpu_usage_seconds_total{namespace=\"vpn-gateway\", pod=~\"$service.*\", container!=\"\"}[5m]) * 1000, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}}/{{container}}"}
+            {"expr": "sum by (service, container) (label_replace(rate(container_cpu_usage_seconds_total{namespace=~\"vpn-gateway|media\", pod=~\"$service.*\", container!=\"\"}[5m]) * 1000, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}}/{{container}}"}
           ],
           "title": "CPU Usage (millicores)",
           "type": "timeseries"
@@ -276,7 +279,7 @@ spec:
           "id": 31,
           "options": {"legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
           "targets": [
-            {"expr": "sum by (service, container) (label_replace(container_memory_working_set_bytes{namespace=\"vpn-gateway\", pod=~\"$service.*\", container!=\"\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}}/{{container}}"}
+            {"expr": "sum by (service, container) (label_replace(container_memory_working_set_bytes{namespace=~\"vpn-gateway|media\", pod=~\"$service.*\", container!=\"\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}}/{{container}}"}
           ],
           "title": "Memory Usage",
           "type": "timeseries"
@@ -302,8 +305,8 @@ spec:
           "id": 40,
           "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
           "targets": [
-            {"expr": "sum by (service) (label_replace(rate(container_network_receive_errors_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} - RX Errors"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_errors_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} - TX Errors"}
+            {"expr": "sum by (service) (label_replace(rate(container_network_receive_errors_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} - RX Errors"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_errors_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} - TX Errors"}
           ],
           "title": "VPN Tunnel Errors",
           "type": "timeseries"
@@ -321,8 +324,8 @@ spec:
           "id": 41,
           "options": {"legend": {"calcs": ["sum"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
           "targets": [
-            {"expr": "sum by (service) (label_replace(rate(container_network_receive_packets_dropped_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} - RX Drops"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_packets_dropped_total{namespace=\"vpn-gateway\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} - TX Drops"}
+            {"expr": "sum by (service) (label_replace(rate(container_network_receive_packets_dropped_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} - RX Drops"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_packets_dropped_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} - TX Drops"}
           ],
           "title": "VPN Dropped Packets",
           "type": "timeseries"
@@ -357,14 +360,14 @@ spec:
           "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "RX Rate"}]},
           "pluginVersion": "10.0.0",
           "targets": [
-            {"expr": "max by (service) (label_replace(gluetun_up{namespace=\"vpn-gateway\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Status"},
-            {"expr": "max by (service, public_ip) (label_replace(gluetun_info{namespace=\"vpn-gateway\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Exit_IP"},
-            {"expr": "max by (service, country) (label_replace(gluetun_info{namespace=\"vpn-gateway\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Country"},
-            {"expr": "max by (service, city) (label_replace(gluetun_info{namespace=\"vpn-gateway\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "City"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "RX_Rate"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "TX_Rate"},
-            {"expr": "sum by (service) (label_replace(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Total_RX"},
-            {"expr": "sum by (service) (label_replace(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Total_TX"}
+            {"expr": "max by (service) (label_replace(gluetun_up{namespace=~\"vpn-gateway|media\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Status"},
+            {"expr": "max by (service, public_ip) (label_replace(gluetun_info{namespace=~\"vpn-gateway|media\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Exit_IP"},
+            {"expr": "max by (service, country) (label_replace(gluetun_info{namespace=~\"vpn-gateway|media\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Country"},
+            {"expr": "max by (service, city) (label_replace(gluetun_info{namespace=~\"vpn-gateway|media\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "City"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "RX_Rate"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "TX_Rate"},
+            {"expr": "sum by (service) (label_replace(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Total_RX"},
+            {"expr": "sum by (service) (label_replace(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Total_TX"}
           ],
           "title": "All VPN Services Summary",
           "transformations": [
@@ -393,15 +396,16 @@ spec:
             "overrides": [
               {"matcher": {"id": "byRegexp", "options": ".*TX.*"}, "properties": [{"id": "custom.transform", "value": "negative-Y"}]},
               {"matcher": {"id": "byRegexp", "options": ".*gluetun.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#73BF69", "mode": "fixed"}}]},
-              {"matcher": {"id": "byRegexp", "options": ".*securexng.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]}
+              {"matcher": {"id": "byRegexp", "options": ".*securexng.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#5794F2", "mode": "fixed"}}]},
+              {"matcher": {"id": "byRegexp", "options": ".*qbittorrent.*"}, "properties": [{"id": "color", "value": {"fixedColor": "#FF9830", "mode": "fixed"}}]}
             ]
           },
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 51},
           "id": 60,
           "options": {"legend": {"calcs": ["mean", "max", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
           "targets": [
-            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} RX"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} TX"}
+            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} RX"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "legendFormat": "{{service}} TX"}
           ],
           "title": "VPN Bandwidth by Exit Location",
           "type": "timeseries"
@@ -428,11 +432,11 @@ spec:
           "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": true}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "RX Rate"}]},
           "pluginVersion": "10.0.0",
           "targets": [
-            {"expr": "max by (service, country, city, public_ip) (label_replace(gluetun_info{namespace=\"vpn-gateway\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Location"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "RX_Rate"},
-            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "TX_Rate"},
-            {"expr": "sum by (service) (label_replace(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Total_RX"},
-            {"expr": "sum by (service) (label_replace(container_network_transmit_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Total_TX"}
+            {"expr": "max by (service, country, city, public_ip) (label_replace(gluetun_info{namespace=~\"vpn-gateway|media\"}, \"service\", \"$1\", \"app_kubernetes_io_name\", \"(.*)\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Location"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "RX_Rate"},
+            {"expr": "sum by (service) (label_replace(rate(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}[5m]), \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "TX_Rate"},
+            {"expr": "sum by (service) (label_replace(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Total_RX"},
+            {"expr": "sum by (service) (label_replace(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}, \"service\", \"$1\", \"pod\", \"^([^-]+-?[^-]*)-[^-]+-[^-]+$\"))", "format": "table", "instant": true, "legendFormat": "__auto", "refId": "Total_TX"}
           ],
           "title": "Traffic Summary by Exit Location",
           "transformations": [
@@ -465,14 +469,14 @@ spec:
             "allValue": ".*",
             "current": {},
             "datasource": {"type": "prometheus", "uid": "${datasource}"},
-            "definition": "label_values(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}, pod)",
+            "definition": "label_values(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}, pod)",
             "hide": 0,
             "includeAll": true,
             "label": "Service",
             "multi": true,
             "name": "service",
             "options": [],
-            "query": {"query": "label_values(container_network_receive_bytes_total{namespace=\"vpn-gateway\", interface=\"tun0\"}, pod)", "refId": "StandardVariableQuery"},
+            "query": {"query": "label_values(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\"}, pod)", "refId": "StandardVariableQuery"},
             "refresh": 2,
             "regex": "/^([^-]+-?[^-]*)-[^-]+-[^-]+$/",
             "skipUrlSync": false,

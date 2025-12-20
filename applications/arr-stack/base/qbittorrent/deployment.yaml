@@ -135,35 +135,71 @@ spec:
 
         # Gluetun metrics exporter for Prometheus
         - name: gluetun-exporter
-          image: busybox:1.36
-          command: ["/bin/sh", "-c"]
+          image: python:3.11-alpine
+          command: ["python3", "-c"]
           args:
             - |
-              while true; do
-                # Simple metrics endpoint
-                {
-                  echo "HTTP/1.1 200 OK"
-                  echo "Content-Type: text/plain"
-                  echo ""
-                  # Get VPN status from gluetun
-                  STATUS=$(wget -q -O- http://localhost:8000/v1/vpn/status 2>/dev/null || echo '{"status":"error"}')
-                  IP=$(echo "$STATUS" | sed -n 's/.*"ip":"\([^"]*\)".*/\1/p')
-                  COUNTRY=$(echo "$STATUS" | sed -n 's/.*"country":"\([^"]*\)".*/\1/p')
-                  if [ -n "$IP" ]; then
-                    echo "gluetun_up{public_ip=\"$IP\",country=\"$COUNTRY\"} 1"
-                  else
-                    echo "gluetun_up{} 0"
-                  fi
-                } | nc -l -p 9091 -q 1
-              done
+              import http.server
+              import socketserver
+              import urllib.request
+              import json
+
+              PORT = 9091
+
+              class MetricsHandler(http.server.BaseHTTPRequestHandler):
+                  def log_message(self, format, *args):
+                      pass  # Suppress logs
+
+                  def do_GET(self):
+                      if self.path != "/metrics":
+                          self.send_response(404)
+                          self.end_headers()
+                          return
+
+                      try:
+                          # Get VPN status from gluetun
+                          with urllib.request.urlopen("http://localhost:8000/v1/vpn/status", timeout=5) as r:
+                              status_data = json.loads(r.read())
+                          with urllib.request.urlopen("http://localhost:8000/v1/publicip/ip", timeout=5) as r:
+                              ip_data = json.loads(r.read())
+
+                          status = status_data.get("status", "unknown")
+                          ip = ip_data.get("public_ip", "unknown")
+                          country = ip_data.get("country", "unknown")
+                          region = ip_data.get("region", "unknown")
+                          city = ip_data.get("city", "unknown")
+                          up = 1 if status == "running" else 0
+
+                          metrics = f'''# HELP gluetun_up Whether gluetun VPN is connected (1=up, 0=down)
+              # TYPE gluetun_up gauge
+              gluetun_up{{public_ip="{ip}",country="{country}",region="{region}",city="{city}"}} {up}
+
+              # HELP gluetun_info VPN connection information
+              # TYPE gluetun_info gauge
+              gluetun_info{{public_ip="{ip}",country="{country}",region="{region}",city="{city}",status="{status}"}} 1
+              '''
+                      except Exception as e:
+                          metrics = f'''# HELP gluetun_up Whether gluetun VPN is connected (1=up, 0=down)
+              # TYPE gluetun_up gauge
+              gluetun_up 0
+              '''
+
+                      self.send_response(200)
+                      self.send_header("Content-Type", "text/plain")
+                      self.end_headers()
+                      self.wfile.write(metrics.encode())
+
+              with socketserver.TCPServer(("", PORT), MetricsHandler) as httpd:
+                  print(f"Serving metrics on port {PORT}")
+                  httpd.serve_forever()
           ports:
             - name: metrics
               containerPort: 9091
               protocol: TCP
           resources:
             requests:
-              memory: "8Mi"
-              cpu: "5m"
+              memory: "32Mi"
+              cpu: "10m"
 
       volumes:
         - name: config
