@@ -60,7 +60,10 @@ dashboard_init() {
 
 # Fetch cluster-wide data (nodes, storage classes, PVs)
 fetch_cluster_data() {
-  echo -e "${DIM}Loading cluster data...${RESET}"
+  # Show loading message only if not in plain mode
+  if [[ "${PLAIN_MODE:-false}" != "true" ]]; then
+    echo -e "${DIM}Loading cluster data...${RESET}"
+  fi
 
   # Fetch in parallel
   kubectl get nodes -o json > "$CACHE_DIR/nodes.json" 2> /dev/null &
@@ -69,8 +72,10 @@ fetch_cluster_data() {
 
   wait
 
-  # Clear loading message
-  echo -e "\033[1A\033[2K"
+  # Clear loading message only if not in plain mode
+  if [[ "${PLAIN_MODE:-false}" != "true" ]]; then
+    echo -e "\033[1A\033[2K"
+  fi
 }
 
 # Fetch namespace-specific data
@@ -79,7 +84,10 @@ fetch_namespace_data() {
   local namespace=$1
   local prefix="${2:-}"
 
-  echo -e "${DIM}Loading ${namespace} data...${RESET}"
+  # Show loading message only if not in plain mode
+  if [[ "${PLAIN_MODE:-false}" != "true" ]]; then
+    echo -e "${DIM}Loading ${namespace} data...${RESET}"
+  fi
 
   # Fetch in parallel
   kubectl get deployments -n "$namespace" -o json > "$CACHE_DIR/${prefix}deployments.json" 2> /dev/null &
@@ -91,8 +99,10 @@ fetch_namespace_data() {
 
   wait
 
-  # Clear loading message
-  echo -e "\033[1A\033[2K"
+  # Clear loading message only if not in plain mode
+  if [[ "${PLAIN_MODE:-false}" != "true" ]]; then
+    echo -e "\033[1A\033[2K"
+  fi
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
