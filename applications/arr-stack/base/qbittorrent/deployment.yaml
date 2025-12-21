@@ -28,16 +28,7 @@ spec:
         # Velero backup: only config, exclude downloads
         backup.velero.io/backup-volumes: "config"
     spec:
-      # Pin to talos03 for local downloads storage
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values:
-                      - talos03
+      # No node affinity - uses NFS for downloads, local-path for config only
       securityContext:
         fsGroup: 1000
         supplementalGroups:
@@ -109,10 +100,10 @@ spec:
             httpGet:
               path: /v1/vpn/status
               port: 8000
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 5
 
         # qBittorrent container - uses gluetun network
         - name: qbittorrent
@@ -304,9 +295,9 @@ spec:
             claimName: qbittorrent-config
         - name: downloads-complete
           persistentVolumeClaim:
-            claimName: downloads-local-complete
+            claimName: synology-downloads-complete
         - name: downloads-incomplete
           persistentVolumeClaim:
-            claimName: downloads-local-incomplete
+            claimName: synology-downloads-incomplete
         - name: gluetun-data
           emptyDir: {}
