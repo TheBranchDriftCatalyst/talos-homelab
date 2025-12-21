@@ -60,6 +60,25 @@ spec:
   monitoring:
     enablePodMonitor: true
 
+  # Backup configuration - S3 via MinIO
+  backup:
+    barmanObjectStore:
+      destinationPath: s3://backups/cnpg/scratch-postgres
+      endpointURL: http://minio.minio.svc.cluster.local
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-s3-credentials
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-s3-credentials
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+        maxParallel: 2
+      data:
+        compression: gzip
+    retentionPolicy: "30d"
+
   # PostgreSQL configuration
   postgresql:
     parameters:
@@ -68,6 +87,9 @@ spec:
       effective_cache_size: "256MB"
       work_mem: "16MB"
       maintenance_work_mem: "64MB"
+      # WAL archiving for backups
+      archive_mode: "on"
+      archive_timeout: "5min"
       # Logging for debugging
       log_statement: "all"
       log_min_duration_statement: "1000"

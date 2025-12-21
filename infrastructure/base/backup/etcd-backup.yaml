@@ -1,0 +1,113 @@
+---
+# etcd Backup CronJob
+# Uses talosctl to snapshot etcd and uploads to S3
+# Requires: talosconfig secret mounted
+apiVersion: v1
+kind: Secret
+metadata:
+  name: talos-etcd-backup-config
+  namespace: backup
+type: Opaque
+stringData:
+  # MinIO S3 configuration
+  S3_ENDPOINT: http://minio.minio.svc.cluster.local
+  S3_BUCKET: backups
+  S3_PREFIX: etcd
+  AWS_ACCESS_KEY_ID: minio
+  AWS_SECRET_ACCESS_KEY: minio123
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-backup
+  namespace: backup
+  labels:
+    app.kubernetes.io/name: etcd-backup
+    app.kubernetes.io/component: backup
+spec:
+  # Daily at 3 AM
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400  # 24 hours
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: etcd-backup
+              image: ghcr.io/siderolabs/talosctl:v1.9.1
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+
+                  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                  BACKUP_FILE="/tmp/etcd-${TIMESTAMP}.snapshot"
+                  S3_KEY="${S3_PREFIX}/etcd-${TIMESTAMP}.snapshot"
+
+                  echo "Creating etcd snapshot..."
+                  talosctl -n ${TALOS_NODE} etcd snapshot ${BACKUP_FILE}
+
+                  echo "Snapshot created: $(ls -lh ${BACKUP_FILE})"
+
+                  echo "Uploading to S3..."
+                  # Install mc (MinIO client)
+                  wget -q https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
+                  chmod +x /tmp/mc
+
+                  /tmp/mc alias set backup ${S3_ENDPOINT} ${AWS_ACCESS_KEY_ID} ${AWS_SECRET_ACCESS_KEY}
+                  /tmp/mc cp ${BACKUP_FILE} backup/${S3_BUCKET}/${S3_KEY}
+
+                  echo "Backup uploaded: s3://${S3_BUCKET}/${S3_KEY}"
+
+                  # Cleanup old backups (keep last 7 days)
+                  echo "Cleaning up old backups..."
+                  /tmp/mc find backup/${S3_BUCKET}/${S3_PREFIX}/ --older-than 7d --exec "/tmp/mc rm {}"
+
+                  echo "Done!"
+              env:
+                - name: TALOS_NODE
+                  value: "192.168.1.54"  # Control plane node
+                - name: S3_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: talos-etcd-backup-config
+                      key: S3_ENDPOINT
+                - name: S3_BUCKET
+                  valueFrom:
+                    secretKeyRef:
+                      name: talos-etcd-backup-config
+                      key: S3_BUCKET
+                - name: S3_PREFIX
+                  valueFrom:
+                    secretKeyRef:
+                      name: talos-etcd-backup-config
+                      key: S3_PREFIX
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: talos-etcd-backup-config
+                      key: AWS_ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: talos-etcd-backup-config
+                      key: AWS_SECRET_ACCESS_KEY
+              volumeMounts:
+                - name: talosconfig
+                  mountPath: /var/run/secrets/talos.dev
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+          volumes:
+            - name: talosconfig
+              secret:
+                secretName: talosconfig
+                optional: true

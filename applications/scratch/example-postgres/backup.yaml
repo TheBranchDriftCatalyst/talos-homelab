@@ -1,0 +1,54 @@
+---
+# CNPG S3 credentials in scratch namespace for PostgreSQL backups
+# Each namespace with CNPG clusters needs its own copy
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cnpg-s3-credentials
+  namespace: scratch
+type: Opaque
+stringData:
+  ACCESS_KEY_ID: minio
+  ACCESS_SECRET_KEY: minio123
+---
+# Scheduled backup for scratch-postgres cluster
+# Performs daily base backups to S3
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: scratch-postgres-daily
+  namespace: scratch
+spec:
+  # Schedule: Daily at 1 AM
+  schedule: "0 1 * * *"
+
+  # Backup method: object_store (S3) with WAL archiving
+  method: barmanObjectStore
+
+  # Target cluster
+  cluster:
+    name: scratch-postgres
+
+  # Retention policy
+  backupOwnerReference: self
+
+  # Immediate backup on creation
+  immediate: true
+---
+# Scheduled backup for weekly full backup
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: scratch-postgres-weekly
+  namespace: scratch
+spec:
+  # Schedule: Weekly on Sunday at 2 AM (CNPG uses 1-7 for day of week)
+  schedule: "0 2 * * 7"
+
+  method: barmanObjectStore
+
+  cluster:
+    name: scratch-postgres
+
+  backupOwnerReference: self
+  immediate: false
