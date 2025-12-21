@@ -1,0 +1,36 @@
+---
+# Local storage for downloads on talos01
+# Faster than NFS for frequent read/write operations
+# All download clients (sabnzbd, qbittorrent) and arr apps must run on talos01
+# talos01 has ~486GB NVMe - allocating 350Gi + 100Gi = 450Gi total
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: downloads-local-complete
+  namespace: media
+  labels:
+    app.kubernetes.io/name: downloads
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 350Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: downloads-local-incomplete
+  namespace: media
+  labels:
+    app.kubernetes.io/name: downloads
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Gi

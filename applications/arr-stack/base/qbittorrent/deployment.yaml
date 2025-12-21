@@ -25,7 +25,19 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "9091"
         prometheus.io/path: "/metrics"
+        # Velero backup: only config, exclude downloads
+        backup.velero.io/backup-volumes: "config"
     spec:
+      # Pin to talos01 for local downloads storage
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - talos01
       securityContext:
         fsGroup: 1000
         supplementalGroups:
@@ -85,10 +97,22 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 5
+          volumeMounts:
+            - name: gluetun-data
+              mountPath: /tmp/gluetun
           resources:
             requests:
               memory: "64Mi"
               cpu: "25m"
+          # Add readiness probe to prevent empty endpoints
+          readinessProbe:
+            httpGet:
+              path: /v1/vpn/status
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
 
         # qBittorrent container - uses gluetun network
         - name: qbittorrent
@@ -133,8 +157,9 @@ spec:
               cpu: 100m
               memory: 256Mi
 
-        # Gluetun metrics exporter for Prometheus
-        - name: gluetun-exporter
+        # Port sync + metrics sidecar
+        # Syncs VPN forwarded port to qBittorrent and exports Prometheus metrics
+        - name: port-sync
           image: python:3.11-alpine
           command: ["python3", "-c"]
           args:
@@ -142,13 +167,72 @@ spec:
               import http.server
               import socketserver
               import urllib.request
+              import urllib.parse
               import json
+              import time
+              import threading
+              import os
 
-              PORT = 9091
+              METRICS_PORT = 9091
+              QBIT_URL = "http://localhost:8080"
+              QBIT_USER = "admin"
+              QBIT_PASS = "admin"
+              PORT_FILE = "/tmp/gluetun/forwarded_port"
+
+              last_synced_port = None
+
+              def get_qbit_cookie():
+                  """Login to qBittorrent and get session cookie"""
+                  try:
+                      data = urllib.parse.urlencode({"username": QBIT_USER, "password": QBIT_PASS}).encode()
+                      req = urllib.request.Request(f"{QBIT_URL}/api/v2/auth/login", data=data)
+                      with urllib.request.urlopen(req, timeout=5) as r:
+                          for cookie in r.headers.get_all("Set-Cookie") or []:
+                              if "SID=" in cookie:
+                                  return cookie.split(";")[0]
+                  except Exception as e:
+                      print(f"Login failed: {e}")
+                  return None
+
+              def sync_port():
+                  """Sync forwarded port from gluetun to qBittorrent"""
+                  global last_synced_port
+                  try:
+                      if not os.path.exists(PORT_FILE):
+                          return
+                      with open(PORT_FILE) as f:
+                          port = f.read().strip()
+                      if not port or port == last_synced_port:
+                          return
+
+                      cookie = get_qbit_cookie()
+                      if not cookie:
+                          return
+
+                      # Update qBittorrent listening port
+                      prefs = json.dumps({"listen_port": int(port)})
+                      data = urllib.parse.urlencode({"json": prefs}).encode()
+                      req = urllib.request.Request(f"{QBIT_URL}/api/v2/app/setPreferences", data=data)
+                      req.add_header("Cookie", cookie)
+                      with urllib.request.urlopen(req, timeout=5):
+                          print(f"Synced port {port} to qBittorrent")
+                          last_synced_port = port
+                  except Exception as e:
+                      print(f"Port sync error: {e}")
+
+              def port_sync_loop():
+                  """Background thread to sync port every 30 seconds"""
+                  time.sleep(60)  # Wait for qBittorrent to start
+                  while True:
+                      sync_port()
+                      time.sleep(30)
+
+              # Start port sync in background
+              threading.Thread(target=port_sync_loop, daemon=True).start()
 
               class MetricsHandler(http.server.BaseHTTPRequestHandler):
                   def log_message(self, format, *args):
-                      pass  # Suppress logs
+                      pass
 
                   def do_GET(self):
                       if self.path != "/metrics":
@@ -157,7 +241,6 @@ spec:
                           return
 
                       try:
-                          # Get VPN status from gluetun
                           with urllib.request.urlopen("http://localhost:8000/v1/vpn/status", timeout=5) as r:
                               status_data = json.loads(r.read())
                           with urllib.request.urlopen("http://localhost:8000/v1/publicip/ip", timeout=5) as r:
@@ -170,16 +253,26 @@ spec:
                           city = ip_data.get("city", "unknown")
                           up = 1 if status == "running" else 0
 
-                          metrics = f'''# HELP gluetun_up Whether gluetun VPN is connected (1=up, 0=down)
+                          # Read forwarded port
+                          fwd_port = "0"
+                          try:
+                              with open(PORT_FILE) as f:
+                                  fwd_port = f.read().strip()
+                          except:
+                              pass
+
+                          metrics = f'''# HELP gluetun_up VPN connected (1=up, 0=down)
               # TYPE gluetun_up gauge
               gluetun_up{{public_ip="{ip}",country="{country}",region="{region}",city="{city}"}} {up}
-
-              # HELP gluetun_info VPN connection information
-              # TYPE gluetun_info gauge
-              gluetun_info{{public_ip="{ip}",country="{country}",region="{region}",city="{city}",status="{status}"}} 1
+              # HELP gluetun_forwarded_port VPN forwarded port
+              # TYPE gluetun_forwarded_port gauge
+              gluetun_forwarded_port {fwd_port}
+              # HELP qbittorrent_port_synced Last synced port (0 if not synced)
+              # TYPE qbittorrent_port_synced gauge
+              qbittorrent_port_synced {last_synced_port or 0}
               '''
                       except Exception as e:
-                          metrics = f'''# HELP gluetun_up Whether gluetun VPN is connected (1=up, 0=down)
+                          metrics = '''# HELP gluetun_up VPN connected (1=up, 0=down)
               # TYPE gluetun_up gauge
               gluetun_up 0
               '''
@@ -189,9 +282,13 @@ spec:
                       self.end_headers()
                       self.wfile.write(metrics.encode())
 
-              with socketserver.TCPServer(("", PORT), MetricsHandler) as httpd:
-                  print(f"Serving metrics on port {PORT}")
+              with socketserver.TCPServer(("", METRICS_PORT), MetricsHandler) as httpd:
+                  print(f"Port sync + metrics on port {METRICS_PORT}")
                   httpd.serve_forever()
+          volumeMounts:
+            - name: gluetun-data
+              mountPath: /tmp/gluetun
+              readOnly: true
           ports:
             - name: metrics
               containerPort: 9091
@@ -207,7 +304,9 @@ spec:
             claimName: qbittorrent-config
         - name: downloads-complete
           persistentVolumeClaim:
-            claimName: synology-downloads-complete
+            claimName: downloads-local-complete
         - name: downloads-incomplete
           persistentVolumeClaim:
-            claimName: synology-downloads-incomplete
+            claimName: downloads-local-incomplete
+        - name: gluetun-data
+          emptyDir: {}

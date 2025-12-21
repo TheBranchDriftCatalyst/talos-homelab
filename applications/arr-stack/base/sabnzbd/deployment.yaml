@@ -21,7 +21,20 @@ spec:
       labels:
         app: sabnzbd
         app.kubernetes.io/name: sabnzbd
+      annotations:
+        # Velero backup: only config, exclude downloads
+        backup.velero.io/backup-volumes: "config"
     spec:
+      # Pin to talos01 for local downloads storage
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - talos01
       securityContext:
         fsGroup: 1000
         supplementalGroups:
@@ -75,7 +88,7 @@ spec:
             claimName: sabnzbd-config
         - name: downloads-complete
           persistentVolumeClaim:
-            claimName: synology-downloads-complete
+            claimName: downloads-local-complete
         - name: downloads-incomplete
           persistentVolumeClaim:
-            claimName: synology-downloads-incomplete
+            claimName: downloads-local-incomplete
