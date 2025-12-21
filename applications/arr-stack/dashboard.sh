@@ -74,11 +74,85 @@ EOF
 # ARR-specific helper functions
 # ============================================================================
 
-# Get API key for a service from homepage-secrets
+# Get API key for a service from arr-api-keys or arr-stack-secrets
 get_api_key() {
   local service=$1
-  local key_name="HOMEPAGE_VAR_${service^^}_KEY"
-  get_secret_data "homepage-secrets" "$key_name"
+  local key
+
+  # Try arr-api-keys first (uppercase format: SONARR_API_KEY)
+  local key_name="${service^^}_API_KEY"
+  key=$(get_secret_data "arr-api-keys" "$key_name")
+  if [[ -n "$key" ]]; then
+    echo "$key"
+    return
+  fi
+
+  # Try arr-stack-secrets (lowercase format: sonarr-api-key)
+  key_name="${service}-api-key"
+  key=$(get_secret_data "arr-stack-secrets" "$key_name")
+  if [[ -n "$key" ]]; then
+    echo "$key"
+    return
+  fi
+}
+
+# Get VPN status from gluetun container
+# Returns: ip|country|city|port or empty if unavailable
+get_vpn_status() {
+  local deploy=${1:-qbittorrent}
+  local namespace="${2:-media}"
+
+  # Get public IP info
+  local ip_info
+  ip_info=$(kubectl exec -n "$namespace" "deploy/$deploy" -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip 2>/dev/null)
+
+  if [[ -z "$ip_info" ]]; then
+    return
+  fi
+
+  local ip country city
+  ip=$(echo "$ip_info" | jq -r '.public_ip // empty')
+  country=$(echo "$ip_info" | jq -r '.country // empty')
+  city=$(echo "$ip_info" | jq -r '.city // empty')
+
+  # Get forwarded port
+  local port_info port
+  port_info=$(kubectl exec -n "$namespace" "deploy/$deploy" -c gluetun -- wget -qO- http://localhost:8000/v1/openvpn/portforwarded 2>/dev/null)
+  port=$(echo "$port_info" | jq -r '.port // empty')
+
+  echo "${ip}|${country}|${city}|${port}"
+}
+
+# Print VPN status section
+print_vpn_status() {
+  local namespace="${1:-media}"
+
+  local vpn_info
+  vpn_info=$(get_vpn_status "qbittorrent" "$namespace")
+
+  if [[ -n "$vpn_info" ]]; then
+    local ip country city port
+    IFS='|' read -r ip country city port <<< "$vpn_info"
+
+    # Country flag emoji
+    local flag="🌐"
+    case "${country,,}" in
+      netherlands) flag="🇳🇱" ;;
+      germany) flag="🇩🇪" ;;
+      switzerland) flag="🇨🇭" ;;
+      sweden) flag="🇸🇪" ;;
+      "united states") flag="🇺🇸" ;;
+      "united kingdom") flag="🇬🇧" ;;
+      japan) flag="🇯🇵" ;;
+    esac
+
+    echo -e "  ${BOLD}VPN Status${RESET}"
+    echo -e "    ${GREEN}●${RESET} IP: ${CYAN}${ip}${RESET} (${country} ${flag})"
+    if [[ -n "$port" ]] && [[ "$port" != "0" ]]; then
+      echo -e "    ${GREEN}●${RESET} Forwarded Port: ${CYAN}${port}${RESET} ${DIM}(synced to qBittorrent)${RESET}"
+    fi
+    echo ""
+  fi
 }
 
 # Get service credentials - returns "user:pass" or "apikey:KEY" or empty
@@ -203,8 +277,8 @@ print_credentials_table() {
     has_creds=true
   fi
 
-  # API Keys from homepage-secrets
-  local services=("sonarr" "radarr" "prowlarr" "readarr" "overseerr" "jellyfin" "plex")
+  # API Keys from arr-api-keys / arr-stack-secrets
+  local services=("sonarr" "radarr" "prowlarr" "readarr" "overseerr" "sabnzbd")
   for svc in "${services[@]}"; do
     local api_key
     api_key=$(get_api_key "$svc")
@@ -214,9 +288,22 @@ print_credentials_table() {
     fi
   done
 
+  # Plex credentials from dedicated secret
+  local plex_token
+  plex_token=$(get_secret_data "homepage-plex-credentials" "HOMEPAGE_VAR_PLEX_KEY")
+  if [[ -n "$plex_token" ]]; then
+    # Truncate for display
+    if [[ ${#plex_token} -gt 20 ]]; then
+      echo -e "  ${CYAN}plex${RESET}        │ token:${plex_token:0:16}..."
+    else
+      echo -e "  ${CYAN}plex${RESET}        │ token:${plex_token}"
+    fi
+    has_creds=true
+  fi
+
   # ArgoCD key if present
   local argocd_key
-  argocd_key=$(get_secret_data "homepage-secrets" "HOMEPAGE_VAR_ARGOCD_KEY")
+  argocd_key=$(get_secret_data "homepage-argocd-credentials" "HOMEPAGE_VAR_ARGOCD_KEY")
   if [[ -n "$argocd_key" ]]; then
     echo -e "  ${CYAN}argocd${RESET}      │ apikey:${argocd_key}"
     has_creds=true
@@ -224,8 +311,8 @@ print_credentials_table() {
 
   # Grafana credentials
   local grafana_user grafana_pass
-  grafana_user=$(get_secret_data "homepage-secrets" "HOMEPAGE_VAR_GRAFANA_USER")
-  grafana_pass=$(get_secret_data "homepage-secrets" "HOMEPAGE_VAR_GRAFANA_PASS")
+  grafana_user=$(get_secret_data "homepage-grafana-credentials" "HOMEPAGE_VAR_GRAFANA_USER")
+  grafana_pass=$(get_secret_data "homepage-grafana-credentials" "HOMEPAGE_VAR_GRAFANA_PASS")
   if [[ -n "$grafana_user" ]] && [[ -n "$grafana_pass" ]]; then
     echo -e "  ${CYAN}grafana${RESET}     │ ${grafana_user}:${grafana_pass}"
     has_creds=true
@@ -270,6 +357,130 @@ print_summary_mode() {
 }
 
 # ============================================================================
+# Node-centric service display
+# ============================================================================
+
+# Print a service with inline details (credentials, VPN, volumes)
+# Optimized to use cached data only (no kubectl exec calls)
+print_node_service() {
+  local name=$1
+  local is_last=${2:-false}
+  local node=$3
+
+  local status ready ingress_url
+  status=$(get_pod_status_by_app "$name")
+  ready=$(get_pod_ready_by_app "$name")
+  ingress_url=$(get_ingress_url "$name")
+
+  [[ -z "$status" ]] && status="NotFound"
+
+  local status_indicator
+  status_indicator=$(print_status_indicator "$status" "$ready")
+
+  # Tree characters
+  local branch="${TREE_BRANCH}"
+  local cont="${TREE_CONT}"
+  [[ "$is_last" == "true" ]] && branch="${TREE_LAST}" && cont=" "
+
+  # Get credentials for this service
+  local creds=""
+  local api_key
+  api_key=$(get_api_key "$name")
+  if [[ -n "$api_key" ]]; then
+    if [[ ${#api_key} -gt 12 ]]; then
+      creds="${YELLOW}apikey:${api_key:0:8}...${RESET}"
+    else
+      creds="${YELLOW}apikey:${api_key}${RESET}"
+    fi
+  fi
+
+  # Main service line
+  local line="  ${BOLD}${branch} ${name}${RESET} ${status_indicator}"
+  [[ -n "$ingress_url" ]] && line+=" ${DIM}→${RESET} ${CYAN}${ingress_url}${RESET}"
+  [[ -n "$creds" ]] && line+=" ${DIM}│${RESET} ${creds}"
+  echo -e "$line"
+
+  # VPN status for qbittorrent (cached via global)
+  if [[ "$name" == "qbittorrent" ]] && [[ -n "${VPN_STATUS:-}" ]]; then
+    local ip country city port flag="🌐"
+    IFS='|' read -r ip country city port <<< "$VPN_STATUS"
+    case "${country,,}" in
+      netherlands) flag="🇳🇱" ;; germany) flag="🇩🇪" ;; switzerland) flag="🇨🇭" ;;
+      sweden) flag="🇸🇪" ;; "united states") flag="🇺🇸" ;; japan) flag="🇯🇵" ;;
+    esac
+    echo -e "  ${cont}    ${GREEN}⚡${RESET} VPN: ${CYAN}${ip}${RESET} ${flag} ${DIM}Port:${port}${RESET}"
+  fi
+
+  # Local volumes (from cached PVC data, no exec)
+  local local_vols
+  local_vols=$(jq -r ".items[] | select(.metadata.name == \"$name\") | .spec.template.spec.volumes[]? | select(.persistentVolumeClaim != null) | .persistentVolumeClaim.claimName" "$CACHE_DIR/deployments.json" 2>/dev/null)
+
+  if [[ -n "$local_vols" ]]; then
+    while read -r pvc; do
+      [[ -z "$pvc" ]] && continue
+      # Get PVC info from cache
+      local pvc_info
+      pvc_info=$(jq -r ".items[] | select(.metadata.name == \"$pvc\") | .spec.resources.requests.storage + \"|\" + .spec.storageClassName" "$CACHE_DIR/pvcs.json" 2>/dev/null)
+      [[ -z "$pvc_info" ]] && continue
+
+      local size sc
+      IFS='|' read -r size sc <<< "$pvc_info"
+
+      # Only show local-path volumes here (shared NFS shown separately)
+      if [[ "$sc" == "local-path" ]]; then
+        local sc_short
+        sc_short=$(shorten_storageclass "$sc")
+        echo -e "  ${cont}    ${GREEN}●${RESET} ${DIM}${pvc##*-}${RESET} ${BLUE}(${size})${RESET} ${DIM}[${sc_short}]${RESET}"
+      fi
+    done <<< "$local_vols"
+  fi
+
+  # emptyDir volumes (transcode cache) - just show name, no exec
+  local empty_vols
+  empty_vols=$(jq -r ".items[] | select(.metadata.name == \"$name\") | .spec.template.spec.volumes[]? | select(.emptyDir != null) | .name + \"|\" + (.emptyDir.sizeLimit // \"node-disk\")" "$CACHE_DIR/deployments.json" 2>/dev/null)
+  if [[ -n "$empty_vols" ]]; then
+    while IFS='|' read -r vol limit; do
+      [[ -z "$vol" ]] && continue
+      echo -e "  ${cont}    ${BLUE}◆${RESET} ${DIM}${vol}${RESET} ${CYAN}(${limit})${RESET}"
+    done <<< "$empty_vols"
+  fi
+
+  echo ""
+}
+
+# Print a node section with all its services
+print_node_section() {
+  local node=$1
+  local services=$2
+  local disk_info="${3:-}"  # Pre-fetched disk info
+
+  local disk_bar=""
+  if [[ -n "$disk_info" ]]; then
+    local used avail total percent
+    IFS='|' read -r used avail total percent <<< "$disk_info"
+    disk_bar=" $(print_usage_bar "${percent%\%}" 15)  ${CYAN}${used}${RESET}/${total}"
+  fi
+
+  # Count services
+  local svc_count
+  svc_count=$(echo "$services" | wc -l | tr -d ' ')
+
+  echo -e "${MAGENTA}${BOLD}▸ NODE: ${node}${RESET} ${DIM}(${svc_count} services)${RESET}${disk_bar}"
+
+  # Print each service
+  local i=0
+  local total_svcs
+  total_svcs=$(echo "$services" | wc -l | tr -d ' ')
+  while read -r svc; do
+    [[ -z "$svc" ]] && continue
+    i=$((i + 1))
+    local is_last="false"
+    [[ $i -eq $total_svcs ]] && is_last="true"
+    print_node_service "$svc" "$is_last" "$node"
+  done <<< "$services"
+}
+
+# ============================================================================
 # Main dashboard
 # ============================================================================
 main() {
@@ -299,41 +510,81 @@ main() {
   fetch_namespace_data "$NAMESPACE"
   fetch_cluster_data
 
+  # Pre-fetch VPN status (single kubectl exec call)
+  echo -e "${DIM}Checking VPN status...${RESET}"
+  VPN_STATUS=$(get_vpn_status "qbittorrent" "$NAMESPACE" 2>/dev/null || true)
+  echo -e "\033[1A\033[2K"
+
   # Legend
-  echo -e "${DIM}Volume Status: ${GREEN}●${RESET}${DIM}=Bound ${YELLOW}○${RESET}${DIM}=Pending ${RED}✗${RESET}${DIM}=NotFound${RESET}"
+  echo -e "${DIM}Legend: ${GREEN}●${RESET}${DIM}=PVC ${BLUE}◆${RESET}${DIM}=Cache ${GREEN}⚡${RESET}${DIM}=VPN${RESET}"
   echo ""
 
-  print_section "INDEXER & MANAGEMENT"
-  print_arr_service "prowlarr" "Indexer Manager" true
+  # Get all nodes and their services
+  local nodes
+  nodes=$(get_all_nodes)
 
-  print_section "MEDIA AUTOMATION"
-  print_arr_service "sonarr" "TV Shows"
-  print_arr_service "radarr" "Movies"
-  print_optional_service "readarr" "Books"
-  print_arr_service "overseerr" "Request Management" true
+  # Pre-fetch node disk usage (one exec per node)
+  echo -e "${DIM}Fetching node disk usage...${RESET}"
+  declare -A NODE_DISK_INFO
+  while read -r node; do
+    [[ -z "$node" ]] && continue
+    NODE_DISK_INFO["$node"]=$(get_node_disk_usage "$node" "$NAMESPACE" 2>/dev/null || true)
+  done <<< "$nodes"
+  echo -e "\033[1A\033[2K"
 
-  print_section "MEDIA SERVERS"
-  print_arr_service "plex" "Plex Media Server"
-  if get_deployment_exists "tdarr"; then
-    print_arr_service "jellyfin" "Jellyfin Media Server"
-    print_arr_service "tdarr" "Transcoding Service" true
-  else
-    print_arr_service "jellyfin" "Jellyfin Media Server" true
-  fi
+  # Print node sections
+  for node in $nodes; do
+    [[ -z "$node" ]] && continue
+    local services
+    services=$(get_deployments_on_node "$node")
+    [[ -z "$services" ]] && continue
+    print_node_section "$node" "$services" "${NODE_DISK_INFO[$node]:-}"
+  done
 
-  print_section "INFRASTRUCTURE"
-  print_arr_service "postgresql" "PostgreSQL Database" false true
-  print_optional_service "homepage" "Dashboard" true
+  # Shared Storage Section (NFS/NAS)
+  print_section "SHARED STORAGE (NFS/NAS)"
 
-  print_section "MONITORING"
-  print_optional_service "exportarr" "Metrics Exporter" true
+  # Collect all shared PVCs and which services use them
+  declare -A shared_pvcs
+  while read -r node; do
+    [[ -z "$node" ]] && continue
+    local services
+    services=$(get_deployments_on_node "$node")
+    while read -r svc; do
+      [[ -z "$svc" ]] && continue
+      local shared
+      shared=$(get_shared_volumes "$svc")
+      while IFS='|' read -r pvc sc; do
+        [[ -z "$pvc" ]] && continue
+        if [[ -z "${shared_pvcs[$pvc]:-}" ]]; then
+          shared_pvcs[$pvc]="$sc:$svc"
+        else
+          shared_pvcs[$pvc]="${shared_pvcs[$pvc]},$svc"
+        fi
+      done <<< "$shared"
+    done <<< "$services"
+  done <<< "$nodes"
+
+  # Print shared PVCs grouped by storage class
+  local last_sc=""
+  for pvc in $(echo "${!shared_pvcs[@]}" | tr ' ' '\n' | sort); do
+    local info="${shared_pvcs[$pvc]}"
+    local sc="${info%%:*}"
+    local users="${info#*:}"
+    local sc_short
+    sc_short=$(shorten_storageclass "$sc")
+
+    # Get size
+    local size
+    size=$(jq -r ".items[] | select(.metadata.name == \"$pvc\") | .spec.resources.requests.storage" "$CACHE_DIR/pvcs.json" 2>/dev/null)
+
+    # Count users
+    local user_count
+    user_count=$(echo "$users" | tr ',' '\n' | wc -l | tr -d ' ')
+
+    echo -e "  ${GREEN}●${RESET} ${pvc} ${BLUE}(${size})${RESET} ${DIM}[${sc_short}]${RESET} ${DIM}← ${user_count} services${RESET}"
+  done
   echo ""
-
-  # Storage Summary
-  print_storage_summary
-
-  # Infrastructure Storage (detailed by category)
-  print_infrastructure_storage
 
   # Credentials Summary
   print_section "CREDENTIALS"
@@ -346,9 +597,6 @@ main() {
   # Cluster status
   print_cluster_status
   echo ""
-
-  # Pod status table
-  print_pod_status
 }
 
 # Run main function
