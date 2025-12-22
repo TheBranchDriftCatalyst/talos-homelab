@@ -1,6 +1,10 @@
 ---
 # Tdarr GPU Worker for talos05 (NVIDIA Quadro P2000 - NVENC)
 # Provides hardware-accelerated transcoding via NVIDIA NVENC
+#
+# NOTE: nvidia-container-toolkit has eBPF issues with kernel 6.12, so we use
+# an init container to copy CUDA libs from nvidia/cuda image instead.
+# See: https://github.com/NVIDIA/libnvidia-container/issues/176
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -36,6 +40,26 @@ spec:
           - 100    # users group (Synology)
           - 1026   # media user (Synology)
 
+      # Init container to copy CUDA libraries (workaround for eBPF issue)
+      initContainers:
+        - name: cuda-libs-init
+          # Use CUDA 12.x with driver 535 compatibility
+          image: nvidia/cuda:12.3.2-runtime-ubuntu22.04
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Copying CUDA libraries to shared volume..."
+              cp -av /usr/local/cuda/lib64/* /nvidia-libs/ 2>/dev/null || true
+              cp -av /usr/lib/x86_64-linux-gnu/libnv*.so* /nvidia-libs/ 2>/dev/null || true
+              cp -av /usr/lib/x86_64-linux-gnu/libcuda*.so* /nvidia-libs/ 2>/dev/null || true
+              cp -av /usr/lib/x86_64-linux-gnu/libnvcuvid*.so* /nvidia-libs/ 2>/dev/null || true
+              ls -la /nvidia-libs/ | head -20
+              echo "CUDA libs copy complete"
+          volumeMounts:
+            - name: nvidia-libs
+              mountPath: /nvidia-libs
+
       containers:
         - name: tdarr-node
           image: ghcr.io/haveagitgat/tdarr_node:2.58.02
@@ -68,11 +92,15 @@ spec:
               value: 'all'
             - name: NVIDIA_DRIVER_CAPABILITIES
               value: 'compute,video,utility'
-            # Add NVIDIA libraries to library path
+            # Add NVIDIA libraries to library path (init container copies libs here)
             - name: LD_LIBRARY_PATH
-              value: '/usr/local/nvidia/lib64:/usr/local/glibc/lib64'
+              value: '/nvidia-libs:/usr/local/cuda/lib64'
 
           volumeMounts:
+            # NVIDIA CUDA libraries (from init container)
+            - name: nvidia-libs
+              mountPath: /nvidia-libs
+              readOnly: true
             # NVIDIA GPU devices
             - name: nvidia-dev
               mountPath: /dev/nvidia0
@@ -109,6 +137,10 @@ spec:
               memory: 2Gi
 
       volumes:
+        # NVIDIA CUDA libraries (populated by init container)
+        - name: nvidia-libs
+          emptyDir:
+            sizeLimit: 2Gi
         # NVIDIA GPU devices via hostPath
         - name: nvidia-dev
           hostPath:
