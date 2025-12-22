@@ -1,0 +1,150 @@
+---
+# Tdarr GPU Worker for talos05 (NVIDIA Quadro P2000 - NVENC)
+# Provides hardware-accelerated transcoding via NVIDIA NVENC
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tdarr-node-gpu-talos05
+  labels:
+    app: tdarr-node-gpu
+    app.kubernetes.io/name: tdarr-node-gpu-talos05
+    app.kubernetes.io/part-of: arr-stack
+    gpu-type: nvidia-nvenc
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: tdarr-node-gpu-talos05
+  template:
+    metadata:
+      labels:
+        app: tdarr-node-gpu-talos05
+        app.kubernetes.io/name: tdarr-node-gpu-talos05
+        gpu-type: nvidia-nvenc
+    spec:
+      # Run only on talos05
+      nodeSelector:
+        kubernetes.io/hostname: talos05
+
+      # Run with NFS-compatible group + video group for GPU
+      securityContext:
+        fsGroup: 44  # video group for GPU access
+        supplementalGroups:
+          - 44     # video group (GPU)
+          - 100    # users group (Synology)
+          - 1026   # media user (Synology)
+
+      containers:
+        - name: tdarr-node
+          image: ghcr.io/haveagitgat/tdarr_node:2.58.02
+          imagePullPolicy: IfNotPresent
+
+          securityContext:
+            privileged: true  # Required for GPU device access
+
+          env:
+            - name: PUID
+              value: '1000'
+            - name: PGID
+              value: '1000'
+            - name: TZ
+              value: 'America/Los_Angeles'
+            # Connect to Tdarr server
+            - name: serverIP
+              value: 'tdarr.media.svc.cluster.local'
+            - name: serverPort
+              value: '8266'
+            - name: inContainer
+              value: 'true'
+            - name: ffmpegVersion
+              value: '6'
+            # Node name for identification in Tdarr UI
+            - name: nodeName
+              value: 'talos05-nvidia-p2000'
+            # NVIDIA environment variables for NVENC access
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: 'all'
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: 'compute,video,utility'
+
+          volumeMounts:
+            # NVIDIA GPU devices
+            - name: nvidia-dev
+              mountPath: /dev/nvidia0
+            - name: nvidia-ctl
+              mountPath: /dev/nvidiactl
+            - name: nvidia-uvm
+              mountPath: /dev/nvidia-uvm
+            - name: nvidia-uvm-tools
+              mountPath: /dev/nvidia-uvm-tools
+            - name: nvidia-modeset
+              mountPath: /dev/nvidia-modeset
+            # Also mount /dev/dri for potential DRM access
+            - name: dri
+              mountPath: /dev/dri
+            - name: transcode-cache
+              mountPath: /temp
+            # TrueNAS media libraries
+            - name: truenas-movies
+              mountPath: /media/truenas/movies
+            - name: truenas-tv
+              mountPath: /media/truenas/tv
+            # Synology media libraries
+            - name: synology-movies
+              mountPath: /media/synology/movies
+            - name: synology-tv
+              mountPath: /media/synology/tv
+            # Synology archive (px200 content)
+            - name: synology-archive
+              mountPath: /synology-archive
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: 2Gi
+
+      volumes:
+        # NVIDIA GPU devices via hostPath
+        - name: nvidia-dev
+          hostPath:
+            path: /dev/nvidia0
+        - name: nvidia-ctl
+          hostPath:
+            path: /dev/nvidiactl
+        - name: nvidia-uvm
+          hostPath:
+            path: /dev/nvidia-uvm
+        - name: nvidia-uvm-tools
+          hostPath:
+            path: /dev/nvidia-uvm-tools
+        - name: nvidia-modeset
+          hostPath:
+            path: /dev/nvidia-modeset
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        # Local transcode cache (disk-backed for larger files)
+        - name: transcode-cache
+          emptyDir:
+            sizeLimit: 200Gi  # talos05 has 250GB NVMe
+        # TrueNAS media libraries
+        - name: truenas-movies
+          persistentVolumeClaim:
+            claimName: truenas-movies
+        - name: truenas-tv
+          persistentVolumeClaim:
+            claimName: truenas-tv
+        # Synology media libraries
+        - name: synology-movies
+          persistentVolumeClaim:
+            claimName: synology-movies
+        - name: synology-tv
+          persistentVolumeClaim:
+            claimName: synology-tv
+        # Synology archive (px200 content)
+        - name: synology-archive
+          persistentVolumeClaim:
+            claimName: synology-archive-10t
