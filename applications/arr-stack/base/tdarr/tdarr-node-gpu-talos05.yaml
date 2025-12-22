@@ -68,8 +68,15 @@ spec:
               value: 'all'
             - name: NVIDIA_DRIVER_CAPABILITIES
               value: 'compute,video,utility'
+            # Add NVIDIA libraries to library path
+            - name: LD_LIBRARY_PATH
+              value: '/usr/local/nvidia/lib64:/usr/local/glibc/lib64'
 
           volumeMounts:
+            # NVIDIA libraries from host (for CUDA/NVENC)
+            - name: nvidia-libs
+              mountPath: /usr/local/nvidia/lib64
+              readOnly: true
             # NVIDIA GPU devices
             - name: nvidia-dev
               mountPath: /dev/nvidia0
@@ -148,3 +155,8 @@ spec:
         - name: synology-archive
           persistentVolumeClaim:
             claimName: synology-archive-10t
+        # NVIDIA libraries from host (for CUDA/NVENC)
+        - name: nvidia-libs
+          hostPath:
+            path: /usr/local/glibc/lib64
+            type: Directory
