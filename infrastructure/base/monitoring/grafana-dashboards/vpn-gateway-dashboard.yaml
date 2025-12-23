@@ -77,8 +77,8 @@ spec:
           "id": 2,
           "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "count(kube_pod_container_status_running{namespace=~\"vpn-gateway|media\", pod=~\"$service.*\"})", "legendFormat": "Containers"}],
-          "title": "Running Containers",
+          "targets": [{"expr": "count(kube_pod_container_status_running{namespace=~\"vpn-gateway|media\", pod=~\"(gluetun|securexng|qbittorrent).*\"})", "legendFormat": "Containers"}],
+          "title": "VPN Containers",
           "type": "stat"
         },
         {
@@ -94,8 +94,8 @@ spec:
           "id": 3,
           "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "sum(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"})", "legendFormat": "Total RX"}],
-          "title": "Total VPN Downloaded",
+          "targets": [{"expr": "sum(increase(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"(gluetun|securexng|qbittorrent).*\"}[$__range]))", "legendFormat": "RX"}],
+          "title": "Downloaded (Interval)",
           "type": "stat"
         },
         {
@@ -111,8 +111,8 @@ spec:
           "id": 4,
           "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "sum(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"$service.*\"})", "legendFormat": "Total TX"}],
-          "title": "Total VPN Uploaded",
+          "targets": [{"expr": "sum(increase(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"(gluetun|securexng|qbittorrent).*\"}[$__range]))", "legendFormat": "TX"}],
+          "title": "Uploaded (Interval)",
           "type": "stat"
         },
         {
@@ -128,8 +128,8 @@ spec:
           "id": 5,
           "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "sum(kube_pod_container_status_restarts_total{namespace=~\"vpn-gateway|media\", container=\"gluetun\", pod=~\"$service.*\"})", "legendFormat": "Restarts"}],
-          "title": "Container Restarts",
+          "targets": [{"expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"vpn-gateway|media\", container=\"gluetun\", pod=~\"(gluetun|securexng|qbittorrent).*\"}[$__range]))", "legendFormat": "Restarts"}],
+          "title": "Restarts (Interval)",
           "type": "stat"
         },
         {
@@ -145,13 +145,67 @@ spec:
           "id": 6,
           "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
           "pluginVersion": "10.0.0",
-          "targets": [{"expr": "min(time() - kube_pod_start_time{namespace=~\"vpn-gateway|media\", pod=~\"$service.*\"})", "legendFormat": "Uptime"}],
-          "title": "Pod Uptime",
+          "targets": [{"expr": "min(time() - kube_pod_start_time{namespace=~\"vpn-gateway|media\", pod=~\"(gluetun|securexng|qbittorrent).*\"})", "legendFormat": "Uptime"}],
+          "title": "VPN Pod Uptime",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "description": "All-time download total for VPN pods",
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "dark-green", "value": null}]},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 2, "w": 4, "x": 8, "y": 5},
+          "id": 7,
+          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "sum(container_network_receive_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"(gluetun|securexng|qbittorrent).*\"})", "legendFormat": "Total RX"}],
+          "title": "Total Downloaded",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "description": "All-time upload total for VPN pods",
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "dark-blue", "value": null}]},
+              "unit": "bytes"
+            }
+          },
+          "gridPos": {"h": 2, "w": 4, "x": 12, "y": 5},
+          "id": 8,
+          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "sum(container_network_transmit_bytes_total{namespace=~\"vpn-gateway|media\", interface=\"tun0\", pod=~\"(gluetun|securexng|qbittorrent).*\"})", "legendFormat": "Total TX"}],
+          "title": "Total Uploaded",
+          "type": "stat"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "description": "All-time restarts for VPN containers",
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {"mode": "absolute", "steps": [{"color": "dark-yellow", "value": null}, {"color": "dark-orange", "value": 10}, {"color": "dark-red", "value": 50}]},
+              "unit": "short"
+            }
+          },
+          "gridPos": {"h": 2, "w": 4, "x": 16, "y": 5},
+          "id": 9,
+          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+          "pluginVersion": "10.0.0",
+          "targets": [{"expr": "sum(kube_pod_container_status_restarts_total{namespace=~\"vpn-gateway|media\", container=\"gluetun\", pod=~\"(gluetun|securexng|qbittorrent).*\"})", "legendFormat": "Total Restarts"}],
+          "title": "Total Restarts",
           "type": "stat"
         },
         {
           "collapsed": false,
-          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 7},
           "id": 101,
           "panels": [],
           "title": "VPN Tunnel Bandwidth (tun0)",
