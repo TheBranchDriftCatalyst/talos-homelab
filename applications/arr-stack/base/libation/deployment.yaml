@@ -1,0 +1,69 @@
+---
+# Libation - Audible audiobook manager
+# Web-based interface for managing Audible library
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: libation
+  labels:
+    app: libation
+    app.kubernetes.io/name: libation
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: libation
+  template:
+    metadata:
+      labels:
+        app: libation
+        app.kubernetes.io/name: libation
+      annotations:
+        # Velero backup: config only
+        backup.velero.io/backup-volumes: "config"
+    spec:
+      containers:
+        - name: libation
+          image: ghcr.io/bcnelson/libation_docker:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: '1000'
+            - name: PGID
+              value: '1000'
+            - name: TZ
+              value: 'America/Los_Angeles'
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config/Libation
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 256Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: libation-config
