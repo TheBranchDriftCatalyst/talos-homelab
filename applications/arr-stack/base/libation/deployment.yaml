@@ -1,6 +1,57 @@
 ---
 # Libation - Audible audiobook manager
-# Web-based interface for managing Audible library
+# Uses linuxserver webtop with Libation installed via custom script
+# Access: https://libation.talos00 (HTTPS required)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: libation-install-script
+  labels:
+    app: libation
+data:
+  install-libation.sh: |
+    #!/bin/bash
+    set -e
+    LIBATION_VERSION="13.0.0"
+    VERSION_FILE="/config/.libation-version"
+
+    # Check if already installed with correct version
+    if [ -f "$VERSION_FILE" ] && [ "$(cat $VERSION_FILE)" = "$LIBATION_VERSION" ]; then
+      echo "Libation $LIBATION_VERSION already installed"
+      exit 0
+    fi
+
+    echo "Installing Libation $LIBATION_VERSION..."
+    cd /tmp
+
+    # Download the .deb package
+    curl -L -o libation.deb "https://github.com/rmcrackan/Libation/releases/download/v${LIBATION_VERSION}/Libation.${LIBATION_VERSION}-linux-chardonnay-amd64.deb"
+
+    # Install dependencies and the package
+    apt-get update
+    apt-get install -y ./libation.deb
+
+    # Record installed version
+    echo "$LIBATION_VERSION" > "$VERSION_FILE"
+    rm libation.deb
+
+    # Create desktop shortcut
+    mkdir -p /config/Desktop
+    cat > /config/Desktop/Libation.desktop << 'EOF'
+    [Desktop Entry]
+    Version=1.0
+    Type=Application
+    Name=Libation
+    Comment=Audible Library Manager
+    Exec=/usr/bin/Libation
+    Icon=libation
+    Terminal=false
+    Categories=AudioVideo;Audio;
+    EOF
+    chmod +x /config/Desktop/Libation.desktop
+
+    echo "Libation installed successfully"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -22,12 +73,22 @@ spec:
         app: libation
         app.kubernetes.io/name: libation
       annotations:
-        # Velero backup: config only
         backup.velero.io/backup-volumes: "config"
     spec:
+      initContainers:
+        - name: install-libation
+          image: lscr.io/linuxserver/webtop:ubuntu-xfce
+          command: ["/bin/bash", "/scripts/install-libation.sh"]
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: install-script
+              mountPath: /scripts
+          securityContext:
+            runAsUser: 0
       containers:
-        - name: libation
-          image: rmcrackan/libation:latest
+        - name: webtop
+          image: lscr.io/linuxserver/webtop:ubuntu-xfce
           imagePullPolicy: IfNotPresent
           env:
             - name: PUID
@@ -36,34 +97,52 @@ spec:
               value: '1000'
             - name: TZ
               value: 'America/Los_Angeles'
+            - name: TITLE
+              value: 'Libation'
+            - name: KEYBOARD
+              value: 'en-us-qwerty'
           ports:
             - name: http
               containerPort: 3000
               protocol: TCP
+            - name: https
+              containerPort: 3001
+              protocol: TCP
           volumeMounts:
             - name: config
-              mountPath: /config/Libation
+              mountPath: /config
+            - name: audiobooks
+              mountPath: /audiobooks
           livenessProbe:
             httpGet:
               path: /
-              port: http
-            initialDelaySeconds: 60
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 120
             periodSeconds: 30
             timeoutSeconds: 10
             failureThreshold: 5
           readinessProbe:
             httpGet:
               path: /
-              port: http
-            initialDelaySeconds: 30
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 60
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
           resources:
             requests:
-              cpu: 10m
-              memory: 256Mi
+              cpu: 50m
+              memory: 512Mi
       volumes:
         - name: config
           persistentVolumeClaim:
             claimName: libation-config
+        - name: audiobooks
+          persistentVolumeClaim:
+            claimName: libation-audiobooks
+        - name: install-script
+          configMap:
+            name: libation-install-script
+            defaultMode: 0755

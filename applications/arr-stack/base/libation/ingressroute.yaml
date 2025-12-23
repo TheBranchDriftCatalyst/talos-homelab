@@ -1,16 +1,38 @@
 ---
+# HTTPS IngressRoute for Libation (webtop requires HTTPS)
 apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
+kind: IngressRouteTCP
 metadata:
   name: libation
   labels:
     app: libation
 spec:
   entryPoints:
-    - web
+    - websecure
   routes:
-    - match: Host(`libation.${CLUSTER_DOMAIN}`)
-      kind: Rule
+    - match: HostSNI(`libation.talos00`)
       services:
         - name: libation
-          port: 3000
+          port: 3001
+  tls:
+    passthrough: true
+---
+# HTTP redirect to HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: libation-redirect
+  labels:
+    app: libation
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`libation.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-to-https
+          namespace: traefik
+      services:
+        - name: libation
+          port: 3001
