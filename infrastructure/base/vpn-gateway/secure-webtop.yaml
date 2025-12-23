@@ -1,7 +1,7 @@
 ---
 # Secure Webtop - Web-based Linux desktop with VPN protection
 # All traffic routed through gluetun VPN sidecar (Germany exit)
-# Access: http://webtop.talos00
+# Access: https://webtop.talos00 (HTTPS required by webtop)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -65,7 +65,7 @@ spec:
             - name: FIREWALL_OUTBOUND_SUBNETS
               value: "10.244.0.0/16,10.96.0.0/12"
             - name: FIREWALL_INPUT_PORTS
-              value: "3000,8000"  # Webtop, control
+              value: "3000,3001,8000"  # Webtop HTTP/HTTPS, control
             - name: HTTP_CONTROL_SERVER_ADDRESS
               value: "0.0.0.0:8000"
             - name: LOG_LEVEL
@@ -94,6 +94,9 @@ spec:
             - name: http
               containerPort: 3000
               protocol: TCP
+            - name: https
+              containerPort: 3001
+              protocol: TCP
           env:
             - name: PUID
               value: "1000"
@@ -108,6 +111,11 @@ spec:
             # Disable keyboard language selection popup
             - name: KEYBOARD
               value: "en-us-qwerty"
+            # Allow HTTP connections (disable HTTPS requirement)
+            - name: CUSTOM_USER
+              value: "abc"
+            - name: PASSWORD
+              value: ""
           resources:
             requests:
               cpu: 100m
@@ -145,12 +153,16 @@ spec:
       port: 3000
       targetPort: 3000
       protocol: TCP
+    - name: https
+      port: 3001
+      targetPort: 3001
+      protocol: TCP
   selector:
     app.kubernetes.io/name: secure-webtop
 ---
-# HTTP IngressRoute for webtop access
+# TCP IngressRoute for HTTPS passthrough (webtop requires its own HTTPS)
 apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
+kind: IngressRouteTCP
 metadata:
   name: secure-webtop
   namespace: vpn-gateway
@@ -159,10 +171,32 @@ metadata:
     app.kubernetes.io/component: ingress
 spec:
   entryPoints:
+    - websecure
+  routes:
+    - match: HostSNI(`webtop.talos00`)
+      services:
+        - name: secure-webtop
+          port: 3001
+  tls:
+    passthrough: true
+---
+# HTTP redirect to HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: secure-webtop-redirect
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-webtop
+spec:
+  entryPoints:
     - web
   routes:
     - match: Host(`webtop.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-to-https
+          namespace: traefik
       services:
         - name: secure-webtop
-          port: 3000
+          port: 3001

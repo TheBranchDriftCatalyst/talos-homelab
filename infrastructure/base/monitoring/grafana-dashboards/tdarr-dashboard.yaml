@@ -28,13 +28,114 @@ spec:
       "liveNow": false,
       "panels": [
         {
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+          "id": 100,
+          "panels": [],
+          "title": "Progress & ETA",
+          "type": "row"
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}, "unit": "none", "decimals": 1},
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+          "id": 101,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["mean"], "fields": "", "values": false}, "textMode": "auto"},
+          "title": "Avg Transcodes/hr",
+          "description": "Average transcodes per hour over selected time range",
+          "type": "stat",
+          "targets": [{"expr": "increase(tdarr_transcode_count[$__range]) / ($__range_s / 3600)", "legendFormat": "", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}, {"color": "yellow", "value": 100}, {"color": "green", "value": 10}]}, "unit": "none"},
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+          "id": 102,
+          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "title": "Files Remaining",
+          "description": "Files not yet transcoded (total - success - errors)",
+          "type": "stat",
+          "targets": [{"expr": "max(tdarr_total_files) - max(tdarr_queue_transcode_success) - max(tdarr_queue_transcode_error)", "legendFormat": "", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 24}, {"color": "orange", "value": 168}, {"color": "red", "value": 720}]}, "unit": "h", "decimals": 1},
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+          "id": 103,
+          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "title": "ETA to Complete",
+          "description": "Estimated hours to finish remaining files at current rate",
+          "type": "stat",
+          "targets": [{"expr": "(max(tdarr_total_files) - max(tdarr_queue_transcode_success) - max(tdarr_queue_transcode_error)) / (increase(tdarr_transcode_count[$__range]) / ($__range_s / 3600)) or vector(0)", "legendFormat": "", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 80}, {"color": "orange", "value": 90}, {"color": "red", "value": 95}]}, "unit": "percent", "decimals": 1, "min": 0, "max": 100},
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+          "id": 104,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "title": "Library Progress",
+          "description": "Percentage of library transcoded",
+          "type": "stat",
+          "targets": [{"expr": "(max(tdarr_queue_transcode_success) + max(tdarr_queue_transcode_error)) / max(tdarr_total_files) * 100", "legendFormat": "", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}, "unit": "none"},
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+          "id": 105,
+          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "title": "Staged Queue",
+          "description": "Files waiting in queue to be processed",
+          "type": "stat",
+          "targets": [{"expr": "max(tdarr_queue_staged)", "legendFormat": "", "refId": "A"}]
+        },
+        {
+          "datasource": {"type": "prometheus", "uid": "${datasource}"},
+          "fieldConfig": {
+            "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 1}, {"color": "green", "value": 100}]}, "unit": "none"},
+            "overrides": []
+          },
+          "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+          "id": 106,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "title": "In Progress",
+          "description": "Files currently being transcoded",
+          "type": "stat",
+          "targets": [{"expr": "max(tdarr_queue_transcode)", "legendFormat": "", "refId": "A"}]
+        },
+        {
+          "collapsed": false,
+          "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+          "id": 107,
+          "panels": [],
+          "title": "Overview",
+          "type": "row"
+        },
+        {
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "fieldConfig": {
             "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "none"},
             "overrides": []
           },
-          "gridPos": {"h": 3, "w": 4, "x": 0, "y": 0},
+          "gridPos": {"h": 3, "w": 4, "x": 0, "y": 6},
           "id": 1,
+          "description": "Total files tracked in Tdarr library",
           "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
           "title": "Total Files",
           "type": "stat",
