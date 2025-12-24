@@ -29,6 +29,42 @@ spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
 
+      # Init container to set up base configuration if not exists
+      initContainers:
+        - name: init-config
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              if [ ! -f /config/configuration.yaml ]; then
+                echo "No configuration.yaml found, copying base config..."
+                cp /config-base/configuration.yaml /config/configuration.yaml
+              else
+                # Ensure trusted_proxies config exists
+                if ! grep -q "trusted_proxies" /config/configuration.yaml; then
+                  echo "Adding trusted_proxies config..."
+                  cat >> /config/configuration.yaml << 'EOF'
+
+              # Reverse proxy configuration (Traefik)
+              http:
+                use_x_forwarded_for: true
+                trusted_proxies:
+                  - 10.0.0.0/8
+                  - 172.16.0.0/12
+                  - 192.168.0.0/16
+              EOF
+                fi
+              fi
+              # Ensure required files exist
+              touch /config/automations.yaml /config/scripts.yaml /config/scenes.yaml
+              mkdir -p /config/themes
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: config-base
+              mountPath: /config-base
+
       containers:
         - name: homeassistant
           image: ghcr.io/home-assistant/home-assistant:stable
@@ -80,6 +116,9 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: homeassistant-config
+        - name: config-base
+          configMap:
+            name: homeassistant-config
         # TODO: Uncomment for Bluetooth dongle support (TALOS-xxxx)
         # - name: usb
         #   hostPath:
