@@ -112,6 +112,27 @@ spec:
               cpu: 100m
               memory: 512Mi
 
+        # Matter Server sidecar for Matter/Thread device support
+        - name: matter-server
+          image: ghcr.io/home-assistant-libs/python-matter-server:stable
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true  # Required for Matter commissioning
+          env:
+            - name: TZ
+              value: "America/Los_Angeles"
+          ports:
+            - name: matter-ws
+              containerPort: 5580
+              protocol: TCP
+          volumeMounts:
+            - name: matter-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+
       volumes:
         - name: config
           persistentVolumeClaim:
@@ -119,6 +140,9 @@ spec:
         - name: config-base
           configMap:
             name: homeassistant-config
+        - name: matter-data
+          persistentVolumeClaim:
+            claimName: matter-server-data
         # TODO: Uncomment for Bluetooth dongle support (TALOS-xxxx)
         # - name: usb
         #   hostPath:
