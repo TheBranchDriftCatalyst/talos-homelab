@@ -1,6 +1,6 @@
 ---
 # Home Assistant - Smart Home Automation Platform
-# With Bluetooth USB passthrough for BLE device support
+# TODO: Add Bluetooth USB passthrough (TALOS-xxxx)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12,7 +12,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate  # Required for USB device access
+    type: Recreate
   selector:
     matchLabels:
       app: homeassistant
@@ -25,35 +25,14 @@ spec:
         # Velero backup
         backup.velero.io/backup-volumes: "config"
     spec:
-      # Pin to node with Bluetooth dongle
-      # Label your node: kubectl label node <node-name> bluetooth.homeassistant.io/enabled=true
-      nodeSelector:
-        bluetooth.homeassistant.io/enabled: "true"
-
       # Host network for mDNS discovery and integrations
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-
-      # Required for USB/Bluetooth device access
-      securityContext:
-        # Run as root for device access
-        runAsUser: 0
-        runAsGroup: 0
-        fsGroup: 0
 
       containers:
         - name: homeassistant
           image: ghcr.io/home-assistant/home-assistant:stable
           imagePullPolicy: IfNotPresent
-
-          # Privileged for USB/Bluetooth access
-          securityContext:
-            privileged: true
-            capabilities:
-              add:
-                - NET_ADMIN
-                - NET_RAW
-                - SYS_ADMIN
 
           env:
             - name: TZ
@@ -65,23 +44,14 @@ spec:
               protocol: TCP
 
           volumeMounts:
-            # Config persistence
             - name: config
               mountPath: /config
-            # USB devices (Bluetooth dongle)
-            - name: usb
-              mountPath: /dev/bus/usb
-            # D-Bus for Bluetooth
-            - name: dbus
-              mountPath: /run/dbus
-              readOnly: true
-            # Bluetooth device
-            - name: bluetooth
-              mountPath: /dev/bluetooth
-            # udev for device discovery
-            - name: udev
-              mountPath: /run/udev
-              readOnly: true
+            # TODO: Uncomment for Bluetooth dongle support (TALOS-xxxx)
+            # - name: usb
+            #   mountPath: /dev/bus/usb
+            # - name: dbus
+            #   mountPath: /run/dbus
+            #   readOnly: true
 
           livenessProbe:
             httpGet:
@@ -110,23 +80,12 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: homeassistant-config
-        # USB bus for Bluetooth dongle
-        - name: usb
-          hostPath:
-            path: /dev/bus/usb
-            type: Directory
-        # D-Bus socket for BlueZ
-        - name: dbus
-          hostPath:
-            path: /run/dbus
-            type: Directory
-        # Bluetooth device nodes
-        - name: bluetooth
-          hostPath:
-            path: /dev/bluetooth
-            type: DirectoryOrCreate
-        # udev for device events
-        - name: udev
-          hostPath:
-            path: /run/udev
-            type: Directory
+        # TODO: Uncomment for Bluetooth dongle support (TALOS-xxxx)
+        # - name: usb
+        #   hostPath:
+        #     path: /dev/bus/usb
+        #     type: Directory
+        # - name: dbus
+        #   hostPath:
+        #     path: /run/dbus
+        #     type: Directory
