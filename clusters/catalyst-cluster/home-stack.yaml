@@ -1,0 +1,25 @@
+---
+# Kustomization for home-stack (home automation)
+# Home Assistant with Bluetooth USB passthrough
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: home-stack
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/home-stack/base
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: namespaces
+    - name: storage
+    - name: traefik
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
