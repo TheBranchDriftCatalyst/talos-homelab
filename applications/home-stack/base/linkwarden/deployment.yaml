@@ -1,0 +1,142 @@
+---
+# Linkwarden - Self-hosted bookmark manager
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: linkwarden
+  labels:
+    app: linkwarden
+    app.kubernetes.io/name: linkwarden
+    app.kubernetes.io/part-of: home-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: linkwarden
+  template:
+    metadata:
+      labels:
+        app: linkwarden
+        app.kubernetes.io/name: linkwarden
+      annotations:
+        backup.velero.io/backup-volumes: "linkwarden-data,postgres-data,meili-data"
+    spec:
+      containers:
+        # Linkwarden main app
+        - name: linkwarden
+          image: ghcr.io/linkwarden/linkwarden:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NEXTAUTH_URL
+              value: "http://linkwarden.talos00/api/v1/auth"
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: nextauth-secret
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: postgres-password
+            # DATABASE_URL constructed from secret - see external-secret.yaml
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: database-url
+            - name: MEILI_HOST
+              value: "http://localhost:7700"
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: meili-master-key
+            # Authentik SSO (optional - configure in 1Password)
+            - name: NEXT_PUBLIC_AUTHENTIK_ENABLED
+              value: "false"
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - name: linkwarden-data
+              mountPath: /data/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+        # PostgreSQL database
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: postgres-password
+            - name: POSTGRES_DB
+              value: "linkwarden"
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+
+        # Meilisearch for full-text search
+        - name: meilisearch
+          image: getmeili/meilisearch:v1.12.8
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: meili-master-key
+            - name: MEILI_ENV
+              value: "production"
+          ports:
+            - name: meili
+              containerPort: 7700
+              protocol: TCP
+          volumeMounts:
+            - name: meili-data
+              mountPath: /meili_data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+
+      volumes:
+        - name: linkwarden-data
+          persistentVolumeClaim:
+            claimName: linkwarden-data
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: linkwarden-postgres
+        - name: meili-data
+          persistentVolumeClaim:
+            claimName: linkwarden-meili
