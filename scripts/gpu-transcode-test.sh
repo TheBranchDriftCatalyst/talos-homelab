@@ -25,6 +25,7 @@ TEST_DURATION=2
 DECODE_CODECS=("h264" "hevc" "vp9" "av1")
 ENCODE_CODECS_QSV=("h264_qsv" "hevc_qsv" "av1_qsv")
 ENCODE_CODECS_VAAPI=("h264_vaapi" "hevc_vaapi" "av1_vaapi")
+ENCODE_CODECS_NVENC=("h264_nvenc" "hevc_nvenc" "av1_nvenc")
 ENCODE_CODECS_SOFTWARE=("libx264" "libx265" "libsvtav1")
 
 log() {
@@ -47,12 +48,18 @@ subheader() {
 discover_gpu_pods() {
     log "Discovering GPU-capable pods in namespace: $NAMESPACE"
 
-    # Find pods with /dev/dri mounted
+    # Find pods with /dev/dri or NVIDIA devices mounted
     kubectl get pods -n "$NAMESPACE" -o json | jq -r '
         .items[] |
         select(.status.phase == "Running") |
-        select(.spec.volumes[]?.hostPath?.path == "/dev/dri" or
-               .spec.containers[].volumeMounts[]?.mountPath == "/dev/dri") |
+        select(
+            .spec.volumes[]?.hostPath?.path == "/dev/dri" or
+            .spec.containers[].volumeMounts[]?.mountPath == "/dev/dri" or
+            .spec.volumes[]?.hostPath?.path == "/dev/nvidia0" or
+            .spec.containers[].volumeMounts[]?.mountPath == "/dev/nvidia0" or
+            .spec.volumes[]?.hostPath?.path == "/dev/nvidiactl" or
+            .spec.containers[].volumeMounts[]?.mountPath == "/dev/nvidiactl"
+        ) |
         .metadata.name
     ' 2>/dev/null || true
 }
@@ -62,7 +69,28 @@ get_gpu_info() {
     local pod="$1"
     local info=""
 
-    # Try vainfo first (Intel/AMD VAAPI)
+    # Check for NVIDIA first
+    if kubectl exec -n "$NAMESPACE" "$pod" -- ls /dev/nvidia0 &>/dev/null; then
+        # Try nvidia-smi
+        info=$(kubectl exec -n "$NAMESPACE" "$pod" -- nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>&1 || true)
+        if [[ -n "$info" ]] && ! echo "$info" | grep -q "command not found"; then
+            echo "NVIDIA GPU detected:"
+            echo "$info"
+            return
+        fi
+        # Fallback: check ffmpeg for NVENC support
+        info=$(kubectl exec -n "$NAMESPACE" "$pod" -- ffmpeg -hide_banner -encoders 2>/dev/null | grep -i nvenc | head -5 || true)
+        if [[ -n "$info" ]]; then
+            echo "NVIDIA NVENC encoders available:"
+            echo "$info"
+            return
+        fi
+        echo "NVIDIA devices found but no nvidia-smi available"
+        kubectl exec -n "$NAMESPACE" "$pod" -- ls -la /dev/nvidia* 2>/dev/null || true
+        return
+    fi
+
+    # Try vainfo (Intel/AMD VAAPI)
     info=$(kubectl exec -n "$NAMESPACE" "$pod" -- vainfo 2>&1 | grep -E "Driver version|Supported profile" | head -20 || true)
 
     if [[ -n "$info" ]]; then
@@ -78,14 +106,24 @@ get_gpu_info() {
 detect_gpu_type() {
     local pod="$1"
 
+    # Check for NVIDIA first (device files)
+    if kubectl exec -n "$NAMESPACE" "$pod" -- ls /dev/nvidia0 &>/dev/null; then
+        echo "nvidia"
+        return
+    fi
+
+    # Check for NVIDIA via nvidiactl
+    if kubectl exec -n "$NAMESPACE" "$pod" -- ls /dev/nvidiactl &>/dev/null; then
+        echo "nvidia"
+        return
+    fi
+
     local vainfo=$(kubectl exec -n "$NAMESPACE" "$pod" -- vainfo 2>&1 || true)
 
     if echo "$vainfo" | grep -qi "iHD\|Intel"; then
         echo "intel"
     elif echo "$vainfo" | grep -qi "radeon\|amdgpu\|AMD"; then
         echo "amd"
-    elif kubectl exec -n "$NAMESPACE" "$pod" -- ls /dev/nvidia0 &>/dev/null; then
-        echo "nvidia"
     else
         echo "software"
     fi
@@ -178,6 +216,9 @@ generate_encode_matrix() {
             ;;
         amd)
             encoders=("${ENCODE_CODECS_VAAPI[@]}" "${ENCODE_CODECS_SOFTWARE[@]}")
+            ;;
+        nvidia)
+            encoders=("${ENCODE_CODECS_NVENC[@]}" "${ENCODE_CODECS_SOFTWARE[@]}")
             ;;
         *)
             encoders=("${ENCODE_CODECS_SOFTWARE[@]}")
@@ -280,6 +321,14 @@ quick_test() {
             run_encode_test "$pod" "h264_vaapi" "vaapi"
             echo -n "hevc_vaapi: "
             run_encode_test "$pod" "hevc_vaapi" "vaapi"
+            ;;
+        nvidia)
+            echo -n "h264_nvenc: "
+            run_encode_test "$pod" "h264_nvenc" "nvidia"
+            echo -n "hevc_nvenc: "
+            run_encode_test "$pod" "hevc_nvenc" "nvidia"
+            echo -n "av1_nvenc:  "
+            run_encode_test "$pod" "av1_nvenc" "nvidia"
             ;;
         *)
             echo -n "libx264: "

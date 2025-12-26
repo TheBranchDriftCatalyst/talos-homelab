@@ -72,18 +72,21 @@ resource_utilization() {
 flux_status() {
     section "FLUX GITOPS STATUS"
 
+    # Columns: NAME, REVISION, SUSPENDED, READY, MESSAGE
+    # Column 3 = SUSPENDED (True = suspended)
+    # Column 4 = READY (True = healthy, False = failed)
     local total ready failed suspended
     total=$(flux get kustomizations --no-header 2>/dev/null | wc -l | tr -d ' ')
-    ready=$(flux get kustomizations --no-header 2>/dev/null | grep -c "True" || echo 0)
-    failed=$(flux get kustomizations --no-header 2>/dev/null | grep -c "False" || echo 0)
-    suspended=$(flux get kustomizations --no-header 2>/dev/null | grep -c "suspended" || echo 0)
+    ready=$(flux get kustomizations --no-header 2>/dev/null | awk '$4 == "True" {count++} END {print count+0}')
+    failed=$(flux get kustomizations --no-header 2>/dev/null | awk '$4 == "False" {count++} END {print count+0}')
+    suspended=$(flux get kustomizations --no-header 2>/dev/null | awk '$3 == "True" {count++} END {print count+0}')
 
     echo -e "  Total: ${BOLD}$total${NC} | Ready: ${GREEN}$ready${NC} | Failed: ${RED}$failed${NC} | Suspended: ${YELLOW}$suspended${NC}"
     echo ""
 
-    # Show any failing kustomizations
+    # Show any failing kustomizations (READY column = False)
     local failures
-    failures=$(flux get kustomizations 2>/dev/null | grep "False" || true)
+    failures=$(flux get kustomizations --no-header 2>/dev/null | awk '$4 == "False"' || true)
     if [[ -n "$failures" ]]; then
         err "Failing Kustomizations:"
         echo "$failures" | while read -r line; do echo "    $line"; done
@@ -151,16 +154,19 @@ pod_health() {
 helmrelease_status() {
     section "HELMRELEASE STATUS"
 
+    # Columns: NAMESPACE, NAME, REVISION, SUSPENDED, READY, MESSAGE
+    # Column 4 = SUSPENDED (True = suspended)
+    # Column 5 = READY (True = healthy, False = failed)
     local total ready failed
     total=$(flux get helmreleases -A --no-header 2>/dev/null | wc -l | tr -d ' ')
-    ready=$(flux get helmreleases -A --no-header 2>/dev/null | grep -c "True" || echo 0)
-    failed=$(flux get helmreleases -A --no-header 2>/dev/null | grep -c "False" || echo 0)
+    ready=$(flux get helmreleases -A --no-header 2>/dev/null | awk '$5 == "True" {count++} END {print count+0}')
+    failed=$(flux get helmreleases -A --no-header 2>/dev/null | awk '$5 == "False" {count++} END {print count+0}')
 
     echo -e "  Total: ${BOLD}$total${NC} | Ready: ${GREEN}$ready${NC} | Failed: ${RED}$failed${NC}"
 
-    # Show failures
+    # Show failures (READY column = False)
     local failures
-    failures=$(flux get helmreleases -A 2>/dev/null | grep "False" || true)
+    failures=$(flux get helmreleases -A --no-header 2>/dev/null | awk '$5 == "False"' || true)
     if [[ -n "$failures" ]]; then
         echo ""
         err "Failing HelmReleases:"
