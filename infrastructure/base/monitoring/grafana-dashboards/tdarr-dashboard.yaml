@@ -94,24 +94,10 @@ spec:
         {
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
           "fieldConfig": {
-            "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]}, "unit": "none"},
-            "overrides": []
-          },
-          "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
-          "id": 105,
-          "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-          "title": "Staged Queue",
-          "description": "Files waiting in queue to be processed",
-          "type": "stat",
-          "targets": [{"expr": "max(tdarr_queue_staged)", "legendFormat": "", "refId": "A"}]
-        },
-        {
-          "datasource": {"type": "prometheus", "uid": "${datasource}"},
-          "fieldConfig": {
             "defaults": {"color": {"mode": "thresholds"}, "mappings": [], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 1}, {"color": "green", "value": 100}]}, "unit": "none"},
             "overrides": []
           },
-          "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+          "gridPos": {"h": 4, "w": 8, "x": 16, "y": 1},
           "id": 106,
           "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
           "title": "In Progress",
@@ -285,14 +271,20 @@ spec:
               "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
               "unit": "decgbytes"
             },
-            "overrides": []
+            "overrides": [
+              {"matcher": {"id": "byName", "options": "Savings Rate"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
+              {"matcher": {"id": "byName", "options": "Total Saved"}, "properties": [{"id": "color", "value": {"fixedColor": "purple", "mode": "fixed"}}]}
+            ]
           },
           "gridPos": {"h": 7, "w": 12, "x": 0, "y": 11},
           "id": 10,
-          "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
-          "title": "Space Saved Over Time",
+          "options": {"legend": {"calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "single", "sort": "none"}},
+          "title": "Space Savings",
           "type": "timeseries",
-          "targets": [{"expr": "max(tdarr_size_diff_gb)", "legendFormat": "Total Saved", "refId": "A"}]
+          "targets": [
+            {"expr": "max(tdarr_size_diff_gb)", "legendFormat": "Total Saved", "refId": "A"},
+            {"expr": "clamp_min(deriv(max(tdarr_size_diff_gb)[5m]), 0) * 3600", "legendFormat": "Savings Rate (GB/hr)", "refId": "B"}
+          ]
         },
         {
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
