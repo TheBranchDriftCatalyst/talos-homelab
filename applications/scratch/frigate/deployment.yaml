@@ -1,0 +1,134 @@
+---
+# Frigate NVR - AI-powered security camera system
+# Uses Intel Arc on talos02-gpu via OpenVINO for person detection
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frigate
+  labels:
+    app: frigate
+    app.kubernetes.io/name: frigate
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: frigate
+  template:
+    metadata:
+      labels:
+        app: frigate
+        app.kubernetes.io/name: frigate
+    spec:
+      # Run on talos02-gpu with Intel Arc
+      nodeSelector:
+        kubernetes.io/hostname: talos02-gpu
+
+      securityContext:
+        fsGroup: 44  # video group
+        supplementalGroups:
+          - 44   # video (for /dev/dri access)
+          - 100  # users
+          - 109  # render group
+
+      initContainers:
+        # Copy config from ConfigMap to writable volume
+        - name: init-config
+          image: busybox:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              cp /config-ro/config.yml /config/config.yml
+              echo "Config copied to /config"
+          volumeMounts:
+            - name: config-ro
+              mountPath: /config-ro
+            - name: config
+              mountPath: /config
+
+      containers:
+        - name: frigate
+          # Standard image with OpenVINO support
+          image: ghcr.io/blakeblackshear/frigate:0.14.1
+          imagePullPolicy: IfNotPresent
+
+          securityContext:
+            privileged: true  # Required for GPU access
+
+          env:
+            - name: TZ
+              value: 'America/Los_Angeles'
+
+          ports:
+            - name: http
+              containerPort: 5000
+              protocol: TCP
+            - name: rtsp
+              containerPort: 8554
+              protocol: TCP
+            - name: webrtc
+              containerPort: 8555
+              protocol: TCP
+
+          volumeMounts:
+            # Config (writable)
+            - name: config
+              mountPath: /config
+            # Media storage
+            - name: media
+              mountPath: /media/frigate
+            # Shared memory for detection
+            - name: shm
+              mountPath: /dev/shm
+            # Intel GPU access
+            - name: dri
+              mountPath: /dev/dri
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+
+          livenessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+
+          readinessProbe:
+            httpGet:
+              path: /api/version
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+
+      volumes:
+        # Config from ConfigMap (read-only source)
+        - name: config-ro
+          configMap:
+            name: frigate-config
+        # Writable config directory
+        - name: config
+          persistentVolumeClaim:
+            claimName: frigate-config
+        # Media storage
+        - name: media
+          persistentVolumeClaim:
+            claimName: frigate-media
+        # Shared memory (required for detection)
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Gi
+        # Intel GPU access
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory

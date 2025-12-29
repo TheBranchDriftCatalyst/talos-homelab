@@ -1,0 +1,98 @@
+---
+# Frigate NVR Configuration
+# POC for 360-degree security camera system with person detection
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frigate-config
+  labels:
+    app: frigate
+data:
+  config.yml: |
+    # Frigate NVR Configuration
+    # Docs: https://docs.frigate.video/configuration/
+
+    mqtt:
+      enabled: false  # Enable when integrating with Home Assistant
+
+    # Detection configuration - Intel OpenVINO on Arc GPU
+    detectors:
+      ov:
+        type: openvino
+        device: GPU
+        model:
+          path: /openvino-model/ssdlite_mobilenet_v2.xml
+
+    # Hardware acceleration for video decoding (Intel QSV)
+    ffmpeg:
+      hwaccel_args: preset-vaapi
+
+    # Object detection settings
+    detect:
+      enabled: true
+      width: 1280
+      height: 720
+      fps: 5  # Detection FPS (lower = less GPU load)
+
+    # Objects to detect
+    objects:
+      track:
+        - person
+        - car
+        - dog
+        - cat
+      filters:
+        person:
+          min_area: 5000
+          max_area: 100000
+          min_score: 0.5
+          threshold: 0.7
+
+    # Recording configuration
+    record:
+      enabled: true
+      retain:
+        days: 7
+        mode: motion
+      events:
+        retain:
+          default: 14
+          mode: active_objects
+
+    # Snapshots
+    snapshots:
+      enabled: true
+      retain:
+        default: 14
+
+    # Birdseye - combined camera view
+    birdseye:
+      enabled: true
+      mode: continuous
+
+    # Example camera configuration (update with your RTSP streams)
+    cameras:
+      # Placeholder camera - replace with your actual RTSP URLs
+      front_door:
+        enabled: false  # Enable when you add a real camera
+        ffmpeg:
+          inputs:
+            - path: rtsp://user:pass@camera-ip:554/stream1
+              roles:
+                - detect
+                - record
+        detect:
+          width: 1280
+          height: 720
+          fps: 5
+        objects:
+          track:
+            - person
+            - car
+
+      # Add more cameras as needed:
+      # back_yard:
+      #   ffmpeg:
+      #     inputs:
+      #       - path: rtsp://...
+      #   ...
