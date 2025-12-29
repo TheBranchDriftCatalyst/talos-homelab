@@ -1,368 +1,432 @@
 #!/usr/bin/env bash
 #
 # GPU Transcode Test Script
-# Discovers GPUs in the cluster and runs encode/decode matrix tests
+# Creates Kubernetes Jobs to test GPU encoding capabilities on each node
 #
-# Usage: ./scripts/gpu-transcode-test.sh [namespace]
+# Usage:
+#   ./scripts/gpu-transcode-test.sh                    # Test all GPU nodes
+#   ./scripts/gpu-transcode-test.sh --node talos02-gpu # Test specific node
+#   ./scripts/gpu-transcode-test.sh --quick            # Quick test (fewer codecs)
 #
 
 set -euo pipefail
 
-NAMESPACE="${1:-media}"
-REPORT_FILE="/tmp/gpu-transcode-report-$(date +%Y%m%d-%H%M%S).txt"
+NAMESPACE="scratch"
+JOB_PREFIX="gpu-test"
+IMAGE="linuxserver/ffmpeg:latest"
+TEST_DURATION=3
+CLEANUP=${CLEANUP:-true}
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# Test duration in seconds
-TEST_DURATION=2
-
-# Codecs to test
-DECODE_CODECS=("h264" "hevc" "vp9" "av1")
-ENCODE_CODECS_QSV=("h264_qsv" "hevc_qsv" "av1_qsv")
-ENCODE_CODECS_VAAPI=("h264_vaapi" "hevc_vaapi" "av1_vaapi")
-ENCODE_CODECS_NVENC=("h264_nvenc" "hevc_nvenc" "av1_nvenc")
-ENCODE_CODECS_SOFTWARE=("libx264" "libx265" "libsvtav1")
-
-log() {
-    echo -e "$1" | tee -a "$REPORT_FILE"
+# Get all schedulable nodes in the cluster
+get_all_nodes() {
+    kubectl get nodes -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n'
 }
 
+log() { echo -e "$1"; }
 header() {
     log ""
     log "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
     log "${BLUE}  $1${NC}"
     log "${BLUE}═══════════════════════════════════════════════════════════════${NC}"
 }
+subheader() { log "\n${YELLOW}--- $1 ---${NC}"; }
 
-subheader() {
-    log ""
-    log "${YELLOW}--- $1 ---${NC}"
-}
+# Detect GPU type for a node by checking labels and device files
+detect_node_gpu_type() {
+    local node="$1"
 
-# Discover GPU-capable pods
-discover_gpu_pods() {
-    log "Discovering GPU-capable pods in namespace: $NAMESPACE"
+    # Check for node labels first (if labeled)
+    local labels=$(kubectl get node "$node" -o jsonpath='{.metadata.labels}' 2>/dev/null)
 
-    # Find pods with /dev/dri or NVIDIA devices mounted
-    kubectl get pods -n "$NAMESPACE" -o json | jq -r '
-        .items[] |
-        select(.status.phase == "Running") |
-        select(
-            .spec.volumes[]?.hostPath?.path == "/dev/dri" or
-            .spec.containers[].volumeMounts[]?.mountPath == "/dev/dri" or
-            .spec.volumes[]?.hostPath?.path == "/dev/nvidia0" or
-            .spec.containers[].volumeMounts[]?.mountPath == "/dev/nvidia0" or
-            .spec.volumes[]?.hostPath?.path == "/dev/nvidiactl" or
-            .spec.containers[].volumeMounts[]?.mountPath == "/dev/nvidiactl"
-        ) |
-        .metadata.name
-    ' 2>/dev/null || true
-}
-
-# Get GPU info from a pod
-get_gpu_info() {
-    local pod="$1"
-    local info=""
-
-    # Check for NVIDIA first
-    if kubectl exec -n "$NAMESPACE" "$pod" -- ls /dev/nvidia0 &>/dev/null; then
-        # Try nvidia-smi
-        info=$(kubectl exec -n "$NAMESPACE" "$pod" -- nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>&1 || true)
-        if [[ -n "$info" ]] && ! echo "$info" | grep -q "command not found"; then
-            echo "NVIDIA GPU detected:"
-            echo "$info"
-            return
-        fi
-        # Fallback: check ffmpeg for NVENC support
-        info=$(kubectl exec -n "$NAMESPACE" "$pod" -- ffmpeg -hide_banner -encoders 2>/dev/null | grep -i nvenc | head -5 || true)
-        if [[ -n "$info" ]]; then
-            echo "NVIDIA NVENC encoders available:"
-            echo "$info"
-            return
-        fi
-        echo "NVIDIA devices found but no nvidia-smi available"
-        kubectl exec -n "$NAMESPACE" "$pod" -- ls -la /dev/nvidia* 2>/dev/null || true
-        return
-    fi
-
-    # Try vainfo (Intel/AMD VAAPI)
-    info=$(kubectl exec -n "$NAMESPACE" "$pod" -- vainfo 2>&1 | grep -E "Driver version|Supported profile" | head -20 || true)
-
-    if [[ -n "$info" ]]; then
-        echo "$info"
-        return
-    fi
-
-    # Check for device files
-    kubectl exec -n "$NAMESPACE" "$pod" -- ls -la /dev/dri/ 2>/dev/null || echo "No /dev/dri access"
-}
-
-# Detect GPU type (intel, amd, nvidia, none)
-detect_gpu_type() {
-    local pod="$1"
-
-    # Check for NVIDIA first (device files)
-    if kubectl exec -n "$NAMESPACE" "$pod" -- ls /dev/nvidia0 &>/dev/null; then
+    if echo "$labels" | grep -qi "nvidia"; then
         echo "nvidia"
         return
     fi
 
-    # Check for NVIDIA via nvidiactl
-    if kubectl exec -n "$NAMESPACE" "$pod" -- ls /dev/nvidiactl &>/dev/null; then
-        echo "nvidia"
-        return
-    fi
-
-    local vainfo=$(kubectl exec -n "$NAMESPACE" "$pod" -- vainfo 2>&1 || true)
-
-    if echo "$vainfo" | grep -qi "iHD\|Intel"; then
+    if echo "$labels" | grep -qi "intel"; then
         echo "intel"
-    elif echo "$vainfo" | grep -qi "radeon\|amdgpu\|AMD"; then
-        echo "amd"
-    else
-        echo "software"
+        return
     fi
+
+    if echo "$labels" | grep -qi "amd"; then
+        echo "amd"
+        return
+    fi
+
+    # Fallback: known node mapping for this cluster
+    case "$node" in
+        *gpu*|talos02*) echo "intel" ;;   # Intel Arc nodes
+        talos03)        echo "amd" ;;     # AMD VAAPI
+        talos05)        echo "nvidia" ;;  # NVIDIA P2000
+        talos04)        echo "nvidia" ;;  # NVIDIA GPU
+        *)              echo "cpu" ;;     # CPU-only fallback
+    esac
 }
 
-# Run single encode test
+# Generate Job YAML for a specific node
+generate_job_yaml() {
+    local node="$1"
+    local gpu_type="$2"
+    local job_name="${JOB_PREFIX}-${node}"
+
+    local gpu_volumes=""
+    local gpu_volume_mounts=""
+    local security_context=""
+    local runtime_class=""
+
+    case "$gpu_type" in
+        intel|amd)
+            gpu_volumes='
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory'
+            gpu_volume_mounts='
+            - name: dri
+              mountPath: /dev/dri'
+            security_context='
+          securityContext:
+            privileged: true'
+            ;;
+        nvidia)
+            # NVIDIA uses device plugin, but we need privileged for now due to CDI issues
+            gpu_volumes='
+        - name: nvidia
+          hostPath:
+            path: /dev/nvidia0
+            type: CharDevice
+        - name: nvidiactl
+          hostPath:
+            path: /dev/nvidiactl
+            type: CharDevice
+        - name: nvidia-uvm
+          hostPath:
+            path: /dev/nvidia-uvm
+            type: CharDevice'
+            gpu_volume_mounts='
+            - name: nvidia
+              mountPath: /dev/nvidia0
+            - name: nvidiactl
+              mountPath: /dev/nvidiactl
+            - name: nvidia-uvm
+              mountPath: /dev/nvidia-uvm'
+            security_context='
+          securityContext:
+            privileged: true'
+            ;;
+        cpu|*)
+            # CPU-only nodes - no special volumes needed
+            gpu_volumes=""
+            gpu_volume_mounts=""
+            security_context=""
+            ;;
+    esac
+
+    # Build volume mounts section
+    local volume_mounts_section="
+            - name: tmp
+              mountPath: /tmp"
+    if [[ -n "$gpu_volume_mounts" ]]; then
+        volume_mounts_section="${gpu_volume_mounts}${volume_mounts_section}"
+    fi
+
+    # Build volumes section
+    local volumes_section="
+        - name: tmp
+          emptyDir: {}"
+    if [[ -n "$gpu_volumes" ]]; then
+        volumes_section="${gpu_volumes}${volumes_section}"
+    fi
+
+    cat <<EOF
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${job_name}
+  namespace: ${NAMESPACE}
+  labels:
+    app: gpu-transcode-test
+    node: ${node}
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: gpu-transcode-test
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: ${node}
+      containers:
+        - name: ffmpeg
+          image: ${IMAGE}
+          command: ["sleep", "infinity"]${security_context}
+          volumeMounts:${volume_mounts_section}
+      volumes:${volumes_section}
+EOF
+}
+
+# Create and wait for job pod to be ready
+create_test_job() {
+    local node="$1"
+    local gpu_type="$2"
+    local job_name="${JOB_PREFIX}-${node}"
+
+    log "${CYAN}Creating test job for ${node} (${gpu_type})...${NC}"
+
+    # Delete existing job if any
+    kubectl delete job "$job_name" -n "$NAMESPACE" --ignore-not-found &>/dev/null
+
+    # Create job
+    generate_job_yaml "$node" "$gpu_type" | kubectl apply -f - &>/dev/null
+
+    # Wait for pod to be running
+    local timeout=60
+    local elapsed=0
+    while [[ $elapsed -lt $timeout ]]; do
+        local phase=$(kubectl get pods -n "$NAMESPACE" -l "job-name=$job_name" -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "Pending")
+        if [[ "$phase" == "Running" ]]; then
+            log "${GREEN}Job pod running${NC}"
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+
+    log "${RED}Timeout waiting for job pod${NC}"
+    return 1
+}
+
+# Get pod name for a job
+get_job_pod() {
+    local job_name="$1"
+    kubectl get pods -n "$NAMESPACE" -l "job-name=$job_name" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
+}
+
+# Run encode test in job pod
 run_encode_test() {
     local pod="$1"
     local encoder="$2"
-    local hw_device="$3"
+    local gpu_type="$3"
 
     local cmd=""
-    local result=""
-    local speed=""
 
     case "$encoder" in
         *_qsv)
-            cmd="ffmpeg -hide_banner -y -init_hw_device qsv=hw -filter_hw_device hw -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -vf 'format=nv12,hwupload=extra_hw_frames=64' -c:v $encoder -preset fast -f null -"
+            cmd="ffmpeg -hide_banner -y -init_hw_device qsv=hw -filter_hw_device hw -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -vf 'format=nv12,hwupload=extra_hw_frames=64' -c:v $encoder -preset fast -f null - 2>&1"
             ;;
         *_vaapi)
-            cmd="ffmpeg -hide_banner -y -vaapi_device /dev/dri/renderD128 -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -vf 'format=nv12,hwupload' -c:v $encoder -f null -"
+            cmd="ffmpeg -hide_banner -y -vaapi_device /dev/dri/renderD128 -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -vf 'format=nv12,hwupload' -c:v $encoder -f null - 2>&1"
             ;;
         *_nvenc)
-            cmd="ffmpeg -hide_banner -y -hwaccel cuda -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -c:v $encoder -preset fast -f null -"
+            cmd="ffmpeg -hide_banner -y -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -c:v $encoder -preset fast -f null - 2>&1"
             ;;
         lib*)
-            cmd="ffmpeg -hide_banner -y -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -c:v $encoder -preset fast -f null -"
-            ;;
-        *)
-            cmd="ffmpeg -hide_banner -y -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -c:v $encoder -f null -"
+            cmd="ffmpeg -hide_banner -y -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -c:v $encoder -preset fast -f null - 2>&1"
             ;;
     esac
 
-    result=$(kubectl exec -n "$NAMESPACE" "$pod" -- bash -c "$cmd" 2>&1 || true)
+    local result=$(kubectl exec -n "$NAMESPACE" "$pod" -- bash -c "$cmd" 2>&1 || true)
 
     if echo "$result" | grep -q "speed="; then
-        speed=$(echo "$result" | sed -n 's/.*speed=\s*\([0-9.]*x\).*/\1/p' | tail -1)
-        echo "$speed"
+        # Extract speed value (compatible with BSD/macOS grep)
+        echo "$result" | sed -n 's/.*speed=\s*\([0-9.]*x\).*/\1/p' | tail -1
     else
         echo "FAIL"
     fi
 }
 
-# Run decode test
-run_decode_test() {
-    local pod="$1"
-    local decoder="$2"
-    local hw_accel="$3"
+# Run full test suite on a node
+run_node_tests() {
+    local node="$1"
+    local quick="${2:-false}"
+    local gpu_type=$(detect_node_gpu_type "$node")
+    local job_name="${JOB_PREFIX}-${node}"
 
-    local cmd=""
-    local result=""
-    local speed=""
+    header "Testing: $node ($gpu_type GPU)"
 
-    # Generate test source and decode
-    case "$hw_accel" in
-        qsv)
-            cmd="ffmpeg -hide_banner -y -init_hw_device qsv=hw -hwaccel qsv -hwaccel_output_format qsv -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -c:v libx264 -f matroska - | ffmpeg -hide_banner -y -init_hw_device qsv=hw -hwaccel qsv -c:v ${decoder}_qsv -i - -f null -"
+    # Create job
+    if ! create_test_job "$node" "$gpu_type"; then
+        log "${RED}Failed to create test job for $node${NC}"
+        return 1
+    fi
+
+    local pod=$(get_job_pod "$job_name")
+    if [[ -z "$pod" ]]; then
+        log "${RED}No pod found for job${NC}"
+        return 1
+    fi
+
+    # Show GPU info
+    subheader "GPU Detection"
+    case "$gpu_type" in
+        intel|amd)
+            kubectl exec -n "$NAMESPACE" "$pod" -- vainfo 2>&1 | grep -E "Driver|Profile" | head -10 || log "vainfo not available"
             ;;
-        vaapi)
-            cmd="ffmpeg -hide_banner -y -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -c:v libx264 -f matroska - | ffmpeg -hide_banner -y -vaapi_device /dev/dri/renderD128 -hwaccel vaapi -i - -f null -"
+        nvidia)
+            kubectl exec -n "$NAMESPACE" "$pod" -- nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>&1 || log "nvidia-smi not available"
             ;;
-        *)
-            # Software decode test
-            cmd="ffmpeg -hide_banner -y -f lavfi -i testsrc=duration=${TEST_DURATION}:size=1920x1080:rate=30 -c:v libx264 -f matroska - | ffmpeg -hide_banner -y -i - -f null -"
+        cpu)
+            log "CPU-only node (no GPU acceleration)"
             ;;
     esac
 
-    result=$(kubectl exec -n "$NAMESPACE" "$pod" -- bash -c "$cmd" 2>&1 || true)
-
-    if echo "$result" | grep -q "speed="; then
-        speed=$(echo "$result" | sed -n 's/.*speed=\s*\([0-9.]*x\).*/\1/p' | tail -1)
-        echo "$speed"
-    else
-        echo "FAIL"
-    fi
-}
-
-# Generate encode matrix for a pod
-generate_encode_matrix() {
-    local pod="$1"
-    local gpu_type="$2"
-
-    subheader "Encode Tests"
-
-    local encoders=()
+    # Determine encoders to test
+    local hw_encoders=()
+    local sw_encoders=("libx264" "libx265")
 
     case "$gpu_type" in
         intel)
-            encoders=("${ENCODE_CODECS_QSV[@]}" "${ENCODE_CODECS_SOFTWARE[@]}")
+            hw_encoders=("h264_qsv" "hevc_qsv" "av1_qsv")
             ;;
         amd)
-            encoders=("${ENCODE_CODECS_VAAPI[@]}" "${ENCODE_CODECS_SOFTWARE[@]}")
+            hw_encoders=("h264_vaapi" "hevc_vaapi")
             ;;
         nvidia)
-            encoders=("${ENCODE_CODECS_NVENC[@]}" "${ENCODE_CODECS_SOFTWARE[@]}")
+            hw_encoders=("h264_nvenc" "hevc_nvenc" "av1_nvenc")
             ;;
-        *)
-            encoders=("${ENCODE_CODECS_SOFTWARE[@]}")
+        cpu)
+            # CPU-only - no hardware encoders, just test software
+            hw_encoders=()
             ;;
     esac
 
-    printf "%-20s %s\n" "Encoder" "Speed" | tee -a "$REPORT_FILE"
-    printf "%-20s %s\n" "-------" "-----" | tee -a "$REPORT_FILE"
+    # Run tests
+    subheader "Encode Tests (1080p, ${TEST_DURATION}s)"
+    printf "${CYAN}%-18s %-10s${NC}\n" "Encoder" "Speed"
+    printf "%-18s %-10s\n" "--------" "-----"
 
-    for encoder in "${encoders[@]}"; do
+    # Hardware encoders
+    for encoder in "${hw_encoders[@]}"; do
+        printf "%-18s " "$encoder"
         local speed=$(run_encode_test "$pod" "$encoder" "$gpu_type")
         if [[ "$speed" == "FAIL" ]]; then
-            printf "%-20s ${RED}%s${NC}\n" "$encoder" "FAIL" | tee -a "$REPORT_FILE"
+            printf "${RED}%s${NC}\n" "FAIL"
         else
-            printf "%-20s ${GREEN}%s${NC}\n" "$encoder" "$speed" | tee -a "$REPORT_FILE"
+            printf "${GREEN}%s${NC}\n" "$speed"
         fi
     done
-}
 
-# Main report generation
-generate_report() {
-    header "GPU Transcode Test Report"
-    log "Generated: $(date)"
-    log "Namespace: $NAMESPACE"
-
-    # Get cluster info
-    subheader "Cluster Nodes"
-    kubectl get nodes -o wide --no-headers | while read line; do
-        log "  $line"
-    done
-
-    # Discover GPU pods
-    header "GPU-Capable Pods Discovery"
-
-    local pods=$(discover_gpu_pods)
-
-    if [[ -z "$pods" ]]; then
-        log "${YELLOW}No GPU-capable pods found in namespace $NAMESPACE${NC}"
-        log "Looking for any pod with ffmpeg..."
-        pods=$(kubectl get pods -n "$NAMESPACE" -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | tr ' ' '\n' | head -5)
+    # Software encoders (skip in quick mode)
+    if [[ "$quick" != "true" ]]; then
+        for encoder in "${sw_encoders[@]}"; do
+            printf "%-18s " "$encoder"
+            local speed=$(run_encode_test "$pod" "$encoder" "$gpu_type")
+            if [[ "$speed" == "FAIL" ]]; then
+                printf "${RED}%s${NC}\n" "FAIL"
+            else
+                printf "${YELLOW}%s${NC}\n" "$speed"
+            fi
+        done
     fi
 
-    for pod in $pods; do
-        header "Pod: $pod"
+    # Cleanup
+    if [[ "$CLEANUP" == "true" ]]; then
+        log "\n${CYAN}Cleaning up job...${NC}"
+        kubectl delete job "$job_name" -n "$NAMESPACE" --ignore-not-found &>/dev/null
+    fi
+}
 
-        # Get node
-        local node=$(kubectl get pod -n "$NAMESPACE" "$pod" -o jsonpath='{.spec.nodeName}')
-        log "Node: $node"
+# Cleanup all test jobs
+cleanup_jobs() {
+    log "${CYAN}Cleaning up all test jobs...${NC}"
+    kubectl delete jobs -n "$NAMESPACE" -l app=gpu-transcode-test --ignore-not-found
+}
 
-        # Detect GPU type
-        local gpu_type=$(detect_gpu_type "$pod")
-        log "GPU Type: $gpu_type"
+# Main
+main() {
+    local target_node=""
+    local quick=false
 
-        # Get GPU info
-        subheader "GPU Info (vainfo)"
-        local gpu_info=$(get_gpu_info "$pod")
-        echo "$gpu_info" | head -15 | tee -a "$REPORT_FILE"
+    # Parse args
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --node|-n)
+                target_node="$2"
+                shift 2
+                ;;
+            --quick|-q)
+                quick=true
+                shift
+                ;;
+            --cleanup)
+                cleanup_jobs
+                exit 0
+                ;;
+            --help|-h)
+                cat <<EOF
+GPU Transcode Test Script
 
-        # Check available devices
-        subheader "Device Files"
-        kubectl exec -n "$NAMESPACE" "$pod" -- ls -la /dev/dri/ 2>/dev/null | tee -a "$REPORT_FILE" || log "No /dev/dri access"
+Creates Kubernetes Jobs to test GPU encoding capabilities on each node.
+Automatically discovers all nodes and tests hardware acceleration.
 
-        # Run encode matrix
-        generate_encode_matrix "$pod" "$gpu_type"
+Usage:
+  $0                          Test all nodes in the cluster
+  $0 --node <node>            Test specific node
+  $0 --quick                  Quick test (hardware encoders only)
+  $0 --cleanup                Remove all test jobs
 
+Options:
+  --node, -n <node>    Target specific node (e.g., talos02-gpu)
+  --quick, -q          Skip software encoder tests
+  --cleanup            Remove leftover test jobs
+
+Environment:
+  CLEANUP=false        Keep jobs after completion (for debugging)
+  TEST_DURATION=N      Encode test duration in seconds (default: 3)
+  NAMESPACE=scratch    Namespace for test jobs (default: scratch)
+
+GPU Types Detected:
+  intel   - Intel QSV (h264_qsv, hevc_qsv, av1_qsv)
+  amd     - AMD VAAPI (h264_vaapi, hevc_vaapi)
+  nvidia  - NVIDIA NVENC (h264_nvenc, hevc_nvenc, av1_nvenc)
+  cpu     - Software only (libx264, libx265)
+
+Examples:
+  $0                           # Test all nodes in cluster
+  $0 --node talos02-gpu        # Test only Intel Arc node
+  $0 --quick --node talos03    # Quick test AMD node
+  CLEANUP=false $0             # Keep jobs for inspection
+EOF
+                exit 0
+                ;;
+            *)
+                log "${RED}Unknown option: $1${NC}"
+                exit 1
+                ;;
+        esac
     done
 
-    # Summary
+    header "GPU Transcode Test"
+    log "Namespace: $NAMESPACE"
+    log "Image: $IMAGE"
+    log "Test Duration: ${TEST_DURATION}s"
+    log "Quick Mode: $quick"
+
+    if [[ -n "$target_node" ]]; then
+        # Test single node
+        run_node_tests "$target_node" "$quick"
+    else
+        # Test all nodes in the cluster
+        local nodes=$(get_all_nodes)
+        log "Discovered nodes: $(echo $nodes | tr '\n' ' ')"
+
+        for node in $nodes; do
+            run_node_tests "$node" "$quick"
+        done
+    fi
+
     header "Summary"
-    log "Report saved to: $REPORT_FILE"
+    log "Tests completed. Use ${CYAN}--cleanup${NC} to remove any leftover jobs."
 }
 
-# Quick test mode - just test one pod
-quick_test() {
-    local pod="$1"
-
-    echo "Quick GPU test for pod: $pod"
-    echo ""
-
-    # Detect GPU
-    local gpu_type=$(detect_gpu_type "$pod")
-    echo "GPU Type: $gpu_type"
-    echo ""
-
-    # Quick encode tests
-    echo "Running quick encode tests..."
-    echo ""
-
-    case "$gpu_type" in
-        intel)
-            echo -n "h264_qsv: "
-            run_encode_test "$pod" "h264_qsv" "qsv"
-            echo -n "hevc_qsv: "
-            run_encode_test "$pod" "hevc_qsv" "qsv"
-            echo -n "av1_qsv:  "
-            run_encode_test "$pod" "av1_qsv" "qsv"
-            ;;
-        amd)
-            echo -n "h264_vaapi: "
-            run_encode_test "$pod" "h264_vaapi" "vaapi"
-            echo -n "hevc_vaapi: "
-            run_encode_test "$pod" "hevc_vaapi" "vaapi"
-            ;;
-        nvidia)
-            echo -n "h264_nvenc: "
-            run_encode_test "$pod" "h264_nvenc" "nvidia"
-            echo -n "hevc_nvenc: "
-            run_encode_test "$pod" "hevc_nvenc" "nvidia"
-            echo -n "av1_nvenc:  "
-            run_encode_test "$pod" "av1_nvenc" "nvidia"
-            ;;
-        *)
-            echo -n "libx264: "
-            run_encode_test "$pod" "libx264" ""
-            echo -n "libx265: "
-            run_encode_test "$pod" "libx265" ""
-            ;;
-    esac
-}
-
-# Parse arguments
-case "${1:-}" in
-    --quick)
-        if [[ -z "${2:-}" ]]; then
-            echo "Usage: $0 --quick <pod-name> [namespace]"
-            exit 1
-        fi
-        NAMESPACE="${3:-media}"
-        quick_test "$2"
-        ;;
-    --help|-h)
-        echo "GPU Transcode Test Script"
-        echo ""
-        echo "Usage:"
-        echo "  $0 [namespace]           Run full report (default namespace: media)"
-        echo "  $0 --quick <pod> [ns]    Quick test single pod"
-        echo "  $0 --help                Show this help"
-        echo ""
-        echo "Examples:"
-        echo "  $0                       # Full report for 'media' namespace"
-        echo "  $0 arr-stack             # Full report for 'arr-stack' namespace"
-        echo "  $0 --quick tdarr-xxx     # Quick test specific pod"
-        ;;
-    *)
-        generate_report
-        ;;
-esac
+main "$@"
