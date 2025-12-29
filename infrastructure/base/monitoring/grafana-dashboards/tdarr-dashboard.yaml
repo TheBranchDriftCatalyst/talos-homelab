@@ -47,7 +47,7 @@ spec:
           "title": "Avg Transcodes/hr",
           "description": "Average transcodes per hour over selected time range",
           "type": "stat",
-          "targets": [{"expr": "increase(tdarr_transcode_count[$__range]) / ($__range_s / 3600)", "legendFormat": "", "refId": "A"}]
+          "targets": [{"expr": "clamp_min(delta(tdarr_transcode_count[$__range]), 0) / ($__range_s / 3600)", "legendFormat": "", "refId": "A"}]
         },
         {
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
@@ -75,7 +75,7 @@ spec:
           "title": "ETA to Complete",
           "description": "Estimated hours to finish remaining files at current rate",
           "type": "stat",
-          "targets": [{"expr": "(max(tdarr_total_files) - max(tdarr_queue_transcode_success) - max(tdarr_queue_transcode_error)) / (increase(tdarr_transcode_count[$__range]) / ($__range_s / 3600)) or vector(0)", "legendFormat": "", "refId": "A"}]
+          "targets": [{"expr": "(max(tdarr_total_files) - max(tdarr_queue_transcode_success) - max(tdarr_queue_transcode_error)) / clamp_min(delta(tdarr_transcode_count[$__range]) / ($__range_s / 3600), 0.1) or vector(0)", "legendFormat": "", "refId": "A"}]
         },
         {
           "datasource": {"type": "prometheus", "uid": "${datasource}"},
@@ -117,7 +117,7 @@ spec:
           "title": "In Progress",
           "description": "Files currently being transcoded",
           "type": "stat",
-          "targets": [{"expr": "max(tdarr_queue_transcode)", "legendFormat": "", "refId": "A"}]
+          "targets": [{"expr": "max(tdarr_queue_staged)", "legendFormat": "", "refId": "A"}]
         },
         {
           "collapsed": false,
@@ -227,8 +227,8 @@ spec:
           "title": "Transcoding Activity",
           "type": "timeseries",
           "targets": [
-            {"expr": "sum(rate(tdarr_transcode_count[5m])) * 60", "legendFormat": "Transcodes/min", "refId": "A"},
-            {"expr": "sum(rate(tdarr_health_check_count[5m])) * 60", "legendFormat": "Health Checks/min", "refId": "B"}
+            {"expr": "clamp_min(sum(deriv(tdarr_transcode_count[5m])), 0) * 60", "legendFormat": "Transcodes/min", "refId": "A"},
+            {"expr": "clamp_min(sum(deriv(tdarr_health_check_count[5m])), 0) * 60", "legendFormat": "Health Checks/min", "refId": "B"}
           ]
         },
         {
@@ -238,7 +238,8 @@ spec:
             "overrides": [
               {"matcher": {"id": "byName", "options": "Success"}, "properties": [{"id": "color", "value": {"fixedColor": "green", "mode": "fixed"}}]},
               {"matcher": {"id": "byName", "options": "Errors"}, "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]},
-              {"matcher": {"id": "byName", "options": "In Progress"}, "properties": [{"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}]}
+              {"matcher": {"id": "byName", "options": "In Progress"}, "properties": [{"id": "color", "value": {"fixedColor": "blue", "mode": "fixed"}}]},
+              {"matcher": {"id": "byName", "options": "Queued"}, "properties": [{"id": "color", "value": {"fixedColor": "yellow", "mode": "fixed"}}]}
             ]
           },
           "gridPos": {"h": 8, "w": 6, "x": 12, "y": 3},
@@ -249,7 +250,8 @@ spec:
           "targets": [
             {"expr": "sum(tdarr_queue_transcode_success)", "legendFormat": "Success", "refId": "A"},
             {"expr": "sum(tdarr_queue_transcode_error)", "legendFormat": "Errors", "refId": "B"},
-            {"expr": "sum(tdarr_queue_transcode)", "legendFormat": "In Progress", "refId": "C"}
+            {"expr": "sum(tdarr_queue_staged)", "legendFormat": "In Progress", "refId": "C"},
+            {"expr": "sum(tdarr_queue_transcode)", "legendFormat": "Queued", "refId": "D"}
           ]
         },
         {
