@@ -39,35 +39,46 @@ header() {
 }
 subheader() { log "\n${YELLOW}--- $1 ---${NC}"; }
 
-# Detect GPU type for a node by checking labels and device files
+# Detect GPU type for a node by checking labels and extensions
 detect_node_gpu_type() {
     local node="$1"
 
-    # Check for node labels first (if labeled)
+    # Get node labels
     local labels=$(kubectl get node "$node" -o jsonpath='{.metadata.labels}' 2>/dev/null)
 
-    if echo "$labels" | grep -qi "nvidia"; then
+    # Check for explicit GPU vendor label (most reliable)
+    if echo "$labels" | grep -q '"node.kubernetes.io/gpu-vendor":"nvidia"'; then
         echo "nvidia"
         return
     fi
 
-    if echo "$labels" | grep -qi "intel"; then
-        echo "intel"
+    # Check for NVIDIA extension
+    if echo "$labels" | grep -q 'extensions.talos.dev/nonfree-kmod-nvidia'; then
+        echo "nvidia"
         return
     fi
 
-    if echo "$labels" | grep -qi "amd"; then
+    # Check for AMD GPU extension
+    if echo "$labels" | grep -q 'extensions.talos.dev/amdgpu'; then
         echo "amd"
+        return
+    fi
+
+    # Check for Intel i915 extension (Arc/discrete GPU)
+    if echo "$labels" | grep -q 'extensions.talos.dev/i915'; then
+        echo "intel"
         return
     fi
 
     # Fallback: known node mapping for this cluster
     case "$node" in
-        *gpu*|talos02*) echo "intel" ;;   # Intel Arc nodes
-        talos03)        echo "amd" ;;     # AMD VAAPI
-        talos05)        echo "nvidia" ;;  # NVIDIA P2000
-        talos04)        echo "nvidia" ;;  # NVIDIA GPU
-        *)              echo "cpu" ;;     # CPU-only fallback
+        talos00)     echo "cpu" ;;      # Control plane - no GPU
+        talos01)     echo "cpu" ;;      # Worker - Intel iGPU only (not useful for transcoding)
+        talos02-gpu) echo "intel" ;;    # Intel Arc A380
+        talos03)     echo "amd" ;;      # AMD VAAPI
+        talos04)     echo "nvidia" ;;   # NVIDIA GPU
+        talos05)     echo "nvidia" ;;   # NVIDIA P2000
+        *)           echo "cpu" ;;      # Default to CPU-only
     esac
 }
 
@@ -166,6 +177,10 @@ spec:
       restartPolicy: Never
       nodeSelector:
         kubernetes.io/hostname: ${node}
+      tolerations:
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
       containers:
         - name: ffmpeg
           image: ${IMAGE}
@@ -421,7 +436,8 @@ EOF
         log "Discovered nodes: $(echo $nodes | tr '\n' ' ')"
 
         for node in $nodes; do
-            run_node_tests "$node" "$quick"
+            # Continue on failure - don't exit script
+            run_node_tests "$node" "$quick" || log "${YELLOW}Skipping $node due to error${NC}"
         done
     fi
 
