@@ -55,7 +55,8 @@ grafana_api() {
     local data="${3:-}"
 
     local curl_args=(
-        -s
+        -sS
+        --fail
         -X "$method"
         -H "Content-Type: application/json"
         -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}"
