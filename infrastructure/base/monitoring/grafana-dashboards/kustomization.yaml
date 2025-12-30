@@ -1,37 +1,59 @@
 ---
+# Grafana Dashboards Kustomization
+#
+# Two types of dashboards:
+# 1. JSON files (json/) - Custom dashboards, editable in UI or code
+# 2. Grafana.com references - Community dashboards by ID
+#
+# Workflow:
+#   - Edit JSON files directly OR use Grafana UI
+#   - Run `./scripts/grafana-sync.sh pull` to export UI changes to JSON
+#   - Run `./scripts/grafana-sync.sh push` to apply JSON to cluster
+#
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 namespace: monitoring
 
+# Generate ConfigMaps from JSON files (custom dashboards)
+configMapGenerator:
+  - name: dashboard-hybrid-cluster-overview
+    files:
+      - json/hybrid-cluster-overview.json
+  - name: dashboard-llm-scaler
+    files:
+      - json/llm-scaler.json
+  - name: dashboard-pod-cleanup
+    files:
+      - json/pod-cleanup.json
+  - name: dashboard-resource-efficiency
+    files:
+      - json/resource-efficiency.json
+  - name: dashboard-tdarr-transcoding
+    files:
+      - json/tdarr-transcoding.json
+  - name: dashboard-vpn-gateway
+    files:
+      - json/vpn-gateway.json
+
+generatorOptions:
+  disableNameSuffixHash: true
+
 resources:
-  # REMOVED: observability-dashboards.yaml
-  # Reason: Old observability stack (Graylog/MongoDB/OpenSearch) suspended
-  # Kubernetes cluster monitoring dashboards
-  - kubernetes-dashboards.yaml
-  # Infrastructure dashboards (Node Exporter, PostgreSQL)
-  - infrastructure-dashboards.yaml
-  # Traefik ingress dashboards
-  - traefik-dashboards.yaml
-  # ArgoCD GitOps dashboards
-  - argocd-dashboards.yaml
-  # GitOps & resource optimization (VPA, Flux, etcd)
-  - gitops-dashboards.yaml
-  # Pod cleanup dashboard
-  - pod-cleanup.yaml
-  # Resource efficiency and optimization
-  - resource-efficiency.yaml
-  # Hybrid cluster dashboards (Nebula, Liqo, AWS)
-  - hybrid-cluster-dashboards.yaml
-  # Comprehensive cluster overview
-  - cluster-overview-dashboard.yaml
-  # LLM Scaler - scale-to-zero monitoring
-  - llm-scaler-dashboard.yaml
-  # Cilium CNI and Hubble observability dashboards
-  - cilium-dashboards.yaml
-  # Loki logging dashboards (log exploration, Fluent Bit monitoring)
-  - loki-dashboards.yaml
-  # VPN Gateway monitoring (gluetun, WireGuard tunnel bandwidth)
-  - vpn-gateway-dashboard.yaml
-  # Tdarr transcoding monitoring (media optimization stats)
-  - tdarr-dashboard.yaml
+  # Custom dashboards (reference ConfigMaps)
+  - resources/hybrid-cluster-overview.yaml
+  - resources/llm-scaler.yaml
+  - resources/pod-cleanup.yaml
+  - resources/resource-efficiency.yaml
+  - resources/tdarr-transcoding.yaml
+  - resources/vpn-gateway.yaml
+
+  # Community dashboards (Grafana.com references - don't need JSON files)
+  - external/argocd-dashboards.yaml
+  - external/cilium-dashboards.yaml
+  - external/gitops-dashboards.yaml
+  - external/hybrid-cluster-dashboards.yaml
+  - external/infrastructure-dashboards.yaml
+  - external/kubernetes-dashboards.yaml
+  - external/loki-dashboards.yaml
+  - external/traefik-dashboards.yaml

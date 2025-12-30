@@ -315,6 +315,40 @@ cmd_button(
     icon_name='password'
 )
 
+# Grafana Dashboard Sync - bidirectional sync between UI and JSON files
+local_resource(
+    'grafana-dashboards',
+    './infrastructure/base/monitoring/grafana-dashboards/scripts/grafana-sync.sh status',
+    deps=['./infrastructure/base/monitoring/grafana-dashboards/json'],
+    auto_init=True,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=[LABEL_OBSERVE]
+)
+
+cmd_button(
+    name='btn-dashboards-pull',
+    resource='grafana-dashboards',
+    argv=['./infrastructure/base/monitoring/grafana-dashboards/scripts/grafana-sync.sh', 'pull'],
+    text='Pull from Grafana',
+    icon_name='cloud_download'
+)
+
+cmd_button(
+    name='btn-dashboards-push',
+    resource='grafana-dashboards',
+    argv=['./infrastructure/base/monitoring/grafana-dashboards/scripts/grafana-sync.sh', 'push'],
+    text='Push to Cluster',
+    icon_name='cloud_upload'
+)
+
+cmd_button(
+    name='btn-dashboards-list',
+    resource='grafana-dashboards',
+    argv=['./infrastructure/base/monitoring/grafana-dashboards/scripts/grafana-sync.sh', 'list'],
+    text='List Dashboards',
+    icon_name='list'
+)
+
 # Legacy observability (scaled to 0, uncomment if running)
 # k8s_attach('graylog', 'statefulset/graylog', namespace='observability', labels=[LABEL_OBSERVE])
 # k8s_attach('opensearch', 'statefulset/opensearch-cluster-master', namespace='observability', labels=[LABEL_OBSERVE])
