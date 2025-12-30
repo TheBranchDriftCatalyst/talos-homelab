@@ -2,14 +2,92 @@
 
 ## TL;DR
 
-Grafana dashboards are managed as **GrafanaDashboard CRDs** via the grafana-operator. Dashboards are imported from grafana.com and automatically provisioned to Grafana instances with the `dashboards: "grafana"` label. No manual dashboard creation needed - just apply YAML and the operator syncs them.
+Grafana dashboards are managed as **GrafanaDashboard CRDs** via the grafana-operator with **bidirectional sync** - edit in Grafana UI or code, changes sync both ways.
 
 **Key Facts:**
 
 - **Deployment:** `kubectl apply -k infrastructure/base/monitoring/grafana-dashboards/`
-- **Access:** http://grafana.talos00 (admin / prom-operator)
-- **Auto-sync:** 10-minute resync period
-- **Dashboard count:** 32 dashboards across 8 categories
+- **Access:** http://grafana.talos00
+- **Sync:** `./scripts/grafana-sync.sh pull` (UI→code) or `push` (code→cluster)
+- **Tilt:** Buttons in `3-infra-observe` group for pull/push/list
+
+## Development Workflow (Bidirectional Sync)
+
+Edit dashboards in **Grafana UI** or **JSON files** - your choice. Changes sync both ways.
+
+### Directory Structure
+
+```
+grafana-dashboards/
+├── json/                    # Editable JSON files (custom dashboards)
+│   ├── tdarr-transcoding.json
+│   ├── vpn-gateway.json
+│   └── ...
+├── resources/               # GrafanaDashboard CRs (reference ConfigMaps)
+├── external/                # Community dashboards (Grafana.com IDs)
+├── scripts/
+│   ├── grafana-sync.sh      # Bidirectional sync script
+│   └── extract-dashboards.py
+└── kustomization.yaml       # ConfigMapGenerator for JSON files
+```
+
+### Option A: Edit in Grafana UI
+
+```bash
+# 1. Make changes in Grafana UI at http://grafana.talos00
+# 2. Export changes to JSON files
+./scripts/grafana-sync.sh pull
+
+# 3. Commit to git
+git add json/ && git commit -m "Update dashboard from UI"
+git push  # Flux applies automatically
+```
+
+### Option B: Edit JSON Directly
+
+```bash
+# 1. Edit json/tdarr-transcoding.json in VSCode/vim
+# 2. Apply to cluster
+./scripts/grafana-sync.sh push
+
+# Or just commit - Flux applies automatically
+git add json/ && git commit -m "Update dashboard"
+git push
+```
+
+### Sync Commands
+
+```bash
+./scripts/grafana-sync.sh pull                    # Export ALL dashboards from Grafana
+./scripts/grafana-sync.sh pull --dashboard <uid>  # Export specific dashboard
+./scripts/grafana-sync.sh push                    # Apply JSON files to cluster
+./scripts/grafana-sync.sh list                    # List all dashboards in Grafana
+./scripts/grafana-sync.sh status                  # Show local vs cluster status
+```
+
+### Tilt Integration
+
+Run `tilt up` and find **grafana-dashboards** in the `3-infra-observe` group:
+
+| Button | Action |
+|--------|--------|
+| **Pull from Grafana** | Export UI changes to JSON files |
+| **Push to Cluster** | Apply JSON files via kustomize |
+| **List Dashboards** | Show all dashboards in Grafana |
+
+### How It Works
+
+1. **JSON files** in `json/` are standalone dashboard definitions
+2. **Kustomize configMapGenerator** creates ConfigMaps from JSON files
+3. **GrafanaDashboard CRs** in `resources/` reference ConfigMaps via `configMapRef`
+4. **Grafana Operator** syncs ConfigMap content to Grafana instance
+5. **Flux** watches git and applies changes automatically
+
+Benefits:
+- Clean git diffs (JSON files vs embedded YAML strings)
+- Edit in Grafana UI when visual editing is easier
+- Edit in code when bulk changes or version control is needed
+- No more losing UI changes to GitOps overwrites
 
 ## Quick Reference
 
@@ -120,11 +198,52 @@ kubectl describe grafanadashboard -n monitoring cilium-agent
 
 ## Adding a New Dashboard
 
-### Method 1: From Grafana.com (Recommended)
+### Method 1: Create in Grafana UI (Recommended for Custom Dashboards)
 
-Create a GrafanaDashboard CRD referencing the grafana.com dashboard ID:
+The easiest way to create custom dashboards with full visual editing:
+
+```bash
+# 1. Create dashboard in Grafana UI at http://grafana.talos00
+#    - Use the visual editor, add panels, configure queries
+#    - Save the dashboard (give it a meaningful UID)
+
+# 2. Export to JSON file
+./scripts/grafana-sync.sh pull --dashboard <dashboard-uid>
+
+# 3. Create GrafanaDashboard CR in resources/
+cat > resources/my-dashboard.yaml <<EOF
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: my-dashboard
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  configMapRef:
+    name: dashboard-my-dashboard
+    key: my-dashboard.json
+  folder: Custom
+EOF
+
+# 4. Add to kustomization.yaml
+#    - Add configMapGenerator entry for the JSON file
+#    - Add resource entry for the CR
+
+# 5. Commit and push
+git add json/ resources/ kustomization.yaml
+git commit -m "Add my-dashboard"
+git push
+```
+
+### Method 2: From Grafana.com (Community Dashboards)
+
+For dashboards from the Grafana community gallery:
 
 ```yaml
+# Add to external/<category>-dashboards.yaml
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
@@ -133,72 +252,47 @@ metadata:
   namespace: monitoring
   labels:
     app.kubernetes.io/component: dashboard
-    dashboard-category: custom # Use appropriate category
+    dashboard-category: custom
 spec:
   instanceSelector:
     matchLabels:
-      dashboards: 'grafana' # REQUIRED: Selects Grafana instances
+      dashboards: 'grafana'
   grafanaCom:
-    id: 12345 # Dashboard ID from grafana.com
+    id: 12345  # Dashboard ID from grafana.com URL
   datasources:
     - inputName: 'DS_PROMETHEUS'
-      datasourceName: 'Prometheus'
-  resyncPeriod: 10m # Auto-sync interval (default: 10m)
+      datasourceName: 'Mimir'
 ```
 
 **Steps:**
 
 1. Find dashboard on https://grafana.com/grafana/dashboards/
 2. Copy the dashboard ID from the URL
-3. Create YAML file in `infrastructure/base/monitoring/grafana-dashboards/`
+3. Add to appropriate file in `external/`
 4. Add resource to `kustomization.yaml`
-5. Apply: `kubectl apply -k infrastructure/base/monitoring/grafana-dashboards/`
-6. Verify: `kubectl get grafanadashboard -n monitoring my-dashboard`
+5. Apply: `kubectl apply -k .` or `git push`
 
-### Method 2: Custom Dashboard JSON
+### Method 3: JSON File Directly (For Programmatic Dashboards)
 
-For custom dashboards or heavily modified versions:
+When generating dashboards from code (Grafonnet, grafanalib, etc.):
 
-```yaml
----
-apiVersion: grafana.integreatly.org/v1beta1
-kind: GrafanaDashboard
-metadata:
-  name: my-custom-dashboard
-  namespace: monitoring
-  labels:
-    app.kubernetes.io/component: dashboard
-    dashboard-category: custom
-spec:
-  instanceSelector:
-    matchLabels:
-      dashboards: 'grafana'
-  json: |
-    {
-      "dashboard": {
-        "title": "My Custom Dashboard",
-        "panels": [
-          {
-            "type": "graph",
-            "title": "Panel Title",
-            "targets": [
-              {
-                "expr": "up{job=\"prometheus\"}"
-              }
-            ]
-          }
-        ]
-      }
-    }
+```bash
+# 1. Generate/write JSON to json/my-dashboard.json
+
+# 2. Create GrafanaDashboard CR in resources/my-dashboard.yaml
+#    (same as Method 1, step 3)
+
+# 3. Update kustomization.yaml:
+#    configMapGenerator:
+#      - name: dashboard-my-dashboard
+#        files:
+#          - json/my-dashboard.json
+#    resources:
+#      - resources/my-dashboard.yaml
+
+# 4. Apply
+./scripts/grafana-sync.sh push
 ```
-
-**Steps:**
-
-1. Create dashboard in Grafana UI
-2. Export as JSON (Dashboard Settings → JSON Model)
-3. Wrap JSON in GrafanaDashboard CRD (use `json: |` for multiline)
-4. Apply YAML file
-5. Verify sync status
 
 ### Dashboard Organization Best Practices
 
