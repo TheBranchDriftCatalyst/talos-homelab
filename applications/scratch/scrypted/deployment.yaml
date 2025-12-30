@@ -1,0 +1,83 @@
+---
+# Scrypted - Home automation platform / Camera bridge
+# Used to expose Arlo cameras as RTSP streams for Frigate
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scrypted
+  labels:
+    app: scrypted
+    app.kubernetes.io/name: scrypted
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: scrypted
+  template:
+    metadata:
+      labels:
+        app: scrypted
+        app.kubernetes.io/name: scrypted
+    spec:
+      # Run on same node as Frigate for low latency
+      nodeSelector:
+        kubernetes.io/hostname: talos02-gpu
+
+      containers:
+        - name: scrypted
+          image: ghcr.io/koush/scrypted:latest
+          imagePullPolicy: Always
+
+          env:
+            - name: TZ
+              value: 'America/Los_Angeles'
+            # Scrypted stores data in /server/volume
+            - name: SCRYPTED_INSECURE_PORT
+              value: "11080"
+
+          ports:
+            - name: http
+              containerPort: 11080
+              protocol: TCP
+            - name: https
+              containerPort: 10443
+              protocol: TCP
+            # RTSP rebroadcast ports
+            - name: rtsp
+              containerPort: 8554
+              protocol: TCP
+            - name: rtsp-tcp
+              containerPort: 8555
+              protocol: TCP
+
+          volumeMounts:
+            - name: config
+              mountPath: /server/volume
+
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: scrypted-config
