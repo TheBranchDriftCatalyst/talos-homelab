@@ -1,0 +1,207 @@
+---
+# Tdarr Universal Worker - runs on ALL worker nodes
+# Auto-detects GPU (Intel QSV, AMD VAAPI, NVIDIA NVENC) and names accordingly
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: tdarr-worker
+  labels:
+    app: tdarr-worker
+    app.kubernetes.io/name: tdarr-worker
+    app.kubernetes.io/component: worker
+spec:
+  selector:
+    matchLabels:
+      app: tdarr-worker
+  template:
+    metadata:
+      labels:
+        app: tdarr-worker
+        app.kubernetes.io/name: tdarr-worker
+    spec:
+      # Run on all worker nodes, skip control-plane
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: DoesNotExist
+
+      securityContext:
+        fsGroup: 44  # video group
+        supplementalGroups: [44, 100, 1026]
+
+      # GPU detection init container - writes node name to shared volume
+      initContainers:
+        - name: gpu-detect
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              NODE_NAME="${NODE_HOSTNAME}"
+              GPU_TYPE="cpu"
+              
+              # Check for Intel GPU (Arc/QSV)
+              if [ -d /dev/dri ]; then
+                if ls /dev/dri/renderD* >/dev/null 2>&1; then
+                  # Check for Intel vs AMD via card info
+                  if [ -f /sys/class/drm/card0/device/vendor ]; then
+                    VENDOR=$(cat /sys/class/drm/card0/device/vendor 2>/dev/null)
+                    case "$VENDOR" in
+                      0x8086) 
+                        # Intel - check for Arc vs integrated
+                        DEVICE=$(cat /sys/class/drm/card0/device/device 2>/dev/null)
+                        case "$DEVICE" in
+                          0x56a*|0x5690|0x5691|0x5692|0x5693|0x5694|0x5695)
+                            GPU_TYPE="arc"
+                            ;;
+                          *)
+                            GPU_TYPE="qsv"
+                            ;;
+                        esac
+                        ;;
+                      0x1002)
+                        GPU_TYPE="vaapi"  # AMD
+                        ;;
+                    esac
+                  fi
+                fi
+              fi
+              
+              # Check for NVIDIA
+              if [ -e /dev/nvidia0 ]; then
+                GPU_TYPE="nvidia"
+              fi
+              
+              FULL_NAME="${NODE_NAME}-${GPU_TYPE}"
+              echo "Detected GPU type: ${GPU_TYPE}"
+              echo "Worker name: ${FULL_NAME}"
+              echo "${FULL_NAME}" > /node-info/worker-name
+          env:
+            - name: NODE_HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: node-info
+              mountPath: /node-info
+            - name: dri
+              mountPath: /dev/dri
+              readOnly: true
+            - name: drm-sys
+              mountPath: /sys/class/drm
+              readOnly: true
+            # NVIDIA devices (may not exist)
+            - name: nvidia-dev
+              mountPath: /dev/nvidia0
+              readOnly: true
+
+      containers:
+        - name: tdarr-node
+          image: ghcr.io/haveagitgat/tdarr_node:2.58.02
+          imagePullPolicy: IfNotPresent
+
+          securityContext:
+            privileged: true  # Required for GPU device access
+
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Read worker name from init container
+              if [ -f /node-info/worker-name ]; then
+                export nodeName=$(cat /node-info/worker-name)
+              else
+                export nodeName="${NODE_HOSTNAME}-unknown"
+              fi
+              echo "Starting Tdarr worker: ${nodeName}"
+              exec /init
+          
+          env:
+            - name: PUID
+              value: '1000'
+            - name: PGID
+              value: '1000'
+            - name: TZ
+              value: 'America/Los_Angeles'
+            - name: serverIP
+              value: 'tdarr-server.tdarr.svc.cluster.local'
+            - name: serverPort
+              value: '8266'
+            - name: inContainer
+              value: 'true'
+            - name: ffmpegVersion
+              value: '6'
+            # Fallback node name (overridden by command)
+            - name: NODE_HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            # NVIDIA env vars (harmless if no NVIDIA GPU)
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: 'all'
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: 'compute,video,utility'
+
+          volumeMounts:
+            - name: node-info
+              mountPath: /node-info
+              readOnly: true
+            # Local transcode cache (node's disk)
+            - name: transcode-cache
+              mountPath: /temp
+            # GPU devices
+            - name: dri
+              mountPath: /dev/dri
+            # Media access
+            - name: truenas-movies
+              mountPath: /media/truenas/movies
+            - name: synology-movies
+              mountPath: /media/synology/movies
+            - name: synology-tv
+              mountPath: /media/synology/tv
+            - name: synology-archive
+              mountPath: /synology-archive
+
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+
+      volumes:
+        # Shared node info from init container
+        - name: node-info
+          emptyDir: {}
+        # Local transcode cache - uses node's NVMe/SSD
+        - name: transcode-cache
+          emptyDir:
+            sizeLimit: 300Gi
+        # GPU devices
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: DirectoryOrCreate
+        - name: drm-sys
+          hostPath:
+            path: /sys/class/drm
+            type: Directory
+        # NVIDIA device (optional - won't fail if missing)
+        - name: nvidia-dev
+          hostPath:
+            path: /dev/nvidia0
+            type: CharDevice
+        # Media PVCs
+        - name: truenas-movies
+          persistentVolumeClaim:
+            claimName: truenas-movies
+        - name: synology-movies
+          persistentVolumeClaim:
+            claimName: synology-movies
+        - name: synology-tv
+          persistentVolumeClaim:
+            claimName: synology-tv
+        - name: synology-archive
+          persistentVolumeClaim:
+            claimName: synology-archive-10t
