@@ -1,7 +1,7 @@
 ---
 # Secure Chrome - VPN-protected Chrome browser via Kasm
 # All traffic routed through gluetun VPN sidecar (Germany exit)
-# Access: http://securechrome.talos00
+# Access: https://securechrome.talos00
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -115,12 +115,14 @@ spec:
             httpGet:
               path: /
               port: 6901
+              scheme: HTTPS
             initialDelaySeconds: 60
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /
               port: 6901
+              scheme: HTTPS
             initialDelaySeconds: 30
             periodSeconds: 10
       volumes:
@@ -147,8 +149,9 @@ spec:
   selector:
     app.kubernetes.io/name: secure-chrome
 ---
+# TCP IngressRoute for HTTPS passthrough (Kasm requires its own HTTPS/WSS)
 apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
+kind: IngressRouteTCP
 metadata:
   name: secure-chrome
   namespace: vpn-gateway
@@ -157,10 +160,32 @@ metadata:
     app.kubernetes.io/component: ingress
 spec:
   entryPoints:
+    - websecure
+  routes:
+    - match: HostSNI(`securechrome.talos00`)
+      services:
+        - name: secure-chrome
+          port: 6901
+  tls:
+    passthrough: true
+---
+# HTTP redirect to HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: secure-chrome-redirect
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+spec:
+  entryPoints:
     - web
   routes:
     - match: Host(`securechrome.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-to-https
+          namespace: traefik
       services:
         - name: secure-chrome
           port: 6901
