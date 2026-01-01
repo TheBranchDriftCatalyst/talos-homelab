@@ -1,0 +1,79 @@
+---
+# Theme.park Overlay for Arr Stack
+# Adds consistent theming across all media apps using Docker Mods
+#
+# Theme is configured in themepark-env.yaml - change TP_THEME there
+# to update the theme for ALL apps at once.
+#
+# Usage:
+#   kubectl apply -k applications/arr-stack/overlays/themepark/
+#
+# Available themes: https://docs.theme-park.dev/themes/
+#   - dracula (default), nord, aquamarine, hotline, overseerr
+#   - plex, organizr-dark, space-gray, dark, maroon, and more
+#
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: media
+
+resources:
+  - ../../base
+  - themepark-env.yaml
+
+# Apply theme.park Docker Mods to all supported apps
+patches:
+  # Arr apps (sonarr, radarr, prowlarr)
+  - target:
+      kind: Deployment
+      name: sonarr
+    path: sonarr-patch.yaml
+
+  - target:
+      kind: Deployment
+      name: radarr
+    path: radarr-patch.yaml
+
+  - target:
+      kind: Deployment
+      name: prowlarr
+    path: prowlarr-patch.yaml
+
+  # Request management
+  - target:
+      kind: Deployment
+      name: overseerr
+    path: overseerr-patch.yaml
+
+  # Media servers
+  - target:
+      kind: Deployment
+      name: plex
+    path: plex-patch.yaml
+
+  - target:
+      kind: Deployment
+      name: jellyfin
+    path: jellyfin-patch.yaml
+
+  # Monitoring
+  - target:
+      kind: Deployment
+      name: tautulli
+    path: tautulli-patch.yaml
+
+  # Download clients
+  - target:
+      kind: Deployment
+      name: qbittorrent
+    path: qbittorrent-patch.yaml
+
+  - target:
+      kind: Deployment
+      name: sabnzbd
+    path: sabnzbd-patch.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/managed-by: kustomize
+      theming: themepark
