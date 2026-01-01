@@ -1,0 +1,166 @@
+---
+# Secure Chrome - VPN-protected Chrome browser via Kasm
+# All traffic routed through gluetun VPN sidecar (Germany exit)
+# Access: http://securechrome.talos00
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-chrome
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+    app.kubernetes.io/component: vpn-browser
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secure-chrome
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secure-chrome
+        app.kubernetes.io/component: vpn-browser
+    spec:
+      # Clean up stale IPv6 routing rules before gluetun starts
+      initContainers:
+        - name: cleanup-routes
+          image: busybox:1.36
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Cleaning up stale IPv6 routing rules..."
+              ip -6 rule del table 51820 2>/dev/null || true
+              ip -6 rule del table 51820 2>/dev/null || true
+              ip -6 rule del table 51820 2>/dev/null || true
+              echo "Cleanup complete"
+      containers:
+        # Gluetun VPN sidecar
+        - name: gluetun
+          image: qmcgaw/gluetun:latest
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: "protonvpn"
+            - name: VPN_TYPE
+              value: "wireguard"
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: protonvpn-credentials
+                  key: se-de-1  # Germany server
+            - name: WIREGUARD_ADDRESSES
+              value: "10.2.0.2/32"
+            - name: SERVER_COUNTRIES
+              value: "Germany"
+            - name: HTTPPROXY
+              value: "off"
+            - name: SHADOWSOCKS
+              value: "off"
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              value: "10.244.0.0/16,10.96.0.0/12"
+            - name: FIREWALL_INPUT_PORTS
+              value: "6901,8000"  # Kasm web UI, gluetun control
+            - name: HTTP_CONTROL_SERVER_ADDRESS
+              value: "0.0.0.0:8000"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: DOT
+              value: "off"
+            - name: DOT_IPV6
+              value: "off"
+          livenessProbe:
+            httpGet:
+              path: /v1/vpn/status
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "25m"
+
+        # Kasm Chrome browser
+        - name: chrome
+          image: kasmweb/chrome:1.16.0
+          ports:
+            - name: web
+              containerPort: 6901
+              protocol: TCP
+          env:
+            - name: VNC_PW
+              value: "password"  # Default password for VNC
+            - name: KASM_DEBUG
+              value: "0"
+          securityContext:
+            # Kasm containers need some elevated permissions
+            privileged: false
+            runAsUser: 1000
+            runAsGroup: 1000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 6901
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 6901
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        # Shared memory for Chrome (prevents crashes)
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-chrome
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+spec:
+  type: ClusterIP
+  ports:
+    - name: web
+      port: 6901
+      targetPort: 6901
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: secure-chrome
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: secure-chrome
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+    app.kubernetes.io/component: ingress
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`securechrome.talos00`)
+      kind: Rule
+      services:
+        - name: secure-chrome
+          port: 6901
