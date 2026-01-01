@@ -1,25 +1,22 @@
 ---
-# Kustomization for monitoring stack (V1 - SUSPENDED for v2-otel migration)
+# Consolidated Monitoring Stack
+# Includes: Mimir, Loki, Tempo, Alloy, Grafana, exporters
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
   name: monitoring
   namespace: flux-system
 spec:
-  suspend: true # V1 suspended - see monitoring-v2-otel.yaml
-  interval: 10m
+  interval: 30m
+  timeout: 10m
+  path: ./infrastructure/base/monitoring/v2-otel
+  prune: true
   sourceRef:
     kind: GitRepository
     name: flux-system
-  path: ./infrastructure/base/monitoring
-  prune: true
-  wait: true
-  timeout: 10m
+  # Depends on operators (for CRDs), storage, and MinIO (for S3)
   dependsOn:
-    - name: namespaces
+    - name: monitoring-v2-operators
     - name: storage
-    - name: infra-control
-  postBuild:
-    substituteFrom:
-      - kind: ConfigMap
-        name: cluster-settings
+    - name: minio
+  suspend: false

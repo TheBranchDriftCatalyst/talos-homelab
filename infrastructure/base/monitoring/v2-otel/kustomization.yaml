@@ -1,5 +1,6 @@
 ---
-# V2 OTEL Data Plane Components
+# Consolidated Monitoring Stack
+# Combines V2 OTEL data plane with Grafana and exporters
 # NOTE: Operators are deployed separately via monitoring-v2-operators kustomization
 #       to ensure CRDs are available before data plane resources.
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -7,17 +8,29 @@ kind: Kustomization
 namespace: monitoring
 
 resources:
-  # Data plane components
+  # Data plane components (metrics, logs, traces)
   - mimir/
   - loki/
   - tempo/
   - alloy/
+
+  # Kubernetes metrics
   - kube-state-metrics/
   - node-exporter/
   - blackbox-exporter/
 
+  # Grafana Operator & Instances (from parent monitoring dir)
+  - ../grafana-operator
+  - ../grafana-instances
+
   # Grafana configuration
   - grafana-datasources/
+  - ../grafana-dashboards
+
+  # Exporters
+  - ../kasa-exporter
+  - ../tdarr-exporter
+  - ../pushgateway
 
   # Ingress
   - ingressroutes.yaml
