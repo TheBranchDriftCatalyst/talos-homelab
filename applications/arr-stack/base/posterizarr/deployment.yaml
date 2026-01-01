@@ -47,6 +47,30 @@ spec:
           volumeMounts:
             - name: kometa-config
               mountPath: /kometa-config
+        # Copy default overlays + custom synthwave overlays
+        - name: copy-overlays
+          image: ghcr.io/fscorrupt/posterizarr:latest
+          command:
+            - sh
+            - -c
+            - |
+              # First copy all original Overlayfiles (fonts, default overlays)
+              echo "Copying original Overlayfiles..."
+              cp -rv /app/Overlayfiles/* /merged-overlays/
+
+              # Then copy custom overlays from config (synthwave) to overlay originals
+              if [ -d /config/overlays ]; then
+                echo "Adding custom overlays from /config/overlays..."
+                cp -v /config/overlays/*.png /merged-overlays/ 2>/dev/null || true
+              fi
+
+              echo "Merged overlay directory:"
+              ls -la /merged-overlays/
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: overlayfiles
+              mountPath: /merged-overlays
       containers:
         - name: posterizarr
           image: ghcr.io/fscorrupt/posterizarr:latest
@@ -76,6 +100,9 @@ spec:
             # Mount assets at /assets for posterizarr's default path validation
             - name: kometa-config
               mountPath: /assets
+            # Custom overlays (synthwave) copied from config via initContainer
+            - name: overlayfiles
+              mountPath: /app/Overlayfiles
           resources:
             requests:
               cpu: 200m
@@ -100,3 +127,6 @@ spec:
         - name: kometa-config
           persistentVolumeClaim:
             claimName: kometa-config
+        # Merged overlays: original + custom (synthwave, etc.)
+        - name: overlayfiles
+          emptyDir: {}
