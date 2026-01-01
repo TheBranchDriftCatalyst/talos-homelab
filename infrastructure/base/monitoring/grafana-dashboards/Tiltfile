@@ -1,0 +1,149 @@
+# Grafana Dashboard Development Tiltfile
+#
+# Auto-sync workflow for bidirectional dashboard editing.
+#
+# Usage:
+#   cd infrastructure/base/monitoring/grafana-dashboards
+#   tilt up
+#
+# Features:
+#   - Auto-push JSON changes to cluster on save
+#   - Pull/Push/List buttons
+#   - Watch mode for live development
+#
+
+load('ext://uibutton', 'cmd_button', 'location')
+
+# ============================================
+# Configuration
+# ============================================
+
+SYNC_SCRIPT = './scripts/grafana-sync.sh'
+JSON_DIR = './json'
+GRAFANA_URL = 'http://grafana.talos00'
+
+print('''
+╔═══════════════════════════════════════════════════════════════╗
+║  Grafana Dashboard Dev Environment                            ║
+╠═══════════════════════════════════════════════════════════════╣
+║  Workflow:                                                    ║
+║    1. Edit JSON files in json/ OR edit in Grafana UI          ║
+║    2. Changes auto-push to cluster on save                    ║
+║    3. Use "Pull from Grafana" to export UI changes            ║
+║                                                               ║
+║  Grafana: %s                              ║
+╚═══════════════════════════════════════════════════════════════╝
+''' % GRAFANA_URL)
+
+# ============================================
+# Auto-sync on JSON file changes
+# ============================================
+
+local_resource(
+    'dashboard-sync',
+    cmd='%s push' % SYNC_SCRIPT,
+    deps=[JSON_DIR],
+    auto_init=True,
+    trigger_mode=TRIGGER_MODE_AUTO,
+    labels=['dashboards'],
+    resource_deps=[]
+)
+
+# ============================================
+# Manual actions
+# ============================================
+
+# Pull from Grafana UI
+local_resource(
+    'pull-from-grafana',
+    cmd='%s pull && echo "✓ Dashboards exported to json/"' % SYNC_SCRIPT,
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['dashboards']
+)
+
+# List dashboards in Grafana
+local_resource(
+    'list-dashboards',
+    cmd='%s list' % SYNC_SCRIPT,
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['dashboards']
+)
+
+# Show sync status
+local_resource(
+    'sync-status',
+    cmd='%s status' % SYNC_SCRIPT,
+    auto_init=True,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=['dashboards']
+)
+
+# ============================================
+# Quick action buttons
+# ============================================
+
+cmd_button(
+    name='btn-pull',
+    resource='dashboard-sync',
+    argv=[SYNC_SCRIPT, 'pull'],
+    text='Pull from Grafana',
+    icon_name='cloud_download'
+)
+
+cmd_button(
+    name='btn-push',
+    resource='dashboard-sync',
+    argv=[SYNC_SCRIPT, 'push'],
+    text='Push to Cluster',
+    icon_name='cloud_upload'
+)
+
+cmd_button(
+    name='btn-list',
+    resource='dashboard-sync',
+    argv=[SYNC_SCRIPT, 'list'],
+    text='List Dashboards',
+    icon_name='list'
+)
+
+cmd_button(
+    name='btn-open-grafana',
+    resource='dashboard-sync',
+    argv=['open', GRAFANA_URL],
+    text='Open Grafana',
+    icon_name='open_in_new'
+)
+
+cmd_button(
+    name='btn-open-json',
+    resource='dashboard-sync',
+    argv=['code', JSON_DIR],
+    text='Open in VSCode',
+    icon_name='edit'
+)
+
+# ============================================
+# Kustomize validation
+# ============================================
+
+local_resource(
+    'validate-kustomize',
+    cmd='kustomize build . > /dev/null && echo "✓ Kustomization valid"',
+    deps=['kustomization.yaml', 'resources'],
+    auto_init=True,
+    trigger_mode=TRIGGER_MODE_AUTO,
+    labels=['validation']
+)
+
+print('''
+Ready! Resources:
+  dashboard-sync     - Auto-pushes JSON changes to cluster
+  pull-from-grafana  - Export dashboards from Grafana UI
+  list-dashboards    - Show all dashboards in Grafana
+  sync-status        - Show local vs cluster status
+  validate-kustomize - Validates kustomization on change
+
+Tip: Edit json/*.json files - changes auto-apply to cluster!
+''')
