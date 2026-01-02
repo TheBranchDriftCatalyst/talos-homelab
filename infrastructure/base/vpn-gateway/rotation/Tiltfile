@@ -1,15 +1,17 @@
-# VPN Rotator Development Tiltfile
-# Can be run standalone or included from parent
+# VPN Rotator Tiltfile
+# All commands run via the vpn-maintenance pod
 #
 # This Tiltfile attaches to Flux-managed resources (no deployments).
 # Resources must already exist in cluster via GitOps.
 
 LABEL_VPN = '6-vpn-gateway'
+MAINT_POD = 'kubectl exec -n vpn-gateway deploy/vpn-maintenance --'
 
-# Rotation commands - create job from cronjob template with env overrides
+# ============ Rotation Commands ============
+
 local_resource(
     'rotate:dry-run',
-    cmd='kubectl delete job vpn-rotator-dry -n vpn-gateway --ignore-not-found=true && kubectl get cronjob vpn-rotator -n vpn-gateway -o json | jq -M \'{apiVersion:"batch/v1",kind:"Job",metadata:{name:"vpn-rotator-dry",namespace:"vpn-gateway"},spec:(.spec.jobTemplate.spec | .template.spec.containers[0].env += [{"name":"DRY_RUN","value":"true"},{"name":"VPN_ROTATION_JITTER_MAX","value":"0"}])}\' | kubectl apply -f - && echo "Job created, waiting..." && kubectl wait --for=condition=complete job/vpn-rotator-dry -n vpn-gateway --timeout=120s && kubectl logs job/vpn-rotator-dry -n vpn-gateway',
+    cmd=f'{MAINT_POD} python3 /scripts/vpnctl rotate-dry',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
@@ -17,17 +19,17 @@ local_resource(
 
 local_resource(
     'rotate:live',
-    cmd='kubectl delete job vpn-rotator-live -n vpn-gateway --ignore-not-found=true && kubectl get cronjob vpn-rotator -n vpn-gateway -o json | jq -M \'{apiVersion:"batch/v1",kind:"Job",metadata:{name:"vpn-rotator-live",namespace:"vpn-gateway"},spec:(.spec.jobTemplate.spec | .template.spec.containers[0].env += [{"name":"VPN_ROTATION_JITTER_MAX","value":"0"}])}\' | kubectl apply -f - && echo "Job created, waiting..." && kubectl wait --for=condition=complete job/vpn-rotator-live -n vpn-gateway --timeout=180s && kubectl logs job/vpn-rotator-live -n vpn-gateway',
+    cmd=f'{MAINT_POD} python3 /scripts/vpnctl rotate',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
 
-# Consolidated inspect commands using vpnctl.py CLI
-# Usage: vpnctl <state|metrics|secrets|pods|status>
+# ============ Inspect Commands ============
+
 local_resource(
     'vpnctl:state',
-    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 /scripts/vpnctl.py state',
+    cmd=f'{MAINT_POD} python3 /scripts/vpnctl state',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
@@ -35,7 +37,7 @@ local_resource(
 
 local_resource(
     'vpnctl:metrics',
-    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 /scripts/vpnctl.py metrics',
+    cmd=f'{MAINT_POD} python3 /scripts/vpnctl metrics',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
@@ -43,24 +45,15 @@ local_resource(
 
 local_resource(
     'vpnctl:secrets',
-    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 /scripts/vpnctl.py secrets',
+    cmd=f'{MAINT_POD} python3 /scripts/vpnctl secrets',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
 
-# These commands run locally with kubectl (need cluster access)
 local_resource(
     'vpnctl:pods',
-    cmd='''
-        echo "=== Rotation-enabled pods ==="
-        echo ""
-        echo "vpn-gateway:"
-        kubectl get pods -n vpn-gateway -l vpn-gateway.io/rotation=enabled -o wide 2>/dev/null || echo "  none"
-        echo ""
-        echo "media:"
-        kubectl get pods -n media -l vpn-gateway.io/rotation=enabled -o wide 2>/dev/null || echo "  none"
-    ''',
+    cmd=f'{MAINT_POD} python3 /scripts/vpnctl pods',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
@@ -68,35 +61,8 @@ local_resource(
 
 local_resource(
     'vpnctl:status',
-    cmd='''
-        echo "=== Current VPN Exits ==="
-        echo ""
-        for pod in $(kubectl get pods -n vpn-gateway -l vpn-gateway.io/rotation=enabled -o jsonpath='{.items[*].metadata.name}'); do
-            echo -n "$pod: "
-            kubectl exec -n vpn-gateway $pod -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip 2>/dev/null | jq -r '.public_ip + " (" + .country + ")"' || echo "unavailable"
-        done
-        for pod in $(kubectl get pods -n media -l vpn-gateway.io/rotation=enabled -o jsonpath='{.items[*].metadata.name}'); do
-            echo -n "$pod: "
-            kubectl exec -n media $pod -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip 2>/dev/null | jq -r '.public_ip + " (" + .country + ")"' || echo "unavailable"
-        done
-    ''',
+    cmd=f'{MAINT_POD} python3 /scripts/vpnctl status',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
-)
-
-# Port forward for local metrics access
-local_resource(
-    'port-forward:metrics',
-    serve_cmd='kubectl port-forward -n vpn-gateway svc/vpn-rotator-exporter 9091:9091',
-    labels=[LABEL_VPN],
-    auto_init=False
-)
-
-# Watch logs
-local_resource(
-    'logs:exporter',
-    serve_cmd='kubectl logs -f -n vpn-gateway deploy/vpn-rotator-exporter',
-    labels=[LABEL_VPN],
-    auto_init=False
 )

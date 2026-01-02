@@ -1,0 +1,63 @@
+---
+# VPN Rotator Maintenance Pod
+# Single pod for all VPN rotation operations: rotate, inspect state, check status
+# Usage: kubectl exec -n vpn-gateway deploy/vpn-maintenance -- vpnctl <command>
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vpn-maintenance
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: vpn-maintenance
+    app.kubernetes.io/component: maintenance
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vpn-maintenance
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vpn-maintenance
+        app.kubernetes.io/component: maintenance
+    spec:
+      serviceAccountName: vpn-rotator
+      containers:
+        - name: maintenance
+          image: python:3.11-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Install kubectl
+              apk add --no-cache curl
+              curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+              chmod +x kubectl && mv kubectl /usr/local/bin/
+              echo "VPN Maintenance pod ready. Use: kubectl exec deploy/vpn-maintenance -- python3 /scripts/vpnctl <cmd>"
+              echo "Commands: rotate, rotate-dry, state, metrics, secrets, pods, status, help"
+              # Keep pod running
+              tail -f /dev/null
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: state
+              mountPath: /state
+            - name: secrets
+              mountPath: /secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+      volumes:
+        - name: scripts
+          configMap:
+            name: vpn-maintenance-scripts
+            defaultMode: 0755
+        - name: state
+          persistentVolumeClaim:
+            claimName: vpn-rotator-state
+        - name: secrets
+          secret:
+            secretName: protonvpn-credentials
