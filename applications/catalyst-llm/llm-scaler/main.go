@@ -6,6 +6,7 @@
 //   - Request queuing during cold start
 //   - Prometheus metrics
 //   - Health endpoints for K8s probes
+//   - RabbitMQ broker mode for decoupled scaling
 package main
 
 import (
@@ -24,7 +25,25 @@ func main() {
 	log.Printf("   Warmup timeout: %s", cfg.WarmupTimeout)
 	log.Printf("   Dashboard: http://localhost%s/_/ui", cfg.ListenAddr)
 
+	// Check if broker mode is enabled
+	var broker *Broker
+	if IsBrokerModeEnabled() {
+		log.Printf("   Broker mode: ENABLED")
+		brokerCfg := LoadBrokerConfig()
+		var err error
+		broker, err = NewBroker(brokerCfg)
+		if err != nil {
+			log.Printf("⚠️  Failed to connect to RabbitMQ, falling back to direct proxy: %v", err)
+		} else {
+			log.Printf("   RabbitMQ: %s:%s/%s", brokerCfg.Host, brokerCfg.Port, brokerCfg.VHost)
+			defer broker.Close()
+		}
+	} else {
+		log.Printf("   Broker mode: DISABLED (direct proxy)")
+	}
+
 	scaler := NewScaler(cfg)
+	scaler.broker = broker // Attach broker to scaler
 	go scaler.hub.Run()
 	go scaler.RunIdleWatcher()
 	go scaler.RunStatusBroadcaster()

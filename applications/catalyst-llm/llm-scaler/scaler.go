@@ -43,6 +43,7 @@ type Scaler struct {
 	remoteProxy *httputil.ReverseProxy
 	macProxy    *httputil.ReverseProxy // Mac dev endpoint (Tilt only)
 	hub         *Hub                   // WebSocket hub
+	broker      *Broker                // RabbitMQ broker (nil if disabled)
 
 	mu           sync.RWMutex
 	state        State
@@ -60,6 +61,7 @@ type Scaler struct {
 	localRouted   atomic.Int64
 	remoteRouted  atomic.Int64
 	macRouted     atomic.Int64
+	brokerRouted  atomic.Int64
 }
 
 // NewScaler creates a new scaler instance
