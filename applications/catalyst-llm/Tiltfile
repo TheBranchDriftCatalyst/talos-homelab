@@ -19,11 +19,45 @@ namespace = 'catalyst-llm'
 LABEL_SCALER = '1-llm-scaler'
 LABEL_INFERENCE = '2-inference'
 LABEL_UI = '3-ui'
+LABEL_FLUX = '0-flux'
 K8S_CONTEXT = 'admin@catalyst-cluster'
 REGISTRY = 'ghcr.io/thebranchdriftcatalyst'
 
 # Allow k8s context
 allow_k8s_contexts(K8S_CONTEXT)
+
+# ============================================
+# Flux Management - Suspend during dev
+# ============================================
+
+# Suspend Flux on Tilt startup to prevent conflicts
+local_resource(
+    'flux-suspend',
+    cmd='flux suspend kustomization catalyst-llm 2>/dev/null || echo "Flux not available or already suspended"',
+    labels=[LABEL_FLUX],
+    auto_init=True,
+)
+
+# Button to resume Flux (for when you're done with Tilt)
+cmd_button(
+    name='btn-flux-resume',
+    resource='flux-suspend',
+    argv=['sh', '-c', '''
+        flux resume kustomization catalyst-llm && \
+        flux reconcile kustomization catalyst-llm --with-source && \
+        echo "Flux resumed and reconciled"
+    '''],
+    text='Resume Flux',
+    icon_name='play_arrow'
+)
+
+cmd_button(
+    name='btn-flux-status',
+    resource='flux-suspend',
+    argv=['sh', '-c', 'flux get kustomization catalyst-llm'],
+    text='Flux Status',
+    icon_name='info'
+)
 
 # ============================================
 # LLM Scaler - Go Reverse Proxy
