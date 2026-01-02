@@ -1,0 +1,366 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vpn-rotator-script
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: vpn-rotator
+    app.kubernetes.io/component: script
+data:
+  rotate.py: |
+    #!/usr/bin/env python3
+    """
+    VPN Rotator - Deterministic weighted random rotation for gluetun sidecars
+
+    Features:
+    - Auto-discovers pods with label: vpn-gateway.io/rotation=enabled
+    - Excludes pods with label: vpn-gateway.io/rotation=disabled
+    - Tracks usage counts per server for balanced distribution
+    - Pushes metrics to Mimir
+    - Configurable parallel/staggered rotation
+    """
+
+    import json
+    import os
+    import random
+    import sys
+    import time
+    import urllib.request
+    import urllib.error
+    from datetime import datetime
+    from typing import Dict, List, Optional, Tuple
+
+    # Configuration from environment
+    ROTATION_MODE = os.getenv("VPN_ROTATION_MODE", "parallel")  # parallel or staggered
+    STAGGER_DELAY = int(os.getenv("VPN_ROTATION_STAGGER_DELAY", "30"))  # seconds
+    JITTER_MAX = int(os.getenv("VPN_ROTATION_JITTER_MAX", "600"))  # seconds (10 min)
+    MIMIR_PUSH_URL = os.getenv("MIMIR_PUSH_URL", "http://mimir-distributor.monitoring:8080/api/v1/push")
+    STATE_FILE = "/state/rotation-state.json"
+    DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
+
+    # Server key to country mapping
+    SERVER_COUNTRIES = {
+        "se-be-1": "Belgium",
+        "se-de-1": "Germany",
+        "se-in-1": "India",
+        "se-nl-1": "Netherlands",
+        "se-ch-1": "Switzerland",
+        "se-is-1": "Iceland",
+        "se-se-1": "Sweden",
+        "se-no-1": "Norway",
+    }
+
+    def log(msg: str, level: str = "INFO"):
+        """Structured logging"""
+        ts = datetime.utcnow().isoformat() + "Z"
+        print(f'{{"ts":"{ts}","level":"{level}","msg":"{msg}"}}', flush=True)
+
+    def apply_jitter():
+        """Sleep for random jitter before starting"""
+        jitter = random.randint(0, JITTER_MAX)
+        log(f"Applying jitter: sleeping {jitter} seconds")
+        if not DRY_RUN:
+            time.sleep(jitter)
+
+    def load_state() -> Dict:
+        """Load rotation state from file"""
+        try:
+            with open(STATE_FILE, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"server_counts": {}, "pod_servers": {}, "last_rotation": None}
+
+    def save_state(state: Dict):
+        """Save rotation state to file"""
+        if DRY_RUN:
+            log(f"DRY_RUN: Would save state: {json.dumps(state)}")
+            return
+        try:
+            with open(STATE_FILE, 'w') as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            log(f"Failed to save state: {e}", "ERROR")
+
+    def get_available_servers() -> List[str]:
+        """Read available server keys from mounted secret"""
+        servers = []
+        secret_dir = "/secrets"
+        try:
+            for key in os.listdir(secret_dir):
+                if key.startswith("se-") and not key.startswith("notes"):
+                    servers.append(key)
+        except Exception as e:
+            log(f"Failed to read secrets: {e}", "ERROR")
+        return sorted(servers)
+
+    def pick_server_weighted(state: Dict, servers: List[str], exclude_current: Optional[str] = None) -> str:
+        """
+        Pick server with lowest usage count (deterministic balancing)
+        On ties, random selection among tied servers
+        Optionally exclude current server to force rotation
+        """
+        counts = state.get("server_counts", {})
+
+        # Initialize missing servers with 0
+        for s in servers:
+            if s not in counts:
+                counts[s] = 0
+
+        # Filter out excluded server
+        candidates = [s for s in servers if s != exclude_current]
+        if not candidates:
+            candidates = servers  # Fallback if only one server
+
+        # Find minimum count
+        min_count = min(counts.get(s, 0) for s in candidates)
+
+        # Get all servers with minimum count
+        tied = [s for s in candidates if counts.get(s, 0) == min_count]
+
+        # Random selection among tied
+        return random.choice(tied)
+
+    def discover_pods() -> List[Dict]:
+        """
+        Discover pods with vpn-gateway.io/rotation=enabled label
+        Returns list of {namespace, name, pod_ip, current_server}
+        """
+        import subprocess
+
+        cmd = [
+            "kubectl", "get", "pods", "-A",
+            "-l", "vpn-gateway.io/rotation=enabled",
+            "-o", "json"
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+        except Exception as e:
+            log(f"Failed to discover pods: {e}", "ERROR")
+            return []
+
+        pods = []
+        for item in data.get("items", []):
+            meta = item.get("metadata", {})
+            labels = meta.get("labels", {})
+
+            # Skip if explicitly disabled
+            if labels.get("vpn-gateway.io/rotation") == "disabled":
+                continue
+
+            # Find gluetun container and get pod IP
+            pod_ip = item.get("status", {}).get("podIP")
+            if not pod_ip:
+                continue
+
+            pods.append({
+                "namespace": meta.get("namespace"),
+                "name": meta.get("name"),
+                "pod_ip": pod_ip,
+                "deployment": labels.get("app.kubernetes.io/name", meta.get("name")),
+            })
+
+        return pods
+
+    def get_current_server(pod_ip: str) -> Optional[str]:
+        """Get current VPN server from gluetun API"""
+        try:
+            url = f"http://{pod_ip}:8000/v1/publicip/ip"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                return data.get("country", "Unknown")
+        except Exception as e:
+            log(f"Failed to get current server for {pod_ip}: {e}", "WARN")
+            return None
+
+    def rotate_pod(pod: Dict, new_server_key: str, secret_dir: str = "/secrets") -> bool:
+        """
+        Rotate a single pod to a new VPN server
+        Updates the WireGuard private key via gluetun API
+        """
+        pod_ip = pod["pod_ip"]
+        pod_name = f"{pod['namespace']}/{pod['name']}"
+
+        # Read the new server's WireGuard key
+        try:
+            key_file = os.path.join(secret_dir, new_server_key)
+            with open(key_file, 'r') as f:
+                wg_key = f.read().strip()
+        except Exception as e:
+            log(f"Failed to read key for {new_server_key}: {e}", "ERROR")
+            return False
+
+        country = SERVER_COUNTRIES.get(new_server_key, "Unknown")
+        log(f"Rotating {pod_name} to {new_server_key} ({country})")
+
+        if DRY_RUN:
+            log(f"DRY_RUN: Would rotate {pod_name} to {new_server_key}")
+            return True
+
+        # Update gluetun settings via API
+        try:
+            url = f"http://{pod_ip}:8000/v1/openvpn/settings"
+            payload = json.dumps({
+                "wireguard_private_key": wg_key,
+                "server_countries": country
+            }).encode()
+
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                method="PUT",
+                headers={"Content-Type": "application/json"}
+            )
+
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if resp.status == 200:
+                    log(f"Successfully rotated {pod_name} to {new_server_key}")
+                    return True
+                else:
+                    log(f"Rotation failed for {pod_name}: HTTP {resp.status}", "ERROR")
+                    return False
+
+        except urllib.error.HTTPError as e:
+            # Try alternative endpoint for newer gluetun versions
+            try:
+                url = f"http://{pod_ip}:8000/v1/vpn/settings"
+                req = urllib.request.Request(
+                    url,
+                    data=payload,
+                    method="PUT",
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    log(f"Successfully rotated {pod_name} to {new_server_key} (alt endpoint)")
+                    return True
+            except Exception as e2:
+                log(f"Rotation failed for {pod_name}: {e} / {e2}", "ERROR")
+                return False
+        except Exception as e:
+            log(f"Rotation failed for {pod_name}: {e}", "ERROR")
+            return False
+
+    def push_metrics(state: Dict, results: List[Tuple[str, str, bool]]):
+        """Push rotation metrics to Mimir"""
+        if DRY_RUN:
+            log("DRY_RUN: Would push metrics to Mimir")
+            return
+
+        timestamp_ms = int(time.time() * 1000)
+        metrics_lines = []
+
+        # Server usage counts
+        for server, count in state.get("server_counts", {}).items():
+            country = SERVER_COUNTRIES.get(server, "Unknown")
+            metrics_lines.append(
+                f'vpn_rotation_total{{server="{server}",country="{country}"}} {count}'
+            )
+
+        # Per-pod results
+        for pod_name, server, success in results:
+            status = "success" if success else "error"
+            country = SERVER_COUNTRIES.get(server, "Unknown")
+            metrics_lines.append(
+                f'vpn_rotation_last_status{{pod="{pod_name}",server="{server}",country="{country}",status="{status}"}} {1 if success else 0}'
+            )
+            if success:
+                metrics_lines.append(
+                    f'vpn_rotation_last_success_timestamp{{pod="{pod_name}"}} {timestamp_ms}'
+                )
+
+        # Total errors
+        errors = sum(1 for _, _, success in results if not success)
+        metrics_lines.append(f'vpn_rotation_errors_total {errors}')
+
+        # Push to Mimir (Prometheus remote write format)
+        metrics_text = "\n".join(metrics_lines) + "\n"
+
+        try:
+            # Use pushgateway-compatible endpoint
+            push_url = os.getenv("PUSHGATEWAY_URL", "http://pushgateway.monitoring:9091/metrics/job/vpn-rotator")
+            req = urllib.request.Request(
+                push_url,
+                data=metrics_text.encode(),
+                method="POST",
+                headers={"Content-Type": "text/plain"}
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                log(f"Pushed {len(metrics_lines)} metrics to pushgateway")
+        except Exception as e:
+            log(f"Failed to push metrics: {e}", "WARN")
+
+    def main():
+        log("VPN Rotator starting")
+        log(f"Config: mode={ROTATION_MODE}, stagger_delay={STAGGER_DELAY}s, jitter_max={JITTER_MAX}s")
+
+        # Apply jitter
+        apply_jitter()
+
+        # Load state
+        state = load_state()
+        log(f"Loaded state: {len(state.get('server_counts', {}))} servers tracked")
+
+        # Get available servers
+        servers = get_available_servers()
+        if not servers:
+            log("No VPN servers found in secrets!", "ERROR")
+            sys.exit(1)
+        log(f"Available servers: {servers}")
+
+        # Discover pods
+        pods = discover_pods()
+        if not pods:
+            log("No pods found with vpn-gateway.io/rotation=enabled label", "WARN")
+            sys.exit(0)
+        log(f"Discovered {len(pods)} pods for rotation")
+
+        # Rotate each pod
+        results = []
+        for i, pod in enumerate(pods):
+            pod_name = f"{pod['namespace']}/{pod['name']}"
+            deployment = pod.get("deployment", pod["name"])
+
+            # Get current server for this pod (to exclude from selection)
+            current = state.get("pod_servers", {}).get(deployment)
+
+            # Pick new server (weighted random, excluding current)
+            new_server = pick_server_weighted(state, servers, exclude_current=current)
+
+            # Rotate
+            success = rotate_pod(pod, new_server)
+            results.append((deployment, new_server, success))
+
+            if success:
+                # Update state
+                state.setdefault("server_counts", {})[new_server] = \
+                    state.get("server_counts", {}).get(new_server, 0) + 1
+                state.setdefault("pod_servers", {})[deployment] = new_server
+
+            # Stagger delay between pods
+            if ROTATION_MODE == "staggered" and i < len(pods) - 1:
+                log(f"Stagger delay: sleeping {STAGGER_DELAY}s")
+                if not DRY_RUN:
+                    time.sleep(STAGGER_DELAY)
+
+        # Update last rotation timestamp
+        state["last_rotation"] = datetime.utcnow().isoformat() + "Z"
+
+        # Save state
+        save_state(state)
+
+        # Push metrics
+        push_metrics(state, results)
+
+        # Summary
+        success_count = sum(1 for _, _, s in results if s)
+        error_count = len(results) - success_count
+        log(f"Rotation complete: {success_count} success, {error_count} errors")
+
+        if error_count > 0:
+            sys.exit(1)
+
+    if __name__ == "__main__":
+        main()
