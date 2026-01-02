@@ -91,19 +91,21 @@ docker_build(
     only=[
         'go.mod',
         'go.sum',
-        '*.go',
+        'main.go',
+        'scaler.go',
+        'ui.go',
+        'websocket.go',
         'scripts/',
     ],
     live_update=[
-        # Sync Go source files
-        sync('./llm-scaler/*.go', '/build/'),
-        # Rebuild binary in container
-        run(
-            'cd /build && CGO_ENABLED=0 go build -o /app/llm-scaler . && kill -HUP 1',
-            trigger=['./llm-scaler/*.go']
-        ),
-        # Sync worker script
+        # Sync steps must come before run steps
+        sync('./llm-scaler/main.go', '/build/main.go'),
+        sync('./llm-scaler/scaler.go', '/build/scaler.go'),
+        sync('./llm-scaler/ui.go', '/build/ui.go'),
+        sync('./llm-scaler/websocket.go', '/build/websocket.go'),
         sync('./llm-scaler/scripts/llm-worker.sh', '/app/llm-worker.sh'),
+        # Rebuild binary in container
+        run('cd /build && CGO_ENABLED=0 go build -o /app/llm-scaler . && kill -HUP 1'),
     ]
 )
 
