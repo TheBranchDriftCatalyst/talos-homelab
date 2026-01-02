@@ -1,44 +1,4 @@
 ---
-# Ollama Model Auto-Pull ConfigMap
-# Models to pre-load on startup
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ollama-models-config
-  namespace: catalyst-llm
-data:
-  # Models to auto-pull on startup (one per line)
-  models.txt: |
-    llama3.2:latest
-    qwen2.5-coder:7b
-    mistral:latest
-  # Script to pull models after Ollama is ready
-  pull-models.sh: |
-    #!/bin/sh
-    set -e
-
-    # Wait for Ollama to be ready
-    echo "Waiting for Ollama to be ready..."
-    until curl -sf http://localhost:11434/ > /dev/null 2>&1; do
-      sleep 2
-    done
-    echo "Ollama is ready!"
-
-    # Pull each model from the list
-    echo "Starting model pulls..."
-    while IFS= read -r model || [ -n "$model" ]; do
-      # Skip empty lines and comments
-      case "$model" in
-        ""|\#*) continue ;;
-      esac
-      echo "Pulling model: $model"
-      curl -sf -X POST http://localhost:11434/api/pull \
-        -H "Content-Type: application/json" \
-        -d "{\"name\": \"$model\"}" > /dev/null || echo "Warning: Failed to pull $model"
-    done < /config/models.txt
-
-    echo "Model pull complete!"
----
 # Ollama LLM Inference Server for talos06
 # Intel Arc 140T GPU with 64GB RAM - ideal for local inference
 apiVersion: v1
@@ -81,6 +41,64 @@ spec:
 
       securityContext:
         fsGroup: 44  # video group for GPU access
+
+      # Init container pulls models before main container is ready
+      # Ollama runs in background, waits for it, then pulls models
+      initContainers:
+        - name: model-puller
+          image: ollama/ollama:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "=== Ollama Model Puller Init Container ==="
+
+              # Start ollama in the background
+              echo "Starting Ollama server..."
+              ollama serve &
+              OLLAMA_PID=$!
+
+              # Wait for Ollama to be ready (use ollama list instead of curl)
+              echo "Waiting for Ollama to be ready..."
+              for i in $(seq 1 60); do
+                if ollama list > /dev/null 2>&1; then
+                  echo "Ollama is ready!"
+                  break
+                fi
+                echo "Waiting... ($i/60)"
+                sleep 2
+              done
+
+              # Pull each model from the list
+              echo "Pulling models..."
+              for model in llama3.2:latest qwen2.5-coder:7b mistral:latest; do
+                echo "Pulling $model..."
+                ollama pull "$model" || echo "  Warning: Failed to pull $model"
+              done
+
+              echo "=== Model pull complete! ==="
+              ollama list
+
+              # Stop ollama gracefully
+              kill $OLLAMA_PID 2>/dev/null || true
+              wait $OLLAMA_PID 2>/dev/null || true
+              echo "Init container done."
+          env:
+            - name: OLLAMA_INTEL_GPU
+              value: "1"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: dri
+              mountPath: /dev/dri
+            - name: models
+              mountPath: /root/.ollama
+          resources:
+            requests:
+              cpu: "1"
+              memory: 8Gi
 
       containers:
         - name: ollama
@@ -135,18 +153,6 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
 
-        # Model puller sidecar - runs once to pull configured models
-        - name: model-puller
-          image: curlimages/curl:latest
-          command: ["/bin/sh", "/config/pull-models.sh"]
-          volumeMounts:
-            - name: model-config
-              mountPath: /config
-          resources:
-            requests:
-              cpu: "100m"
-              memory: 64Mi
-
       volumes:
         - name: dri
           hostPath:
@@ -155,10 +161,6 @@ spec:
         - name: models
           persistentVolumeClaim:
             claimName: ollama-models
-        - name: model-config
-          configMap:
-            name: ollama-models-config
-            defaultMode: 0755
 ---
 apiVersion: v1
 kind: Service
