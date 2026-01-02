@@ -276,6 +276,81 @@ cmd_button(
 )
 
 # ============================================
+# Local Mac Ollama (dev only - runs on host machine)
+# ============================================
+
+# Get Mac's local IP for cluster access
+# Uses route to find the default interface IP (works on macOS)
+MAC_IP = str(local('ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "localhost"', quiet=True)).strip()
+
+LABEL_LOCAL = '8-local-dev'
+
+# Local Ollama management - ensures ollama is running on Mac
+local_resource(
+    'ollama-mac',
+    serve_cmd='ollama serve 2>&1 || echo "Ollama already running"',
+    readiness_probe=probe(
+        http_get=http_get_action(port=11434, path='/'),
+        initial_delay_secs=2,
+        period_secs=5,
+    ),
+    labels=[LABEL_LOCAL],
+    links=[
+        link('http://localhost:11434', 'Mac Ollama API'),
+    ],
+    allow_parallel=True,
+)
+
+# Button to list models on Mac
+cmd_button(
+    name='btn-mac-ollama-list',
+    resource='ollama-mac',
+    argv=['ollama', 'list'],
+    text='List Models',
+    icon_name='list'
+)
+
+# Button to pull model on Mac
+cmd_button(
+    name='btn-mac-pull-model',
+    resource='ollama-mac',
+    argv=['sh', '-c', '''
+        if [ -z "$MODEL_NAME" ]; then
+            echo "Error: Please enter a model name"
+            exit 1
+        fi
+        echo "Pulling model on Mac: $MODEL_NAME" && \
+        ollama pull "$MODEL_NAME" && \
+        echo "Model $MODEL_NAME pulled successfully"
+    '''],
+    text='Pull Model',
+    icon_name='download',
+    inputs=[
+        text_input('MODEL_NAME', 'Model name (e.g., llama3.2, qwen2.5-coder:7b)')
+    ]
+)
+
+# Button to show Mac Ollama connection info
+cmd_button(
+    name='btn-mac-ollama-info',
+    resource='ollama-mac',
+    argv=['sh', '-c', '''
+        echo "Mac Ollama Endpoint Info"
+        echo "========================"
+        echo ""
+        echo "Mac IP: ''' + MAC_IP + '''"
+        echo "Ollama URL: http://''' + MAC_IP + ''':11434"
+        echo ""
+        echo "To use from cluster, set llm-scaler routing to:"
+        echo "  curl -X POST http://localhost:8080/_/api/routing -d 'mode=local'"
+        echo ""
+        echo "Note: Mac must be on same network as Talos cluster"
+    '''],
+    text='Connection Info',
+    icon_name='info'
+)
+
+# ============================================
 # Dev utilities
 # ============================================
 
