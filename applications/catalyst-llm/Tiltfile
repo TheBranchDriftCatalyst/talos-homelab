@@ -235,75 +235,44 @@ cmd_button(
     icon_name='memory'
 )
 
-# Model pull buttons - common models
+# Model pull with text input - type any model name (e.g., llama3.2, qwen2.5-coder:7b)
 cmd_button(
-    name='btn-pull-llama3.2',
-    resource='ollama',
-    argv=['sh', '-c', 'kubectl exec -n catalyst-llm deploy/ollama -- ollama pull llama3.2:latest'],
-    text='Pull llama3.2',
-    icon_name='download'
-)
-
-cmd_button(
-    name='btn-pull-llama3.2-3b',
-    resource='ollama',
-    argv=['sh', '-c', 'kubectl exec -n catalyst-llm deploy/ollama -- ollama pull llama3.2:3b'],
-    text='Pull llama3.2:3b',
-    icon_name='download'
-)
-
-cmd_button(
-    name='btn-pull-qwen2.5-coder',
-    resource='ollama',
-    argv=['sh', '-c', 'kubectl exec -n catalyst-llm deploy/ollama -- ollama pull qwen2.5-coder:7b'],
-    text='Pull qwen2.5-coder',
-    icon_name='download'
-)
-
-cmd_button(
-    name='btn-pull-deepseek-coder',
-    resource='ollama',
-    argv=['sh', '-c', 'kubectl exec -n catalyst-llm deploy/ollama -- ollama pull deepseek-coder-v2:latest'],
-    text='Pull deepseek-coder',
-    icon_name='download'
-)
-
-cmd_button(
-    name='btn-pull-mistral',
-    resource='ollama',
-    argv=['sh', '-c', 'kubectl exec -n catalyst-llm deploy/ollama -- ollama pull mistral:latest'],
-    text='Pull mistral',
-    icon_name='download'
-)
-
-cmd_button(
-    name='btn-pull-codellama',
-    resource='ollama',
-    argv=['sh', '-c', 'kubectl exec -n catalyst-llm deploy/ollama -- ollama pull codellama:latest'],
-    text='Pull codellama',
-    icon_name='download'
-)
-
-cmd_button(
-    name='btn-pull-phi3',
-    resource='ollama',
-    argv=['sh', '-c', 'kubectl exec -n catalyst-llm deploy/ollama -- ollama pull phi3:latest'],
-    text='Pull phi3',
-    icon_name='download'
-)
-
-cmd_button(
-    name='btn-ollama-rm',
+    name='btn-pull-model',
     resource='ollama',
     argv=['sh', '-c', '''
-        echo "=== Current Models ===" && \
-        kubectl exec -n catalyst-llm deploy/ollama -- ollama list && \
-        echo "" && \
-        echo "To remove a model, run:" && \
-        echo "kubectl exec -n catalyst-llm deploy/ollama -- ollama rm <model>"
+        if [ -z "$MODEL_NAME" ]; then
+            echo "Error: Please enter a model name"
+            exit 1
+        fi
+        echo "Pulling model: $MODEL_NAME" && \
+        kubectl exec -n catalyst-llm deploy/ollama -- ollama pull "$MODEL_NAME" && \
+        echo "Model $MODEL_NAME pulled successfully"
     '''],
-    text='Remove Model Help',
-    icon_name='delete'
+    text='Pull Model',
+    icon_name='download',
+    inputs=[
+        text_input('MODEL_NAME', 'Model name (e.g., llama3.2, qwen2.5-coder:7b, mistral)')
+    ]
+)
+
+# Delete model with text input
+cmd_button(
+    name='btn-delete-model',
+    resource='ollama',
+    argv=['sh', '-c', '''
+        if [ -z "$MODEL_NAME" ]; then
+            echo "Error: Please enter a model name"
+            exit 1
+        fi
+        echo "Deleting model: $MODEL_NAME" && \
+        kubectl exec -n catalyst-llm deploy/ollama -- ollama rm "$MODEL_NAME" && \
+        echo "Model $MODEL_NAME deleted"
+    '''],
+    text='Delete Model',
+    icon_name='delete',
+    inputs=[
+        text_input('MODEL_NAME', 'Model to delete')
+    ]
 )
 
 # ============================================
