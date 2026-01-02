@@ -43,7 +43,7 @@ spec:
         fsGroup: 44  # video group for GPU access
 
       # Init container pulls models before main container is ready
-      # Ollama runs in background, waits for it, then pulls models
+      # Reads model list from ConfigMap for easy management
       initContainers:
         - name: model-puller
           image: ollama/ollama:latest
@@ -60,7 +60,7 @@ spec:
               ollama serve &
               OLLAMA_PID=$!
 
-              # Wait for Ollama to be ready (use ollama list instead of curl)
+              # Wait for Ollama to be ready
               echo "Waiting for Ollama to be ready..."
               for i in $(seq 1 60); do
                 if ollama list > /dev/null 2>&1; then
@@ -71,12 +71,20 @@ spec:
                 sleep 2
               done
 
-              # Pull each model from the list
-              echo "Pulling models..."
-              for model in llama3.2:latest qwen2.5-coder:7b mistral:latest; do
-                echo "Pulling $model..."
-                ollama pull "$model" || echo "  Warning: Failed to pull $model"
-              done
+              # Read models from ConfigMap and pull each one
+              echo "=== Pulling models from ConfigMap ==="
+              if [ -f /config/models.txt ]; then
+                grep -v '^#' /config/models.txt | grep -v '^$' | while read model; do
+                  echo "Pulling $model..."
+                  ollama pull "$model" || echo "  Warning: Failed to pull $model"
+                done
+              else
+                echo "Warning: /config/models.txt not found, using defaults"
+                for model in llama3.2:latest qwen2.5-coder:7b mistral:latest; do
+                  echo "Pulling $model..."
+                  ollama pull "$model" || echo "  Warning: Failed to pull $model"
+                done
+              fi
 
               echo "=== Model pull complete! ==="
               ollama list
@@ -95,6 +103,8 @@ spec:
               mountPath: /dev/dri
             - name: models
               mountPath: /root/.ollama
+            - name: model-config
+              mountPath: /config
           resources:
             requests:
               cpu: "1"
@@ -161,6 +171,9 @@ spec:
         - name: models
           persistentVolumeClaim:
             claimName: ollama-models
+        - name: model-config
+          configMap:
+            name: ollama-models
 ---
 apiVersion: v1
 kind: Service
