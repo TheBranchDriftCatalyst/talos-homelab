@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-// UI serves a modern WebSocket-based dashboard
+// UI serves a modern WebSocket-based dashboard with tabbed iframes
 func (s *Scaler) UI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(uiHTML))
@@ -31,22 +31,29 @@ const uiHTML = `<!DOCTYPE html>
       --accent-purple: #a371f7;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
+    html, body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
       background: var(--bg-primary);
       color: var(--text-primary);
-      min-height: 100vh;
+      height: 100%;
+      overflow: hidden;
+    }
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
     }
     .header {
       background: var(--bg-secondary);
       border-bottom: 1px solid var(--border-color);
-      padding: 16px 24px;
+      padding: 12px 24px;
       display: flex;
       align-items: center;
       justify-content: space-between;
+      flex-shrink: 0;
     }
     .header h1 {
-      font-size: 20px;
+      font-size: 18px;
       font-weight: 600;
       display: flex;
       align-items: center;
@@ -66,10 +73,81 @@ const uiHTML = `<!DOCTYPE html>
       background: var(--accent-red);
     }
     .status-dot.connected { background: var(--accent-green); }
+
+    /* Tab Navigation */
+    .tab-bar {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border-color);
+      display: flex;
+      padding: 0 16px;
+      flex-shrink: 0;
+      overflow-x: auto;
+    }
+    .tab {
+      padding: 12px 20px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+    .tab:hover {
+      color: var(--text-primary);
+      background: var(--bg-tertiary);
+    }
+    .tab.active {
+      color: var(--accent-blue);
+      border-bottom-color: var(--accent-blue);
+    }
+    .tab-icon {
+      font-size: 16px;
+    }
+    .tab-close {
+      margin-left: 4px;
+      opacity: 0.5;
+      font-size: 14px;
+    }
+    .tab-close:hover {
+      opacity: 1;
+    }
+
+    /* Content Area */
+    .content-area {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    .tab-content {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .tab-content iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* Control Panel Content */
+    .control-panel {
+      height: 100%;
+      overflow-y: auto;
+      padding: 24px;
+    }
     .container {
       max-width: 1400px;
       margin: 0 auto;
-      padding: 24px;
     }
     .grid {
       display: grid;
@@ -247,167 +325,214 @@ const uiHTML = `<!DOCTYPE html>
     }
     .worker-icon.local { background: linear-gradient(135deg, #3fb950, #238636); }
     .worker-icon.remote { background: linear-gradient(135deg, #f0883e, #d29922); }
-    .quick-actions {
-      display: flex;
-      gap: 8px;
-    }
-    .quick-actions button {
-      padding: 6px 12px;
-      font-size: 12px;
-    }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1>🤖 LLM Control Panel</h1>
-    <div class="connection-status">
-      <span class="status-dot" id="ws-status"></span>
-      <span id="ws-status-text">Connecting...</span>
+  <div class="app-container">
+    <div class="header">
+      <h1>🤖 Catalyst LLM</h1>
+      <div class="connection-status">
+        <span class="status-dot" id="ws-status"></span>
+        <span id="ws-status-text">Connecting...</span>
+      </div>
     </div>
-  </div>
 
-  <div class="container">
-    <div class="grid">
-      <!-- Local Worker Card -->
-      <div class="card" id="local-card">
-        <div class="card-header">
-          <div class="worker-header">
-            <div class="worker-icon local">🏠</div>
-            <div>
-              <h2>Local Ollama</h2>
-              <div style="font-size: 12px; color: var(--text-secondary);">talos06 • Intel Arc 140T</div>
+    <div class="tab-bar">
+      <div class="tab active" data-tab="control" onclick="switchTab('control')">
+        <span class="tab-icon">⚙️</span>
+        Control Panel
+      </div>
+      <div class="tab" data-tab="chat" onclick="switchTab('chat')">
+        <span class="tab-icon">💬</span>
+        Open WebUI
+      </div>
+      <div class="tab" data-tab="sillytavern" onclick="switchTab('sillytavern')">
+        <span class="tab-icon">🎭</span>
+        SillyTavern
+      </div>
+      <div class="tab" data-tab="searxng" onclick="switchTab('searxng')">
+        <span class="tab-icon">🔍</span>
+        SearXNG
+      </div>
+      <div class="tab" data-tab="ollama" onclick="switchTab('ollama')">
+        <span class="tab-icon">🦙</span>
+        Ollama API
+      </div>
+    </div>
+
+    <div class="content-area">
+      <!-- Control Panel Tab -->
+      <div class="tab-content active" id="tab-control">
+        <div class="control-panel">
+          <div class="container">
+            <div class="grid">
+              <!-- Local Worker Card -->
+              <div class="card" id="local-card">
+                <div class="card-header">
+                  <div class="worker-header">
+                    <div class="worker-icon local">🏠</div>
+                    <div>
+                      <h2>Local Ollama</h2>
+                      <div style="font-size: 12px; color: var(--text-secondary);">talos06 • Intel Arc 140T</div>
+                    </div>
+                  </div>
+                  <span class="badge badge-stopped" id="local-badge">Offline</span>
+                </div>
+                <div class="card-body">
+                  <div class="info-row">
+                    <span class="info-label">Endpoint</span>
+                    <span class="info-value" id="local-url">--</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Models Loaded</span>
+                    <span class="info-value" id="local-models-count">0</span>
+                  </div>
+                  <div class="model-list" id="local-models">
+                    <div style="color: var(--text-secondary); text-align: center; padding: 20px;">No models loaded</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Remote Worker Card -->
+              <div class="card" id="remote-card">
+                <div class="card-header">
+                  <div class="worker-header">
+                    <div class="worker-icon remote">☁️</div>
+                    <div>
+                      <h2>EC2 Bigboi</h2>
+                      <div style="font-size: 12px; color: var(--text-secondary);" id="ec2-instance-type">r5.2xlarge • us-west-2</div>
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 8px;">
+                    <span class="badge badge-stopped" id="ec2-state-badge" title="EC2 Instance">⚡ Stopped</span>
+                    <span class="badge badge-stopped" id="ollama-ready-badge" title="Ollama Service">🦙 Offline</span>
+                  </div>
+                </div>
+                <div class="card-body">
+                  <div class="info-row">
+                    <span class="info-label">Endpoint</span>
+                    <span class="info-value" id="remote-url">--</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Instance ID</span>
+                    <span class="info-value" id="ec2-instance-id">--</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">AWS Console</span>
+                    <a class="ec2-link" id="ec2-console-link" href="#" target="_blank">
+                      Open Console ↗
+                    </a>
+                  </div>
+                  <div class="model-list" id="remote-models">
+                    <div style="color: var(--text-secondary); text-align: center; padding: 20px;">Worker offline</div>
+                  </div>
+                  <div class="controls">
+                    <button class="btn-success" id="btn-start-remote" onclick="sendControl('start', 'remote')">
+                      ▶ Start Worker
+                    </button>
+                    <button class="btn-danger" id="btn-stop-remote" onclick="sendControl('stop', 'remote')">
+                      ⏹ Stop Worker
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Scaler Control Card -->
+              <div class="card">
+                <div class="card-header">
+                  <h2>⚙️ Scaler Configuration</h2>
+                  <span class="badge" id="scaler-mode-badge">Active</span>
+                </div>
+                <div class="card-body">
+                  <div class="stat-grid">
+                    <div class="stat">
+                      <div class="stat-value" id="stat-requests">0</div>
+                      <div class="stat-label">Total Requests</div>
+                    </div>
+                    <div class="stat">
+                      <div class="stat-value" id="stat-cold-starts">0</div>
+                      <div class="stat-label">Cold Starts</div>
+                    </div>
+                    <div class="stat">
+                      <div class="stat-value" id="stat-idle">0m</div>
+                      <div class="stat-label">Idle Time</div>
+                    </div>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Current TTL</span>
+                    <span class="info-value" id="current-ttl">15m</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="info-label">Until Shutdown</span>
+                    <span class="info-value" id="until-shutdown">--</span>
+                  </div>
+                  <div class="progress-bar-container">
+                    <div class="progress-bar" id="ttl-progress" style="width: 100%"></div>
+                  </div>
+                  <div class="ttl-control">
+                    <select id="ttl-select">
+                      <option value="5m">5 minutes</option>
+                      <option value="15m" selected>15 minutes</option>
+                      <option value="30m">30 minutes</option>
+                      <option value="1h">1 hour</option>
+                      <option value="2h">2 hours</option>
+                      <option value="4h">4 hours</option>
+                      <option value="8h">8 hours</option>
+                      <option value="24h">24 hours</option>
+                    </select>
+                    <button class="btn-primary" onclick="sendControl('set_ttl', '', document.getElementById('ttl-select').value)">
+                      Set TTL
+                    </button>
+                  </div>
+                  <div class="controls">
+                    <button class="btn-warning" id="btn-pause" onclick="sendControl('pause')">
+                      ⏸ Pause Auto-Scale
+                    </button>
+                    <button class="btn-success" id="btn-resume" onclick="sendControl('resume')">
+                      ▶ Resume Auto-Scale
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Activity Log Card -->
+              <div class="card">
+                <div class="card-header">
+                  <h2>📋 Activity Log</h2>
+                  <button class="btn-secondary" onclick="clearLogs()" style="padding: 4px 10px; font-size: 11px;">Clear</button>
+                </div>
+                <div class="card-body">
+                  <div class="log-container" id="log-container">
+                    <div class="log-entry">
+                      <span class="log-time">[--:--:--]</span>
+                      <span class="log-message">Connecting to control panel...</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-          <span class="badge badge-stopped" id="local-badge">Offline</span>
-        </div>
-        <div class="card-body">
-          <div class="info-row">
-            <span class="info-label">Endpoint</span>
-            <span class="info-value" id="local-url">--</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Models Loaded</span>
-            <span class="info-value" id="local-models-count">0</span>
-          </div>
-          <div class="model-list" id="local-models">
-            <div style="color: var(--text-secondary); text-align: center; padding: 20px;">No models loaded</div>
           </div>
         </div>
       </div>
 
-      <!-- Remote Worker Card -->
-      <div class="card" id="remote-card">
-        <div class="card-header">
-          <div class="worker-header">
-            <div class="worker-icon remote">☁️</div>
-            <div>
-              <h2>EC2 Bigboi</h2>
-              <div style="font-size: 12px; color: var(--text-secondary);" id="ec2-instance-type">r5.2xlarge • us-west-2</div>
-            </div>
-          </div>
-          <span class="badge badge-stopped" id="remote-badge">Offline</span>
-        </div>
-        <div class="card-body">
-          <div class="info-row">
-            <span class="info-label">Endpoint</span>
-            <span class="info-value" id="remote-url">--</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Instance ID</span>
-            <span class="info-value" id="ec2-instance-id">--</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">AWS Console</span>
-            <a class="ec2-link" id="ec2-console-link" href="#" target="_blank">
-              Open Console ↗
-            </a>
-          </div>
-          <div class="model-list" id="remote-models">
-            <div style="color: var(--text-secondary); text-align: center; padding: 20px;">Worker offline</div>
-          </div>
-          <div class="controls">
-            <button class="btn-success" id="btn-start-remote" onclick="sendControl('start', 'remote')">
-              ▶ Start Worker
-            </button>
-            <button class="btn-danger" id="btn-stop-remote" onclick="sendControl('stop', 'remote')">
-              ⏹ Stop Worker
-            </button>
-          </div>
-        </div>
+      <!-- Open WebUI Tab -->
+      <div class="tab-content" id="tab-chat">
+        <iframe src="http://chat.talos00" loading="lazy"></iframe>
       </div>
 
-      <!-- Scaler Control Card -->
-      <div class="card">
-        <div class="card-header">
-          <h2>⚙️ Scaler Configuration</h2>
-          <span class="badge" id="scaler-mode-badge">Active</span>
-        </div>
-        <div class="card-body">
-          <div class="stat-grid">
-            <div class="stat">
-              <div class="stat-value" id="stat-requests">0</div>
-              <div class="stat-label">Total Requests</div>
-            </div>
-            <div class="stat">
-              <div class="stat-value" id="stat-cold-starts">0</div>
-              <div class="stat-label">Cold Starts</div>
-            </div>
-            <div class="stat">
-              <div class="stat-value" id="stat-idle">0m</div>
-              <div class="stat-label">Idle Time</div>
-            </div>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Current TTL</span>
-            <span class="info-value" id="current-ttl">15m</span>
-          </div>
-          <div class="info-row">
-            <span class="info-label">Until Shutdown</span>
-            <span class="info-value" id="until-shutdown">--</span>
-          </div>
-          <div class="progress-bar-container">
-            <div class="progress-bar" id="ttl-progress" style="width: 100%"></div>
-          </div>
-          <div class="ttl-control">
-            <select id="ttl-select">
-              <option value="5m">5 minutes</option>
-              <option value="15m" selected>15 minutes</option>
-              <option value="30m">30 minutes</option>
-              <option value="1h">1 hour</option>
-              <option value="2h">2 hours</option>
-              <option value="4h">4 hours</option>
-              <option value="8h">8 hours</option>
-              <option value="24h">24 hours</option>
-            </select>
-            <button class="btn-primary" onclick="sendControl('set_ttl', '', document.getElementById('ttl-select').value)">
-              Set TTL
-            </button>
-          </div>
-          <div class="controls">
-            <button class="btn-warning" id="btn-pause" onclick="sendControl('pause')">
-              ⏸ Pause Auto-Scale
-            </button>
-            <button class="btn-success" id="btn-resume" onclick="sendControl('resume')">
-              ▶ Resume Auto-Scale
-            </button>
-          </div>
-        </div>
+      <!-- SillyTavern Tab -->
+      <div class="tab-content" id="tab-sillytavern">
+        <iframe src="http://sillytavern.talos00" loading="lazy"></iframe>
       </div>
 
-      <!-- Activity Log Card -->
-      <div class="card">
-        <div class="card-header">
-          <h2>📋 Activity Log</h2>
-          <button class="btn-secondary" onclick="clearLogs()" style="padding: 4px 10px; font-size: 11px;">Clear</button>
-        </div>
-        <div class="card-body">
-          <div class="log-container" id="log-container">
-            <div class="log-entry">
-              <span class="log-time">[--:--:--]</span>
-              <span class="log-message">Connecting to control panel...</span>
-            </div>
-          </div>
-        </div>
+      <!-- SearXNG Tab -->
+      <div class="tab-content" id="tab-searxng">
+        <iframe src="http://searxng.talos00" loading="lazy"></iframe>
+      </div>
+
+      <!-- Ollama API Tab -->
+      <div class="tab-content" id="tab-ollama">
+        <iframe src="http://ollama.talos00" loading="lazy"></iframe>
       </div>
     </div>
   </div>
@@ -418,6 +543,19 @@ const uiHTML = `<!DOCTYPE html>
     const maxReconnectAttempts = 10;
     const logs = [];
     const maxLogs = 50;
+
+    // Tab switching
+    function switchTab(tabName) {
+      // Update tab buttons
+      document.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.toggle('active', tab.dataset.tab === tabName);
+      });
+
+      // Update content
+      document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === 'tab-' + tabName);
+      });
+    }
 
     function connect() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -509,21 +647,16 @@ const uiHTML = `<!DOCTYPE html>
     }
 
     function updateWorkerCard(type, worker) {
-      const badge = document.getElementById(type + '-badge');
       const urlEl = document.getElementById(type + '-url');
       const modelsEl = document.getElementById(type + '-models');
       const modelsCountEl = document.getElementById(type + '-models-count');
-
-      // Update badge
-      badge.textContent = worker.ready ? 'Online' : 'Offline';
-      badge.className = 'badge ' + (worker.ready ? 'badge-running' : 'badge-stopped');
 
       // Update URL
       urlEl.textContent = worker.url || '--';
 
       // Update models
       if (worker.models && worker.models.length > 0) {
-        modelsCountEl.textContent = worker.models.length;
+        if (modelsCountEl) modelsCountEl.textContent = worker.models.length;
         modelsEl.innerHTML = worker.models.map(m =>
           '<div class="model-item">' +
             '<span class="model-name">' + m.name + '</span>' +
@@ -531,26 +664,65 @@ const uiHTML = `<!DOCTYPE html>
           '</div>'
         ).join('');
       } else {
-        modelsCountEl.textContent = '0';
+        if (modelsCountEl) modelsCountEl.textContent = '0';
         modelsEl.innerHTML = '<div style="color: var(--text-secondary); text-align: center; padding: 20px;">' +
           (worker.ready ? 'No models loaded' : 'Worker offline') + '</div>';
       }
 
-      // EC2-specific updates
+      // Local worker - simple badge
+      if (type === 'local') {
+        const badge = document.getElementById('local-badge');
+        badge.textContent = worker.ready ? 'Online' : 'Offline';
+        badge.className = 'badge ' + (worker.ready ? 'badge-running' : 'badge-stopped');
+      }
+
+      // EC2-specific updates with dual status
       if (type === 'remote' && worker.ec2) {
+        const ec2StateBadge = document.getElementById('ec2-state-badge');
+        const ollamaReadyBadge = document.getElementById('ollama-ready-badge');
+
+        // EC2 instance state badge
+        const ec2State = worker.ec2.state || 'unknown';
+        const ec2Running = ec2State === 'running';
+        const ec2Starting = ec2State === 'pending';
+        const ec2Stopping = ec2State === 'stopping' || ec2State === 'shutting-down';
+
+        if (ec2Running) {
+          ec2StateBadge.textContent = '⚡ Running';
+          ec2StateBadge.className = 'badge badge-running';
+        } else if (ec2Starting) {
+          ec2StateBadge.textContent = '⚡ Starting';
+          ec2StateBadge.className = 'badge badge-starting';
+        } else if (ec2Stopping) {
+          ec2StateBadge.textContent = '⚡ Stopping';
+          ec2StateBadge.className = 'badge badge-starting';
+        } else {
+          ec2StateBadge.textContent = '⚡ Stopped';
+          ec2StateBadge.className = 'badge badge-stopped';
+        }
+
+        // Ollama ready badge
+        const ollamaReady = worker.ec2.ollama_ready;
+        ollamaReadyBadge.textContent = ollamaReady ? '🦙 Ready' : '🦙 Offline';
+        ollamaReadyBadge.className = 'badge ' + (ollamaReady ? 'badge-running' : 'badge-stopped');
+
+        // Instance info
         document.getElementById('ec2-instance-id').textContent = worker.ec2.instance_id || '--';
         document.getElementById('ec2-instance-type').textContent =
           (worker.ec2.instance_type || 'r5.2xlarge') + ' • ' + (worker.ec2.region || 'us-west-2');
 
+        // Console link
         const consoleLink = document.getElementById('ec2-console-link');
         if (worker.ec2.console_url) {
           consoleLink.href = worker.ec2.console_url;
           consoleLink.style.display = 'inline-flex';
         }
 
-        // Update start/stop buttons
-        document.getElementById('btn-start-remote').disabled = worker.ready;
-        document.getElementById('btn-stop-remote').disabled = !worker.ready;
+        // Update start/stop buttons based on EC2 state
+        const canStart = !ec2Running && !ec2Starting;
+        const canStop = ec2Running || ec2Starting;
+        document.getElementById('btn-start-remote').disabled = !canStart;
+        document.getElementById('btn-stop-remote').disabled = !canStop;
       }
     }
 

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/gorilla/websocket"
 )
 
@@ -107,7 +109,8 @@ type EC2Info struct {
 	InstanceType string `json:"instance_type"`
 	Region       string `json:"region"`
 	ConsoleURL   string `json:"console_url"`
-	State        string `json:"state"`
+	State        string `json:"state"`         // EC2 instance state from AWS (running, stopped, etc.)
+	OllamaReady  bool   `json:"ollama_ready"`  // Whether Ollama endpoint is responding
 	PublicIP     string `json:"public_ip,omitempty"`
 	LaunchTime   string `json:"launch_time,omitempty"`
 }
@@ -386,24 +389,61 @@ func (s *Scaler) getEC2Info() *EC2Info {
 		region = "us-west-2"
 	}
 
+	// Get actual EC2 state from AWS
+	ec2State := s.getEC2StateFromAWS(instanceID, region)
+
+	// Check Ollama endpoint separately
+	ollamaReady := s.checkEndpoint(s.cfg.RemoteOllamaURL)
+
 	return &EC2Info{
 		InstanceID:   instanceID,
 		InstanceType: instanceType,
 		Region:       region,
 		ConsoleURL:   "https://" + region + ".console.aws.amazon.com/ec2/home?region=" + region + "#InstanceDetails:instanceId=" + instanceID,
-		State:        s.getEC2State(instanceID),
+		State:        ec2State,
+		OllamaReady:  ollamaReady,
 	}
 }
 
-func (s *Scaler) getEC2State(instanceID string) string {
+func (s *Scaler) getEC2StateFromAWS(instanceID, region string) string {
 	if instanceID == "" {
 		return "not_configured"
 	}
-	// Quick check via worker script
-	if s.checkEndpoint(s.cfg.RemoteOllamaURL) {
-		return "running"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Load AWS config
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	if err != nil {
+		log.Printf("⚠️ AWS config error: %v", err)
+		return "unknown"
 	}
-	return "stopped"
+
+	// Create EC2 client
+	client := ec2.NewFromConfig(cfg)
+
+	// Describe instance
+	input := &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	}
+
+	result, err := client.DescribeInstances(ctx, input)
+	if err != nil {
+		log.Printf("⚠️ EC2 describe error: %v", err)
+		return "unknown"
+	}
+
+	// Extract state
+	for _, reservation := range result.Reservations {
+		for _, instance := range reservation.Instances {
+			if instance.State != nil && instance.State.Name != "" {
+				return string(instance.State.Name)
+			}
+		}
+	}
+
+	return "unknown"
 }
 
 func (s *Scaler) pullModel(target, modelName string) {
