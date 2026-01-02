@@ -1,0 +1,23 @@
+# VPN Rotator QA Checklist
+# Run each command and mark status
+
+## Rotation Commands
+- [x] rotate:dry-run - Creates job, runs with DRY_RUN=true (WORKS)
+- [ ] rotate:live - Creates job, actually rotates VPNs (BLOCKED - gluetun 401)
+
+## Inspect Commands
+- [x] inspect:pods - Lists rotation-enabled pods (WORKS)
+- [x] inspect:secrets - Lists ProtonVPN server keys (WORKS)
+- [x] inspect:state - Shows rotation state JSON (WORKS)
+- [x] inspect:metrics - Shows Prometheus metrics (WORKS)
+- [x] inspect:vpn-status - Shows current VPN exit per pod (FIXED - uses xargs)
+
+## Service Commands
+- [ ] port-forward:metrics - Forwards exporter to localhost:9091
+- [ ] logs:exporter - Streams exporter logs
+
+## Issues Found
+1. ~~inspect:vpn-status - for loop doesn't work in Tilt cmd context~~ FIXED with xargs
+2. rotate:live - gluetun API returns 401 Unauthorized
+   - Need to set HTTP_CONTROL_SERVER_AUTH=false on all gluetun sidecars
+   - Or set HTTP_CONTROL_SERVER_AUTH_USER + HTTP_CONTROL_SERVER_AUTH_PASSWORD

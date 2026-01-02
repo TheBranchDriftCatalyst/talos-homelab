@@ -6,18 +6,10 @@
 
 LABEL_VPN = '6-vpn-gateway'
 
-# Rotation commands - creates ephemeral job from cronjob
+# Rotation commands - create job from cronjob template with env overrides
 local_resource(
     'rotate:dry-run',
-    cmd='''
-        kubectl delete job vpn-rotator-dry -n vpn-gateway --ignore-not-found=true 2>/dev/null
-        kubectl create job vpn-rotator-dry --from=cronjob/vpn-rotator -n vpn-gateway
-        kubectl patch job vpn-rotator-dry -n vpn-gateway --type=json \
-            -p='[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"DRY_RUN","value":"true"}},
-                 {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"VPN_ROTATION_JITTER_MAX","value":"0"}}]'
-        kubectl wait --for=condition=complete job/vpn-rotator-dry -n vpn-gateway --timeout=60s
-        kubectl logs job/vpn-rotator-dry -n vpn-gateway
-    ''',
+    cmd='kubectl delete job vpn-rotator-dry -n vpn-gateway --ignore-not-found=true && kubectl get cronjob vpn-rotator -n vpn-gateway -o json | jq -M \'{apiVersion:"batch/v1",kind:"Job",metadata:{name:"vpn-rotator-dry",namespace:"vpn-gateway"},spec:(.spec.jobTemplate.spec | .template.spec.containers[0].env += [{"name":"DRY_RUN","value":"true"},{"name":"VPN_ROTATION_JITTER_MAX","value":"0"}])}\' | kubectl apply -f - && echo "Job created, waiting..." && kubectl wait --for=condition=complete job/vpn-rotator-dry -n vpn-gateway --timeout=120s && kubectl logs job/vpn-rotator-dry -n vpn-gateway',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
@@ -25,15 +17,7 @@ local_resource(
 
 local_resource(
     'rotate:live',
-    cmd='''
-        kubectl delete job vpn-rotator-live -n vpn-gateway --ignore-not-found=true 2>/dev/null
-        kubectl create job vpn-rotator-live --from=cronjob/vpn-rotator -n vpn-gateway
-        kubectl patch job vpn-rotator-live -n vpn-gateway --type=json \
-            -p='[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"DRY_RUN","value":"false"}},
-                 {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"VPN_ROTATION_JITTER_MAX","value":"0"}}]'
-        kubectl wait --for=condition=complete job/vpn-rotator-live -n vpn-gateway --timeout=120s
-        kubectl logs job/vpn-rotator-live -n vpn-gateway
-    ''',
+    cmd='kubectl delete job vpn-rotator-live -n vpn-gateway --ignore-not-found=true && kubectl get cronjob vpn-rotator -n vpn-gateway -o json | jq -M \'{apiVersion:"batch/v1",kind:"Job",metadata:{name:"vpn-rotator-live",namespace:"vpn-gateway"},spec:(.spec.jobTemplate.spec | .template.spec.containers[0].env += [{"name":"VPN_ROTATION_JITTER_MAX","value":"0"}])}\' | kubectl apply -f - && echo "Job created, waiting..." && kubectl wait --for=condition=complete job/vpn-rotator-live -n vpn-gateway --timeout=180s && kubectl logs job/vpn-rotator-live -n vpn-gateway',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
@@ -82,15 +66,7 @@ local_resource(
 
 local_resource(
     'inspect:vpn-status',
-    cmd='''
-        echo "=== Current VPN Exits ==="
-        for pod in $(kubectl get pods -n vpn-gateway -l vpn-gateway.io/rotation=enabled -o name); do
-            name=$(echo $pod | cut -d/ -f2)
-            ip=$(kubectl get $pod -n vpn-gateway -o jsonpath='{.status.podIP}')
-            echo -n "$name: "
-            kubectl exec -n vpn-gateway $pod -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip 2>/dev/null | jq -r '.public_ip + " (" + .country + ")"' || echo "unavailable"
-        done
-    ''',
+    cmd='echo "=== Current VPN Exits ===" && kubectl get pods -n vpn-gateway -l vpn-gateway.io/rotation=enabled -o jsonpath="{range .items[*]}{.metadata.name} {end}" | tr " " "\\n" | grep -v "^$" | xargs -I{} sh -c \'echo -n "{}: " && kubectl exec -n vpn-gateway {} -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip 2>/dev/null | jq -r "\"\\(.public_ip) (\\(.country))\"" || echo "unavailable"\'',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
