@@ -30,6 +30,7 @@ const (
 type Scaler struct {
 	cfg   Config
 	proxy *httputil.ReverseProxy
+	hub   *Hub // WebSocket hub
 
 	mu           sync.RWMutex
 	state        State
@@ -50,6 +51,7 @@ func NewScaler(cfg Config) *Scaler {
 
 	s := &Scaler{
 		cfg:          cfg,
+		hub:          NewHub(),
 		state:        StateUnknown,
 		lastActivity: time.Now(),
 	}

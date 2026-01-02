@@ -25,7 +25,9 @@ func main() {
 	log.Printf("   Dashboard: http://localhost%s/_/ui", cfg.ListenAddr)
 
 	scaler := NewScaler(cfg)
+	go scaler.hub.Run()
 	go scaler.RunIdleWatcher()
+	go scaler.RunStatusBroadcaster()
 	go scaler.ServeMetrics()
 
 	mux := http.NewServeMux()
@@ -37,6 +39,7 @@ func main() {
 	mux.HandleFunc("/_/pause", scaler.Pause)
 	mux.HandleFunc("/_/resume", scaler.Resume)
 	mux.HandleFunc("/_/ttl", scaler.SetTTL)
+	mux.HandleFunc("/_/ws", scaler.WebSocket)
 	mux.HandleFunc("/_/ui", scaler.UI)
 	mux.HandleFunc("/", scaler.Proxy)
 
@@ -53,6 +56,8 @@ type Config struct {
 	IdleTimeout     time.Duration
 	WarmupTimeout   time.Duration
 	WorkerScript    string
+	StateFile       string
+	AWSRegion       string
 }
 
 func loadConfig() Config {
@@ -64,6 +69,8 @@ func loadConfig() Config {
 		IdleTimeout:     duration("IDLE_TIMEOUT", 40*time.Minute),
 		WarmupTimeout:   duration("WARMUP_TIMEOUT", 5*time.Minute),
 		WorkerScript:    env("WORKER_SCRIPT", "/app/llm-worker.sh"),
+		StateFile:       env("STATE_FILE", "/app/.output/worker-state.json"),
+		AWSRegion:       env("AWS_REGION", "us-west-2"),
 	}
 }
 
