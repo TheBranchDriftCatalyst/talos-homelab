@@ -5,7 +5,7 @@
 # Or included from root Tiltfile
 #
 # Features:
-#   - llm-scaler: Go reverse proxy with WebSocket control panel
+#   - llm-proxy: Go reverse proxy with WebSocket control panel
 #   - ollama: Local inference on talos06 (Intel Arc GPU)
 #   - open-webui: ChatGPT-like web UI
 #   - EC2 worker: Scale-to-zero remote inference
@@ -75,7 +75,7 @@ local_resource(
     auto_init=False,
     links=[
         link('http://chat.talos00', 'Open WebUI (Chat)'),
-        link('http://llm-scaler.talos00/_/ui', 'LLM Scaler Dashboard'),
+        link('http://llm-proxy.talos00/_/ui', 'LLM Scaler Dashboard'),
         link('http://llm.talos00', 'LLM API'),
         link('http://ollama.talos00', 'Ollama API'),
         link('http://sillytavern.talos00', 'SillyTavern'),
@@ -87,11 +87,11 @@ local_resource(
 # LLM Scaler - Go Reverse Proxy
 # ============================================
 
-# Build llm-scaler with live update
+# Build llm-proxy with live update
 docker_build(
-    REGISTRY + '/llm-scaler',
-    context='./llm-scaler',
-    dockerfile='./llm-scaler/Dockerfile',
+    REGISTRY + '/llm-proxy',
+    context='./llm-proxy',
+    dockerfile='./llm-proxy/Dockerfile',
     only=[
         'go.mod',
         'go.sum',
@@ -103,17 +103,17 @@ docker_build(
     ],
     live_update=[
         # Sync steps must come before run steps
-        sync('./llm-scaler/main.go', '/build/main.go'),
-        sync('./llm-scaler/scaler.go', '/build/scaler.go'),
-        sync('./llm-scaler/ui.go', '/build/ui.go'),
-        sync('./llm-scaler/websocket.go', '/build/websocket.go'),
-        sync('./llm-scaler/scripts/llm-worker.sh', '/app/llm-worker.sh'),
+        sync('./llm-proxy/main.go', '/build/main.go'),
+        sync('./llm-proxy/scaler.go', '/build/scaler.go'),
+        sync('./llm-proxy/ui.go', '/build/ui.go'),
+        sync('./llm-proxy/websocket.go', '/build/websocket.go'),
+        sync('./llm-proxy/scripts/llm-worker.sh', '/app/llm-worker.sh'),
         # Rebuild binary in container
-        run('cd /build && CGO_ENABLED=0 go build -o /app/llm-scaler . && kill -HUP 1'),
+        run('cd /build && CGO_ENABLED=0 go build -o /app/llm-proxy . && kill -HUP 1'),
     ]
 )
 
-# Apply llm-scaler deployment only (not full kustomization to avoid conflicts with Flux)
+# Apply llm-proxy deployment only (not full kustomization to avoid conflicts with Flux)
 # Note: We patch the deployment to add MAC_OLLAMA_URL for dev mode
 k8s_yaml(['scaler-deployment.yaml', 'service.yaml'])
 watch_file('scaler-deployment.yaml')
@@ -122,8 +122,8 @@ watch_file('service.yaml')
 # Inject MAC_OLLAMA_URL environment variable for dev mode
 # This enables the "Mac" routing option in the UI
 k8s_resource(
-    'llm-scaler',
-    objects=['llm-scaler:serviceaccount', 'llm-scaler:servicemonitor'],
+    'llm-proxy',
+    objects=['llm-proxy:serviceaccount', 'llm-proxy:servicemonitor'],
     port_forwards=[
         '8080:8080',   # Proxy + UI
         '9090:9090',   # Metrics
@@ -132,7 +132,7 @@ k8s_resource(
     links=[
         link('http://localhost:8080/_/ui', 'Control Panel'),
         link('http://localhost:9090/metrics', 'Metrics'),
-        link('http://llm-scaler.talos00/_/ui', 'Control Panel (Ingress)'),
+        link('http://llm-proxy.talos00/_/ui', 'Control Panel (Ingress)'),
     ]
 )
 
@@ -140,11 +140,11 @@ k8s_resource(
 local_resource(
     'patch-mac-env',
     cmd='''
-        kubectl patch deployment llm-scaler -n catalyst-llm --type=json -p='[
+        kubectl patch deployment llm-proxy -n catalyst-llm --type=json -p='[
           {"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "MAC_OLLAMA_URL", "value": "http://''' + MAC_IP + ''':11434"}}
         ]' 2>/dev/null || echo "Patch applied or deployment not ready"
     ''',
-    resource_deps=['llm-scaler'],
+    resource_deps=['llm-proxy'],
     labels=[LABEL_SCALER],
     auto_init=True,
 )
@@ -156,9 +156,9 @@ local_resource(
 
 cmd_button(
     name='btn-ec2-status',
-    resource='llm-scaler',
+    resource='llm-proxy',
     argv=['sh', '-c', '''
-        kubectl exec -n catalyst-llm deploy/llm-scaler -- /app/llm-worker.sh status
+        kubectl exec -n catalyst-llm deploy/llm-proxy -- /app/llm-worker.sh status
     '''],
     text='EC2 Status',
     icon_name='info'
@@ -166,10 +166,10 @@ cmd_button(
 
 cmd_button(
     name='btn-ec2-start',
-    resource='llm-scaler',
+    resource='llm-proxy',
     argv=['sh', '-c', '''
         echo "Starting EC2 worker..." && \
-        kubectl exec -n catalyst-llm deploy/llm-scaler -- /app/llm-worker.sh start && \
+        kubectl exec -n catalyst-llm deploy/llm-proxy -- /app/llm-worker.sh start && \
         echo "EC2 worker started"
     '''],
     text='Start EC2',
@@ -178,10 +178,10 @@ cmd_button(
 
 cmd_button(
     name='btn-ec2-stop',
-    resource='llm-scaler',
+    resource='llm-proxy',
     argv=['sh', '-c', '''
         echo "Stopping EC2 worker..." && \
-        kubectl exec -n catalyst-llm deploy/llm-scaler -- /app/llm-worker.sh stop && \
+        kubectl exec -n catalyst-llm deploy/llm-proxy -- /app/llm-worker.sh stop && \
         echo "EC2 worker stopped"
     '''],
     text='Stop EC2',
@@ -190,10 +190,10 @@ cmd_button(
 
 cmd_button(
     name='btn-ec2-warm',
-    resource='llm-scaler',
+    resource='llm-proxy',
     argv=['sh', '-c', '''
         echo "Warming EC2 worker (start + wait for Ollama ready)..." && \
-        kubectl exec -n catalyst-llm deploy/llm-scaler -- /app/llm-worker.sh warm && \
+        kubectl exec -n catalyst-llm deploy/llm-proxy -- /app/llm-worker.sh warm && \
         echo "EC2 worker ready"
     '''],
     text='Warm EC2',
@@ -202,7 +202,7 @@ cmd_button(
 
 cmd_button(
     name='btn-local-models',
-    resource='llm-scaler',
+    resource='llm-proxy',
     argv=['sh', '-c', '''
         echo "=== Local Ollama Models ===" && \
         kubectl exec -n catalyst-llm deploy/ollama -- ollama list
@@ -381,7 +381,7 @@ cmd_button(
         echo "Mac IP: ''' + MAC_IP + '''"
         echo "Ollama URL: http://''' + MAC_IP + ''':11434"
         echo ""
-        echo "To use from cluster, set llm-scaler routing to:"
+        echo "To use from cluster, set llm-proxy routing to:"
         echo "  curl -X POST http://localhost:8080/_/api/routing -d 'mode=local'"
         echo ""
         echo "Note: Mac must be on same network as Talos cluster"
@@ -404,13 +404,13 @@ local_resource(
 
 cmd_button(
     name='btn-rebuild-push',
-    resource='llm-scaler',
+    resource='llm-proxy',
     argv=['sh', '-c', '''
-        cd applications/catalyst-llm/llm-scaler && \
+        cd applications/catalyst-llm/llm-proxy && \
         docker buildx build --platform linux/amd64,linux/arm64 \
-            -t ghcr.io/thebranchdriftcatalyst/llm-scaler:latest --push . && \
-        kubectl rollout restart deploy/llm-scaler -n catalyst-llm && \
-        kubectl rollout status deploy/llm-scaler -n catalyst-llm --timeout=60s && \
+            -t ghcr.io/thebranchdriftcatalyst/llm-proxy:latest --push . && \
+        kubectl rollout restart deploy/llm-proxy -n catalyst-llm && \
+        kubectl rollout status deploy/llm-proxy -n catalyst-llm --timeout=60s && \
         echo "Rebuild and deploy complete"
     '''],
     text='Rebuild & Push',

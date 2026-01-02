@@ -13,7 +13,7 @@ spec:
     idleConnTimeout: 120s
 ---
 # IngressRoute for Catalyst LLM API via scaler (scale-to-zero)
-# Routes through llm-scaler which manages EC2 worker lifecycle
+# Routes through llm-proxy which manages EC2 worker lifecycle
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -31,7 +31,7 @@ spec:
     - match: Host(`llm.talos00`)
       kind: Rule
       services:
-        - name: llm-scaler
+        - name: llm-proxy
           port: 8080
           serversTransport: llm-transport
 ---
@@ -53,7 +53,7 @@ spec:
     - match: Host(`ollama.talos00`)
       kind: Rule
       services:
-        - name: llm-scaler
+        - name: llm-proxy
           port: 8080
           serversTransport: llm-transport
 ---
@@ -161,10 +161,10 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: llm-scaler-dashboard
+  name: llm-proxy-dashboard
   namespace: catalyst-llm
   labels:
-    app.kubernetes.io/name: llm-scaler
+    app.kubernetes.io/name: llm-proxy
     app.kubernetes.io/component: ingress
   annotations:
     description: 'LLM Scaler dashboard - pause/resume and status'
@@ -172,8 +172,8 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`llm-scaler.talos00`)
+    - match: Host(`llm-proxy.talos00`)
       kind: Rule
       services:
-        - name: llm-scaler
+        - name: llm-proxy
           port: 8080

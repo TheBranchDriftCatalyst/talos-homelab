@@ -1,12 +1,13 @@
-// LLM Scaler - Transparent reverse proxy with scale-to-zero for EC2 workers
+// LLM Proxy - Intelligent reverse proxy for LLM inference routing
 //
 // Features:
+//   - Multi-backend routing (local, remote, Mac dev)
 //   - Automatic worker spin-up on first request
 //   - Automatic spin-down after configurable idle timeout
-//   - Request queuing during cold start
+//   - RabbitMQ broker mode for decoupled scaling
 //   - Prometheus metrics
 //   - Health endpoints for K8s probes
-//   - RabbitMQ broker mode for decoupled scaling
+//   - Real-time WebSocket dashboard
 package main
 
 import (
@@ -19,7 +20,7 @@ import (
 func main() {
 	cfg := loadConfig()
 
-	log.Printf("🚀 LLM Scaler starting")
+	log.Printf("🚀 LLM Proxy starting")
 	log.Printf("   Proxy: %s -> %s", cfg.ListenAddr, cfg.OllamaURL)
 	log.Printf("   Idle timeout: %s", cfg.IdleTimeout)
 	log.Printf("   Warmup timeout: %s", cfg.WarmupTimeout)

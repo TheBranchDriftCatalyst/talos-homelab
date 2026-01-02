@@ -354,7 +354,7 @@ print_service_urls() {
   echo -e "    ${CYAN}http://chat.talos00${RESET}           ${DIM}│${RESET} Open-WebUI (ChatGPT-like interface)"
   echo -e "    ${CYAN}http://sillytavern.talos00${RESET}    ${DIM}│${RESET} SillyTavern (character chat)"
   echo -e "    ${CYAN}http://searxng.talos00${RESET}        ${DIM}│${RESET} SearXNG (privacy search)"
-  echo -e "    ${CYAN}http://llm-scaler.talos00/_/ui${RESET} ${DIM}│${RESET} Scaler Dashboard (pause/resume)"
+  echo -e "    ${CYAN}http://llm-proxy.talos00/_/ui${RESET} ${DIM}│${RESET} Scaler Dashboard (pause/resume)"
   echo ""
   echo -e "  ${BOLD}API Endpoints:${RESET}"
   echo -e "    ${CYAN}http://llm.talos00${RESET}            ${DIM}│${RESET} Ollama API (via scaler)"

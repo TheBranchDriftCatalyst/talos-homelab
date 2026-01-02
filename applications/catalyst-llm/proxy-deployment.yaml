@@ -4,26 +4,26 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: llm-scaler
+  name: llm-proxy
   namespace: catalyst-llm
   labels:
-    app.kubernetes.io/name: llm-scaler
+    app.kubernetes.io/name: llm-proxy
     app.kubernetes.io/component: proxy
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: llm-scaler
+      app.kubernetes.io/name: llm-proxy
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: llm-scaler
+        app.kubernetes.io/name: llm-proxy
         app.kubernetes.io/component: proxy
     spec:
-      serviceAccountName: llm-scaler
+      serviceAccountName: llm-proxy
       containers:
         - name: scaler
-          image: ghcr.io/thebranchdriftcatalyst/llm-scaler:latest
+          image: ghcr.io/thebranchdriftcatalyst/llm-proxy:latest
           ports:
             - name: http
               containerPort: 8080
@@ -115,15 +115,15 @@ spec:
       volumes:
         - name: worker-state
           persistentVolumeClaim:
-            claimName: llm-scaler-state
+            claimName: llm-proxy-state
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: llm-scaler
+  name: llm-proxy
   namespace: catalyst-llm
   labels:
-    app.kubernetes.io/name: llm-scaler
+    app.kubernetes.io/name: llm-proxy
 spec:
   type: ClusterIP
   ports:
@@ -134,26 +134,26 @@ spec:
       port: 9090
       targetPort: metrics
   selector:
-    app.kubernetes.io/name: llm-scaler
+    app.kubernetes.io/name: llm-proxy
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: llm-scaler
+  name: llm-proxy
   namespace: catalyst-llm
 ---
 # ServiceMonitor for Prometheus scraping
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: llm-scaler
+  name: llm-proxy
   namespace: catalyst-llm
   labels:
-    app.kubernetes.io/name: llm-scaler
+    app.kubernetes.io/name: llm-proxy
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: llm-scaler
+      app.kubernetes.io/name: llm-proxy
   endpoints:
     - port: metrics
       interval: 30s

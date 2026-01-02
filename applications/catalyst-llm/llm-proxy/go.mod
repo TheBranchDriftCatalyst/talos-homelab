@@ -1,4 +1,4 @@
-module github.com/TheBranchDriftCatalyst/talos-homelab/tools/llm-scaler
+module github.com/TheBranchDriftCatalyst/talos-homelab/tools/llm-proxy
 
 go 1.22
 
