@@ -25,13 +25,16 @@ WORKDIR /app
 # Copy binary
 COPY --from=builder /build/llm-scaler /app/
 
-# Copy worker script (will be mounted via ConfigMap in K8s)
-# For local testing, you can mount the script
-COPY scripts/llm-worker.sh /app/llm-worker.sh
-RUN chmod +x /app/llm-worker.sh
-
 # Non-root user
 RUN adduser -D -u 1000 scaler
+
+# Copy worker script and set permissions for scaler user
+COPY --chown=scaler:scaler scripts/llm-worker.sh /app/llm-worker.sh
+RUN chmod 755 /app/llm-worker.sh
+
+# Also ensure binary is readable
+RUN chown scaler:scaler /app/llm-scaler
+
 USER scaler
 
 EXPOSE 8080 9090
