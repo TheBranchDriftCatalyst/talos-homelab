@@ -1,0 +1,111 @@
+# VPN Rotator Development Tiltfile
+# Usage: cd infrastructure/base/vpn-gateway/rotation && tilt up
+#
+# This Tiltfile attaches to Flux-managed resources (no deployments).
+# Resources must already exist in cluster via GitOps.
+
+# Rotation commands - creates ephemeral job from cronjob
+local_resource(
+    'rotate:dry-run',
+    cmd='''
+        kubectl delete job vpn-rotator-dry -n vpn-gateway --ignore-not-found=true 2>/dev/null
+        kubectl create job vpn-rotator-dry --from=cronjob/vpn-rotator -n vpn-gateway
+        kubectl patch job vpn-rotator-dry -n vpn-gateway --type=json \
+            -p='[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"DRY_RUN","value":"true"}},
+                 {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"VPN_ROTATION_JITTER_MAX","value":"0"}}]'
+        kubectl wait --for=condition=complete job/vpn-rotator-dry -n vpn-gateway --timeout=60s
+        kubectl logs job/vpn-rotator-dry -n vpn-gateway
+    ''',
+    labels=['rotate'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
+
+local_resource(
+    'rotate:live',
+    cmd='''
+        kubectl delete job vpn-rotator-live -n vpn-gateway --ignore-not-found=true 2>/dev/null
+        kubectl create job vpn-rotator-live --from=cronjob/vpn-rotator -n vpn-gateway
+        kubectl patch job vpn-rotator-live -n vpn-gateway --type=json \
+            -p='[{"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"DRY_RUN","value":"false"}},
+                 {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"VPN_ROTATION_JITTER_MAX","value":"0"}}]'
+        kubectl wait --for=condition=complete job/vpn-rotator-live -n vpn-gateway --timeout=120s
+        kubectl logs job/vpn-rotator-live -n vpn-gateway
+    ''',
+    labels=['rotate'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
+
+# Inspect state and metrics via exporter pod
+local_resource(
+    'inspect:state',
+    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- cat /state/rotation-state.json 2>/dev/null | jq . || echo "{}"',
+    labels=['inspect'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
+
+local_resource(
+    'inspect:metrics',
+    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 -c "import urllib.request; print(urllib.request.urlopen(\'http://localhost:9091/metrics\').read().decode())" | grep -v "^#"',
+    labels=['inspect'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
+
+local_resource(
+    'inspect:secrets',
+    cmd='kubectl get secret protonvpn-credentials -n vpn-gateway -o jsonpath="{.data}" | jq -r "keys[]"',
+    labels=['inspect'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
+
+local_resource(
+    'inspect:pods',
+    cmd='''
+        echo "=== Rotation-enabled pods ==="
+        echo ""
+        echo "vpn-gateway:"
+        kubectl get pods -n vpn-gateway -l vpn-gateway.io/rotation=enabled -o wide 2>/dev/null || echo "  none"
+        echo ""
+        echo "media:"
+        kubectl get pods -n media -l vpn-gateway.io/rotation=enabled -o wide 2>/dev/null || echo "  none"
+    ''',
+    labels=['inspect'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
+
+local_resource(
+    'inspect:vpn-status',
+    cmd='''
+        echo "=== Current VPN Exits ==="
+        for pod in $(kubectl get pods -n vpn-gateway -l vpn-gateway.io/rotation=enabled -o name); do
+            name=$(echo $pod | cut -d/ -f2)
+            ip=$(kubectl get $pod -n vpn-gateway -o jsonpath='{.status.podIP}')
+            echo -n "$name: "
+            kubectl exec -n vpn-gateway $pod -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip 2>/dev/null | jq -r '.public_ip + " (" + .country + ")"' || echo "unavailable"
+        done
+    ''',
+    labels=['inspect'],
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL
+)
+
+# Port forward for local metrics access
+local_resource(
+    'port-forward:metrics',
+    serve_cmd='kubectl port-forward -n vpn-gateway svc/vpn-rotator-exporter 9091:9091',
+    labels=['services'],
+    auto_init=False
+)
+
+# Watch logs
+local_resource(
+    'logs:exporter',
+    serve_cmd='kubectl logs -f -n vpn-gateway deploy/vpn-rotator-exporter',
+    labels=['logs'],
+    auto_init=False
+)
