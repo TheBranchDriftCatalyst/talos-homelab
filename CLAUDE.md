@@ -378,7 +378,7 @@ All services accessible via hostname (requires `/etc/hosts` entry for `*.talos00
               nexus.talos00 npm.talos00 docker-proxy.talos00 \
               sonarr.talos00 radarr.talos00 prowlarr.talos00 \
               plex.talos00 jellyfin.talos00 tdarr.talos00 catalyst.talos00 \
-              hubble.talos00
+              hubble.talos00 rabbitmq.talos00
 ```
 
 Access: `http://<service>.talos00`

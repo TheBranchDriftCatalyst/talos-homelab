@@ -1,0 +1,126 @@
+---
+# RabbitMQ Message Broker for LLM Request Routing
+# Management UI: http://rabbitmq.talos00
+# AMQP: amqp://rabbitmq.catalyst-llm.svc:5672
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: bitnami
+  namespace: catalyst-llm
+spec:
+  interval: 1h
+  url: https://charts.bitnami.com/bitnami
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: rabbitmq
+  namespace: catalyst-llm
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: rabbitmq
+      version: '16.0.14'
+      sourceRef:
+        kind: HelmRepository
+        name: bitnami
+        namespace: catalyst-llm
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Authentication
+    auth:
+      username: llmproxy
+      # Password from existing secret (ESO synced from 1Password)
+      existingPasswordSecret: rabbitmq-credentials
+      existingSecretPasswordKey: password
+      # Erlang cookie for clustering
+      existingErlangSecret: rabbitmq-credentials
+      existingSecretErlangKey: erlang-cookie
+
+    # Single node for homelab (no clustering)
+    replicaCount: 1
+    clustering:
+      enabled: false
+
+    # Persistence
+    persistence:
+      enabled: true
+      storageClass: local-path
+      size: 8Gi
+
+    # Resource requests only (no limits for homelab)
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+    # Enable management plugin
+    plugins: "rabbitmq_management rabbitmq_prometheus"
+
+    # Community plugins (none for now)
+    communityPlugins: ""
+
+    # Extra configuration for LLM routing
+    extraConfiguration: |
+      # Default vhost for LLM routing
+      default_vhost = llm
+
+      # Queue message TTL (1 hour default)
+      consumer_timeout = 3600000
+
+      # Lazy queues for memory efficiency
+      queue_master_locator = min-masters
+
+    # Load definitions on startup (queues, exchanges, bindings)
+    loadDefinition:
+      enabled: true
+      existingSecret: rabbitmq-definitions
+
+    # Metrics for Prometheus
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
+        namespace: catalyst-llm
+        labels:
+          release: prometheus
+
+    # Service configuration
+    service:
+      type: ClusterIP
+      ports:
+        amqp: 5672
+        manager: 15672
+        metrics: 9419
+
+    # Pod security
+    podSecurityContext:
+      enabled: true
+      fsGroup: 1001
+    containerSecurityContext:
+      enabled: true
+      runAsUser: 1001
+      runAsNonRoot: true
+---
+# IngressRoute for RabbitMQ Management UI
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: rabbitmq-management
+  namespace: catalyst-llm
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`rabbitmq.talos00`)
+      kind: Rule
+      services:
+        - name: rabbitmq
+          port: 15672
