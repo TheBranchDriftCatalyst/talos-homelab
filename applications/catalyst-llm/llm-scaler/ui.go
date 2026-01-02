@@ -59,6 +59,97 @@ const uiHTML = `<!DOCTYPE html>
       align-items: center;
       gap: 10px;
     }
+    .header-center {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .routing-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 16px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+    .routing-stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 60px;
+    }
+    .routing-stat-value {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--accent-blue);
+    }
+    .routing-stat-label {
+      font-size: 10px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+    }
+    .routing-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border-color);
+    }
+    .routing-toggle {
+      display: flex;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      padding: 2px;
+      border: 1px solid var(--border-color);
+    }
+    .routing-toggle button {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      background: transparent;
+      color: var(--text-secondary);
+      flex: unset;
+    }
+    .routing-toggle button:hover {
+      color: var(--text-primary);
+    }
+    .routing-toggle button.active {
+      background: var(--accent-blue);
+      color: white;
+    }
+    .routing-toggle button.active-local {
+      background: var(--accent-green);
+      color: white;
+    }
+    .routing-toggle button.active-remote {
+      background: var(--accent-yellow);
+      color: black;
+    }
+    .active-endpoint {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      background: var(--bg-tertiary);
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .active-endpoint-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      animation: pulse 2s infinite;
+    }
+    .active-endpoint-dot.remote { background: var(--accent-yellow); }
+    .active-endpoint-dot.none { background: var(--accent-red); animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
     .connection-status {
       display: flex;
       align-items: center;
@@ -73,6 +164,54 @@ const uiHTML = `<!DOCTYPE html>
       background: var(--accent-red);
     }
     .status-dot.connected { background: var(--accent-green); }
+
+    /* Loading skeleton */
+    .skeleton {
+      background: linear-gradient(90deg, var(--bg-tertiary) 25%, var(--bg-secondary) 50%, var(--bg-tertiary) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 4px;
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    .skeleton-text {
+      height: 14px;
+      width: 60px;
+      display: inline-block;
+    }
+    .skeleton-stat {
+      height: 28px;
+      width: 40px;
+    }
+    .card.loading .card-body {
+      opacity: 0.6;
+    }
+    .loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(13, 17, 23, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      z-index: 10;
+    }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border-color);
+      border-top-color: var(--accent-blue);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
 
     /* Tab Navigation */
     .tab-bar {
@@ -331,6 +470,29 @@ const uiHTML = `<!DOCTYPE html>
   <div class="app-container">
     <div class="header">
       <h1>🤖 Catalyst LLM</h1>
+      <div class="header-center">
+        <div class="routing-info" id="routing-info">
+          <div class="active-endpoint" id="active-endpoint">
+            <span class="active-endpoint-dot none" id="active-dot"></span>
+            <span id="active-target-text">Loading...</span>
+          </div>
+          <div class="routing-divider"></div>
+          <div class="routing-stat">
+            <span class="routing-stat-value" id="local-routed">-</span>
+            <span class="routing-stat-label">Local</span>
+          </div>
+          <div class="routing-stat">
+            <span class="routing-stat-value" id="remote-routed">-</span>
+            <span class="routing-stat-label">Remote</span>
+          </div>
+          <div class="routing-divider"></div>
+          <div class="routing-toggle" id="routing-toggle">
+            <button id="route-auto" onclick="setRouting('auto')">Auto</button>
+            <button id="route-local" onclick="setRouting('local')">Local</button>
+            <button id="route-remote" onclick="setRouting('remote')">Remote</button>
+          </div>
+        </div>
+      </div>
       <div class="connection-status">
         <span class="status-dot" id="ws-status"></span>
         <span id="ws-status-text">Connecting...</span>
@@ -367,7 +529,7 @@ const uiHTML = `<!DOCTYPE html>
           <div class="container">
             <div class="grid">
               <!-- Local Worker Card -->
-              <div class="card" id="local-card">
+              <div class="card loading" id="local-card">
                 <div class="card-header">
                   <div class="worker-header">
                     <div class="worker-icon local">🏠</div>
@@ -376,7 +538,7 @@ const uiHTML = `<!DOCTYPE html>
                       <div style="font-size: 12px; color: var(--text-secondary);">talos06 • Intel Arc 140T</div>
                     </div>
                   </div>
-                  <span class="badge badge-stopped" id="local-badge">Offline</span>
+                  <span class="badge badge-stopped" id="local-badge">Loading...</span>
                 </div>
                 <div class="card-body">
                   <div class="info-row">
@@ -394,7 +556,7 @@ const uiHTML = `<!DOCTYPE html>
               </div>
 
               <!-- Remote Worker Card -->
-              <div class="card" id="remote-card">
+              <div class="card loading" id="remote-card">
                 <div class="card-header">
                   <div class="worker-header">
                     <div class="worker-icon remote">☁️</div>
@@ -404,8 +566,8 @@ const uiHTML = `<!DOCTYPE html>
                     </div>
                   </div>
                   <div style="display: flex; gap: 8px;">
-                    <span class="badge badge-stopped" id="ec2-state-badge" title="EC2 Instance">⚡ Stopped</span>
-                    <span class="badge badge-stopped" id="ollama-ready-badge" title="Ollama Service">🦙 Offline</span>
+                    <span class="badge badge-stopped" id="ec2-state-badge" title="EC2 Instance">⚡ Loading...</span>
+                    <span class="badge badge-stopped" id="ollama-ready-badge" title="Ollama Service">🦙 Loading...</span>
                   </div>
                 </div>
                 <div class="card-body">
@@ -438,10 +600,10 @@ const uiHTML = `<!DOCTYPE html>
               </div>
 
               <!-- Scaler Control Card -->
-              <div class="card">
+              <div class="card loading" id="scaler-card">
                 <div class="card-header">
                   <h2>⚙️ Scaler Configuration</h2>
-                  <span class="badge" id="scaler-mode-badge">Active</span>
+                  <span class="badge" id="scaler-mode-badge">Loading...</span>
                 </div>
                 <div class="card-body">
                   <div class="stat-grid">
@@ -543,6 +705,65 @@ const uiHTML = `<!DOCTYPE html>
     const maxReconnectAttempts = 10;
     const logs = [];
     const maxLogs = 50;
+    let isLoading = true;
+    let currentRoutingMode = 'auto';
+
+    // Update routing info in topbar
+    function updateRoutingInfo(scaler) {
+      // Update routing stats
+      document.getElementById('local-routed').textContent = scaler.local_routed || 0;
+      document.getElementById('remote-routed').textContent = scaler.remote_routed || 0;
+
+      // Update active target indicator
+      const activeTarget = scaler.active_target || 'none';
+      const activeDot = document.getElementById('active-dot');
+      const activeText = document.getElementById('active-target-text');
+
+      activeDot.className = 'active-endpoint-dot';
+      if (activeTarget === 'local') {
+        activeDot.classList.add('local');
+        activeText.textContent = '🏠 Local Active';
+        activeText.style.color = 'var(--accent-green)';
+      } else if (activeTarget === 'remote') {
+        activeDot.classList.add('remote');
+        activeText.textContent = '☁️ Remote Active';
+        activeText.style.color = 'var(--accent-yellow)';
+      } else {
+        activeDot.classList.add('none');
+        activeText.textContent = '⚠️ No Backend';
+        activeText.style.color = 'var(--accent-red)';
+      }
+
+      // Update routing mode toggle
+      const mode = scaler.routing_mode || 'auto';
+      currentRoutingMode = mode;
+      updateRoutingToggle(mode);
+    }
+
+    function updateRoutingToggle(mode) {
+      // Reset all buttons
+      document.querySelectorAll('.routing-toggle button').forEach(btn => {
+        btn.className = '';
+      });
+
+      // Set active button
+      const activeBtn = document.getElementById('route-' + mode);
+      if (activeBtn) {
+        if (mode === 'local') {
+          activeBtn.className = 'active-local';
+        } else if (mode === 'remote') {
+          activeBtn.className = 'active-remote';
+        } else {
+          activeBtn.className = 'active';
+        }
+      }
+    }
+
+    function setRouting(mode) {
+      if (mode === currentRoutingMode) return;
+      sendControl('set_routing', '', mode);
+      addLog('Switching to ' + mode + ' routing mode');
+    }
 
     // Tab switching
     function switchTab(tabName) {
@@ -610,6 +831,10 @@ const uiHTML = `<!DOCTYPE html>
     }
 
     function updateStatus(data) {
+      // Remove initial loading state
+      isLoading = false;
+      document.querySelectorAll('.card.loading').forEach(c => c.classList.remove('loading'));
+
       // Update scaler stats
       if (data.scaler) {
         document.getElementById('stat-requests').textContent = data.scaler.requests_total || 0;
@@ -632,6 +857,9 @@ const uiHTML = `<!DOCTYPE html>
         const modeBadge = document.getElementById('scaler-mode-badge');
         modeBadge.textContent = paused ? 'Paused' : 'Active';
         modeBadge.className = 'badge ' + (paused ? 'badge-stopped' : 'badge-running');
+
+        // Update routing info in topbar
+        updateRoutingInfo(data.scaler);
       }
 
       // Update workers

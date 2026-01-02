@@ -137,6 +137,11 @@ type ScalerStatus struct {
 	UntilShutdown string `json:"until_shutdown"`
 	RequestsTotal int64  `json:"requests_total"`
 	ColdStarts    int64  `json:"cold_starts"`
+	// Routing
+	RoutingMode   string `json:"routing_mode"`
+	ActiveTarget  string `json:"active_target"`
+	LocalRouted   int64  `json:"local_routed"`
+	RemoteRouted  int64  `json:"remote_routed"`
 }
 
 // WebSocket handles WebSocket connections
@@ -249,6 +254,25 @@ func (s *Scaler) handleControl(ctrl ControlMessage, conn *websocket.Conn) {
 			response["message"] = "Pulling " + ctrl.Data + "..."
 		}
 
+	case "set_routing":
+		switch ctrl.Data {
+		case "auto":
+			s.SetRoutingMode(RoutingAuto)
+			response["status"] = "updated"
+			response["message"] = "Routing mode: Auto (local first, fallback remote)"
+		case "local":
+			s.SetRoutingMode(RoutingLocal)
+			response["status"] = "updated"
+			response["message"] = "Routing mode: Local only"
+		case "remote":
+			s.SetRoutingMode(RoutingRemote)
+			response["status"] = "updated"
+			response["message"] = "Routing mode: Remote only"
+		default:
+			response["status"] = "error"
+			response["message"] = "Invalid routing mode. Use: auto, local, remote"
+		}
+
 	case "refresh":
 		s.sendFullStatus(conn)
 		return
@@ -317,6 +341,19 @@ func (s *Scaler) buildStatusUpdate() StatusUpdate {
 		workers = append(workers, remoteWorker)
 	}
 
+	// Get routing info
+	localRouted, remoteRouted := s.GetRoutingStats()
+	routingMode := s.GetRoutingMode()
+	activeTarget := s.GetActiveTarget()
+
+	// Determine active target name for display
+	activeTargetName := "none"
+	if activeTarget == s.cfg.OllamaURL {
+		activeTargetName = "local"
+	} else if activeTarget == s.cfg.RemoteOllamaURL {
+		activeTargetName = "remote"
+	}
+
 	return StatusUpdate{
 		Type:      "status",
 		Timestamp: time.Now().Format(time.RFC3339),
@@ -327,6 +364,11 @@ func (s *Scaler) buildStatusUpdate() StatusUpdate {
 			UntilShutdown: (s.cfg.IdleTimeout - idle).Round(time.Second).String(),
 			RequestsTotal: s.requests.Load(),
 			ColdStarts:    s.starts.Load(),
+			// Routing info
+			RoutingMode:  string(routingMode),
+			ActiveTarget: activeTargetName,
+			LocalRouted:  localRouted,
+			RemoteRouted: remoteRouted,
 		},
 		Workers: workers,
 	}

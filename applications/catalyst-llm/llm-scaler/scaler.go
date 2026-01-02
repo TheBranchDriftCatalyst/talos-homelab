@@ -26,38 +26,62 @@ const (
 	StateStopping State = "stopping"
 )
 
+// RoutingMode determines which backend to route to
+type RoutingMode string
+
+const (
+	RoutingAuto   RoutingMode = "auto"   // Try local first, fallback to remote
+	RoutingLocal  RoutingMode = "local"  // Force local only
+	RoutingRemote RoutingMode = "remote" // Force remote only
+)
+
 // Scaler manages the EC2 worker lifecycle and proxies requests
 type Scaler struct {
-	cfg   Config
-	proxy *httputil.ReverseProxy
-	hub   *Hub // WebSocket hub
+	cfg         Config
+	localProxy  *httputil.ReverseProxy
+	remoteProxy *httputil.ReverseProxy
+	hub         *Hub // WebSocket hub
 
 	mu           sync.RWMutex
 	state        State
 	lastActivity time.Time
 	startOnce    *sync.Once
 	startDone    chan struct{}
-	paused       bool // When true, disable auto-scaling (idle shutdown)
+	paused       bool        // When true, disable auto-scaling (idle shutdown)
+	routingMode  RoutingMode // Current routing mode
+	activeTarget string      // Currently active target URL for metrics
 
 	// Metrics (atomic for lock-free reads)
-	requests atomic.Int64
-	blocked  atomic.Int64
-	starts   atomic.Int64
+	requests      atomic.Int64
+	blocked       atomic.Int64
+	starts        atomic.Int64
+	localRouted   atomic.Int64
+	remoteRouted  atomic.Int64
 }
 
 // NewScaler creates a new scaler instance
 func NewScaler(cfg Config) *Scaler {
-	target, _ := url.Parse(cfg.OllamaURL)
+	localTarget, _ := url.Parse(cfg.OllamaURL)
 
 	s := &Scaler{
 		cfg:          cfg,
 		hub:          NewHub(),
 		state:        StateUnknown,
 		lastActivity: time.Now(),
+		routingMode:  RoutingAuto,
+		activeTarget: cfg.OllamaURL,
 	}
 
-	s.proxy = httputil.NewSingleHostReverseProxy(target)
-	s.proxy.ErrorHandler = s.proxyError
+	// Local proxy (primary)
+	s.localProxy = httputil.NewSingleHostReverseProxy(localTarget)
+	s.localProxy.ErrorHandler = s.proxyError
+
+	// Remote proxy (if configured)
+	if cfg.RemoteOllamaURL != "" {
+		remoteTarget, _ := url.Parse(cfg.RemoteOllamaURL)
+		s.remoteProxy = httputil.NewSingleHostReverseProxy(remoteTarget)
+		s.remoteProxy.ErrorHandler = s.proxyError
+	}
 
 	return s
 }
@@ -75,29 +99,112 @@ func (s *Scaler) proxyError(w http.ResponseWriter, r *http.Request, err error) {
 func (s *Scaler) Proxy(w http.ResponseWriter, r *http.Request) {
 	s.requests.Add(1)
 
-	// Ensure worker is running
-	if !s.isReady() {
-		s.blocked.Add(1)
+	// Get routing mode and determine target
+	s.mu.RLock()
+	mode := s.routingMode
+	s.mu.RUnlock()
 
-		ctx, cancel := context.WithTimeout(r.Context(), s.cfg.WarmupTimeout)
-		defer cancel()
+	var proxy *httputil.ReverseProxy
+	var targetURL string
 
-		if err := s.ensureRunning(ctx); err != nil {
-			log.Printf("❌ Cold start failed: %v", err)
+	switch mode {
+	case RoutingLocal:
+		// Force local only
+		if !s.checkEndpoint(s.cfg.OllamaURL) {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-				"error":   "worker unavailable",
-				"message": "LLM worker is starting. Retry in 2-3 minutes.",
-				"state":   s.getState(),
+				"error":   "local worker unavailable",
+				"message": "Local ollama is not responding",
+				"mode":    "local",
 			})
 			return
 		}
+		proxy = s.localProxy
+		targetURL = s.cfg.OllamaURL
+		s.localRouted.Add(1)
+
+	case RoutingRemote:
+		// Force remote only
+		if s.remoteProxy == nil || !s.checkEndpoint(s.cfg.RemoteOllamaURL) {
+			// Try to start EC2 if not ready
+			if s.remoteProxy != nil {
+				s.blocked.Add(1)
+				ctx, cancel := context.WithTimeout(r.Context(), s.cfg.WarmupTimeout)
+				defer cancel()
+				if err := s.ensureRunning(ctx); err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+						"error":   "remote worker unavailable",
+						"message": "EC2 worker is starting. Retry in 2-3 minutes.",
+						"mode":    "remote",
+					})
+					return
+				}
+			} else {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"error":   "remote not configured",
+					"message": "No remote ollama URL configured",
+					"mode":    "remote",
+				})
+				return
+			}
+		}
+		proxy = s.remoteProxy
+		targetURL = s.cfg.RemoteOllamaURL
+		s.remoteRouted.Add(1)
+
+	default: // RoutingAuto
+		// Try local first, fallback to remote
+		if s.checkEndpoint(s.cfg.OllamaURL) {
+			proxy = s.localProxy
+			targetURL = s.cfg.OllamaURL
+			s.localRouted.Add(1)
+		} else if s.remoteProxy != nil && s.checkEndpoint(s.cfg.RemoteOllamaURL) {
+			proxy = s.remoteProxy
+			targetURL = s.cfg.RemoteOllamaURL
+			s.remoteRouted.Add(1)
+		} else {
+			// Neither available, try to start EC2
+			s.blocked.Add(1)
+			ctx, cancel := context.WithTimeout(r.Context(), s.cfg.WarmupTimeout)
+			defer cancel()
+
+			if err := s.ensureRunning(ctx); err != nil {
+				writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+					"error":   "no workers available",
+					"message": "All LLM workers are offline. Retry in 2-3 minutes.",
+					"mode":    "auto",
+				})
+				return
+			}
+			// After cold start, check which is ready
+			if s.checkEndpoint(s.cfg.OllamaURL) {
+				proxy = s.localProxy
+				targetURL = s.cfg.OllamaURL
+				s.localRouted.Add(1)
+			} else if s.remoteProxy != nil {
+				proxy = s.remoteProxy
+				targetURL = s.cfg.RemoteOllamaURL
+				s.remoteRouted.Add(1)
+			}
+		}
 	}
+
+	if proxy == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "no backend available",
+		})
+		return
+	}
+
+	// Update active target for UI
+	s.mu.Lock()
+	s.activeTarget = targetURL
+	s.mu.Unlock()
 
 	// Update activity timestamp
 	s.touch()
 
 	// Proxy the request
-	s.proxy.ServeHTTP(w, r)
+	proxy.ServeHTTP(w, r)
 }
 
 // Health returns 200 if the scaler is running (liveness)
@@ -514,6 +621,33 @@ func (s *Scaler) touch() {
 	s.mu.Lock()
 	s.lastActivity = time.Now()
 	s.mu.Unlock()
+}
+
+// GetRoutingMode returns the current routing mode
+func (s *Scaler) GetRoutingMode() RoutingMode {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.routingMode
+}
+
+// SetRoutingMode changes the routing mode
+func (s *Scaler) SetRoutingMode(mode RoutingMode) {
+	s.mu.Lock()
+	s.routingMode = mode
+	s.mu.Unlock()
+	log.Printf("🔀 Routing mode changed to: %s", mode)
+}
+
+// GetActiveTarget returns the currently active backend URL
+func (s *Scaler) GetActiveTarget() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.activeTarget
+}
+
+// GetRoutingStats returns routing statistics
+func (s *Scaler) GetRoutingStats() (local, remote int64) {
+	return s.localRouted.Load(), s.remoteRouted.Load()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
