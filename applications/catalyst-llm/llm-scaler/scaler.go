@@ -33,6 +33,7 @@ const (
 	RoutingAuto   RoutingMode = "auto"   // Try local first, fallback to remote
 	RoutingLocal  RoutingMode = "local"  // Force local only
 	RoutingRemote RoutingMode = "remote" // Force remote only
+	RoutingMac    RoutingMode = "mac"    // Force Mac dev endpoint (Tilt only)
 )
 
 // Scaler manages the EC2 worker lifecycle and proxies requests
@@ -40,7 +41,8 @@ type Scaler struct {
 	cfg         Config
 	localProxy  *httputil.ReverseProxy
 	remoteProxy *httputil.ReverseProxy
-	hub         *Hub // WebSocket hub
+	macProxy    *httputil.ReverseProxy // Mac dev endpoint (Tilt only)
+	hub         *Hub                   // WebSocket hub
 
 	mu           sync.RWMutex
 	state        State
@@ -57,6 +59,7 @@ type Scaler struct {
 	starts        atomic.Int64
 	localRouted   atomic.Int64
 	remoteRouted  atomic.Int64
+	macRouted     atomic.Int64
 }
 
 // NewScaler creates a new scaler instance
@@ -81,6 +84,14 @@ func NewScaler(cfg Config) *Scaler {
 		remoteTarget, _ := url.Parse(cfg.RemoteOllamaURL)
 		s.remoteProxy = httputil.NewSingleHostReverseProxy(remoteTarget)
 		s.remoteProxy.ErrorHandler = s.proxyError
+	}
+
+	// Mac proxy (if configured - Tilt dev mode only)
+	if cfg.MacOllamaURL != "" {
+		macTarget, _ := url.Parse(cfg.MacOllamaURL)
+		s.macProxy = httputil.NewSingleHostReverseProxy(macTarget)
+		s.macProxy.ErrorHandler = s.proxyError
+		log.Printf("   Mac dev endpoint: %s", cfg.MacOllamaURL)
 	}
 
 	return s
@@ -108,6 +119,20 @@ func (s *Scaler) Proxy(w http.ResponseWriter, r *http.Request) {
 	var targetURL string
 
 	switch mode {
+	case RoutingMac:
+		// Force Mac dev endpoint only (Tilt mode)
+		if s.macProxy == nil || !s.checkEndpoint(s.cfg.MacOllamaURL) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error":   "mac worker unavailable",
+				"message": "Mac ollama is not responding. Is 'ollama serve' running?",
+				"mode":    "mac",
+			})
+			return
+		}
+		proxy = s.macProxy
+		targetURL = s.cfg.MacOllamaURL
+		s.macRouted.Add(1)
+
 	case RoutingLocal:
 		// Force local only
 		if !s.checkEndpoint(s.cfg.OllamaURL) {
@@ -646,8 +671,18 @@ func (s *Scaler) GetActiveTarget() string {
 }
 
 // GetRoutingStats returns routing statistics
-func (s *Scaler) GetRoutingStats() (local, remote int64) {
-	return s.localRouted.Load(), s.remoteRouted.Load()
+func (s *Scaler) GetRoutingStats() (local, remote, mac int64) {
+	return s.localRouted.Load(), s.remoteRouted.Load(), s.macRouted.Load()
+}
+
+// HasMacEndpoint returns true if Mac dev endpoint is configured
+func (s *Scaler) HasMacEndpoint() bool {
+	return s.cfg.MacOllamaURL != ""
+}
+
+// GetMacOllamaURL returns the Mac Ollama URL if configured
+func (s *Scaler) GetMacOllamaURL() string {
+	return s.cfg.MacOllamaURL
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

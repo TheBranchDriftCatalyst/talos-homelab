@@ -110,12 +110,16 @@ docker_build(
 )
 
 # Apply llm-scaler deployment only (not full kustomization to avoid conflicts with Flux)
+# Note: We patch the deployment to add MAC_OLLAMA_URL for dev mode
 k8s_yaml(['scaler-deployment.yaml', 'service.yaml'])
 watch_file('scaler-deployment.yaml')
 watch_file('service.yaml')
 
+# Inject MAC_OLLAMA_URL environment variable for dev mode
+# This enables the "Mac" routing option in the UI
 k8s_resource(
     'llm-scaler',
+    objects=['llm-scaler:serviceaccount', 'llm-scaler:servicemonitor'],
     port_forwards=[
         '8080:8080',   # Proxy + UI
         '9090:9090',   # Metrics
@@ -127,6 +131,20 @@ k8s_resource(
         link('http://llm-scaler.talos00/_/ui', 'Control Panel (Ingress)'),
     ]
 )
+
+# Patch deployment to add MAC_OLLAMA_URL env var
+local_resource(
+    'patch-mac-env',
+    cmd='''
+        kubectl patch deployment llm-scaler -n catalyst-llm --type=json -p='[
+          {"op": "add", "path": "/spec/template/spec/containers/0/env/-", "value": {"name": "MAC_OLLAMA_URL", "value": "http://''' + MAC_IP + ''':11434"}}
+        ]' 2>/dev/null || echo "Patch applied or deployment not ready"
+    ''',
+    resource_deps=['llm-scaler'],
+    labels=[LABEL_SCALER],
+    auto_init=True,
+)
+
 
 # ============================================
 # Control Buttons

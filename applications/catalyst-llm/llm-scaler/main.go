@@ -53,6 +53,7 @@ type Config struct {
 	MetricsAddr     string
 	OllamaURL       string        // Primary (local) ollama
 	RemoteOllamaURL string        // Remote (EC2) ollama - for status display
+	MacOllamaURL    string        // Mac dev ollama (Tilt only)
 	IdleTimeout     time.Duration
 	WarmupTimeout   time.Duration
 	WorkerScript    string
@@ -66,6 +67,7 @@ func loadConfig() Config {
 		MetricsAddr:     env("METRICS_ADDR", ":9090"),
 		OllamaURL:       env("OLLAMA_URL", "http://10.42.2.1:11434"),
 		RemoteOllamaURL: env("REMOTE_OLLAMA_URL", ""),
+		MacOllamaURL:    env("MAC_OLLAMA_URL", ""), // Set by Tiltfile for dev mode
 		IdleTimeout:     duration("IDLE_TIMEOUT", 40*time.Minute),
 		WarmupTimeout:   duration("WARMUP_TIMEOUT", 5*time.Minute),
 		WorkerScript:    env("WORKER_SCRIPT", "/app/llm-worker.sh"),

@@ -142,6 +142,8 @@ type ScalerStatus struct {
 	ActiveTarget  string `json:"active_target"`
 	LocalRouted   int64  `json:"local_routed"`
 	RemoteRouted  int64  `json:"remote_routed"`
+	MacRouted     int64  `json:"mac_routed"`
+	HasMac        bool   `json:"has_mac"` // True if Mac dev endpoint is configured
 }
 
 // WebSocket handles WebSocket connections
@@ -268,9 +270,18 @@ func (s *Scaler) handleControl(ctrl ControlMessage, conn *websocket.Conn) {
 			s.SetRoutingMode(RoutingRemote)
 			response["status"] = "updated"
 			response["message"] = "Routing mode: Remote only"
+		case "mac":
+			if s.HasMacEndpoint() {
+				s.SetRoutingMode(RoutingMac)
+				response["status"] = "updated"
+				response["message"] = "Routing mode: Mac dev endpoint"
+			} else {
+				response["status"] = "error"
+				response["message"] = "Mac endpoint not configured (set MAC_OLLAMA_URL)"
+			}
 		default:
 			response["status"] = "error"
-			response["message"] = "Invalid routing mode. Use: auto, local, remote"
+			response["message"] = "Invalid routing mode. Use: auto, local, remote, mac"
 		}
 
 	case "refresh":
@@ -341,8 +352,27 @@ func (s *Scaler) buildStatusUpdate() StatusUpdate {
 		workers = append(workers, remoteWorker)
 	}
 
+	// Mac worker (if configured - Tilt dev mode)
+	if s.cfg.MacOllamaURL != "" {
+		macReady := s.checkEndpoint(s.cfg.MacOllamaURL)
+		macWorker := WorkerInfo{
+			Name:      "mac-dev",
+			Type:      "mac",
+			URL:       s.cfg.MacOllamaURL,
+			State:     "stopped",
+			Ready:     macReady,
+			LastCheck: time.Now(),
+		}
+		if macReady {
+			macWorker.State = "running"
+			macWorker.Models = s.fetchModels(s.cfg.MacOllamaURL)
+			macWorker.Stats.ModelsLoaded = len(macWorker.Models)
+		}
+		workers = append(workers, macWorker)
+	}
+
 	// Get routing info
-	localRouted, remoteRouted := s.GetRoutingStats()
+	localRouted, remoteRouted, macRouted := s.GetRoutingStats()
 	routingMode := s.GetRoutingMode()
 	activeTarget := s.GetActiveTarget()
 
@@ -352,6 +382,8 @@ func (s *Scaler) buildStatusUpdate() StatusUpdate {
 		activeTargetName = "local"
 	} else if activeTarget == s.cfg.RemoteOllamaURL {
 		activeTargetName = "remote"
+	} else if activeTarget == s.cfg.MacOllamaURL {
+		activeTargetName = "mac"
 	}
 
 	return StatusUpdate{
@@ -369,6 +401,8 @@ func (s *Scaler) buildStatusUpdate() StatusUpdate {
 			ActiveTarget: activeTargetName,
 			LocalRouted:  localRouted,
 			RemoteRouted: remoteRouted,
+			MacRouted:    macRouted,
+			HasMac:       s.HasMacEndpoint(),
 		},
 		Workers: workers,
 	}

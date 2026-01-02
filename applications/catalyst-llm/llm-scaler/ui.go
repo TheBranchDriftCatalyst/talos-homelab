@@ -128,6 +128,13 @@ const uiHTML = `<!DOCTYPE html>
       background: var(--accent-yellow);
       color: black;
     }
+    .routing-toggle button.active-mac {
+      background: var(--accent-purple);
+      color: white;
+    }
+    .routing-toggle button.hidden {
+      display: none;
+    }
     .active-endpoint {
       display: flex;
       align-items: center;
@@ -145,6 +152,7 @@ const uiHTML = `<!DOCTYPE html>
       animation: pulse 2s infinite;
     }
     .active-endpoint-dot.remote { background: var(--accent-yellow); }
+    .active-endpoint-dot.mac { background: var(--accent-purple); }
     .active-endpoint-dot.none { background: var(--accent-red); animation: none; }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
@@ -485,11 +493,16 @@ const uiHTML = `<!DOCTYPE html>
             <span class="routing-stat-value" id="remote-routed">-</span>
             <span class="routing-stat-label">Remote</span>
           </div>
+          <div class="routing-stat" id="mac-stat" style="display: none;">
+            <span class="routing-stat-value" id="mac-routed">-</span>
+            <span class="routing-stat-label">Mac</span>
+          </div>
           <div class="routing-divider"></div>
           <div class="routing-toggle" id="routing-toggle">
             <button id="route-auto" onclick="setRouting('auto')">Auto</button>
             <button id="route-local" onclick="setRouting('local')">Local</button>
             <button id="route-remote" onclick="setRouting('remote')">Remote</button>
+            <button id="route-mac" class="hidden" onclick="setRouting('mac')">🍎 Mac</button>
           </div>
         </div>
       </div>
@@ -714,6 +727,14 @@ const uiHTML = `<!DOCTYPE html>
       document.getElementById('local-routed').textContent = scaler.local_routed || 0;
       document.getElementById('remote-routed').textContent = scaler.remote_routed || 0;
 
+      // Show/hide Mac stat and button based on whether Mac endpoint is configured
+      const hasMac = scaler.has_mac || false;
+      document.getElementById('mac-stat').style.display = hasMac ? 'flex' : 'none';
+      document.getElementById('route-mac').classList.toggle('hidden', !hasMac);
+      if (hasMac) {
+        document.getElementById('mac-routed').textContent = scaler.mac_routed || 0;
+      }
+
       // Update active target indicator
       const activeTarget = scaler.active_target || 'none';
       const activeDot = document.getElementById('active-dot');
@@ -728,6 +749,10 @@ const uiHTML = `<!DOCTYPE html>
         activeDot.classList.add('remote');
         activeText.textContent = '☁️ Remote Active';
         activeText.style.color = 'var(--accent-yellow)';
+      } else if (activeTarget === 'mac') {
+        activeDot.classList.add('mac');
+        activeText.textContent = '🍎 Mac Active';
+        activeText.style.color = 'var(--accent-purple)';
       } else {
         activeDot.classList.add('none');
         activeText.textContent = '⚠️ No Backend';
@@ -741,20 +766,23 @@ const uiHTML = `<!DOCTYPE html>
     }
 
     function updateRoutingToggle(mode) {
-      // Reset all buttons
+      // Reset all buttons (preserve hidden class for mac button if not configured)
       document.querySelectorAll('.routing-toggle button').forEach(btn => {
-        btn.className = '';
+        const isHidden = btn.classList.contains('hidden');
+        btn.className = isHidden ? 'hidden' : '';
       });
 
       // Set active button
       const activeBtn = document.getElementById('route-' + mode);
       if (activeBtn) {
         if (mode === 'local') {
-          activeBtn.className = 'active-local';
+          activeBtn.classList.add('active-local');
         } else if (mode === 'remote') {
-          activeBtn.className = 'active-remote';
+          activeBtn.classList.add('active-remote');
+        } else if (mode === 'mac') {
+          activeBtn.classList.add('active-mac');
         } else {
-          activeBtn.className = 'active';
+          activeBtn.classList.add('active');
         }
       }
     }
