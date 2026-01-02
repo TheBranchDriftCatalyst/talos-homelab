@@ -17,7 +17,7 @@ config.define_string('k8s_context', args=False, usage='Kubernetes context to use
 cfg = config.parse()
 
 settings = {
-    'k8s_context': cfg.get('k8s_context', 'admin@homelab-single'),
+    'k8s_context': cfg.get('k8s_context', 'admin@catalyst-cluster'),
 }
 
 allow_k8s_contexts(settings['k8s_context'])
