@@ -1,0 +1,147 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vpn-rotator-exporter-script
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: vpn-rotator-exporter
+    app.kubernetes.io/component: script
+data:
+  exporter.py: |
+    #!/usr/bin/env python3
+    """
+    VPN Rotator Exporter - Exposes rotation state as Prometheus metrics
+
+    Metrics exposed:
+    - vpn_rotation_total{server,country} - Total rotations per server
+    - vpn_rotation_current{pod,server,country} - Current server per pod
+    - vpn_rotation_last_timestamp - Unix timestamp of last rotation
+    - vpn_rotator_up - Exporter health (1=healthy)
+    """
+
+    import json
+    import os
+    import time
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from datetime import datetime
+
+    STATE_FILE = "/state/rotation-state.json"
+    PORT = 9091
+
+    # Server key to country mapping
+    SERVER_COUNTRIES = {
+        "se-be-1": "Belgium",
+        "se-de-1": "Germany",
+        "se-in-1": "India",
+        "se-nl-1": "Netherlands",
+        "se-ch-1": "Switzerland",
+        "se-is-1": "Iceland",
+        "se-se-1": "Sweden",
+        "se-no-1": "Norway",
+    }
+
+    def load_state():
+        """Load rotation state from file"""
+        try:
+            with open(STATE_FILE, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"server_counts": {}, "pod_servers": {}, "last_rotation": None}
+
+    def generate_metrics():
+        """Generate Prometheus metrics from state"""
+        state = load_state()
+        lines = []
+
+        # Help and type declarations
+        lines.append("# HELP vpn_rotation_total Total number of rotations per server")
+        lines.append("# TYPE vpn_rotation_total counter")
+
+        lines.append("# HELP vpn_rotation_current Current VPN server for each pod (1=active)")
+        lines.append("# TYPE vpn_rotation_current gauge")
+
+        lines.append("# HELP vpn_rotation_last_timestamp Unix timestamp of last rotation")
+        lines.append("# TYPE vpn_rotation_last_timestamp gauge")
+
+        lines.append("# HELP vpn_rotator_up Exporter health status")
+        lines.append("# TYPE vpn_rotator_up gauge")
+
+        lines.append("# HELP vpn_rotation_server_distribution Percentage of rotations per server")
+        lines.append("# TYPE vpn_rotation_server_distribution gauge")
+
+        # Server rotation counts
+        server_counts = state.get("server_counts", {})
+        total_rotations = sum(server_counts.values()) if server_counts else 0
+
+        for server, count in server_counts.items():
+            country = SERVER_COUNTRIES.get(server, "Unknown")
+            lines.append(f'vpn_rotation_total{{server="{server}",country="{country}"}} {count}')
+
+            # Distribution percentage
+            pct = (count / total_rotations * 100) if total_rotations > 0 else 0
+            lines.append(f'vpn_rotation_server_distribution{{server="{server}",country="{country}"}} {pct:.2f}')
+
+        # Current server per pod
+        pod_servers = state.get("pod_servers", {})
+        for pod, server in pod_servers.items():
+            country = SERVER_COUNTRIES.get(server, "Unknown")
+            lines.append(f'vpn_rotation_current{{pod="{pod}",server="{server}",country="{country}"}} 1')
+
+        # Last rotation timestamp
+        last_rotation = state.get("last_rotation")
+        if last_rotation:
+            try:
+                # Parse ISO format and convert to Unix timestamp
+                dt = datetime.fromisoformat(last_rotation.replace("Z", "+00:00"))
+                ts = dt.timestamp()
+                lines.append(f"vpn_rotation_last_timestamp {ts}")
+            except:
+                pass
+
+        # Total rotations
+        lines.append(f"# HELP vpn_rotation_total_all Total rotations across all servers")
+        lines.append(f"# TYPE vpn_rotation_total_all counter")
+        lines.append(f"vpn_rotation_total_all {total_rotations}")
+
+        # Exporter health
+        lines.append("vpn_rotator_up 1")
+
+        return "\n".join(lines) + "\n"
+
+    class MetricsHandler(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            # Suppress access logs
+            pass
+
+        def do_GET(self):
+            if self.path == "/metrics":
+                try:
+                    metrics = generate_metrics()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.end_headers()
+                    self.wfile.write(metrics.encode())
+                except Exception as e:
+                    self.send_response(500)
+                    self.end_headers()
+                    self.wfile.write(f"Error: {e}\n".encode())
+
+            elif self.path == "/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(b"OK\n")
+
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    def main():
+        print(f"VPN Rotator Exporter starting on port {PORT}")
+        server = HTTPServer(("0.0.0.0", PORT), MetricsHandler)
+        print(f"Serving metrics at http://0.0.0.0:{PORT}/metrics")
+        server.serve_forever()
+
+    if __name__ == "__main__":
+        main()

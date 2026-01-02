@@ -35,7 +35,7 @@ data:
     ROTATION_MODE = os.getenv("VPN_ROTATION_MODE", "parallel")  # parallel or staggered
     STAGGER_DELAY = int(os.getenv("VPN_ROTATION_STAGGER_DELAY", "30"))  # seconds
     JITTER_MAX = int(os.getenv("VPN_ROTATION_JITTER_MAX", "600"))  # seconds (10 min)
-    MIMIR_PUSH_URL = os.getenv("MIMIR_PUSH_URL", "http://mimir-distributor.monitoring:8080/api/v1/push")
+    # Metrics are exposed via vpn-rotator-exporter (pull model)
     STATE_FILE = "/state/rotation-state.json"
     DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 
@@ -243,54 +243,8 @@ data:
             log(f"Rotation failed for {pod_name}: {e}", "ERROR")
             return False
 
-    def push_metrics(state: Dict, results: List[Tuple[str, str, bool]]):
-        """Push rotation metrics to Mimir"""
-        if DRY_RUN:
-            log("DRY_RUN: Would push metrics to Mimir")
-            return
-
-        timestamp_ms = int(time.time() * 1000)
-        metrics_lines = []
-
-        # Server usage counts
-        for server, count in state.get("server_counts", {}).items():
-            country = SERVER_COUNTRIES.get(server, "Unknown")
-            metrics_lines.append(
-                f'vpn_rotation_total{{server="{server}",country="{country}"}} {count}'
-            )
-
-        # Per-pod results
-        for pod_name, server, success in results:
-            status = "success" if success else "error"
-            country = SERVER_COUNTRIES.get(server, "Unknown")
-            metrics_lines.append(
-                f'vpn_rotation_last_status{{pod="{pod_name}",server="{server}",country="{country}",status="{status}"}} {1 if success else 0}'
-            )
-            if success:
-                metrics_lines.append(
-                    f'vpn_rotation_last_success_timestamp{{pod="{pod_name}"}} {timestamp_ms}'
-                )
-
-        # Total errors
-        errors = sum(1 for _, _, success in results if not success)
-        metrics_lines.append(f'vpn_rotation_errors_total {errors}')
-
-        # Push to Mimir (Prometheus remote write format)
-        metrics_text = "\n".join(metrics_lines) + "\n"
-
-        try:
-            # Use pushgateway-compatible endpoint
-            push_url = os.getenv("PUSHGATEWAY_URL", "http://pushgateway.monitoring:9091/metrics/job/vpn-rotator")
-            req = urllib.request.Request(
-                push_url,
-                data=metrics_text.encode(),
-                method="POST",
-                headers={"Content-Type": "text/plain"}
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                log(f"Pushed {len(metrics_lines)} metrics to pushgateway")
-        except Exception as e:
-            log(f"Failed to push metrics: {e}", "WARN")
+    # Metrics are exposed via vpn-rotator-exporter deployment (pull model)
+    # No push_metrics needed - exporter reads state file directly
 
     def main():
         log("VPN Rotator starting")
@@ -348,11 +302,8 @@ data:
         # Update last rotation timestamp
         state["last_rotation"] = datetime.utcnow().isoformat() + "Z"
 
-        # Save state
+        # Save state (exporter will read this file for metrics)
         save_state(state)
-
-        # Push metrics
-        push_metrics(state, results)
 
         # Summary
         success_count = sum(1 for _, _, s in results if s)
