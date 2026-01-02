@@ -285,6 +285,9 @@ MAC_IP = str(local('ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1
 
 LABEL_LOCAL = '8-local-dev'
 
+# Default models to pull (same as init container in ollama-talos06.yaml)
+DEFAULT_MODELS = ['llama3.2:latest', 'qwen2.5-coder:7b', 'mistral:latest']
+
 # Local Ollama management - ensures ollama is running on Mac
 local_resource(
     'ollama-mac',
@@ -299,6 +302,27 @@ local_resource(
         link('http://localhost:11434', 'Mac Ollama API'),
     ],
     allow_parallel=True,
+)
+
+# Auto-pull default models (runs once after ollama-mac is ready)
+local_resource(
+    'ollama-mac-models',
+    cmd='''
+        echo "=== Pulling default models for Mac Ollama ==="
+        for model in ''' + ' '.join(DEFAULT_MODELS) + '''; do
+            echo "Checking $model..."
+            if ollama list | grep -q "^$model"; then
+                echo "  $model already present"
+            else
+                echo "  Pulling $model..."
+                ollama pull "$model" || echo "  Warning: Failed to pull $model"
+            fi
+        done
+        echo "=== Model sync complete ==="
+        ollama list
+    ''',
+    resource_deps=['ollama-mac'],
+    labels=[LABEL_LOCAL],
 )
 
 # Button to list models on Mac
