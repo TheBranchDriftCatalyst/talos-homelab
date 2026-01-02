@@ -18,6 +18,13 @@ import (
 )
 
 func main() {
+	// Check if running in worker mode (sidecar alongside Ollama)
+	if IsWorkerMode() {
+		log.Printf("🔧 Starting in WORKER mode")
+		RunWorker()
+		return
+	}
+
 	cfg := loadConfig()
 
 	log.Printf("🚀 LLM Proxy starting")

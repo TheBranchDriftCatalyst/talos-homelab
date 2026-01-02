@@ -163,6 +163,66 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
 
+        # Worker sidecar - RabbitMQ consumer for broker mode
+        - name: worker
+          image: ghcr.io/thebranchdriftcatalyst/llm-proxy:latest
+          imagePullPolicy: Always
+          env:
+            # Enable worker mode (consumes from RabbitMQ)
+            - name: LLM_WORKER_MODE
+              value: "true"
+            # Connect to local Ollama in same pod
+            - name: LLM_WORKER_OLLAMA_URL
+              value: "http://localhost:11434"
+            # Models this worker handles
+            - name: LLM_WORKER_MODELS
+              value: "llama3,mistral,qwen,dolphin"
+            # Worker ID (unique per pod)
+            - name: LLM_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Concurrent request limit
+            - name: LLM_WORKER_CONCURRENCY
+              value: "2"
+            # RabbitMQ connection
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: catalyst-llm-config
+                  key: RABBITMQ_HOST
+            - name: RABBITMQ_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: catalyst-llm-config
+                  key: RABBITMQ_PORT
+            - name: RABBITMQ_VHOST
+              valueFrom:
+                configMapKeyRef:
+                  name: catalyst-llm-config
+                  key: RABBITMQ_VHOST
+            - name: RABBITMQ_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: catalyst-llm-config
+                  key: RABBITMQ_USER
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          # Don't start until Ollama is ready
+          startupProbe:
+            exec:
+              command: ["wget", "-q", "-O-", "http://localhost:11434/"]
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            failureThreshold: 60
+
       volumes:
         - name: dri
           hostPath:
