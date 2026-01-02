@@ -39,9 +39,9 @@ fi
 # Lighthouse config (from state file or default)
 STATE_FILE="$REPO_ROOT/.output/lighthouse-state.json"
 if [[ -f "$STATE_FILE" ]]; then
-  LIGHTHOUSE_PUBLIC_IP=$(jq -r '.elastic_ip // "52.13.210.163"' "$STATE_FILE")
+  LIGHTHOUSE_PUBLIC_IP=$(jq -r '.elastic_ip // "52.10.38.70"' "$STATE_FILE")
 else
-  LIGHTHOUSE_PUBLIC_IP="${LIGHTHOUSE_PUBLIC_IP:-52.13.210.163}"
+  LIGHTHOUSE_PUBLIC_IP="${LIGHTHOUSE_PUBLIC_IP:-52.10.38.70}"
 fi
 
 # k3s token for joining the cluster
