@@ -1,0 +1,201 @@
+# Catalyst LLM Tiltfile
+# Hybrid LLM infrastructure with local Ollama + EC2 scale-to-zero
+#
+# Can run standalone: cd applications/catalyst-llm && tilt up
+# Or included from root Tiltfile
+#
+# Features:
+#   - llm-scaler: Go reverse proxy with WebSocket control panel
+#   - ollama: Local inference on talos06 (Intel Arc GPU)
+#   - open-webui: ChatGPT-like web UI
+#   - EC2 worker: Scale-to-zero remote inference
+
+# Load extensions
+load('ext://uibutton', 'cmd_button', 'location')
+load('ext://k8s_attach', 'k8s_attach')
+
+# Configuration
+namespace = 'catalyst-llm'
+LABEL_SCALER = '1-llm-scaler'
+LABEL_INFERENCE = '2-inference'
+LABEL_UI = '3-ui'
+K8S_CONTEXT = 'admin@catalyst-cluster'
+REGISTRY = 'ghcr.io/thebranchdriftcatalyst'
+
+# Allow k8s context
+allow_k8s_contexts(K8S_CONTEXT)
+
+# ============================================
+# LLM Scaler - Go Reverse Proxy
+# ============================================
+
+# Build llm-scaler with live update
+docker_build(
+    REGISTRY + '/llm-scaler',
+    context='./llm-scaler',
+    dockerfile='./llm-scaler/Dockerfile',
+    only=[
+        'go.mod',
+        'go.sum',
+        '*.go',
+        'scripts/',
+    ],
+    live_update=[
+        # Sync Go source files
+        sync('./llm-scaler/*.go', '/build/'),
+        # Rebuild binary in container
+        run(
+            'cd /build && CGO_ENABLED=0 go build -o /app/llm-scaler . && kill -HUP 1',
+            trigger=['./llm-scaler/*.go']
+        ),
+        # Sync worker script
+        sync('./llm-scaler/scripts/llm-worker.sh', '/app/llm-worker.sh'),
+    ]
+)
+
+# Apply llm-scaler deployment only (not full kustomization to avoid conflicts with Flux)
+k8s_yaml(['scaler-deployment.yaml', 'service.yaml'])
+watch_file('scaler-deployment.yaml')
+watch_file('service.yaml')
+
+k8s_resource(
+    'llm-scaler',
+    port_forwards=[
+        '8080:8080',   # Proxy + UI
+        '9090:9090',   # Metrics
+    ],
+    labels=[LABEL_SCALER],
+    links=[
+        link('http://localhost:8080/_/ui', 'Control Panel'),
+        link('http://localhost:9090/metrics', 'Metrics'),
+        link('http://llm-scaler.talos00/_/ui', 'Control Panel (Ingress)'),
+    ]
+)
+
+# ============================================
+# Control Buttons
+# ============================================
+
+cmd_button(
+    name='btn-ec2-status',
+    resource='llm-scaler',
+    argv=['sh', '-c', '''
+        kubectl exec -n catalyst-llm deploy/llm-scaler -- /app/llm-worker.sh status
+    '''],
+    text='EC2 Status',
+    icon_name='info'
+)
+
+cmd_button(
+    name='btn-ec2-start',
+    resource='llm-scaler',
+    argv=['sh', '-c', '''
+        echo "Starting EC2 worker..." && \
+        kubectl exec -n catalyst-llm deploy/llm-scaler -- /app/llm-worker.sh start && \
+        echo "EC2 worker started"
+    '''],
+    text='Start EC2',
+    icon_name='play_arrow'
+)
+
+cmd_button(
+    name='btn-ec2-stop',
+    resource='llm-scaler',
+    argv=['sh', '-c', '''
+        echo "Stopping EC2 worker..." && \
+        kubectl exec -n catalyst-llm deploy/llm-scaler -- /app/llm-worker.sh stop && \
+        echo "EC2 worker stopped"
+    '''],
+    text='Stop EC2',
+    icon_name='stop'
+)
+
+cmd_button(
+    name='btn-ec2-warm',
+    resource='llm-scaler',
+    argv=['sh', '-c', '''
+        echo "Warming EC2 worker (start + wait for Ollama ready)..." && \
+        kubectl exec -n catalyst-llm deploy/llm-scaler -- /app/llm-worker.sh warm && \
+        echo "EC2 worker ready"
+    '''],
+    text='Warm EC2',
+    icon_name='whatshot'
+)
+
+cmd_button(
+    name='btn-local-models',
+    resource='llm-scaler',
+    argv=['sh', '-c', '''
+        echo "=== Local Ollama Models ===" && \
+        kubectl exec -n catalyst-llm deploy/ollama -- ollama list
+    '''],
+    text='List Models',
+    icon_name='list'
+)
+
+# ============================================
+# Inference Backends (Flux-managed, observe only)
+# ============================================
+
+k8s_attach('ollama', 'deployment/ollama', namespace=namespace,
+           port_forwards=['11434:11434'], labels=[LABEL_INFERENCE])
+
+# ============================================
+# Web UIs (Flux-managed, observe only)
+# ============================================
+
+k8s_attach('open-webui', 'deployment/open-webui', namespace=namespace,
+           port_forwards=['3000:8080'], labels=[LABEL_UI])
+
+k8s_attach('sillytavern', 'deployment/sillytavern', namespace=namespace,
+           port_forwards=['8000:8000'], labels=[LABEL_UI])
+
+# Ollama utility buttons
+cmd_button(
+    name='btn-ollama-pull',
+    resource='ollama',
+    argv=['sh', '-c', '''
+        read -p "Model to pull: " model && \
+        kubectl exec -n catalyst-llm deploy/ollama -- ollama pull "$model"
+    '''],
+    text='Pull Model',
+    icon_name='download'
+)
+
+cmd_button(
+    name='btn-ollama-ps',
+    resource='ollama',
+    argv=['sh', '-c', '''
+        echo "=== Loaded Models ===" && \
+        kubectl exec -n catalyst-llm deploy/ollama -- ollama ps
+    '''],
+    text='Running Models',
+    icon_name='memory'
+)
+
+# ============================================
+# Dev utilities
+# ============================================
+
+local_resource(
+    'dashboard',
+    cmd='./dashboard.sh --plain 2>/dev/null || echo "Dashboard script not found"',
+    deps=['dashboard.sh'],
+    labels=[LABEL_SCALER],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-rebuild-push',
+    resource='llm-scaler',
+    argv=['sh', '-c', '''
+        cd applications/catalyst-llm/llm-scaler && \
+        docker buildx build --platform linux/amd64,linux/arm64 \
+            -t ghcr.io/thebranchdriftcatalyst/llm-scaler:latest --push . && \
+        kubectl rollout restart deploy/llm-scaler -n catalyst-llm && \
+        kubectl rollout status deploy/llm-scaler -n catalyst-llm --timeout=60s && \
+        echo "Rebuild and deploy complete"
+    '''],
+    text='Rebuild & Push',
+    icon_name='build'
+)

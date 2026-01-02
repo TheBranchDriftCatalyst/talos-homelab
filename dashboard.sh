@@ -27,7 +27,7 @@ MODE="inline"
 declare -a DOMAINS=(
   "infrastructure|flux-system|infrastructure/dashboard.sh|Platform Infrastructure"
   "arr-stack|media|applications/arr-stack/dashboard.sh|Media Automation Stack"
-  "catalyst-llm|catalyst-llm|infrastructure/base/catalyst-llm/dashboard.sh|LLM Hybrid Cloud"
+  "catalyst-llm|catalyst-llm|applications/catalyst-llm/dashboard.sh|LLM Hybrid Cloud"
   "nebula|nebula-system|infrastructure/base/nebula/dashboard.sh|Mesh VPN Overlay"
   "liqo|liqo|infrastructure/base/liqo/dashboard.sh|Multi-Cluster Federation"
   "intel-gpu|node-feature-discovery|infrastructure/base/intel-gpu/dashboard.sh|GPU Acceleration"

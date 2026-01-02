@@ -2,6 +2,15 @@
 
 Pod-based VPN gateway using gluetun with ProtonVPN WireGuard. Provides anonymous egress for pods and external clients via multiple proxy protocols.
 
+## TODO:
+
+Change this dir structure a bit:
+
+vpn-gateway/
+  ├── README.md
+  ├── apps/
+
+
 ## Architecture
 
 ```
