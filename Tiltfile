@@ -202,7 +202,7 @@ k8s_attach('plex', 'deployment/plex', namespace='media',
            port_forwards=['32400:32400'], labels=[LABEL_MEDIA])
 k8s_attach('jellyfin', 'deployment/jellyfin', namespace='media',
            port_forwards=['8096:8096'], labels=[LABEL_MEDIA])
-k8s_attach('tdarr', 'deployment/tdarr', namespace='media',
+k8s_attach('tdarr', 'deployment/tdarr-server', namespace='tdarr',
            port_forwards=['8265:8265'], labels=[LABEL_MEDIA])
 k8s_attach('homepage', 'deployment/homepage', namespace='media',
            port_forwards=['3001:3000'], labels=[LABEL_MEDIA])
