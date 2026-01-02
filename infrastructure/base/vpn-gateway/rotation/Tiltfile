@@ -1,8 +1,10 @@
 # VPN Rotator Development Tiltfile
-# Usage: cd infrastructure/base/vpn-gateway/rotation && tilt up
+# Can be run standalone or included from parent
 #
 # This Tiltfile attaches to Flux-managed resources (no deployments).
 # Resources must already exist in cluster via GitOps.
+
+LABEL_VPN = '6-vpn-gateway'
 
 # Rotation commands - creates ephemeral job from cronjob
 local_resource(
@@ -16,7 +18,7 @@ local_resource(
         kubectl wait --for=condition=complete job/vpn-rotator-dry -n vpn-gateway --timeout=60s
         kubectl logs job/vpn-rotator-dry -n vpn-gateway
     ''',
-    labels=['rotate'],
+    labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
@@ -32,7 +34,7 @@ local_resource(
         kubectl wait --for=condition=complete job/vpn-rotator-live -n vpn-gateway --timeout=120s
         kubectl logs job/vpn-rotator-live -n vpn-gateway
     ''',
-    labels=['rotate'],
+    labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
@@ -41,7 +43,7 @@ local_resource(
 local_resource(
     'inspect:state',
     cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- cat /state/rotation-state.json 2>/dev/null | jq . || echo "{}"',
-    labels=['inspect'],
+    labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
@@ -49,7 +51,7 @@ local_resource(
 local_resource(
     'inspect:metrics',
     cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 -c "import urllib.request; print(urllib.request.urlopen(\'http://localhost:9091/metrics\').read().decode())" | grep -v "^#"',
-    labels=['inspect'],
+    labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
@@ -57,7 +59,7 @@ local_resource(
 local_resource(
     'inspect:secrets',
     cmd='kubectl get secret protonvpn-credentials -n vpn-gateway -o jsonpath="{.data}" | jq -r "keys[]"',
-    labels=['inspect'],
+    labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
@@ -73,7 +75,7 @@ local_resource(
         echo "media:"
         kubectl get pods -n media -l vpn-gateway.io/rotation=enabled -o wide 2>/dev/null || echo "  none"
     ''',
-    labels=['inspect'],
+    labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
@@ -89,7 +91,7 @@ local_resource(
             kubectl exec -n vpn-gateway $pod -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip 2>/dev/null | jq -r '.public_ip + " (" + .country + ")"' || echo "unavailable"
         done
     ''',
-    labels=['inspect'],
+    labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
@@ -98,7 +100,7 @@ local_resource(
 local_resource(
     'port-forward:metrics',
     serve_cmd='kubectl port-forward -n vpn-gateway svc/vpn-rotator-exporter 9091:9091',
-    labels=['services'],
+    labels=[LABEL_VPN],
     auto_init=False
 )
 
@@ -106,6 +108,6 @@ local_resource(
 local_resource(
     'logs:exporter',
     serve_cmd='kubectl logs -f -n vpn-gateway deploy/vpn-rotator-exporter',
-    labels=['logs'],
+    labels=[LABEL_VPN],
     auto_init=False
 )

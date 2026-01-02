@@ -376,6 +376,12 @@ cmd_button(
 # )
 
 # ============================================
+# VPN GATEWAY - Include vpn-gateway module
+# ============================================
+
+include('./infrastructure/base/vpn-gateway/Tiltfile')
+
+# ============================================
 # CONFIGURATION
 # ============================================
 
