@@ -60,6 +60,26 @@ cmd_button(
 )
 
 # ============================================
+# Service Links (IngressRoutes)
+# ============================================
+
+# All services accessible via Traefik ingress
+local_resource(
+    'service-links',
+    cmd='echo "All catalyst-llm services available via ingress"',
+    labels=['0-links'],
+    auto_init=False,
+    links=[
+        link('http://chat.talos00', 'Open WebUI (Chat)'),
+        link('http://llm-scaler.talos00/_/ui', 'LLM Scaler Dashboard'),
+        link('http://llm.talos00', 'LLM API'),
+        link('http://ollama.talos00', 'Ollama API'),
+        link('http://sillytavern.talos00', 'SillyTavern'),
+        link('http://searxng.talos00', 'SearXNG Search'),
+    ]
+)
+
+# ============================================
 # LLM Scaler - Go Reverse Proxy
 # ============================================
 
@@ -172,17 +192,29 @@ cmd_button(
 # ============================================
 
 k8s_attach('ollama', 'deployment/ollama', namespace=namespace,
-           port_forwards=['11434:11434'], labels=[LABEL_INFERENCE])
+           port_forwards=['11434:11434'], labels=[LABEL_INFERENCE],
+           links=[
+               link('http://ollama.talos00', 'Ollama (Ingress)'),
+               link('http://localhost:11434', 'Ollama (Local)'),
+           ])
 
 # ============================================
 # Web UIs (Flux-managed, observe only)
 # ============================================
 
 k8s_attach('open-webui', 'deployment/open-webui', namespace=namespace,
-           port_forwards=['3000:8080'], labels=[LABEL_UI])
+           port_forwards=['3000:8080'], labels=[LABEL_UI],
+           links=[
+               link('http://chat.talos00', 'Open WebUI (Ingress)'),
+               link('http://localhost:3000', 'Open WebUI (Local)'),
+           ])
 
 k8s_attach('sillytavern', 'deployment/sillytavern', namespace=namespace,
-           port_forwards=['8000:8000'], labels=[LABEL_UI])
+           port_forwards=['8000:8000'], labels=[LABEL_UI],
+           links=[
+               link('http://sillytavern.talos00', 'SillyTavern (Ingress)'),
+               link('http://localhost:8000', 'SillyTavern (Local)'),
+           ])
 
 # Ollama utility buttons
 cmd_button(
