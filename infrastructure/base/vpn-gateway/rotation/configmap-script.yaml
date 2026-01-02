@@ -201,11 +201,18 @@ data:
             return True
 
         # Update gluetun settings via API
+        # Gluetun expects nested payload structure for WireGuard
         try:
-            url = f"http://{pod_ip}:8000/v1/openvpn/settings"
+            url = f"http://{pod_ip}:8000/v1/vpn/settings"
             payload = json.dumps({
-                "wireguard_private_key": wg_key,
-                "server_countries": country
+                "wireguard": {
+                    "private_key": wg_key
+                },
+                "provider": {
+                    "server_selection": {
+                        "countries": [country]
+                    }
+                }
             }).encode()
 
             req = urllib.request.Request(
@@ -224,21 +231,9 @@ data:
                     return False
 
         except urllib.error.HTTPError as e:
-            # Try alternative endpoint for newer gluetun versions
-            try:
-                url = f"http://{pod_ip}:8000/v1/vpn/settings"
-                req = urllib.request.Request(
-                    url,
-                    data=payload,
-                    method="PUT",
-                    headers={"Content-Type": "application/json"}
-                )
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    log(f"Successfully rotated {pod_name} to {new_server_key} (alt endpoint)")
-                    return True
-            except Exception as e2:
-                log(f"Rotation failed for {pod_name}: {e} / {e2}", "ERROR")
-                return False
+            body = e.read().decode() if hasattr(e, 'read') else str(e)
+            log(f"Rotation failed for {pod_name}: HTTP {e.code} - {body}", "ERROR")
+            return False
         except Exception as e:
             log(f"Rotation failed for {pod_name}: {e}", "ERROR")
             return False

@@ -23,33 +23,35 @@ local_resource(
     trigger_mode=TRIGGER_MODE_MANUAL
 )
 
-# Inspect state and metrics via exporter pod
+# Consolidated inspect commands using vpnctl.py CLI
+# Usage: vpnctl <state|metrics|secrets|pods|status>
 local_resource(
-    'inspect:state',
-    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- cat /state/rotation-state.json 2>/dev/null | jq . || echo "{}"',
+    'vpnctl:state',
+    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 /scripts/vpnctl.py state',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
 
 local_resource(
-    'inspect:metrics',
-    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 -c "import urllib.request; print(urllib.request.urlopen(\'http://localhost:9091/metrics\').read().decode())" | grep -v "^#"',
+    'vpnctl:metrics',
+    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 /scripts/vpnctl.py metrics',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
 
 local_resource(
-    'inspect:secrets',
-    cmd='kubectl get secret protonvpn-credentials -n vpn-gateway -o jsonpath="{.data}" | jq -r "keys[]"',
+    'vpnctl:secrets',
+    cmd='kubectl exec -n vpn-gateway deploy/vpn-rotator-exporter -- python3 /scripts/vpnctl.py secrets',
     labels=[LABEL_VPN],
     auto_init=False,
     trigger_mode=TRIGGER_MODE_MANUAL
 )
 
+# These commands run locally with kubectl (need cluster access)
 local_resource(
-    'inspect:pods',
+    'vpnctl:pods',
     cmd='''
         echo "=== Rotation-enabled pods ==="
         echo ""
@@ -65,9 +67,10 @@ local_resource(
 )
 
 local_resource(
-    'inspect:vpn-status',
+    'vpnctl:status',
     cmd='''
         echo "=== Current VPN Exits ==="
+        echo ""
         for pod in $(kubectl get pods -n vpn-gateway -l vpn-gateway.io/rotation=enabled -o jsonpath='{.items[*].metadata.name}'); do
             echo -n "$pod: "
             kubectl exec -n vpn-gateway $pod -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip 2>/dev/null | jq -r '.public_ip + " (" + .country + ")"' || echo "unavailable"

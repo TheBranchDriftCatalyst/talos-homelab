@@ -145,3 +145,162 @@ data:
 
     if __name__ == "__main__":
         main()
+
+  vpnctl.py: |
+    #!/usr/bin/env python3
+    """
+    VPN Rotator CLI - Consolidated inspect commands for Tilt/debugging
+
+    Usage: python3 /scripts/vpnctl.py <command>
+
+    Commands:
+      state       Show rotation state JSON
+      metrics     Show current Prometheus metrics
+      secrets     List available VPN server keys
+      pods        Show rotation-enabled pods
+      status      Show current VPN exit for each pod
+      help        Show this help message
+    """
+
+    import json
+    import os
+    import subprocess
+    import sys
+    import urllib.request
+    import urllib.error
+
+    STATE_FILE = "/state/rotation-state.json"
+    SECRETS_DIR = "/secrets"
+
+    SERVER_COUNTRIES = {
+        "se-be-1": "Belgium",
+        "se-de-1": "Germany",
+        "se-in-1": "India",
+        "se-nl-1": "Netherlands",
+        "se-ch-1": "Switzerland",
+        "se-is-1": "Iceland",
+        "se-se-1": "Sweden",
+        "se-no-1": "Norway",
+    }
+
+    def cmd_state():
+        """Show rotation state"""
+        try:
+            with open(STATE_FILE, 'r') as f:
+                state = json.load(f)
+            print(json.dumps(state, indent=2))
+        except FileNotFoundError:
+            print("{}")
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    def cmd_metrics():
+        """Fetch metrics from localhost"""
+        try:
+            req = urllib.request.Request("http://localhost:9091/metrics")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                content = resp.read().decode()
+                # Filter out comments for cleaner output
+                for line in content.split("\n"):
+                    if not line.startswith("#"):
+                        print(line)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    def cmd_secrets():
+        """List available server keys"""
+        try:
+            keys = sorted([
+                k for k in os.listdir(SECRETS_DIR)
+                if k.startswith("se-") and not k.startswith("notes")
+            ])
+            for key in keys:
+                country = SERVER_COUNTRIES.get(key, "Unknown")
+                print(f"{key}: {country}")
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    def cmd_pods():
+        """Show rotation-enabled pods"""
+        try:
+            result = subprocess.run([
+                "kubectl", "get", "pods", "-A",
+                "-l", "vpn-gateway.io/rotation=enabled",
+                "-o", "wide"
+            ], capture_output=True, text=True)
+            print(result.stdout)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    def cmd_status():
+        """Show current VPN exit for each pod"""
+        # Get rotation-enabled pods
+        try:
+            result = subprocess.run([
+                "kubectl", "get", "pods", "-A",
+                "-l", "vpn-gateway.io/rotation=enabled",
+                "-o", "json"
+            ], capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+        except Exception as e:
+            print(f"Failed to get pods: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        print("=== Current VPN Exits ===\n")
+
+        for item in data.get("items", []):
+            meta = item.get("metadata", {})
+            pod_name = meta.get("name", "unknown")
+            namespace = meta.get("namespace", "unknown")
+            pod_ip = item.get("status", {}).get("podIP")
+
+            if not pod_ip:
+                print(f"{namespace}/{pod_name}: No IP")
+                continue
+
+            # Query gluetun API for public IP
+            try:
+                url = f"http://{pod_ip}:8000/v1/publicip/ip"
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    info = json.loads(resp.read().decode())
+                    ip = info.get("public_ip", "?")
+                    country = info.get("country", "?")
+                    print(f"{namespace}/{pod_name}: {ip} ({country})")
+            except Exception as e:
+                print(f"{namespace}/{pod_name}: unavailable ({e})")
+
+    def cmd_help():
+        """Show help"""
+        print(__doc__)
+
+    def main():
+        commands = {
+            "state": cmd_state,
+            "metrics": cmd_metrics,
+            "secrets": cmd_secrets,
+            "pods": cmd_pods,
+            "status": cmd_status,
+            "help": cmd_help,
+        }
+
+        if len(sys.argv) < 2:
+            cmd_help()
+            sys.exit(1)
+
+        cmd = sys.argv[1]
+        if cmd not in commands:
+            print(f"Unknown command: {cmd}")
+            print(f"Available: {', '.join(commands.keys())}")
+            sys.exit(1)
+
+        commands[cmd]()
+
+    if __name__ == "__main__":
+        main()
