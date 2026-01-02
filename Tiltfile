@@ -20,9 +20,8 @@ settings = {
     'k8s_context': cfg.get('k8s_context', 'admin@catalyst-cluster'),
 }
 
-# Allow both context names (renamed from homelab-single to catalyst-cluster)
+# Cluster context
 allow_k8s_contexts('admin@catalyst-cluster')
-allow_k8s_contexts('admin@homelab-single')
 
 print("""
 ======================================================================
