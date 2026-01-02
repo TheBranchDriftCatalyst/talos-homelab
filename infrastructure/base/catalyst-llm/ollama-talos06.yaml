@@ -1,0 +1,121 @@
+---
+# Ollama LLM Inference Server for talos06
+# Intel Arc 140T GPU with 64GB RAM - ideal for local inference
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: catalyst-llm
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: catalyst-llm
+  labels:
+    app: ollama
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: catalyst-llm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      # Run on talos06 - best inference node (64GB RAM, Arc 140T)
+      nodeSelector:
+        kubernetes.io/hostname: talos06
+
+      securityContext:
+        fsGroup: 44  # video group for GPU access
+
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 11434
+              name: http
+
+          env:
+            # Enable Intel GPU acceleration
+            - name: OLLAMA_INTEL_GPU
+              value: "1"
+            # Number of parallel requests
+            - name: OLLAMA_NUM_PARALLEL
+              value: "4"
+            # Keep models loaded longer (64GB RAM allows it)
+            - name: OLLAMA_KEEP_ALIVE
+              value: "24h"
+            # Allow larger context windows
+            - name: OLLAMA_MAX_LOADED_MODELS
+              value: "3"
+
+          securityContext:
+            privileged: true  # Required for GPU access
+
+          volumeMounts:
+            # GPU device access
+            - name: dri
+              mountPath: /dev/dri
+            # Model storage
+            - name: models
+              mountPath: /root/.ollama
+
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+      volumes:
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-local
+  namespace: catalyst-llm
+  labels:
+    app: ollama
+spec:
+  selector:
+    app: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434
+      name: http
+  type: ClusterIP

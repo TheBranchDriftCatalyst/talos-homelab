@@ -130,15 +130,39 @@ const uiHTML = `<!DOCTYPE html>
     <h1>LLM Scaler</h1>
 
     <div class="card">
+      <h2 style="margin-bottom: 15px; font-size: 1.1em; color: #00d9ff;">🏠 Local Ollama (talos06)</h2>
       <div class="status-row">
-        <span class="status-label">Worker State</span>
-        <span class="status-value" id="state">
-          <span class="indicator" id="indicator"></span>
-          <span id="state-text">Loading...</span>
+        <span class="status-label">Status</span>
+        <span class="status-value" id="local-state">
+          <span class="indicator" id="local-indicator"></span>
+          <span id="local-state-text">Loading...</span>
         </span>
       </div>
       <div class="status-row">
-        <span class="status-label">Scaler Mode</span>
+        <span class="status-label">Endpoint</span>
+        <span class="status-value" id="local-url" style="font-size: 0.8em; color: #888;">--</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-bottom: 15px; font-size: 1.1em; color: #ff9f43;">☁️ Remote Bigboi (EC2)</h2>
+      <div class="status-row">
+        <span class="status-label">Status</span>
+        <span class="status-value" id="remote-state">
+          <span class="indicator" id="remote-indicator"></span>
+          <span id="remote-state-text">Loading...</span>
+        </span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Endpoint</span>
+        <span class="status-value" id="remote-url" style="font-size: 0.8em; color: #888;">--</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 style="margin-bottom: 15px; font-size: 1.1em; color: #aaa;">⚙️ Scaler Status</h2>
+      <div class="status-row">
+        <span class="status-label">Mode</span>
         <span class="status-value" id="paused">--</span>
       </div>
       <div class="status-row">
@@ -166,6 +190,26 @@ const uiHTML = `<!DOCTYPE html>
       </div>
     </div>
 
+    <div class="card">
+      <h2 style="margin-bottom: 15px; font-size: 1.1em; color: #aaa;">⏰ TTL Settings</h2>
+      <div class="status-row">
+        <span class="status-label">Current TTL</span>
+        <span class="status-value" id="current-ttl">--</span>
+      </div>
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <select id="ttl-select" style="flex: 1; padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.3); color: #eee; font-size: 1em;">
+          <option value="15m">15 minutes</option>
+          <option value="30m">30 minutes</option>
+          <option value="1h">1 hour</option>
+          <option value="2h">2 hours</option>
+          <option value="4h">4 hours</option>
+          <option value="8h">8 hours</option>
+          <option value="24h">24 hours</option>
+        </select>
+        <button onclick="setTTL()" style="padding: 12px 20px; border-radius: 8px; border: none; background: linear-gradient(135deg, #6c5ce7, #a29bfe); color: white; font-weight: 600; cursor: pointer;">Set TTL</button>
+      </div>
+    </div>
+
     <div class="card controls">
       <button class="btn-start" id="btn-start" onclick="doAction('start')">Start Worker</button>
       <button class="btn-stop" id="btn-stop" onclick="doAction('stop')">Stop Worker</button>
@@ -182,13 +226,25 @@ const uiHTML = `<!DOCTYPE html>
         const res = await fetch('/_/status');
         const data = await res.json();
 
-        const state = data.worker_state || 'unknown';
-        const stateText = document.getElementById('state-text');
-        const indicator = document.getElementById('indicator');
+        // Local backend status
+        if (data.local) {
+          const localState = data.local.state || 'unknown';
+          document.getElementById('local-state-text').textContent = localState.charAt(0).toUpperCase() + localState.slice(1);
+          document.getElementById('local-state-text').className = 'state-' + localState;
+          document.getElementById('local-indicator').className = 'indicator indicator-' + localState;
+          document.getElementById('local-url').textContent = data.local.url || '--';
+        }
 
-        stateText.textContent = state.charAt(0).toUpperCase() + state.slice(1);
-        stateText.className = 'state-' + state;
-        indicator.className = 'indicator indicator-' + state;
+        // Remote backend status
+        if (data.remote) {
+          const remoteState = data.remote.state || 'unknown';
+          let remoteLabel = remoteState.charAt(0).toUpperCase() + remoteState.slice(1);
+          if (remoteState === 'not_configured') remoteLabel = 'Not Configured';
+          document.getElementById('remote-state-text').textContent = remoteLabel;
+          document.getElementById('remote-state-text').className = 'state-' + (remoteState === 'not_configured' ? 'stopped' : remoteState);
+          document.getElementById('remote-indicator').className = 'indicator indicator-' + (remoteState === 'not_configured' ? 'stopped' : remoteState);
+          document.getElementById('remote-url').textContent = data.remote.url || 'Not configured';
+        }
 
         const paused = data.paused;
         const pausedEl = document.getElementById('paused');
@@ -196,6 +252,7 @@ const uiHTML = `<!DOCTYPE html>
         pausedEl.className = 'status-value ' + (paused ? 'state-paused' : 'state-running');
 
         document.getElementById('idle').textContent = data.idle || '--';
+        document.getElementById('current-ttl').textContent = data.idle_timeout || '--';
         document.getElementById('requests').textContent = data.requests_total || 0;
         document.getElementById('blocked').textContent = data.requests_blocked || 0;
         document.getElementById('starts').textContent = data.cold_starts || 0;
@@ -206,12 +263,14 @@ const uiHTML = `<!DOCTYPE html>
         const remaining = timeoutSec - idleSec;
         const pct = Math.max(0, Math.min(100, (remaining / timeoutSec) * 100));
 
+        const localReady = data.local && data.local.ready;
         document.getElementById('progress').style.width = pct + '%';
         document.getElementById('progress-label').textContent =
-          state === 'running' ? 'Until auto-shutdown: ' + data.until_shutdown :
+          localReady ? 'Until auto-shutdown: ' + data.until_shutdown :
           paused ? 'Auto-scaling paused' : 'Worker not running';
 
         // Update buttons
+        const state = data.worker_state || 'unknown';
         document.getElementById('btn-start').disabled = state === 'running' || state === 'starting';
         document.getElementById('btn-stop').disabled = state === 'stopped' || state === 'stopping';
         document.getElementById('btn-pause').disabled = paused;
@@ -245,6 +304,18 @@ const uiHTML = `<!DOCTYPE html>
         setTimeout(fetchStatus, 500);
       } catch (e) {
         console.error('Action failed:', e);
+      }
+    }
+
+    async function setTTL() {
+      const ttl = document.getElementById('ttl-select').value;
+      try {
+        const res = await fetch('/_/ttl?ttl=' + ttl, { method: 'POST' });
+        const data = await res.json();
+        console.log('setTTL:', data);
+        setTimeout(fetchStatus, 500);
+      } catch (e) {
+        console.error('Set TTL failed:', e);
       }
     }
 

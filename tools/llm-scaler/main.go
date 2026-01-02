@@ -36,6 +36,7 @@ func main() {
 	mux.HandleFunc("/_/stop", scaler.ForceStop)
 	mux.HandleFunc("/_/pause", scaler.Pause)
 	mux.HandleFunc("/_/resume", scaler.Resume)
+	mux.HandleFunc("/_/ttl", scaler.SetTTL)
 	mux.HandleFunc("/_/ui", scaler.UI)
 	mux.HandleFunc("/", scaler.Proxy)
 
@@ -45,22 +46,24 @@ func main() {
 
 // Config for the scaler
 type Config struct {
-	ListenAddr    string
-	MetricsAddr   string
-	OllamaURL     string
-	IdleTimeout   time.Duration
-	WarmupTimeout time.Duration
-	WorkerScript  string
+	ListenAddr      string
+	MetricsAddr     string
+	OllamaURL       string        // Primary (local) ollama
+	RemoteOllamaURL string        // Remote (EC2) ollama - for status display
+	IdleTimeout     time.Duration
+	WarmupTimeout   time.Duration
+	WorkerScript    string
 }
 
 func loadConfig() Config {
 	return Config{
-		ListenAddr:    env("LISTEN_ADDR", ":8080"),
-		MetricsAddr:   env("METRICS_ADDR", ":9090"),
-		OllamaURL:     env("OLLAMA_URL", "http://10.42.2.1:11434"),
-		IdleTimeout:   duration("IDLE_TIMEOUT", 40*time.Minute),
-		WarmupTimeout: duration("WARMUP_TIMEOUT", 5*time.Minute),
-		WorkerScript:  env("WORKER_SCRIPT", "/app/llm-worker.sh"),
+		ListenAddr:      env("LISTEN_ADDR", ":8080"),
+		MetricsAddr:     env("METRICS_ADDR", ":9090"),
+		OllamaURL:       env("OLLAMA_URL", "http://10.42.2.1:11434"),
+		RemoteOllamaURL: env("REMOTE_OLLAMA_URL", ""),
+		IdleTimeout:     duration("IDLE_TIMEOUT", 40*time.Minute),
+		WarmupTimeout:   duration("WARMUP_TIMEOUT", 5*time.Minute),
+		WorkerScript:    env("WORKER_SCRIPT", "/app/llm-worker.sh"),
 	}
 }
 

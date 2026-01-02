@@ -125,9 +125,28 @@ func (s *Scaler) Status(w http.ResponseWriter, r *http.Request) {
 	paused := s.paused
 	s.mu.RUnlock()
 
+	// Check local (primary) ollama status
+	localReady := s.isReady()
+	localState := "stopped"
+	if localReady {
+		localState = "running"
+	}
+
+	// Check remote (EC2/bigboi) ollama status
+	remoteReady := false
+	remoteState := "stopped"
+	if s.cfg.RemoteOllamaURL != "" {
+		remoteReady = s.checkEndpoint(s.cfg.RemoteOllamaURL)
+		if remoteReady {
+			remoteState = "running"
+		}
+	} else {
+		remoteState = "not_configured"
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"worker_state":     s.getState(),
-		"worker_ready":     s.isReady(),
+		"worker_ready":     localReady,
 		"paused":           paused,
 		"idle":             idle.Round(time.Second).String(),
 		"idle_timeout":     s.cfg.IdleTimeout.String(),
@@ -135,7 +154,32 @@ func (s *Scaler) Status(w http.ResponseWriter, r *http.Request) {
 		"requests_total":   s.requests.Load(),
 		"requests_blocked": s.blocked.Load(),
 		"cold_starts":      s.starts.Load(),
+		// Dual-backend status
+		"local": map[string]any{
+			"url":   s.cfg.OllamaURL,
+			"state": localState,
+			"ready": localReady,
+		},
+		"remote": map[string]any{
+			"url":   s.cfg.RemoteOllamaURL,
+			"state": remoteState,
+			"ready": remoteReady,
+		},
 	})
+}
+
+// checkEndpoint checks if an ollama endpoint is responding
+func (s *Scaler) checkEndpoint(url string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", url+"/api/tags", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // ForceStart manually triggers a worker start
@@ -200,6 +244,51 @@ func (s *Scaler) Resume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "resumed",
 		"message": "Auto-scaling resumed. Idle timer reset.",
+	})
+}
+
+// SetTTL updates the idle timeout
+func (s *Scaler) SetTTL(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST required", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ttl := r.URL.Query().Get("ttl")
+	if ttl == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "ttl parameter required (e.g., ?ttl=30m)",
+		})
+		return
+	}
+
+	duration, err := time.ParseDuration(ttl)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":   "invalid duration format",
+			"example": "15m, 1h, 30m",
+		})
+		return
+	}
+
+	// Minimum 5 minutes, maximum 24 hours
+	if duration < 5*time.Minute {
+		duration = 5 * time.Minute
+	}
+	if duration > 24*time.Hour {
+		duration = 24 * time.Hour
+	}
+
+	s.mu.Lock()
+	s.cfg.IdleTimeout = duration
+	s.lastActivity = time.Now() // Reset timer on TTL change
+	s.mu.Unlock()
+
+	log.Printf("⏱️  Idle timeout changed to %s", duration)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":       "updated",
+		"idle_timeout": duration.String(),
+		"message":      fmt.Sprintf("Idle timeout set to %s. Timer reset.", duration),
 	})
 }
 

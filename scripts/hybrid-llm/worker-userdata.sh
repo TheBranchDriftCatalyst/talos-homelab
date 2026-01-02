@@ -390,6 +390,145 @@ else
 fi
 
 #############################################
+# PHASE 5: Self-Destruct Watchdog (Cost Control)
+#############################################
+echo "=== Phase 5: Installing Self-Destruct Watchdog ==="
+
+# The watchdog monitors ollama activity and shuts down after 120 minutes of inactivity
+# This prevents runaway EC2 costs from forgotten instances
+
+IDLE_TIMEOUT_MINUTES=120
+
+cat > /usr/local/bin/llm-watchdog.sh << 'WATCHDOG'
+#!/bin/bash
+# LLM Worker Self-Destruct Watchdog
+# Monitors ollama activity and shuts down instance after idle timeout
+# Runs every minute via systemd timer
+
+ACTIVITY_FILE="/var/run/llm-activity"
+IDLE_TIMEOUT_SECONDS=$((120 * 60))  # 120 minutes in seconds
+LOG_FILE="/var/log/llm-watchdog.log"
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
+}
+
+# Check if ollama is actively processing
+check_activity() {
+    # Check if any model is currently loaded (indicates active use)
+    local ps_output=$(curl -s http://localhost:11434/api/ps 2>/dev/null)
+
+    if [[ -n "$ps_output" ]] && echo "$ps_output" | jq -e '.models | length > 0' >/dev/null 2>&1; then
+        return 0  # Active - models are loaded
+    fi
+
+    # Also check for recent API requests via ollama logs
+    # If ollama received a request in the last minute, consider it active
+    if journalctl -u ollama --since "1 minute ago" 2>/dev/null | grep -qE "request|generation|model"; then
+        return 0  # Active - recent requests
+    fi
+
+    return 1  # Idle
+}
+
+# Get last activity timestamp (seconds since epoch)
+get_last_activity() {
+    if [[ -f "$ACTIVITY_FILE" ]]; then
+        cat "$ACTIVITY_FILE"
+    else
+        # First run - set to now
+        date +%s
+    fi
+}
+
+# Update last activity timestamp
+update_activity() {
+    date +%s > "$ACTIVITY_FILE"
+}
+
+# Main watchdog logic
+main() {
+    local now=$(date +%s)
+    local last_activity=$(get_last_activity)
+    local idle_seconds=$((now - last_activity))
+
+    if check_activity; then
+        # Active - reset timer
+        update_activity
+        log "Active: resetting idle timer"
+    else
+        # Idle - check if we should shutdown
+        local remaining=$((IDLE_TIMEOUT_SECONDS - idle_seconds))
+
+        if [[ $idle_seconds -ge $IDLE_TIMEOUT_SECONDS ]]; then
+            log "SHUTDOWN: Idle for $((idle_seconds / 60)) minutes - initiating self-destruct"
+            echo "LLM Worker idle for $((idle_seconds / 60)) minutes - shutting down to save costs"
+
+            # Graceful shutdown
+            systemctl stop ollama
+            systemctl stop k3s-agent || true
+
+            # Use AWS CLI to stop this instance (more reliable than just OS shutdown)
+            INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+            if [[ -n "$INSTANCE_ID" ]]; then
+                log "Stopping instance $INSTANCE_ID via AWS API"
+                aws ec2 stop-instances --instance-ids "$INSTANCE_ID" --region us-west-2 2>/dev/null || \
+                    shutdown -h now
+            else
+                shutdown -h now
+            fi
+        else
+            log "Idle: ${idle_seconds}s / ${IDLE_TIMEOUT_SECONDS}s (${remaining}s remaining)"
+        fi
+    fi
+}
+
+main
+WATCHDOG
+
+chmod +x /usr/local/bin/llm-watchdog.sh
+
+# Create systemd service for the watchdog
+cat > /etc/systemd/system/llm-watchdog.service << 'WDSVC'
+[Unit]
+Description=LLM Worker Self-Destruct Watchdog
+After=ollama.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/llm-watchdog.sh
+WDSVC
+
+# Create systemd timer to run watchdog every minute
+cat > /etc/systemd/system/llm-watchdog.timer << 'WDTIMER'
+[Unit]
+Description=LLM Worker Watchdog Timer
+Requires=llm-watchdog.service
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+WDTIMER
+
+# Initialize activity file (first activity = now)
+mkdir -p /var/run
+date +%s > /var/run/llm-activity
+
+# Enable and start the timer
+systemctl daemon-reload
+systemctl enable llm-watchdog.timer
+systemctl start llm-watchdog.timer
+
+echo "Self-destruct watchdog installed:"
+echo "  - Monitors every minute"
+echo "  - Shuts down after 120 minutes of inactivity"
+echo "  - Activity resets on any ollama API usage"
+
+#############################################
 # Summary
 #############################################
 echo ""
@@ -407,7 +546,13 @@ echo "Ollama:"
 echo "  API: http://10.42.2.1:11434"
 echo "  Models: /var/lib/ollama/models"
 echo ""
+echo "Self-Destruct Watchdog:"
+echo "  Idle timeout: 120 minutes"
+echo "  Log: /var/log/llm-watchdog.log"
+echo ""
 echo "This node is now part of the aws-gpu-cluster and visible via Liqo."
 echo "Workloads with nodeSelector 'node-type: gpu' will schedule here."
+echo ""
+echo "NOTE: Instance will auto-shutdown after 120 minutes of inactivity!"
 echo ""
 MIDDLE3
