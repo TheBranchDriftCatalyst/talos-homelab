@@ -382,6 +382,12 @@ cmd_button(
 include('./infrastructure/base/vpn-gateway/Tiltfile')
 
 # ============================================
+# CATALYST LLM - Hybrid LLM infrastructure
+# ============================================
+
+include('./applications/catalyst-llm/Tiltfile')
+
+# ============================================
 # CONFIGURATION
 # ============================================
 
@@ -397,6 +403,8 @@ Ready! UI Groups:
   2-infra-platform - ArgoCD, Traefik, Registry, External Secrets
   3-infra-observe  - Grafana, Mimir, Loki, Tempo, Alloy
   5-ops            - Cluster status, GPU tests, deployments
+  6-vpn-gateway    - Gluetun, SecureXNG, VPN rotation
+  7-catalyst-llm   - LLM Scaler, Ollama, Open WebUI, SillyTavern
 
 Note: Some resources may show 'pending' if not yet deployed.
       Flux manages all deployments - Tilt only observes.

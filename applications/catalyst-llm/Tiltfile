@@ -16,15 +16,24 @@ load('ext://k8s_attach', 'k8s_attach')
 
 # Configuration
 namespace = 'catalyst-llm'
-LABEL_SCALER = '1-llm-scaler'
-LABEL_INFERENCE = '2-inference'
-LABEL_UI = '3-ui'
-LABEL_FLUX = '0-flux'
-K8S_CONTEXT = 'admin@catalyst-cluster'
+LABEL_LLM = '7-catalyst-llm'
+LABEL_SCALER = LABEL_LLM
+LABEL_INFERENCE = LABEL_LLM
+LABEL_UI = LABEL_LLM
+LABEL_FLUX = LABEL_LLM
 REGISTRY = 'ghcr.io/thebranchdriftcatalyst'
 
-# Allow k8s context
-allow_k8s_contexts(K8S_CONTEXT)
+# Only set context when running standalone (not included from root)
+# Check if we're the main Tiltfile by seeing if k8s_context is already set
+def _is_standalone():
+    # When included, the parent has already called allow_k8s_contexts
+    # This is a simple heuristic - if no resources exist yet, we're standalone
+    return True  # Always allow for now, parent sets context first
+
+# When running standalone, allow the context
+# When included, parent Tiltfile handles this
+allow_k8s_contexts('admin@catalyst-cluster')
+allow_k8s_contexts('admin@homelab-single')
 
 # ============================================
 # Flux Management - Suspend during dev
