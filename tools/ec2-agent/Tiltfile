@@ -1,0 +1,250 @@
+# EC2 Agent Tiltfile
+# WebSocket control interface for EC2/Fargate workers
+#
+# Usage: cd tools/ec2-agent && tilt up
+#
+# Features:
+#   - Live Go reload with air/entr
+#   - Mock worker for testing
+#   - HTML test client
+#   - EC2/Fargate monitoring (optional)
+
+load('ext://uibutton', 'cmd_button', 'text_input')
+
+# Configuration
+LABEL_AGENT = '1-ec2-agent'
+LABEL_TEST = '2-testing'
+LABEL_BUILD = '3-build'
+
+# ============================================
+# EC2 Agent - Go Server with Live Reload
+# ============================================
+
+# Main ec2-agent server with mock worker
+local_resource(
+    'ec2-agent',
+    serve_cmd='''
+        # Use entr for live reload if available, otherwise just run
+        if command -v entr >/dev/null 2>&1; then
+            find . -name "*.go" | entr -r go run ./cmd/main.go \
+                -script=./scripts/mock-worker.sh \
+                -addr=:8090
+        else
+            go run ./cmd/main.go \
+                -script=./scripts/mock-worker.sh \
+                -addr=:8090
+        fi
+    ''',
+    deps=[
+        './cmd',
+        './pkg',
+        './scripts/mock-worker.sh',
+    ],
+    readiness_probe=probe(
+        http_get=http_get_action(port=8090, path='/health'),
+        initial_delay_secs=3,
+        period_secs=5,
+    ),
+    labels=[LABEL_AGENT],
+    links=[
+        link('http://localhost:8090/health', 'Health Check'),
+        link('http://localhost:8090/api/status', 'Worker Status'),
+    ],
+)
+
+# ============================================
+# EC2 Agent with Real LLM Worker Script
+# ============================================
+
+local_resource(
+    'ec2-agent-llm',
+    serve_cmd='''
+        go run ./cmd/main.go \
+            -script=../../scripts/hybrid-llm/llm-worker.sh \
+            -ec2-tags='{"Name":"llm-worker","Project":"catalyst-llm"}' \
+            -addr=:8091
+    ''',
+    deps=['./cmd', './pkg'],
+    readiness_probe=probe(
+        http_get=http_get_action(port=8091, path='/health'),
+        initial_delay_secs=3,
+        period_secs=5,
+    ),
+    labels=[LABEL_AGENT],
+    links=[
+        link('http://localhost:8091/health', 'Health'),
+        link('http://localhost:8091/api/status', 'Status'),
+    ],
+    auto_init=False,  # Manual start - for real EC2 control
+)
+
+# ============================================
+# Test Client (HTML)
+# ============================================
+
+# Serve test client HTML
+local_resource(
+    'test-client',
+    serve_cmd='''
+        python3 -m http.server 8099 --directory ./examples
+    ''',
+    readiness_probe=probe(
+        http_get=http_get_action(port=8099, path='/test-client.html'),
+        initial_delay_secs=1,
+        period_secs=5,
+    ),
+    labels=[LABEL_TEST],
+    links=[
+        link('http://localhost:8099/test-client.html', 'WebSocket Test Client'),
+    ],
+    resource_deps=['ec2-agent'],
+)
+
+# ============================================
+# Control Buttons
+# ============================================
+
+# Mock worker commands
+cmd_button(
+    name='btn-worker-status',
+    resource='ec2-agent',
+    argv=['./scripts/mock-worker.sh', 'status'],
+    text='Status',
+    icon_name='info'
+)
+
+cmd_button(
+    name='btn-worker-start',
+    resource='ec2-agent',
+    argv=['./scripts/mock-worker.sh', 'start'],
+    text='Start',
+    icon_name='play_arrow'
+)
+
+cmd_button(
+    name='btn-worker-stop',
+    resource='ec2-agent',
+    argv=['./scripts/mock-worker.sh', 'stop'],
+    text='Stop',
+    icon_name='stop'
+)
+
+cmd_button(
+    name='btn-worker-stream',
+    resource='ec2-agent',
+    argv=['./scripts/mock-worker.sh', 'stream'],
+    text='Stream Test',
+    icon_name='live_tv'
+)
+
+cmd_button(
+    name='btn-worker-logs',
+    resource='ec2-agent',
+    argv=['./scripts/mock-worker.sh', 'logs'],
+    text='Logs',
+    icon_name='description'
+)
+
+# WebSocket test with curl
+cmd_button(
+    name='btn-ws-test',
+    resource='ec2-agent',
+    argv=['sh', '-c', '''
+        echo "Testing WebSocket endpoint..."
+        curl -s http://localhost:8090/health | jq .
+        echo ""
+        echo "Fetching worker status..."
+        curl -s http://localhost:8090/api/status | jq .
+    '''],
+    text='Test Endpoints',
+    icon_name='bug_report'
+)
+
+# ============================================
+# Build & Test
+# ============================================
+
+local_resource(
+    'unit-tests',
+    cmd='go test ./pkg/... -v',
+    labels=[LABEL_BUILD],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-run-tests',
+    resource='unit-tests',
+    argv=['go', 'test', './pkg/...', '-v'],
+    text='Run Tests',
+    icon_name='science'
+)
+
+cmd_button(
+    name='btn-run-tests-cover',
+    resource='unit-tests',
+    argv=['sh', '-c', '''
+        go test ./pkg/... -coverprofile=coverage.out && \
+        go tool cover -html=coverage.out -o coverage.html && \
+        echo "Coverage report: coverage.html" && \
+        open coverage.html 2>/dev/null || xdg-open coverage.html 2>/dev/null || echo "Open coverage.html in browser"
+    '''],
+    text='Test + Coverage',
+    icon_name='assessment'
+)
+
+local_resource(
+    'build',
+    cmd='go build -o ./bin/ec2-agent ./cmd/main.go && echo "Built: ./bin/ec2-agent"',
+    labels=[LABEL_BUILD],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-build',
+    resource='build',
+    argv=['sh', '-c', 'go build -o ./bin/ec2-agent ./cmd/main.go && echo "Built: ./bin/ec2-agent"'],
+    text='Build Binary',
+    icon_name='build'
+)
+
+cmd_button(
+    name='btn-go-mod-tidy',
+    resource='build',
+    argv=['go', 'mod', 'tidy'],
+    text='go mod tidy',
+    icon_name='cleaning_services'
+)
+
+# ============================================
+# Docker Build (for k8s deployment)
+# ============================================
+
+local_resource(
+    'docker-build',
+    cmd='echo "Docker build available via button"',
+    labels=[LABEL_BUILD],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-docker-build',
+    resource='docker-build',
+    argv=['sh', '-c', '''
+        docker build -t ghcr.io/thebranchdriftcatalyst/ec2-agent:latest . && \
+        echo "Built: ghcr.io/thebranchdriftcatalyst/ec2-agent:latest"
+    '''],
+    text='Docker Build',
+    icon_name='layers'
+)
+
+cmd_button(
+    name='btn-docker-push',
+    resource='docker-build',
+    argv=['sh', '-c', '''
+        docker buildx build --platform linux/amd64,linux/arm64 \
+            -t ghcr.io/thebranchdriftcatalyst/ec2-agent:latest --push . && \
+        echo "Pushed: ghcr.io/thebranchdriftcatalyst/ec2-agent:latest"
+    '''],
+    text='Build & Push',
+    icon_name='cloud_upload'
+)
