@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,6 +46,7 @@ type Scaler struct {
 	macProxy    *httputil.ReverseProxy // Mac dev endpoint (Tilt only)
 	hub         *Hub                   // WebSocket hub
 	broker      *Broker                // RabbitMQ broker (nil if disabled)
+	executor    *Executor              // Process executor for worker control
 
 	mu           sync.RWMutex
 	state        State
@@ -71,9 +71,12 @@ type Scaler struct {
 func NewScaler(cfg Config) *Scaler {
 	localTarget, _ := url.Parse(cfg.OllamaURL)
 
+	hub := NewHub()
+
 	s := &Scaler{
 		cfg:          cfg,
-		hub:          NewHub(),
+		hub:          hub,
+		executor:     NewExecutor(cfg.WorkerScript, hub),
 		state:        StateUnknown,
 		lastActivity: time.Now(),
 		routingMode:  RoutingAuto,
@@ -603,17 +606,25 @@ func (s *Scaler) ensureRunning(ctx context.Context) error {
 }
 
 // startWorker executes the worker script with "warm" command
+// Output is streamed to WebSocket clients via the executor
 func (s *Scaler) startWorker() error {
 	log.Printf("▶️  Starting worker...")
+	s.setState(StateStarting)
 
-	cmd := exec.Command(s.cfg.WorkerScript, "warm")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
-	if err := cmd.Run(); err != nil {
-		log.Printf("Start failed: %v\n%s", err, out.String())
+	exitCode, err := s.executor.ExecuteSync(ctx, "remote", "warm")
+	if err != nil {
+		log.Printf("Start failed: %v", err)
+		s.setState(StateUnknown)
 		return err
+	}
+
+	if exitCode != 0 {
+		log.Printf("Start failed with exit code %d", exitCode)
+		s.setState(StateUnknown)
+		return fmt.Errorf("worker script exited with code %d", exitCode)
 	}
 
 	log.Printf("✅ Worker started")
@@ -623,19 +634,25 @@ func (s *Scaler) startWorker() error {
 }
 
 // stopWorker executes the worker script with "stop" command
+// Output is streamed to WebSocket clients via the executor
 func (s *Scaler) stopWorker() error {
 	log.Printf("⏹️  Stopping worker...")
 	s.setState(StateStopping)
 
-	cmd := exec.Command(s.cfg.WorkerScript, "stop")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 
-	if err := cmd.Run(); err != nil {
-		log.Printf("Stop failed: %v\n%s", err, out.String())
+	exitCode, err := s.executor.ExecuteSync(ctx, "remote", "stop")
+	if err != nil {
+		log.Printf("Stop failed: %v", err)
 		s.setState(StateUnknown)
 		return err
+	}
+
+	if exitCode != 0 {
+		log.Printf("Stop failed with exit code %d", exitCode)
+		s.setState(StateUnknown)
+		return fmt.Errorf("worker script exited with code %d", exitCode)
 	}
 
 	log.Printf("✅ Worker stopped")

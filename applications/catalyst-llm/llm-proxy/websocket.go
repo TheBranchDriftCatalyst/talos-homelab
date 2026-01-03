@@ -130,6 +130,7 @@ type StatusUpdate struct {
 	Scaler       ScalerStatus `json:"scaler"`
 	Workers      []WorkerInfo `json:"workers"`
 	Broker       BrokerStatus `json:"broker"`
+	Operations   []Operation  `json:"operations,omitempty"` // Active executor operations
 }
 
 type ScalerStatus struct {
@@ -306,6 +307,61 @@ func (s *Scaler) handleControl(ctrl ControlMessage, conn *websocket.Conn) {
 			response["message"] = "Invalid routing mode. Use: auto, local, remote, mac"
 		}
 
+	case "status":
+		// Run status command via executor with streaming output
+		if ctrl.Target == "remote" {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				s.executor.ExecuteSync(ctx, "remote", "status")
+			}()
+			response["status"] = "checking"
+			response["message"] = "Checking remote worker status..."
+		} else {
+			response["status"] = "ok"
+			response["message"] = "Local worker status available in status update"
+		}
+
+	case "logs":
+		// Fetch logs from remote worker
+		if ctrl.Target == "remote" {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				s.executor.ExecuteSync(ctx, "remote", "logs")
+			}()
+			response["status"] = "fetching"
+			response["message"] = "Fetching remote worker logs..."
+		} else {
+			response["status"] = "error"
+			response["message"] = "Logs only available for remote worker"
+		}
+
+	case "ssh":
+		// Open SSH session to remote worker
+		if ctrl.Target == "remote" {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				s.executor.ExecuteSync(ctx, "remote", "ssh", ctrl.Data)
+			}()
+			response["status"] = "connecting"
+			response["message"] = "Opening SSH session..."
+		} else {
+			response["status"] = "error"
+			response["message"] = "SSH only available for remote worker"
+		}
+
+	case "kill":
+		// Kill running command
+		if err := s.executor.Kill(ctrl.Target); err != nil {
+			response["status"] = "error"
+			response["message"] = err.Error()
+		} else {
+			response["status"] = "killed"
+			response["message"] = "Command terminated"
+		}
+
 	case "refresh":
 		s.sendFullStatus(conn)
 		return
@@ -411,9 +467,13 @@ func (s *Scaler) buildStatusUpdate() StatusUpdate {
 	// Build broker status
 	brokerStatus := s.buildBrokerStatus()
 
+	// Get active operations from executor
+	activeOps := s.executor.GetActiveOperations()
+
 	return StatusUpdate{
-		Type:      "status",
-		Timestamp: time.Now().Format(time.RFC3339),
+		Type:       "status",
+		Timestamp:  time.Now().Format(time.RFC3339),
+		Operations: activeOps,
 		Scaler: ScalerStatus{
 			Paused:        paused,
 			IdleTimeout:   s.cfg.IdleTimeout.String(),
