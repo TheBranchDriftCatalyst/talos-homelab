@@ -87,14 +87,20 @@ func (w *Worker) Run(ctx context.Context) error {
 	log.Printf("   Models: %v", w.cfg.Models)
 	log.Printf("   Concurrency: %d", w.cfg.Concurrency)
 
-	// Subscribe to queues for each model
+	// Build list of queues to consume
+	var queues []string
 	for _, model := range w.cfg.Models {
-		queueName := fmt.Sprintf("llm.inference.%s", modelToQueueName(model))
-		go w.consumeQueue(ctx, queueName)
+		queues = append(queues, fmt.Sprintf("llm.inference.%s", modelToQueueName(model)))
 	}
+	queues = append(queues, "llm.inference.default")
 
-	// Also subscribe to catch-all queue
-	go w.consumeQueue(ctx, "llm.inference.default")
+	// Set up each queue sequentially (channel ops not thread-safe)
+	for i, queueName := range queues {
+		consumerTag := fmt.Sprintf("%s-%d", w.cfg.WorkerID, i)
+		go w.consumeQueue(ctx, queueName, consumerTag)
+		// Small delay to let channel stabilize
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	// Start heartbeat
 	go w.heartbeatLoop(ctx)
@@ -107,9 +113,17 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // consumeQueue consumes messages from a specific queue
-func (w *Worker) consumeQueue(ctx context.Context, queueName string) {
+func (w *Worker) consumeQueue(ctx context.Context, queueName, consumerTag string) {
+	// Create a dedicated channel for this queue (channels are not thread-safe)
+	ch, err := w.conn.Channel()
+	if err != nil {
+		log.Printf("⚠️ Failed to create channel for %s: %v", queueName, err)
+		return
+	}
+	defer ch.Close()
+
 	// Declare queue (idempotent)
-	queue, err := w.channel.QueueDeclare(
+	queue, err := ch.QueueDeclare(
 		queueName, // Name
 		true,      // Durable
 		false,     // Auto-delete
@@ -125,7 +139,7 @@ func (w *Worker) consumeQueue(ctx context.Context, queueName string) {
 	}
 
 	// Bind to inference exchange
-	err = w.channel.QueueBind(
+	err = ch.QueueBind(
 		queue.Name,
 		"#", // Routing key (catch all for this queue)
 		"llm.inference",
@@ -137,14 +151,14 @@ func (w *Worker) consumeQueue(ctx context.Context, queueName string) {
 		return
 	}
 
-	msgs, err := w.channel.Consume(
-		queue.Name,   // Queue
-		w.cfg.WorkerID, // Consumer tag
-		false,        // Auto-ack (false = manual ack)
-		false,        // Exclusive
-		false,        // No-local
-		false,        // No-wait
-		nil,          // Args
+	msgs, err := ch.Consume(
+		queue.Name,  // Queue
+		consumerTag, // Consumer tag (unique per queue)
+		false,       // Auto-ack (false = manual ack)
+		false,       // Exclusive
+		false,       // No-local
+		false,       // No-wait
+		nil,         // Args
 	)
 	if err != nil {
 		log.Printf("⚠️ Failed to consume from %s: %v", queueName, err)
