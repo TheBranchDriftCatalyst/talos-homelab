@@ -129,6 +129,7 @@ type StatusUpdate struct {
 	Timestamp    string       `json:"timestamp"`
 	Scaler       ScalerStatus `json:"scaler"`
 	Workers      []WorkerInfo `json:"workers"`
+	Broker       BrokerStatus `json:"broker"`
 }
 
 type ScalerStatus struct {
@@ -144,7 +145,27 @@ type ScalerStatus struct {
 	LocalRouted   int64  `json:"local_routed"`
 	RemoteRouted  int64  `json:"remote_routed"`
 	MacRouted     int64  `json:"mac_routed"`
+	BrokerRouted  int64  `json:"broker_routed"`
 	HasMac        bool   `json:"has_mac"` // True if Mac dev endpoint is configured
+}
+
+// BrokerStatus contains RabbitMQ broker information
+type BrokerStatus struct {
+	Connected bool         `json:"connected"`
+	Enabled   bool         `json:"enabled"`
+	Queues    []QueueInfo  `json:"queues,omitempty"`
+	Exchanges []string     `json:"exchanges,omitempty"`
+	ReplyQueue string      `json:"reply_queue,omitempty"`
+}
+
+// QueueInfo contains information about a RabbitMQ queue
+type QueueInfo struct {
+	Name         string `json:"name"`
+	Messages     int    `json:"messages"`
+	Consumers    int    `json:"consumers"`
+	RoutingKey   string `json:"routing_key"`
+	MessagesReady int   `json:"messages_ready"`
+	MessagesUnacked int `json:"messages_unacked"`
 }
 
 // WebSocket handles WebSocket connections
@@ -387,6 +408,9 @@ func (s *Scaler) buildStatusUpdate() StatusUpdate {
 		activeTargetName = "mac"
 	}
 
+	// Build broker status
+	brokerStatus := s.buildBrokerStatus()
+
 	return StatusUpdate{
 		Type:      "status",
 		Timestamp: time.Now().Format(time.RFC3339),
@@ -403,10 +427,120 @@ func (s *Scaler) buildStatusUpdate() StatusUpdate {
 			LocalRouted:  localRouted,
 			RemoteRouted: remoteRouted,
 			MacRouted:    macRouted,
+			BrokerRouted: s.brokerRouted.Load(),
 			HasMac:       s.HasMacEndpoint(),
 		},
 		Workers: workers,
+		Broker:  brokerStatus,
 	}
+}
+
+// buildBrokerStatus constructs the broker status from RabbitMQ
+func (s *Scaler) buildBrokerStatus() BrokerStatus {
+	status := BrokerStatus{
+		Enabled:   IsBrokerModeEnabled(),
+		Connected: s.IsBrokerConnected(),
+	}
+
+	if !status.Connected || s.broker == nil {
+		return status
+	}
+
+	// Get reply queue name
+	status.ReplyQueue = s.broker.replyQueue.Name
+
+	// Get queue info from RabbitMQ Management API
+	status.Queues = s.fetchQueueInfo()
+
+	// List exchanges we use
+	status.Exchanges = []string{
+		s.broker.cfg.InferenceExchange,
+		s.broker.cfg.PriorityExchange,
+		s.broker.cfg.WorkersExchange,
+	}
+
+	return status
+}
+
+// fetchQueueInfo gets queue statistics from RabbitMQ Management API
+func (s *Scaler) fetchQueueInfo() []QueueInfo {
+	if s.broker == nil {
+		return nil
+	}
+
+	// RabbitMQ Management API endpoint
+	mgmtURL := fmt.Sprintf("http://%s:15672/api/queues/%s",
+		s.broker.cfg.Host, s.broker.cfg.VHost)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", mgmtURL, nil)
+	req.SetBasicAuth(s.broker.cfg.User, s.broker.cfg.Password)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("⚠️ Failed to fetch queue info: %v", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+
+	var queues []struct {
+		Name              string `json:"name"`
+		Messages          int    `json:"messages"`
+		MessagesReady     int    `json:"messages_ready"`
+		MessagesUnacked   int    `json:"messages_unacknowledged"`
+		Consumers         int    `json:"consumers"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&queues); err != nil {
+		return nil
+	}
+
+	result := make([]QueueInfo, 0, len(queues))
+	for _, q := range queues {
+		// Skip auto-generated reply queues (amq.gen-*)
+		if len(q.Name) > 4 && q.Name[:4] == "amq." {
+			continue
+		}
+
+		// Extract routing key from queue name (e.g., llm.inference.llama3 -> llama3)
+		routingKey := ""
+		parts := splitString(q.Name, ".")
+		if len(parts) >= 3 {
+			routingKey = parts[len(parts)-1]
+		}
+
+		result = append(result, QueueInfo{
+			Name:            q.Name,
+			Messages:        q.Messages,
+			MessagesReady:   q.MessagesReady,
+			MessagesUnacked: q.MessagesUnacked,
+			Consumers:       q.Consumers,
+			RoutingKey:      routingKey,
+		})
+	}
+
+	return result
+}
+
+// splitString is a simple string split helper
+func splitString(s, sep string) []string {
+	var result []string
+	start := 0
+	for i := 0; i <= len(s)-len(sep); i++ {
+		if s[i:i+len(sep)] == sep {
+			result = append(result, s[start:i])
+			start = i + len(sep)
+			i += len(sep) - 1
+		}
+	}
+	result = append(result, s[start:])
+	return result
 }
 
 func (s *Scaler) fetchModels(url string) []ModelInfo {
