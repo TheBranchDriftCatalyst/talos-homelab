@@ -1,0 +1,86 @@
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: llm-proxy-overview
+  namespace: catalyst-llm
+  labels:
+    app: llm-proxy
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folder: "Catalyst LLM"
+  json: |
+    {
+      "title": "LLM Proxy Overview",
+      "uid": "llm-proxy-catalyst",
+      "tags": ["llm", "catalyst-llm", "proxy", "ollama"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "panels": [
+        {
+          "title": "Worker Status",
+          "type": "stat",
+          "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "llm_scaler_worker_up{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}]}}
+        },
+        {
+          "title": "Total Requests",
+          "type": "stat",
+          "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "llm_scaler_requests_total{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "title": "Blocked Requests",
+          "type": "stat",
+          "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "llm_scaler_requests_blocked{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 20}]}}}
+        },
+        {
+          "title": "Cold Starts",
+          "type": "stat",
+          "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "llm_scaler_cold_starts_total{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "title": "Idle Time",
+          "type": "gauge",
+          "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "llm_scaler_idle_seconds{namespace=\"catalyst-llm\"} / llm_scaler_idle_timeout_seconds{namespace=\"catalyst-llm\"} * 100", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}}
+        },
+        {
+          "title": "Worker Starting",
+          "type": "stat",
+          "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "llm_scaler_worker_starting{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "No", "color": "green"}, "1": {"text": "Starting...", "color": "yellow"}}}]}}
+        },
+        {
+          "title": "Request Rate",
+          "type": "timeseries",
+          "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+          "targets": [
+            {"expr": "rate(llm_scaler_requests_total{namespace=\"catalyst-llm\"}[5m])", "legendFormat": "Requests/sec", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "reqps"}}
+        },
+        {
+          "title": "Idle Time",
+          "type": "timeseries",
+          "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+          "targets": [
+            {"expr": "llm_scaler_idle_seconds{namespace=\"catalyst-llm\"}", "legendFormat": "Idle (seconds)", "refId": "A"},
+            {"expr": "llm_scaler_idle_timeout_seconds{namespace=\"catalyst-llm\"}", "legendFormat": "Timeout", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "s"}}
+        }
+      ],
+      "schemaVersion": 38
+    }

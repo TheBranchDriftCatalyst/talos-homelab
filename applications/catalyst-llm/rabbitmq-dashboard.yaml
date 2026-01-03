@@ -1,0 +1,125 @@
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: rabbitmq-overview
+  namespace: catalyst-llm
+  labels:
+    app: rabbitmq
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folder: "Catalyst LLM"
+  json: |
+    {
+      "title": "RabbitMQ Overview",
+      "uid": "rabbitmq-catalyst-llm",
+      "tags": ["rabbitmq", "catalyst-llm", "broker"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "time": {"from": "now-1h", "to": "now"},
+      "panels": [
+        {
+          "title": "Connections",
+          "type": "stat",
+          "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "rabbitmq_connections{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 50}]}}}
+        },
+        {
+          "title": "Channels",
+          "type": "stat",
+          "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "rabbitmq_channels{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "title": "Queues",
+          "type": "stat",
+          "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "rabbitmq_queues{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "title": "Consumers",
+          "type": "stat",
+          "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "rabbitmq_consumers{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "title": "Messages Ready",
+          "type": "stat",
+          "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "sum(rabbitmq_queue_messages_ready{namespace=\"catalyst-llm\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 100}, {"color": "red", "value": 1000}]}}}
+        },
+        {
+          "title": "Messages Unacked",
+          "type": "stat",
+          "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4},
+          "targets": [{"expr": "sum(rabbitmq_queue_messages_unacked{namespace=\"catalyst-llm\"})", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 10}, {"color": "red", "value": 50}]}}}
+        },
+        {
+          "title": "Message Rates",
+          "type": "timeseries",
+          "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+          "targets": [
+            {"expr": "rate(rabbitmq_channel_messages_published_total{namespace=\"catalyst-llm\"}[5m])", "legendFormat": "Published", "refId": "A"},
+            {"expr": "rate(rabbitmq_channel_messages_delivered_total{namespace=\"catalyst-llm\"}[5m])", "legendFormat": "Delivered", "refId": "B"},
+            {"expr": "rate(rabbitmq_channel_messages_acked_total{namespace=\"catalyst-llm\"}[5m])", "legendFormat": "Acked", "refId": "C"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "title": "Queue Depths",
+          "type": "timeseries",
+          "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+          "targets": [
+            {"expr": "rabbitmq_queue_messages_ready{namespace=\"catalyst-llm\"}", "legendFormat": "{{queue}} ready", "refId": "A"},
+            {"expr": "rabbitmq_queue_messages_unacked{namespace=\"catalyst-llm\"}", "legendFormat": "{{queue}} unacked", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "title": "Queue Messages by Queue",
+          "type": "table",
+          "gridPos": {"x": 0, "y": 12, "w": 24, "h": 6},
+          "targets": [
+            {"expr": "rabbitmq_queue_messages{namespace=\"catalyst-llm\"}", "format": "table", "instant": true, "refId": "A"}
+          ],
+          "transformations": [
+            {"id": "organize", "options": {"excludeByName": {"Time": true, "job": true, "namespace": true, "pod": true, "instance": true, "container": true}, "renameByName": {"queue": "Queue", "Value": "Messages"}}}
+          ]
+        },
+        {
+          "title": "Memory Usage",
+          "type": "timeseries",
+          "gridPos": {"x": 0, "y": 18, "w": 12, "h": 6},
+          "targets": [
+            {"expr": "rabbitmq_process_resident_memory_bytes{namespace=\"catalyst-llm\"}", "legendFormat": "Resident Memory", "refId": "A"},
+            {"expr": "rabbitmq_resident_memory_limit_bytes{namespace=\"catalyst-llm\"}", "legendFormat": "Memory Limit", "refId": "B"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "bytes"}}
+        },
+        {
+          "title": "File Descriptors",
+          "type": "gauge",
+          "gridPos": {"x": 12, "y": 18, "w": 6, "h": 6},
+          "targets": [
+            {"expr": "rabbitmq_process_open_fds{namespace=\"catalyst-llm\"} / rabbitmq_process_max_fds{namespace=\"catalyst-llm\"} * 100", "refId": "A"}
+          ],
+          "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}}
+        },
+        {
+          "title": "Erlang Processes",
+          "type": "stat",
+          "gridPos": {"x": 18, "y": 18, "w": 6, "h": 6},
+          "targets": [{"expr": "erlang_vm_process_count{namespace=\"catalyst-llm\"}", "refId": "A"}],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        }
+      ],
+      "schemaVersion": 38
+    }

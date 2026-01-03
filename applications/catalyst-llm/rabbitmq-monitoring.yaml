@@ -1,0 +1,42 @@
+---
+# ServiceMonitor for RabbitMQ Prometheus metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rabbitmq
+  namespace: catalyst-llm
+  labels:
+    app: rabbitmq
+    release: prometheus  # Match kube-prometheus-stack selector
+spec:
+  endpoints:
+    - port: prometheus
+      interval: 30s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - catalyst-llm
+  selector:
+    matchLabels:
+      app: rabbitmq
+---
+# PodMonitor for llm-proxy metrics
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: llm-proxy
+  namespace: catalyst-llm
+  labels:
+    app: llm-proxy
+    release: prometheus
+spec:
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+  namespaceSelector:
+    matchNames:
+      - catalyst-llm
+  selector:
+    matchLabels:
+      app: llm-proxy
