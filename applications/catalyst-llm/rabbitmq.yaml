@@ -2,14 +2,18 @@
 # RabbitMQ Message Broker for LLM Request Routing
 # Management UI: http://rabbitmq.talos00
 # AMQP: amqp://rabbitmq.catalyst-llm.svc:5672
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
+#
+# Note: Bitnami migrated to OCI-only chart hosting, using OCIRepository
+apiVersion: source.toolkit.fluxcd.io/v1beta2
+kind: OCIRepository
 metadata:
-  name: bitnami
+  name: bitnami-rabbitmq
   namespace: catalyst-llm
 spec:
   interval: 1h
-  url: https://charts.bitnami.com/bitnami
+  url: oci://registry-1.docker.io/bitnamicharts/rabbitmq
+  ref:
+    tag: '16.0.14'
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -18,15 +22,10 @@ metadata:
   namespace: catalyst-llm
 spec:
   interval: 30m
-  chart:
-    spec:
-      chart: rabbitmq
-      version: '16.0.14'
-      sourceRef:
-        kind: HelmRepository
-        name: bitnami
-        namespace: catalyst-llm
-      interval: 12h
+  chartRef:
+    kind: OCIRepository
+    name: bitnami-rabbitmq
+    namespace: catalyst-llm
   install:
     remediation:
       retries: 3
