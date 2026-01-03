@@ -84,39 +84,22 @@ local_resource(
 )
 
 # ============================================
-# LLM Scaler - Go Reverse Proxy
+# LLM Scaler - Go Reverse Proxy (Flux-managed, observe only)
 # ============================================
 
-# Build llm-proxy with live update
-docker_build(
-    REGISTRY + '/llm-proxy',
-    context='./llm-proxy',
-    dockerfile='./llm-proxy/Dockerfile',
-    only=[
-        'go.mod',
-        'go.sum',
-        'main.go',
-        'scaler.go',
-        'broker.go',
-        'worker.go',
-        'ui.go',
-        'websocket.go',
-        'scripts/',
-        'ui/',  # Include React UI for production builds
-    ],
-    live_update=[
-        # Sync steps must come before run steps
-        sync('./llm-proxy/main.go', '/build/main.go'),
-        sync('./llm-proxy/scaler.go', '/build/scaler.go'),
-        sync('./llm-proxy/broker.go', '/build/broker.go'),
-        sync('./llm-proxy/worker.go', '/build/worker.go'),
-        sync('./llm-proxy/ui.go', '/build/ui.go'),
-        sync('./llm-proxy/websocket.go', '/build/websocket.go'),
-        sync('./llm-proxy/scripts/llm-worker.sh', '/app/llm-worker.sh'),
-        # Rebuild binary in container
-        run('cd /build && CGO_ENABLED=0 go build -o /app/llm-proxy . && kill -HUP 1'),
-    ]
-)
+# Attach to the Flux-managed llm-proxy deployment
+# For dev: run UI locally with Vite, backend uses Flux-deployed image
+k8s_attach('llm-proxy', 'deployment/llm-proxy', namespace=namespace,
+           port_forwards=[
+               '8080:8080',   # Proxy + UI
+               '9090:9090',   # Metrics
+           ],
+           labels=[LABEL_SCALER],
+           links=[
+               link('http://localhost:8080/_/ui', 'Control Panel'),
+               link('http://localhost:9090/metrics', 'Metrics'),
+               link('http://llm-proxy.talos00/_/ui', 'Control Panel (Ingress)'),
+           ])
 
 # ============================================
 # React UI Development (optional - run locally with Vite)
@@ -158,30 +141,7 @@ cmd_button(
     icon_name='build'
 )
 
-# Apply llm-proxy deployment only (not full kustomization to avoid conflicts with Flux)
-# Note: We patch the deployment to add MAC_OLLAMA_URL for dev mode
-k8s_yaml(['proxy-deployment.yaml', 'service.yaml'])
-watch_file('proxy-deployment.yaml')
-watch_file('service.yaml')
-
-# Inject MAC_OLLAMA_URL environment variable for dev mode
-# This enables the "Mac" routing option in the UI
-k8s_resource(
-    'llm-proxy',
-    objects=['llm-proxy:serviceaccount', 'llm-proxy:servicemonitor'],
-    port_forwards=[
-        '8080:8080',   # Proxy + UI
-        '9090:9090',   # Metrics
-    ],
-    labels=[LABEL_SCALER],
-    links=[
-        link('http://localhost:8080/_/ui', 'Control Panel'),
-        link('http://localhost:9090/metrics', 'Metrics'),
-        link('http://llm-proxy.talos00/_/ui', 'Control Panel (Ingress)'),
-    ]
-)
-
-# Patch deployment to add MAC_OLLAMA_URL env var
+# Patch deployment to add MAC_OLLAMA_URL env var for Mac routing
 local_resource(
     'patch-mac-env',
     cmd='''
