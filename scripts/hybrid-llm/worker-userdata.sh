@@ -91,35 +91,48 @@ OLLAMA_DATA_DIR="/var/lib/ollama"
 MODEL_DEVICE=""
 
 # Wait for the EBS volume to be attached (may be xvdf, nvme1n1, nvme2n1, etc.)
+# On g6 instances: nvme0=root, nvme1=instance-store, nvme2+=EBS
 echo "Waiting for model storage volume..."
+echo "  Waiting extra time for EBS attachment to complete..."
+sleep 10  # Give AWS time to attach the EBS volume
+
 for i in {1..30}; do
     # Check for xvd* device (traditional naming)
     if [[ -b "/dev/xvdf" ]]; then
         MODEL_DEVICE="/dev/xvdf"
+        echo "Found model volume: $MODEL_DEVICE (xvd naming)"
         break
     fi
-    # Check NVMe devices - find the non-root, non-instance-store EBS volume
-    # Instance stores are usually ephemeral and small, EBS volumes are persistent
+
+    # Check NVMe devices - look for EBS (Amazon Elastic Block Store) not instance store
     for nvme in /dev/nvme[0-9]n1; do
         if [[ -b "$nvme" ]]; then
+            # Get device model to distinguish EBS from instance store
+            model=$(cat /sys/block/$(basename "$nvme")/device/model 2>/dev/null | tr -d ' ')
+
             # Skip root volume (nvme0n1 usually)
             if [[ "$nvme" == "/dev/nvme0n1" ]]; then
                 continue
             fi
-            # Check if it's our EBS volume (will be ~100GB, not instance store which is smaller)
-            size_gb=$(lsblk -b -d -n -o SIZE "$nvme" 2>/dev/null | awk '{print int($1/1024/1024/1024)}')
-            if [[ "$size_gb" -ge 50 ]]; then
+
+            # EBS volumes have "Amazon Elastic Block Store" model
+            # Instance stores have "Amazon EC2 NVMe Instance Storage"
+            if [[ "$model" == *"ElasticBlockStore"* ]] || [[ "$model" == *"EBS"* ]]; then
+                size_gb=$(lsblk -b -d -n -o SIZE "$nvme" 2>/dev/null | awk '{print int($1/1024/1024/1024)}')
                 MODEL_DEVICE="$nvme"
-                echo "Found model volume: $MODEL_DEVICE (${size_gb}GB)"
+                echo "Found EBS model volume: $MODEL_DEVICE (${size_gb}GB, model: $model)"
                 break 2
             fi
         fi
     done
+    echo "  Attempt $i/30 - waiting for EBS volume..."
     sleep 2
 done
 
 if [[ -z "$MODEL_DEVICE" ]]; then
     echo "WARNING: Model storage volume not found after waiting"
+    echo "Available block devices:"
+    lsblk -o NAME,SIZE,MODEL
 fi
 
 if [[ -n "$MODEL_DEVICE" ]] && [[ -b "$MODEL_DEVICE" ]]; then
