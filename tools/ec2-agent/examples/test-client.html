@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EC2 Agent Test Client</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      background: #1a1a2e;
+      color: #eee;
+      margin: 0;
+      padding: 20px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { color: #4ecca3; margin-bottom: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .panel {
+      background: #16213e;
+      border-radius: 8px;
+      padding: 15px;
+      border: 1px solid #0f3460;
+    }
+    .panel h2 {
+      margin: 0 0 15px 0;
+      color: #e94560;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+    .status {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      margin-left: 10px;
+    }
+    .status.connected { background: #4ecca3; color: #000; }
+    .status.disconnected { background: #e94560; color: #fff; }
+    .output {
+      background: #0f0f23;
+      border-radius: 4px;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .output .stdout { color: #4ecca3; }
+    .output .stderr { color: #ff6b6b; }
+    .output .status { color: #ffd93d; }
+    .output .error { color: #e94560; }
+    .output .info { color: #6c757d; }
+    .controls { margin-top: 15px; }
+    button {
+      background: #4ecca3;
+      color: #000;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-right: 8px;
+      margin-bottom: 8px;
+      font-family: inherit;
+    }
+    button:hover { background: #3db892; }
+    button.danger { background: #e94560; color: #fff; }
+    button.danger:hover { background: #d63050; }
+    input {
+      background: #0f0f23;
+      border: 1px solid #0f3460;
+      color: #eee;
+      padding: 8px;
+      border-radius: 4px;
+      font-family: inherit;
+      width: 200px;
+    }
+    .workers {
+      display: grid;
+      gap: 10px;
+    }
+    .worker-card {
+      background: #0f0f23;
+      border-radius: 4px;
+      padding: 10px;
+      border-left: 3px solid #4ecca3;
+    }
+    .worker-card.stopped { border-left-color: #e94560; }
+    .worker-card.pending { border-left-color: #ffd93d; }
+    .worker-card h3 { margin: 0 0 8px 0; font-size: 14px; }
+    .worker-card .meta { font-size: 11px; color: #6c757d; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>EC2 Agent Test Client <span id="wsStatus" class="status disconnected">Disconnected</span></h1>
+
+    <div class="grid">
+      <div class="panel">
+        <h2>Command Output</h2>
+        <div id="output" class="output"></div>
+        <div class="controls">
+          <input type="text" id="target" placeholder="Target (default)" value="default">
+          <br><br>
+          <button onclick="sendCommand('status')">Status</button>
+          <button onclick="sendCommand('start')">Start</button>
+          <button onclick="sendCommand('stop')">Stop</button>
+          <button onclick="sendCommand('logs')">Logs</button>
+          <button onclick="sendCommand('stream')">Stream Test</button>
+          <button onclick="sendCommand('kill')" class="danger">Kill</button>
+          <br>
+          <button onclick="clearOutput()">Clear Output</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Workers</h2>
+        <div id="workers" class="workers">
+          <div class="info">No workers detected</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    const output = document.getElementById('output');
+    const wsStatus = document.getElementById('wsStatus');
+    const workersDiv = document.getElementById('workers');
+
+    function connect() {
+      const wsUrl = 'ws://localhost:8090/ws';
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        wsStatus.textContent = 'Connected';
+        wsStatus.className = 'status connected';
+        addOutput('info', `Connected to ${wsUrl}`);
+      };
+
+      ws.onclose = () => {
+        wsStatus.textContent = 'Disconnected';
+        wsStatus.className = 'status disconnected';
+        addOutput('info', 'Disconnected, reconnecting in 3s...');
+        setTimeout(connect, 3000);
+      };
+
+      ws.onerror = (err) => {
+        addOutput('error', 'WebSocket error');
+      };
+
+      ws.onmessage = (event) => {
+        // Handle batched messages (newline separated)
+        const messages = event.data.split('\n');
+        messages.forEach(msgStr => {
+          if (!msgStr.trim()) return;
+          try {
+            const msg = JSON.parse(msgStr);
+            handleMessage(msg);
+          } catch (e) {
+            addOutput('info', msgStr);
+          }
+        });
+      };
+    }
+
+    function handleMessage(msg) {
+      switch (msg.type) {
+        case 'stdout':
+          addOutput('stdout', msg.data);
+          break;
+        case 'stderr':
+          addOutput('stderr', msg.data);
+          break;
+        case 'result':
+          addOutput('info', `Command finished (exit code: ${msg.exit_code})`);
+          break;
+        case 'error':
+          addOutput('error', msg.error);
+          break;
+        case 'status':
+          try {
+            const status = JSON.parse(msg.data);
+            updateWorkers(status.workers);
+          } catch (e) {
+            addOutput('status', msg.data);
+          }
+          break;
+        case 'pong':
+          // Ignore pong messages
+          break;
+        default:
+          addOutput('info', JSON.stringify(msg));
+      }
+    }
+
+    function updateWorkers(workers) {
+      if (!workers || workers.length === 0) {
+        workersDiv.innerHTML = '<div class="info">No workers detected</div>';
+        return;
+      }
+
+      workersDiv.innerHTML = workers.map(w => {
+        const stateClass = w.state === 'running' ? '' :
+                          w.state === 'stopped' ? 'stopped' : 'pending';
+        return `
+          <div class="worker-card ${stateClass}">
+            <h3>${w.name || w.id}</h3>
+            <div class="meta">
+              <div>Provider: ${w.provider} | State: ${w.state}</div>
+              <div>Type: ${w.instance_type || 'N/A'}</div>
+              <div>IP: ${w.private_ip || 'N/A'} ${w.public_ip ? `(${w.public_ip})` : ''}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function sendCommand(command) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        addOutput('error', 'Not connected');
+        return;
+      }
+
+      const target = document.getElementById('target').value || 'default';
+      const msg = {
+        type: 'command',
+        command: command,
+        target: target,
+        args: []
+      };
+
+      addOutput('info', `> ${command} (target: ${target})`);
+      ws.send(JSON.stringify(msg));
+    }
+
+    function addOutput(type, text) {
+      const line = document.createElement('div');
+      line.className = type;
+      const time = new Date().toLocaleTimeString();
+      line.textContent = `[${time}] ${text}`;
+      output.appendChild(line);
+      output.scrollTop = output.scrollHeight;
+    }
+
+    function clearOutput() {
+      output.innerHTML = '';
+    }
+
+    // Connect on load
+    connect();
+  </script>
+</body>
+</html>
