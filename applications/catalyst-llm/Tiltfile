@@ -97,6 +97,8 @@ docker_build(
         'go.sum',
         'main.go',
         'scaler.go',
+        'broker.go',
+        'worker.go',
         'ui.go',
         'websocket.go',
         'scripts/',
@@ -105,6 +107,8 @@ docker_build(
         # Sync steps must come before run steps
         sync('./llm-proxy/main.go', '/build/main.go'),
         sync('./llm-proxy/scaler.go', '/build/scaler.go'),
+        sync('./llm-proxy/broker.go', '/build/broker.go'),
+        sync('./llm-proxy/worker.go', '/build/worker.go'),
         sync('./llm-proxy/ui.go', '/build/ui.go'),
         sync('./llm-proxy/websocket.go', '/build/websocket.go'),
         sync('./llm-proxy/scripts/llm-worker.sh', '/app/llm-worker.sh'),
@@ -221,6 +225,53 @@ k8s_attach('ollama', 'deployment/ollama', namespace=namespace,
                link('http://ollama.talos00', 'Ollama (Ingress)'),
                link('http://localhost:11434', 'Ollama (Local)'),
            ])
+
+# ============================================
+# RabbitMQ Message Broker
+# ============================================
+
+k8s_attach('rabbitmq', 'statefulset/rabbitmq', namespace=namespace,
+           port_forwards=[
+               '5672:5672',    # AMQP
+               '15672:15672',  # Management UI
+               '15692:15692',  # Prometheus metrics
+           ],
+           labels=[LABEL_LLM],
+           links=[
+               link('http://localhost:15672', 'RabbitMQ Management'),
+           ])
+
+cmd_button(
+    name='btn-rabbitmq-status',
+    resource='rabbitmq',
+    argv=['sh', '-c', '''
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl status | head -30
+    '''],
+    text='Status',
+    icon_name='info'
+)
+
+cmd_button(
+    name='btn-rabbitmq-queues',
+    resource='rabbitmq',
+    argv=['sh', '-c', '''
+        echo "=== Queues ===" && \
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_queues --vhost llm name messages consumers
+    '''],
+    text='List Queues',
+    icon_name='list'
+)
+
+cmd_button(
+    name='btn-rabbitmq-bindings',
+    resource='rabbitmq',
+    argv=['sh', '-c', '''
+        echo "=== Bindings ===" && \
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_bindings --vhost llm source_name destination_name routing_key
+    '''],
+    text='List Bindings',
+    icon_name='link'
+)
 
 # ============================================
 # Web UIs (Flux-managed, observe only)
