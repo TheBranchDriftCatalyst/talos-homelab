@@ -69,11 +69,11 @@ export function BrokerCard({ broker }: BrokerCardProps) {
                 <thead className="bg-[var(--bg-tertiary)] sticky top-0">
                   <tr className="text-left text-xs text-[var(--text-secondary)]">
                     <th className="px-3 py-2">Queue</th>
-                    <th className="px-3 py-2 text-center">
-                      <MessageSquare className="w-3 h-3 inline" title="Messages" />
+                    <th className="px-3 py-2 text-center" title="Messages">
+                      <MessageSquare className="w-3 h-3 inline" />
                     </th>
-                    <th className="px-3 py-2 text-center">
-                      <Users className="w-3 h-3 inline" title="Consumers" />
+                    <th className="px-3 py-2 text-center" title="Consumers">
+                      <Users className="w-3 h-3 inline" />
                     </th>
                     <th className="px-3 py-2 text-center">Ready</th>
                     <th className="px-3 py-2 text-center">Unacked</th>

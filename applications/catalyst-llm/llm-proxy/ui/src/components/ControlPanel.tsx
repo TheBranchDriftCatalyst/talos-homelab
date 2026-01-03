@@ -1,6 +1,7 @@
 import type { StatusUpdate, LogEntry } from '../types/api'
 import { WorkerCard } from './WorkerCard'
-import { ScalerCard } from './ScalerCard'
+import { FlipCard } from './FlipCard'
+import { ScalerBackPanel } from './ScalerBackPanel'
 import { BrokerCard } from './BrokerCard'
 import { ActivityLog } from './ActivityLog'
 
@@ -31,14 +32,19 @@ export function ControlPanel({ status, logs, onControl, onClearLogs }: ControlPa
             />
           )}
 
-          {/* Remote Worker (EC2) */}
+          {/* Remote Worker (EC2) with Scaler Config on flip */}
           {remoteWorker && (
-            <WorkerCard
-              worker={remoteWorker}
-              icon="☁️"
-              subtitle={`${remoteWorker.ec2?.instance_type || 'r5.2xlarge'} • ${remoteWorker.ec2?.region || 'us-west-2'}`}
-              onControl={onControl}
-              showControls
+            <FlipCard
+              front={
+                <WorkerCard
+                  worker={remoteWorker}
+                  icon="☁️"
+                  subtitle={`${remoteWorker.ec2?.instance_type || 'r5.2xlarge'} • ${remoteWorker.ec2?.region || 'us-west-2'}`}
+                  onControl={onControl}
+                  showControls
+                />
+              }
+              back={<ScalerBackPanel status={status?.scaler} onControl={onControl} />}
             />
           )}
 
@@ -51,9 +57,6 @@ export function ControlPanel({ status, logs, onControl, onClearLogs }: ControlPa
               onControl={onControl}
             />
           )}
-
-          {/* Scaler Configuration */}
-          <ScalerCard status={status?.scaler} onControl={onControl} />
 
           {/* Broker Status */}
           {status?.broker?.enabled && <BrokerCard broker={status.broker} />}

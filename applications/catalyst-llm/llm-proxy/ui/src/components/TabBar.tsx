@@ -1,4 +1,4 @@
-import { Settings, MessageCircle, Theater, Bot, Rabbit } from 'lucide-react'
+import { Settings, MessageCircle, Theater, Bot } from 'lucide-react'
 
 export interface Tab {
   id: string

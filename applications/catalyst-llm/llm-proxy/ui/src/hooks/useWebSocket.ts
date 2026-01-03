@@ -16,9 +16,17 @@ interface UseWebSocketReturn {
   clearLogs: () => void
 }
 
+// In dev mode, connect directly to backend; in prod, use relative path
+const getDefaultWsUrl = () => {
+  if (import.meta.env.DEV) {
+    return 'ws://localhost:8080/_/ws'
+  }
+  return `ws://${window.location.host}/_/ws`
+}
+
 export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketReturn {
   const {
-    url = `ws://${window.location.host}/ws`,
+    url = getDefaultWsUrl(),
     reconnectInterval = 3000,
     maxReconnectAttempts = 10,
   } = options
@@ -30,7 +38,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectAttemptsRef = useRef(0)
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   const addLog = useCallback((level: LogEntry['level'], message: string) => {
     setLogs((prev) => {
