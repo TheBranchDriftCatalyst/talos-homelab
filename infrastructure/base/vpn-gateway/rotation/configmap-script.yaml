@@ -39,17 +39,42 @@ data:
     STATE_FILE = "/state/rotation-state.json"
     DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
 
-    # Server key to country mapping
-    SERVER_COUNTRIES = {
-        "se-be-1": "Belgium",
-        "se-de-1": "Germany",
-        "se-in-1": "India",
-        "se-nl-1": "Netherlands",
-        "se-ch-1": "Switzerland",
-        "se-is-1": "Iceland",
-        "se-se-1": "Sweden",
-        "se-no-1": "Norway",
+    # ISO 3166-1 alpha-2 country code to full name mapping
+    # Used to derive country from server key (e.g., se-de-1 → DE → Germany)
+    ISO_COUNTRY_CODES = {
+        "ad": "Andorra", "ae": "United Arab Emirates", "af": "Afghanistan",
+        "al": "Albania", "am": "Armenia", "ar": "Argentina", "at": "Austria",
+        "au": "Australia", "az": "Azerbaijan", "ba": "Bosnia and Herzegovina",
+        "be": "Belgium", "bg": "Bulgaria", "bh": "Bahrain", "br": "Brazil",
+        "by": "Belarus", "ca": "Canada", "ch": "Switzerland", "cl": "Chile",
+        "cn": "China", "co": "Colombia", "cr": "Costa Rica", "cy": "Cyprus",
+        "cz": "Czechia", "de": "Germany", "dk": "Denmark", "ee": "Estonia",
+        "eg": "Egypt", "es": "Spain", "fi": "Finland", "fr": "France",
+        "gb": "United Kingdom", "ge": "Georgia", "gr": "Greece", "hk": "Hong Kong",
+        "hr": "Croatia", "hu": "Hungary", "id": "Indonesia", "ie": "Ireland",
+        "il": "Israel", "in": "India", "is": "Iceland", "it": "Italy",
+        "jp": "Japan", "ke": "Kenya", "kr": "South Korea", "kz": "Kazakhstan",
+        "lt": "Lithuania", "lu": "Luxembourg", "lv": "Latvia", "ma": "Morocco",
+        "md": "Moldova", "me": "Montenegro", "mk": "North Macedonia", "mx": "Mexico",
+        "my": "Malaysia", "ng": "Nigeria", "nl": "Netherlands", "no": "Norway",
+        "nz": "New Zealand", "pe": "Peru", "ph": "Philippines", "pk": "Pakistan",
+        "pl": "Poland", "pt": "Portugal", "ro": "Romania", "rs": "Serbia",
+        "ru": "Russia", "sa": "Saudi Arabia", "se": "Sweden", "sg": "Singapore",
+        "si": "Slovenia", "sk": "Slovakia", "th": "Thailand", "tr": "Turkey",
+        "tw": "Taiwan", "ua": "Ukraine", "uk": "United Kingdom", "us": "United States",
+        "uy": "Uruguay", "vn": "Vietnam", "za": "South Africa",
     }
+
+    def get_country_from_key(server_key: str) -> str:
+        """
+        Derive country name from server key using ISO codes.
+        Key format: se-XX-N where XX is ISO country code (e.g., se-de-1 → Germany)
+        """
+        parts = server_key.split("-")
+        if len(parts) >= 2:
+            country_code = parts[1].lower()
+            return ISO_COUNTRY_CODES.get(country_code, country_code.upper())
+        return "Unknown"
 
     def log(msg: str, level: str = "INFO"):
         """Structured logging"""
@@ -176,6 +201,48 @@ data:
             log(f"Failed to get current server for {pod_ip}: {e}", "WARN")
             return None
 
+    def validate_vpn_connection(pod_ip: str, expected_country: str, max_retries: int = 5, delay: int = 3) -> bool:
+        """
+        Validate VPN connection is working after rotation.
+        Checks that gluetun reports 'running' status and public IP is in expected country.
+        """
+        for attempt in range(max_retries):
+            try:
+                # Check VPN status
+                status_url = f"http://{pod_ip}:8000/v1/vpn/status"
+                req = urllib.request.Request(status_url, method="GET")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    status_data = json.loads(resp.read().decode())
+                    vpn_status = status_data.get("status", "unknown")
+
+                if vpn_status != "running":
+                    log(f"VPN status check {attempt+1}/{max_retries}: status={vpn_status}, waiting...", "WARN")
+                    time.sleep(delay)
+                    continue
+
+                # Check public IP and country
+                ip_url = f"http://{pod_ip}:8000/v1/publicip/ip"
+                req = urllib.request.Request(ip_url, method="GET")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    ip_data = json.loads(resp.read().decode())
+                    public_ip = ip_data.get("public_ip", "unknown")
+                    actual_country = ip_data.get("country", "unknown")
+
+                # Verify we got a public IP (not empty/private)
+                if public_ip and public_ip != "unknown":
+                    log(f"VPN validated: public_ip={public_ip}, country={actual_country}")
+                    return True
+
+                log(f"VPN validation {attempt+1}/{max_retries}: no public IP yet, waiting...", "WARN")
+                time.sleep(delay)
+
+            except Exception as e:
+                log(f"VPN validation {attempt+1}/{max_retries} failed: {e}", "WARN")
+                time.sleep(delay)
+
+        log(f"VPN validation failed after {max_retries} attempts", "ERROR")
+        return False
+
     def rotate_pod(pod: Dict, new_server_key: str, secret_dir: str = "/secrets") -> bool:
         """
         Rotate a single pod to a new VPN server
@@ -193,7 +260,7 @@ data:
             log(f"Failed to read key for {new_server_key}: {e}", "ERROR")
             return False
 
-        country = SERVER_COUNTRIES.get(new_server_key, "Unknown")
+        country = get_country_from_key(new_server_key)
         log(f"Rotating {pod_name} to {new_server_key} ({country})")
 
         if DRY_RUN:
@@ -223,12 +290,18 @@ data:
             )
 
             with urllib.request.urlopen(req, timeout=30) as resp:
-                if resp.status == 200:
-                    log(f"Successfully rotated {pod_name} to {new_server_key}")
-                    return True
-                else:
+                if resp.status != 200:
                     log(f"Rotation failed for {pod_name}: HTTP {resp.status}", "ERROR")
                     return False
+
+            # Validate the VPN connection is working
+            log(f"API update succeeded for {pod_name}, validating VPN connection...")
+            if validate_vpn_connection(pod_ip, country):
+                log(f"Successfully rotated and validated {pod_name} to {new_server_key} ({country})")
+                return True
+            else:
+                log(f"Rotation to {new_server_key} failed validation for {pod_name}", "ERROR")
+                return False
 
         except urllib.error.HTTPError as e:
             body = e.read().decode() if hasattr(e, 'read') else str(e)
@@ -241,6 +314,32 @@ data:
     # Metrics are exposed via vpn-rotator-exporter deployment (pull model)
     # No push_metrics needed - exporter reads state file directly
 
+    # How long to exclude failed servers (seconds)
+    FAILED_SERVER_COOLDOWN = int(os.getenv("FAILED_SERVER_COOLDOWN", "3600"))  # 1 hour
+    MAX_RETRIES_PER_POD = int(os.getenv("MAX_RETRIES_PER_POD", "3"))
+
+    def get_healthy_servers(servers: List[str], state: Dict) -> List[str]:
+        """Filter out servers that failed recently (within cooldown period)"""
+        failed = state.get("failed_servers", {})
+        now = datetime.utcnow()
+        healthy = []
+
+        for server in servers:
+            if server in failed:
+                failed_at = datetime.fromisoformat(failed[server].replace("Z", ""))
+                age_seconds = (now - failed_at).total_seconds()
+                if age_seconds < FAILED_SERVER_COOLDOWN:
+                    log(f"Excluding {server}: failed {int(age_seconds)}s ago (cooldown: {FAILED_SERVER_COOLDOWN}s)")
+                    continue
+            healthy.append(server)
+
+        return healthy
+
+    def mark_server_failed(state: Dict, server: str):
+        """Mark a server as failed with current timestamp"""
+        state.setdefault("failed_servers", {})[server] = datetime.utcnow().isoformat() + "Z"
+        log(f"Marked {server} as failed (cooldown: {FAILED_SERVER_COOLDOWN}s)")
+
     def main():
         log("VPN Rotator starting")
         log(f"Config: mode={ROTATION_MODE}, stagger_delay={STAGGER_DELAY}s, jitter_max={JITTER_MAX}s")
@@ -250,14 +349,14 @@ data:
 
         # Load state
         state = load_state()
-        log(f"Loaded state: {len(state.get('server_counts', {}))} servers tracked")
+        log(f"Loaded state: {len(state.get('server_counts', {}))} servers tracked, {len(state.get('failed_servers', {}))} failed")
 
         # Get available servers
-        servers = get_available_servers()
-        if not servers:
+        all_servers = get_available_servers()
+        if not all_servers:
             log("No VPN servers found in secrets!", "ERROR")
             sys.exit(1)
-        log(f"Available servers: {servers}")
+        log(f"Available servers: {all_servers}")
 
         # Discover pods
         pods = discover_pods()
@@ -275,18 +374,44 @@ data:
             # Get current server for this pod (to exclude from selection)
             current = state.get("pod_servers", {}).get(deployment)
 
-            # Pick new server (weighted random, excluding current)
-            new_server = pick_server_weighted(state, servers, exclude_current=current)
+            # Get healthy servers (exclude recently failed)
+            servers = get_healthy_servers(all_servers, state)
+            if not servers:
+                log(f"No healthy servers available! All {len(all_servers)} servers failed recently.", "ERROR")
+                servers = all_servers  # Fallback to all servers
 
-            # Rotate
-            success = rotate_pod(pod, new_server)
-            results.append((deployment, new_server, success))
+            # Try rotation with retries on different servers
+            success = False
+            tried_servers = set()
+            for attempt in range(MAX_RETRIES_PER_POD):
+                # Pick new server (weighted random, excluding current and tried)
+                exclude = tried_servers | {current} if current else tried_servers
+                candidates = [s for s in servers if s not in exclude]
+                if not candidates:
+                    candidates = servers  # Fallback if we've tried all
 
-            if success:
-                # Update state
-                state.setdefault("server_counts", {})[new_server] = \
-                    state.get("server_counts", {}).get(new_server, 0) + 1
-                state.setdefault("pod_servers", {})[deployment] = new_server
+                new_server = pick_server_weighted(state, candidates, exclude_current=current)
+                tried_servers.add(new_server)
+
+                log(f"Attempt {attempt+1}/{MAX_RETRIES_PER_POD}: trying {new_server} for {pod_name}")
+
+                # Rotate
+                success = rotate_pod(pod, new_server)
+
+                if success:
+                    # Update state
+                    state.setdefault("server_counts", {})[new_server] = \
+                        state.get("server_counts", {}).get(new_server, 0) + 1
+                    state.setdefault("pod_servers", {})[deployment] = new_server
+                    results.append((deployment, new_server, True))
+                    break
+                else:
+                    # Mark server as failed
+                    mark_server_failed(state, new_server)
+
+            if not success:
+                log(f"All {MAX_RETRIES_PER_POD} attempts failed for {pod_name}", "ERROR")
+                results.append((deployment, None, False))
 
             # Stagger delay between pods
             if ROTATION_MODE == "staggered" and i < len(pods) - 1:
