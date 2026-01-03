@@ -3,110 +3,105 @@
 # Management UI: http://rabbitmq.talos00
 # AMQP: amqp://rabbitmq.catalyst-llm.svc:5672
 #
-# Note: Bitnami migrated to OCI-only chart hosting, using OCIRepository
-apiVersion: source.toolkit.fluxcd.io/v1beta2
-kind: OCIRepository
+# Using official RabbitMQ image (Bitnami images not available)
+apiVersion: v1
+kind: PersistentVolumeClaim
 metadata:
-  name: bitnami-rabbitmq
+  name: rabbitmq-data
   namespace: catalyst-llm
 spec:
-  interval: 1h
-  url: oci://registry-1.docker.io/bitnamicharts/rabbitmq
-  ref:
-    tag: '16.0.14'
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 8Gi
 ---
-apiVersion: helm.toolkit.fluxcd.io/v2
-kind: HelmRelease
+apiVersion: apps/v1
+kind: StatefulSet
 metadata:
   name: rabbitmq
   namespace: catalyst-llm
+  labels:
+    app: rabbitmq
 spec:
-  interval: 30m
-  chartRef:
-    kind: OCIRepository
-    name: bitnami-rabbitmq
-    namespace: catalyst-llm
-  install:
-    remediation:
-      retries: 3
-  upgrade:
-    remediation:
-      retries: 3
-  values:
-    # Authentication
-    auth:
-      username: panda
-      # Password from secret (TODO: TALOS-c1c1 migrate to 1Password)
-      existingPasswordSecret: rabbitmq-credentials
-      existingSecretPasswordKey: password
-      # Erlang cookie for clustering
-      existingErlangSecret: rabbitmq-credentials
-      existingSecretErlangKey: erlang-cookie
-
-    # Single node for homelab (no clustering)
-    replicaCount: 1
-    clustering:
-      enabled: false
-
-    # Persistence
-    persistence:
-      enabled: true
-      storageClass: local-path
-      size: 8Gi
-
-    # Resource requests only (no limits for homelab)
-    resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
-
-    # Enable management plugin
-    plugins: "rabbitmq_management rabbitmq_prometheus"
-
-    # Community plugins (none for now)
-    communityPlugins: ""
-
-    # Extra configuration for LLM routing
-    extraConfiguration: |
-      # Default vhost for LLM routing
-      default_vhost = llm
-
-      # Queue message TTL (1 hour default)
-      consumer_timeout = 3600000
-
-      # Lazy queues for memory efficiency
-      queue_master_locator = min-masters
-
-    # Load definitions on startup (queues, exchanges, bindings)
-    loadDefinition:
-      enabled: true
-      existingSecret: rabbitmq-definitions
-
-    # Metrics for Prometheus
-    metrics:
-      enabled: true
-      serviceMonitor:
-        enabled: true
-        namespace: catalyst-llm
-        labels:
-          release: prometheus
-
-    # Service configuration
-    service:
-      type: ClusterIP
-      ports:
-        amqp: 5672
-        manager: 15672
-        metrics: 9419
-
-    # Pod security
-    podSecurityContext:
-      enabled: true
-      fsGroup: 1001
-    containerSecurityContext:
-      enabled: true
-      runAsUser: 1001
-      runAsNonRoot: true
+  serviceName: rabbitmq
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:3.13-management-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5672
+              name: amqp
+            - containerPort: 15672
+              name: management
+            - containerPort: 15692
+              name: prometheus
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: panda
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_DEFAULT_VHOST
+              value: llm
+            # Enable prometheus metrics
+            - name: RABBITMQ_PLUGINS
+              value: "rabbitmq_management,rabbitmq_prometheus"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "check_running"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: rabbitmq-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: catalyst-llm
+  labels:
+    app: rabbitmq
+spec:
+  selector:
+    app: rabbitmq
+  ports:
+    - port: 5672
+      targetPort: 5672
+      name: amqp
+    - port: 15672
+      targetPort: 15672
+      name: management
+    - port: 15692
+      targetPort: 15692
+      name: prometheus
+  type: ClusterIP
 ---
 # IngressRoute for RabbitMQ Management UI
 apiVersion: traefik.io/v1alpha1
