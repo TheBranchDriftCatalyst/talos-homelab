@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // State represents worker lifecycle states
@@ -111,6 +114,14 @@ func (s *Scaler) proxyError(w http.ResponseWriter, r *http.Request, err error) {
 // Proxy handles all incoming requests
 func (s *Scaler) Proxy(w http.ResponseWriter, r *http.Request) {
 	s.requests.Add(1)
+
+	// Check if this is an inference request that should go through broker
+	if s.shouldUseBroker(r) {
+		s.handleBrokerRequest(w, r)
+		return
+	}
+
+	// Direct proxy mode for non-inference requests or when broker is disabled
 
 	// Get routing mode and determine target
 	s.mu.RLock()
@@ -691,4 +702,166 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// shouldUseBroker determines if request should go through RabbitMQ
+func (s *Scaler) shouldUseBroker(r *http.Request) bool {
+	// Only POST requests to inference endpoints use broker
+	if r.Method != http.MethodPost {
+		return false
+	}
+
+	// Check if broker is available
+	if s.broker == nil || !s.broker.IsConnected() {
+		return false
+	}
+
+	// Only route /api/generate and /api/chat through broker
+	path := r.URL.Path
+	return path == "/api/generate" || path == "/api/chat"
+}
+
+// handleBrokerRequest routes inference requests through RabbitMQ
+func (s *Scaler) handleBrokerRequest(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+
+	// Read request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "failed to read request body",
+		})
+		return
+	}
+	r.Body.Close()
+
+	// Parse the request to extract model and prompt
+	var ollamaReq struct {
+		Model   string         `json:"model"`
+		Prompt  string         `json:"prompt"`
+		Stream  bool           `json:"stream"`
+		Options map[string]any `json:"options"`
+	}
+	if err := json.Unmarshal(body, &ollamaReq); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error": "invalid JSON request",
+		})
+		return
+	}
+
+	// Check for streaming - not supported through broker yet
+	if ollamaReq.Stream {
+		log.Printf("📡 Streaming request, falling back to direct proxy")
+		// Recreate request body and fall through to direct proxy
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		s.proxyDirect(w, r)
+		return
+	}
+
+	// Create inference request
+	req := &InferenceRequest{
+		ID:        uuid.New().String(),
+		Model:     ollamaReq.Model,
+		Prompt:    ollamaReq.Prompt,
+		Stream:    false,
+		Options:   ollamaReq.Options,
+		Timestamp: time.Now(),
+	}
+
+	log.Printf("📨 Broker: routing %s to model %s", req.ID[:8], req.Model)
+
+	// Set timeout for broker request (5 min max for inference)
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+
+	// Publish to broker and wait for response
+	resp, err := s.broker.Publish(ctx, req)
+	if err != nil {
+		log.Printf("❌ Broker error: %v, falling back to direct proxy", err)
+		// On broker failure, fallback to direct proxy
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		s.proxyDirect(w, r)
+		return
+	}
+
+	s.brokerRouted.Add(1)
+	s.touch()
+
+	duration := time.Since(start)
+	log.Printf("✅ Broker: %s completed in %s (worker: %s)", req.ID[:8], duration.Round(time.Millisecond), resp.WorkerID)
+
+	// Return response in Ollama format
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"model":          resp.Model,
+		"response":       resp.Response,
+		"done":           resp.Done,
+		"total_duration": resp.Duration * 1000000, // Convert ms to ns for Ollama compat
+	})
+}
+
+// proxyDirect handles direct HTTP proxy (fallback or non-broker requests)
+func (s *Scaler) proxyDirect(w http.ResponseWriter, r *http.Request) {
+	// Get routing mode
+	s.mu.RLock()
+	mode := s.routingMode
+	s.mu.RUnlock()
+
+	var proxy *httputil.ReverseProxy
+	var targetURL string
+
+	switch mode {
+	case RoutingMac:
+		if s.macProxy != nil && s.checkEndpoint(s.cfg.MacOllamaURL) {
+			proxy = s.macProxy
+			targetURL = s.cfg.MacOllamaURL
+			s.macRouted.Add(1)
+		}
+	case RoutingLocal:
+		if s.checkEndpoint(s.cfg.OllamaURL) {
+			proxy = s.localProxy
+			targetURL = s.cfg.OllamaURL
+			s.localRouted.Add(1)
+		}
+	case RoutingRemote:
+		if s.remoteProxy != nil && s.checkEndpoint(s.cfg.RemoteOllamaURL) {
+			proxy = s.remoteProxy
+			targetURL = s.cfg.RemoteOllamaURL
+			s.remoteRouted.Add(1)
+		}
+	default: // RoutingAuto
+		if s.checkEndpoint(s.cfg.OllamaURL) {
+			proxy = s.localProxy
+			targetURL = s.cfg.OllamaURL
+			s.localRouted.Add(1)
+		} else if s.remoteProxy != nil && s.checkEndpoint(s.cfg.RemoteOllamaURL) {
+			proxy = s.remoteProxy
+			targetURL = s.cfg.RemoteOllamaURL
+			s.remoteRouted.Add(1)
+		}
+	}
+
+	if proxy == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "no backend available",
+		})
+		return
+	}
+
+	s.mu.Lock()
+	s.activeTarget = targetURL
+	s.mu.Unlock()
+	s.touch()
+
+	proxy.ServeHTTP(w, r)
+}
+
+// GetBrokerStats returns broker routing statistics
+func (s *Scaler) GetBrokerStats() int64 {
+	return s.brokerRouted.Load()
+}
+
+// IsBrokerConnected checks if broker is connected
+func (s *Scaler) IsBrokerConnected() bool {
+	return s.broker != nil && s.broker.IsConnected()
 }

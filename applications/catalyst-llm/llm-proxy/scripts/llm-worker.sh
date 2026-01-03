@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Configuration
 AWS_REGION="${AWS_REGION:-us-west-2}"
-INSTANCE_TYPE="${LLM_INSTANCE_TYPE:-r5.2xlarge}" # 8 vCPU, 64GB RAM
+INSTANCE_TYPE="${LLM_INSTANCE_TYPE:-g6.2xlarge}" # 8 vCPU, 64GB RAM
 USE_SPOT="${LLM_USE_SPOT:-false}"                # Default to on-demand for reliability
 KEY_NAME="hybrid-llm-key"
 SG_NAME="nebula-lighthouse" # Reuse lighthouse security group

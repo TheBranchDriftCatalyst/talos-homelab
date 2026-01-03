@@ -218,14 +218,17 @@ func (b *Broker) Publish(ctx context.Context, req *InferenceRequest) (*Inference
 	}
 
 	// Determine exchange based on priority
+	// Priority 0 = not set (use default), 1-4 = low, 5 = normal, 6-10 = high
 	exchange := b.cfg.InferenceExchange
 	if req.Priority > 5 {
 		exchange = b.cfg.PriorityExchange
 		routingKey = "high"
-	} else if req.Priority < 3 {
+	} else if req.Priority > 0 && req.Priority < 5 {
+		// Only use priority exchange if priority was explicitly set
 		exchange = b.cfg.PriorityExchange
 		routingKey = "low"
 	}
+	// Priority 0 or 5 uses the default inference exchange
 
 	err = b.channel.PublishWithContext(ctx,
 		exchange,   // Exchange
