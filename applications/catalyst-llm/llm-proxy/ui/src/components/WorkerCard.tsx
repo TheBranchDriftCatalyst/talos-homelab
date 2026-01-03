@@ -1,5 +1,25 @@
 import { ExternalLink, Play, Square, HardDrive } from 'lucide-react'
-import type { WorkerInfo } from '../types/api'
+import type { WorkerInfo, ModelInfo } from '../types/api'
+
+// Parse size string like "3.8 GB" or "7.3 GB" to bytes for sorting
+function parseSizeToBytes(size: string): number {
+  const match = size.match(/^([\d.]+)\s*(GB|MB|KB|B)?$/i)
+  if (!match) return 0
+  const value = parseFloat(match[1])
+  const unit = (match[2] || 'B').toUpperCase()
+  const multipliers: Record<string, number> = {
+    B: 1,
+    KB: 1024,
+    MB: 1024 * 1024,
+    GB: 1024 * 1024 * 1024,
+  }
+  return value * (multipliers[unit] || 1)
+}
+
+// Sort models by size descending (largest first)
+function sortModelsBySize(models: ModelInfo[]): ModelInfo[] {
+  return [...models].sort((a, b) => parseSizeToBytes(b.size) - parseSizeToBytes(a.size))
+}
 
 interface WorkerCardProps {
   worker: WorkerInfo
@@ -78,7 +98,7 @@ export function WorkerCard({ worker, icon, subtitle, onControl, showControls }: 
           <div className="max-h-32 overflow-auto">
             {worker.models && worker.models.length > 0 ? (
               <div className="divide-y divide-[var(--border-color)]">
-                {worker.models.map((model) => (
+                {sortModelsBySize(worker.models).map((model) => (
                   <div
                     key={model.name}
                     className="px-3 py-2 flex items-center justify-between text-sm"
