@@ -88,24 +88,41 @@ dnf install -y --allowerasing tar gzip curl jq
 echo "=== Phase 0: Mounting model storage volume ==="
 
 OLLAMA_DATA_DIR="/var/lib/ollama"
-MODEL_DEVICE="/dev/xvdf"
+MODEL_DEVICE=""
 
-# Wait for the EBS volume to be attached
+# Wait for the EBS volume to be attached (may be xvdf, nvme1n1, nvme2n1, etc.)
 echo "Waiting for model storage volume..."
 for i in {1..30}; do
-    if [[ -b "$MODEL_DEVICE" ]] || [[ -b "/dev/nvme1n1" ]]; then
-        echo "Model volume detected"
+    # Check for xvd* device (traditional naming)
+    if [[ -b "/dev/xvdf" ]]; then
+        MODEL_DEVICE="/dev/xvdf"
         break
     fi
+    # Check NVMe devices - find the non-root, non-instance-store EBS volume
+    # Instance stores are usually ephemeral and small, EBS volumes are persistent
+    for nvme in /dev/nvme[0-9]n1; do
+        if [[ -b "$nvme" ]]; then
+            # Skip root volume (nvme0n1 usually)
+            if [[ "$nvme" == "/dev/nvme0n1" ]]; then
+                continue
+            fi
+            # Check if it's our EBS volume (will be ~100GB, not instance store which is smaller)
+            size_gb=$(lsblk -b -d -n -o SIZE "$nvme" 2>/dev/null | awk '{print int($1/1024/1024/1024)}')
+            if [[ "$size_gb" -ge 50 ]]; then
+                MODEL_DEVICE="$nvme"
+                echo "Found model volume: $MODEL_DEVICE (${size_gb}GB)"
+                break 2
+            fi
+        fi
+    done
     sleep 2
 done
 
-# Determine the actual device (NVMe instances use different naming)
-if [[ -b "/dev/nvme1n1" ]]; then
-    MODEL_DEVICE="/dev/nvme1n1"
+if [[ -z "$MODEL_DEVICE" ]]; then
+    echo "WARNING: Model storage volume not found after waiting"
 fi
 
-if [[ -b "$MODEL_DEVICE" ]]; then
+if [[ -n "$MODEL_DEVICE" ]] && [[ -b "$MODEL_DEVICE" ]]; then
     # Check if filesystem exists
     if ! blkid "$MODEL_DEVICE" | grep -q "TYPE="; then
         echo "Creating XFS filesystem on model volume..."
@@ -171,7 +188,7 @@ MIDDLE2
 cat "$HOST_KEY"
 
 # Embed lighthouse IP
-cat << 'MIDDLE3'
+cat << MIDDLE3
 HOSTKEY
 
 chmod 600 /etc/nebula/host.key
@@ -288,22 +305,26 @@ echo "=== Phase 2: Installing k3s Agent ==="
 # k3s server URL and token (embedded at userdata generation time)
 K3S_URL="https://10.42.0.1:6443"
 K3S_TOKEN="${K3S_TOKEN}"
+MIDDLE3
+
+# Start new quoted heredoc for remainder (no variable expansion needed)
+cat << 'MIDDLE4'
 
 # Wait for lighthouse k3s API to be reachable via Nebula
-echo "Waiting for k3s API server at \$K3S_URL..."
+echo "Waiting for k3s API server at $K3S_URL..."
 for i in {1..60}; do
-    if curl -sk "\$K3S_URL/healthz" 2>/dev/null | grep -q "ok"; then
+    if curl -sk "$K3S_URL/healthz" 2>/dev/null | grep -q "ok"; then
         echo "k3s API server is reachable"
         break
     fi
-    echo "  Attempt \$i/60 - waiting for k3s API..."
+    echo "  Attempt $i/60 - waiting for k3s API..."
     sleep 5
 done
 
 # Install k3s as AGENT (joins lighthouse's cluster)
 # - Uses Nebula mesh for cluster communication
 # - Labeled as GPU node for Liqo/scheduler targeting
-curl -sfL https://get.k3s.io | K3S_URL="\$K3S_URL" K3S_TOKEN="\$K3S_TOKEN" \
+curl -sfL https://get.k3s.io | K3S_URL="$K3S_URL" K3S_TOKEN="$K3S_TOKEN" \
     INSTALL_K3S_EXEC="agent \
     --node-ip=10.42.2.1 \
     --flannel-iface=nebula1 \
@@ -315,7 +336,7 @@ curl -sfL https://get.k3s.io | K3S_URL="\$K3S_URL" K3S_TOKEN="\$K3S_TOKEN" \
 # Wait for this node to be Ready in the cluster
 echo "Waiting for node to join cluster..."
 for i in {1..60}; do
-    if curl -sk "\$K3S_URL/api/v1/nodes" -H "Authorization: Bearer \$K3S_TOKEN" 2>/dev/null | grep -q "gpu-worker"; then
+    if curl -sk "$K3S_URL/api/v1/nodes" -H "Authorization: Bearer $K3S_TOKEN" 2>/dev/null | grep -q "gpu-worker"; then
         echo "Node joined cluster successfully"
         break
     fi
@@ -555,4 +576,4 @@ echo "Workloads with nodeSelector 'node-type: gpu' will schedule here."
 echo ""
 echo "NOTE: Instance will auto-shutdown after 120 minutes of inactivity!"
 echo ""
-MIDDLE3
+MIDDLE4

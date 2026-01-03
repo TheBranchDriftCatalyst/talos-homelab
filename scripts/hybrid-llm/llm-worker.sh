@@ -127,11 +127,24 @@ ensure_model_volume() {
     fi
   fi
 
+  # Get instance AZ for volume placement
+  local instance_id=$(get_state "instance_id")
+  local az
+  if [[ -n "$instance_id" ]]; then
+    az=$(aws ec2 describe-instances \
+      --instance-ids "$instance_id" \
+      --query 'Reservations[0].Instances[0].Placement.AvailabilityZone' \
+      --output text --region "$AWS_REGION" 2>/dev/null)
+  fi
+  # Default to first AZ in region if instance not available yet
+  az="${az:-${AWS_REGION}a}"
+
   # Create new volume
-  log_info "Creating persistent EBS volume for models (${MODEL_VOLUME_SIZE}GB)..."
+  log_info "Creating persistent EBS volume for models (${MODEL_VOLUME_SIZE}GB) in $az..."
   volume_id=$(aws ec2 create-volume \
     --size "$MODEL_VOLUME_SIZE" \
     --volume-type "$MODEL_VOLUME_TYPE" \
+    --availability-zone "$az" \
     --tag-specifications "ResourceType=volume,Tags=[{Key=Name,Value=$MODEL_VOLUME_NAME},{Key=Project,Value=hybrid-llm}]" \
     --region "$AWS_REGION" \
     --query 'VolumeId' \

@@ -24,16 +24,10 @@ LABEL_BUILD = '3-build'
 local_resource(
     'ec2-agent',
     serve_cmd='''
-        # Use entr for live reload if available, otherwise just run
-        if command -v entr >/dev/null 2>&1; then
-            find . -name "*.go" | entr -r go run ./cmd/main.go \
-                -script=./scripts/mock-worker.sh \
-                -addr=:8090
-        else
-            go run ./cmd/main.go \
-                -script=./scripts/mock-worker.sh \
-                -addr=:8090
-        fi
+        export CGO_ENABLED=0
+        go run ./cmd/main.go \
+            -script=./scripts/mock-worker.sh \
+            -addr=:8090
     ''',
     deps=[
         './cmd',
@@ -59,6 +53,7 @@ local_resource(
 local_resource(
     'ec2-agent-llm',
     serve_cmd='''
+        export CGO_ENABLED=0
         go run ./cmd/main.go \
             -script=../../scripts/hybrid-llm/llm-worker.sh \
             -ec2-tags='{"Name":"llm-worker","Project":"catalyst-llm"}' \
