@@ -171,7 +171,7 @@ MIDDLE2
 cat "$HOST_KEY"
 
 # Embed lighthouse IP
-cat << MIDDLE3
+cat << 'MIDDLE3'
 HOSTKEY
 
 chmod 600 /etc/nebula/host.key
