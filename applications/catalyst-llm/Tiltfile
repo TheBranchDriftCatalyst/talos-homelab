@@ -102,6 +102,7 @@ docker_build(
         'ui.go',
         'websocket.go',
         'scripts/',
+        'ui/',  # Include React UI for production builds
     ],
     live_update=[
         # Sync steps must come before run steps
@@ -115,6 +116,46 @@ docker_build(
         # Rebuild binary in container
         run('cd /build && CGO_ENABLED=0 go build -o /app/llm-proxy . && kill -HUP 1'),
     ]
+)
+
+# ============================================
+# React UI Development (optional - run locally with Vite)
+# ============================================
+
+# Local Vite dev server for React UI hot-reload
+# This proxies WebSocket to the Go backend running in cluster
+local_resource(
+    'llm-proxy-ui-dev',
+    serve_cmd='cd llm-proxy/ui && yarn install && yarn dev',
+    serve_dir='llm-proxy/ui',
+    deps=['llm-proxy/ui/src', 'llm-proxy/ui/package.json'],
+    readiness_probe=probe(
+        http_get=http_get_action(port=5173, path='/'),
+        initial_delay_secs=5,
+        period_secs=3,
+    ),
+    labels=[LABEL_LOCAL],
+    links=[
+        link('http://localhost:5173', 'React UI (Dev Server)'),
+    ],
+    resource_deps=['llm-proxy'],  # Needs backend for WebSocket
+    auto_init=False,  # Manual start - run only when developing UI
+)
+
+cmd_button(
+    name='btn-ui-install',
+    resource='llm-proxy-ui-dev',
+    argv=['sh', '-c', 'cd llm-proxy/ui && yarn install && echo "Dependencies installed"'],
+    text='Install Deps',
+    icon_name='download'
+)
+
+cmd_button(
+    name='btn-ui-build',
+    resource='llm-proxy-ui-dev',
+    argv=['sh', '-c', 'cd llm-proxy/ui && yarn build && echo "UI built to ui/dist"'],
+    text='Build UI',
+    icon_name='build'
 )
 
 # Apply llm-proxy deployment only (not full kustomization to avoid conflicts with Flux)

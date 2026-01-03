@@ -67,7 +67,21 @@ func main() {
 	mux.HandleFunc("/_/resume", scaler.Resume)
 	mux.HandleFunc("/_/ttl", scaler.SetTTL)
 	mux.HandleFunc("/_/ws", scaler.WebSocket)
-	mux.HandleFunc("/_/ui", scaler.UI)
+
+	// Serve React UI from static files if available, otherwise use embedded HTML
+	uiDir := env("UI_DIR", "/app/ui/dist")
+	if _, err := os.Stat(uiDir); err == nil {
+		log.Printf("   UI: Serving from %s", uiDir)
+		fs := http.FileServer(http.Dir(uiDir))
+		mux.Handle("/_/ui/", http.StripPrefix("/_/ui/", fs))
+		mux.HandleFunc("/_/ui", func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFile(w, r, uiDir+"/index.html")
+		})
+	} else {
+		log.Printf("   UI: Using embedded HTML (no %s)", uiDir)
+		mux.HandleFunc("/_/ui", scaler.UI)
+	}
+
 	mux.HandleFunc("/", scaler.Proxy)
 
 	log.Printf("   Listening on %s", cfg.ListenAddr)
