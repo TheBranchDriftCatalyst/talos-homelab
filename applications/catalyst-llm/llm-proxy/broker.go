@@ -299,19 +299,19 @@ func (b *Broker) IsConnected() bool {
 }
 
 // determineRoutingKey maps model names to routing keys
+// Returns just the base model family name for clean routing
 func determineRoutingKey(model string) string {
-	// Extract base model name (before : or /)
 	switch {
-	case containsAny(model, "llama3", "llama-3"):
-		return "llama3." + model
+	case containsAny(model, "llama3", "llama-3", "llama3.2", "llama3.1"):
+		return "llama3"
 	case containsAny(model, "mistral"):
-		return "mistral." + model
+		return "mistral"
 	case containsAny(model, "qwen"):
-		return "qwen." + model
+		return "qwen"
 	case containsAny(model, "dolphin"):
-		return "dolphin." + model
+		return "dolphin"
 	default:
-		return model // Use model name as routing key
+		return "default" // Unknown models go to default queue
 	}
 }
 

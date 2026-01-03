@@ -138,18 +138,23 @@ func (w *Worker) consumeQueue(ctx context.Context, queueName, consumerTag string
 		return
 	}
 
-	// Bind to inference exchange
+	// Extract routing key from queue name (e.g., "llm.inference.llama3" -> "llama3")
+	routingKey := extractRoutingKey(queueName)
+
+	// Bind to inference exchange with specific routing key
 	err = ch.QueueBind(
 		queue.Name,
-		"#", // Routing key (catch all for this queue)
+		routingKey, // Specific routing key for this queue
 		"llm.inference",
 		false,
 		nil,
 	)
 	if err != nil {
-		log.Printf("⚠️ Failed to bind queue %s: %v", queueName, err)
+		log.Printf("⚠️ Failed to bind queue %s with key %s: %v", queueName, routingKey, err)
 		return
 	}
+
+	log.Printf("📥 Queue %s bound with routing key: %s", queueName, routingKey)
 
 	msgs, err := ch.Consume(
 		queue.Name,  // Queue
@@ -340,6 +345,16 @@ func modelToQueueName(model string) string {
 	name := strings.Split(model, ":")[0]
 	name = strings.Split(name, "/")[0]
 	return strings.ToLower(name)
+}
+
+// extractRoutingKey extracts the routing key from queue name
+// e.g., "llm.inference.llama3" -> "llama3"
+func extractRoutingKey(queueName string) string {
+	parts := strings.Split(queueName, ".")
+	if len(parts) >= 3 {
+		return parts[len(parts)-1] // Last part is the model/routing key
+	}
+	return "default"
 }
 
 // LoadWorkerConfig loads worker configuration from environment
