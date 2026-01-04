@@ -1,0 +1,286 @@
+syntax = "proto3";
+
+package ec2agent.v1;
+
+option go_package = "github.com/thebranchdriftcatalyst/ec2-agent/pkg/proto;proto";
+
+import "google/protobuf/timestamp.proto";
+
+// =============================================================================
+// Agent Control Service
+// =============================================================================
+
+// AgentControl is the main service for worker agent communication.
+// Workers connect via bidirectional streaming for real-time status and commands.
+service AgentControl {
+  // Connect establishes a bidirectional stream between agent and control plane.
+  // Agent sends status updates, control plane sends commands.
+  rpc Connect(stream AgentMessage) returns (stream ControlMessage);
+
+  // Register is called once when agent starts to register with control plane.
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+
+  // Heartbeat is a lightweight keep-alive (backup if stream hiccups).
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // GetFleetStatus returns status of all connected agents (for dashboards).
+  rpc GetFleetStatus(FleetStatusRequest) returns (FleetStatusResponse);
+}
+
+// =============================================================================
+// Registration
+// =============================================================================
+
+message RegisterRequest {
+  string node_id = 1;           // Unique node identifier (instance-id or hostname)
+  NodeType node_type = 2;       // lighthouse, gpu-worker, cpu-worker
+  string instance_id = 3;       // AWS instance ID (if applicable)
+  string nebula_ip = 4;         // Nebula mesh IP (e.g., 10.42.2.1)
+  string public_ip = 5;         // Public IP (if any)
+  string region = 6;            // AWS region or "homelab"
+  string availability_zone = 7; // AZ or empty
+  map<string, string> labels = 8; // Additional labels/tags
+  NodeCapabilities capabilities = 9;
+}
+
+message RegisterResponse {
+  bool accepted = 1;
+  string message = 2;
+  string assigned_id = 3;       // Control plane may assign a different ID
+  int32 heartbeat_interval_sec = 4; // How often to send heartbeats
+  int32 status_interval_sec = 5;    // How often to send full status
+}
+
+message NodeCapabilities {
+  bool has_gpu = 1;
+  string gpu_model = 2;         // e.g., "NVIDIA T4", "NVIDIA A10G"
+  int32 gpu_count = 3;
+  int64 gpu_memory_mb = 4;
+  int32 cpu_cores = 5;
+  int64 memory_mb = 6;
+  int64 disk_mb = 7;
+}
+
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_LIGHTHOUSE = 1;     // k3s server + liqo + nebula lighthouse
+  NODE_TYPE_GPU_WORKER = 2;     // k3s agent + ollama + GPU
+  NODE_TYPE_CPU_WORKER = 3;     // k3s agent, no GPU
+}
+
+// =============================================================================
+// Bidirectional Stream Messages
+// =============================================================================
+
+// AgentMessage is sent from worker agent to control plane
+message AgentMessage {
+  oneof payload {
+    NodeStatus status = 1;
+    CommandResult command_result = 2;
+    LogEntry log = 3;
+  }
+}
+
+// ControlMessage is sent from control plane to worker agent
+message ControlMessage {
+  oneof payload {
+    Command command = 1;
+    Ack ack = 2;
+    ConfigUpdate config = 3;
+  }
+}
+
+// =============================================================================
+// Node Status (Agent -> Control)
+// =============================================================================
+
+message NodeStatus {
+  string node_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+
+  // Service health
+  ServiceStatus nebula = 3;
+  ServiceStatus k3s = 4;
+  ServiceStatus ollama = 5;
+  ServiceStatus liqo = 6;
+
+  // Resource usage
+  ResourceUsage resources = 7;
+
+  // GPU status (if applicable)
+  repeated GPUStatus gpus = 8;
+
+  // Ollama models (if applicable)
+  repeated OllamaModel loaded_models = 9;
+
+  // Uptime and idle tracking
+  int64 uptime_seconds = 10;
+  int64 idle_seconds = 11;      // Seconds since last ollama request
+
+  // Overall health
+  HealthState health = 12;
+}
+
+message ServiceStatus {
+  ServiceState state = 1;
+  string message = 2;           // Error message if not healthy
+  int64 uptime_seconds = 3;
+}
+
+enum ServiceState {
+  SERVICE_STATE_UNSPECIFIED = 0;
+  SERVICE_STATE_RUNNING = 1;
+  SERVICE_STATE_STOPPED = 2;
+  SERVICE_STATE_STARTING = 3;
+  SERVICE_STATE_ERROR = 4;
+  SERVICE_STATE_NOT_INSTALLED = 5;
+}
+
+enum HealthState {
+  HEALTH_STATE_UNSPECIFIED = 0;
+  HEALTH_STATE_HEALTHY = 1;
+  HEALTH_STATE_DEGRADED = 2;    // Partially working
+  HEALTH_STATE_UNHEALTHY = 3;
+}
+
+message ResourceUsage {
+  double cpu_percent = 1;
+  int64 memory_used_mb = 2;
+  int64 memory_total_mb = 3;
+  int64 disk_used_mb = 4;
+  int64 disk_total_mb = 5;
+}
+
+message GPUStatus {
+  int32 index = 1;
+  string name = 2;              // e.g., "NVIDIA T4"
+  int64 memory_used_mb = 3;
+  int64 memory_total_mb = 4;
+  double utilization_percent = 5;
+  int32 temperature_c = 6;
+}
+
+message OllamaModel {
+  string name = 1;              // e.g., "llama3.2:latest"
+  int64 size_bytes = 2;
+  bool currently_loaded = 3;    // In VRAM
+}
+
+// =============================================================================
+// Commands (Control -> Agent)
+// =============================================================================
+
+message Command {
+  string command_id = 1;        // Unique ID for tracking
+  CommandType type = 2;
+  map<string, string> args = 3; // Command-specific arguments
+  int32 timeout_seconds = 4;    // 0 = no timeout
+}
+
+enum CommandType {
+  COMMAND_TYPE_UNSPECIFIED = 0;
+  COMMAND_TYPE_SHUTDOWN = 1;    // Graceful shutdown
+  COMMAND_TYPE_REBOOT = 2;
+  COMMAND_TYPE_DRAIN = 3;       // Drain k3s workloads then shutdown
+  COMMAND_TYPE_PULL_MODEL = 4;  // Pull ollama model (args: model=name)
+  COMMAND_TYPE_UNLOAD_MODEL = 5;// Unload model from VRAM
+  COMMAND_TYPE_EXEC = 6;        // Execute arbitrary command (args: cmd=...)
+  COMMAND_TYPE_UPDATE_CONFIG = 7; // Update agent config
+  COMMAND_TYPE_RESTART_SERVICE = 8; // Restart a service (args: service=name)
+}
+
+message CommandResult {
+  string command_id = 1;
+  bool success = 2;
+  int32 exit_code = 3;
+  string stdout = 4;
+  string stderr = 5;
+  string error = 6;             // Error message if failed
+  int64 duration_ms = 7;
+}
+
+message Ack {
+  string message_id = 1;
+  bool received = 2;
+}
+
+message ConfigUpdate {
+  int32 heartbeat_interval_sec = 1;
+  int32 status_interval_sec = 2;
+  int32 idle_shutdown_minutes = 3; // 0 = disabled
+}
+
+// =============================================================================
+// Logging (Agent -> Control)
+// =============================================================================
+
+message LogEntry {
+  google.protobuf.Timestamp timestamp = 1;
+  LogLevel level = 2;
+  string message = 3;
+  string source = 4;            // e.g., "ollama", "k3s", "nebula"
+  map<string, string> fields = 5;
+}
+
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_WARN = 3;
+  LOG_LEVEL_ERROR = 4;
+}
+
+// =============================================================================
+// Heartbeat (Backup keep-alive)
+// =============================================================================
+
+message HeartbeatRequest {
+  string node_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+  google.protobuf.Timestamp server_time = 2;
+}
+
+// =============================================================================
+// Fleet Status (for dashboards/APIs)
+// =============================================================================
+
+message FleetStatusRequest {
+  // Optional filters
+  NodeType node_type = 1;       // Filter by type
+  HealthState health = 2;       // Filter by health
+}
+
+message FleetStatusResponse {
+  repeated NodeSummary nodes = 1;
+  FleetSummary summary = 2;
+}
+
+message NodeSummary {
+  string node_id = 1;
+  NodeType node_type = 2;
+  HealthState health = 3;
+  string nebula_ip = 4;
+  string instance_id = 5;
+  bool connected = 6;
+  google.protobuf.Timestamp last_seen = 7;
+  int64 uptime_seconds = 8;
+  int64 idle_seconds = 9;
+
+  // Quick stats
+  double cpu_percent = 10;
+  double memory_percent = 11;
+  int32 gpu_count = 12;
+  int32 loaded_models = 13;
+}
+
+message FleetSummary {
+  int32 total_nodes = 1;
+  int32 healthy_nodes = 2;
+  int32 unhealthy_nodes = 3;
+  int32 gpu_nodes = 4;
+  int32 total_gpus = 5;
+}
