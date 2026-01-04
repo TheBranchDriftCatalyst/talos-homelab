@@ -24,11 +24,11 @@ LABEL_FLUX = LABEL_LLM
 LABEL_LOCAL = '8-local-dev'
 REGISTRY = 'ghcr.io/thebranchdriftcatalyst'
 
+# Cluster context (same as root Tiltfile) - must be before any local() calls
+allow_k8s_contexts('admin@catalyst-cluster')
+
 # Get Mac's local IP for cluster access (used for Mac dev endpoint)
 MAC_IP = str(local('ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "localhost"', quiet=True)).strip()
-
-# Cluster context (same as root Tiltfile)
-allow_k8s_contexts('admin@catalyst-cluster')
 
 # ============================================
 # Flux Management - Suspend during dev
@@ -76,10 +76,13 @@ local_resource(
     links=[
         link('http://chat.talos00', 'Open WebUI (Chat)'),
         link('http://llm-proxy.talos00/_/ui', 'LLM Scaler Dashboard'),
+        link('http://llm-proxy.talos00/_/fleet', 'Fleet Status (JSON)'),
         link('http://llm.talos00', 'LLM API'),
         link('http://ollama.talos00', 'Ollama API'),
         link('http://sillytavern.talos00', 'SillyTavern'),
         link('http://searxng.talos00', 'SearXNG Search'),
+        link('http://rabbitmq.talos00', 'RabbitMQ Management'),
+        link('http://fleet.talos00/api/v1/nodes', 'Fleet API (if IngressRoute)'),
     ]
 )
 
@@ -256,8 +259,11 @@ cmd_button(
     name='btn-rabbitmq-queues',
     resource='rabbitmq',
     argv=['sh', '-c', '''
-        echo "=== Queues ===" && \
-        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_queues --vhost llm name messages consumers
+        echo "=== LLM Queues ===" && \
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_queues --vhost llm name messages consumers && \
+        echo "" && \
+        echo "=== Agents Queues ===" && \
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_queues --vhost agents name messages consumers 2>/dev/null || echo "(agents vhost not configured)"
     '''],
     text='List Queues',
     icon_name='list'
@@ -267,11 +273,28 @@ cmd_button(
     name='btn-rabbitmq-bindings',
     resource='rabbitmq',
     argv=['sh', '-c', '''
-        echo "=== Bindings ===" && \
-        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_bindings --vhost llm source_name destination_name routing_key
+        echo "=== LLM Bindings ===" && \
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_bindings --vhost llm source_name destination_name routing_key && \
+        echo "" && \
+        echo "=== Agents Bindings ===" && \
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_bindings --vhost agents source_name destination_name routing_key 2>/dev/null || echo "(agents vhost not configured)"
     '''],
     text='List Bindings',
     icon_name='link'
+)
+
+cmd_button(
+    name='btn-rabbitmq-agents-queues',
+    resource='rabbitmq',
+    argv=['sh', '-c', '''
+        echo "=== Agents Vhost Queues ===" && \
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_queues --vhost agents name messages consumers && \
+        echo "" && \
+        echo "=== Agents Exchanges ===" && \
+        kubectl exec -n catalyst-llm rabbitmq-0 -- rabbitmqctl list_exchanges --vhost agents name type
+    '''],
+    text='Agents Vhost',
+    icon_name='hub'
 )
 
 # ============================================
@@ -467,4 +490,87 @@ cmd_button(
     '''],
     text='Rebuild & Push',
     icon_name='build'
+)
+
+# ============================================
+# EC2 Agents - Fleet Management (control-plane)
+# ============================================
+
+LABEL_FLEET = '9-ec2-agents'
+
+# Attach to control-plane in ec2-agents namespace
+k8s_attach('control-plane', 'deployment/control-plane', namespace='ec2-agents',
+           port_forwards=[
+               '8090:8090',   # HTTP API
+               '50051:50051', # gRPC
+           ],
+           labels=[LABEL_FLEET],
+           links=[
+               link('http://localhost:8090/api/v1/fleet', 'Fleet API'),
+               link('http://localhost:8090/api/v1/nodes', 'Nodes API'),
+               link('http://localhost:8090/api/v1/stats', 'Stats API'),
+           ])
+
+# Fleet status button
+cmd_button(
+    name='btn-fleet-status',
+    resource='control-plane',
+    argv=['sh', '-c', '''
+        echo "=== Fleet Status ===" && \
+        curl -s http://localhost:8090/api/v1/fleet | jq . 2>/dev/null || \
+        kubectl exec -n ec2-agents deploy/control-plane -- curl -s http://localhost:8090/api/v1/fleet
+    '''],
+    text='Fleet Status',
+    icon_name='dns'
+)
+
+# List nodes button
+cmd_button(
+    name='btn-fleet-nodes',
+    resource='control-plane',
+    argv=['sh', '-c', '''
+        echo "=== Fleet Nodes ===" && \
+        curl -s http://localhost:8090/api/v1/nodes | jq . 2>/dev/null || \
+        kubectl exec -n ec2-agents deploy/control-plane -- curl -s http://localhost:8090/api/v1/nodes
+    '''],
+    text='List Nodes',
+    icon_name='list'
+)
+
+# GPU workers only button
+cmd_button(
+    name='btn-fleet-gpu-workers',
+    resource='control-plane',
+    argv=['sh', '-c', '''
+        echo "=== GPU Workers ===" && \
+        curl -s "http://localhost:8090/api/v1/nodes?type=gpu-worker" | jq . 2>/dev/null || \
+        kubectl exec -n ec2-agents deploy/control-plane -- curl -s "http://localhost:8090/api/v1/nodes?type=gpu-worker"
+    '''],
+    text='GPU Workers',
+    icon_name='memory'
+)
+
+# Fleet stats button
+cmd_button(
+    name='btn-fleet-stats',
+    resource='control-plane',
+    argv=['sh', '-c', '''
+        echo "=== Fleet Stats ===" && \
+        curl -s http://localhost:8090/api/v1/stats | jq . 2>/dev/null || \
+        kubectl exec -n ec2-agents deploy/control-plane -- curl -s http://localhost:8090/api/v1/stats
+    '''],
+    text='Stats',
+    icon_name='analytics'
+)
+
+# llm-proxy fleet integration check
+cmd_button(
+    name='btn-llm-fleet',
+    resource='llm-proxy',
+    argv=['sh', '-c', '''
+        echo "=== LLM Proxy Fleet Integration ===" && \
+        curl -s http://localhost:8080/_/fleet | jq .
+    '''],
+    text='Fleet Integration',
+    icon_name='hub'
 )
