@@ -18,9 +18,12 @@ RUN yarn build
 # ============================================
 # Stage 2: Build Go binary
 # ============================================
-FROM golang:1.22-alpine AS go-builder
+FROM golang:1.24-alpine AS go-builder
 
 WORKDIR /build
+
+# Copy ec2-agent dependency first (local replace in go.mod)
+COPY ec2-agent/ /tools/ec2-agent/
 
 # Download dependencies first (cached layer)
 COPY go.mod go.sum ./
