@@ -46,6 +46,7 @@ type Scaler struct {
 	macProxy    *httputil.ReverseProxy // Mac dev endpoint (Tilt only)
 	hub         *Hub                   // WebSocket hub
 	broker      *Broker                // RabbitMQ broker (nil if disabled)
+	fleet       *FleetClient           // Fleet API client (nil if disabled)
 	executor    *Executor              // Process executor for worker control
 
 	mu           sync.RWMutex
@@ -881,4 +882,64 @@ func (s *Scaler) GetBrokerStats() int64 {
 // IsBrokerConnected checks if broker is connected
 func (s *Scaler) IsBrokerConnected() bool {
 	return s.broker != nil && s.broker.IsConnected()
+}
+
+// FleetStatus returns the current fleet state for the API
+func (s *Scaler) FleetStatus(w http.ResponseWriter, r *http.Request) {
+	if s.fleet == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"enabled": false,
+			"message": "Fleet API not configured",
+		})
+		return
+	}
+
+	nodes := s.fleet.GetNodes()
+	gpuWorkers := s.fleet.GetGPUWorkers()
+	bestWorker := s.fleet.GetBestGPUWorker()
+
+	result := map[string]any{
+		"enabled":     true,
+		"total_nodes": len(nodes),
+		"gpu_workers": len(gpuWorkers),
+		"nodes":       nodes,
+	}
+
+	if bestWorker != nil {
+		result["best_worker"] = map[string]any{
+			"id":         bestWorker.ID,
+			"nebula_ip":  bestWorker.NebulaIP,
+			"health":     bestWorker.Health,
+			"ollama_url": fmt.Sprintf("http://%s:11434", bestWorker.NebulaIP),
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// GetDynamicRemoteURL returns the remote Ollama URL, preferring fleet API if configured
+func (s *Scaler) GetDynamicRemoteURL() string {
+	// If fleet is configured and has workers, use dynamic URL
+	if s.fleet != nil && s.fleet.IsConfigured() {
+		s.fleet.RefreshIfStale(context.Background())
+		url := s.fleet.GetOllamaURL()
+		if url != "" {
+			return url
+		}
+	}
+	// Fall back to static config
+	return s.cfg.RemoteOllamaURL
+}
+
+// IsFleetConfigured returns true if fleet API is configured
+func (s *Scaler) IsFleetConfigured() bool {
+	return s.fleet != nil && s.fleet.IsConfigured()
+}
+
+// GetFleetWorkerCount returns the number of fleet workers
+func (s *Scaler) GetFleetWorkerCount() int {
+	if s.fleet == nil {
+		return 0
+	}
+	return len(s.fleet.GetGPUWorkers())
 }

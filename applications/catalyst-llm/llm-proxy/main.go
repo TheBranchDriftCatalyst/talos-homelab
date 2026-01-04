@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -50,8 +51,19 @@ func main() {
 		log.Printf("   Broker mode: DISABLED (direct proxy)")
 	}
 
+	// Initialize fleet client if configured
+	var fleetClient *FleetClient
+	if cfg.FleetAPIURL != "" {
+		log.Printf("   Fleet API: %s", cfg.FleetAPIURL)
+		fleetClient = NewFleetClient(cfg.FleetAPIURL)
+		go fleetClient.RunRefreshLoop(context.Background())
+	} else {
+		log.Printf("   Fleet API: DISABLED (using static REMOTE_OLLAMA_URL)")
+	}
+
 	scaler := NewScaler(cfg)
-	scaler.broker = broker // Attach broker to scaler
+	scaler.broker = broker       // Attach broker to scaler
+	scaler.fleet = fleetClient   // Attach fleet client to scaler
 	go scaler.hub.Run()
 	go scaler.RunIdleWatcher()
 	go scaler.RunStatusBroadcaster()
@@ -73,6 +85,7 @@ func main() {
 	mux.HandleFunc("/_/resume", scaler.Resume)
 	mux.HandleFunc("/_/ttl", scaler.SetTTL)
 	mux.HandleFunc("/_/ws", scaler.WebSocket)
+	mux.HandleFunc("/_/fleet", scaler.FleetStatus)
 
 	// Dynamic tabs from IngressRoutes
 	if ingressDiscovery != nil {
@@ -113,6 +126,7 @@ type Config struct {
 	WorkerScript    string
 	StateFile       string
 	AWSRegion       string
+	FleetAPIURL     string        // ec2-agents control-plane API URL
 }
 
 func loadConfig() Config {
@@ -127,6 +141,7 @@ func loadConfig() Config {
 		WorkerScript:    env("WORKER_SCRIPT", "/app/llm-worker.sh"),
 		StateFile:       env("STATE_FILE", "/app/.output/worker-state.json"),
 		AWSRegion:       env("AWS_REGION", "us-west-2"),
+		FleetAPIURL:     env("FLEET_API_URL", ""), // e.g., http://control-plane.ec2-agents.svc.cluster.local:8090
 	}
 }
 

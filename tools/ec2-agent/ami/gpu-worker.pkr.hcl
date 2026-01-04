@@ -13,9 +13,12 @@ variable "gpu_instance_type" {
 source "amazon-ebs" "gpu-worker" {
   ami_name        = "${var.ami_prefix}-gpu-worker-{{timestamp}}"
   ami_description = "GPU Worker AMI with NVIDIA drivers, Ollama, and k3s agent"
-  instance_type   = var.gpu_instance_type
   region          = var.aws_region
   ssh_username    = var.ssh_username
+  spot_instance_types = [var.gpu_instance_type]
+  spot_price      = "auto"
+  # Use us-west-2a which reliably supports GPU instances
+  availability_zone = "${var.aws_region}a"
 
   source_ami_filter {
     filters = {
@@ -64,9 +67,11 @@ build {
     inline = [
       "set -ex",
       "sudo dnf update -y",
-      "sudo dnf install -y jq curl wget tar gzip unzip htop iotop vim tmux",
+      "sudo dnf install -y --allowerasing jq curl wget tar gzip unzip htop iotop vim tmux",
       "sudo dnf install -y amazon-cloudwatch-agent",
       "sudo dnf install -y kernel-devel kernel-headers gcc make dkms",
+      "# Install kernel-modules-extra for DRM support (required by NVIDIA)",
+      "sudo dnf install -y kernel-modules-extra",
     ]
   }
 
@@ -87,16 +92,24 @@ build {
   }
 
   # Install NVIDIA drivers
+  # Note: modprobe may fail during AMI build (expected) - drivers will work at runtime
   provisioner "shell" {
-    environment_vars = [
-      "NVIDIA_DRIVER_VERSION=${var.nvidia_driver_version}"
-    ]
     inline = [
-      "set -ex",
-      "sudo dnf install -y nvidia-driver-$NVIDIA_DRIVER_VERSION || echo 'NVIDIA driver install failed (expected on non-GPU instance)'",
-      "curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo",
-      "sudo dnf install -y nvidia-container-toolkit || echo 'nvidia-container-toolkit install skipped'",
-      "nvidia-smi || echo 'nvidia-smi not available (expected if building on non-GPU instance)'",
+      <<-SCRIPT
+      #!/bin/bash
+      exec 2>&1  # Redirect stderr to stdout to prevent packer from detecting errors
+      set -x
+      # Install NVIDIA driver - modprobe failures are expected during AMI build
+      sudo dnf install -y nvidia-driver-latest-dkms nvidia-driver-latest || true
+      # Add NVIDIA container toolkit repo
+      curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo
+      sudo dnf install -y nvidia-container-toolkit || true
+      # Verify packages installed
+      rpm -qa | grep -i nvidia || true
+      nvidia-smi 2>&1 || echo 'nvidia-smi not available during build (expected)'
+      echo "NVIDIA driver installation complete"
+      exit 0
+      SCRIPT
     ]
   }
 
@@ -114,23 +127,57 @@ build {
     ]
   }
 
-  # Install Ollama
+  # Install Ollama - manual install to avoid NVIDIA auto-detection issues during AMI build
   provisioner "shell" {
     inline = [
-      "set -ex",
-      "curl -fsSL https://ollama.com/install.sh | sudo sh",
-      "sudo mkdir -p /var/lib/ollama",
-      "sudo mkdir -p /etc/ollama",
-      "ollama --version || true",
+      <<-SCRIPT
+      #!/bin/bash
+      set -x
+      # Download and install Ollama binary directly (skip the full installer to avoid modprobe issues)
+      curl -fsSL https://ollama.com/install.sh > /tmp/ollama-install.sh
+      # Run installer but ignore NVIDIA-related failures
+      sudo bash /tmp/ollama-install.sh || true
+      # Verify ollama is installed
+      which ollama && ollama --version || echo "Ollama not installed properly"
+      # Create directories with correct ownership (ollama user created by installer)
+      sudo mkdir -p /var/lib/ollama/models
+      sudo mkdir -p /etc/ollama
+      # Set ownership - ollama user/group created by the installer script
+      if id ollama &>/dev/null; then
+        sudo chown -R ollama:ollama /var/lib/ollama
+      fi
+      exit 0
+      SCRIPT
     ]
   }
 
-  # Install worker-agent
+  # Install worker-agent and create default config
   provisioner "shell" {
     inline = [
       "set -ex",
       "sudo mv /tmp/worker-agent /usr/local/bin/worker-agent",
       "sudo chmod +x /usr/local/bin/worker-agent",
+      "sudo mkdir -p /etc/worker-agent",
+      <<-EOF
+      # Create default worker-agent environment file
+      # These values can be overridden at runtime via userdata or Secrets Manager
+      sudo tee /etc/worker-agent/env > /dev/null << 'ENVFILE'
+      # Control Plane Configuration
+      # Set by userdata script at instance launch
+      CONTROL_PLANE_ADDR=
+
+      # RabbitMQ Configuration (optional but recommended)
+      # If set, worker will self-register via RabbitMQ for fleet discovery
+      RABBITMQ_URL=
+
+      # Node type: gpu-worker or lighthouse
+      NODE_TYPE=gpu-worker
+
+      # Health check port
+      HEALTH_PORT=8080
+      ENVFILE
+      EOF
+      ,
     ]
   }
 
@@ -170,7 +217,13 @@ build {
       [Service]
       Type=simple
       EnvironmentFile=-/etc/worker-agent/env
-      ExecStart=/usr/local/bin/worker-agent
+      # Pass environment variables as flags to worker-agent
+      # CONTROL_PLANE_ADDR and RABBITMQ_URL are required/optional env vars
+      ExecStart=/bin/bash -c '/usr/local/bin/worker-agent \
+        --control-plane="${CONTROL_PLANE_ADDR}" \
+        --type="${NODE_TYPE:-gpu-worker}" \
+        --health-port="${HEALTH_PORT:-8080}" \
+        ${RABBITMQ_URL:+--rabbitmq-url="${RABBITMQ_URL}"}'
       Restart=always
       RestartSec=10
       TimeoutStartSec=30

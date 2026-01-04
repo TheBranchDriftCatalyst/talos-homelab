@@ -1,0 +1,38 @@
+---
+# Traefik IngressRoute for control-plane HTTP API
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: control-plane-api
+  namespace: ec2-agents
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/component: fleet-manager
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`fleet.talos00`)
+      kind: Rule
+      services:
+        - name: control-plane
+          port: 8090
+---
+# Middleware to add CORS headers for API access
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: cors-api
+  namespace: ec2-agents
+spec:
+  headers:
+    accessControlAllowMethods:
+      - GET
+      - POST
+      - OPTIONS
+    accessControlAllowHeaders:
+      - Content-Type
+      - Authorization
+    accessControlAllowOriginList:
+      - "*"
+    accessControlMaxAge: 100

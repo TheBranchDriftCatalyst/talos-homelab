@@ -27,6 +27,12 @@ var (
 	httpAddr      = flag.String("http-addr", ":8090", "HTTP API server address")
 	wsAddr        = flag.String("ws-addr", ":8091", "WebSocket server address (legacy)")
 	staleTimeout  = flag.Duration("stale-timeout", 2*time.Minute, "Node stale timeout")
+
+	// RabbitMQ flags
+	rabbitmqURL        = flag.String("rabbitmq-url", "", "RabbitMQ connection URL (amqp://user:pass@host:port/vhost)")
+	rabbitmqVHost      = flag.String("rabbitmq-vhost", "agents", "RabbitMQ virtual host")
+	autoTerminateDead  = flag.Bool("auto-terminate-dead", false, "Auto-terminate nodes after dead threshold (opt-in)")
+	deadThreshold      = flag.Duration("dead-threshold", 5*time.Minute, "Time after which node is marked dead")
 )
 
 func main() {
@@ -54,6 +60,35 @@ func main() {
 			node.ID, status.Health, len(status.Gpus), len(status.LoadedModels))
 	}
 
+	// Start context for background services
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Initialize RabbitMQ consumer if URL provided
+	var rmqConsumer *fleet.RabbitMQConsumer
+	if *rabbitmqURL != "" {
+		log.Printf("Initializing RabbitMQ consumer...")
+		rmqConfig := fleet.DefaultRabbitMQConfig()
+		rmqConfig.URL = *rabbitmqURL
+		rmqConfig.StaleThreshold = *staleTimeout
+		rmqConfig.DeadThreshold = *deadThreshold
+		rmqConfig.AutoTerminateOnDead = *autoTerminateDead
+
+		rmqConsumer = fleet.NewRabbitMQConsumer(rmqConfig, fleetManager)
+
+		if err := rmqConsumer.Connect(ctx); err != nil {
+			log.Printf("Warning: Failed to connect to RabbitMQ: %v", err)
+		} else {
+			log.Printf("Connected to RabbitMQ at %s", *rabbitmqURL)
+			if err := rmqConsumer.Start(ctx); err != nil {
+				log.Printf("Warning: Failed to start RabbitMQ consumers: %v", err)
+			} else {
+				log.Printf("RabbitMQ consumers started (auto-terminate: %v)", *autoTerminateDead)
+			}
+		}
+	} else {
+		log.Printf("RabbitMQ not configured, using gRPC-only mode")
+	}
+
 	// Create gRPC server
 	grpcServer := grpc.NewServer(fleetManager)
 
@@ -68,9 +103,10 @@ func main() {
 	// Start HTTP API server
 	go startHTTPServer(*httpAddr, fleetManager)
 
-	// Start fleet cleanup goroutine
-	ctx, cancel := context.WithCancel(context.Background())
-	go fleetManager.StartCleanup(ctx)
+	// Start fleet cleanup goroutine (only if RabbitMQ not configured, as RabbitMQ has its own TTL checker)
+	if rmqConsumer == nil {
+		go fleetManager.StartCleanup(ctx)
+	}
 
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
@@ -80,6 +116,15 @@ func main() {
 	log.Printf("Received signal %v, shutting down...", sig)
 
 	cancel()
+
+	// Stop RabbitMQ consumer
+	if rmqConsumer != nil {
+		log.Printf("Stopping RabbitMQ consumer...")
+		if err := rmqConsumer.Stop(); err != nil {
+			log.Printf("Error stopping RabbitMQ consumer: %v", err)
+		}
+	}
+
 	grpcServer.Stop()
 
 	log.Printf("control-plane shutdown complete")

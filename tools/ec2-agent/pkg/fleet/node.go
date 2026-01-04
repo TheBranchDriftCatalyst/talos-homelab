@@ -31,6 +31,10 @@ type Node struct {
 	// Status (latest from agent)
 	Status *pb.NodeStatus
 
+	// RabbitMQ-based status (from heartbeats)
+	HealthStatus string                 // "healthy", "degraded", "unhealthy", "stale"
+	Metadata     map[string]interface{} // Additional data from heartbeats
+
 	// Stream for sending commands (set when Connect stream is active)
 	commandChan chan *pb.ControlMessage
 }
@@ -50,6 +54,30 @@ func NewNode(req *pb.RegisterRequest) *Node {
 		Connected:    true,
 		ConnectedAt:  time.Now(),
 		LastSeen:     time.Now(),
+		commandChan:  make(chan *pb.ControlMessage, 10),
+	}
+}
+
+// NewNodeFromRabbitMQ creates a new node from RabbitMQ registration (simpler constructor)
+func NewNodeFromRabbitMQ(nodeID, nodeType string) *Node {
+	var pbNodeType pb.NodeType
+	switch nodeType {
+	case "gpu-worker":
+		pbNodeType = pb.NodeType_NODE_TYPE_GPU_WORKER
+	case "lighthouse":
+		pbNodeType = pb.NodeType_NODE_TYPE_LIGHTHOUSE
+	default:
+		pbNodeType = pb.NodeType_NODE_TYPE_UNSPECIFIED
+	}
+
+	return &Node{
+		ID:           nodeID,
+		Type:         pbNodeType,
+		Labels:       make(map[string]string),
+		Connected:    true,
+		ConnectedAt:  time.Now(),
+		LastSeen:     time.Now(),
+		HealthStatus: "healthy",
 		commandChan:  make(chan *pb.ControlMessage, 10),
 	}
 }
@@ -112,6 +140,11 @@ func (n *Node) Touch() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.LastSeen = time.Now()
+}
+
+// Heartbeat updates last seen time (alias for Touch, used by RabbitMQ consumer)
+func (n *Node) Heartbeat() {
+	n.Touch()
 }
 
 // IsHealthy returns true if the node is connected and reporting healthy

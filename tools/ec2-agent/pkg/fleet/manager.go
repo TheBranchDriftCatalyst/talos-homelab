@@ -35,7 +35,7 @@ func NewManager() *Manager {
 	}
 }
 
-// Register registers a new node or updates existing
+// Register registers a new node or updates existing (from gRPC)
 func (m *Manager) Register(req *pb.RegisterRequest) (*Node, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -70,6 +70,31 @@ func (m *Manager) Register(req *pb.RegisterRequest) (*Node, error) {
 	}
 
 	return node, nil
+}
+
+// RegisterNode registers a node directly (from RabbitMQ)
+func (m *Manager) RegisterNode(node *Node) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	existing, exists := m.nodes[node.ID]
+	if exists {
+		// Update existing node - preserve connection state
+		existing.NebulaIP = node.NebulaIP
+		existing.PublicIP = node.PublicIP
+		existing.Region = node.Region
+		existing.AZ = node.AZ
+		existing.SetConnected(true)
+		log.Printf("[fleet] Node updated via RabbitMQ: %s", node.ID)
+		return
+	}
+
+	m.nodes[node.ID] = node
+	log.Printf("[fleet] Node registered via RabbitMQ: %s (%v) at %s", node.ID, node.Type, node.NebulaIP)
+
+	if m.OnNodeConnected != nil {
+		go m.OnNodeConnected(node)
+	}
 }
 
 // Unregister removes a node from the fleet
@@ -220,6 +245,43 @@ func (m *Manager) BroadcastCommand(cmd *pb.Command, nodeType pb.NodeType) int {
 		}
 	}
 	return sent
+}
+
+// SendShutdownCommand sends a shutdown command to a specific node via gRPC
+func (m *Manager) SendShutdownCommand(nodeID string, reason string) bool {
+	m.mu.RLock()
+	node, exists := m.nodes[nodeID]
+	m.mu.RUnlock()
+
+	if !exists {
+		log.Printf("[fleet] Cannot send shutdown to unknown node: %s", nodeID)
+		return false
+	}
+
+	if !node.StreamActive {
+		log.Printf("[fleet] Cannot send shutdown to node %s: no active gRPC stream", nodeID)
+		return false
+	}
+
+	cmd := &pb.Command{
+		CommandId: "auto-shutdown-" + nodeID,
+		Type:      pb.CommandType_COMMAND_TYPE_SHUTDOWN,
+		Args:      map[string]string{"reason": reason},
+	}
+
+	success := node.SendCommand(&pb.ControlMessage{
+		Payload: &pb.ControlMessage_Command{
+			Command: cmd,
+		},
+	})
+
+	if success {
+		log.Printf("[fleet] Sent shutdown command to node %s: %s", nodeID, reason)
+	} else {
+		log.Printf("[fleet] Failed to send shutdown to node %s: channel full or inactive", nodeID)
+	}
+
+	return success
 }
 
 // ListNodes returns all nodes (for debugging/admin)

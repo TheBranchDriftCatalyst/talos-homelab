@@ -10,8 +10,9 @@
 # - NEBULA_HOST_CRT: This node's certificate
 # - NEBULA_HOST_KEY: This node's private key
 # - CONTROL_PLANE_ADDR: gRPC control plane address (e.g., 10.42.0.1:50051)
-# - K3S_TOKEN: k3s cluster join token
-# - K3S_URL: k3s server URL (e.g., https://10.42.1.1:6443)
+# - RABBITMQ_URL: RabbitMQ connection URL for self-registration (optional)
+# - K3S_TOKEN: k3s cluster join token (optional)
+# - K3S_URL: k3s server URL (e.g., https://10.42.1.1:6443) (optional)
 
 set -euo pipefail
 exec > >(tee /var/log/userdata.log) 2>&1
@@ -23,6 +24,7 @@ echo "=== GPU Worker Bootstrap Started at $(date) ==="
 NEBULA_IP="${NEBULA_IP:-}"
 LIGHTHOUSE_NEBULA_IP="${LIGHTHOUSE_NEBULA_IP:-10.42.1.1}"
 CONTROL_PLANE_ADDR="${CONTROL_PLANE_ADDR:-${LIGHTHOUSE_NEBULA_IP}:50051}"
+RABBITMQ_URL="${RABBITMQ_URL:-}"
 
 # =============================================================================
 # Fetch Secrets from AWS Secrets Manager
@@ -40,6 +42,11 @@ NEBULA_HOST_CRT=$(echo "$SECRETS" | jq -r '.nebula_host_crt')
 NEBULA_HOST_KEY=$(echo "$SECRETS" | jq -r '.nebula_host_key')
 K3S_TOKEN=$(echo "$SECRETS" | jq -r '.k3s_token // empty')
 K3S_URL=$(echo "$SECRETS" | jq -r '.k3s_url // empty')
+
+# Get RabbitMQ URL from secret if not provided via env
+if [ -z "$RABBITMQ_URL" ]; then
+  RABBITMQ_URL=$(echo "$SECRETS" | jq -r '.rabbitmq_url // empty')
+fi
 
 # Get nebula IP from secret or generate from instance ID
 if [ -z "$NEBULA_IP" ]; then
@@ -138,6 +145,7 @@ CONTROL_PLANE_ADDR=${CONTROL_PLANE_ADDR}
 NODE_TYPE=gpu-worker
 INSTANCE_ID=${INSTANCE_ID}
 NEBULA_IP=${NEBULA_IP}
+RABBITMQ_URL=${RABBITMQ_URL}
 EOF
 
 systemctl enable worker-agent

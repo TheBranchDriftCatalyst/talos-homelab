@@ -29,6 +29,10 @@ var (
 	publicIP         = flag.String("public-ip", "", "Public IP address")
 	region           = flag.String("region", "", "AWS region")
 	az               = flag.String("az", "", "AWS availability zone")
+
+	// RabbitMQ flags
+	rabbitmqURL   = flag.String("rabbitmq-url", "", "RabbitMQ connection URL (amqp://user:pass@host:port/vhost)")
+	rabbitmqVHost = flag.String("rabbitmq-vhost", "agents", "RabbitMQ virtual host")
 )
 
 func main() {
@@ -44,6 +48,11 @@ func main() {
 		if *controlPlaneAddr == "" {
 			log.Fatal("--control-plane flag or CONTROL_PLANE_ADDR env var required")
 		}
+	}
+
+	// RabbitMQ URL from flag or env
+	if *rabbitmqURL == "" {
+		*rabbitmqURL = os.Getenv("RABBITMQ_URL")
 	}
 
 	// Parse node type
@@ -98,8 +107,32 @@ func main() {
 		log.Printf("Executing command: %s (%s)", cmd.CommandId, cmd.Type)
 	}
 
+	// Initialize RabbitMQ publisher if URL provided
+	var rmqPublisher *agent.RabbitMQPublisher
+	if *rabbitmqURL != "" {
+		log.Printf("Initializing RabbitMQ publisher...")
+		rmqConfig := agent.DefaultRabbitMQConfig()
+		rmqConfig.URL = *rabbitmqURL
+		rmqConfig.VHost = *rabbitmqVHost
+
+		rmqPublisher = agent.NewRabbitMQPublisher(
+			rmqConfig,
+			*instanceID,
+			*nodeType,
+			*nebulaIP,
+			*publicIP,
+			*region,
+			*az,
+		)
+
+		// Set status function to get current node status
+		rmqPublisher.SetStatusFunc(func() *pb.NodeStatus {
+			return statusCollector.Collect()
+		})
+	}
+
 	// Start health check server
-	go startHealthServer(*healthPort, client)
+	go startHealthServer(*healthPort, client, rmqPublisher)
 
 	// Setup signal handling
 	ctx, cancel := context.WithCancel(context.Background())
@@ -112,21 +145,51 @@ func main() {
 		cancel()
 	}()
 
+	// Connect to RabbitMQ and register if configured
+	if rmqPublisher != nil {
+		log.Printf("Connecting to RabbitMQ...")
+		if err := rmqPublisher.Connect(ctx); err != nil {
+			log.Printf("Warning: Failed to connect to RabbitMQ: %v", err)
+		} else {
+			// Register with control plane via RabbitMQ
+			if err := rmqPublisher.Register(ctx); err != nil {
+				log.Printf("Warning: Failed to register via RabbitMQ: %v", err)
+			} else {
+				log.Printf("Registered via RabbitMQ")
+			}
+			// Start heartbeat loop
+			rmqPublisher.StartHeartbeatLoop(ctx)
+		}
+	}
+
 	// Run agent with auto-reconnection
 	log.Printf("Connecting to control plane at %s...", *controlPlaneAddr)
 	client.RunWithReconnect(ctx)
 
+	// Graceful shutdown
+	if rmqPublisher != nil {
+		log.Printf("Stopping RabbitMQ publisher...")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer shutdownCancel()
+		if err := rmqPublisher.Stop(shutdownCtx); err != nil {
+			log.Printf("Error stopping RabbitMQ publisher: %v", err)
+		}
+	}
+
 	log.Printf("worker-agent shutdown complete")
 }
 
-func startHealthServer(port int, client *agent.Client) {
+func startHealthServer(port int, client *agent.Client, rmqPublisher *agent.RabbitMQPublisher) {
 	mux := http.NewServeMux()
 
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if client.IsConnected() {
+		grpcOK := client.IsConnected()
+		rmqOK := rmqPublisher == nil || rmqPublisher.IsConnected()
+
+		if grpcOK || rmqOK {
 			w.WriteHeader(http.StatusOK)
-			fmt.Fprintln(w, "ok")
+			fmt.Fprintf(w, "ok (grpc=%v rmq=%v)\n", grpcOK, rmqOK)
 		} else {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprintln(w, "disconnected")
@@ -135,7 +198,10 @@ func startHealthServer(port int, client *agent.Client) {
 
 	// Readiness endpoint
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		if client.IsConnected() {
+		grpcOK := client.IsConnected()
+		rmqOK := rmqPublisher == nil || rmqPublisher.IsConnected()
+
+		if grpcOK || rmqOK {
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintln(w, "ready")
 		} else {
