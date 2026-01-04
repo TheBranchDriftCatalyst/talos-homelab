@@ -734,6 +734,14 @@ func (s *Scaler) shouldUseBroker(r *http.Request) bool {
 		return false
 	}
 
+	// Don't use broker when forcing Mac dev endpoint (direct proxy instead)
+	s.mu.RLock()
+	mode := s.routingMode
+	s.mu.RUnlock()
+	if mode == RoutingMac {
+		return false
+	}
+
 	// Only route /api/generate and /api/chat through broker
 	path := r.URL.Path
 	return path == "/api/generate" || path == "/api/chat"

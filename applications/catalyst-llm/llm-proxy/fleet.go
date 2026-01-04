@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -155,7 +156,7 @@ func (c *FleetClient) SendShutdownCommand(ctx context.Context, nodeID, reason st
 		return fmt.Errorf("failed to marshal command: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, json.RawMessage(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
