@@ -30,6 +30,12 @@ USE_SPOT="${LLM_USE_SPOT:-false}"                  # Default to on-demand for re
 KEY_NAME="hybrid-llm-key"
 SG_NAME="nebula-lighthouse" # Reuse lighthouse security group
 
+# AMI Configuration - use pre-baked AMI or fall back to base AL2023
+# Set USE_CUSTOM_AMI=false to use legacy userdata provisioning
+USE_CUSTOM_AMI="${LLM_USE_CUSTOM_AMI:-true}"
+CUSTOM_AMI_PREFIX="catalyst-llm-gpu-worker"
+SECRET_NAME="${LLM_SECRET_NAME:-catalyst-llm/gpu-worker}"
+
 # Warm-up timeout (seconds to wait for Ollama to be ready)
 WARMUP_TIMEOUT="${LLM_WARMUP_TIMEOUT:-180}" # 3 minutes default
 
@@ -106,6 +112,135 @@ get_worker_public_ip() {
     --query 'Reservations[0].Instances[0].PublicIpAddress' \
     --output text \
     --region "$AWS_REGION" 2> /dev/null
+}
+
+# Get the latest custom GPU worker AMI
+get_custom_ami() {
+  local ami_id=$(aws ec2 describe-images \
+    --owners self \
+    --filters "Name=name,Values=${CUSTOM_AMI_PREFIX}*" \
+              "Name=state,Values=available" \
+    --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
+    --output text \
+    --region "$AWS_REGION" 2>/dev/null)
+
+  if [[ -z "$ami_id" || "$ami_id" == "None" ]]; then
+    return 1
+  fi
+  echo "$ami_id"
+}
+
+# Generate minimal userdata for pre-baked AMI
+# Just sets environment variables - secrets come from AWS Secrets Manager
+generate_minimal_userdata() {
+  local lighthouse_public_ip="$1"
+  local lighthouse_nebula_ip="${2:-10.42.1.1}"
+
+  cat << EOF
+#!/bin/bash
+# Minimal bootstrap for pre-baked GPU Worker AMI
+# Secrets are fetched from AWS Secrets Manager at boot
+set -euo pipefail
+exec > >(tee /var/log/userdata.log) 2>&1
+echo "=== GPU Worker Bootstrap Started at \$(date) ==="
+
+# Configuration injected at launch time
+export SECRET_NAME="${SECRET_NAME}"
+export LIGHTHOUSE_NEBULA_IP="${lighthouse_nebula_ip}"
+export LIGHTHOUSE_PUBLIC_IP="${lighthouse_public_ip}"
+export NEBULA_IP="10.42.2.1"
+export CONTROL_PLANE_ADDR="${lighthouse_nebula_ip}:50051"
+
+# Run the pre-installed bootstrap script
+if [[ -x /usr/local/bin/bootstrap-gpu-worker.sh ]]; then
+  /usr/local/bin/bootstrap-gpu-worker.sh
+else
+  # Fallback: inline bootstrap for compatibility
+  REGION=\$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+  INSTANCE_ID=\$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+
+  echo "Fetching secrets from AWS Secrets Manager: \${SECRET_NAME}"
+  SECRETS=\$(aws secretsmanager get-secret-value --secret-id "\${SECRET_NAME}" --region "\${REGION}" --query SecretString --output text)
+
+  # Extract and write Nebula certificates
+  echo "\$SECRETS" | jq -r '.nebula_ca_crt' | base64 -d > /etc/nebula/ca.crt
+  echo "\$SECRETS" | jq -r '.nebula_host_crt' | base64 -d > /etc/nebula/host.crt
+  echo "\$SECRETS" | jq -r '.nebula_host_key' | base64 -d > /etc/nebula/host.key
+  chmod 600 /etc/nebula/host.key
+
+  # Configure Nebula
+  cat > /etc/nebula/config.yml << NEBCONF
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/host.crt
+  key: /etc/nebula/host.key
+static_host_map:
+  "\${LIGHTHOUSE_NEBULA_IP}": ["\${LIGHTHOUSE_PUBLIC_IP}:4242"]
+lighthouse:
+  am_lighthouse: false
+  interval: 60
+  hosts:
+    - "\${LIGHTHOUSE_NEBULA_IP}"
+listen:
+  host: 0.0.0.0
+  port: 4242
+punchy:
+  punch: true
+tun:
+  dev: nebula1
+  mtu: 1300
+firewall:
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  inbound:
+    - port: any
+      proto: icmp
+      host: any
+    - port: 22
+      proto: tcp
+      host: any
+    - port: 11434
+      proto: tcp
+      host: any
+NEBCONF
+
+  # Configure worker-agent
+  cat > /etc/worker-agent/env << AGENTENV
+CONTROL_PLANE_ADDR=\${CONTROL_PLANE_ADDR}
+NODE_TYPE=gpu-worker
+INSTANCE_ID=\${INSTANCE_ID}
+NEBULA_IP=\${NEBULA_IP}
+AGENTENV
+
+  # Start services
+  systemctl enable nebula worker-agent ollama
+  systemctl start nebula
+  sleep 5
+  systemctl start worker-agent ollama
+
+  # Configure k3s if token available
+  K3S_TOKEN=\$(echo "\$SECRETS" | jq -r '.k3s_token // empty')
+  K3S_URL=\$(echo "\$SECRETS" | jq -r '.k3s_url // empty')
+  if [[ -n "\$K3S_TOKEN" && -n "\$K3S_URL" ]]; then
+    cat > /etc/rancher/k3s/config.yaml << K3SCONF
+server: \${K3S_URL}
+token: \${K3S_TOKEN}
+node-name: \${INSTANCE_ID}
+node-ip: \${NEBULA_IP}
+flannel-iface: nebula1
+node-label:
+  - "node.kubernetes.io/instance-type=gpu-worker"
+  - "nvidia.com/gpu=true"
+K3SCONF
+    systemctl enable k3s-agent
+    systemctl start k3s-agent
+  fi
+fi
+
+echo "=== GPU Worker Bootstrap Completed at \$(date) ==="
+EOF
 }
 
 # Get or create persistent EBS volume for model storage
@@ -218,6 +353,7 @@ cmd_status() {
   local instance_id=$(get_state "instance_id")
   local instance_mode=$(get_state "instance_mode")
   local model_volume_id=$(get_state "model_volume_id")
+  local ami_type=$(get_state "ami_type")
 
   echo ""
   echo -e "${BLUE}=== LLM Worker Status ===${NC}"
@@ -229,6 +365,11 @@ cmd_status() {
       echo -e "State:        ${GREEN}Running${NC}"
       echo "Instance ID:  $instance_id"
       echo "Instance:     $INSTANCE_TYPE ($instance_mode)"
+      if [[ "$ami_type" == "custom" ]]; then
+        echo -e "AMI:          ${GREEN}Pre-baked${NC} (fast boot)"
+      else
+        echo "AMI:          AL2023 (legacy)"
+      fi
       echo "Public IP:    $public_ip"
       echo "Nebula IP:    10.42.2.1"
       echo "Ollama API:   http://10.42.2.1:11434"
@@ -440,21 +581,54 @@ cmd_provision() {
   fi
   log_info "Security Group: $sg_id"
 
-  # Get AMI
-  log_info "Finding latest Amazon Linux 2023 AMI..."
-  local ami_id=$(aws ec2 describe-images \
-    --owners amazon \
-    --filters "Name=name,Values=al2023-ami-2023*-x86_64" \
-    "Name=state,Values=available" \
-    --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
-    --output text \
-    --region "$AWS_REGION")
-  log_info "AMI: $ami_id"
+  # Get lighthouse public IP for Nebula config
+  local lighthouse_public_ip=""
+  if [[ -f "$LIGHTHOUSE_STATE" ]]; then
+    lighthouse_public_ip=$(jq -r '.elastic_ip // empty' "$LIGHTHOUSE_STATE")
+  fi
+  if [[ -z "$lighthouse_public_ip" ]]; then
+    log_error "Lighthouse public IP not found. Run lighthouse provisioning first."
+    exit 1
+  fi
+  log_info "Lighthouse IP: $lighthouse_public_ip"
+
+  # Get AMI - try custom pre-baked AMI first, fall back to AL2023
+  local ami_id=""
+  local ami_type=""
+  if [[ "$USE_CUSTOM_AMI" == "true" ]]; then
+    log_info "Looking for pre-baked GPU worker AMI..."
+    ami_id=$(get_custom_ami) || true
+    if [[ -n "$ami_id" ]]; then
+      ami_type="custom"
+      log_info "Using custom AMI: $ami_id (fast boot ~30-60s)"
+    else
+      log_warn "Custom AMI not found. Build with: cd tools/ec2-agent/ami && packer build gpu-worker.pkr.hcl"
+      log_info "Falling back to base AL2023 with legacy userdata (~5 min boot)"
+    fi
+  fi
+
+  if [[ -z "$ami_id" ]]; then
+    log_info "Finding latest Amazon Linux 2023 AMI..."
+    ami_id=$(aws ec2 describe-images \
+      --owners amazon \
+      --filters "Name=name,Values=al2023-ami-2023*-x86_64" \
+      "Name=state,Values=available" \
+      --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
+      --output text \
+      --region "$AWS_REGION")
+    ami_type="al2023"
+    log_info "AMI: $ami_id (legacy provisioning)"
+  fi
 
   # Generate userdata
-  log_info "Generating userdata script..."
   local userdata_file="/tmp/worker-userdata-$$.sh"
-  "$SCRIPT_DIR/worker-userdata.sh" > "$userdata_file"
+  if [[ "$ami_type" == "custom" ]]; then
+    log_info "Generating minimal userdata for pre-baked AMI..."
+    generate_minimal_userdata "$lighthouse_public_ip" > "$userdata_file"
+  else
+    log_info "Generating full userdata script (legacy mode)..."
+    "$SCRIPT_DIR/worker-userdata.sh" > "$userdata_file"
+  fi
 
   # Launch instance (on-demand by default for reliability, spot optional)
   if [[ "$USE_SPOT" == "true" ]]; then
@@ -494,6 +668,8 @@ cmd_provision() {
 
   save_state "instance_id" "$instance_id"
   save_state "instance_type" "$INSTANCE_TYPE"
+  save_state "ami_type" "$ami_type"
+  save_state "ami_id" "$ami_id"
   save_state "created_at" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
   log_info "Instance launched: $instance_id"
@@ -510,7 +686,11 @@ cmd_provision() {
 
   log_info "Instance running at: $public_ip"
   log_info ""
-  log_info "Bootstrap in progress (~3-5 minutes). Monitor with:"
+  if [[ "$ami_type" == "custom" ]]; then
+    log_info "Bootstrap in progress (~30-60 seconds with pre-baked AMI). Monitor with:"
+  else
+    log_info "Bootstrap in progress (~3-5 minutes with legacy userdata). Monitor with:"
+  fi
   log_info "  $0 logs"
   log_info ""
   log_info "Or wait for full readiness:"
@@ -657,10 +837,12 @@ case "${1:-status}" in
     echo ""
     echo "Environment variables:"
     echo "  AWS_REGION            AWS region (default: us-west-2)"
-    echo "  LLM_INSTANCE_TYPE     Instance type (default: r5.2xlarge)"
+    echo "  LLM_INSTANCE_TYPE     Instance type (default: g4dn.4xlarge)"
     echo "  LLM_USE_SPOT          Use spot instances (default: false)"
     echo "  LLM_WARMUP_TIMEOUT    Seconds to wait for warm-up (default: 180)"
     echo "  LLM_MODEL_VOLUME_SIZE Persistent model storage size in GB (default: 100)"
+    echo "  LLM_USE_CUSTOM_AMI    Use pre-baked AMI for fast boot (default: true)"
+    echo "  LLM_SECRET_NAME       AWS Secrets Manager secret name (default: catalyst-llm/gpu-worker)"
     echo ""
     echo "Storage:"
     echo "  Models are stored on a persistent EBS volume (${MODEL_VOLUME_SIZE}GB gp3)."
@@ -672,6 +854,11 @@ case "${1:-status}" in
     echo "  $0 ready && curl ...     # Only call if ready"
     echo "  $0 ollama pull llama3.2  # Download a model (persists on EBS)"
     echo "  LLM_USE_SPOT=true $0 provision  # Use spot (cheaper but less reliable)"
+    echo ""
+    echo "Pre-baked AMI (recommended for fast boot):"
+    echo "  Build AMI:  cd tools/ec2-agent/ami && packer build gpu-worker.pkr.hcl"
+    echo "  Provision:  $0 provision  # Auto-detects custom AMI"
+    echo "  Legacy:     LLM_USE_CUSTOM_AMI=false $0 provision  # Force legacy mode"
     exit 1
     ;;
 esac
