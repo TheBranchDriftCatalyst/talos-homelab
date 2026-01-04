@@ -14,7 +14,14 @@ export default defineConfig({
     proxy: {
       // Proxy WebSocket and API to Go backend
       '/ws': {
-        target: 'ws://localhost:8080',
+        target: 'http://localhost:8080',
+        ws: true,
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/ws/, '/_/ws'),
+      },
+      '/_/': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
         ws: true,
       },
       '/health': 'http://localhost:8080',
