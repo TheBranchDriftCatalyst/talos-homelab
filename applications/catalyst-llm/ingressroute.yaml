@@ -1,4 +1,20 @@
 ---
+# Middleware to allow iframe embedding
+# Strips X-Frame-Options and sets permissive CSP for embedded UIs
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: iframe-allow
+  namespace: catalyst-llm
+  labels:
+    app.kubernetes.io/name: catalyst-llm
+    app.kubernetes.io/component: middleware
+spec:
+  headers:
+    customResponseHeaders:
+      X-Frame-Options: ""  # Remove header
+      Content-Security-Policy: ""  # Remove CSP restrictions
+---
 # ServersTransport with extended timeout for LLM requests
 # LLM inference can take 30+ seconds
 apiVersion: traefik.io/v1alpha1
@@ -94,6 +110,8 @@ spec:
   routes:
     - match: Host(`chat.talos00`)
       kind: Rule
+      middlewares:
+        - name: iframe-allow
       services:
         - name: open-webui
           port: 8080
@@ -114,6 +132,8 @@ spec:
   routes:
     - match: Host(`sillytavern.talos00`)
       kind: Rule
+      middlewares:
+        - name: iframe-allow
       services:
         - name: sillytavern
           port: 8000

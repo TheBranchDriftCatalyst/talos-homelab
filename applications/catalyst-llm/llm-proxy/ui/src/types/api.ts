@@ -89,3 +89,10 @@ export interface LogEntry {
   level: 'info' | 'warn' | 'error' | 'success'
   message: string
 }
+
+export interface TabInfo {
+  id: string
+  label: string
+  icon: string
+  url?: string
+}

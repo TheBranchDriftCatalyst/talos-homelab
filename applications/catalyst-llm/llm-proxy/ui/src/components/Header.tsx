@@ -41,23 +41,8 @@ export function Header({ status, connected, reconnecting, onRoutingChange }: Hea
           )}
         </div>
 
-        {/* Routing Mode Toggle */}
-        <div className="flex bg-[var(--bg-primary)] rounded-md p-0.5 border border-[var(--border-color)]">
-          <RoutingButton mode="auto" current={routingMode} onClick={() => onRoutingChange('auto')}>
-            Auto
-          </RoutingButton>
-          <RoutingButton mode="local" current={routingMode} onClick={() => onRoutingChange('local')}>
-            <Server className="w-3 h-3" /> Local
-          </RoutingButton>
-          <RoutingButton mode="remote" current={routingMode} onClick={() => onRoutingChange('remote')}>
-            <Cloud className="w-3 h-3" /> Remote
-          </RoutingButton>
-          {hasMac && (
-            <RoutingButton mode="mac" current={routingMode} onClick={() => onRoutingChange('mac')}>
-              <Laptop className="w-3 h-3" /> Mac
-            </RoutingButton>
-          )}
-        </div>
+        {/* Routing Mode Dropdown */}
+        <RoutingDropdown mode={routingMode} hasMac={hasMac} onChange={onRoutingChange} />
 
         {/* Active Target */}
         <ActiveTargetBadge target={activeTarget} />
@@ -80,31 +65,47 @@ function RoutingStat({ label, value, color }: { label: string; value: number; co
   )
 }
 
-interface RoutingButtonProps {
+interface RoutingDropdownProps {
   mode: RoutingMode
-  current: RoutingMode
-  onClick: () => void
-  children: React.ReactNode
+  hasMac: boolean
+  onChange: (mode: RoutingMode) => void
 }
 
-function RoutingButton({ mode, current, onClick, children }: RoutingButtonProps) {
-  const isActive = mode === current
+function RoutingDropdown({ mode, hasMac, onChange }: RoutingDropdownProps) {
+  const options: { value: RoutingMode; label: string; icon: React.ReactNode }[] = [
+    { value: 'auto', label: 'Auto', icon: null },
+    { value: 'local', label: 'Local', icon: <Server className="w-3 h-3" /> },
+    { value: 'remote', label: 'Remote', icon: <Cloud className="w-3 h-3" /> },
+    ...(hasMac ? [{ value: 'mac' as RoutingMode, label: 'Mac', icon: <Laptop className="w-3 h-3" /> }] : []),
+  ]
+
   const colors: Record<RoutingMode, string> = {
-    auto: 'bg-[var(--accent-blue)] text-white',
-    local: 'bg-[var(--accent-green)] text-white',
-    remote: 'bg-[var(--accent-yellow)] text-black',
-    mac: 'bg-[var(--accent-purple)] text-white',
+    auto: 'var(--accent-blue)',
+    local: 'var(--accent-green)',
+    remote: 'var(--accent-yellow)',
+    mac: 'var(--accent-purple)',
   }
 
   return (
-    <button
-      onClick={onClick}
-      className={`flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium transition-all ${
-        isActive ? colors[mode] : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
-      }`}
-    >
-      {children}
-    </button>
+    <div className="relative">
+      <select
+        value={mode}
+        onChange={(e) => onChange(e.target.value as RoutingMode)}
+        className="appearance-none bg-[var(--bg-tertiary)] border border-[var(--border-color)] rounded-md px-3 py-1.5 pr-8 text-xs font-medium cursor-pointer focus:outline-none focus:ring-1 focus:ring-[var(--accent-blue)]"
+        style={{ color: colors[mode] }}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none">
+        <svg className="w-3 h-3 text-[var(--text-secondary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </div>
+    </div>
   )
 }
 

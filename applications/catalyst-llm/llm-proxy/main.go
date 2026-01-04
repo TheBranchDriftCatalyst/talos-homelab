@@ -57,6 +57,12 @@ func main() {
 	go scaler.RunStatusBroadcaster()
 	go scaler.ServeMetrics()
 
+	// Ingress discovery for dynamic tabs
+	ingressDiscovery, err := NewIngressDiscovery()
+	if err != nil {
+		log.Printf("   Ingress discovery: disabled (not in cluster)")
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", scaler.Health)
 	mux.HandleFunc("/ready", scaler.Ready)
@@ -67,6 +73,13 @@ func main() {
 	mux.HandleFunc("/_/resume", scaler.Resume)
 	mux.HandleFunc("/_/ttl", scaler.SetTTL)
 	mux.HandleFunc("/_/ws", scaler.WebSocket)
+
+	// Dynamic tabs from IngressRoutes
+	if ingressDiscovery != nil {
+		mux.HandleFunc("/_/tabs", ingressDiscovery.TabsHandler)
+	} else {
+		mux.HandleFunc("/_/tabs", TabsHandlerFallback)
+	}
 
 	// Serve React UI from static files if available, otherwise use embedded HTML
 	uiDir := env("UI_DIR", "/app/ui/dist")

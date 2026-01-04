@@ -1,4 +1,4 @@
-import { Settings, MessageCircle, Theater, Bot } from 'lucide-react'
+import { Settings, MessageCircle, Theater, Bot, ExternalLink, Search } from 'lucide-react'
 
 export interface Tab {
   id: string
@@ -19,6 +19,9 @@ const iconMap: Record<string, React.ReactNode> = {
   theater: <Theater className="w-4 h-4" />,
   bot: <Bot className="w-4 h-4" />,
   llama: <span className="text-base">🦙</span>,
+  rabbit: <span className="text-base">🐰</span>,
+  search: <Search className="w-4 h-4" />,
+  'external-link': <ExternalLink className="w-4 h-4" />,
 }
 
 export function TabBar({ tabs, activeTab, onTabChange }: TabBarProps) {
