@@ -1,0 +1,38 @@
+# ============================================
+# Build Stage
+# ============================================
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+# Download dependencies first (cached layer)
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and build
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o control-plane ./cmd/control-plane
+
+# ============================================
+# Runtime Stage
+# ============================================
+FROM alpine:3.19
+
+RUN apk add --no-cache ca-certificates curl
+
+WORKDIR /app
+
+# Copy binary
+COPY --from=builder /build/control-plane /app/control-plane
+
+# Non-root user
+RUN adduser -D -u 1000 agent && chown -R agent:agent /app
+USER agent
+
+# HTTP API + gRPC
+EXPOSE 8090 50051
+
+ENTRYPOINT ["/app/control-plane"]
