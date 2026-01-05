@@ -45,8 +45,8 @@ stringData:
   KEY_VAULTS_SECRET: "YP6h/1pCGk6dfs9YQ6x27pKUJ7+94sbvUusTsbUwunk="
   # NextAuth secret for session encryption
   NEXT_AUTH_SECRET: "vQSeiwMoBnv9elw577K8yBcHz/wbisZOQDGNBTQkOQQ="
-  # PostgreSQL connection (using existing scratch-postgres)
-  DATABASE_URL: "postgresql://postgres:scratch-pg-password@scratch-postgres-rw.scratch.svc.cluster.local:5432/lobechat"
+  # PostgreSQL connection (using existing scratch-postgres app user)
+  DATABASE_URL: "postgresql://scratch_app:scratch-app-password@scratch-postgres-rw.scratch.svc.cluster.local:5432/lobechat"
   # MinIO/S3 credentials
   S3_ACCESS_KEY_ID: "minio"
   S3_SECRET_ACCESS_KEY: "minio123"
@@ -96,8 +96,9 @@ spec:
               echo "Bucket ready"
       containers:
         - name: lobe-chat
-          # Server mode image with database support
-          image: lobehub/lobe-chat-database:latest
+          # Client mode image (no auth required)
+          # TODO: Switch to lobehub/lobe-chat-database:latest when Authentik OIDC is configured
+          image: lobehub/lobe-chat:latest
           ports:
             - containerPort: 3210
               name: http
@@ -118,15 +119,15 @@ spec:
               memory: 1Gi
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /
               port: 3210
-            initialDelaySeconds: 60
+            initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /
               port: 3210
-            initialDelaySeconds: 30
+            initialDelaySeconds: 10
             periodSeconds: 10
 ---
 apiVersion: v1
