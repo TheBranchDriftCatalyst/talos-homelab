@@ -52,6 +52,11 @@ stringData:
   S3_SECRET_ACCESS_KEY: "minio123"
   # HuggingFace token - optional, users can add their own in UI
   # OPENAI_API_KEY: ""
+  # Authentik OIDC
+  NEXT_AUTH_SSO_PROVIDERS: "authentik"
+  AUTH_AUTHENTIK_ID: "a9YOu5LvGsKrkTpKfKJeFVIqL0i9iPxPeVgOeaGf"
+  AUTH_AUTHENTIK_SECRET: "72KpBOPThgTElf7hWrWsvTwpmGYe2oA6ADrothiUaaFyXrJ85Uz0Qhk5ItLajvuIYaQx0vmhh2iuPi3Ha7sOpswzTVRXq3fLyVeOCkRCZn5hnfeCnevsLC3XB2wzh9np"
+  AUTH_AUTHENTIK_ISSUER: "http://authentik-server.authentik.svc.cluster.local/application/o/lobechat/"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -96,9 +101,8 @@ spec:
               echo "Bucket ready"
       containers:
         - name: lobe-chat
-          # Client mode image (no auth required)
-          # TODO: Switch to lobehub/lobe-chat-database:latest when Authentik OIDC is configured
-          image: lobehub/lobe-chat:latest
+          # Server mode with database + Authentik OIDC
+          image: lobehub/lobe-chat-database:latest
           ports:
             - containerPort: 3210
               name: http
@@ -119,16 +123,20 @@ spec:
               memory: 1Gi
           livenessProbe:
             httpGet:
-              path: /
+              path: /api/auth/providers
               port: 3210
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
           readinessProbe:
             httpGet:
-              path: /
+              path: /api/auth/providers
               port: 3210
-            initialDelaySeconds: 10
-            periodSeconds: 10
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service
