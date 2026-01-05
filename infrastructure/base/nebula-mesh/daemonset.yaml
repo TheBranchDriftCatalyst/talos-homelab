@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nebula
+  namespace: nebula-mesh
+  labels:
+    app: nebula
+spec:
+  selector:
+    matchLabels:
+      app: nebula
+  template:
+    metadata:
+      labels:
+        app: nebula
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: nebula
+          image: nebulaoss/nebula:1.10.0
+          args: ["-config", "/etc/nebula/config.yaml"]
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - NET_ADMIN
+                - SYS_ADMIN
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: nebula-certs
+              mountPath: /etc/nebula/ca.crt
+              subPath: ca.crt
+              readOnly: true
+            - name: nebula-certs
+              mountPath: /etc/nebula/host.crt
+              subPath: host.crt
+              readOnly: true
+            - name: nebula-certs
+              mountPath: /etc/nebula/host.key
+              subPath: host.key
+              readOnly: true
+            - name: nebula-config
+              mountPath: /etc/nebula/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: dev-net-tun
+              mountPath: /dev/net/tun
+      volumes:
+        - name: nebula-certs
+          secret:
+            secretName: nebula-certs
+            defaultMode: 0400
+        - name: nebula-config
+          configMap:
+            name: nebula-config
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
