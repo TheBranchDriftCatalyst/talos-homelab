@@ -3,16 +3,15 @@
 # Lighthouse Userdata - Minimal Bootstrap for Pre-baked AMI
 # =============================================================================
 # This script runs at first boot to configure the Nebula lighthouse,
-# k3s server, and Liqo for multi-cluster federation.
+# k3s server, and Cilium CNI with ClusterMesh for multi-cluster connectivity.
 #
 # Required Secrets (injected via AWS Secrets Manager):
 # - NEBULA_CA_CRT: Nebula CA certificate
 # - NEBULA_CA_KEY: Nebula CA private key (for signing new certs)
 # - NEBULA_HOST_CRT: This node's certificate
 # - NEBULA_HOST_KEY: This node's private key
-# - CONTROL_PLANE_ADDR: gRPC control plane address
+# - CONTROL_PLANE_ADDR: gRPC control plane address (optional)
 # - K3S_TOKEN: k3s cluster token (generated if not provided)
-# - LIQO_CLUSTER_NAME: Name for this Liqo cluster
 
 set -euo pipefail
 exec > >(tee /var/log/userdata.log) 2>&1
@@ -21,9 +20,17 @@ echo "=== Lighthouse Bootstrap Started at $(date) ==="
 # =============================================================================
 # Configuration
 # =============================================================================
-NEBULA_IP="${NEBULA_IP:-10.42.1.1}"
-CONTROL_PLANE_ADDR="${CONTROL_PLANE_ADDR:-10.42.0.1:50051}"
-LIQO_CLUSTER_NAME="${LIQO_CLUSTER_NAME:-ec2-lighthouse}"
+NEBULA_IP="${NEBULA_IP:-10.100.1.1}"
+CONTROL_PLANE_ADDR="${CONTROL_PLANE_ADDR:-10.100.0.1:50051}"
+RABBITMQ_URL="${RABBITMQ_URL:-}"
+CILIUM_CLUSTER_NAME="${CILIUM_CLUSTER_NAME:-aws-lighthouse}"
+CILIUM_CLUSTER_ID="${CILIUM_CLUSTER_ID:-2}"
+CILIUM_VERSION="${CILIUM_VERSION:-1.16.6}"
+
+# Network CIDRs (must not overlap with Talos cluster)
+POD_CIDR="${POD_CIDR:-10.42.0.0/16}"
+SERVICE_CIDR="${SERVICE_CIDR:-10.43.0.0/16}"
+CLUSTER_DNS="${CLUSTER_DNS:-10.43.0.10}"
 
 # =============================================================================
 # Fetch Secrets
@@ -41,6 +48,11 @@ NEBULA_CA_KEY=$(echo "$SECRETS" | jq -r '.nebula_ca_key // empty')
 NEBULA_HOST_CRT=$(echo "$SECRETS" | jq -r '.nebula_host_crt')
 NEBULA_HOST_KEY=$(echo "$SECRETS" | jq -r '.nebula_host_key')
 K3S_TOKEN=$(echo "$SECRETS" | jq -r '.k3s_token // empty')
+
+# Get RabbitMQ URL from secret if not provided via env
+if [ -z "$RABBITMQ_URL" ]; then
+  RABBITMQ_URL=$(echo "$SECRETS" | jq -r '.rabbitmq_url // empty')
+fi
 
 # =============================================================================
 # Configure Nebula Lighthouse
@@ -109,6 +121,7 @@ firewall:
     - port: 6443
       proto: tcp
       host: any
+    # VXLAN for Cilium
     - port: 8472
       proto: udp
       host: any
@@ -118,6 +131,17 @@ firewall:
     - port: 53
       proto: any
       host: any
+    # ClusterMesh etcd
+    - port: 2379
+      proto: tcp
+      host: any
+    - port: 32379
+      proto: tcp
+      host: any
+    # Hubble
+    - port: 4244
+      proto: tcp
+      host: any
 EOF
 
 # Start Nebula
@@ -126,6 +150,12 @@ systemctl start nebula
 
 echo "Waiting for Nebula to establish..."
 sleep 5
+
+# Verify Nebula is running
+if ! ip addr show nebula1 2>/dev/null; then
+  echo "ERROR: Nebula interface not up!"
+  exit 1
+fi
 
 # =============================================================================
 # Configure worker-agent
@@ -138,13 +168,14 @@ NODE_TYPE=lighthouse
 INSTANCE_ID=${INSTANCE_ID}
 NEBULA_IP=${NEBULA_IP}
 PUBLIC_IP=${PUBLIC_IP}
+RABBITMQ_URL=${RABBITMQ_URL}
 EOF
 
 systemctl enable worker-agent
 systemctl start worker-agent
 
 # =============================================================================
-# Configure k3s Server
+# Configure k3s Server (without default CNI)
 # =============================================================================
 echo "Configuring k3s server..."
 
@@ -154,17 +185,19 @@ if [ -z "$K3S_TOKEN" ]; then
   echo "Generated K3S_TOKEN: ${K3S_TOKEN}"
 fi
 
-# Write k3s config
+# Write k3s config - disable flannel, we use Cilium
 cat > /etc/rancher/k3s/config.yaml << EOF
-node-name: ${INSTANCE_ID}
+node-name: lighthouse-${INSTANCE_ID}
 node-ip: ${NEBULA_IP}
 node-external-ip: ${PUBLIC_IP}
 bind-address: 0.0.0.0
 advertise-address: ${NEBULA_IP}
-flannel-iface: nebula1
-cluster-cidr: "10.43.0.0/16"
-service-cidr: "10.44.0.0/16"
-cluster-dns: "10.44.0.10"
+# Disable flannel - we use Cilium
+flannel-backend: none
+disable-network-policy: true
+cluster-cidr: "${POD_CIDR}"
+service-cidr: "${SERVICE_CIDR}"
+cluster-dns: "${CLUSTER_DNS}"
 disable:
   - traefik
   - servicelb
@@ -173,6 +206,8 @@ tls-san:
   - ${NEBULA_IP}
   - ${PUBLIC_IP}
   - ${INSTANCE_ID}
+  - localhost
+  - 127.0.0.1
 EOF
 
 # Start k3s
@@ -180,38 +215,64 @@ systemctl enable k3s
 systemctl start k3s
 
 echo "Waiting for k3s to be ready..."
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
 for i in {1..60}; do
-  if kubectl get nodes 2> /dev/null; then
-    echo "k3s is ready!"
+  if kubectl get nodes 2>/dev/null; then
+    echo "k3s API is ready!"
     break
   fi
+  echo "Waiting for k3s API... ($i/60)"
   sleep 5
 done
 
 # =============================================================================
-# Install Liqo
+# Install Cilium with ClusterMesh
 # =============================================================================
-echo "Installing Liqo..."
+echo "Installing Cilium CNI with ClusterMesh..."
 
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+# Wait for node to be registered (will be NotReady until CNI is installed)
+kubectl wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=False node --all --timeout=120s || true
 
-# Wait for k3s to be fully ready
+# Install Cilium with ClusterMesh enabled
+cilium install \
+  --version ${CILIUM_VERSION} \
+  --set cluster.name=${CILIUM_CLUSTER_NAME} \
+  --set cluster.id=${CILIUM_CLUSTER_ID} \
+  --set ipam.mode=kubernetes \
+  --set kubeProxyReplacement=true \
+  --set k8sServiceHost=${NEBULA_IP} \
+  --set k8sServicePort=6443 \
+  --set hubble.enabled=true \
+  --set hubble.relay.enabled=true \
+  --set clustermesh.useAPIServer=true \
+  --set clustermesh.apiserver.replicas=1 \
+  --set clustermesh.apiserver.service.type=NodePort \
+  --set clustermesh.apiserver.service.nodePort=32379 \
+  --set clustermesh.apiserver.tls.auto.enabled=true \
+  --set clustermesh.apiserver.tls.auto.method=helm
+
+echo "Waiting for Cilium to be ready..."
+cilium status --wait --wait-duration 5m
+
+# Verify node is ready now
+echo "Waiting for node to be Ready..."
 kubectl wait --for=condition=ready node --all --timeout=300s
 
-# Install Liqo using liqoctl
-liqoctl install k3s \
-  --cluster-name="${LIQO_CLUSTER_NAME}" \
-  --timeout=10m
+# =============================================================================
+# Enable ClusterMesh
+# =============================================================================
+echo "Enabling ClusterMesh..."
 
-echo "Waiting for Liqo to be ready..."
-kubectl wait --for=condition=ready pod -l app.kubernetes.io/part-of=liqo -n liqo-system --timeout=300s || true
+# ClusterMesh is already enabled via install, just verify status
+cilium clustermesh status || true
 
 # =============================================================================
 # Store outputs for GPU workers to retrieve
 # =============================================================================
 echo "Storing cluster info..."
 
-# Create secret with k3s join info
+# Create/update secret with k3s join info
 aws secretsmanager put-secret-value \
   --secret-id "catalyst-llm/gpu-worker" \
   --region "${REGION}" \
@@ -221,9 +282,18 @@ aws secretsmanager put-secret-value \
       --arg url "https://${NEBULA_IP}:6443" \
       --arg lighthouse_ip "${NEBULA_IP}" \
       --arg lighthouse_public_ip "${PUBLIC_IP}" \
-      '{k3s_token: $token, k3s_url: $url, lighthouse_nebula_ip: $lighthouse_ip, lighthouse_public_ip: $lighthouse_public_ip}'
+      --arg cluster_name "${CILIUM_CLUSTER_NAME}" \
+      --arg cluster_id "${CILIUM_CLUSTER_ID}" \
+      '{k3s_token: $token, k3s_url: $url, lighthouse_nebula_ip: $lighthouse_ip, lighthouse_public_ip: $lighthouse_public_ip, cilium_cluster_name: $cluster_name, cilium_cluster_id: $cluster_id}'
   )" || echo "Warning: Could not update gpu-worker secret"
 
 echo "=== Lighthouse Bootstrap Completed at $(date) ==="
 echo "k3s server URL: https://${NEBULA_IP}:6443"
-echo "k3s token: ${K3S_TOKEN}"
+echo "Nebula IP: ${NEBULA_IP}"
+echo "Public IP: ${PUBLIC_IP}"
+echo "Cilium ClusterMesh: ${CILIUM_CLUSTER_NAME} (ID: ${CILIUM_CLUSTER_ID})"
+echo ""
+echo "To connect to Talos ClusterMesh:"
+echo "  1. Extract Talos ClusterMesh secrets"
+echo "  2. Create cilium-clustermesh secret on this cluster"
+echo "  3. Extract this cluster's secrets and apply to Talos"
