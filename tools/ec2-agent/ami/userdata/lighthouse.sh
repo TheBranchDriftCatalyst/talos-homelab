@@ -117,6 +117,10 @@ firewall:
       host: any
 
   inbound:
+    # Allow all from infrastructure group (home gateway, etc)
+    - port: any
+      proto: any
+      group: infrastructure
     - port: any
       proto: icmp
       host: any
