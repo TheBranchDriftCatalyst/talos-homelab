@@ -1,11 +1,11 @@
 # =============================================================================
 # Base AMI - Common Foundation for All Node Types
 # =============================================================================
-# Includes: Amazon Linux 2023, Nebula, worker-agent, systemd services
+# Includes: Amazon Linux 2023, worker-agent, systemd services
 
 source "amazon-ebs" "base" {
   ami_name        = "${var.ami_prefix}-base-{{timestamp}}"
-  ami_description = "Base AMI with Nebula and worker-agent for Catalyst fleet"
+  ami_description = "Base AMI with worker-agent for Catalyst fleet"
   instance_type   = var.instance_type
   region          = var.aws_region
   ssh_username    = var.ssh_username
@@ -31,7 +31,6 @@ source "amazon-ebs" "base" {
   tags = merge(var.common_tags, {
     Name      = "${var.ami_prefix}-base"
     AMIType   = "base"
-    NebulaVer = var.nebula_version
     BuildTime = "{{timestamp}}"
   })
 
@@ -60,23 +59,6 @@ build {
     ]
   }
 
-  # Install Nebula
-  provisioner "shell" {
-    environment_vars = [
-      "NEBULA_VERSION=${var.nebula_version}"
-    ]
-    inline = [
-      "set -ex",
-      "cd /tmp",
-      "wget -q https://github.com/slackhq/nebula/releases/download/v$NEBULA_VERSION/nebula-linux-amd64.tar.gz",
-      "tar xzf nebula-linux-amd64.tar.gz",
-      "sudo mv nebula nebula-cert /usr/local/bin/",
-      "sudo chmod +x /usr/local/bin/nebula /usr/local/bin/nebula-cert",
-      "rm -f nebula-linux-amd64.tar.gz",
-      "nebula --version",
-    ]
-  }
-
   # Install worker-agent
   provisioner "shell" {
     inline = [
@@ -91,34 +73,13 @@ build {
   provisioner "shell" {
     inline = [
       "set -ex",
-      "sudo mkdir -p /etc/nebula",
       "sudo mkdir -p /etc/worker-agent",
-      <<-EOF
-      sudo tee /etc/systemd/system/nebula.service > /dev/null << 'UNIT'
-      [Unit]
-      Description=Nebula VPN
-      After=network.target
-      Wants=network-online.target
-
-      [Service]
-      Type=simple
-      ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yml
-      Restart=always
-      RestartSec=5
-      LimitNOFILE=65535
-
-      [Install]
-      WantedBy=multi-user.target
-      UNIT
-      EOF
-      ,
       <<-EOF
       sudo tee /etc/systemd/system/worker-agent.service > /dev/null << 'UNIT'
       [Unit]
       Description=Catalyst Worker Agent
-      After=network.target nebula.service
+      After=network.target
       Wants=network-online.target
-      Requires=nebula.service
 
       [Service]
       Type=simple

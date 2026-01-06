@@ -32,12 +32,6 @@ variable "ami_prefix" {
   description = "Prefix for AMI names"
 }
 
-variable "nebula_version" {
-  type        = string
-  default     = "1.9.0"
-  description = "Nebula VPN version"
-}
-
 variable "k3s_version" {
   type        = string
   default     = "v1.31.2+k3s1"

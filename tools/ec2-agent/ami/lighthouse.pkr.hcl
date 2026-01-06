@@ -1,12 +1,12 @@
 # =============================================================================
-# Lighthouse AMI - k3s Server + Cilium + Nebula Lighthouse
+# Lighthouse AMI - k3s Server + Cilium
 # =============================================================================
 # Central coordination node for the hybrid cluster
-# Provides: Nebula lighthouse, k3s server, Cilium CNI with ClusterMesh
+# Provides: k3s server, Cilium CNI with ClusterMesh
 
 source "amazon-ebs" "lighthouse" {
   ami_name        = "${var.ami_prefix}-lighthouse-{{timestamp}}"
-  ami_description = "Lighthouse AMI with k3s server, Cilium, and Nebula lighthouse"
+  ami_description = "Lighthouse AMI with k3s server and Cilium"
   instance_type   = var.instance_type
   region          = var.aws_region
   ssh_username    = var.ssh_username
@@ -63,22 +63,6 @@ build {
     ]
   }
 
-  # Install Nebula (configured as lighthouse)
-  provisioner "shell" {
-    environment_vars = [
-      "NEBULA_VERSION=${var.nebula_version}"
-    ]
-    inline = [
-      "set -ex",
-      "cd /tmp",
-      "wget -q https://github.com/slackhq/nebula/releases/download/v$NEBULA_VERSION/nebula-linux-amd64.tar.gz",
-      "tar xzf nebula-linux-amd64.tar.gz",
-      "sudo mv nebula nebula-cert /usr/local/bin/",
-      "sudo chmod +x /usr/local/bin/nebula /usr/local/bin/nebula-cert",
-      "rm -f nebula-linux-amd64.tar.gz",
-    ]
-  }
-
   # Install k3s server (without default CNI - we'll use Cilium)
   provisioner "shell" {
     environment_vars = [
@@ -132,34 +116,13 @@ build {
   provisioner "shell" {
     inline = [
       "set -ex",
-      "sudo mkdir -p /etc/nebula",
       "sudo mkdir -p /etc/worker-agent",
-      <<-EOF
-      sudo tee /etc/systemd/system/nebula.service > /dev/null << 'UNIT'
-      [Unit]
-      Description=Nebula VPN Lighthouse
-      After=network.target
-      Wants=network-online.target
-
-      [Service]
-      Type=simple
-      ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yml
-      Restart=always
-      RestartSec=5
-      LimitNOFILE=65535
-
-      [Install]
-      WantedBy=multi-user.target
-      UNIT
-      EOF
-      ,
       <<-EOF
       sudo tee /etc/systemd/system/worker-agent.service > /dev/null << 'UNIT'
       [Unit]
       Description=Catalyst Worker Agent
-      After=network.target nebula.service k3s.service
+      After=network.target k3s.service
       Wants=network-online.target
-      Requires=nebula.service
 
       [Service]
       Type=simple
