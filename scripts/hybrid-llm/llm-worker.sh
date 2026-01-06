@@ -28,13 +28,14 @@ AWS_REGION="${AWS_REGION:-us-west-2}"
 INSTANCE_TYPE="${LLM_INSTANCE_TYPE:-g4dn.4xlarge}" # 16 vCPU, 64GB RAM, 1x T4 GPU
 USE_SPOT="${LLM_USE_SPOT:-false}"                  # Default to on-demand for reliability
 KEY_NAME="hybrid-llm-key"
-SG_NAME="nebula-lighthouse" # Reuse lighthouse security group
+SG_NAME="catalyst-llm" # Security group for LLM workers
 
 # AMI Configuration - use pre-baked AMI or fall back to base AL2023
 # Set USE_CUSTOM_AMI=false to use legacy userdata provisioning
 USE_CUSTOM_AMI="${LLM_USE_CUSTOM_AMI:-true}"
 CUSTOM_AMI_PREFIX="catalyst-llm-gpu-worker"
 SECRET_NAME="${LLM_SECRET_NAME:-catalyst-llm/gpu-worker}"
+IAM_INSTANCE_PROFILE="${LLM_IAM_PROFILE:-catalyst-llm-gpu-worker}"
 
 # Warm-up timeout (seconds to wait for Ollama to be ready)
 WARMUP_TIMEOUT="${LLM_WARMUP_TIMEOUT:-180}" # 3 minutes default
@@ -96,12 +97,21 @@ get_instance_status() {
     --region "$AWS_REGION" 2> /dev/null || echo "not_found"
 }
 
-# Get worker IP (Nebula mesh IP)
+# Get worker IP (private IP since Nebula not yet implemented)
+# TODO: TALOS-700h will add Nebula mesh support with home-as-lighthouse
 get_worker_ip() {
-  echo "10.42.2.1"
+  local instance_id=$(get_state "instance_id")
+  if [[ -z "$instance_id" ]]; then
+    return
+  fi
+  aws ec2 describe-instances \
+    --instance-ids "$instance_id" \
+    --query 'Reservations[0].Instances[0].PrivateIpAddress' \
+    --output text \
+    --region "$AWS_REGION" 2> /dev/null
 }
 
-# Get worker public IP (for SSH before Nebula is up)
+# Get worker public IP (for SSH access)
 get_worker_public_ip() {
   local instance_id=$(get_state "instance_id")
   if [[ -z "$instance_id" ]]; then
@@ -132,114 +142,73 @@ get_custom_ami() {
 
 # Generate minimal userdata for pre-baked AMI
 # Just sets environment variables - secrets come from AWS Secrets Manager
+# NOTE: Nebula mesh not yet implemented - see TALOS-700h
 generate_minimal_userdata() {
   local lighthouse_public_ip="$1"
-  local lighthouse_nebula_ip="${2:-10.42.1.1}"
+  # lighthouse_nebula_ip parameter preserved for future TALOS-700h implementation
+  local lighthouse_nebula_ip="${2:-}"
 
   cat << EOF
 #!/bin/bash
 # Minimal bootstrap for pre-baked GPU Worker AMI
 # Secrets are fetched from AWS Secrets Manager at boot
+# NOTE: Nebula mesh not configured - see TALOS-700h for proper implementation
 set -euo pipefail
 exec > >(tee /var/log/userdata.log) 2>&1
 echo "=== GPU Worker Bootstrap Started at \$(date) ==="
 
 # Configuration injected at launch time
 export SECRET_NAME="${SECRET_NAME}"
-export LIGHTHOUSE_NEBULA_IP="${lighthouse_nebula_ip}"
-export LIGHTHOUSE_PUBLIC_IP="${lighthouse_public_ip}"
-export NEBULA_IP="10.42.2.1"
-export CONTROL_PLANE_ADDR="${lighthouse_nebula_ip}:50051"
 
-# Run the pre-installed bootstrap script
-if [[ -x /usr/local/bin/bootstrap-gpu-worker.sh ]]; then
-  /usr/local/bin/bootstrap-gpu-worker.sh
-else
-  # Fallback: inline bootstrap for compatibility
-  REGION=\$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
-  INSTANCE_ID=\$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+# Fetch instance metadata (IMDSv2)
+IMDS_TOKEN=\$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+REGION=\$(curl -s -H "X-aws-ec2-metadata-token: \$IMDS_TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+INSTANCE_ID=\$(curl -s -H "X-aws-ec2-metadata-token: \$IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+PRIVATE_IP=\$(curl -s -H "X-aws-ec2-metadata-token: \$IMDS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+PUBLIC_IP=\$(curl -s -H "X-aws-ec2-metadata-token: \$IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
 
-  echo "Fetching secrets from AWS Secrets Manager: \${SECRET_NAME}"
-  SECRETS=\$(aws secretsmanager get-secret-value --secret-id "\${SECRET_NAME}" --region "\${REGION}" --query SecretString --output text)
+echo "Fetching secrets from AWS Secrets Manager: \${SECRET_NAME}"
+SECRETS=\$(aws secretsmanager get-secret-value --secret-id "\${SECRET_NAME}" --region "\${REGION}" --query SecretString --output text 2>/dev/null || echo "{}")
 
-  # Extract and write Nebula certificates
-  echo "\$SECRETS" | jq -r '.nebula_ca_crt' | base64 -d > /etc/nebula/ca.crt
-  echo "\$SECRETS" | jq -r '.nebula_host_crt' | base64 -d > /etc/nebula/host.crt
-  echo "\$SECRETS" | jq -r '.nebula_host_key' | base64 -d > /etc/nebula/host.key
-  chmod 600 /etc/nebula/host.key
+# Get RabbitMQ URL from secrets if available
+RABBITMQ_URL=\$(echo "\$SECRETS" | jq -r '.rabbitmq_url // empty')
 
-  # Configure Nebula
-  cat > /etc/nebula/config.yml << NEBCONF
-pki:
-  ca: /etc/nebula/ca.crt
-  cert: /etc/nebula/host.crt
-  key: /etc/nebula/host.key
-static_host_map:
-  "\${LIGHTHOUSE_NEBULA_IP}": ["\${LIGHTHOUSE_PUBLIC_IP}:4242"]
-lighthouse:
-  am_lighthouse: false
-  interval: 60
-  hosts:
-    - "\${LIGHTHOUSE_NEBULA_IP}"
-listen:
-  host: 0.0.0.0
-  port: 4242
-punchy:
-  punch: true
-tun:
-  dev: nebula1
-  mtu: 1300
-firewall:
-  outbound:
-    - port: any
-      proto: any
-      host: any
-  inbound:
-    - port: any
-      proto: icmp
-      host: any
-    - port: 22
-      proto: tcp
-      host: any
-    - port: 11434
-      proto: tcp
-      host: any
-NEBCONF
-
-  # Configure worker-agent
-  cat > /etc/worker-agent/env << AGENTENV
-CONTROL_PLANE_ADDR=\${CONTROL_PLANE_ADDR}
+# Configure worker-agent
+cat > /etc/worker-agent/env << AGENTENV
 NODE_TYPE=gpu-worker
 INSTANCE_ID=\${INSTANCE_ID}
-NEBULA_IP=\${NEBULA_IP}
+PUBLIC_IP=\${PUBLIC_IP}
+PRIVATE_IP=\${PRIVATE_IP}
+RABBITMQ_URL=\${RABBITMQ_URL}
 AGENTENV
 
-  # Start services
-  systemctl enable nebula worker-agent ollama
-  systemctl start nebula
-  sleep 5
-  systemctl start worker-agent ollama
+# Start services
+systemctl enable worker-agent ollama
+systemctl start worker-agent ollama
 
-  # Configure k3s if token available
-  K3S_TOKEN=\$(echo "\$SECRETS" | jq -r '.k3s_token // empty')
-  K3S_URL=\$(echo "\$SECRETS" | jq -r '.k3s_url // empty')
-  if [[ -n "\$K3S_TOKEN" && -n "\$K3S_URL" ]]; then
-    cat > /etc/rancher/k3s/config.yaml << K3SCONF
+# Configure k3s if token available
+K3S_TOKEN=\$(echo "\$SECRETS" | jq -r '.k3s_token // empty')
+K3S_URL=\$(echo "\$SECRETS" | jq -r '.k3s_url // empty')
+if [[ -n "\$K3S_TOKEN" && -n "\$K3S_URL" ]]; then
+  cat > /etc/rancher/k3s/config.yaml << K3SCONF
 server: \${K3S_URL}
 token: \${K3S_TOKEN}
 node-name: \${INSTANCE_ID}
-node-ip: \${NEBULA_IP}
-flannel-iface: nebula1
+node-ip: \${PRIVATE_IP}
 node-label:
   - "node.kubernetes.io/instance-type=gpu-worker"
   - "nvidia.com/gpu=true"
 K3SCONF
-    systemctl enable k3s-agent
-    systemctl start k3s-agent
-  fi
+  systemctl enable k3s-agent
+  systemctl start k3s-agent
 fi
 
 echo "=== GPU Worker Bootstrap Completed at \$(date) ==="
+echo "Instance ID: \${INSTANCE_ID}"
+echo "Private IP: \${PRIVATE_IP}"
+echo "Public IP: \${PUBLIC_IP}"
+echo "Ollama: http://\${PRIVATE_IP}:11434"
+echo "NOTE: Nebula mesh not configured - see TALOS-700h"
 EOF
 }
 
@@ -370,29 +339,23 @@ cmd_status() {
       else
         echo "AMI:          AL2023 (legacy)"
       fi
+      local private_ip=$(get_worker_ip)
       echo "Public IP:    $public_ip"
-      echo "Nebula IP:    10.42.2.1"
-      echo "Ollama API:   http://10.42.2.1:11434"
+      echo "Private IP:   $private_ip"
+      echo "Ollama API:   http://$public_ip:11434"
       if [[ -n "$model_volume_id" ]]; then
         echo "Model Volume: $model_volume_id (${MODEL_VOLUME_SIZE}GB persistent)"
       fi
       echo ""
 
-      # Check Nebula connectivity
-      if ping -c 1 -W 2 10.42.2.1 > /dev/null 2>&1; then
-        echo -e "Mesh:         ${GREEN}Connected${NC}"
-
-        # Check Ollama
-        if curl -s --connect-timeout 2 http://10.42.2.1:11434/api/tags > /dev/null 2>&1; then
-          echo -e "Ollama:       ${GREEN}Ready${NC}"
-          echo ""
-          echo "Available models:"
-          curl -s http://10.42.2.1:11434/api/tags | jq -r '.models[].name' 2> /dev/null || echo "  (none)"
-        else
-          echo -e "Ollama:       ${YELLOW}Not ready${NC}"
-        fi
+      # Check Ollama connectivity via public IP
+      if curl -s --connect-timeout 2 http://$public_ip:11434/api/tags > /dev/null 2>&1; then
+        echo -e "Ollama:       ${GREEN}Ready${NC}"
+        echo ""
+        echo "Available models:"
+        curl -s http://$public_ip:11434/api/tags | jq -r '.models[].name' 2> /dev/null || echo "  (none)"
       else
-        echo -e "Mesh:         ${YELLOW}Not connected (instance may still be booting)${NC}"
+        echo -e "Ollama:       ${YELLOW}Not ready (instance may still be booting)${NC}"
       fi
       ;;
     stopped)
@@ -463,20 +426,12 @@ cmd_start() {
   # Attach model volume if exists
   attach_model_volume "$instance_id"
 
-  log_info "Instance running. Waiting for Nebula mesh connection..."
-  for i in {1..60}; do
-    if ping -c 1 -W 2 10.42.2.1 > /dev/null 2>&1; then
-      log_info "Mesh connected!"
-      break
-    fi
-    echo -n "."
-    sleep 5
-  done
-  echo ""
+  log_info "Instance running. Waiting for services to start..."
+  local public_ip=$(get_worker_public_ip)
 
   log_info "Waiting for Ollama to be ready..."
   for i in {1..30}; do
-    if curl -s --connect-timeout 2 http://10.42.2.1:11434/api/tags > /dev/null 2>&1; then
+    if curl -s --connect-timeout 2 http://$public_ip:11434/api/tags > /dev/null 2>&1; then
       log_info "Ollama is ready!"
       break
     fi
@@ -581,7 +536,7 @@ cmd_provision() {
   fi
   log_info "Security Group: $sg_id"
 
-  # Get lighthouse public IP for Nebula config
+  # Get lighthouse public IP (used for secrets lookup)
   local lighthouse_public_ip=""
   if [[ -f "$LIGHTHOUSE_STATE" ]]; then
     lighthouse_public_ip=$(jq -r '.elastic_ip // empty' "$LIGHTHOUSE_STATE")
@@ -638,6 +593,7 @@ cmd_provision() {
       --instance-type "$INSTANCE_TYPE" \
       --key-name "$KEY_NAME" \
       --security-group-ids "$sg_id" \
+      --iam-instance-profile "Name=$IAM_INSTANCE_PROFILE" \
       --user-data "file://$userdata_file" \
       --instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=persistent,InstanceInterruptionBehavior=stop}' \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=llm-worker},{Key=Project,Value=hybrid-llm},{Key=InstanceMode,Value=spot}]" \
@@ -654,6 +610,7 @@ cmd_provision() {
       --instance-type "$INSTANCE_TYPE" \
       --key-name "$KEY_NAME" \
       --security-group-ids "$sg_id" \
+      --iam-instance-profile "Name=$IAM_INSTANCE_PROFILE" \
       --user-data "file://$userdata_file" \
       --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=llm-worker},{Key=Project,Value=hybrid-llm},{Key=InstanceMode,Value=on-demand}]" \
       --block-device-mappings '[{"DeviceName":"/dev/xvda","Ebs":{"VolumeSize":100,"VolumeType":"gp3"}}]' \
@@ -745,15 +702,10 @@ cmd_ssh() {
     exit 1
   fi
 
-  # Try Nebula IP first, fall back to public IP
-  if ping -c 1 -W 2 10.42.2.1 > /dev/null 2>&1; then
-    log_info "Connecting via Nebula mesh (10.42.2.1)..."
-    ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new ec2-user@10.42.2.1 "$@"
-  else
-    local public_ip=$(get_worker_public_ip)
-    log_info "Connecting via public IP ($public_ip)..."
-    ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "ec2-user@$public_ip" "$@"
-  fi
+  # Connect via public IP (Nebula mesh not yet implemented - see TALOS-700h)
+  local public_ip=$(get_worker_public_ip)
+  log_info "Connecting via public IP ($public_ip)..."
+  ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new "ec2-user@$public_ip" "$@"
 }
 
 cmd_logs() {

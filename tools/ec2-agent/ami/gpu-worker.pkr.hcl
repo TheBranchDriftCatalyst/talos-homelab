@@ -75,22 +75,6 @@ build {
     ]
   }
 
-  # Install Nebula
-  provisioner "shell" {
-    environment_vars = [
-      "NEBULA_VERSION=${var.nebula_version}"
-    ]
-    inline = [
-      "set -ex",
-      "cd /tmp",
-      "wget -q https://github.com/slackhq/nebula/releases/download/v$NEBULA_VERSION/nebula-linux-amd64.tar.gz",
-      "tar xzf nebula-linux-amd64.tar.gz",
-      "sudo mv nebula nebula-cert /usr/local/bin/",
-      "sudo chmod +x /usr/local/bin/nebula /usr/local/bin/nebula-cert",
-      "rm -f nebula-linux-amd64.tar.gz",
-    ]
-  }
-
   # Install NVIDIA drivers
   # Note: modprobe may fail during AMI build (expected) - drivers will work at runtime
   provisioner "shell" {
@@ -185,34 +169,13 @@ build {
   provisioner "shell" {
     inline = [
       "set -ex",
-      "sudo mkdir -p /etc/nebula",
       "sudo mkdir -p /etc/worker-agent",
-      <<-EOF
-      sudo tee /etc/systemd/system/nebula.service > /dev/null << 'UNIT'
-      [Unit]
-      Description=Nebula VPN
-      After=network.target
-      Wants=network-online.target
-
-      [Service]
-      Type=simple
-      ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yml
-      Restart=always
-      RestartSec=5
-      LimitNOFILE=65535
-
-      [Install]
-      WantedBy=multi-user.target
-      UNIT
-      EOF
-      ,
       <<-EOF
       sudo tee /etc/systemd/system/worker-agent.service > /dev/null << 'UNIT'
       [Unit]
       Description=Catalyst Worker Agent
-      After=network.target nebula.service ollama.service
+      After=network.target ollama.service
       Wants=network-online.target
-      Requires=nebula.service
 
       [Service]
       Type=simple
@@ -220,10 +183,10 @@ build {
       # Pass environment variables as flags to worker-agent
       # CONTROL_PLANE_ADDR and RABBITMQ_URL are required/optional env vars
       ExecStart=/bin/bash -c '/usr/local/bin/worker-agent \
-        --control-plane="${CONTROL_PLANE_ADDR}" \
-        --type="${NODE_TYPE:-gpu-worker}" \
-        --health-port="${HEALTH_PORT:-8080}" \
-        ${RABBITMQ_URL:+--rabbitmq-url="${RABBITMQ_URL}"}'
+        --control-plane="$${CONTROL_PLANE_ADDR}" \
+        --type="$${NODE_TYPE:-gpu-worker}" \
+        --health-port="$${HEALTH_PORT:-8080}" \
+        $${RABBITMQ_URL:+--rabbitmq-url="$${RABBITMQ_URL}"}'
       Restart=always
       RestartSec=10
       TimeoutStartSec=30
