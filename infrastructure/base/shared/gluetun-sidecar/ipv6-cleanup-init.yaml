@@ -1,0 +1,48 @@
+# Shared init container for gluetun IPv6 route cleanup
+# Include this in any deployment using gluetun VPN sidecar to prevent
+# "adding IPv6 rule: adding ip rule 101: from all to all table 51820: file exists" errors
+#
+# Usage: Add this init container to your deployment's initContainers list
+# Or use strategic merge patch via kustomization.yaml
+#
+# Why this is needed:
+# - Gluetun with WireGuard creates IPv6 routing rules for table 51820
+# - When pods restart, stale rules may persist in the node's network namespace
+# - This causes gluetun to fail startup with "file exists" error
+# - Cleaning up stale rules before gluetun starts prevents this issue
+#
+# Files that should include this pattern:
+# - infrastructure/base/vpn-gateway/deployment.yaml
+# - infrastructure/base/vpn-gateway/securexng.yaml
+# - infrastructure/base/vpn-gateway/secure-chrome.yaml
+# - infrastructure/base/vpn-gateway/secure-webtop.yaml
+# - applications/arr-stack/base/qbittorrent/deployment.yaml
+# - (Any future deployment using gluetun sidecar)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gluetun-ipv6-cleanup-docs
+  labels:
+    app.kubernetes.io/component: gluetun-sidecar
+    app.kubernetes.io/part-of: shared-infrastructure
+data:
+  init-container-snippet.yaml: |
+    # Add this initContainer to any deployment with gluetun sidecar:
+    initContainers:
+      - name: cleanup-routes
+        image: busybox:1.36
+        securityContext:
+          capabilities:
+            add:
+              - NET_ADMIN
+        command:
+          - /bin/sh
+          - -c
+          - |
+            echo "Cleaning up stale IPv6 routing rules..."
+            # Remove any stale ip rules for table 51820 (wireguard)
+            ip -6 rule del table 51820 2>/dev/null || true
+            ip -6 rule del table 51820 2>/dev/null || true
+            ip -6 rule del table 51820 2>/dev/null || true
+            echo "Cleanup complete"
