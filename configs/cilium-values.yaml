@@ -1,6 +1,13 @@
 # Cilium CNI values for Talos Linux cluster
 # Generated for catalyst-cluster multi-node setup
 
+# =============================================================================
+# Cluster Identity (required for ClusterMesh)
+# =============================================================================
+cluster:
+  name: talos-home
+  id: 1
+
 # Replace kube-proxy with Cilium's eBPF implementation
 kubeProxyReplacement: true
 
@@ -156,3 +163,23 @@ bpf:
 #   enabled: true
 #   type: wireguard
 #   nodeEncryption: false
+
+# =============================================================================
+# ClusterMesh for Multi-Cluster Connectivity
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/network/clustermesh/clustermesh/
+#
+# Enables cross-cluster service discovery and pod-to-pod connectivity
+# across talos-home (ID:1) and aws-lighthouse (ID:2) clusters via Nebula mesh
+
+clustermesh:
+  useAPIServer: true
+  apiserver:
+    replicas: 1
+    service:
+      type: NodePort
+      nodePort: 32379
+    tls:
+      auto:
+        enabled: true
+        method: helm
