@@ -27,11 +27,15 @@ CONTROL_PLANE_ADDR="${CONTROL_PLANE_ADDR:-${LIGHTHOUSE_NEBULA_IP}:50051}"
 RABBITMQ_URL="${RABBITMQ_URL:-}"
 
 # =============================================================================
+# Fetch Instance Metadata (IMDSv2)
+# =============================================================================
+IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+
 # Fetch Secrets from AWS Secrets Manager
 # =============================================================================
 SECRET_NAME="${SECRET_NAME:-catalyst-llm/gpu-worker}"
-REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
-INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
 
 echo "Fetching secrets from AWS Secrets Manager: ${SECRET_NAME}"
 SECRETS=$(aws secretsmanager get-secret-value --secret-id "${SECRET_NAME}" --region "${REGION}" --query SecretString --output text)
