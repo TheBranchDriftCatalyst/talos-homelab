@@ -1,17 +1,12 @@
 # =============================================================================
-# Lighthouse AMI - k3s Server + Liqo + Nebula Lighthouse
+# Lighthouse AMI - k3s Server + Cilium + Nebula Lighthouse
 # =============================================================================
 # Central coordination node for the hybrid cluster
-
-variable "liqo_version" {
-  type        = string
-  default     = "0.10.0"
-  description = "Liqo version for multi-cluster"
-}
+# Provides: Nebula lighthouse, k3s server, Cilium CNI with ClusterMesh
 
 source "amazon-ebs" "lighthouse" {
   ami_name        = "${var.ami_prefix}-lighthouse-{{timestamp}}"
-  ami_description = "Lighthouse AMI with k3s server, Liqo, and Nebula lighthouse"
+  ami_description = "Lighthouse AMI with k3s server, Cilium, and Nebula lighthouse"
   instance_type   = var.instance_type
   region          = var.aws_region
   ssh_username    = var.ssh_username
@@ -38,7 +33,7 @@ source "amazon-ebs" "lighthouse" {
     Name      = "${var.ami_prefix}-lighthouse"
     AMIType   = "lighthouse"
     K3sVer    = var.k3s_version
-    LiqoVer   = var.liqo_version
+    CiliumVer = var.cilium_version
     BuildTime = "{{timestamp}}"
   })
 
@@ -62,7 +57,8 @@ build {
     inline = [
       "set -ex",
       "sudo dnf update -y",
-      "sudo dnf install -y jq curl wget tar gzip unzip htop iotop vim tmux",
+      # curl-minimal is pre-installed; skip curl to avoid conflict
+      "sudo dnf install -y jq wget tar gzip unzip htop iotop vim tmux",
       "sudo dnf install -y amazon-cloudwatch-agent",
     ]
   }
@@ -83,7 +79,7 @@ build {
     ]
   }
 
-  # Install k3s server
+  # Install k3s server (without default CNI - we'll use Cilium)
   provisioner "shell" {
     environment_vars = [
       "K3S_VERSION=${var.k3s_version}"
@@ -101,24 +97,25 @@ build {
   provisioner "shell" {
     inline = [
       "set -ex",
-      "curl -LO 'https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl'",
+      "KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)",
+      "curl -LO https://dl.k8s.io/release/$${KUBECTL_VERSION}/bin/linux/amd64/kubectl",
       "sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl",
       "rm kubectl",
       "curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash",
     ]
   }
 
-  # Install liqoctl (Liqo CLI)
+  # Install Cilium CLI
   provisioner "shell" {
     environment_vars = [
-      "LIQO_VERSION=${var.liqo_version}"
+      "CILIUM_CLI_VERSION=${var.cilium_cli_version}"
     ]
     inline = [
       "set -ex",
-      "curl -sSL https://github.com/liqotech/liqo/releases/download/v$LIQO_VERSION/liqoctl-linux-amd64 -o /tmp/liqoctl",
-      "sudo mv /tmp/liqoctl /usr/local/bin/liqoctl",
-      "sudo chmod +x /usr/local/bin/liqoctl",
-      "liqoctl version --client || true",
+      "curl -L --fail --remote-name-all https://github.com/cilium/cilium-cli/releases/download/$CILIUM_CLI_VERSION/cilium-linux-amd64.tar.gz",
+      "sudo tar xzvfC cilium-linux-amd64.tar.gz /usr/local/bin",
+      "rm cilium-linux-amd64.tar.gz",
+      "cilium version --client",
     ]
   }
 

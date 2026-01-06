@@ -4,7 +4,7 @@
 
 variable "aws_region" {
   type        = string
-  default     = "us-east-1"
+  default     = "us-west-2"
   description = "AWS region to build AMI in"
 }
 
@@ -28,7 +28,7 @@ variable "ssh_username" {
 
 variable "ami_prefix" {
   type        = string
-  default     = "catalyst"
+  default     = "catalyst-llm"
   description = "Prefix for AMI names"
 }
 
@@ -42,6 +42,18 @@ variable "k3s_version" {
   type        = string
   default     = "v1.31.2+k3s1"
   description = "k3s version"
+}
+
+variable "cilium_version" {
+  type        = string
+  default     = "1.16.6"
+  description = "Cilium CNI version"
+}
+
+variable "cilium_cli_version" {
+  type        = string
+  default     = "v0.16.22"
+  description = "Cilium CLI version"
 }
 
 variable "nvidia_driver_version" {
