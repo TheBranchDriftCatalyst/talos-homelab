@@ -35,11 +35,16 @@ spec:
             - /bin/sh
             - -c
             - |
-              echo "Cleaning up stale IPv6 routing rules..."
-              # Remove any stale ip rules for table 51820 (wireguard)
-              ip -6 rule del table 51820 2>/dev/null || true
-              ip -6 rule del table 51820 2>/dev/null || true
-              ip -6 rule del table 51820 2>/dev/null || true
+              echo "Cleaning up stale IPv6 routing rules for table 51820..."
+              # Dynamically find and delete all IPv6 rules referencing table 51820
+              # This handles any rule format (fwmark, priority, etc)
+              ip -6 rule show 2>/dev/null | grep -E 'lookup 51820|table 51820' | while read line; do
+                prio=$(echo "$line" | cut -d: -f1)
+                echo "Deleting IPv6 rule with priority $prio"
+                ip -6 rule del prio "$prio" 2>/dev/null || true
+              done
+              echo "IPv6 rules after cleanup:"
+              ip -6 rule list 2>/dev/null || true
               echo "Cleanup complete"
       containers:
         - name: gluetun
