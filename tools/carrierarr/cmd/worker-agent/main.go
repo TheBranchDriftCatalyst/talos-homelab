@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/agent"
-	pb "github.com/thebranchdriftcatalyst/ec2-agent/pkg/proto"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/agent"
+	pb "github.com/thebranchdriftcatalyst/carrierarr/pkg/proto"
 )
 
 var (

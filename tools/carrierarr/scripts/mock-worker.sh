@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mock worker script for testing ec2-agent
+# Mock worker script for testing carrierarr
 # Simulates the behavior of llm-worker.sh
 
 set -euo pipefail

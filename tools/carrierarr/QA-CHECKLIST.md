@@ -14,7 +14,7 @@ Manual testing checklist for the RabbitMQ-based worker registration system.
 |---------|-----|---------|
 | llm-proxy UI | http://llm.talos00/_/ui | Main control panel |
 | RabbitMQ Console | http://rabbitmq.talos00 | Queue monitoring |
-| Control-plane API | http://control-plane.ec2-agents.svc:8090 | Fleet API (internal) |
+| Control-plane API | http://control-plane.carrierarr.svc:8090 | Fleet API (internal) |
 
 ---
 
@@ -34,13 +34,13 @@ Manual testing checklist for the RabbitMQ-based worker registration system.
   - [ ] `registration.control-plane`
   - [ ] `heartbeat.control-plane`
 
-### 1.2 ec2-agents Namespace
+### 1.2 carrierarr Namespace
 ```bash
 # Run these commands and verify output
-kubectl get ns ec2-agents
-kubectl get pods -n ec2-agents
-kubectl get svc -n ec2-agents
-kubectl get ingressroute -n ec2-agents
+kubectl get ns carrierarr
+kubectl get pods -n carrierarr
+kubectl get svc -n carrierarr
+kubectl get ingressroute -n carrierarr
 ```
 
 - [ ] Namespace exists
@@ -51,7 +51,7 @@ kubectl get ingressroute -n ec2-agents
 ### 1.3 Control-Plane Health
 ```bash
 # Port-forward to test locally
-kubectl port-forward -n ec2-agents svc/control-plane 8090:8090 &
+kubectl port-forward -n carrierarr svc/control-plane 8090:8090 &
 
 # Test endpoints
 curl http://localhost:8090/health
@@ -73,7 +73,7 @@ curl http://localhost:8090/api/v1/stats
 
 ### 2.1 Build and Push Worker-Agent
 ```bash
-cd tools/ec2-agent
+cd tools/carrierarr
 make build
 # Push to registry if needed
 ```
@@ -83,7 +83,7 @@ make build
 
 ### 2.2 Build GPU Worker AMI
 ```bash
-cd tools/ec2-agent/ami
+cd tools/carrierarr/ami
 packer init .
 packer validate .
 packer build -only="gpu-worker.*" .
@@ -162,7 +162,7 @@ curl http://localhost:8090/api/v1/nodes | jq '.[] | select(.health_status == "st
 kubectl logs -n catalyst-llm deployment/llm-proxy | grep -i fleet
 ```
 
-- [ ] Logs show "Fleet API: http://control-plane.ec2-agents..."
+- [ ] Logs show "Fleet API: http://control-plane.carrierarr..."
 - [ ] No connection errors
 
 ### 4.2 Dynamic Remote URL
@@ -233,7 +233,7 @@ kubectl scale statefulset rabbitmq -n catalyst-llm --replicas=1
 
 ### 6.2 Control-Plane Restart
 ```bash
-kubectl rollout restart deployment/control-plane -n ec2-agents
+kubectl rollout restart deployment/control-plane -n carrierarr
 ```
 
 - [ ] Workers re-register after control-plane restart
@@ -270,7 +270,7 @@ curl http://localhost:8090/api/v1/nodes  # Should be empty or node removed
 
 | Component | Location |
 |-----------|----------|
-| Control-plane | `kubectl logs -n ec2-agents deployment/control-plane` |
+| Control-plane | `kubectl logs -n carrierarr deployment/control-plane` |
 | llm-proxy | `kubectl logs -n catalyst-llm deployment/llm-proxy` |
 | Worker-agent (EC2) | `/var/log/userdata.log`, `journalctl -u worker-agent` |
 | RabbitMQ | `kubectl logs -n catalyst-llm statefulset/rabbitmq` |

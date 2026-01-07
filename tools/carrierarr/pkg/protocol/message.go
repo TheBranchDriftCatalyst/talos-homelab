@@ -1,4 +1,4 @@
-// Package protocol defines the WebSocket message types for ec2-agent
+// Package protocol defines the WebSocket message types for carrierarr
 package protocol
 
 import (

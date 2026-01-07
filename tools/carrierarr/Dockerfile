@@ -1,4 +1,4 @@
-# ec2-agent Dockerfile
+# carrierarr Dockerfile
 # Multi-stage build for minimal runtime image
 
 # Build stage
@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 
 # Build binary
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o ec2-agent ./cmd/main.go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o carrierarr ./cmd/main.go
 
 # Runtime stage
 FROM alpine:3.19
@@ -33,7 +33,7 @@ RUN apk add --no-cache \
     openssh-client
 
 # Copy binary
-COPY --from=builder /app/ec2-agent /app/ec2-agent
+COPY --from=builder /app/carrierarr /app/carrierarr
 
 # Copy scripts
 COPY scripts/ /app/scripts/
@@ -46,5 +46,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 EXPOSE 8090
 
 # Run
-ENTRYPOINT ["/app/ec2-agent"]
+ENTRYPOINT ["/app/carrierarr"]
 CMD ["-addr=:8090"]

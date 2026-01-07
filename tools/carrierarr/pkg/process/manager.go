@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/protocol"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/protocol"
 )
 
 // OutputHandler is called for each line of output

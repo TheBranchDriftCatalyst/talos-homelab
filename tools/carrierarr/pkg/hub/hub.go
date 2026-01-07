@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/protocol"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/protocol"
 )
 
 const (

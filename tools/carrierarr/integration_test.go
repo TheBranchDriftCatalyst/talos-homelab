@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/hub"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/process"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/protocol"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/hub"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/process"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/protocol"
 )
 
 // TestIntegration_WebSocketFlow tests the complete WebSocket flow

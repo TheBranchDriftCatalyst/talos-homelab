@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/thebranchdriftcatalyst/ec2-agent/pkg/proto"
+	pb "github.com/thebranchdriftcatalyst/carrierarr/pkg/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"

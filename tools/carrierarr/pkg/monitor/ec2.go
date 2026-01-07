@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/protocol"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/protocol"
 )
 
 // EC2Monitor watches EC2 instances and reports status changes

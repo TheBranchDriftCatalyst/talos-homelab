@@ -10,7 +10,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	pb "github.com/thebranchdriftcatalyst/ec2-agent/pkg/proto"
+	pb "github.com/thebranchdriftcatalyst/carrierarr/pkg/proto"
 )
 
 // RabbitMQConfig holds RabbitMQ connection settings

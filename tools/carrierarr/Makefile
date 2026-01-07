@@ -103,10 +103,10 @@ ami-all: build-linux ## Build all AMIs
 # =============================================================================
 
 docker-build: ## Build Docker image
-	docker build -t ghcr.io/thebranchdriftcatalyst/ec2-agent:$(VERSION) .
+	docker build -t ghcr.io/thebranchdriftcatalyst/carrierarr:$(VERSION) .
 
 docker-push: ## Push Docker image
-	docker push ghcr.io/thebranchdriftcatalyst/ec2-agent:$(VERSION)
+	docker push ghcr.io/thebranchdriftcatalyst/carrierarr:$(VERSION)
 
 # =============================================================================
 # Cleanup

@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/aws/aws-sdk-go-v2/service/ecs/types"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/protocol"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/protocol"
 )
 
 // FargateMonitor watches ECS Fargate tasks and reports status changes
