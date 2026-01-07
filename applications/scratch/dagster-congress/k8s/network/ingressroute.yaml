@@ -1,0 +1,69 @@
+---
+# Traefik IngressRoutes for Dagster Congress services
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: dagster-webserver
+  namespace: scratch
+  labels:
+    app.kubernetes.io/part-of: dagster-congress
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`dagster.talos00`)
+      kind: Rule
+      services:
+        - name: dagster-dagster-webserver
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: neo4j-browser
+  namespace: scratch
+  labels:
+    app.kubernetes.io/part-of: dagster-congress
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`neo4j.talos00`)
+      kind: Rule
+      services:
+        - name: neo4j
+          port: 7474
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kg-graphql
+  namespace: scratch
+  labels:
+    app.kubernetes.io/part-of: dagster-congress
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`kg-graphql.talos00`)
+      kind: Rule
+      services:
+        - name: knowledge-graph-graphql
+          port: 4000
+---
+# TCP IngressRoute for gRPC (requires Traefik TCP entrypoint)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: kg-grpc
+  namespace: scratch
+  labels:
+    app.kubernetes.io/part-of: dagster-congress
+spec:
+  entryPoints:
+    - grpc  # Assumes grpc entrypoint configured on Traefik
+  routes:
+    - match: HostSNI(`kg-grpc.talos00`)
+      services:
+        - name: knowledge-graph-grpc
+          port: 50051
