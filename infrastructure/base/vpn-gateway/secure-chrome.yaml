@@ -22,8 +22,9 @@ spec:
         app.kubernetes.io/component: vpn-browser
         vpn-gateway.io/rotation: enabled
     spec:
-      # Clean up stale IPv6 routing rules before gluetun starts
+      # Init containers for setup
       initContainers:
+        # Clean up stale IPv6 routing rules before gluetun starts
         - name: cleanup-routes
           image: busybox:1.36
           securityContext:
@@ -38,6 +39,22 @@ spec:
               ip -6 rule del table 51820 2>/dev/null || true
               ip -6 rule del table 51820 2>/dev/null || true
               echo "Cleanup complete"
+        # Fix permissions on NFS mount for kasm_user (uid 1000)
+        - name: fix-permissions
+          image: busybox:1.36
+          securityContext:
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Fixing permissions on /home/kasm_user..."
+              chown -R 1000:1000 /home/kasm_user
+              chmod 755 /home/kasm_user
+              echo "Permissions fixed"
+          volumeMounts:
+            - name: chrome-data
+              mountPath: /home/kasm_user
       containers:
         # Gluetun VPN sidecar
         - name: gluetun
@@ -121,6 +138,8 @@ spec:
           volumeMounts:
             - name: shm
               mountPath: /dev/shm
+            - name: chrome-data
+              mountPath: /home/kasm_user
           livenessProbe:
             tcpSocket:
               port: 6901
@@ -137,6 +156,10 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 2Gi
+        # Persistent Chrome user data (logins, bookmarks, extensions)
+        - name: chrome-data
+          persistentVolumeClaim:
+            claimName: secure-chrome-data
 ---
 apiVersion: v1
 kind: Service
@@ -195,3 +218,20 @@ spec:
       services:
         - name: secure-chrome
           port: 6901
+---
+# Persistent storage for Chrome user data (logins, bookmarks, extensions)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: secure-chrome-data
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 5Gi
