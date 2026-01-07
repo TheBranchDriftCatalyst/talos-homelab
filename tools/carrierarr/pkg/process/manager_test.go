@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/protocol"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/protocol"
 )
 
 func TestManager_Execute(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/fleet"
-	pb "github.com/thebranchdriftcatalyst/ec2-agent/pkg/proto"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/fleet"
+	pb "github.com/thebranchdriftcatalyst/carrierarr/pkg/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"

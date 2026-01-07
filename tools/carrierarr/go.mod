@@ -1,4 +1,4 @@
-module github.com/thebranchdriftcatalyst/ec2-agent
+module github.com/thebranchdriftcatalyst/carrierarr
 
 go 1.24.0
 

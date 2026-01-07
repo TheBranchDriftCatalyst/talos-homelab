@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/thebranchdriftcatalyst/ec2-agent/pkg/proto"
+	pb "github.com/thebranchdriftcatalyst/carrierarr/pkg/proto"
 )
 
 // Node represents a connected worker agent

@@ -12,9 +12,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/fleet"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/grpc"
-	pb "github.com/thebranchdriftcatalyst/ec2-agent/pkg/proto"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/fleet"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/grpc"
+	pb "github.com/thebranchdriftcatalyst/carrierarr/pkg/proto"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 

@@ -14,7 +14,7 @@ Packer templates for building pre-baked AMIs for the Catalyst hybrid cluster.
 
 1. **Build the Go binaries first:**
    ```bash
-   # From tools/ec2-agent/
+   # From tools/carrierarr/
    make build-linux
    ```
 

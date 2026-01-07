@@ -1,7 +1,7 @@
-# EC2 Agent Tiltfile
+# Carrierarr Tiltfile
 # WebSocket control interface for EC2/Fargate workers
 #
-# Usage: cd tools/ec2-agent && tilt up
+# Usage: cd tools/carrierarr && tilt up
 #
 # Features:
 #   - Live Go reload with air/entr
@@ -12,7 +12,7 @@
 load('ext://uibutton', 'cmd_button', 'text_input')
 
 # Configuration
-LABEL_AGENT = '1-ec2-agent'
+LABEL_AGENT = '1-carrierarr'
 LABEL_TEST = '2-testing'
 LABEL_BUILD = '3-build'
 
@@ -20,9 +20,9 @@ LABEL_BUILD = '3-build'
 # EC2 Agent - Go Server with Live Reload
 # ============================================
 
-# Main ec2-agent server with mock worker
+# Main carrierarr server with mock worker
 local_resource(
-    'ec2-agent',
+    'carrierarr',
     serve_cmd='''
         export CGO_ENABLED=0
         go run ./cmd/main.go \
@@ -51,7 +51,7 @@ local_resource(
 # ============================================
 
 local_resource(
-    'ec2-agent-llm',
+    'carrierarr-llm',
     serve_cmd='''
         export CGO_ENABLED=0
         go run ./cmd/main.go \
@@ -92,7 +92,7 @@ local_resource(
     links=[
         link('http://localhost:8099/test-client.html', 'WebSocket Test Client'),
     ],
-    resource_deps=['ec2-agent'],
+    resource_deps=['carrierarr'],
 )
 
 # ============================================
@@ -102,7 +102,7 @@ local_resource(
 # Mock worker commands
 cmd_button(
     name='btn-worker-status',
-    resource='ec2-agent',
+    resource='carrierarr',
     argv=['./scripts/mock-worker.sh', 'status'],
     text='Status',
     icon_name='info'
@@ -110,7 +110,7 @@ cmd_button(
 
 cmd_button(
     name='btn-worker-start',
-    resource='ec2-agent',
+    resource='carrierarr',
     argv=['./scripts/mock-worker.sh', 'start'],
     text='Start',
     icon_name='play_arrow'
@@ -118,7 +118,7 @@ cmd_button(
 
 cmd_button(
     name='btn-worker-stop',
-    resource='ec2-agent',
+    resource='carrierarr',
     argv=['./scripts/mock-worker.sh', 'stop'],
     text='Stop',
     icon_name='stop'
@@ -126,7 +126,7 @@ cmd_button(
 
 cmd_button(
     name='btn-worker-stream',
-    resource='ec2-agent',
+    resource='carrierarr',
     argv=['./scripts/mock-worker.sh', 'stream'],
     text='Stream Test',
     icon_name='live_tv'
@@ -134,7 +134,7 @@ cmd_button(
 
 cmd_button(
     name='btn-worker-logs',
-    resource='ec2-agent',
+    resource='carrierarr',
     argv=['./scripts/mock-worker.sh', 'logs'],
     text='Logs',
     icon_name='description'
@@ -143,7 +143,7 @@ cmd_button(
 # WebSocket test with curl
 cmd_button(
     name='btn-ws-test',
-    resource='ec2-agent',
+    resource='carrierarr',
     argv=['sh', '-c', '''
         echo "Testing WebSocket endpoint..."
         curl -s http://localhost:8090/health | jq .
@@ -189,7 +189,7 @@ cmd_button(
 
 local_resource(
     'build',
-    cmd='go build -o ./bin/ec2-agent ./cmd/main.go && echo "Built: ./bin/ec2-agent"',
+    cmd='go build -o ./bin/carrierarr ./cmd/main.go && echo "Built: ./bin/carrierarr"',
     labels=[LABEL_BUILD],
     auto_init=False,
 )
@@ -197,7 +197,7 @@ local_resource(
 cmd_button(
     name='btn-build',
     resource='build',
-    argv=['sh', '-c', 'go build -o ./bin/ec2-agent ./cmd/main.go && echo "Built: ./bin/ec2-agent"'],
+    argv=['sh', '-c', 'go build -o ./bin/carrierarr ./cmd/main.go && echo "Built: ./bin/carrierarr"'],
     text='Build Binary',
     icon_name='build'
 )
@@ -225,8 +225,8 @@ cmd_button(
     name='btn-docker-build',
     resource='docker-build',
     argv=['sh', '-c', '''
-        docker build -t ghcr.io/thebranchdriftcatalyst/ec2-agent:latest . && \
-        echo "Built: ghcr.io/thebranchdriftcatalyst/ec2-agent:latest"
+        docker build -t ghcr.io/thebranchdriftcatalyst/carrierarr:latest . && \
+        echo "Built: ghcr.io/thebranchdriftcatalyst/carrierarr:latest"
     '''],
     text='Docker Build',
     icon_name='layers'
@@ -237,8 +237,8 @@ cmd_button(
     resource='docker-build',
     argv=['sh', '-c', '''
         docker buildx build --platform linux/amd64,linux/arm64 \
-            -t ghcr.io/thebranchdriftcatalyst/ec2-agent:latest --push . && \
-        echo "Pushed: ghcr.io/thebranchdriftcatalyst/ec2-agent:latest"
+            -t ghcr.io/thebranchdriftcatalyst/carrierarr:latest --push . && \
+        echo "Pushed: ghcr.io/thebranchdriftcatalyst/carrierarr:latest"
     '''],
     text='Build & Push',
     icon_name='cloud_upload'

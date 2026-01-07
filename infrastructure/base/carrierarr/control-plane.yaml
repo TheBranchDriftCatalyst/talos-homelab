@@ -1,15 +1,15 @@
 ---
 # Control Plane Deployment
-# Manages fleet of EC2 worker agents
+# Manages fleet of worker agents
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: control-plane
-  namespace: ec2-agents
+  namespace: carrierarr
   labels:
     app.kubernetes.io/name: control-plane
     app.kubernetes.io/component: fleet-manager
-    app.kubernetes.io/part-of: ec2-agents
+    app.kubernetes.io/part-of: carrierarr
 spec:
   replicas: 1
   selector:
@@ -25,7 +25,7 @@ spec:
         - name: ghcr-secret
       containers:
         - name: control-plane
-          image: ghcr.io/thebranchdriftcatalyst/ec2-agent-control-plane:latest
+          image: ghcr.io/thebranchdriftcatalyst/carrierarr-control-plane:latest
           imagePullPolicy: Always
           ports:
             - name: grpc
@@ -74,7 +74,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: control-plane
-  namespace: ec2-agents
+  namespace: carrierarr
   labels:
     app.kubernetes.io/name: control-plane
     app.kubernetes.io/component: fleet-manager
@@ -92,13 +92,34 @@ spec:
       targetPort: http
       protocol: TCP
 ---
+# NodePort service for external worker-agent access
+# Workers connect to this from EC2 via public IP
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane-external
+  namespace: carrierarr
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/component: fleet-manager
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: control-plane
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      nodePort: 30051
+      protocol: TCP
+---
 # Secret for RabbitMQ connection
 # Uses existing RabbitMQ in catalyst-llm namespace with agents vhost
 apiVersion: v1
 kind: Secret
 metadata:
   name: rabbitmq-agents-credentials
-  namespace: ec2-agents
+  namespace: carrierarr
   labels:
     app.kubernetes.io/name: control-plane
     app.kubernetes.io/component: fleet-manager

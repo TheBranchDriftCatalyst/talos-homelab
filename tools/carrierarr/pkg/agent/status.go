@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/thebranchdriftcatalyst/ec2-agent/pkg/proto"
+	pb "github.com/thebranchdriftcatalyst/carrierarr/pkg/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

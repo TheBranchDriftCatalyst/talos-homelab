@@ -1,6 +1,6 @@
 #!/bin/bash
 # EC2 Example Configuration
-# Run ec2-agent with llm-worker.sh
+# Run carrierarr with llm-worker.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
@@ -17,7 +17,7 @@ POLL_INTERVAL="30s"
 # Server address
 ADDR=":8090"
 
-echo "Starting ec2-agent with EC2 worker..."
+echo "Starting carrierarr with EC2 worker..."
 echo "  Worker script: $WORKER_SCRIPT"
 echo "  EC2 tags: $EC2_TAGS"
 echo ""

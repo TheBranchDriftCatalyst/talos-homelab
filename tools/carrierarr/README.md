@@ -1,6 +1,6 @@
-# ec2-agent
+# carrierarr
 
-WebSocket-based control interface for EC2 and Fargate workers. Provides real-time stdout/stderr streaming and instance monitoring.
+Fleet management system for EC2/Fargate workers. Provides gRPC-based agent communication, real-time status streaming, and self-registration via RabbitMQ.
 
 ## Features
 
@@ -16,7 +16,7 @@ WebSocket-based control interface for EC2 and Fargate workers. Provides real-tim
 ### With Mock Worker (Testing)
 
 ```bash
-cd tools/ec2-agent
+cd tools/carrierarr
 go run ./cmd/main.go -script=./scripts/mock-worker.sh -addr=:8090
 ```
 
@@ -25,7 +25,7 @@ Open `examples/test-client.html` in a browser to test.
 ### With LLM Worker (Production)
 
 ```bash
-cd tools/ec2-agent
+cd tools/carrierarr
 go run ./cmd/main.go \
   -script=../../scripts/hybrid-llm/llm-worker.sh \
   -ec2-tags='{"Name":"llm-worker"}' \
@@ -41,7 +41,7 @@ go run ./cmd/main.go \
                               │ WebSocket
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   ec2-agent (Go binary)                      │
+│                   carrierarr (Go binary)                     │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────┐ │
 │  │  WebSocket Hub  │  │ Process Manager │  │ EC2 Monitor │ │
 │  └─────────────────┘  └─────────────────┘  └─────────────┘ │
@@ -140,7 +140,7 @@ go test -tags=integration ./...
 ### Build
 
 ```bash
-go build -o ec2-agent ./cmd/main.go
+go build -o carrierarr ./cmd/main.go
 ```
 
 ## Examples
@@ -159,7 +159,7 @@ go build -o ec2-agent ./cmd/main.go
 
 ## Integration with llm-proxy
 
-This agent is designed to work with the llm-proxy's worker management UI. The proxy can connect to ec2-agent's WebSocket to:
+This agent is designed to work with the llm-proxy's worker management UI. The proxy can connect to carrierarr's WebSocket to:
 
 1. Display real-time worker status
 2. Show command output in the UI

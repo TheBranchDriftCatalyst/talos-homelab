@@ -1,4 +1,4 @@
-// ec2-agent provides a WebSocket interface for controlling EC2/Fargate workers
+// carrierarr provides a WebSocket interface for controlling EC2/Fargate workers
 package main
 
 import (
@@ -16,10 +16,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	"github.com/gorilla/websocket"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/hub"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/monitor"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/process"
-	"github.com/thebranchdriftcatalyst/ec2-agent/pkg/protocol"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/hub"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/monitor"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/process"
+	"github.com/thebranchdriftcatalyst/carrierarr/pkg/protocol"
 )
 
 var (
@@ -50,7 +50,7 @@ func main() {
 	flag.Parse()
 
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	log.Printf("ec2-agent starting on %s", *addr)
+	log.Printf("carrierarr starting on %s", *addr)
 
 	// Create hub
 	h := hub.New()
