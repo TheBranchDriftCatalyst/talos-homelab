@@ -48,13 +48,13 @@ spec:
             - /bin/sh
             - -c
             - |
-              echo "Fixing permissions on /home/kasm_user..."
-              chown -R 1000:1000 /home/kasm_user
-              chmod 755 /home/kasm_user
+              echo "Fixing permissions on /home/kasm-user..."
+              chown -R 1000:1000 /home/kasm-user
+              chmod 755 /home/kasm-user
               echo "Permissions fixed"
           volumeMounts:
             - name: chrome-data
-              mountPath: /home/kasm_user
+              mountPath: /home/kasm-user
       containers:
         # Gluetun VPN sidecar
         - name: gluetun
@@ -96,6 +96,15 @@ spec:
               value: "off"
             - name: DOT_IPV6
               value: "off"
+            # Healthcheck settings - more resilient to rotation
+            - name: HEALTH_VPN_DURATION_INITIAL
+              value: "30s"  # Wait 30s before first healthcheck (default 6s)
+            - name: HEALTH_VPN_DURATION_ADDITION
+              value: "15s"  # Add 15s after each failure (default 5s)
+            - name: HEALTH_SUCCESS_WAIT_DURATION
+              value: "10s"  # Wait between success checks
+            - name: HEALTH_TARGET_ADDRESS
+              value: "1.1.1.1:443"  # Use IP instead of DNS hostname
           livenessProbe:
             httpGet:
               path: /v1/vpn/status
@@ -139,7 +148,7 @@ spec:
             - name: shm
               mountPath: /dev/shm
             - name: chrome-data
-              mountPath: /home/kasm_user
+              mountPath: /home/kasm-user
           livenessProbe:
             tcpSocket:
               port: 6901
