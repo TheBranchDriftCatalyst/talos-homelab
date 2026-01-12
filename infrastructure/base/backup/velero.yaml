@@ -107,7 +107,9 @@ spec:
 
     # Schedules for automated backups
     schedules:
-      # Daily backup of all namespaces (except system)
+      # Daily backup of app namespaces (config volumes only via annotations)
+      # IMPORTANT: Only volumes with backup.velero.io/backup-volumes annotation are backed up
+      # This prevents backing up massive synology-nfs media libraries (10TB+ each)
       daily-all:
         disabled: false
         schedule: "0 2 * * *"  # 2 AM daily
@@ -116,17 +118,21 @@ spec:
           ttl: "720h"  # 30 days
           includedNamespaces:
             - media
+            - media-private
             - scratch
-            - arr-stack
             - home-automation
+            - catalyst-llm
+            - registry
+            - vpn-gateway
           excludedResources:
             - events
             - pods
           storageLocation: default
           snapshotVolumes: false
-          defaultVolumesToFsBackup: true
+          # CRITICAL: false = opt-in via pod annotations, true = backup ALL volumes
+          defaultVolumesToFsBackup: false
 
-      # Weekly full backup including PVCs
+      # Weekly full backup of infrastructure (config volumes only)
       weekly-full:
         disabled: false
         schedule: "0 3 * * 0"  # 3 AM Sunday
@@ -140,8 +146,10 @@ spec:
             - kube-public
             - kube-node-lease
             - flux-system
+            - minio  # Don't backup MinIO (it IS the backup storage)
           excludedResources:
             - events
           storageLocation: default
           snapshotVolumes: false
-          defaultVolumesToFsBackup: true
+          # CRITICAL: false = opt-in via pod annotations, true = backup ALL volumes
+          defaultVolumesToFsBackup: false
