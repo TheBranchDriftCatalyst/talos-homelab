@@ -18,8 +18,8 @@ echo "=== GPU Worker Bootstrap Started at $(date) ==="
 # =============================================================================
 # Configuration
 # =============================================================================
-# Nebula lighthouse endpoint (homelab public IP or DDNS)
-LIGHTHOUSE_ENDPOINT="${LIGHTHOUSE_ENDPOINT:-nebula.yourdomain.com:4242}"
+# Nebula lighthouse endpoint (homelab DDNS)
+LIGHTHOUSE_ENDPOINT="${LIGHTHOUSE_ENDPOINT:-nebula.knowledgedump.space:4242}"
 # Lighthouse Nebula IP
 LIGHTHOUSE_NEBULA_IP="${LIGHTHOUSE_NEBULA_IP:-10.100.0.1}"
 # Control plane address via Nebula mesh
