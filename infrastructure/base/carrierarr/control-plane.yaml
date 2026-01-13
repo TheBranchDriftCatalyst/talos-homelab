@@ -21,11 +21,9 @@ spec:
         app.kubernetes.io/name: control-plane
         app.kubernetes.io/component: fleet-manager
     spec:
-      imagePullSecrets:
-        - name: ghcr-secret
       containers:
         - name: control-plane
-          image: ghcr.io/thebranchdriftcatalyst/carrierarr-control-plane:latest
+          image: ttl.sh/carrierarr-control-plane-mvp:1h
           imagePullPolicy: Always
           ports:
             - name: grpc
@@ -34,21 +32,12 @@ spec:
             - name: http
               containerPort: 8090
               protocol: TCP
-          env:
-            - name: RABBITMQ_URL
-              valueFrom:
-                secretKeyRef:
-                  name: rabbitmq-agents-credentials
-                  key: url
           args:
             - --grpc-addr=:50051
             - --http-addr=:8090
-            - --rabbitmq-url=$(RABBITMQ_URL)
+            # gRPC-only mode (no RabbitMQ for MVP)
             - --stale-timeout=2m
             - --dead-threshold=5m
-            # Safe default - don't auto-terminate, just mark dead
-            # Set to true for automatic cleanup
-            - --auto-terminate-dead=false
           resources:
             requests:
               cpu: 50m
@@ -110,19 +99,5 @@ spec:
     - name: grpc
       port: 50051
       targetPort: grpc
-      nodePort: 30051
+      nodePort: 30052
       protocol: TCP
----
-# Secret for RabbitMQ connection
-# Uses existing RabbitMQ in catalyst-llm namespace with agents vhost
-apiVersion: v1
-kind: Secret
-metadata:
-  name: rabbitmq-agents-credentials
-  namespace: carrierarr
-  labels:
-    app.kubernetes.io/name: control-plane
-    app.kubernetes.io/component: fleet-manager
-type: Opaque
-stringData:
-  url: "amqp://panda:turbopookipanda@rabbitmq.catalyst-llm.svc.cluster.local:5672/agents"
