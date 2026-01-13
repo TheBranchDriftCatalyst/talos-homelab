@@ -112,6 +112,45 @@ build {
     ]
   }
 
+  # Install Nebula overlay network
+  provisioner "shell" {
+    environment_vars = [
+      "NEBULA_VERSION=${var.nebula_version}"
+    ]
+    inline = [
+      "set -ex",
+      "echo 'Installing Nebula v${NEBULA_VERSION}...'",
+      "curl -fsSL https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/nebula-linux-amd64.tar.gz -o /tmp/nebula.tar.gz",
+      "sudo tar -xzf /tmp/nebula.tar.gz -C /usr/local/bin nebula nebula-cert",
+      "sudo chmod +x /usr/local/bin/nebula /usr/local/bin/nebula-cert",
+      "rm /tmp/nebula.tar.gz",
+      "nebula --version",
+      "sudo mkdir -p /etc/nebula",
+      <<-EOF
+      # Create Nebula systemd service
+      sudo tee /etc/systemd/system/nebula.service > /dev/null << 'UNIT'
+      [Unit]
+      Description=Nebula Overlay Network
+      After=network.target
+      Before=worker-agent.service k3s.service
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yaml
+      Restart=always
+      RestartSec=5
+      CapabilityBoundingSet=CAP_NET_ADMIN
+      AmbientCapabilities=CAP_NET_ADMIN
+
+      [Install]
+      WantedBy=multi-user.target
+      UNIT
+      EOF
+      ,
+      "sudo systemctl daemon-reload",
+    ]
+  }
+
   # Create systemd services
   provisioner "shell" {
     inline = [
