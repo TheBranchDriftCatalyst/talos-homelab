@@ -1,0 +1,183 @@
+# Tiltfile for Dagster Congress ETL Pipeline Development
+# Usage: tilt up
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+# Container registry for development builds
+default_registry('ghcr.io/thebranchdriftcatalyst')
+
+# Load kubernetes manifests via kustomize
+k8s_yaml(kustomize('.'))
+
+# ============================================================================
+# Python Dagster User Code
+# ============================================================================
+
+docker_build(
+    'ghcr.io/thebranchdriftcatalyst/memex',
+    context='./src',
+    dockerfile='./src/Dockerfile',
+    live_update=[
+        # Sync Python source files
+        sync('./src', '/app'),
+        # Restart the Dagster code server on changes
+        run('cd /app && pip install -e .', trigger=['./src/pyproject.toml']),
+    ],
+    ignore=[
+        '__pycache__',
+        '*.pyc',
+        '.pytest_cache',
+        '.mypy_cache',
+        'dist/',
+        '*.egg-info',
+    ]
+)
+
+# ============================================================================
+# gRPC MCP Service
+# ============================================================================
+
+docker_build(
+    'ghcr.io/thebranchdriftcatalyst/memex-grpc',
+    context='./src',
+    dockerfile='./src/grpc/Dockerfile',
+    live_update=[
+        sync('./src/grpc', '/app/grpc'),
+        sync('./src/shared', '/app/shared'),
+        sync('./src/schema', '/app/schema'),
+        sync('./src/domains', '/app/domains'),
+    ],
+    ignore=[
+        '__pycache__',
+        '*.pyc',
+        'generated/',
+    ]
+)
+
+# ============================================================================
+# GraphQL Apollo Service
+# ============================================================================
+
+docker_build(
+    'ghcr.io/thebranchdriftcatalyst/memex-graphql',
+    context='./src/graphql',
+    dockerfile='./src/graphql/Dockerfile',
+    live_update=[
+        sync('./src/graphql/src', '/app/src'),
+        run('cd /app && npm install', trigger=['./src/graphql/package.json']),
+    ],
+    ignore=[
+        'node_modules/',
+        'dist/',
+    ]
+)
+
+# ============================================================================
+# Resource Groups
+# ============================================================================
+
+# Core infrastructure (PostgreSQL, Neo4j)
+k8s_resource(
+    'dagster-postgres',
+    labels=['infrastructure'],
+    resource_deps=[]
+)
+
+k8s_resource(
+    'neo4j',
+    labels=['infrastructure'],
+    port_forwards=['7474:7474', '7687:7687'],  # Browser + Bolt
+    resource_deps=[]
+)
+
+# MinIO bucket creation job
+k8s_resource(
+    'dagster-minio-create-bucket',
+    labels=['infrastructure'],
+    resource_deps=[]
+)
+
+# Dagster components
+k8s_resource(
+    'dagster-dagster-webserver',
+    labels=['dagster'],
+    port_forwards=['3000:80'],
+    resource_deps=['dagster-postgres']
+)
+
+k8s_resource(
+    'dagster-dagster-daemon',
+    labels=['dagster'],
+    resource_deps=['dagster-postgres']
+)
+
+k8s_resource(
+    'dagster-user-deployments-congress-etl',
+    labels=['dagster'],
+    resource_deps=['dagster-dagster-webserver', 'neo4j']
+)
+
+# Knowledge Graph services
+k8s_resource(
+    'knowledge-graph-grpc',
+    labels=['services'],
+    port_forwards=['50051:50051'],
+    resource_deps=['neo4j']
+)
+
+k8s_resource(
+    'knowledge-graph-graphql',
+    labels=['services'],
+    port_forwards=['4000:4000'],
+    resource_deps=['neo4j']
+)
+
+# ============================================================================
+# Local Development Resources
+# ============================================================================
+
+# Watch for schema changes and regenerate
+local_resource(
+    'schema-generate',
+    cmd='cd src && python -m schema.generators.neo4j_schema && python -m schema.generators.grpc_proto',
+    deps=['./src/schema/ontology.py'],
+    labels=['codegen'],
+    auto_init=False,
+)
+
+# Run tests
+local_resource(
+    'pytest',
+    cmd='cd src && pytest -v',
+    deps=['./src'],
+    labels=['test'],
+    auto_init=False,
+)
+
+# ============================================================================
+# Buttons for manual actions
+# ============================================================================
+
+# Trigger a Dagster run
+local_resource(
+    'trigger-congress-etl',
+    cmd='''
+        kubectl exec -n scratch deploy/dagster-dagster-webserver -- \
+            dagster job launch -j congress_etl_job
+    ''',
+    labels=['actions'],
+    auto_init=False,
+)
+
+# Reset Neo4j (clear all data)
+local_resource(
+    'reset-neo4j',
+    cmd='''
+        kubectl exec -n scratch neo4j-0 -- \
+            cypher-shell -u neo4j -p neo4j-password "MATCH (n) DETACH DELETE n"
+    ''',
+    labels=['actions'],
+    auto_init=False,
+)

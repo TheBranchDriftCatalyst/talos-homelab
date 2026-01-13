@@ -1,0 +1,165 @@
+// Knowledge Graph gRPC Service
+// MCP interface for dynamic knowledge graph queries
+syntax = "proto3";
+
+package knowledge_graph;
+
+option go_package = "github.com/thebranchdriftcatalyst/memex/grpc";
+
+// ============================================================================
+// Service Definition
+// ============================================================================
+
+service KnowledgeGraph {
+  // Discover available MCP tools from all domains
+  rpc DiscoverTools(Empty) returns (ToolList);
+
+  // Get JSON-LD schema for an entity type
+  rpc GetSchema(SchemaRequest) returns (JsonLdSchema);
+
+  // Execute a Cypher query from registered templates
+  rpc ExecuteQuery(QueryRequest) returns (QueryResult);
+
+  // Semantic search using embeddings
+  rpc SemanticSearch(SearchRequest) returns (EntityList);
+
+  // Get entity by ID
+  rpc GetEntity(EntityRequest) returns (Entity);
+
+  // Stream entities matching a filter
+  rpc StreamEntities(FilterRequest) returns (stream Entity);
+
+  // Health check
+  rpc Health(Empty) returns (HealthResponse);
+}
+
+// ============================================================================
+// Common Messages
+// ============================================================================
+
+message Empty {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string version = 2;
+  int64 uptime_seconds = 3;
+}
+
+message Tool {
+  string name = 1;
+  string description = 2;
+  string cypher_template = 3;
+  map<string, string> parameters = 4;
+  string domain = 5;
+  string entity_type = 6;
+}
+
+message ToolList {
+  repeated Tool tools = 1;
+  int32 total_count = 2;
+}
+
+message SchemaRequest {
+  string entity_type = 1;
+}
+
+message JsonLdSchema {
+  string entity_type = 1;
+  string context = 2;  // JSON-LD @context as JSON string
+  string schema = 3;   // Full schema as JSON string
+}
+
+message QueryRequest {
+  string tool_name = 1;
+  map<string, string> parameters = 2;
+}
+
+message QueryResult {
+  bool success = 1;
+  string data = 2;      // JSON serialized result
+  string error = 3;
+  int64 count = 4;
+  double execution_time_ms = 5;
+}
+
+message SearchRequest {
+  string query = 1;
+  int32 limit = 2;
+  string entity_type = 3;  // Optional: filter by type
+  string domain = 4;       // Optional: filter by domain
+  float min_score = 5;     // Minimum similarity score
+}
+
+message EntityRequest {
+  string id = 1;
+  string entity_type = 2;
+}
+
+message FilterRequest {
+  string entity_type = 1;
+  map<string, string> filters = 2;
+  int32 limit = 3;
+  int32 offset = 4;
+  string order_by = 5;
+  bool descending = 6;
+}
+
+message EntityList {
+  repeated Entity entities = 1;
+  int64 total_count = 2;
+  bool has_more = 3;
+}
+
+message Entity {
+  string id = 1;
+  string entity_type = 2;
+  string domain = 3;
+  map<string, string> properties = 4;
+  string json_data = 5;                // Full entity as JSON
+  repeated float embedding = 6;        // Vector embedding
+  float score = 7;                     // Relevance score (for search results)
+}
+
+// ============================================================================
+// Entity-Specific Messages
+// ============================================================================
+
+message Bill {
+  string id = 1;
+  string number = 2;
+  string title = 3;
+  int32 congress = 4;
+  string chamber = 5;
+  string bill_type = 6;
+  string introduced_date = 7;
+  string latest_action_date = 8;
+  string latest_action_text = 9;
+  string policy_area = 10;
+  string summary = 11;
+  string source_url = 12;
+}
+
+message Member {
+  string id = 1;
+  string bioguide_id = 2;
+  string name = 3;
+  string first_name = 4;
+  string last_name = 5;
+  string party = 6;
+  string state = 7;
+  string district = 8;
+  string chamber = 9;
+  int32 terms_served = 10;
+  string url = 11;
+}
+
+message Committee {
+  string id = 1;
+  string system_code = 2;
+  string name = 3;
+  string chamber = 4;
+  string committee_type = 5;
+  string parent_committee = 6;
+  string jurisdiction = 7;
+  string url = 8;
+}
