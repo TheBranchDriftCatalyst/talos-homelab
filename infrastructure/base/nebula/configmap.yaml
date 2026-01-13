@@ -1,0 +1,99 @@
+---
+# Nebula Lighthouse Configuration
+# Home cluster acts as the lighthouse (coordinator) for the mesh
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nebula-config
+  namespace: nebula
+data:
+  config.yaml: |
+    # PKI configuration - certs mounted from secret
+    pki:
+      ca: /config/certs/ca.crt
+      cert: /config/certs/lighthouse.crt
+      key: /config/certs/lighthouse.key
+
+    # This IS the lighthouse
+    lighthouse:
+      am_lighthouse: true
+      # No other lighthouses to connect to
+      hosts: []
+
+    # Listen on all interfaces, UDP 4242
+    listen:
+      host: 0.0.0.0
+      port: 4242
+
+    # Punch through NAT
+    punchy:
+      punch: true
+      respond: true
+
+    # Relay for nodes that can't punch through
+    relay:
+      am_relay: true
+      use_relays: false
+
+    # TUN interface configuration
+    tun:
+      disabled: false
+      dev: nebula0
+      drop_local_broadcast: false
+      drop_multicast: false
+      tx_queue: 500
+      mtu: 1300
+
+    # Logging
+    logging:
+      level: info
+      format: text
+
+    # Firewall rules
+    firewall:
+      conntrack:
+        tcp_timeout: 12m
+        udp_timeout: 3m
+        default_timeout: 10m
+
+      outbound:
+        # Allow all outbound traffic
+        - port: any
+          proto: any
+          host: any
+
+      inbound:
+        # Allow ICMP from any nebula host
+        - port: any
+          proto: icmp
+          host: any
+
+        # Allow all from lighthouse group (management)
+        - port: any
+          proto: any
+          groups:
+            - lighthouse
+
+        # Allow SSH from workers (for debugging)
+        - port: 22
+          proto: tcp
+          groups:
+            - workers
+
+        # Allow Kubernetes API from workers
+        - port: 6443
+          proto: tcp
+          groups:
+            - workers
+
+        # Allow gRPC from workers (carrierarr)
+        - port: 8091
+          proto: tcp
+          groups:
+            - workers
+
+        # Allow Liqo peering
+        - port: 5871
+          proto: tcp
+          groups:
+            - workers

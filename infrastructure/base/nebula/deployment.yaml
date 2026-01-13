@@ -1,0 +1,89 @@
+---
+# Nebula Lighthouse Deployment
+# Runs on control-plane node, exposes UDP 4242 via hostPort
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nebula-lighthouse
+  namespace: nebula
+  labels:
+    app: nebula-lighthouse
+    app.kubernetes.io/name: nebula
+    app.kubernetes.io/component: lighthouse
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Only one lighthouse instance
+  selector:
+    matchLabels:
+      app: nebula-lighthouse
+  template:
+    metadata:
+      labels:
+        app: nebula-lighthouse
+        app.kubernetes.io/name: nebula
+    spec:
+      # Pin to control-plane for stability
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+
+      # Host networking for direct UDP access
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      containers:
+        - name: nebula
+          image: nebulaoss/nebula:1.9.5
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - /nebula
+            - -config
+            - /config/config.yaml
+
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN  # Required for TUN device
+            privileged: false
+
+          ports:
+            - name: nebula
+              containerPort: 4242
+              hostPort: 4242
+              protocol: UDP
+
+          volumeMounts:
+            - name: config
+              mountPath: /config/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: certs
+              mountPath: /config/certs
+              readOnly: true
+            - name: tun
+              mountPath: /dev/net/tun
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+          # Note: No liveness probe - distroless image has no shell/ip command
+          # Nebula will self-restart if TUN fails
+
+      volumes:
+        - name: config
+          configMap:
+            name: nebula-config
+        - name: certs
+          secret:
+            secretName: nebula-lighthouse-certs
+        - name: tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
