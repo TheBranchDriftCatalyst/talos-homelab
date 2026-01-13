@@ -1,13 +1,13 @@
 #!/bin/bash
 # =============================================================================
-# GPU Worker Userdata - Minimal Bootstrap (Nebula-free stub)
+# GPU Worker Userdata - Bootstrap with Nebula Mesh
 # =============================================================================
-# NOTE: This is a minimal stub. Full implementation pending TALOS-700h
-#       which will add proper Nebula mesh with home-as-lighthouse architecture.
+# Connects to homelab Nebula lighthouse and registers with Carrierarr
 #
-# Current capabilities:
-# - Fetches secrets from AWS Secrets Manager
-# - Configures worker-agent for fleet registration
+# Capabilities:
+# - Fetches secrets from AWS Secrets Manager (including Nebula certs)
+# - Configures Nebula mesh connection to homelab lighthouse
+# - Configures worker-agent for fleet registration via gRPC
 # - Starts Ollama for LLM inference
 # - Optionally joins k3s cluster if K3S_TOKEN provided
 
@@ -18,7 +18,12 @@ echo "=== GPU Worker Bootstrap Started at $(date) ==="
 # =============================================================================
 # Configuration
 # =============================================================================
-RABBITMQ_URL="${RABBITMQ_URL:-}"
+# Nebula lighthouse endpoint (homelab public IP or DDNS)
+LIGHTHOUSE_ENDPOINT="${LIGHTHOUSE_ENDPOINT:-nebula.yourdomain.com:4242}"
+# Lighthouse Nebula IP
+LIGHTHOUSE_NEBULA_IP="${LIGHTHOUSE_NEBULA_IP:-10.100.0.1}"
+# Control plane address via Nebula mesh
+CONTROL_PLANE_ADDR="${CONTROL_PLANE_ADDR:-${LIGHTHOUSE_NEBULA_IP}:50051}"
 
 # =============================================================================
 # Fetch Instance Metadata (IMDSv2)
@@ -28,6 +33,8 @@ REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.2
 INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
 PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+
+echo "Instance: ${INSTANCE_ID}, Public: ${PUBLIC_IP}, Private: ${PRIVATE_IP}"
 
 # =============================================================================
 # Fetch Secrets from AWS Secrets Manager
@@ -40,9 +47,114 @@ SECRETS=$(aws secretsmanager get-secret-value --secret-id "${SECRET_NAME}" --reg
 K3S_TOKEN=$(echo "$SECRETS" | jq -r '.k3s_token // empty')
 K3S_URL=$(echo "$SECRETS" | jq -r '.k3s_url // empty')
 
-# Get RabbitMQ URL from secret if not provided via env
-if [ -z "$RABBITMQ_URL" ]; then
-  RABBITMQ_URL=$(echo "$SECRETS" | jq -r '.rabbitmq_url // empty')
+# Nebula certificates from secrets
+NEBULA_CA_CRT=$(echo "$SECRETS" | jq -r '.nebula_ca_crt // empty')
+NEBULA_NODE_CRT=$(echo "$SECRETS" | jq -r '.nebula_node_crt // empty')
+NEBULA_NODE_KEY=$(echo "$SECRETS" | jq -r '.nebula_node_key // empty')
+NEBULA_IP=$(echo "$SECRETS" | jq -r '.nebula_ip // empty')
+
+# Override lighthouse endpoint from secrets if provided
+LIGHTHOUSE_ENDPOINT_SECRET=$(echo "$SECRETS" | jq -r '.lighthouse_endpoint // empty')
+if [ -n "$LIGHTHOUSE_ENDPOINT_SECRET" ]; then
+  LIGHTHOUSE_ENDPOINT="$LIGHTHOUSE_ENDPOINT_SECRET"
+fi
+
+# =============================================================================
+# Configure Nebula Mesh
+# =============================================================================
+if [ -n "$NEBULA_CA_CRT" ] && [ -n "$NEBULA_NODE_CRT" ] && [ -n "$NEBULA_NODE_KEY" ]; then
+  echo "Configuring Nebula mesh..."
+
+  # Write certificates
+  echo "$NEBULA_CA_CRT" > /etc/nebula/ca.crt
+  echo "$NEBULA_NODE_CRT" > /etc/nebula/node.crt
+  echo "$NEBULA_NODE_KEY" > /etc/nebula/node.key
+  chmod 600 /etc/nebula/node.key
+
+  # Create Nebula config
+  cat > /etc/nebula/config.yaml << NEBULACONF
+# Nebula Worker Configuration
+# Connects to homelab lighthouse
+
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/node.crt
+  key: /etc/nebula/node.key
+
+lighthouse:
+  am_lighthouse: false
+  hosts:
+    - "${LIGHTHOUSE_NEBULA_IP}"
+
+static_host_map:
+  "${LIGHTHOUSE_NEBULA_IP}":
+    - "${LIGHTHOUSE_ENDPOINT}"
+
+listen:
+  host: 0.0.0.0
+  port: 4242
+
+punchy:
+  punch: true
+  respond: true
+
+relay:
+  am_relay: false
+  use_relays: true
+
+tun:
+  disabled: false
+  dev: nebula0
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+firewall:
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+
+  outbound:
+    - port: any
+      proto: any
+      host: any
+
+  inbound:
+    - port: any
+      proto: icmp
+      host: any
+    - port: any
+      proto: any
+      groups:
+        - lighthouse
+        - homelab
+    - port: 11434
+      proto: tcp
+      groups:
+        - workers
+NEBULACONF
+
+  # Start Nebula
+  systemctl enable nebula
+  systemctl start nebula
+
+  # Wait for Nebula to establish connection
+  echo "Waiting for Nebula tunnel..."
+  for i in {1..30}; do
+    if ip link show nebula0 &>/dev/null; then
+      NEBULA_IP=$(ip addr show nebula0 | grep -oP 'inet \K[\d.]+')
+      echo "Nebula connected! IP: ${NEBULA_IP}"
+      break
+    fi
+    echo "Waiting for Nebula... ($i/30)"
+    sleep 2
+  done
+else
+  echo "WARNING: Nebula certificates not found in secrets, skipping mesh setup"
+  NEBULA_IP=""
 fi
 
 # =============================================================================
@@ -55,7 +167,8 @@ NODE_TYPE=gpu-worker
 INSTANCE_ID=${INSTANCE_ID}
 PUBLIC_IP=${PUBLIC_IP}
 PRIVATE_IP=${PRIVATE_IP}
-RABBITMQ_URL=${RABBITMQ_URL}
+NEBULA_IP=${NEBULA_IP}
+CONTROL_PLANE_ADDR=${CONTROL_PLANE_ADDR}
 EOF
 
 systemctl enable worker-agent
@@ -117,6 +230,9 @@ echo "=== GPU Worker Bootstrap Completed at $(date) ==="
 echo "Instance ID: ${INSTANCE_ID}"
 echo "Public IP: ${PUBLIC_IP}"
 echo "Private IP: ${PRIVATE_IP}"
+echo "Nebula IP: ${NEBULA_IP}"
+echo "Control Plane: ${CONTROL_PLANE_ADDR}"
 echo "Ollama: http://${PRIVATE_IP}:11434"
-echo ""
-echo "NOTE: Nebula mesh is not configured. See TALOS-700h for proper mesh implementation."
+if [ -n "$NEBULA_IP" ]; then
+  echo "Ollama via Nebula: http://${NEBULA_IP}:11434"
+fi

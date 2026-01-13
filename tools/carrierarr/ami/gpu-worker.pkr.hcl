@@ -146,22 +146,61 @@ build {
       # Create default worker-agent environment file
       # These values can be overridden at runtime via userdata or Secrets Manager
       sudo tee /etc/worker-agent/env > /dev/null << 'ENVFILE'
-      # Control Plane Configuration
+      # Control Plane Configuration (via Nebula mesh)
       # Set by userdata script at instance launch
       CONTROL_PLANE_ADDR=
-
-      # RabbitMQ Configuration (optional but recommended)
-      # If set, worker will self-register via RabbitMQ for fleet discovery
-      RABBITMQ_URL=
 
       # Node type: gpu-worker or lighthouse
       NODE_TYPE=gpu-worker
 
       # Health check port
       HEALTH_PORT=8080
+
+      # Nebula IP assigned to this worker (set at runtime)
+      NEBULA_IP=
       ENVFILE
       EOF
       ,
+    ]
+  }
+
+  # Install Nebula overlay network
+  provisioner "shell" {
+    environment_vars = [
+      "NEBULA_VERSION=${var.nebula_version}"
+    ]
+    inline = [
+      "set -ex",
+      "echo 'Installing Nebula v${NEBULA_VERSION}...'",
+      "curl -fsSL https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/nebula-linux-amd64.tar.gz -o /tmp/nebula.tar.gz",
+      "sudo tar -xzf /tmp/nebula.tar.gz -C /usr/local/bin nebula nebula-cert",
+      "sudo chmod +x /usr/local/bin/nebula /usr/local/bin/nebula-cert",
+      "rm /tmp/nebula.tar.gz",
+      "nebula --version",
+      "sudo mkdir -p /etc/nebula",
+      <<-EOF
+      # Create Nebula systemd service
+      sudo tee /etc/systemd/system/nebula.service > /dev/null << 'UNIT'
+      [Unit]
+      Description=Nebula Overlay Network
+      After=network.target
+      Before=worker-agent.service k3s-agent.service
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yaml
+      Restart=always
+      RestartSec=5
+      # Nebula needs CAP_NET_ADMIN for TUN device
+      CapabilityBoundingSet=CAP_NET_ADMIN
+      AmbientCapabilities=CAP_NET_ADMIN
+
+      [Install]
+      WantedBy=multi-user.target
+      UNIT
+      EOF
+      ,
+      "sudo systemctl daemon-reload",
     ]
   }
 
