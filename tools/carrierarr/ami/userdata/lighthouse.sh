@@ -1,24 +1,31 @@
 #!/bin/bash
 # =============================================================================
-# Lighthouse Userdata - Minimal Bootstrap (Nebula-free stub)
+# EC2 k3s Node Userdata - Bootstrap with Nebula Mesh
 # =============================================================================
-# NOTE: This is a minimal stub. Full implementation pending TALOS-700h
-#       which will add proper Nebula mesh with home-as-lighthouse architecture.
+# Connects to homelab Nebula lighthouse, starts k3s, and registers with Carrierarr
 #
-# Current capabilities:
-# - Fetches secrets from AWS Secrets Manager
-# - Configures worker-agent for fleet registration
+# Capabilities:
+# - Fetches secrets from AWS Secrets Manager (including Nebula certs)
+# - Configures Nebula mesh connection to homelab lighthouse
 # - Starts k3s server with Cilium CNI
+# - Configures worker-agent for fleet registration via gRPC
 
 set -euo pipefail
 exec > >(tee /var/log/userdata.log) 2>&1
-echo "=== Lighthouse Bootstrap Started at $(date) ==="
+echo "=== EC2 k3s Node Bootstrap Started at $(date) ==="
 
 # =============================================================================
 # Configuration
 # =============================================================================
-RABBITMQ_URL="${RABBITMQ_URL:-}"
-CILIUM_CLUSTER_NAME="${CILIUM_CLUSTER_NAME:-aws-lighthouse}"
+# Nebula lighthouse endpoint (homelab DDNS)
+LIGHTHOUSE_ENDPOINT="${LIGHTHOUSE_ENDPOINT:-nebula.knowledgedump.space:4242}"
+# Lighthouse Nebula IP
+LIGHTHOUSE_NEBULA_IP="${LIGHTHOUSE_NEBULA_IP:-10.100.0.1}"
+# Control plane address via Nebula mesh
+CONTROL_PLANE_ADDR="${CONTROL_PLANE_ADDR:-${LIGHTHOUSE_NEBULA_IP}:50051}"
+
+# Cilium/k3s config
+CILIUM_CLUSTER_NAME="${CILIUM_CLUSTER_NAME:-aws-k3s}"
 CILIUM_CLUSTER_ID="${CILIUM_CLUSTER_ID:-2}"
 CILIUM_VERSION="${CILIUM_VERSION:-1.16.6}"
 
@@ -33,22 +40,133 @@ CLUSTER_DNS="${CLUSTER_DNS:-10.43.0.10}"
 IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
-PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4)
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 
+echo "Instance: ${INSTANCE_ID}, Public: ${PUBLIC_IP}, Private: ${PRIVATE_IP}"
+
 # =============================================================================
-# Fetch Secrets
+# Fetch Secrets from AWS Secrets Manager
 # =============================================================================
-SECRET_NAME="${SECRET_NAME:-catalyst-llm/lighthouse}"
+SECRET_NAME="${SECRET_NAME:-catalyst-llm/nebula-worker-001}"
 
 echo "Fetching secrets from AWS Secrets Manager: ${SECRET_NAME}"
 SECRETS=$(aws secretsmanager get-secret-value --secret-id "${SECRET_NAME}" --region "${REGION}" --query SecretString --output text 2>/dev/null || echo "{}")
 
 K3S_TOKEN=$(echo "$SECRETS" | jq -r '.k3s_token // empty')
 
-# Get RabbitMQ URL from secret if not provided via env
-if [ -z "$RABBITMQ_URL" ]; then
-  RABBITMQ_URL=$(echo "$SECRETS" | jq -r '.rabbitmq_url // empty')
+# Nebula certificates from secrets
+NEBULA_CA_CRT=$(echo "$SECRETS" | jq -r '.nebula_ca_crt // empty')
+NEBULA_NODE_CRT=$(echo "$SECRETS" | jq -r '.nebula_node_crt // empty')
+NEBULA_NODE_KEY=$(echo "$SECRETS" | jq -r '.nebula_node_key // empty')
+NEBULA_IP=$(echo "$SECRETS" | jq -r '.nebula_ip // empty')
+
+# Override lighthouse endpoint from secrets if provided
+LIGHTHOUSE_ENDPOINT_SECRET=$(echo "$SECRETS" | jq -r '.lighthouse_endpoint // empty')
+if [ -n "$LIGHTHOUSE_ENDPOINT_SECRET" ]; then
+  LIGHTHOUSE_ENDPOINT="$LIGHTHOUSE_ENDPOINT_SECRET"
+fi
+
+# =============================================================================
+# Configure Nebula Mesh
+# =============================================================================
+if [ -n "$NEBULA_CA_CRT" ] && [ -n "$NEBULA_NODE_CRT" ] && [ -n "$NEBULA_NODE_KEY" ]; then
+  echo "Configuring Nebula mesh..."
+
+  # Write certificates
+  echo "$NEBULA_CA_CRT" > /etc/nebula/ca.crt
+  echo "$NEBULA_NODE_CRT" > /etc/nebula/node.crt
+  echo "$NEBULA_NODE_KEY" > /etc/nebula/node.key
+  chmod 600 /etc/nebula/node.key
+
+  # Create Nebula config
+  cat > /etc/nebula/config.yaml << NEBULACONF
+# Nebula Worker Configuration
+# Connects to homelab lighthouse
+
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/node.crt
+  key: /etc/nebula/node.key
+
+lighthouse:
+  am_lighthouse: false
+  hosts:
+    - "${LIGHTHOUSE_NEBULA_IP}"
+
+static_host_map:
+  "${LIGHTHOUSE_NEBULA_IP}":
+    - "${LIGHTHOUSE_ENDPOINT}"
+
+listen:
+  host: 0.0.0.0
+  port: 4242
+
+punchy:
+  punch: true
+  respond: true
+
+relay:
+  am_relay: false
+  use_relays: true
+
+tun:
+  disabled: false
+  dev: nebula0
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+firewall:
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+
+  outbound:
+    - port: any
+      proto: any
+      host: any
+
+  inbound:
+    - port: any
+      proto: icmp
+      host: any
+    - port: any
+      proto: any
+      groups:
+        - lighthouse
+        - homelab
+    # k3s API
+    - port: 6443
+      proto: tcp
+      host: any
+    # Cilium ClusterMesh
+    - port: 32379
+      proto: tcp
+      host: any
+NEBULACONF
+
+  # Start Nebula
+  systemctl enable nebula
+  systemctl start nebula
+
+  # Wait for Nebula to establish connection
+  echo "Waiting for Nebula tunnel..."
+  for i in {1..30}; do
+    if ip link show nebula0 &>/dev/null; then
+      NEBULA_IP=$(ip addr show nebula0 | grep -oP 'inet \K[\d.]+')
+      echo "Nebula connected! IP: ${NEBULA_IP}"
+      break
+    fi
+    echo "Waiting for Nebula... ($i/30)"
+    sleep 2
+  done
+else
+  echo "WARNING: Nebula certificates not found in secrets, skipping mesh setup"
+  NEBULA_IP=""
 fi
 
 # =============================================================================
@@ -57,10 +175,12 @@ fi
 echo "Configuring worker-agent..."
 
 cat > /etc/worker-agent/env << EOF
-NODE_TYPE=lighthouse
+NODE_TYPE=k3s-server
 INSTANCE_ID=${INSTANCE_ID}
 PUBLIC_IP=${PUBLIC_IP}
-RABBITMQ_URL=${RABBITMQ_URL}
+PRIVATE_IP=${PRIVATE_IP}
+NEBULA_IP=${NEBULA_IP}
+CONTROL_PLANE_ADDR=${CONTROL_PLANE_ADDR}
 EOF
 
 systemctl enable worker-agent
@@ -77,14 +197,16 @@ if [ -z "$K3S_TOKEN" ]; then
   echo "Generated K3S_TOKEN: ${K3S_TOKEN}"
 fi
 
+# Use Nebula IP if available, otherwise fall back to private IP
+K3S_ADVERTISE_IP="${NEBULA_IP:-$PRIVATE_IP}"
+
 # Write k3s config - disable flannel, we use Cilium
-# Use private IP since we don't have Nebula mesh
 cat > /etc/rancher/k3s/config.yaml << EOF
-node-name: lighthouse-${INSTANCE_ID}
-node-ip: ${PRIVATE_IP}
+node-name: k3s-${INSTANCE_ID}
+node-ip: ${K3S_ADVERTISE_IP}
 node-external-ip: ${PUBLIC_IP}
 bind-address: 0.0.0.0
-advertise-address: ${PRIVATE_IP}
+advertise-address: ${K3S_ADVERTISE_IP}
 # Disable flannel - we use Cilium
 flannel-backend: none
 disable-network-policy: true
@@ -102,6 +224,11 @@ tls-san:
   - localhost
   - 127.0.0.1
 EOF
+
+# Add Nebula IP to TLS SANs if available
+if [ -n "$NEBULA_IP" ]; then
+  echo "  - ${NEBULA_IP}" >> /etc/rancher/k3s/config.yaml
+fi
 
 # Start k3s
 systemctl enable k3s
@@ -134,7 +261,7 @@ cilium install \
   --set cluster.id=${CILIUM_CLUSTER_ID} \
   --set ipam.mode=kubernetes \
   --set kubeProxyReplacement=true \
-  --set k8sServiceHost=${PRIVATE_IP} \
+  --set k8sServiceHost=${K3S_ADVERTISE_IP} \
   --set k8sServicePort=6443 \
   --set hubble.enabled=true \
   --set hubble.relay.enabled=true \
@@ -152,29 +279,11 @@ cilium status --wait --wait-duration 5m
 echo "Waiting for node to be Ready..."
 kubectl wait --for=condition=ready node --all --timeout=300s
 
-# =============================================================================
-# Store outputs for GPU workers to retrieve
-# =============================================================================
-echo "Storing cluster info..."
-
-# Create/update secret with k3s join info
-aws secretsmanager put-secret-value \
-  --secret-id "catalyst-llm/gpu-worker" \
-  --region "${REGION}" \
-  --secret-string "$(
-    jq -n \
-      --arg token "$K3S_TOKEN" \
-      --arg url "https://${PUBLIC_IP}:6443" \
-      --arg lighthouse_public_ip "${PUBLIC_IP}" \
-      --arg cluster_name "${CILIUM_CLUSTER_NAME}" \
-      --arg cluster_id "${CILIUM_CLUSTER_ID}" \
-      '{k3s_token: $token, k3s_url: $url, lighthouse_public_ip: $lighthouse_public_ip, cilium_cluster_name: $cluster_name, cilium_cluster_id: $cluster_id}'
-  )" || echo "Warning: Could not update gpu-worker secret"
-
-echo "=== Lighthouse Bootstrap Completed at $(date) ==="
-echo "k3s server URL: https://${PUBLIC_IP}:6443"
+echo "=== EC2 k3s Node Bootstrap Completed at $(date) ==="
+echo "Instance ID: ${INSTANCE_ID}"
 echo "Public IP: ${PUBLIC_IP}"
 echo "Private IP: ${PRIVATE_IP}"
+echo "Nebula IP: ${NEBULA_IP}"
+echo "k3s API: https://${K3S_ADVERTISE_IP}:6443"
+echo "Control Plane: ${CONTROL_PLANE_ADDR}"
 echo "Cilium ClusterMesh: ${CILIUM_CLUSTER_NAME} (ID: ${CILIUM_CLUSTER_ID})"
-echo ""
-echo "NOTE: Nebula mesh is not configured. See TALOS-700h for proper mesh implementation."
