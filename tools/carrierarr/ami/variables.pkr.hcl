@@ -62,6 +62,12 @@ variable "ollama_version" {
   description = "Ollama version (or 'latest')"
 }
 
+variable "nebula_version" {
+  type        = string
+  default     = "1.9.5"
+  description = "Nebula overlay network version"
+}
+
 # Tags applied to all AMIs
 variable "common_tags" {
   type = map(string)
