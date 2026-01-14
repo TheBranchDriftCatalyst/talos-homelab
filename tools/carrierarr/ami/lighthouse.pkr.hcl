@@ -119,8 +119,8 @@ build {
     ]
     inline = [
       "set -ex",
-      "echo 'Installing Nebula v${NEBULA_VERSION}...'",
-      "curl -fsSL https://github.com/slackhq/nebula/releases/download/v${NEBULA_VERSION}/nebula-linux-amd64.tar.gz -o /tmp/nebula.tar.gz",
+      "echo 'Installing Nebula v$${NEBULA_VERSION}...'",
+      "curl -fsSL https://github.com/slackhq/nebula/releases/download/v$${NEBULA_VERSION}/nebula-linux-amd64.tar.gz -o /tmp/nebula.tar.gz",
       "sudo tar -xzf /tmp/nebula.tar.gz -C /usr/local/bin nebula nebula-cert",
       "sudo chmod +x /usr/local/bin/nebula /usr/local/bin/nebula-cert",
       "rm /tmp/nebula.tar.gz",
