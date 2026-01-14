@@ -243,3 +243,392 @@ cmd_button(
     text='Build & Push',
     icon_name='cloud_upload'
 )
+
+# ============================================
+# EC2 Hybrid Cloud Provisioning
+# ============================================
+# Provision EC2 instances with Nebula mesh + k3s + Cilium
+#
+# Usage:
+#   tilt args -- --worker-name=gpu-worker-001 --nebula-ip=10.100.2.1
+#   tilt up
+
+LABEL_PROVISION = '4-provisioning'
+
+# Provisioning configuration
+config.define_string('worker-name', args=True)
+config.define_string('nebula-ip', args=True)
+config.define_string('instance-type', args=True)
+config.define_string('ami-id', args=True)
+config.define_string('region', args=True)
+
+cfg = config.parse()
+
+WORKER_NAME = cfg.get('worker-name', 'gpu-worker-001')
+NEBULA_IP = cfg.get('nebula-ip', '10.100.2.1')
+INSTANCE_TYPE = cfg.get('instance-type', 't3.small')
+AMI_ID = cfg.get('ami-id', 'ami-0f24e5b7febd29ea3')
+REGION = cfg.get('region', 'us-west-2')
+
+# Paths relative to Tiltfile
+CERTS_DIR = '../../configs/nebula-certs'
+USERDATA_FILE = './ami/userdata/lighthouse.sh'
+
+# Phase 1: Nebula Worker Certificate
+local_resource(
+    'provision-nebula-cert',
+    cmd='''
+    cd {certs_dir} && \\
+    if [ ! -f {worker}.crt ]; then
+        echo "Generating Nebula certificate for {worker} @ {ip}/16"
+        nebula-cert sign \\
+            -name "{worker}" \\
+            -ip "{ip}/16" \\
+            -groups "workers,aws" \\
+            -ca-crt ca.crt \\
+            -ca-key ca.key
+        echo "✅ Certificate generated"
+    else
+        echo "Certificate {worker}.crt already exists"
+    fi
+    '''.format(certs_dir=CERTS_DIR, worker=WORKER_NAME, ip=NEBULA_IP),
+    labels=[LABEL_PROVISION],
+    auto_init=False,
+)
+
+# Phase 2: AWS Secret
+local_resource(
+    'provision-aws-secret',
+    cmd='''
+    SECRET_NAME="catalyst-llm/{worker}"
+    REGION="{region}"
+    CERTS_DIR="{certs_dir}"
+
+    # Build secret JSON
+    SECRET_JSON=$(jq -n \\
+        --arg ca "$(cat $CERTS_DIR/ca.crt)" \\
+        --arg crt "$(cat $CERTS_DIR/{worker}.crt)" \\
+        --arg key "$(cat $CERTS_DIR/{worker}.key)" \\
+        --arg ip "{ip}" \\
+        --arg endpoint "nebula.knowledgedump.space:4242" \\
+        '{{
+            nebula_ca_crt: $ca,
+            nebula_node_crt: $crt,
+            nebula_node_key: $key,
+            nebula_ip: $ip,
+            lighthouse_endpoint: $endpoint
+        }}')
+
+    # Create or update secret
+    if AWS_PAGER="" aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region "$REGION" 2>/dev/null; then
+        echo "Updating secret $SECRET_NAME..."
+        AWS_PAGER="" aws secretsmanager put-secret-value \\
+            --secret-id "$SECRET_NAME" \\
+            --secret-string "$SECRET_JSON" \\
+            --region "$REGION"
+    else
+        echo "Creating secret $SECRET_NAME..."
+        AWS_PAGER="" aws secretsmanager create-secret \\
+            --name "$SECRET_NAME" \\
+            --secret-string "$SECRET_JSON" \\
+            --region "$REGION"
+    fi
+    echo "✅ Secret ready"
+    '''.format(certs_dir=CERTS_DIR, worker=WORKER_NAME, ip=NEBULA_IP, region=REGION),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-nebula-cert'],
+    auto_init=False,
+)
+
+# Phase 3: Security Group
+local_resource(
+    'provision-security-group',
+    cmd='''
+    SG_NAME="carrierarr-{worker}"
+    REGION="{region}"
+
+    # Check if SG exists
+    EXISTING=$(AWS_PAGER="" aws ec2 describe-security-groups \\
+        --filters "Name=group-name,Values=$SG_NAME" \\
+        --query 'SecurityGroups[0].GroupId' \\
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ "$EXISTING" != "None" ] && [ -n "$EXISTING" ]; then
+        echo "Security group exists: $EXISTING"
+        echo "$EXISTING" > .provision-sg-id
+        exit 0
+    fi
+
+    # Get default VPC
+    VPC_ID=$(AWS_PAGER="" aws ec2 describe-vpcs \\
+        --filters "Name=is-default,Values=true" \\
+        --query 'Vpcs[0].VpcId' --output text --region "$REGION")
+
+    # Create SG
+    SG_ID=$(AWS_PAGER="" aws ec2 create-security-group \\
+        --group-name "$SG_NAME" \\
+        --description "Carrierarr {worker}" \\
+        --vpc-id "$VPC_ID" \\
+        --query 'GroupId' --output text --region "$REGION")
+
+    # Add rules
+    for rule in "22/tcp" "4242/udp" "6443/tcp" "8080/tcp" "32379/tcp"; do
+        port=$(echo $rule | cut -d/ -f1)
+        proto=$(echo $rule | cut -d/ -f2)
+        AWS_PAGER="" aws ec2 authorize-security-group-ingress \\
+            --group-id "$SG_ID" --protocol "$proto" --port "$port" \\
+            --cidr 0.0.0.0/0 --region "$REGION" 2>/dev/null || true
+    done
+
+    echo "$SG_ID" > .provision-sg-id
+    echo "✅ Created security group: $SG_ID"
+    '''.format(worker=WORKER_NAME, region=REGION),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-aws-secret'],
+    auto_init=False,
+)
+
+# Phase 4: Launch EC2 Instance
+local_resource(
+    'provision-ec2',
+    cmd='''
+    REGION="{region}"
+    AMI_ID="{ami}"
+    INSTANCE_TYPE="{itype}"
+    WORKER="{worker}"
+
+    SG_ID=$(cat .provision-sg-id 2>/dev/null)
+    if [ -z "$SG_ID" ]; then
+        echo "ERROR: Run provision-security-group first"
+        exit 1
+    fi
+
+    # Check for existing instance
+    EXISTING=$(AWS_PAGER="" aws ec2 describe-instances \\
+        --filters "Name=tag:Name,Values=carrierarr-$WORKER" "Name=instance-state-name,Values=running,pending" \\
+        --query 'Reservations[0].Instances[0].InstanceId' \\
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ "$EXISTING" != "None" ] && [ -n "$EXISTING" ]; then
+        echo "Instance already running: $EXISTING"
+        echo "$EXISTING" > .provision-instance-id
+        PUBLIC_IP=$(AWS_PAGER="" aws ec2 describe-instances \\
+            --instance-ids "$EXISTING" \\
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \\
+            --output text --region "$REGION")
+        echo "$PUBLIC_IP" > .provision-public-ip
+        echo "Public IP: $PUBLIC_IP"
+        exit 0
+    fi
+
+    # Launch instance
+    echo "Launching EC2 instance..."
+    INSTANCE_ID=$(AWS_PAGER="" aws ec2 run-instances \\
+        --image-id "$AMI_ID" \\
+        --instance-type "$INSTANCE_TYPE" \\
+        --key-name hybrid-llm-key \\
+        --security-group-ids "$SG_ID" \\
+        --iam-instance-profile Name=catalyst-llm-gpu-worker \\
+        --user-data file://{userdata} \\
+        --tag-specifications "ResourceType=instance,Tags=[{{Key=Name,Value=carrierarr-$WORKER}}]" \\
+        --query 'Instances[0].InstanceId' --output text --region "$REGION")
+
+    echo "$INSTANCE_ID" > .provision-instance-id
+    echo "Launched: $INSTANCE_ID"
+
+    # Wait for public IP
+    for i in $(seq 1 30); do
+        PUBLIC_IP=$(AWS_PAGER="" aws ec2 describe-instances \\
+            --instance-ids "$INSTANCE_ID" \\
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \\
+            --output text --region "$REGION" 2>/dev/null)
+        if [ "$PUBLIC_IP" != "None" ] && [ -n "$PUBLIC_IP" ]; then
+            echo "$PUBLIC_IP" > .provision-public-ip
+            echo "✅ Instance ready: $PUBLIC_IP"
+            exit 0
+        fi
+        sleep 5
+    done
+    echo "⚠️ Timeout waiting for public IP"
+    '''.format(
+        region=REGION, ami=AMI_ID, itype=INSTANCE_TYPE,
+        worker=WORKER_NAME, userdata=USERDATA_FILE
+    ),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-security-group'],
+    auto_init=False,
+)
+
+# Phase 5: Verify Nebula Mesh
+local_resource(
+    'provision-verify-nebula',
+    cmd='''
+    echo "Checking Nebula mesh connection to {ip}..."
+
+    for i in $(seq 1 30); do
+        if kubectl logs -n nebula deploy/nebula-lighthouse --tail=50 2>/dev/null | grep -q "{ip}"; then
+            echo "✅ Nebula handshake detected!"
+            kubectl logs -n nebula deploy/nebula-lighthouse --tail=3 | grep "{ip}" || true
+            exit 0
+        fi
+        echo "Waiting for Nebula... ($i/30)"
+        sleep 5
+    done
+    echo "⚠️ Nebula handshake not detected in logs (check manually)"
+    '''.format(ip=NEBULA_IP),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-ec2'],
+    auto_init=False,
+)
+
+# Phase 6: Install Cilium via SSH
+local_resource(
+    'provision-cilium',
+    cmd='''
+    PUBLIC_IP=$(cat .provision-public-ip 2>/dev/null)
+    INSTANCE_ID=$(cat .provision-instance-id 2>/dev/null)
+    REGION="{region}"
+
+    if [ -z "$PUBLIC_IP" ]; then
+        echo "ERROR: No public IP - run provision-ec2 first"
+        exit 1
+    fi
+
+    # Send SSH key
+    aws ec2-instance-connect send-ssh-public-key \\
+        --instance-id "$INSTANCE_ID" \\
+        --instance-os-user ec2-user \\
+        --ssh-public-key file://$HOME/.ssh/id_ed25519.pub \\
+        --region "$REGION" >/dev/null
+
+    # Install Cilium
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/id_ed25519 ec2-user@$PUBLIC_IP "
+        if sudo k3s kubectl get pods -n kube-system 2>/dev/null | grep -q cilium; then
+            echo 'Cilium already installed'
+            exit 0
+        fi
+
+        NEBULA_IP=\\$(ip addr show nebula0 | grep -oP 'inet \\\\K[\\\\d.]+')
+        echo 'Installing Cilium CNI...'
+
+        sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml cilium install \\
+            --version 1.16.6 \\
+            --set cluster.name=aws-k3s \\
+            --set cluster.id=2 \\
+            --set kubeProxyReplacement=true \\
+            --set k8sServiceHost=\\$NEBULA_IP \\
+            --set k8sServicePort=6443 \\
+            --set hubble.enabled=true \\
+            --set clustermesh.useAPIServer=true
+
+        echo 'Waiting for Cilium...'
+        sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml cilium status --wait --wait-duration 3m || true
+        echo '✅ Cilium installed'
+    "
+    '''.format(region=REGION),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-verify-nebula'],
+    auto_init=False,
+)
+
+# Phase 7: Status Check
+local_resource(
+    'provision-status',
+    cmd='''
+    PUBLIC_IP=$(cat .provision-public-ip 2>/dev/null)
+    INSTANCE_ID=$(cat .provision-instance-id 2>/dev/null)
+    SG_ID=$(cat .provision-sg-id 2>/dev/null)
+    REGION="{region}"
+
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║             Carrierarr Provisioning Status                   ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Worker:       {worker}"
+    echo "║  Nebula IP:    {ip}"
+    echo "║  Instance:     $INSTANCE_ID"
+    echo "║  Public IP:    $PUBLIC_IP"
+    echo "║  Security Grp: $SG_ID"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+
+    if [ -n "$PUBLIC_IP" ] && [ -n "$INSTANCE_ID" ]; then
+        # Send SSH key
+        aws ec2-instance-connect send-ssh-public-key \\
+            --instance-id "$INSTANCE_ID" \\
+            --instance-os-user ec2-user \\
+            --ssh-public-key file://$HOME/.ssh/id_ed25519.pub \\
+            --region "$REGION" >/dev/null 2>&1
+
+        echo ""
+        echo "=== Remote Status ==="
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/id_ed25519 ec2-user@$PUBLIC_IP "
+            echo 'Nebula:' \\$(ip addr show nebula0 2>/dev/null | grep -oP 'inet \\K[\\d.]+' || echo 'not up')
+            echo 'k3s:' \\$(sudo systemctl is-active k3s 2>/dev/null || echo 'not running')
+            echo 'Node:' \\$(sudo k3s kubectl get nodes -o wide 2>/dev/null | grep -v NAME | awk '{{print \\$1, \\$2}}' || echo 'not ready')
+        " 2>/dev/null || echo "(SSH connection failed)"
+    fi
+    '''.format(worker=WORKER_NAME, ip=NEBULA_IP, region=REGION),
+    labels=[LABEL_PROVISION],
+    auto_init=False,
+)
+
+# Teardown
+local_resource(
+    'provision-teardown',
+    cmd='''
+    REGION="{region}"
+    WORKER="{worker}"
+
+    echo "⚠️  TEARDOWN: Destroying carrierarr-$WORKER resources..."
+
+    INSTANCE_ID=$(cat .provision-instance-id 2>/dev/null)
+    if [ -n "$INSTANCE_ID" ]; then
+        echo "Terminating instance: $INSTANCE_ID"
+        AWS_PAGER="" aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" || true
+        rm -f .provision-instance-id .provision-public-ip
+        echo "Waiting for termination..."
+        aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID" --region "$REGION" 2>/dev/null || true
+    fi
+
+    SG_ID=$(cat .provision-sg-id 2>/dev/null)
+    if [ -n "$SG_ID" ]; then
+        echo "Deleting security group: $SG_ID"
+        AWS_PAGER="" aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null || echo "(in use, try again later)"
+        rm -f .provision-sg-id
+    fi
+
+    echo "Deleting AWS secret: catalyst-llm/$WORKER"
+    AWS_PAGER="" aws secretsmanager delete-secret \\
+        --secret-id "catalyst-llm/$WORKER" \\
+        --force-delete-without-recovery \\
+        --region "$REGION" 2>/dev/null || true
+
+    echo "✅ Teardown complete"
+    '''.format(region=REGION, worker=WORKER_NAME),
+    labels=[LABEL_PROVISION],
+    auto_init=False,
+)
+
+# Provisioning control buttons
+cmd_button(
+    name='btn-provision-all',
+    resource='provision-nebula-cert',
+    argv=['sh', '-c', '''
+        tilt trigger provision-nebula-cert && \\
+        tilt trigger provision-aws-secret && \\
+        tilt trigger provision-security-group && \\
+        tilt trigger provision-ec2 && \\
+        tilt trigger provision-verify-nebula && \\
+        tilt trigger provision-cilium && \\
+        tilt trigger provision-status
+    '''],
+    text='🚀 Provision All',
+    icon_name='rocket_launch'
+)
+
+cmd_button(
+    name='btn-provision-teardown',
+    resource='provision-teardown',
+    argv=['sh', '-c', 'tilt trigger provision-teardown'],
+    text='🗑️ Teardown',
+    icon_name='delete_forever'
+)
