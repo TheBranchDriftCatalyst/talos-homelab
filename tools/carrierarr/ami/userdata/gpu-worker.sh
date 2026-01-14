@@ -42,7 +42,9 @@ echo "Instance: ${INSTANCE_ID}, Public: ${PUBLIC_IP}, Private: ${PRIVATE_IP}"
 SECRET_NAME="${SECRET_NAME:-catalyst-llm/gpu-worker}"
 
 echo "Fetching secrets from AWS Secrets Manager: ${SECRET_NAME}"
-SECRETS=$(aws secretsmanager get-secret-value --secret-id "${SECRET_NAME}" --region "${REGION}" --query SecretString --output text 2>/dev/null || echo "{}")
+# Fetch secrets - strip ANSI codes that AWS CLI may add
+SECRETS_RAW=$(AWS_PAGER="" aws secretsmanager get-secret-value --secret-id "${SECRET_NAME}" --region "${REGION}" --query SecretString --output text 2>/dev/null || echo "{}")
+SECRETS=$(echo "$SECRETS_RAW" | sed 's/\x1B\[[0-9;]*[JKmsu]//g')
 
 K3S_TOKEN=$(echo "$SECRETS" | jq -r '.k3s_token // empty')
 K3S_URL=$(echo "$SECRETS" | jq -r '.k3s_url // empty')
