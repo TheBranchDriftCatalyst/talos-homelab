@@ -1,0 +1,81 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: liqo
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://helm.liqo.io/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: liqo
+  namespace: liqo-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: liqo
+      version: "0.10.3"
+      sourceRef:
+        kind: HelmRepository
+        name: liqo
+        namespace: flux-system
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Cluster identification
+    discovery:
+      config:
+        clusterName: "catalyst-homelab"
+
+    # Network configuration - use Nebula-compatible settings
+    networking:
+      # Enable the gateway for cross-cluster connectivity
+      gatewayTemplates:
+        server:
+          service:
+            type: NodePort
+            nodePort: 32380  # Avoid conflict with ClusterMesh 32379
+        client:
+          service:
+            type: ClusterIP
+
+      # IP Mapping mode - NAT for different address spaces
+      ipMappingMode: "nat"
+
+      # Pod CIDR (homelab Talos uses 10.244.0.0/16)
+      internal:
+        podCIDR: "10.244.0.0/16"
+        serviceCIDR: "10.96.0.0/12"
+
+    # Auth configuration
+    auth:
+      # Generate tokens for authentication
+      config:
+        enableAuthentication: true
+
+    # Controller manager settings
+    controllerManager:
+      config:
+        # Enable resource sharing
+        enableResourceEnforcement: true
+        # Maximum resources to share (50%)
+        resourceSharingPercentage: 50
+
+    # Webhook
+    webhook:
+      enabled: true
+
+    # Metrics
+    metrics:
+      enabled: true
+      serviceMonitor:
+        enabled: true
