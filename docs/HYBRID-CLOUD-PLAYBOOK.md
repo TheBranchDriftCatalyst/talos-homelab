@@ -327,10 +327,26 @@ nebula-cert sign -name "xxx" -ip "10.100.x.x/16" ...
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Nebula Lighthouse | Running | Deployed in nebula namespace |
-| Nebula Worker | Connected | 10.100.2.1, ~35ms latency |
-| k3s Server | Running | Node NotReady (no CNI) |
-| Carrierarr Control Plane | Running | At fleet.talos00:30052 |
-| Worker Agent | Not started | Needs Carrierarr integration |
-| Cilium CNI | Not installed | Required for k3s Ready state |
-| Liqo Peering | Not configured | Future phase |
+| Nebula Lighthouse | ✅ Running | Deployed in nebula namespace (10.100.0.1/16) |
+| Nebula Worker | ✅ Connected | 10.100.2.1, ~35ms latency to lighthouse |
+| k3s Server | ✅ Running | Node Ready with Cilium CNI |
+| Cilium CNI (Talos) | ✅ Installed | cluster.name=talos-home, cluster.id=1 |
+| Cilium CNI (k3s) | ✅ Installed | cluster.name=aws-k3s, cluster.id=2 |
+| ClusterMesh API (Talos) | ✅ Running | NodePort 32379 |
+| ClusterMesh API (k3s) | ✅ Running | NodePort 32379 |
+| **ClusterMesh Peering** | ⏳ Pending | Secret exchange required |
+| Liqo | ❌ Removed | Replaced by ClusterMesh |
+| Carrierarr Control Plane | ✅ Running | At fleet.talos00:30052 |
+| Worker Agent | ⏳ Pending | Needs Carrierarr integration |
+
+### Next Steps
+
+1. **Exchange ClusterMesh secrets** between clusters
+2. Verify cross-cluster service discovery
+3. Complete carrierarr worker agent integration
+
+### Beads Tracking
+
+- Epic: TALOS-rien (Migrate to Cilium ClusterMesh)
+- Task: TALOS-rrnk (Configure ClusterMesh - in progress)
+- Epic: TALOS-w5e0 (Carrierarr base image system)
