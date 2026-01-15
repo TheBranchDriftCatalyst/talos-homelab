@@ -1,18 +1,19 @@
 #!/bin/bash
 # =============================================================================
-# EC2 k3s Node Userdata - Bootstrap with Nebula Mesh
+# GPU Worker Userdata - Bootstrap with Nebula Mesh
 # =============================================================================
-# Connects to homelab Nebula lighthouse, starts k3s, and registers with Carrierarr
+# Connects to homelab Nebula lighthouse and registers with Carrierarr
 #
 # Capabilities:
 # - Fetches secrets from AWS Secrets Manager (including Nebula certs)
 # - Configures Nebula mesh connection to homelab lighthouse
-# - Starts k3s server with Cilium CNI
 # - Configures worker-agent for fleet registration via gRPC
+# - Starts Ollama for LLM inference
+# - Optionally joins k3s cluster if K3S_TOKEN provided
 
 set -euo pipefail
 exec > >(tee /var/log/userdata.log) 2>&1
-echo "=== EC2 k3s Node Bootstrap Started at $(date) ==="
+echo "=== GPU Worker Bootstrap Started at $(date) ==="
 
 # =============================================================================
 # Configuration
@@ -24,23 +25,13 @@ LIGHTHOUSE_NEBULA_IP="${LIGHTHOUSE_NEBULA_IP:-10.100.0.1}"
 # Control plane address via Nebula mesh
 CONTROL_PLANE_ADDR="${CONTROL_PLANE_ADDR:-${LIGHTHOUSE_NEBULA_IP}:50051}"
 
-# Cilium/k3s config
-CILIUM_CLUSTER_NAME="${CILIUM_CLUSTER_NAME:-aws-k3s}"
-CILIUM_CLUSTER_ID="${CILIUM_CLUSTER_ID:-2}"
-CILIUM_VERSION="${CILIUM_VERSION:-1.16.6}"
-
-# Network CIDRs (must not overlap with Talos cluster)
-POD_CIDR="${POD_CIDR:-10.42.0.0/16}"
-SERVICE_CIDR="${SERVICE_CIDR:-10.43.0.0/16}"
-CLUSTER_DNS="${CLUSTER_DNS:-10.43.0.10}"
-
 # =============================================================================
 # Fetch Instance Metadata (IMDSv2)
 # =============================================================================
 IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
-PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 2> /dev/null || echo "")
 PRIVATE_IP=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 
 echo "Instance: ${INSTANCE_ID}, Public: ${PUBLIC_IP}, Private: ${PRIVATE_IP}"
@@ -48,14 +39,16 @@ echo "Instance: ${INSTANCE_ID}, Public: ${PUBLIC_IP}, Private: ${PRIVATE_IP}"
 # =============================================================================
 # Fetch Secrets from AWS Secrets Manager
 # =============================================================================
-SECRET_NAME="${SECRET_NAME:-catalyst-llm/nebula-worker-001}"
+SECRET_NAME="${SECRET_NAME:-catalyst-llm/gpu-worker}"
 
 echo "Fetching secrets from AWS Secrets Manager: ${SECRET_NAME}"
 # Fetch secrets - strip ANSI codes that AWS CLI may add
-SECRETS_RAW=$(AWS_PAGER="" aws secretsmanager get-secret-value --secret-id "${SECRET_NAME}" --region "${REGION}" --query SecretString --output text 2>/dev/null || echo "{}")
+SECRETS_RAW=$(AWS_PAGER="" aws secretsmanager get-secret-value --secret-id "${SECRET_NAME}" --region "${REGION}" --query SecretString --output text 2> /dev/null || echo "{}")
+# shellcheck disable=SC2001  # Complex ANSI escape regex requires sed
 SECRETS=$(echo "$SECRETS_RAW" | sed 's/\x1B\[[0-9;]*[JKmsu]//g')
 
 K3S_TOKEN=$(echo "$SECRETS" | jq -r '.k3s_token // empty')
+K3S_URL=$(echo "$SECRETS" | jq -r '.k3s_url // empty')
 
 # Nebula certificates from secrets
 NEBULA_CA_CRT=$(echo "$SECRETS" | jq -r '.nebula_ca_crt // empty')
@@ -141,14 +134,10 @@ firewall:
       groups:
         - lighthouse
         - homelab
-    # k3s API
-    - port: 6443
+    - port: 11434
       proto: tcp
-      host: any
-    # Cilium ClusterMesh
-    - port: 32379
-      proto: tcp
-      host: any
+      groups:
+        - workers
 NEBULACONF
 
   # Start Nebula
@@ -158,7 +147,7 @@ NEBULACONF
   # Wait for Nebula to establish connection
   echo "Waiting for Nebula tunnel..."
   for i in {1..30}; do
-    if ip link show nebula0 &>/dev/null; then
+    if ip link show nebula0 &> /dev/null; then
       NEBULA_IP=$(ip addr show nebula0 | grep -oP 'inet \K[\d.]+')
       echo "Nebula connected! IP: ${NEBULA_IP}"
       break
@@ -177,7 +166,7 @@ fi
 echo "Configuring worker-agent..."
 
 cat > /etc/worker-agent/env << EOF
-NODE_TYPE=k3s-server
+NODE_TYPE=gpu-worker
 INSTANCE_ID=${INSTANCE_ID}
 PUBLIC_IP=${PUBLIC_IP}
 PRIVATE_IP=${PRIVATE_IP}
@@ -189,103 +178,64 @@ systemctl enable worker-agent
 systemctl start worker-agent
 
 # =============================================================================
-# Configure k3s Server (without default CNI)
+# Configure k3s agent (if joining cluster)
 # =============================================================================
-echo "Configuring k3s server..."
+if [ -n "$K3S_TOKEN" ] && [ -n "$K3S_URL" ]; then
+  echo "Configuring k3s agent to join: ${K3S_URL}"
 
-# Generate k3s token if not provided
-if [ -z "$K3S_TOKEN" ]; then
-  K3S_TOKEN=$(openssl rand -hex 32)
-  echo "Generated K3S_TOKEN: ${K3S_TOKEN}"
-fi
-
-# Use Nebula IP if available, otherwise fall back to private IP
-K3S_ADVERTISE_IP="${NEBULA_IP:-$PRIVATE_IP}"
-
-# Write k3s config - disable flannel, we use Cilium
-cat > /etc/rancher/k3s/config.yaml << EOF
-node-name: k3s-${INSTANCE_ID}
-node-ip: ${K3S_ADVERTISE_IP}
-node-external-ip: ${PUBLIC_IP}
-bind-address: 0.0.0.0
-advertise-address: ${K3S_ADVERTISE_IP}
-# Disable flannel - we use Cilium
-flannel-backend: none
-disable-network-policy: true
-cluster-cidr: "${POD_CIDR}"
-service-cidr: "${SERVICE_CIDR}"
-cluster-dns: "${CLUSTER_DNS}"
-disable:
-  - traefik
-  - servicelb
+  # Configure k3s agent
+  cat > /etc/rancher/k3s/config.yaml << EOF
+server: ${K3S_URL}
 token: ${K3S_TOKEN}
-tls-san:
-  - ${PRIVATE_IP}
-  - ${PUBLIC_IP}
-  - ${INSTANCE_ID}
-  - localhost
-  - 127.0.0.1
+node-name: ${INSTANCE_ID}
+node-label:
+  - "node.kubernetes.io/instance-type=gpu-worker"
+  - "nvidia.com/gpu=true"
+node-ip: ${PRIVATE_IP}
 EOF
 
-# Add Nebula IP to TLS SANs if available
-if [ -n "$NEBULA_IP" ]; then
-  echo "  - ${NEBULA_IP}" >> /etc/rancher/k3s/config.yaml
+  # Enable k3s agent
+  systemctl enable k3s-agent
+  systemctl start k3s-agent
+else
+  echo "K3S_TOKEN or K3S_URL not provided, skipping k3s agent setup"
 fi
 
-# Start k3s
-systemctl enable k3s
-systemctl start k3s
+# =============================================================================
+# Configure Ollama
+# =============================================================================
+echo "Configuring Ollama..."
 
-echo "Waiting for k3s to be ready..."
-export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+# Mount models volume if available
+if [ -b /dev/xvdb ]; then
+  mkfs.xfs /dev/xvdb 2> /dev/null || true
+  mkdir -p /var/lib/ollama
+  mount /dev/xvdb /var/lib/ollama
+  echo "/dev/xvdb /var/lib/ollama xfs defaults,nofail 0 2" >> /etc/fstab
+fi
 
-for i in {1..60}; do
-  if kubectl get nodes 2>/dev/null; then
-    echo "k3s API is ready!"
+# Start Ollama
+systemctl enable ollama
+systemctl start ollama
+
+# Wait for Ollama to be ready
+echo "Waiting for Ollama to be ready..."
+for i in {1..30}; do
+  if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+    echo "Ollama is ready!"
     break
   fi
-  echo "Waiting for k3s API... ($i/60)"
-  sleep 5
+  echo "Waiting for Ollama... ($i/30)"
+  sleep 2
 done
 
-# =============================================================================
-# Install Cilium with ClusterMesh
-# =============================================================================
-echo "Installing Cilium CNI with ClusterMesh..."
-
-# Wait for node to be registered (will be NotReady until CNI is installed)
-kubectl wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=False node --all --timeout=120s || true
-
-# Install Cilium with ClusterMesh enabled
-cilium install \
-  --version ${CILIUM_VERSION} \
-  --set cluster.name=${CILIUM_CLUSTER_NAME} \
-  --set cluster.id=${CILIUM_CLUSTER_ID} \
-  --set ipam.mode=kubernetes \
-  --set kubeProxyReplacement=true \
-  --set k8sServiceHost=${K3S_ADVERTISE_IP} \
-  --set k8sServicePort=6443 \
-  --set hubble.enabled=true \
-  --set hubble.relay.enabled=true \
-  --set clustermesh.useAPIServer=true \
-  --set clustermesh.apiserver.replicas=1 \
-  --set clustermesh.apiserver.service.type=NodePort \
-  --set clustermesh.apiserver.service.nodePort=32379 \
-  --set clustermesh.apiserver.tls.auto.enabled=true \
-  --set clustermesh.apiserver.tls.auto.method=helm
-
-echo "Waiting for Cilium to be ready..."
-cilium status --wait --wait-duration 5m
-
-# Verify node is ready now
-echo "Waiting for node to be Ready..."
-kubectl wait --for=condition=ready node --all --timeout=300s
-
-echo "=== EC2 k3s Node Bootstrap Completed at $(date) ==="
+echo "=== GPU Worker Bootstrap Completed at $(date) ==="
 echo "Instance ID: ${INSTANCE_ID}"
 echo "Public IP: ${PUBLIC_IP}"
 echo "Private IP: ${PRIVATE_IP}"
 echo "Nebula IP: ${NEBULA_IP}"
-echo "k3s API: https://${K3S_ADVERTISE_IP}:6443"
 echo "Control Plane: ${CONTROL_PLANE_ADDR}"
-echo "Cilium ClusterMesh: ${CILIUM_CLUSTER_NAME} (ID: ${CILIUM_CLUSTER_ID})"
+echo "Ollama: http://${PRIVATE_IP}:11434"
+if [ -n "$NEBULA_IP" ]; then
+  echo "Ollama via Nebula: http://${NEBULA_IP}:11434"
+fi

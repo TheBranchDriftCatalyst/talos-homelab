@@ -1,0 +1,786 @@
+# AWS k3s Cluster - Provisioning & ClusterMesh Management
+# Full lifecycle management for the AWS k3s node in the hybrid cluster
+#
+# Usage: cd clusters/aws-k3s && tilt up
+#
+# Features:
+#   - EC2 instance provisioning (Nebula + k3s + Cilium)
+#   - ClusterMesh status and management
+#   - AMI building with Packer
+#
+# Architecture:
+#   Talos Homelab (talos-home, ID:1) <--Nebula Mesh--> AWS k3s (aws-k3s, ID:2)
+
+load('ext://uibutton', 'cmd_button', 'location', 'choice_input')
+
+# ============================================
+# CONFIGURATION
+# ============================================
+
+# Cluster contexts
+TALOS_CONTEXT = 'admin@catalyst-cluster'
+AWS_CONTEXT = 'aws-lighthouse'
+
+# Nebula network
+TALOS_NEBULA_IP = '10.100.0.1'
+AWS_NEBULA_IP = '10.100.2.1'
+CLUSTERMESH_PORT = '32380'
+
+# Provisioning defaults
+config.define_string('worker-name', args=True)
+config.define_string('nebula-ip', args=True)
+config.define_string('instance-type', args=True)
+config.define_string('ami-id', args=True)
+config.define_string('region', args=True)
+
+cfg = config.parse()
+
+WORKER_NAME = cfg.get('worker-name', 'gpu-worker-001')
+NEBULA_IP = cfg.get('nebula-ip', AWS_NEBULA_IP)
+INSTANCE_TYPE = cfg.get('instance-type', 't3.small')
+AMI_ID = cfg.get('ami-id', 'ami-0f24e5b7febd29ea3')
+REGION = cfg.get('region', 'us-west-2')
+
+# Paths relative to this Tiltfile
+CERTS_DIR = '../../configs/nebula-certs'
+USERDATA_FILE = './ami/userdata/lighthouse.sh'
+
+# Labels
+LABEL_STATUS = '1-status'
+LABEL_PROVISION = '2-provision'
+LABEL_MESH = '3-clustermesh'
+LABEL_NEBULA = '4-nebula'
+LABEL_AMI = '5-ami'
+LABEL_OPS = '6-ops'
+
+print("""
+======================================================================
+  AWS k3s Cluster - Hybrid Cloud Dashboard
+======================================================================
+  Talos Context:  %s (talos-home, ID:1)
+  AWS Context:    %s (aws-k3s, ID:2)
+  Nebula:         %s <-> %s
+
+  Worker:         %s
+  Instance Type:  %s
+  Region:         %s
+======================================================================
+""" % (TALOS_CONTEXT, AWS_CONTEXT, TALOS_NEBULA_IP, NEBULA_IP, WORKER_NAME, INSTANCE_TYPE, REGION))
+
+# ============================================
+# STATUS - Quick overview
+# ============================================
+
+local_resource(
+    'cluster-overview',
+    cmd='''
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║              Hybrid Cluster Overview                          ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo ""
+    echo "=== TALOS CLUSTER (talos-home) ==="
+    kubectl --context=''' + TALOS_CONTEXT + ''' get nodes -o wide 2>/dev/null | head -6 || echo "(unreachable)"
+    echo ""
+    echo "=== AWS K3S CLUSTER (aws-k3s) ==="
+    kubectl --context=''' + AWS_CONTEXT + ''' get nodes -o wide 2>/dev/null || echo "(unreachable)"
+    echo ""
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    ''',
+    labels=[LABEL_STATUS],
+    auto_init=True,
+)
+
+local_resource(
+    'clustermesh-status',
+    cmd='''
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║                 ClusterMesh Status                            ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo ""
+    echo "=== TALOS CLUSTER ==="
+    cilium --context=''' + TALOS_CONTEXT + ''' clustermesh status 2>/dev/null || echo "(cilium CLI failed)"
+    echo ""
+    echo "=== AWS K3S CLUSTER ==="
+    cilium --context=''' + AWS_CONTEXT + ''' clustermesh status 2>/dev/null || echo "(unreachable)"
+    echo ""
+    echo "╚══════════════════════════════════════════════════════════════╝"
+    ''',
+    labels=[LABEL_STATUS],
+    auto_init=True,
+)
+
+# ============================================
+# PROVISIONING - EC2 Lifecycle
+# ============================================
+
+# Phase 1: Nebula Worker Certificate
+local_resource(
+    'provision-nebula-cert',
+    cmd='''
+    cd {certs_dir} && \\
+    if [ ! -f {worker}.crt ]; then
+        echo "Generating Nebula certificate for {worker} @ {ip}/16"
+        nebula-cert sign \\
+            -name "{worker}" \\
+            -ip "{ip}/16" \\
+            -groups "workers,aws" \\
+            -ca-crt ca.crt \\
+            -ca-key ca.key
+        echo "✅ Certificate generated"
+    else
+        echo "Certificate {worker}.crt already exists"
+    fi
+    '''.format(certs_dir=CERTS_DIR, worker=WORKER_NAME, ip=NEBULA_IP),
+    labels=[LABEL_PROVISION],
+    auto_init=False,
+)
+
+# Phase 2: AWS Secret
+local_resource(
+    'provision-aws-secret',
+    cmd='''
+    SECRET_NAME="catalyst-llm/{worker}"
+    REGION="{region}"
+    CERTS_DIR="{certs_dir}"
+
+    # Build secret JSON
+    SECRET_JSON=$(jq -n \\
+        --arg ca "$(cat $CERTS_DIR/ca.crt)" \\
+        --arg crt "$(cat $CERTS_DIR/{worker}.crt)" \\
+        --arg key "$(cat $CERTS_DIR/{worker}.key)" \\
+        --arg ip "{ip}" \\
+        --arg endpoint "nebula.knowledgedump.space:4242" \\
+        '{{
+            nebula_ca_crt: $ca,
+            nebula_node_crt: $crt,
+            nebula_node_key: $key,
+            nebula_ip: $ip,
+            lighthouse_endpoint: $endpoint
+        }}')
+
+    # Create or update secret
+    if AWS_PAGER="" aws secretsmanager describe-secret --secret-id "$SECRET_NAME" --region "$REGION" 2>/dev/null; then
+        echo "Updating secret $SECRET_NAME..."
+        AWS_PAGER="" aws secretsmanager put-secret-value \\
+            --secret-id "$SECRET_NAME" \\
+            --secret-string "$SECRET_JSON" \\
+            --region "$REGION"
+    else
+        echo "Creating secret $SECRET_NAME..."
+        AWS_PAGER="" aws secretsmanager create-secret \\
+            --name "$SECRET_NAME" \\
+            --secret-string "$SECRET_JSON" \\
+            --region "$REGION"
+    fi
+    echo "✅ Secret ready"
+    '''.format(certs_dir=CERTS_DIR, worker=WORKER_NAME, ip=NEBULA_IP, region=REGION),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-nebula-cert'],
+    auto_init=False,
+)
+
+# Phase 3: Security Group
+local_resource(
+    'provision-security-group',
+    cmd='''
+    SG_NAME="aws-k3s-{worker}"
+    REGION="{region}"
+
+    # Check if SG exists
+    EXISTING=$(AWS_PAGER="" aws ec2 describe-security-groups \\
+        --filters "Name=group-name,Values=$SG_NAME" \\
+        --query 'SecurityGroups[0].GroupId' \\
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ "$EXISTING" != "None" ] && [ -n "$EXISTING" ]; then
+        echo "Security group exists: $EXISTING"
+        echo "$EXISTING" > .provision-sg-id
+        exit 0
+    fi
+
+    # Get default VPC
+    VPC_ID=$(AWS_PAGER="" aws ec2 describe-vpcs \\
+        --filters "Name=is-default,Values=true" \\
+        --query 'Vpcs[0].VpcId' --output text --region "$REGION")
+
+    # Create SG
+    SG_ID=$(AWS_PAGER="" aws ec2 create-security-group \\
+        --group-name "$SG_NAME" \\
+        --description "AWS k3s {worker}" \\
+        --vpc-id "$VPC_ID" \\
+        --query 'GroupId' --output text --region "$REGION")
+
+    # Add rules
+    for rule in "22/tcp" "4242/udp" "6443/tcp" "8080/tcp" "32379/tcp" "32380/tcp"; do
+        port=$(echo $rule | cut -d/ -f1)
+        proto=$(echo $rule | cut -d/ -f2)
+        AWS_PAGER="" aws ec2 authorize-security-group-ingress \\
+            --group-id "$SG_ID" --protocol "$proto" --port "$port" \\
+            --cidr 0.0.0.0/0 --region "$REGION" 2>/dev/null || true
+    done
+
+    echo "$SG_ID" > .provision-sg-id
+    echo "✅ Created security group: $SG_ID"
+    '''.format(worker=WORKER_NAME, region=REGION),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-aws-secret'],
+    auto_init=False,
+)
+
+# Phase 4: Launch EC2 Instance
+local_resource(
+    'provision-ec2',
+    cmd='''
+    REGION="{region}"
+    AMI_ID="{ami}"
+    INSTANCE_TYPE="{itype}"
+    WORKER="{worker}"
+
+    SG_ID=$(cat .provision-sg-id 2>/dev/null)
+    if [ -z "$SG_ID" ]; then
+        echo "ERROR: Run provision-security-group first"
+        exit 1
+    fi
+
+    # Check for existing instance
+    EXISTING=$(AWS_PAGER="" aws ec2 describe-instances \\
+        --filters "Name=tag:Name,Values=aws-k3s-$WORKER" "Name=instance-state-name,Values=running,pending" \\
+        --query 'Reservations[0].Instances[0].InstanceId' \\
+        --output text --region "$REGION" 2>/dev/null)
+
+    if [ "$EXISTING" != "None" ] && [ -n "$EXISTING" ]; then
+        echo "Instance already running: $EXISTING"
+        echo "$EXISTING" > .provision-instance-id
+        PUBLIC_IP=$(AWS_PAGER="" aws ec2 describe-instances \\
+            --instance-ids "$EXISTING" \\
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \\
+            --output text --region "$REGION")
+        echo "$PUBLIC_IP" > .provision-public-ip
+        echo "Public IP: $PUBLIC_IP"
+        exit 0
+    fi
+
+    # Launch instance
+    echo "Launching EC2 instance..."
+    INSTANCE_ID=$(AWS_PAGER="" aws ec2 run-instances \\
+        --image-id "$AMI_ID" \\
+        --instance-type "$INSTANCE_TYPE" \\
+        --key-name hybrid-llm-key \\
+        --security-group-ids "$SG_ID" \\
+        --iam-instance-profile Name=catalyst-llm-gpu-worker \\
+        --user-data file://{userdata} \\
+        --tag-specifications "ResourceType=instance,Tags=[{{Key=Name,Value=aws-k3s-$WORKER}},{{Key=Cluster,Value=aws-k3s}}]" \\
+        --query 'Instances[0].InstanceId' --output text --region "$REGION")
+
+    echo "$INSTANCE_ID" > .provision-instance-id
+    echo "Launched: $INSTANCE_ID"
+
+    # Wait for public IP
+    for i in $(seq 1 30); do
+        PUBLIC_IP=$(AWS_PAGER="" aws ec2 describe-instances \\
+            --instance-ids "$INSTANCE_ID" \\
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \\
+            --output text --region "$REGION" 2>/dev/null)
+        if [ "$PUBLIC_IP" != "None" ] && [ -n "$PUBLIC_IP" ]; then
+            echo "$PUBLIC_IP" > .provision-public-ip
+            echo "✅ Instance ready: $PUBLIC_IP"
+            exit 0
+        fi
+        sleep 5
+    done
+    echo "⚠️ Timeout waiting for public IP"
+    '''.format(
+        region=REGION, ami=AMI_ID, itype=INSTANCE_TYPE,
+        worker=WORKER_NAME, userdata=USERDATA_FILE
+    ),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-security-group'],
+    auto_init=False,
+)
+
+# Phase 5: Verify Nebula Mesh
+local_resource(
+    'provision-verify-nebula',
+    cmd='''
+    echo "Checking Nebula mesh connection to {ip}..."
+
+    for i in $(seq 1 30); do
+        if kubectl --context=''' + TALOS_CONTEXT + ''' logs -n nebula deploy/nebula-lighthouse --tail=50 2>/dev/null | grep -q "{ip}"; then
+            echo "✅ Nebula handshake detected!"
+            kubectl --context=''' + TALOS_CONTEXT + ''' logs -n nebula deploy/nebula-lighthouse --tail=3 | grep "{ip}" || true
+            exit 0
+        fi
+        echo "Waiting for Nebula... ($i/30)"
+        sleep 5
+    done
+    echo "⚠️ Nebula handshake not detected in logs (check manually)"
+    '''.format(ip=NEBULA_IP),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-ec2'],
+    auto_init=False,
+)
+
+# Phase 6: Install Cilium via SSH
+local_resource(
+    'provision-cilium',
+    cmd='''
+    PUBLIC_IP=$(cat .provision-public-ip 2>/dev/null)
+    INSTANCE_ID=$(cat .provision-instance-id 2>/dev/null)
+    REGION="{region}"
+
+    if [ -z "$PUBLIC_IP" ]; then
+        echo "ERROR: No public IP - run provision-ec2 first"
+        exit 1
+    fi
+
+    # Send SSH key
+    aws ec2-instance-connect send-ssh-public-key \\
+        --instance-id "$INSTANCE_ID" \\
+        --instance-os-user ec2-user \\
+        --ssh-public-key file://$HOME/.ssh/id_ed25519.pub \\
+        --region "$REGION" >/dev/null
+
+    # Install Cilium
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=30 -i ~/.ssh/id_ed25519 ec2-user@$PUBLIC_IP "
+        if sudo k3s kubectl get pods -n kube-system 2>/dev/null | grep -q cilium; then
+            echo 'Cilium already installed'
+            exit 0
+        fi
+
+        NEBULA_IP=\\$(ip addr show nebula0 | grep -oP 'inet \\\\K[\\\\d.]+')
+        echo 'Installing Cilium CNI...'
+
+        sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml cilium install \\
+            --version 1.16.6 \\
+            --set cluster.name=aws-k3s \\
+            --set cluster.id=2 \\
+            --set kubeProxyReplacement=true \\
+            --set k8sServiceHost=\\$NEBULA_IP \\
+            --set k8sServicePort=6443 \\
+            --set hubble.enabled=true \\
+            --set clustermesh.useAPIServer=true
+
+        echo 'Waiting for Cilium...'
+        sudo KUBECONFIG=/etc/rancher/k3s/k3s.yaml cilium status --wait --wait-duration 3m || true
+        echo '✅ Cilium installed'
+    "
+    '''.format(region=REGION),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-verify-nebula'],
+    auto_init=False,
+)
+
+# Phase 7: Deploy Port Forwarder
+local_resource(
+    'provision-port-forwarder',
+    cmd='''
+    PUBLIC_IP=$(cat .provision-public-ip 2>/dev/null)
+    INSTANCE_ID=$(cat .provision-instance-id 2>/dev/null)
+    REGION="{region}"
+
+    if [ -z "$PUBLIC_IP" ]; then
+        echo "ERROR: No public IP"
+        exit 1
+    fi
+
+    # Send SSH key
+    aws ec2-instance-connect send-ssh-public-key \\
+        --instance-id "$INSTANCE_ID" \\
+        --instance-os-user ec2-user \\
+        --ssh-public-key file://$HOME/.ssh/id_ed25519.pub \\
+        --region "$REGION" >/dev/null
+
+    # Deploy port forwarder
+    ssh -o StrictHostKeyChecking=no -i ~/.ssh/id_ed25519 ec2-user@$PUBLIC_IP "
+        sudo k3s kubectl apply -f - <<'EOF'
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: clustermesh-port-forwarder
+  namespace: kube-system
+  labels:
+    app: clustermesh-port-forwarder
+spec:
+  selector:
+    matchLabels:
+      app: clustermesh-port-forwarder
+  template:
+    metadata:
+      labels:
+        app: clustermesh-port-forwarder
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: socat
+          image: alpine/socat:latest
+          args:
+            - 'TCP-LISTEN:32380,fork,reuseaddr'
+            - 'TCP:clustermesh-apiserver.kube-system.svc.cluster.local:2379'
+          ports:
+            - containerPort: 32380
+              hostPort: 32380
+              protocol: TCP
+          resources:
+            limits:
+              memory: 64Mi
+              cpu: 100m
+            requests:
+              memory: 32Mi
+              cpu: 10m
+          securityContext:
+            privileged: true
+EOF
+        echo '✅ Port forwarder deployed'
+    "
+    '''.format(region=REGION),
+    labels=[LABEL_PROVISION],
+    resource_deps=['provision-cilium'],
+    auto_init=False,
+)
+
+# Phase 8: Status Check
+local_resource(
+    'provision-status',
+    cmd='''
+    PUBLIC_IP=$(cat .provision-public-ip 2>/dev/null)
+    INSTANCE_ID=$(cat .provision-instance-id 2>/dev/null)
+    SG_ID=$(cat .provision-sg-id 2>/dev/null)
+    REGION="{region}"
+
+    echo "╔══════════════════════════════════════════════════════════════╗"
+    echo "║             AWS k3s Provisioning Status                       ║"
+    echo "╠══════════════════════════════════════════════════════════════╣"
+    echo "║  Worker:       {worker}"
+    echo "║  Nebula IP:    {ip}"
+    echo "║  Instance:     $INSTANCE_ID"
+    echo "║  Public IP:    $PUBLIC_IP"
+    echo "║  Security Grp: $SG_ID"
+    echo "╚══════════════════════════════════════════════════════════════╝"
+
+    if [ -n "$PUBLIC_IP" ] && [ -n "$INSTANCE_ID" ]; then
+        # Send SSH key
+        aws ec2-instance-connect send-ssh-public-key \\
+            --instance-id "$INSTANCE_ID" \\
+            --instance-os-user ec2-user \\
+            --ssh-public-key file://$HOME/.ssh/id_ed25519.pub \\
+            --region "$REGION" >/dev/null 2>&1
+
+        echo ""
+        echo "=== Remote Status ==="
+        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i ~/.ssh/id_ed25519 ec2-user@$PUBLIC_IP "
+            echo 'Nebula:' \\$(ip addr show nebula0 2>/dev/null | grep -oP 'inet \\K[\\d.]+' || echo 'not up')
+            echo 'k3s:' \\$(sudo systemctl is-active k3s 2>/dev/null || echo 'not running')
+            echo 'Node:' \\$(sudo k3s kubectl get nodes -o wide 2>/dev/null | grep -v NAME | awk '{{print \\$1, \\$2}}' || echo 'not ready')
+        " 2>/dev/null || echo "(SSH connection failed)"
+    fi
+    '''.format(worker=WORKER_NAME, ip=NEBULA_IP, region=REGION),
+    labels=[LABEL_PROVISION],
+    auto_init=False,
+)
+
+# Teardown
+local_resource(
+    'provision-teardown',
+    cmd='''
+    REGION="{region}"
+    WORKER="{worker}"
+
+    echo "⚠️  TEARDOWN: Destroying aws-k3s-$WORKER resources..."
+
+    INSTANCE_ID=$(cat .provision-instance-id 2>/dev/null)
+    if [ -n "$INSTANCE_ID" ]; then
+        echo "Terminating instance: $INSTANCE_ID"
+        AWS_PAGER="" aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION" || true
+        rm -f .provision-instance-id .provision-public-ip
+        echo "Waiting for termination..."
+        aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID" --region "$REGION" 2>/dev/null || true
+    fi
+
+    SG_ID=$(cat .provision-sg-id 2>/dev/null)
+    if [ -n "$SG_ID" ]; then
+        echo "Deleting security group: $SG_ID"
+        AWS_PAGER="" aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null || echo "(in use, try again later)"
+        rm -f .provision-sg-id
+    fi
+
+    echo "Deleting AWS secret: catalyst-llm/$WORKER"
+    AWS_PAGER="" aws secretsmanager delete-secret \\
+        --secret-id "catalyst-llm/$WORKER" \\
+        --force-delete-without-recovery \\
+        --region "$REGION" 2>/dev/null || true
+
+    echo "✅ Teardown complete"
+    '''.format(region=REGION, worker=WORKER_NAME),
+    labels=[LABEL_PROVISION],
+    auto_init=False,
+)
+
+# Provisioning control buttons
+cmd_button(
+    name='btn-provision-all',
+    resource='provision-nebula-cert',
+    argv=['sh', '-c', '''
+        tilt trigger provision-nebula-cert && \\
+        tilt trigger provision-aws-secret && \\
+        tilt trigger provision-security-group && \\
+        tilt trigger provision-ec2 && \\
+        tilt trigger provision-verify-nebula && \\
+        tilt trigger provision-cilium && \\
+        tilt trigger provision-port-forwarder && \\
+        tilt trigger provision-status
+    '''],
+    text='Provision All',
+    icon_name='rocket_launch'
+)
+
+cmd_button(
+    name='btn-provision-teardown',
+    resource='provision-teardown',
+    argv=['sh', '-c', 'tilt trigger provision-teardown'],
+    text='Teardown',
+    icon_name='delete_forever'
+)
+
+# ============================================
+# CLUSTERMESH - Detailed management
+# ============================================
+
+local_resource(
+    'kvstoremesh-sync',
+    cmd='''
+    echo "=== Talos KVStoreMesh ==="
+    kubectl --context=''' + TALOS_CONTEXT + ''' exec -n kube-system deploy/clustermesh-apiserver -c kvstoremesh -- kvstoremesh-dbg status 2>/dev/null || echo "(failed)"
+    echo ""
+    echo "=== AWS k3s KVStoreMesh ==="
+    kubectl --context=''' + AWS_CONTEXT + ''' exec -n kube-system deploy/clustermesh-apiserver -c kvstoremesh -- kvstoremesh-dbg status 2>/dev/null || echo "(unreachable)"
+    ''',
+    labels=[LABEL_MESH],
+    auto_init=False,
+)
+
+local_resource(
+    'port-forwarders',
+    cmd='''
+    echo "=== Talos Port Forwarders ==="
+    kubectl --context=''' + TALOS_CONTEXT + ''' get pods -n kube-system -l app=clustermesh-port-forwarder -o wide 2>/dev/null || echo "(not deployed)"
+    echo ""
+    echo "=== AWS Port Forwarders ==="
+    kubectl --context=''' + AWS_CONTEXT + ''' get pods -n kube-system -l app=clustermesh-port-forwarder -o wide 2>/dev/null || echo "(not deployed)"
+    ''',
+    labels=[LABEL_MESH],
+    auto_init=False,
+)
+
+local_resource(
+    'global-services',
+    cmd='''
+    echo "=== Global Services (Talos) ==="
+    kubectl --context=''' + TALOS_CONTEXT + ''' get svc -A -o json | jq -r '.items[] | select(.metadata.annotations["io.cilium/global-service"] == "true") | "  \\(.metadata.namespace)/\\(.metadata.name)"' 2>/dev/null || echo "  (none)"
+    echo ""
+    echo "=== Global Services (AWS) ==="
+    kubectl --context=''' + AWS_CONTEXT + ''' get svc -A -o json | jq -r '.items[] | select(.metadata.annotations["io.cilium/global-service"] == "true") | "  \\(.metadata.namespace)/\\(.metadata.name)"' 2>/dev/null || echo "  (none)"
+    echo ""
+    echo "To make a service global, add annotation:"
+    echo "  io.cilium/global-service: \\"true\\""
+    ''',
+    labels=[LABEL_MESH],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-restart-kvstoremesh-talos',
+    resource='kvstoremesh-sync',
+    argv=['sh', '-c', '''
+        echo "Restarting KVStoreMesh on Talos..."
+        kubectl --context=''' + TALOS_CONTEXT + ''' rollout restart deployment/clustermesh-apiserver -n kube-system
+        kubectl --context=''' + TALOS_CONTEXT + ''' rollout status deployment/clustermesh-apiserver -n kube-system --timeout=120s
+        echo "Done"
+    '''],
+    text='Restart Talos',
+    icon_name='restart_alt'
+)
+
+cmd_button(
+    name='btn-restart-kvstoremesh-aws',
+    resource='kvstoremesh-sync',
+    argv=['sh', '-c', '''
+        echo "Restarting KVStoreMesh on AWS..."
+        kubectl --context=''' + AWS_CONTEXT + ''' rollout restart deployment/clustermesh-apiserver -n kube-system
+        kubectl --context=''' + AWS_CONTEXT + ''' rollout status deployment/clustermesh-apiserver -n kube-system --timeout=120s
+        echo "Done"
+    '''],
+    text='Restart AWS',
+    icon_name='restart_alt'
+)
+
+# ============================================
+# NEBULA - Mesh network status
+# ============================================
+
+local_resource(
+    'nebula-status',
+    cmd='''
+    echo "=== Nebula Lighthouse (Talos) ==="
+    kubectl --context=''' + TALOS_CONTEXT + ''' get pods -n nebula -o wide 2>/dev/null || echo "(not deployed)"
+    echo ""
+    echo "=== Recent Lighthouse Logs ==="
+    kubectl --context=''' + TALOS_CONTEXT + ''' logs -n nebula deploy/nebula-lighthouse --tail=10 2>/dev/null || echo "(no logs)"
+    ''',
+    labels=[LABEL_NEBULA],
+    auto_init=False,
+)
+
+local_resource(
+    'nebula-connectivity',
+    cmd='''
+    echo "Testing Nebula mesh connectivity..."
+    echo ""
+    echo "=== Ping AWS from Talos (''' + TALOS_NEBULA_IP + ''' -> ''' + AWS_NEBULA_IP + ''') ==="
+    kubectl --context=''' + TALOS_CONTEXT + ''' exec -n nebula deploy/nebula-lighthouse -- ping -c 3 -W 2 ''' + AWS_NEBULA_IP + ''' 2>/dev/null || echo "(ping failed)"
+    echo ""
+    echo "=== ClusterMesh Port Test ==="
+    kubectl --context=''' + TALOS_CONTEXT + ''' exec -n kube-system deploy/clustermesh-apiserver -c kvstoremesh -- \\
+        timeout 5 sh -c "echo | nc -v ''' + AWS_NEBULA_IP + ''' ''' + CLUSTERMESH_PORT + '''" 2>&1 || echo "(port unreachable)"
+    ''',
+    labels=[LABEL_NEBULA],
+    auto_init=False,
+)
+
+# ============================================
+# AMI - Packer image building
+# ============================================
+
+local_resource(
+    'ami-build-lighthouse',
+    cmd='''
+    cd ./ami && \\
+    packer init . && \\
+    packer build -only='lighthouse.*' .
+    ''',
+    labels=[LABEL_AMI],
+    auto_init=False,
+)
+
+local_resource(
+    'ami-build-gpu-worker',
+    cmd='''
+    cd ./ami && \\
+    packer init . && \\
+    packer build -only='gpu-worker.*' .
+    ''',
+    labels=[LABEL_AMI],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-ami-validate',
+    resource='ami-build-lighthouse',
+    argv=['sh', '-c', 'cd ./ami && packer validate .'],
+    text='Validate',
+    icon_name='check_circle'
+)
+
+# ============================================
+# OPS - Operations and troubleshooting
+# ============================================
+
+local_resource(
+    'hubble-talos',
+    serve_cmd='cilium --context=' + TALOS_CONTEXT + ' hubble ui',
+    labels=[LABEL_OPS],
+    auto_init=False,
+    links=[link('http://localhost:12000', 'Hubble UI')],
+)
+
+local_resource(
+    'hubble-aws',
+    serve_cmd='cilium --context=' + AWS_CONTEXT + ' hubble ui --port 12001',
+    labels=[LABEL_OPS],
+    auto_init=False,
+    links=[link('http://localhost:12001', 'Hubble UI (AWS)')],
+)
+
+local_resource(
+    'ssh-to-aws',
+    cmd='''
+    PUBLIC_IP=$(cat .provision-public-ip 2>/dev/null)
+    INSTANCE_ID=$(cat .provision-instance-id 2>/dev/null)
+    REGION="{region}"
+
+    if [ -z "$PUBLIC_IP" ] || [ -z "$INSTANCE_ID" ]; then
+        echo "No provisioned instance found"
+        exit 1
+    fi
+
+    echo "Sending SSH key..."
+    aws ec2-instance-connect send-ssh-public-key \\
+        --instance-id "$INSTANCE_ID" \\
+        --instance-os-user ec2-user \\
+        --ssh-public-key file://$HOME/.ssh/id_ed25519.pub \\
+        --region "$REGION"
+
+    echo ""
+    echo "Connect with:"
+    echo "  ssh -i ~/.ssh/id_ed25519 ec2-user@$PUBLIC_IP"
+    '''.format(region=REGION),
+    labels=[LABEL_OPS],
+    auto_init=False,
+)
+
+local_resource(
+    'troubleshoot-tls',
+    cmd='''
+    echo "=== ClusterMesh TLS Troubleshooting ==="
+    echo ""
+    echo "Talos server cert SANs:"
+    kubectl --context=''' + TALOS_CONTEXT + ''' get secret -n kube-system clustermesh-apiserver-server-cert -o jsonpath='{.data.tls\\.crt}' | base64 -d | openssl x509 -noout -text 2>/dev/null | grep -A1 "Subject Alternative Name" || echo "(failed)"
+    echo ""
+    echo "AWS server cert SANs:"
+    kubectl --context=''' + AWS_CONTEXT + ''' get secret -n kube-system clustermesh-apiserver-server-cert -o jsonpath='{.data.tls\\.crt}' | base64 -d | openssl x509 -noout -text 2>/dev/null | grep -A1 "Subject Alternative Name" || echo "(failed)"
+    echo ""
+    echo "KVStoreMesh endpoint config (Talos):"
+    kubectl --context=''' + TALOS_CONTEXT + ''' get secret -n kube-system cilium-kvstoremesh -o jsonpath='{.data.aws-k3s}' 2>/dev/null | base64 -d | head -5 || echo "(no aws-k3s config)"
+    ''',
+    labels=[LABEL_OPS],
+    auto_init=False,
+)
+
+# Nav buttons
+cmd_button(
+    name='btn-nav-refresh',
+    argv=['sh', '-c', 'tilt trigger cluster-overview && tilt trigger clustermesh-status'],
+    location=location.NAV,
+    text='Refresh',
+    icon_name='refresh'
+)
+
+cmd_button(
+    name='btn-nav-pods',
+    argv=['sh', '-c', '''
+        echo "=== AWS k3s Pods ==="
+        kubectl --context=''' + AWS_CONTEXT + ''' get pods -A
+    '''],
+    location=location.NAV,
+    text='AWS Pods',
+    icon_name='view_list'
+)
+
+# ============================================
+# SETTINGS
+# ============================================
+
+update_settings(
+    max_parallel_updates=3,
+    suppress_unused_image_warnings=None
+)
+
+print("""
+Ready! UI Groups:
+  1-status      - Cluster overview, ClusterMesh status
+  2-provision   - EC2 provisioning lifecycle
+  3-clustermesh - KVStoreMesh sync, port forwarders, global services
+  4-nebula      - Nebula mesh status, connectivity tests
+  5-ami         - Packer AMI building
+  6-ops         - Hubble UI, SSH access, TLS troubleshooting
+""")
