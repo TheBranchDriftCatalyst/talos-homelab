@@ -4,14 +4,17 @@ This document describes the complete setup for running a hybrid cloud architectu
 
 ## Architecture Overview
 
+### High-Level Topology
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              HOMELAB                                         │
+│                         HOMELAB (Talos Cluster)                              │
+│                        cluster.id=1 (talos-home)                             │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐          │
 │  │  Talos Cluster   │  │ Nebula Lighthouse│  │   Carrierarr     │          │
-│  │  (Kubernetes)    │  │   10.100.0.1     │  │  Control Plane   │          │
-│  └──────────────────┘  └────────┬─────────┘  └────────┬─────────┘          │
-│                                 │ UDP 4242            │ gRPC 50051          │
+│  │  5 nodes         │  │   10.100.0.1     │  │  Control Plane   │          │
+│  │  135 endpoints   │  └────────┬─────────┘  └────────┬─────────┘          │
+│  └──────────────────┘           │ UDP 4242            │ gRPC 50051          │
 │                                 │                     │                      │
 │  Router: port forward UDP 4242 ─┘                     │                      │
 │  DNS: nebula.knowledgedump.space → home public IP     │                      │
@@ -20,16 +23,74 @@ This document describes the complete setup for running a hybrid cloud architectu
                            ═══════╪═══════  Internet
                                   │
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                               AWS                                            │
+│                         AWS (k3s Cluster)                                    │
+│                        cluster.id=2 (aws-k3s)                                │
 │  ┌──────────────────────────────────────────────────────────────────────┐  │
 │  │                     EC2 Instance (t3.small)                           │  │
 │  │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐          │  │
 │  │  │     Nebula     │  │      k3s       │  │  Worker Agent  │          │  │
-│  │  │   10.100.2.1   │  │   API :6443    │  │   :8080        │          │  │
+│  │  │   10.100.2.1   │  │  1 node        │  │   :8080        │          │  │
+│  │  │                │  │  6 endpoints   │  │                │          │  │
 │  │  └────────────────┘  └────────────────┘  └────────────────┘          │  │
 │  └──────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Cilium ClusterMesh Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      TALOS CLUSTER (talos-home)                              │
+│                                                                              │
+│  ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐  │
+│  │  Cilium Agents  │────▶│  KVStoreMesh Cache   │◀────│ ClusterMesh API │  │
+│  │  (per node)     │     │  (local etcd cache)  │     │  :32379/32380   │  │
+│  └─────────────────┘     └──────────────────────┘     └────────┬────────┘  │
+│                                                                 │           │
+│  ┌──────────────────────────────────────────────────────────────┘           │
+│  │                                                                           │
+│  │  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │  │              Port Forwarder DaemonSet (socat)                   │    │
+│  │  │  hostNetwork: true                                              │    │
+│  │  │  socat TCP-LISTEN:32380 → TCP:10.100.2.1:32380                 │    │
+│  │  │  Bridges Nebula TUN → ClusterMesh (bypasses eBPF limitation)   │    │
+│  │  └─────────────────────────────────────────────────────────────────┘    │
+│  │                                                                           │
+└──┼───────────────────────────────────────────────────────────────────────────┘
+   │
+   │  TLS over Nebula Mesh (10.100.0.0/16)
+   │  Combined CA bundle for mutual authentication
+   │
+   ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       AWS K3S CLUSTER (aws-k3s)                              │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │              Port Forwarder DaemonSet (socat)                       │    │
+│  │  socat TCP-LISTEN:32380 → TCP:10.100.0.1:32380                     │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│                                                                 │           │
+│  ┌──────────────────────────────────────────────────────────────┘           │
+│  │                                                                           │
+│  ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐  │
+│  │  Cilium Agents  │────▶│  KVStoreMesh Cache   │◀────│ ClusterMesh API │  │
+│  │  (per node)     │     │  (local etcd cache)  │     │  :32379/32380   │  │
+│  └─────────────────┘     └──────────────────────┘     └─────────────────┘  │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Key:
+  ─────▶  Local communication
+  ═══════  Nebula encrypted tunnel (WireGuard-like)
+  TLS      Mutual TLS with combined CA bundle
+```
+
+### Data Flow
+
+1. **Identity Sync**: Each cluster's KVStoreMesh syncs identities/endpoints to remote cluster
+2. **Port Forwarders**: socat DaemonSets bridge Nebula TUN to ClusterMesh etcd ports
+3. **Combined CA**: Both Cilium CAs bundled for mutual TLS authentication
+4. **KVStoreMesh Mode**: Agents read from local cache, reducing cross-cluster latency
 
 ## Components
 
@@ -308,6 +369,74 @@ Certificate subnet is too narrow. Regenerate with `/16`:
 nebula-cert sign -name "xxx" -ip "10.100.x.x/16" ...
 ```
 
+### ClusterMesh TLS Errors
+
+**"certificate is valid for X, not Y"**
+Server certificates missing Nebula IPs in SANs. Regenerate with custom OpenSSL config:
+```bash
+# Create config with Nebula IP in SANs
+cat > /tmp/server-cert.cnf <<EOF
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = clustermesh-apiserver.cilium.io
+
+[v3_req]
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = clustermesh-apiserver.cilium.io
+DNS.2 = *.mesh.cilium.io
+IP.1 = 127.0.0.1
+IP.2 = 10.100.0.1
+IP.3 = 10.100.2.1
+EOF
+
+# Generate RSA key (must match CA key type)
+openssl genrsa -out server.key 2048
+
+# Create CSR and sign with Cilium CA
+openssl req -new -key server.key -out server.csr -config /tmp/server-cert.cnf
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -out server.crt -days 1095 -extensions v3_req -extfile /tmp/server-cert.cnf
+```
+
+**"crypto/rsa: verification error"**
+Key type mismatch. Cilium uses RSA keys by default. Regenerate server certs with RSA:
+```bash
+openssl genrsa -out server.key 2048  # NOT ecparam
+```
+
+**KVStoreMesh using wrong endpoint**
+Check `cilium-kvstoremesh` secret - ensure endpoints use Nebula IPs:
+```bash
+kubectl get secret cilium-kvstoremesh -n kube-system -o yaml
+# Should show: https://10.100.X.1:32380
+```
+
+### ClusterMesh Status Commands
+
+```bash
+# Check overall status
+cilium --context=admin@catalyst-cluster clustermesh status
+cilium --context=aws-lighthouse clustermesh status
+
+# Check KVStoreMesh sync
+kubectl exec -n kube-system deploy/clustermesh-apiserver -c kvstoremesh -- kvstoremesh-dbg status
+
+# Verify pod connectivity to remote
+kubectl exec -n kube-system deploy/clustermesh-apiserver -c kvstoremesh -- \
+  curl -k --cert /var/lib/cilium/clustermesh/aws-k3s.etcd-client.crt \
+       --key /var/lib/cilium/clustermesh/aws-k3s.etcd-client.key \
+       https://10.100.2.1:32380/health
+```
+
 ---
 
 ## File Locations
@@ -332,21 +461,30 @@ nebula-cert sign -name "xxx" -ip "10.100.x.x/16" ...
 | k3s Server | ✅ Running | Node Ready with Cilium CNI |
 | Cilium CNI (Talos) | ✅ Installed | cluster.name=talos-home, cluster.id=1 |
 | Cilium CNI (k3s) | ✅ Installed | cluster.name=aws-k3s, cluster.id=2 |
-| ClusterMesh API (Talos) | ✅ Running | NodePort 32379 |
-| ClusterMesh API (k3s) | ✅ Running | NodePort 32379 |
-| **ClusterMesh Peering** | ⏳ Pending | Secret exchange required |
+| ClusterMesh API (Talos) | ✅ Running | NodePort 32379/32380, Nebula 10.100.0.1 |
+| ClusterMesh API (k3s) | ✅ Running | NodePort 32379/32380, Nebula 10.100.2.1 |
+| **ClusterMesh Peering** | ✅ Connected | KVStoreMesh bidirectional sync active |
+| Port Forwarders | ✅ Running | socat bridges Nebula → ClusterMesh |
 | Liqo | ❌ Removed | Replaced by ClusterMesh |
 | Carrierarr Control Plane | ✅ Running | At fleet.talos00:30052 |
 | Worker Agent | ⏳ Pending | Needs Carrierarr integration |
 
+### ClusterMesh Sync Status
+
+| Direction | Nodes | Endpoints | Identities |
+|-----------|-------|-----------|------------|
+| Talos → k3s | 1 | 6 | 6 |
+| k3s → Talos | 5 | 135 | 4716 |
+
 ### Next Steps
 
-1. **Exchange ClusterMesh secrets** between clusters
-2. Verify cross-cluster service discovery
+1. ~~Exchange ClusterMesh secrets between clusters~~ ✅ Complete
+2. ~~Verify cross-cluster service discovery~~ ✅ Working
 3. Complete carrierarr worker agent integration
+4. Add global services for cross-cluster access
 
 ### Beads Tracking
 
-- Epic: TALOS-rien (Migrate to Cilium ClusterMesh)
-- Task: TALOS-rrnk (Configure ClusterMesh - in progress)
+- Epic: TALOS-rien (Migrate to Cilium ClusterMesh) - ✅ Closed
+- Task: TALOS-rrnk (Configure ClusterMesh) - ✅ Closed
 - Epic: TALOS-w5e0 (Carrierarr base image system)
