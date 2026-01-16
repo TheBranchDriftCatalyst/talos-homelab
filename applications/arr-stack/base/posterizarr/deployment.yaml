@@ -26,11 +26,7 @@ spec:
         # Velero backup: config only
         backup.velero.io/backup-volumes: "config"
     spec:
-      # Tolerate control-plane taint - local-path PV (kometa-config) is bound to talos00
-      tolerations:
-        - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
+      # NFS storage - can schedule on any node
       securityContext:
         fsGroup: 1000
         supplementalGroups: [100, 1000]
@@ -128,11 +124,11 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: posterizarr-config
+            claimName: posterizarr-config-nfs
         # Kometa's config PVC - we mount the 'assets' subdir at /assets
         - name: kometa-config
           persistentVolumeClaim:
-            claimName: kometa-config
+            claimName: kometa-config-nfs
         # Merged overlays: original + custom (synthwave, etc.)
         - name: overlayfiles
           emptyDir: {}
