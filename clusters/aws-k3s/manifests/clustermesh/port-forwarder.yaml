@@ -1,0 +1,52 @@
+# ClusterMesh Port Forwarder for AWS -> Talos direction
+# This DaemonSet runs on AWS k3s and forwards traffic from local pods
+# through the Nebula mesh network to the Talos ClusterMesh apiserver.
+#
+# Traffic flow:
+#   Cilium agent (pod network) -> localhost:32381 (this forwarder)
+#   -> 10.100.0.1:32381 (Talos forwarder via Nebula)
+#   -> localhost:32379 (Talos ClusterMesh apiserver)
+#
+# Why needed:
+#   Cilium's eBPF datapath doesn't work properly with TUN interfaces (like Nebula).
+#   Using hostNetwork bypasses eBPF and allows direct access to the Nebula network.
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: clustermesh-talos-forwarder
+  namespace: kube-system
+  labels:
+    app: clustermesh-talos-forwarder
+    app.kubernetes.io/part-of: cilium-clustermesh
+spec:
+  selector:
+    matchLabels:
+      app: clustermesh-talos-forwarder
+  template:
+    metadata:
+      labels:
+        app: clustermesh-talos-forwarder
+    spec:
+      hostNetwork: true
+      containers:
+      - name: socat
+        image: alpine/socat:latest
+        args:
+        # Listen on 32381 (dedicated port for AWS->Talos)
+        # Forward to Talos forwarder via Nebula on port 32381
+        - TCP-LISTEN:32381,fork,reuseaddr
+        - TCP:10.100.0.1:32381
+        ports:
+        - containerPort: 32381
+          hostPort: 32381
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+        securityContext:
+          privileged: true

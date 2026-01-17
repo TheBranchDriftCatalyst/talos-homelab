@@ -44,46 +44,67 @@ This document describes the complete setup for running a hybrid cloud architectu
 │                                                                              │
 │  ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐  │
 │  │  Cilium Agents  │────▶│  KVStoreMesh Cache   │◀────│ ClusterMesh API │  │
-│  │  (per node)     │     │  (local etcd cache)  │     │  :32379/32380   │  │
+│  │  (5 nodes)      │     │  (local etcd cache)  │     │    :32379       │  │
 │  └─────────────────┘     └──────────────────────┘     └────────┬────────┘  │
-│                                                                 │           │
-│  ┌──────────────────────────────────────────────────────────────┘           │
-│  │                                                                           │
-│  │  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │  │              Port Forwarder DaemonSet (socat)                   │    │
-│  │  │  hostNetwork: true                                              │    │
-│  │  │  socat TCP-LISTEN:32380 → TCP:10.100.2.1:32380                 │    │
-│  │  │  Bridges Nebula TUN → ClusterMesh (bypasses eBPF limitation)   │    │
-│  │  └─────────────────────────────────────────────────────────────────┘    │
-│  │                                                                           │
-└──┼───────────────────────────────────────────────────────────────────────────┘
-   │
-   │  TLS over Nebula Mesh (10.100.0.0/16)
-   │  Combined CA bundle for mutual authentication
-   │
-   ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       AWS K3S CLUSTER (aws-k3s)                              │
-│                                                                              │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │              Port Forwarder DaemonSet (socat)                       │    │
-│  │  socat TCP-LISTEN:32380 → TCP:10.100.0.1:32380                     │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                 │           │
-│  ┌──────────────────────────────────────────────────────────────┘           │
-│  │                                                                           │
-│  ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐  │
-│  │  Cilium Agents  │────▶│  KVStoreMesh Cache   │◀────│ ClusterMesh API │  │
-│  │  (per node)     │     │  (local etcd cache)  │     │  :32379/32380   │  │
+│                                    │                           │           │
+│  Agents connect to:                │                           │           │
+│  192.168.1.54:32380 ───────────────┼───────────────────────────┤           │
+│                                    │                           │           │
+│  ┌─────────────────────────────────┴───────────────────────────┴─────────┐ │
+│  │          Port Forwarders on talos00 (hostNetwork: true)               │ │
+│  │  ┌────────────────────────────┐  ┌────────────────────────────┐       │ │
+│  │  │ Talos→AWS (outbound)       │  │ AWS→Talos (inbound)        │       │ │
+│  │  │ :32380 → 10.100.2.1:32380  │  │ :32381 → localhost:32379   │       │ │
+│  │  └────────────────────────────┘  └────────────────────────────┘       │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                            │                    ▲                           │
+└────────────────────────────┼────────────────────┼───────────────────────────┘
+                             │                    │
+              Nebula Mesh    │                    │
+              10.100.0.1 ◄───┼────────────────────┼───► 10.100.2.1
+                             │                    │
+                             ▼                    │
+┌────────────────────────────┼────────────────────┼───────────────────────────┐
+│                            │                    │      AWS K3S (aws-k3s)    │
+│  ┌─────────────────────────┴────────────────────┴───────────────────────┐  │
+│  │          Port Forwarder on k3s node (hostNetwork: true)              │  │
+│  │  ┌────────────────────────────┐                                      │  │
+│  │  │ AWS→Talos (outbound)       │  Agents/KVStoreMesh connect to:     │  │
+│  │  │ :32381 → 10.100.0.1:32381  │  10.100.2.1:32381                   │  │
+│  │  └────────────────────────────┘                                      │  │
+│  └──────────────────────────────────────────────────────────────────────┘  │
+│                                    │                           │           │
+│  ┌─────────────────┐     ┌─────────┴────────────┐     ┌────────┴────────┐  │
+│  │  Cilium Agent   │────▶│  KVStoreMesh Cache   │◀────│ ClusterMesh API │  │
+│  │  (1 node)       │     │  (local etcd cache)  │     │    :32379       │  │
 │  └─────────────────┘     └──────────────────────┘     └─────────────────┘  │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Key:
   ─────▶  Local communication
-  ═══════  Nebula encrypted tunnel (WireGuard-like)
-  TLS      Mutual TLS with combined CA bundle
+  Port forwarders bypass Cilium eBPF (which doesn't work on TUN interfaces)
+  TLS: Mutual TLS with combined CA bundle (both Cilium CAs)
 ```
+
+### Port Configuration Summary
+
+| Component | Port | Purpose |
+|-----------|------|---------|
+| ClusterMesh apiserver | 32379 | NodePort for etcd access |
+| Talos→AWS forwarder | 32380 | Outbound to AWS via Nebula |
+| AWS→Talos forwarder | 32381 | Accepts inbound from Talos via Nebula |
+
+### Secrets Configuration
+
+Both clusters need these secrets configured:
+
+| Secret | Purpose | Key Contents |
+|--------|---------|--------------|
+| `cilium-clustermesh` | Agent config | endpoints, combined CA, client certs |
+| `cilium-kvstoremesh` | KVStoreMesh config | endpoints, combined CA, client certs |
+| `clustermesh-apiserver-remote-cert` | Server TLS | Combined CA for client verification |
+| `clustermesh-apiserver-server-cert` | Server identity | Server cert with Nebula IPs in SANs |
 
 ### Data Flow
 
