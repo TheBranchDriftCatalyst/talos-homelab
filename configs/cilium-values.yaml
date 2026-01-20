@@ -138,6 +138,11 @@ authentication:
         enabled: true
         namespace: cilium-spire
         server:
+          # Run SPIRE server as root to fix socket permission issues
+          # SPIRE 1.10+ defaults to UID 1000 which can't write to hostPath
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
           dataStorage:
             enabled: true
             storageClass: local-path
@@ -175,6 +180,20 @@ bpf:
 #   nodeEncryption: false
 
 # =============================================================================
+# Native Routing for Nebula Mesh Network
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/network/concepts/routing/#native-routing
+#
+# Traffic to the Nebula CIDR (10.100.0.0/16) bypasses Cilium's eBPF datapath
+# and is routed natively by the kernel to the nebula0 TUN interface.
+# This enables cross-cluster pod-to-pod connectivity via Nebula overlay.
+#
+# Without this, Cilium's eBPF intercepts Nebula-bound traffic but can't
+# route it through the TUN interface, causing connectivity failures.
+
+ipv4NativeRoutingCIDR: "10.100.0.0/16"
+
+# =============================================================================
 # ClusterMesh for Multi-Cluster Connectivity
 # =============================================================================
 # Reference: https://docs.cilium.io/en/stable/network/clustermesh/clustermesh/
@@ -193,6 +212,12 @@ clustermesh:
       auto:
         enabled: true
         method: helm
+      # Include additional IPs for cross-cluster connectivity via port forwarders
+      # These IPs will be included in the server certificate SANs
+      server:
+        extraIpAddresses:
+          - 192.168.1.54   # Talos control plane LAN IP
+          - 10.100.0.1     # Talos Nebula mesh IP
     # Pin ClusterMesh API server to control plane node (has Nebula)
     # This ensures the NodePort 32379 is accessible via Nebula IP (10.100.0.1)
     affinity:
