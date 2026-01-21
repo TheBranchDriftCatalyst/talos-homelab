@@ -1,0 +1,69 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pulsarr
+  labels:
+    app: pulsarr
+    app.kubernetes.io/name: pulsarr
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pulsarr
+  template:
+    metadata:
+      labels:
+        app: pulsarr
+        app.kubernetes.io/name: pulsarr
+      annotations:
+        backup.velero.io/backup-volumes: "data"
+    spec:
+      containers:
+        - name: pulsarr
+          image: lakker/pulsarr:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: 'America/Los_Angeles'
+            # Base URL for webhooks from Sonarr/Radarr
+            - name: baseUrl
+              value: 'http://pulsarr.media.svc.cluster.local:3003'
+            - name: port
+              value: '3003'
+          ports:
+            - name: http
+              containerPort: 3003
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pulsarr-data
