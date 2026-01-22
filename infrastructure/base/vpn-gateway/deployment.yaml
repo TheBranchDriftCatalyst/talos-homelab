@@ -22,9 +22,8 @@ spec:
         prometheus.io/port: "9091"
         prometheus.io/path: "/metrics"
     spec:
-      # Clean up stale routing rules before gluetun starts
-      # Fixes "adding IPv4/IPv6 rule: file exists" error on pod restarts
-      # See: https://github.com/qdm12/gluetun-wiki/blob/main/setup/advanced/kubernetes.md
+      # Clean up stale IPv6 routing rules before gluetun starts
+      # Fixes "adding IPv6 rule: file exists" error on pod restarts
       initContainers:
         - name: cleanup-routes
           image: busybox:1.36
@@ -36,12 +35,16 @@ spec:
             - /bin/sh
             - -c
             - |
-              echo "Flushing stale wireguard routing table 51820..."
-              ip route flush table 51820 2>/dev/null || true
-              ip -6 route flush table 51820 2>/dev/null || true
-              # Delete any rules pointing to this table
-              while ip rule del table 51820 2>/dev/null; do :; done
-              while ip -6 rule del table 51820 2>/dev/null; do :; done
+              echo "Cleaning up stale IPv6 routing rules for table 51820..."
+              # Dynamically find and delete all IPv6 rules referencing table 51820
+              # This handles any rule format (fwmark, priority, etc)
+              ip -6 rule show 2>/dev/null | grep -E 'lookup 51820|table 51820' | while read line; do
+                prio=$(echo "$line" | cut -d: -f1)
+                echo "Deleting IPv6 rule with priority $prio"
+                ip -6 rule del prio "$prio" 2>/dev/null || true
+              done
+              echo "IPv6 rules after cleanup:"
+              ip -6 rule list 2>/dev/null || true
               echo "Cleanup complete"
       containers:
         - name: gluetun
