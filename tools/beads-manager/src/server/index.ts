@@ -6,25 +6,17 @@ import { watch } from 'chokidar';
 import { exec } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
-const PORT = process.env.PORT || 3333;
+const PORT = process.env.PORT || 3001;
 
 // Get workspace root (where .beads/ is located)
-const WORKSPACE_ROOT = process.env.BEADS_WORKSPACE || process.cwd();
+const WORKSPACE_ROOT = process.env.BEADS_WORKSPACE || process.cwd().replace('/tools/beads-manager', '');
 const BEADS_DIR = path.join(WORKSPACE_ROOT, '.beads');
 const JSONL_PATH = path.join(BEADS_DIR, 'issues.jsonl');
 
-// Static file serving for production
-const STATIC_DIR = path.join(__dirname, '..', 'client');
-const isDev = !fs.existsSync(path.join(STATIC_DIR, 'index.html'));
-
 console.log(`[Server] Workspace root: ${WORKSPACE_ROOT}`);
 console.log(`[Server] Beads directory: ${BEADS_DIR}`);
-console.log(`[Server] Mode: ${isDev ? 'development' : 'production'}`);
 
 app.use(cors());
 app.use(express.json());
@@ -225,17 +217,6 @@ app.get('/api/stats', (_req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// Serve static files in production
-if (!isDev) {
-  console.log(`[Server] Serving static files from: ${STATIC_DIR}`);
-  app.use(express.static(STATIC_DIR));
-
-  // SPA fallback - serve index.html for non-API routes
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(STATIC_DIR, 'index.html'));
-  });
-}
 
 // Create HTTP server
 const server = createServer(app);
