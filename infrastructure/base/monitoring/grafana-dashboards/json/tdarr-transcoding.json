@@ -349,12 +349,11 @@
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "title": "Rate (24h avg)",
-      "description": "Average transcodes per hour over last 24h",
+      "title": "Transcodes/Hour",
       "type": "stat",
       "targets": [
         {
-          "expr": "clamp_min((max(tdarr_queue_transcode_success) - max(tdarr_queue_transcode_success offset 24h)) / 24, 0)",
+          "expr": "clamp_min(delta(tdarr_queue_transcode_success[1h]), 0)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -460,12 +459,7 @@
               "app": true, "app 1": true, "app 2": true,
               "cluster": true, "cluster 1": true, "cluster 2": true,
               "instance": true, "instance 1": true, "instance 2": true,
-              "job": true, "job 1": true, "job 2": true,
-              "container": true, "container 1": true, "container 2": true,
-              "endpoint": true, "endpoint 1": true, "endpoint 2": true,
-              "namespace": true, "namespace 1": true, "namespace 2": true,
-              "pod": true, "pod 1": true, "pod 2": true,
-              "service": true, "service 1": true, "service 2": true
+              "job": true, "job 1": true, "job 2": true
             },
             "indexByName": {},
             "renameByName": {
@@ -604,11 +598,10 @@
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "textMode": "auto"
       },
-      "title": "GPU Nodes",
-      "description": "Worker nodes with GPU capability",
+      "title": "GPU Workers",
       "type": "stat",
       "targets": [
-        { "expr": "count(tdarr_node_paused{node=~\".*gpu.*|.*arc.*|.*vaapi.*|.*nvidia.*|.*qsv.*\"} == 0)", "legendFormat": "", "refId": "A" }
+        { "expr": "sum(tdarr_node_gpu_workers)", "legendFormat": "", "refId": "A" }
       ]
     },
     {
@@ -722,16 +715,15 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
       "id": 401,
       "options": {
-        "legend": { "calcs": ["lastNotNull", "min", "max", "diff"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": ["sum", "mean", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
-      "title": "Processing Activity",
-      "description": "Changes in transcode and health check counts over time",
+      "title": "Processing Rate",
       "type": "timeseries",
       "targets": [
-        { "expr": "max(tdarr_queue_transcode_success)", "legendFormat": "Successful Transcodes", "refId": "A" },
-        { "expr": "max(tdarr_queue_health_check_success)", "legendFormat": "Health Checks Passed", "refId": "B" },
-        { "expr": "max(tdarr_queue_transcode_error)", "legendFormat": "Transcode Errors", "refId": "C" }
+        { "expr": "clamp_min(increase(tdarr_queue_transcode_success[5m]), 0)", "legendFormat": "Transcodes", "refId": "A" },
+        { "expr": "clamp_min(increase(tdarr_queue_health_check_success[5m]), 0)", "legendFormat": "Health Checks", "refId": "B" },
+        { "expr": "clamp_min(increase(tdarr_queue_transcode_error[5m]), 0)", "legendFormat": "Errors", "refId": "C" }
       ]
     },
     {
@@ -763,19 +755,28 @@
           "unit": "decgbytes"
         },
         "overrides": [
-          { "matcher": { "id": "byName", "options": "Total Saved (GB)" }, "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }] }
+          { "matcher": { "id": "byName", "options": "Total Saved" }, "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }] },
+          {
+            "matcher": { "id": "byName", "options": "Savings Rate" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } },
+              { "id": "custom.axisPlacement", "value": "right" },
+              { "id": "unit", "value": "GBs" }
+            ]
+          }
         ]
       },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
       "id": 402,
       "options": {
-        "legend": { "calcs": ["lastNotNull", "min", "diff"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "legend": { "calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "title": "Space Savings",
       "type": "timeseries",
       "targets": [
-        { "expr": "max(tdarr_size_diff_gb)", "legendFormat": "Total Saved (GB)", "refId": "A" }
+        { "expr": "max(tdarr_size_diff_gb)", "legendFormat": "Total Saved", "refId": "A" },
+        { "expr": "clamp_min(deriv(tdarr_size_diff_gb[10m]), 0) * 3600", "legendFormat": "Savings Rate", "refId": "B" }
       ]
     },
     {
