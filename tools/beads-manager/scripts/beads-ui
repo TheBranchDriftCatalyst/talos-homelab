@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+#
+# beads-ui - Launch the Beads Manager UI
+#
+# Usage:
+#   beads-ui                    # Run from current directory
+#   beads-ui /path/to/project   # Run for specific project
+#   beads-ui --help             # Show help
+#
+# Installation:
+#   curl -fsSL https://raw.githubusercontent.com/TheBranchDriftCatalyst/beads-manager/main/scripts/beads-ui -o ~/.local/bin/beads-ui
+#   chmod +x ~/.local/bin/beads-ui
+#
+
+set -euo pipefail
+
+VERSION="0.1.0"
+IMAGE="ghcr.io/thebranchdriftcatalyst/beads-manager:latest"
+PORT="${BEADS_PORT:-3333}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+DIM='\033[0;90m'
+NC='\033[0m' # No Color
+
+show_help() {
+    cat << EOF
+${CYAN}beads-ui${NC} - Launch the Beads Manager UI
+
+${DIM}Usage:${NC}
+    beads-ui [options] [workspace_path]
+
+${DIM}Options:${NC}
+    -p, --port PORT    Port to run on (default: 3333)
+    -d, --detach       Run in background
+    --pull             Force pull latest image
+    -h, --help         Show this help
+    -v, --version      Show version
+
+${DIM}Examples:${NC}
+    beads-ui                     # Run in current directory
+    beads-ui /path/to/project    # Run for specific project
+    beads-ui -p 8080             # Run on port 8080
+    beads-ui -d                  # Run in background
+
+${DIM}Environment:${NC}
+    BEADS_PORT    Override default port (3333)
+
+EOF
+}
+
+show_version() {
+    echo "beads-ui $VERSION"
+}
+
+# Find .beads directory
+find_beads_dir() {
+    local dir="$1"
+    while [[ "$dir" != "/" ]]; do
+        if [[ -d "$dir/.beads" ]]; then
+            echo "$dir"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
+# Parse arguments
+WORKSPACE=""
+DETACH=""
+PULL=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        -v|--version)
+            show_version
+            exit 0
+            ;;
+        -p|--port)
+            PORT="$2"
+            shift 2
+            ;;
+        -d|--detach)
+            DETACH="-d"
+            shift
+            ;;
+        --pull)
+            PULL="1"
+            shift
+            ;;
+        -*)
+            echo -e "${RED}Unknown option: $1${NC}" >&2
+            show_help
+            exit 1
+            ;;
+        *)
+            WORKSPACE="$1"
+            shift
+            ;;
+    esac
+done
+
+# Determine workspace
+if [[ -z "$WORKSPACE" ]]; then
+    WORKSPACE="$(pwd)"
+fi
+
+# Resolve to absolute path
+WORKSPACE="$(cd "$WORKSPACE" && pwd)"
+
+# Find .beads directory
+BEADS_ROOT=$(find_beads_dir "$WORKSPACE") || {
+    echo -e "${RED}Error:${NC} No .beads directory found in $WORKSPACE or any parent." >&2
+    echo ""
+    echo "Make sure you're in a project that has beads initialized."
+    echo -e "Run ${CYAN}bd init${NC} to initialize beads in the current directory."
+    exit 1
+}
+
+# Verify issues.jsonl exists
+if [[ ! -f "$BEADS_ROOT/.beads/issues.jsonl" ]]; then
+    echo -e "${RED}Error:${NC} No issues.jsonl found in .beads directory." >&2
+    echo ""
+    echo "The beads database appears to be empty or corrupted."
+    exit 1
+fi
+
+# Pull image if requested
+if [[ -n "$PULL" ]]; then
+    echo -e "${DIM}Pulling latest image...${NC}"
+    docker pull "$IMAGE"
+    echo ""
+fi
+
+# Check if container already running
+CONTAINER_NAME="beads-manager-$(echo "$BEADS_ROOT" | md5sum | cut -c1-8)"
+if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
+    echo -e "${GREEN}Beads Manager already running at http://localhost:$PORT${NC}"
+    echo -e "${DIM}To stop: docker stop $CONTAINER_NAME${NC}"
+    exit 0
+fi
+
+# Print banner
+echo -e "${CYAN}  _                    _     ${NC}"
+echo -e "${CYAN} | |__   ___  __ _  __| |___ ${NC}"
+echo -e "${CYAN} | '_ \\ / _ \\/ _\` |/ _\` / __|${NC}"
+echo -e "${CYAN} | |_) |  __/ (_| | (_| \\__ \\${NC}"
+echo -e "${CYAN} |_.__/ \\___|\\__,_|\\__,_|___/${NC}"
+echo ""
+echo -e "${DIM}  Issue Manager UI${NC}"
+echo ""
+echo -e "${DIM}Workspace:${NC} $BEADS_ROOT"
+echo -e "${DIM}Port:${NC}      $PORT"
+echo ""
+
+# Run container
+docker run --rm $DETACH \
+    --name "$CONTAINER_NAME" \
+    -p "$PORT:3333" \
+    -v "$BEADS_ROOT:/workspace:ro" \
+    -e "BEADS_WORKSPACE=/workspace" \
+    --read-only \
+    --tmpfs /tmp \
+    --security-opt no-new-privileges:true \
+    "$IMAGE" &
+
+# Wait for server to start
+sleep 2
+
+# Open browser (only if not detached)
+if [[ -z "$DETACH" ]]; then
+    URL="http://localhost:$PORT"
+    echo -e "${GREEN}Opening browser at $URL${NC}"
+
+    case "$(uname -s)" in
+        Darwin)
+            open "$URL"
+            ;;
+        Linux)
+            xdg-open "$URL" 2>/dev/null || echo "Open $URL in your browser"
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            start "$URL"
+            ;;
+    esac
+
+    # Wait for container
+    echo ""
+    echo -e "${DIM}Press Ctrl+C to stop${NC}"
+    wait
+else
+    echo -e "${GREEN}Running in background at http://localhost:$PORT${NC}"
+    echo -e "${DIM}To stop: docker stop $CONTAINER_NAME${NC}"
+fi
