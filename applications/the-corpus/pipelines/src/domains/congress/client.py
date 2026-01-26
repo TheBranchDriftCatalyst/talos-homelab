@@ -5,10 +5,10 @@ Rate-limited client for Congress.gov API v3.
 Docs: https://api.congress.gov/
 """
 
-import os
 from typing import Any, Iterator
 
 from corpus_core.clients import BaseAPIClient
+from corpus_core import get_env_str
 
 
 class CongressAPIClient(BaseAPIClient):
@@ -22,7 +22,13 @@ class CongressAPIClient(BaseAPIClient):
         self,
         api_key: str | None = None,
     ):
-        api_key = api_key or os.environ.get("CONGRESS_API_KEY")
+        api_key = api_key or get_env_str(
+            "CONGRESS_API_KEY", "",
+            description="Congress.gov API key (get from https://api.congress.gov/sign-up/)",
+            domain="congress",
+            required=True,
+            secret=True,
+        )
         if not api_key:
             raise ValueError("CONGRESS_API_KEY environment variable required")
 
