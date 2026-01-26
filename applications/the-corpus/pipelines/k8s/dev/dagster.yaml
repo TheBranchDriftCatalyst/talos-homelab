@@ -1,0 +1,183 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dagster-pvc
+  namespace: corpus-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-webserver
+  namespace: corpus-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-webserver
+  template:
+    metadata:
+      labels:
+        app: dagster-webserver
+    spec:
+      serviceAccountName: dagster
+      containers:
+        - name: webserver
+          image: dagster/dagster-k8s:latest
+          ports:
+            - containerPort: 3000
+          command: ["dagster-webserver"]
+          args:
+            - "-h"
+            - "0.0.0.0"
+            - "-p"
+            - "3000"
+            - "-w"
+            - "/dagster-workspace/workspace.yaml"
+          env:
+            - name: DAGSTER_HOME
+              value: /opt/dagster/dagster_home
+            - name: DAGSTER_POSTGRES_HOST
+              value: postgres
+            - name: DAGSTER_POSTGRES_PORT
+              value: "5432"
+            - name: DAGSTER_POSTGRES_USER
+              value: dagster
+            - name: DAGSTER_POSTGRES_PASSWORD
+              value: dagster-dev
+            - name: DAGSTER_POSTGRES_DB
+              value: dagster
+          volumeMounts:
+            - name: dagster-home
+              mountPath: /opt/dagster/dagster_home
+            - name: workspace-config
+              mountPath: /dagster-workspace
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: dagster-home
+          persistentVolumeClaim:
+            claimName: dagster-pvc
+        - name: workspace-config
+          configMap:
+            name: dagster-workspace
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dagster-daemon
+  namespace: corpus-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dagster-daemon
+  template:
+    metadata:
+      labels:
+        app: dagster-daemon
+    spec:
+      serviceAccountName: dagster
+      containers:
+        - name: daemon
+          image: dagster/dagster-k8s:latest
+          command: ["dagster-daemon"]
+          args: ["run"]
+          env:
+            - name: DAGSTER_HOME
+              value: /opt/dagster/dagster_home
+            - name: DAGSTER_POSTGRES_HOST
+              value: postgres
+            - name: DAGSTER_POSTGRES_PORT
+              value: "5432"
+            - name: DAGSTER_POSTGRES_USER
+              value: dagster
+            - name: DAGSTER_POSTGRES_PASSWORD
+              value: dagster-dev
+            - name: DAGSTER_POSTGRES_DB
+              value: dagster
+          volumeMounts:
+            - name: dagster-home
+              mountPath: /opt/dagster/dagster_home
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: dagster-home
+          persistentVolumeClaim:
+            claimName: dagster-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dagster-webserver
+  namespace: corpus-dev
+spec:
+  selector:
+    app: dagster-webserver
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dagster-workspace
+  namespace: corpus-dev
+data:
+  workspace.yaml: |
+    load_from:
+      - grpc_server:
+          host: corpus-pipelines
+          port: 4000
+          location_name: corpus_pipelines
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dagster
+  namespace: corpus-dev
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dagster-role
+  namespace: corpus-dev
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/status"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dagster-rolebinding
+  namespace: corpus-dev
+subjects:
+  - kind: ServiceAccount
+    name: dagster
+    namespace: corpus-dev
+roleRef:
+  kind: Role
+  name: dagster-role
+  apiGroup: rbac.authorization.k8s.io
