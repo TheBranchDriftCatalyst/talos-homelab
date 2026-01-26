@@ -37,7 +37,11 @@ def reddit_submissions(context: AssetExecutionContext) -> Output[list[Submission
 
     Uses HuggingFace datasets for streaming access.
     """
-    max_submissions = get_env_int("MAX_REDDIT_SUBMISSIONS", 10000)
+    max_submissions = get_env_int(
+        "MAX_REDDIT_SUBMISSIONS", 10000,
+        description="Maximum Reddit submissions to extract",
+        domain="reddit",
+    )
     target_subreddits = get_all_target_subreddits()
 
     loader = PushshiftLoader()
@@ -128,7 +132,11 @@ def reddit_comments(
     Note: Full comment extraction is expensive - this asset provides
     a sample for development. Production would use streaming.
     """
-    max_comments = get_env_int("MAX_REDDIT_COMMENTS", 5000)
+    max_comments = get_env_int(
+        "MAX_REDDIT_COMMENTS", 5000,
+        description="Maximum Reddit comments to extract",
+        domain="reddit",
+    )
     target_subreddits = [s.subreddit for s in reddit_submissions]
 
     loader = PushshiftLoader()

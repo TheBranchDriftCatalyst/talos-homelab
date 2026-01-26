@@ -34,8 +34,16 @@ def congress_bills(context: AssetExecutionContext) -> Output[list[Bill]]:
 
     Fetches bills from the current congress with pagination.
     """
-    congress = get_env_int("CONGRESS_NUMBER", 118)
-    max_bills = get_env_int("MAX_BILLS", 1000)
+    congress = get_env_int(
+        "CONGRESS_NUMBER", 118,
+        description="Congress number to extract (e.g., 118 for 118th Congress)",
+        domain="congress",
+    )
+    max_bills = get_env_int(
+        "MAX_BILLS", 1000,
+        description="Maximum number of bills to extract",
+        domain="congress",
+    )
 
     with CongressAPIClient() as client:
         bills = []
@@ -66,8 +74,16 @@ def congress_members(context: AssetExecutionContext) -> Output[list[Member]]:
 
     Fetches all members of the current congress.
     """
-    congress = get_env_int("CONGRESS_NUMBER", 118)
-    max_members = get_env_int("MAX_MEMBERS", 600)
+    congress = get_env_int(
+        "CONGRESS_NUMBER", 118,
+        description="Congress number to extract",
+        domain="congress",
+    )
+    max_members = get_env_int(
+        "MAX_MEMBERS", 600,
+        description="Maximum number of members to extract",
+        domain="congress",
+    )
 
     with CongressAPIClient() as client:
         members = []
@@ -102,8 +118,16 @@ def congress_committees(context: AssetExecutionContext) -> Output[list[Committee
 
     Fetches all committees of the current congress.
     """
-    congress = get_env_int("CONGRESS_NUMBER", 118)
-    max_committees = get_env_int("MAX_COMMITTEES", 300)
+    congress = get_env_int(
+        "CONGRESS_NUMBER", 118,
+        description="Congress number to extract",
+        domain="congress",
+    )
+    max_committees = get_env_int(
+        "MAX_COMMITTEES", 300,
+        description="Maximum number of committees to extract",
+        domain="congress",
+    )
 
     with CongressAPIClient() as client:
         committees = []

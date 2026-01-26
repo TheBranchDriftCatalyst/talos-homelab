@@ -13,11 +13,17 @@ This package provides:
 from corpus_core.models.document import Document
 from corpus_core.models.entity import ExtractedEntity
 from corpus_core.utils import (
+    # Base classes
     BaseEntity,
+    # Env config
     get_env_int,
     get_env_str,
     get_env_bool,
     get_env_list,
+    get_env_registry,
+    dump_env_config,
+    validate_env_config,
+    # Date parsing
     parse_date,
     parse_datetime,
     parse_timestamp,
@@ -32,11 +38,15 @@ __all__ = [
     "ExtractedEntity",
     # Base classes
     "BaseEntity",
-    # Utilities
+    # Env config
     "get_env_int",
     "get_env_str",
     "get_env_bool",
     "get_env_list",
+    "get_env_registry",
+    "dump_env_config",
+    "validate_env_config",
+    # Date parsing
     "parse_date",
     "parse_datetime",
     "parse_timestamp",

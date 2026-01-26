@@ -38,7 +38,11 @@ def edgar_companies(context: AssetExecutionContext) -> Output[list[Company]]:
 
     Uses a subset of S&P 500 companies for MVP.
     """
-    max_companies = get_env_int("MAX_COMPANIES", 20)
+    max_companies = get_env_int(
+        "MAX_COMPANIES", 20,
+        description="Maximum number of S&P 500 companies to extract",
+        domain="edgar",
+    )
 
     client = EDGARClient()
     companies = []
@@ -77,7 +81,11 @@ def edgar_filings(
 
     Fetches last 5 years of 10-K filings per company.
     """
-    max_filings_per_company = get_env_int("MAX_FILINGS_PER_COMPANY", 5)
+    max_filings_per_company = get_env_int(
+        "MAX_FILINGS_PER_COMPANY", 5,
+        description="Maximum 10-K filings to extract per company",
+        domain="edgar",
+    )
 
     client = EDGARClient()
     filings = []
@@ -124,7 +132,11 @@ def edgar_sections(
     Extracts key sections: Item 1 (Business), Item 1A (Risk Factors),
     Item 7 (MD&A), etc.
     """
-    max_filings_to_parse = get_env_int("MAX_FILINGS_TO_PARSE", 20)
+    max_filings_to_parse = get_env_int(
+        "MAX_FILINGS_TO_PARSE", 20,
+        description="Maximum filings to parse into sections (expensive operation)",
+        domain="edgar",
+    )
 
     client = EDGARClient()
     documents = []
