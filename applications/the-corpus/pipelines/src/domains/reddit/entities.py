@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from corpus_core.utils import parse_timestamp
+
 
 class Submission(BaseModel):
     """Reddit submission (post) entity."""
@@ -47,12 +49,7 @@ class Submission(BaseModel):
     @classmethod
     def from_pushshift(cls, data: dict[str, Any]) -> "Submission":
         """Create Submission from Pushshift record."""
-        # Handle timestamp
-        created = data.get("created_utc", 0)
-        if isinstance(created, (int, float)):
-            created_dt = datetime.utcfromtimestamp(created)
-        else:
-            created_dt = datetime.utcnow()
+        created_dt = parse_timestamp(data.get("created_utc")) or datetime.utcnow()
 
         return cls(
             id=data.get("id", ""),
@@ -120,12 +117,7 @@ class Comment(BaseModel):
     @classmethod
     def from_pushshift(cls, data: dict[str, Any]) -> "Comment":
         """Create Comment from Pushshift record."""
-        # Handle timestamp
-        created = data.get("created_utc", 0)
-        if isinstance(created, (int, float)):
-            created_dt = datetime.utcfromtimestamp(created)
-        else:
-            created_dt = datetime.utcnow()
+        created_dt = parse_timestamp(data.get("created_utc")) or datetime.utcnow()
 
         return cls(
             id=data.get("id", ""),

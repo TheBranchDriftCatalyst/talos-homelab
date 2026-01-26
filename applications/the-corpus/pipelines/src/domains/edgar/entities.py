@@ -4,13 +4,15 @@ SEC EDGAR Domain Entities
 Pydantic models for Companies, Filings, and SEC Documents.
 """
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from corpus_core.utils import BaseEntity, parse_date
 
 
-class Company(BaseModel):
+class Company(BaseEntity):
     """SEC registered company entity."""
 
     # Identifiers
@@ -24,29 +26,23 @@ class Company(BaseModel):
     state: str | None = Field(default=None, description="State of incorporation")
     fiscal_year_end: str | None = Field(default=None, description="Fiscal year end (MMDD)")
 
-    # Source
-    source_url: str | None = Field(default=None, description="SEC EDGAR URL")
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
     @classmethod
     def from_submissions(cls, data: dict[str, Any], ticker: str | None = None) -> "Company":
         """Create Company from SEC submissions response."""
+        cik = data.get("cik", "")
         return cls(
-            cik=data.get("cik", ""),
+            cik=cik,
             ticker=ticker,
             name=data.get("name", ""),
             sic=data.get("sic", ""),
             sic_description=data.get("sicDescription", ""),
             state=data.get("stateOfIncorporation", ""),
             fiscal_year_end=data.get("fiscalYearEnd", ""),
-            source_url=f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={data.get('cik', '')}&type=10-K",
+            source_url=f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=10-K",
         )
 
 
-class Filing(BaseModel):
+class Filing(BaseEntity):
     """SEC filing entity (10-K, 10-Q, 8-K, etc.)."""
 
     # Identifiers
@@ -55,8 +51,8 @@ class Filing(BaseModel):
 
     # Filing info
     form_type: str = Field(description="Form type (10-K, 10-Q, 8-K, etc.)")
-    filing_date: date | None = Field(default=None, description="Date filed with SEC")
-    period_of_report: date | None = Field(default=None, description="Reporting period end date")
+    filing_date: datetime | None = Field(default=None, description="Date filed with SEC")
+    period_of_report: datetime | None = Field(default=None, description="Reporting period end date")
 
     # Company info (denormalized)
     company_name: str | None = Field(default=None, description="Company name")
@@ -65,27 +61,13 @@ class Filing(BaseModel):
     primary_document: str | None = Field(default=None, description="Primary document filename")
     document_url: str | None = Field(default=None, description="URL to filing document")
 
-    # Source
-    source_url: str | None = Field(default=None, description="SEC EDGAR filing URL")
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
     @classmethod
     def from_api_response(cls, data: dict[str, Any]) -> "Filing":
         """Create Filing from EDGAR API response."""
-        filing_date = None
-        if data.get("filing_date"):
-            try:
-                filing_date = date.fromisoformat(data["filing_date"])
-            except (ValueError, TypeError):
-                pass
-
         accession = data.get("accession_number", "")
         cik = data.get("cik", "")
 
-        # Build URLs
+        # Build document URL
         clean_accession = accession.replace("-", "")
         document_url = None
         if cik and accession and data.get("primary_document"):
@@ -95,7 +77,7 @@ class Filing(BaseModel):
             accession_number=accession,
             cik=cik,
             form_type=data.get("form", ""),
-            filing_date=filing_date,
+            filing_date=parse_date(data.get("filing_date")),
             company_name=data.get("company_name"),
             primary_document=data.get("primary_document"),
             document_url=document_url,
@@ -103,7 +85,7 @@ class Filing(BaseModel):
         )
 
 
-class SECDocument(BaseModel):
+class SECDocument(BaseEntity):
     """
     Parsed SEC document section.
 
@@ -125,12 +107,6 @@ class SECDocument(BaseModel):
     cik: str | None = Field(default=None, description="Company CIK")
     company_name: str | None = Field(default=None, description="Company name")
     fiscal_year: int | None = Field(default=None, description="Fiscal year")
-
-    # Source
-    source_url: str | None = Field(default=None, description="URL to filing")
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
 
     @property
     def text_length(self) -> int:

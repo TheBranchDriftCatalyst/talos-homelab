@@ -7,7 +7,7 @@ ETL pipeline assets for Reddit/Pushshift data:
 3. Document transformation for NER training
 """
 
-import os
+from datetime import datetime
 
 from dagster import (
     AssetExecutionContext,
@@ -16,7 +16,7 @@ from dagster import (
     asset,
 )
 
-from corpus_core.models import Document
+from corpus_core import Document, get_env_int
 
 from .loader import PushshiftLoader, TARGET_SUBREDDITS, get_all_target_subreddits
 from .entities import Submission, Comment
@@ -37,7 +37,7 @@ def reddit_submissions(context: AssetExecutionContext) -> Output[list[Submission
 
     Uses HuggingFace datasets for streaming access.
     """
-    max_submissions = int(os.environ.get("MAX_REDDIT_SUBMISSIONS", "10000"))
+    max_submissions = get_env_int("MAX_REDDIT_SUBMISSIONS", 10000)
     target_subreddits = get_all_target_subreddits()
 
     loader = PushshiftLoader()
@@ -86,7 +86,7 @@ def reddit_submissions(context: AssetExecutionContext) -> Output[list[Submission
                     selftext=f"This is sample content for {subreddit}. "
                              f"It discusses various topics related to the subreddit theme.",
                     author=f"user_{j}",
-                    created_utc=__import__("datetime").datetime.utcnow(),
+                    created_utc=datetime.utcnow(),
                     score=100 * (j + 1),
                     num_comments=50 * (j + 1),
                 )
@@ -128,7 +128,7 @@ def reddit_comments(
     Note: Full comment extraction is expensive - this asset provides
     a sample for development. Production would use streaming.
     """
-    max_comments = int(os.environ.get("MAX_REDDIT_COMMENTS", "5000"))
+    max_comments = get_env_int("MAX_REDDIT_COMMENTS", 5000)
     target_subreddits = [s.subreddit for s in reddit_submissions]
 
     loader = PushshiftLoader()
