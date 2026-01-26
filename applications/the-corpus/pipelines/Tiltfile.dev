@@ -1,0 +1,180 @@
+# Tiltfile for Corpus Pipelines - Local K3s Development
+#
+# Prerequisites:
+#   - k3s cluster running locally
+#   - k3s registry enabled (k3s server --docker or registry config)
+#
+# Usage:
+#   cd pipelines
+#   tilt up
+#
+# This runs a lightweight Dagster setup for NER training data collection.
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+# Use k3s local registry (default: localhost:5000)
+# If using k3d: k3d-registry.localhost:5000
+k3s_registry = os.getenv('K3S_REGISTRY', 'localhost:5000')
+default_registry(k3s_registry)
+
+# Namespace for development
+namespace = 'corpus-dev'
+
+# ============================================================================
+# Namespace Setup
+# ============================================================================
+
+k8s_yaml(blob("""
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {namespace}
+""".format(namespace=namespace)))
+
+# ============================================================================
+# Docker Builds
+# ============================================================================
+
+# Dagster pipelines image
+# Build from the-corpus root (parent dir) since Dockerfile copies corpus-core
+docker_build(
+    '{}/corpus-pipelines'.format(k3s_registry),
+    context='..',
+    dockerfile='pipelines/Dockerfile',
+    live_update=[
+        # Sync source files for hot reload
+        sync('./src', '/app/src'),
+        sync('../corpus-core/src', '/app/corpus-core/src'),
+        # Reinstall on pyproject.toml changes
+        run('pip install -e /app/corpus-core && pip install -e /app',
+            trigger=['pipelines/pyproject.toml', 'corpus-core/pyproject.toml']),
+    ],
+    ignore=[
+        '__pycache__',
+        '*.pyc',
+        '.pytest_cache',
+        '.mypy_cache',
+        'dist/',
+        '*.egg-info',
+        'datasets/',
+        'notebooks/',
+        '.git/',
+        'memex/',
+        'dagster-congress/',
+    ]
+)
+
+# ============================================================================
+# Kubernetes Resources
+# ============================================================================
+
+# Load k8s manifests
+k8s_yaml('k8s/dev/')
+
+# ============================================================================
+# Resource Configuration
+# ============================================================================
+
+# PostgreSQL for Dagster metadata
+k8s_resource(
+    'postgres',
+    labels=['infrastructure'],
+    port_forwards=['5432:5432'],
+)
+
+# Dagster webserver
+k8s_resource(
+    'dagster-webserver',
+    labels=['dagster'],
+    port_forwards=['3000:3000'],
+    resource_deps=['postgres'],
+)
+
+# Dagster daemon (for schedules/sensors)
+k8s_resource(
+    'dagster-daemon',
+    labels=['dagster'],
+    resource_deps=['postgres', 'dagster-webserver'],
+)
+
+# Dagster user code (our pipelines)
+k8s_resource(
+    'corpus-pipelines',
+    labels=['dagster'],
+    resource_deps=['dagster-webserver'],
+)
+
+# ============================================================================
+# Optional: Neo4j for Knowledge Graph
+# ============================================================================
+
+# Uncomment if you want Neo4j for graph loading
+# k8s_resource(
+#     'neo4j',
+#     labels=['infrastructure'],
+#     port_forwards=['7474:7474', '7687:7687'],
+# )
+
+# ============================================================================
+# Local Resources (Buttons)
+# ============================================================================
+
+# Install dependencies locally (for IDE support)
+local_resource(
+    'install-local',
+    cmd='cd ../corpus-core && pip install -e . && cd ../pipelines && pip install -e ".[dev]"',
+    labels=['setup'],
+    auto_init=False,
+)
+
+# Run tests
+local_resource(
+    'pytest',
+    cmd='cd src && pytest -v',
+    deps=['./src'],
+    labels=['test'],
+    auto_init=False,
+)
+
+# Materialize Congress assets
+local_resource(
+    'materialize-congress',
+    cmd='''
+        kubectl exec -n {namespace} deploy/dagster-webserver -- \
+            dagster asset materialize -m definitions --select "congress_bills congress_members congress_committees congress_documents"
+    '''.format(namespace=namespace),
+    labels=['actions'],
+    auto_init=False,
+)
+
+# Materialize EDGAR assets
+local_resource(
+    'materialize-edgar',
+    cmd='''
+        kubectl exec -n {namespace} deploy/dagster-webserver -- \
+            dagster asset materialize -m definitions --select "edgar_companies edgar_filings edgar_sections edgar_documents"
+    '''.format(namespace=namespace),
+    labels=['actions'],
+    auto_init=False,
+)
+
+# Materialize Reddit assets
+local_resource(
+    'materialize-reddit',
+    cmd='''
+        kubectl exec -n {namespace} deploy/dagster-webserver -- \
+            dagster asset materialize -m definitions --select "reddit_submissions reddit_comments reddit_documents"
+    '''.format(namespace=namespace),
+    labels=['actions'],
+    auto_init=False,
+)
+
+# Open Dagster UI
+local_resource(
+    'open-dagster-ui',
+    cmd='open http://localhost:3000',
+    labels=['actions'],
+    auto_init=False,
+)
