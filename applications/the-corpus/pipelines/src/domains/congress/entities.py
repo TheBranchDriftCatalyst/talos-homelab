@@ -4,13 +4,15 @@ Congressional Domain Entities
 Pydantic models for Bills, Members, and Committees.
 """
 
-from datetime import date, datetime
+from datetime import date
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from corpus_core.utils import BaseEntity, parse_date, parse_year_to_date
 
 
-class Bill(BaseModel):
+class Bill(BaseEntity):
     """Congressional bill entity."""
 
     # Identifiers
@@ -32,12 +34,7 @@ class Bill(BaseModel):
     policy_area: str | None = Field(default=None, description="Primary policy area")
 
     # Source
-    source_url: str | None = Field(default=None, description="Congress.gov URL")
     api_url: str | None = Field(default=None, description="API URL")
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     @classmethod
     def from_api_response(cls, data: dict[str, Any], congress: int) -> "Bill":
@@ -46,21 +43,7 @@ class Bill(BaseModel):
         number = data.get("number", "")
         bill_number = f"{bill_type.upper()}.{number}" if bill_type else str(number)
 
-        # Parse dates
-        introduced_date = None
-        if data.get("introducedDate"):
-            try:
-                introduced_date = date.fromisoformat(data["introducedDate"])
-            except (ValueError, TypeError):
-                pass
-
-        latest_action_date = None
         latest_action = data.get("latestAction", {})
-        if latest_action.get("actionDate"):
-            try:
-                latest_action_date = date.fromisoformat(latest_action["actionDate"])
-            except (ValueError, TypeError):
-                pass
 
         return cls(
             id=f"{bill_type}{number}-{congress}",
@@ -71,8 +54,8 @@ class Bill(BaseModel):
             short_title=data.get("shortTitle"),
             summary=None,  # Requires separate API call
             chamber=data.get("originChamber", ""),
-            introduced_date=introduced_date,
-            latest_action_date=latest_action_date,
+            introduced_date=parse_date(data.get("introducedDate")),
+            latest_action_date=parse_date(latest_action.get("actionDate")),
             latest_action_text=latest_action.get("text"),
             policy_area=data.get("policyArea", {}).get("name"),
             source_url=data.get("url"),
@@ -80,7 +63,7 @@ class Bill(BaseModel):
         )
 
 
-class Member(BaseModel):
+class Member(BaseEntity):
     """Congressional member entity."""
 
     # Identifiers
@@ -108,13 +91,6 @@ class Member(BaseModel):
     phone: str | None = Field(default=None)
     url: str | None = Field(default=None)
 
-    # Source
-    source_url: str | None = Field(default=None)
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
     @classmethod
     def from_api_response(cls, data: dict[str, Any]) -> "Member":
         """Create Member from Congress.gov API response."""
@@ -123,19 +99,6 @@ class Member(BaseModel):
         # Parse current term
         terms = data.get("terms", {}).get("item", [])
         current_term = terms[-1] if terms else {}
-
-        term_start = None
-        term_end = None
-        if current_term.get("startYear"):
-            try:
-                term_start = date(int(current_term["startYear"]), 1, 1)
-            except (ValueError, TypeError):
-                pass
-        if current_term.get("endYear"):
-            try:
-                term_end = date(int(current_term["endYear"]), 12, 31)
-            except (ValueError, TypeError):
-                pass
 
         return cls(
             id=bioguide_id,
@@ -148,14 +111,14 @@ class Member(BaseModel):
             district=data.get("district"),
             chamber=current_term.get("chamber"),
             terms_served=len(terms),
-            current_term_start=term_start,
-            current_term_end=term_end,
+            current_term_start=parse_year_to_date(current_term.get("startYear"), 1, 1),
+            current_term_end=parse_year_to_date(current_term.get("endYear"), 12, 31),
             url=data.get("url"),
             source_url=data.get("url"),
         )
 
 
-class Committee(BaseModel):
+class Committee(BaseEntity):
     """Congressional committee entity."""
 
     # Identifiers
@@ -171,13 +134,6 @@ class Committee(BaseModel):
     # Details
     jurisdiction: str | None = Field(default=None, description="Committee jurisdiction")
     url: str | None = Field(default=None)
-
-    # Source
-    source_url: str | None = Field(default=None)
-
-    # Timestamps
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     @classmethod
     def from_api_response(cls, data: dict[str, Any]) -> "Committee":

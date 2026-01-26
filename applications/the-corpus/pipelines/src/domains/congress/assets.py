@@ -6,9 +6,6 @@ ETL pipeline assets for Congress.gov data:
 2. Document transformation for NER training
 """
 
-import os
-from pathlib import Path
-
 from dagster import (
     AssetExecutionContext,
     MetadataValue,
@@ -16,7 +13,7 @@ from dagster import (
     asset,
 )
 
-from corpus_core.models import Document
+from corpus_core import Document, get_env_int
 
 from .client import CongressAPIClient
 from .entities import Bill, Member, Committee
@@ -37,8 +34,8 @@ def congress_bills(context: AssetExecutionContext) -> Output[list[Bill]]:
 
     Fetches bills from the current congress with pagination.
     """
-    congress = int(os.environ.get("CONGRESS_NUMBER", "118"))
-    max_bills = int(os.environ.get("MAX_BILLS", "1000"))
+    congress = get_env_int("CONGRESS_NUMBER", 118)
+    max_bills = get_env_int("MAX_BILLS", 1000)
 
     with CongressAPIClient() as client:
         bills = []
@@ -69,8 +66,8 @@ def congress_members(context: AssetExecutionContext) -> Output[list[Member]]:
 
     Fetches all members of the current congress.
     """
-    congress = int(os.environ.get("CONGRESS_NUMBER", "118"))
-    max_members = int(os.environ.get("MAX_MEMBERS", "600"))
+    congress = get_env_int("CONGRESS_NUMBER", 118)
+    max_members = get_env_int("MAX_MEMBERS", 600)
 
     with CongressAPIClient() as client:
         members = []
@@ -105,8 +102,8 @@ def congress_committees(context: AssetExecutionContext) -> Output[list[Committee
 
     Fetches all committees of the current congress.
     """
-    congress = int(os.environ.get("CONGRESS_NUMBER", "118"))
-    max_committees = int(os.environ.get("MAX_COMMITTEES", "300"))
+    congress = get_env_int("CONGRESS_NUMBER", 118)
+    max_committees = get_env_int("MAX_COMMITTEES", 300)
 
     with CongressAPIClient() as client:
         committees = []
