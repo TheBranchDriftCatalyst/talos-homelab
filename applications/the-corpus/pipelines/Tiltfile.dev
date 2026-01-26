@@ -1,21 +1,22 @@
-# Tiltfile for Corpus Pipelines - Local K3s Development
+# Corpus Pipelines - Local K3s Development
+#
+# Multi-source NER training data collection pipeline (Dagster).
 #
 # Prerequisites:
 #   - k3s cluster running locally
-#   - k3s registry enabled (k3s server --docker or registry config)
+#   - k3s registry enabled (localhost:5000)
 #
 # Usage:
-#   cd pipelines
-#   tilt up
+#   tilt up -f Tiltfile.dev
 #
-# This runs a lightweight Dagster setup for NER training data collection.
+# Or from parent:
+#   cd .. && tilt up -f Tiltfile.dev pipelines
 
 # ============================================================================
 # Configuration
 # ============================================================================
 
-# Use k3s local registry (default: localhost:5000)
-# If using k3d: k3d-registry.localhost:5000
+# Use k3s local registry
 k3s_registry = os.getenv('K3S_REGISTRY', 'localhost:5000')
 default_registry(k3s_registry)
 
@@ -23,10 +24,13 @@ default_registry(k3s_registry)
 namespace = 'corpus-dev'
 
 # ============================================================================
-# Namespace Setup
+# Namespace (only if running standalone)
 # ============================================================================
 
-k8s_yaml(blob("""
+# Check if we're running standalone (not included by parent)
+# Parent sets the namespace, so we only create it if running directly
+if config.main_dir == os.getcwd():
+    k8s_yaml(blob("""
 apiVersion: v1
 kind: Namespace
 metadata:

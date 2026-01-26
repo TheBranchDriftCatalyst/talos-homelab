@@ -1,0 +1,70 @@
+# The Corpus - Local Development Orchestrator
+#
+# This orchestrates all sub-projects for local k3s development.
+# Each sub-project has its own Tiltfile.dev that can run independently.
+#
+# Prerequisites:
+#   - k3s cluster running locally
+#   - k3s registry enabled (localhost:5000)
+#
+# Usage:
+#   tilt up -f Tiltfile.dev                    # Run all sub-projects
+#   tilt up -f Tiltfile.dev pipelines          # Run only pipelines
+#   tilt up -f Tiltfile.dev memex              # Run only memex
+#
+# Or run sub-projects independently:
+#   cd pipelines && tilt up -f Tiltfile.dev
+#   cd memex && tilt up -f Tiltfile.dev
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+# Use k3s local registry
+k3s_registry = os.getenv('K3S_REGISTRY', 'localhost:5000')
+default_registry(k3s_registry)
+
+# ============================================================================
+# Shared Infrastructure
+# ============================================================================
+
+# Shared namespace for corpus development
+k8s_yaml(blob("""
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: corpus-dev
+  labels:
+    app.kubernetes.io/part-of: the-corpus
+    environment: dev
+"""))
+
+# ============================================================================
+# Load Sub-Projects
+# ============================================================================
+
+# Pipelines - Multi-source NER training data collection (Dagster)
+include('./pipelines/Tiltfile.dev')
+
+# Memex - Knowledge graph governance layer (deferred, but scaffolded)
+include('./memex/Tiltfile.dev')
+
+# ============================================================================
+# Development Resources
+# ============================================================================
+
+# Install all Python packages locally (for IDE support)
+local_resource(
+    'install-all-local',
+    cmd='pip install -e ./corpus-core && pip install -e "./pipelines[dev]"',
+    labels=['setup'],
+    auto_init=False,
+)
+
+# Open all UIs
+local_resource(
+    'open-all-uis',
+    cmd='open http://localhost:3000 && open http://localhost:7474',  # Dagster + Neo4j
+    labels=['actions'],
+    auto_init=False,
+)

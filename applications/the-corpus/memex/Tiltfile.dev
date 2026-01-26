@@ -1,0 +1,116 @@
+# Memex - Local K3s Development
+#
+# Knowledge graph governance layer for the-corpus.
+# NOTE: This is a deferred component - scaffolded but not fully implemented.
+#
+# Prerequisites:
+#   - k3s cluster running locally
+#   - k3s registry enabled (localhost:5000)
+#
+# Usage:
+#   tilt up -f Tiltfile.dev
+#
+# Or from parent:
+#   cd .. && tilt up -f Tiltfile.dev memex
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+# Use k3s local registry
+k3s_registry = os.getenv('K3S_REGISTRY', 'localhost:5000')
+default_registry(k3s_registry)
+
+# Namespace (created by parent Tiltfile.dev or here if standalone)
+namespace = 'corpus-dev'
+
+# ============================================================================
+# Namespace (only if running standalone)
+# ============================================================================
+
+# Check if we're being included by parent
+if not os.getenv('TILT_PARENT'):
+    k8s_yaml(blob("""
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {namespace}
+""".format(namespace=namespace)))
+
+# ============================================================================
+# Docker Builds
+# ============================================================================
+
+# Memex Dagster user code
+docker_build(
+    '{}/memex'.format(k3s_registry),
+    context='.',
+    dockerfile='src/Dockerfile',
+    live_update=[
+        sync('./src', '/app'),
+        run('pip install -e /app', trigger=['src/pyproject.toml']),
+    ],
+    ignore=[
+        '__pycache__',
+        '*.pyc',
+        '.pytest_cache',
+        '.mypy_cache',
+        'dist/',
+        '*.egg-info',
+        'k8s/',
+    ]
+)
+
+# ============================================================================
+# Kubernetes Resources
+# ============================================================================
+
+# Load k8s manifests
+k8s_yaml('k8s/dev/')
+
+# ============================================================================
+# Resource Configuration
+# ============================================================================
+
+# Neo4j for knowledge graph
+k8s_resource(
+    'neo4j',
+    labels=['infrastructure'],
+    port_forwards=['7474:7474', '7687:7687'],  # Browser + Bolt
+)
+
+# Memex user code server
+k8s_resource(
+    'memex',
+    labels=['memex'],
+    resource_deps=['neo4j'],
+)
+
+# ============================================================================
+# Local Resources
+# ============================================================================
+
+# Install dependencies locally (for IDE support)
+local_resource(
+    'install-memex-local',
+    cmd='pip install -e ./src',
+    labels=['setup'],
+    auto_init=False,
+)
+
+# Run tests
+local_resource(
+    'memex-pytest',
+    cmd='cd src && pytest -v',
+    deps=['./src'],
+    labels=['test'],
+    auto_init=False,
+)
+
+# Open Neo4j browser
+local_resource(
+    'open-neo4j',
+    cmd='open http://localhost:7474',
+    labels=['actions'],
+    auto_init=False,
+)
