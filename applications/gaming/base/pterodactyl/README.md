@@ -17,19 +17,19 @@ kubectl exec -it -n gaming deploy/pterodactyl-panel -- php artisan p:user:make
 
 Follow the prompts to create your admin account.
 
-### 2. Register Kuber Node
+### 2. Register Kuber Cluster
 
 1. Login to Panel at http://pterodactyl.talos00
-2. Go to **Admin** → **Nodes** → **Create New**
+2. Go to **Clusters** → **Create New**
 3. Fill in:
-   - **Name**: `kuber-node`
-   - **FQDN**: `pterodactyl-kuber.gaming.svc.cluster.local`
-   - **Total Memory**: `16384` (16GB)
-   - **Total Disk Space**: `102400` (100GB)
-   - **Daemon Port**: `8080`
-4. Click **Create Node**
-5. Go to **Configuration** tab
-6. Copy the configuration YAML
+   - **Name**: `homelab-cluster`
+   - **Host**: `pterodactyl-kuber.gaming.svc.cluster.local`
+   - **Port**: `8080`
+   - **Memory**: `16384` (16GB available)
+   - **Disk**: `102400` (100GB available)
+4. Click **Create**
+5. Go to the cluster's **Configuration** tab
+6. Copy the `uuid`, `token_id`, and `token` values
 
 ### 3. Update Kuber Config
 
