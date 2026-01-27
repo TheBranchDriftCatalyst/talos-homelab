@@ -28,12 +28,19 @@ spec:
         - name: opensim
           image: soupbowl/opensimulator:0.9.3.0
           imagePullPolicy: IfNotPresent
+          # Use environment variables instead of config files
+          # Container auto-generates configs on first run
           env:
-            # Basic region configuration
             - name: GRID_NAME
-              value: "Homelab Region"
+              value: "Homelab Grid"
             - name: REGION_NAME
-              value: "My Region"
+              value: "Homelab Region"
+            - name: ESTATE_NAME
+              value: "Homelab Estate"
+            - name: ESTATE_OWNER_NAME
+              value: "Admin User"
+            - name: ESTATE_OWNER_PASSWORD
+              value: "changeme123"
             # Physics engine (use basicphysics on ARM64)
             - name: PHYSICS_ENGINE
               value: "BulletSim"
@@ -48,14 +55,9 @@ spec:
               containerPort: 9000
               protocol: UDP
           volumeMounts:
+            # Persist SQLite database and generated configs
             - name: data
               mountPath: /opt/opensim/bin/sqlite-database
-            - name: config
-              mountPath: /opt/opensim/bin/OpenSim.ini
-              subPath: OpenSim.ini
-            - name: config
-              mountPath: /opt/opensim/bin/Regions/Regions.ini
-              subPath: Regions.ini
           resources:
             requests:
               cpu: 500m
@@ -84,6 +86,3 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: opensim-data
-        - name: config
-          configMap:
-            name: opensim-config
