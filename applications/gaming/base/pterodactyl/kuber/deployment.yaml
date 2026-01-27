@@ -29,10 +29,30 @@ spec:
                 sleep 5
               done
               echo "Panel is ready"
+        # Copy config to writable location
+        - name: copy-config
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              cp /config-ro/config.yml /etc/kubectyl/config.yml
+              chown 100:101 /etc/kubectyl/config.yml
+              chmod 644 /etc/kubectyl/config.yml
+              chown 100:101 /etc/kubectyl
+              echo "Config copied and ownership set for kubectyl user (100:101)"
+          volumeMounts:
+            - name: config-ro
+              mountPath: /config-ro
+              readOnly: true
+            - name: config
+              mountPath: /etc/kubectyl
       containers:
         - name: kuber
           image: ghcr.io/kubectyl/kuber:v1.0.0-alpha.1
           imagePullPolicy: Always
+          securityContext:
+            readOnlyRootFilesystem: false
           envFrom:
             - configMapRef:
                 name: pterodactyl-kuber
@@ -44,7 +64,6 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/kubectyl
-              readOnly: true
           resources:
             requests:
               cpu: 100m
@@ -52,18 +71,18 @@ spec:
             limits:
               memory: 512Mi
           livenessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8080
             initialDelaySeconds: 30
             periodSeconds: 30
           readinessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8080
-            initialDelaySeconds: 10
+            initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
-        - name: config
+        - name: config-ro
           configMap:
             name: pterodactyl-kuber-config
+        - name: config
+          emptyDir: {}
