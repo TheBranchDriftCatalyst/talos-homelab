@@ -1,0 +1,89 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opensim
+  labels:
+    app: opensim
+    app.kubernetes.io/name: opensim
+    app.kubernetes.io/part-of: gaming-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: opensim
+  template:
+    metadata:
+      labels:
+        app: opensim
+        app.kubernetes.io/name: opensim
+      annotations:
+        backup.velero.io/backup-volumes: "data"
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: opensim
+          image: soupbowl/opensimulator:0.9.3.0
+          imagePullPolicy: IfNotPresent
+          env:
+            # Basic region configuration
+            - name: GRID_NAME
+              value: "Homelab Region"
+            - name: REGION_NAME
+              value: "My Region"
+            # Physics engine (use basicphysics on ARM64)
+            - name: PHYSICS_ENGINE
+              value: "BulletSim"
+          envFrom:
+            - configMapRef:
+                name: gaming-common-env
+          ports:
+            - name: region-tcp
+              containerPort: 9000
+              protocol: TCP
+            - name: region-udp
+              containerPort: 9000
+              protocol: UDP
+          volumeMounts:
+            - name: data
+              mountPath: /opt/opensim/bin/sqlite-database
+            - name: config
+              mountPath: /opt/opensim/bin/OpenSim.ini
+              subPath: OpenSim.ini
+            - name: config
+              mountPath: /opt/opensim/bin/Regions/Regions.ini
+              subPath: Regions.ini
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              memory: 4Gi
+          # OpenSim takes time to initialize
+          startupProbe:
+            tcpSocket:
+              port: region-tcp
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            tcpSocket:
+              port: region-tcp
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            tcpSocket:
+              port: region-tcp
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: opensim-data
+        - name: config
+          configMap:
+            name: opensim-config

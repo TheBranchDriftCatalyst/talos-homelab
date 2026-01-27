@@ -1,0 +1,88 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: conan-exiles
+  labels:
+    app: conan-exiles
+    app.kubernetes.io/name: conan-exiles
+    app.kubernetes.io/part-of: gaming-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: conan-exiles
+  template:
+    metadata:
+      labels:
+        app: conan-exiles
+        app.kubernetes.io/name: conan-exiles
+      annotations:
+        backup.velero.io/backup-volumes: "config"
+    spec:
+      # melle2/conanexiles-ds requires UID/GID 7100
+      securityContext:
+        runAsUser: 7100
+        runAsGroup: 7100
+        fsGroup: 7100
+      containers:
+        - name: conan-exiles
+          image: melle2/conanexiles-ds:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: conan-exiles-config
+            - configMapRef:
+                name: gaming-common-env
+          ports:
+            - name: game
+              containerPort: 7777
+              protocol: UDP
+            - name: raw
+              containerPort: 7778
+              protocol: UDP
+            - name: query
+              containerPort: 27015
+              protocol: UDP
+          volumeMounts:
+            # Game files (SteamCMD, binaries)
+            - name: game
+              mountPath: /conanexiles
+            # World data and config (CRITICAL - saves are here)
+            - name: config
+              mountPath: /conanexiles_config
+          resources:
+            requests:
+              cpu: 1000m
+              memory: 6Gi
+            limits:
+              memory: 8Gi
+          # Wine + game server takes a long time to start
+          # First run downloads ~40GB of game files
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "pgrep -f wine || pgrep -f Conan"
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 60  # Allow up to 30 minutes for first-time setup
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "pgrep -f wine || pgrep -f Conan"
+            initialDelaySeconds: 300
+            periodSeconds: 60
+            failureThreshold: 5
+      volumes:
+        - name: game
+          persistentVolumeClaim:
+            claimName: conan-exiles-game
+        - name: config
+          persistentVolumeClaim:
+            claimName: conan-exiles-config
