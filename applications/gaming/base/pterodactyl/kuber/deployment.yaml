@@ -1,0 +1,61 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pterodactyl-kuber
+  labels:
+    app: pterodactyl-kuber
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pterodactyl-kuber
+  template:
+    metadata:
+      labels:
+        app: pterodactyl-kuber
+    spec:
+      serviceAccountName: pterodactyl-kuber
+      initContainers:
+        # Wait for Panel to be ready
+        - name: wait-for-panel
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z pterodactyl-panel 80; do
+                echo "Waiting for Panel..."
+                sleep 5
+              done
+              echo "Panel is ready"
+      containers:
+        - name: kuber
+          image: ghcr.io/kubectyl/kuber:v1.0.0-alpha.1
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: pterodactyl-kuber
+            - secretRef:
+                name: pterodactyl-kuber
+          ports:
+            - name: http
+              containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
