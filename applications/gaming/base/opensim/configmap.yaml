@@ -1,0 +1,88 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: opensim-config
+  labels:
+    app: opensim
+data:
+  # OSGrid connection configuration
+  # Update EXTERNAL_HOSTNAME with your public IP or DDNS
+  # Get a region location from OSGrid before deploying
+
+  OpenSim.ini: |
+    ; OSGrid Configuration for OpenSimulator 0.9.3.0
+    ; See: http://opensimulator.org/wiki/Configuration
+
+    [Startup]
+      ; Grid mode for connecting to OSGrid
+      gridmode = true
+
+      ; Physics engine (BulletSim recommended, use basicphysics on ARM64)
+      physics = BulletSim
+
+      ; Persistence - use SQLite for simplicity
+      storage_plugin = "OpenSim.Data.SQLite.dll"
+      storage_connection_string = "URI=file:/opt/opensim/bin/sqlite-database/OpenSim.db,version=3,UseUTF16Encoding=True"
+
+    [Network]
+      ; IMPORTANT: Set this to your public IP or DDNS hostname
+      ; This is how other grid users will connect to your region
+      ExternalHostNameForLSL = CHANGE_ME_TO_PUBLIC_IP
+
+      ; Region port (matches NodePort configuration)
+      http_listener_port = 9000
+
+    [GridService]
+      ; OSGrid login server
+      GridServerURI = "http://login.osgrid.org:80"
+
+    [AssetService]
+      AssetServerURI = "http://assets.osgrid.org:80"
+
+    [InventoryService]
+      InventoryServerURI = "http://inventory.osgrid.org:80"
+
+    [GridUserService]
+      GridUserServerURI = "http://login.osgrid.org:80"
+
+    [PresenceService]
+      PresenceServerURI = "http://login.osgrid.org:80"
+
+    [UserAccountService]
+      UserAccountServerURI = "http://login.osgrid.org:80"
+
+    [AuthenticationService]
+      AuthenticationServerURI = "http://login.osgrid.org:80"
+
+    [AvatarService]
+      AvatarServerURI = "http://login.osgrid.org:80"
+
+    [FriendsService]
+      FriendsServerURI = "http://login.osgrid.org:80"
+
+  Regions.ini: |
+    ; Region Configuration
+    ; IMPORTANT: You must register your region with OSGrid first
+    ; Get a unique location from: http://www.osgrid.org/
+
+    [My Region]
+      ; Generate a unique UUID: uuidgen
+      RegionUUID = CHANGE_ME_GENERATE_UUID
+
+      ; Get an available location from OSGrid
+      ; Format: X,Y (e.g., 9500,9500)
+      Location = CHANGE_ME_OSGRID_LOCATION
+
+      ; Internal port (must match container port)
+      InternalPort = 9000
+
+      ; IMPORTANT: Your public IP or DDNS hostname
+      ExternalHostName = CHANGE_ME_TO_PUBLIC_IP
+
+      ; Region size (default 256x256)
+      SizeX = 256
+      SizeY = 256
+
+      ; Allow object entry from neighboring regions
+      AllowAlternatePorts = False
