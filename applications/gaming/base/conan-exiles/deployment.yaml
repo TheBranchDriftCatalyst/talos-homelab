@@ -22,11 +22,22 @@ spec:
       annotations:
         backup.velero.io/backup-volumes: "config"
     spec:
-      # melle2/conanexiles-ds requires UID/GID 7100
+      # Let container use its internal user (conanexiles:7100)
+      # Only set fsGroup for volume ownership
       securityContext:
-        runAsUser: 7100
-        runAsGroup: 7100
         fsGroup: 7100
+      initContainers:
+        # Fix ownership on existing volumes
+        - name: fix-permissions
+          image: busybox:latest
+          command: ['sh', '-c', 'chown -R 7100:7100 /conanexiles /conanexiles_config || true']
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: game
+              mountPath: /conanexiles
+            - name: config
+              mountPath: /conanexiles_config
       containers:
         - name: conan-exiles
           image: melle2/conanexiles-ds:latest
