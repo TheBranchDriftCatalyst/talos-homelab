@@ -1,0 +1,148 @@
+---
+# Service Account for VNC proxy access to KubeVirt API
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vnc-proxy
+  labels:
+    app: windows-novnc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vnc-proxy
+rules:
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachines", "virtualmachineinstances"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["subresources.kubevirt.io"]
+    resources: ["virtualmachineinstances/vnc"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vnc-proxy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vnc-proxy
+subjects:
+  - kind: ServiceAccount
+    name: vnc-proxy
+---
+# noVNC web console deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: windows-novnc
+  labels:
+    app: windows-novnc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: windows-novnc
+  template:
+    metadata:
+      labels:
+        app: windows-novnc
+    spec:
+      serviceAccountName: vnc-proxy
+      initContainers:
+        # Download virtctl binary
+        - name: download-virtctl
+          image: curlimages/curl:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              VIRTCTL_VERSION=v1.4.0
+              curl -L -o /shared/virtctl https://github.com/kubevirt/kubevirt/releases/download/${VIRTCTL_VERSION}/virtctl-${VIRTCTL_VERSION}-linux-amd64
+              chmod +x /shared/virtctl
+              echo "virtctl downloaded successfully"
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      containers:
+        # noVNC + websockify (connects to vnc-proxy)
+        - name: novnc
+          image: geek1011/easy-novnc:latest
+          args:
+            - --addr=:8080
+            - --host=localhost
+            - --port=5900
+            - --no-url-password
+            - --novnc-params=resize=remote
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+        # virtctl VNC proxy sidecar
+        - name: vnc-proxy
+          image: bitnami/kubectl:latest
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Starting VNC proxy for windows-gameserver..."
+              /shared/virtctl vnc windows-gameserver \
+                --namespace=gaming \
+                --proxy-only \
+                --address=0.0.0.0 \
+                --port=5900
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+          ports:
+            - containerPort: 5900
+              name: vnc
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: shared
+          emptyDir: {}
+---
+# Service for noVNC web access
+apiVersion: v1
+kind: Service
+metadata:
+  name: windows-novnc
+  labels:
+    app: windows-novnc
+spec:
+  type: ClusterIP
+  selector:
+    app: windows-novnc
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# Traefik IngressRoute for browser access
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: windows-novnc
+  labels:
+    app: windows-novnc
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`windows-vnc.talos00`)
+      kind: Rule
+      services:
+        - name: windows-novnc
+          port: 8080
