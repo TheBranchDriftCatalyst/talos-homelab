@@ -17,13 +17,8 @@ spec:
       nodePort: 30389
       protocol: TCP
 ---
-# Service for Conan Exiles Dedicated Server ports
-# Based on: https://forums.funcom.com/t/conan-exiles-dedicated-server-launcher-official-version-1-7-12-beta-1-8-0/21699
-# Default ports from Dedicated Server Launcher:
-#   - Game Client Port: 27101 (UDP)
-#   - Raw UDP Port: 27102 (UDP)
-#   - Steam Query Port: 27015 (UDP)
-#   - RCON Port: 27104 (TCP)
+# Service for Conan Exiles Dedicated Server ports (UDP)
+# Default ports from Dedicated Server Launcher
 apiVersion: v1
 kind: Service
 metadata:
@@ -37,26 +32,26 @@ spec:
     kubevirt.io/domain: windows-gameserver
   ports:
     - name: game-client
-      port: 27101
-      targetPort: 27101
-      nodePort: 31101
+      port: 7777
+      targetPort: 7777
+      nodePort: 30777
       protocol: UDP
     - name: raw-udp
-      port: 27102
-      targetPort: 27102
-      nodePort: 31102
+      port: 7778
+      targetPort: 7778
+      nodePort: 30778
       protocol: UDP
     - name: steam-query
       port: 27015
       targetPort: 27015
-      nodePort: 31015
+      nodePort: 30015
       protocol: UDP
 ---
-# RCON service (TCP) - separate because K8s services can't mix TCP/UDP
+# TCP services for Conan Exiles (RCON + Web)
 apiVersion: v1
 kind: Service
 metadata:
-  name: conan-exiles-rcon
+  name: conan-exiles-tcp
   labels:
     app: windows-gameserver
     game: conan-exiles
@@ -66,7 +61,12 @@ spec:
     kubevirt.io/domain: windows-gameserver
   ports:
     - name: rcon
-      port: 27104
-      targetPort: 27104
-      nodePort: 31104
+      port: 25575
+      targetPort: 25575
+      nodePort: 30575
+      protocol: TCP
+    - name: web
+      port: 80
+      targetPort: 80
+      nodePort: 30080
       protocol: TCP
