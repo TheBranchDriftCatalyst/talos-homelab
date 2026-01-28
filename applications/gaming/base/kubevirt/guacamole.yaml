@@ -1,0 +1,148 @@
+---
+# guacd - Apache Guacamole proxy daemon
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guacd
+  labels:
+    app: guacd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guacd
+  template:
+    metadata:
+      labels:
+        app: guacd
+    spec:
+      containers:
+        - name: guacd
+          image: guacamole/guacd:latest
+          ports:
+            - containerPort: 4822
+              name: guacd
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guacd
+  labels:
+    app: guacd
+spec:
+  type: ClusterIP
+  selector:
+    app: guacd
+  ports:
+    - name: guacd
+      port: 4822
+      targetPort: 4822
+---
+# Guacamole user-mapping config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guacamole-config
+  labels:
+    app: guacamole
+data:
+  user-mapping.xml: |
+    <user-mapping>
+      <authorize username="admin" password="admin">
+        <connection name="Windows Gameserver (RDP)">
+          <protocol>rdp</protocol>
+          <param name="hostname">windows-gameserver-rdp</param>
+          <param name="port">3389</param>
+          <param name="security">any</param>
+          <param name="ignore-cert">true</param>
+          <param name="color-depth">32</param>
+          <param name="resize-method">reconnect</param>
+          <param name="enable-wallpaper">true</param>
+          <param name="enable-font-smoothing">true</param>
+          <param name="clipboard-encoding">UTF-8</param>
+        </connection>
+      </authorize>
+    </user-mapping>
+---
+# Guacamole web frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guacamole
+  labels:
+    app: guacamole
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: guacamole
+  template:
+    metadata:
+      labels:
+        app: guacamole
+    spec:
+      containers:
+        - name: guacamole
+          image: guacamole/guacamole:latest
+          env:
+            - name: GUACD_HOSTNAME
+              value: guacd
+            - name: GUACD_PORT
+              value: "4822"
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /etc/guacamole/user-mapping.xml
+              subPath: user-mapping.xml
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: guacamole-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guacamole
+  labels:
+    app: guacamole
+spec:
+  type: ClusterIP
+  selector:
+    app: guacamole
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+# Traefik IngressRoute - strips /guacamole prefix
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: guacamole
+  labels:
+    app: guacamole
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`guac.talos00`)
+      kind: Rule
+      services:
+        - name: guacamole
+          port: 8080
