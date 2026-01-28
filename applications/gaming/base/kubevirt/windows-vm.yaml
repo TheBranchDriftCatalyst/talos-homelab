@@ -1,0 +1,125 @@
+---
+# PVC for Windows boot disk (100GB for Windows + Conan Exiles ~60GB)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: windows-gameserver-disk
+  labels:
+    app: windows-gameserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 150Gi
+  storageClassName: local-path
+---
+# PVC for Windows ISO (upload via: virtctl image-upload pvc windows-iso --image-path=/path/to/windows.iso -n gaming)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: windows-iso
+  labels:
+    app: windows-gameserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: local-path
+---
+# Windows VM for Conan Exiles Dedicated Server
+# Uses the official Conan Exiles Dedicated Server Launcher
+# https://forums.funcom.com/t/conan-exiles-dedicated-server-launcher-official-version-1-7-12-beta-1-8-0/21699
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: windows-gameserver
+  labels:
+    app: windows-gameserver
+    game: conan-exiles
+spec:
+  runStrategy: Manual  # Start with: virtctl start windows-gameserver -n gaming
+  template:
+    metadata:
+      labels:
+        app: windows-gameserver
+        kubevirt.io/domain: windows-gameserver
+        game: conan-exiles
+    spec:
+      domain:
+        cpu:
+          cores: 4
+          threads: 2
+        memory:
+          guest: 12Gi  # Conan needs 6-8GB, plus Windows overhead
+        machine:
+          type: q35
+        clock:
+          utc: {}
+          timer:
+            hpet:
+              present: false
+            pit:
+              tickPolicy: delay
+            rtc:
+              tickPolicy: catchup
+            hyperv: {}
+        features:
+          acpi: {}
+          apic: {}
+          hyperv:
+            relaxed: {}
+            vapic: {}
+            spinlocks:
+              spinlocks: 8191
+        devices:
+          disks:
+            - name: bootdisk
+              disk:
+                bus: virtio
+              bootOrder: 1
+            - name: cdrom
+              cdrom:
+                bus: sata
+              bootOrder: 2
+            # VirtIO drivers ISO for Windows (optional but recommended)
+            # - name: virtio-drivers
+            #   cdrom:
+            #     bus: sata
+          interfaces:
+            - name: default
+              masquerade: {}
+              ports:
+                # RDP
+                - name: rdp
+                  port: 3389
+                  protocol: TCP
+                # Conan Exiles ports (from Dedicated Server Launcher)
+                - name: game-client
+                  port: 27101
+                  protocol: UDP
+                - name: raw-udp
+                  port: 27102
+                  protocol: UDP
+                - name: steam-query
+                  port: 27015
+                  protocol: UDP
+                - name: rcon
+                  port: 27104
+                  protocol: TCP
+          inputs:
+            - type: tablet
+              bus: usb
+              name: tablet
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: bootdisk
+          persistentVolumeClaim:
+            claimName: windows-gameserver-disk
+        - name: cdrom
+          persistentVolumeClaim:
+            claimName: windows-iso

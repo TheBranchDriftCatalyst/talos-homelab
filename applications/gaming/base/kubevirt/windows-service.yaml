@@ -1,0 +1,72 @@
+---
+# Service for RDP access to Windows VM
+apiVersion: v1
+kind: Service
+metadata:
+  name: windows-gameserver-rdp
+  labels:
+    app: windows-gameserver
+spec:
+  type: NodePort
+  selector:
+    kubevirt.io/domain: windows-gameserver
+  ports:
+    - name: rdp
+      port: 3389
+      targetPort: 3389
+      nodePort: 30389
+      protocol: TCP
+---
+# Service for Conan Exiles Dedicated Server ports
+# Based on: https://forums.funcom.com/t/conan-exiles-dedicated-server-launcher-official-version-1-7-12-beta-1-8-0/21699
+# Default ports from Dedicated Server Launcher:
+#   - Game Client Port: 27101 (UDP)
+#   - Raw UDP Port: 27102 (UDP)
+#   - Steam Query Port: 27015 (UDP)
+#   - RCON Port: 27104 (TCP)
+apiVersion: v1
+kind: Service
+metadata:
+  name: conan-exiles-game
+  labels:
+    app: windows-gameserver
+    game: conan-exiles
+spec:
+  type: NodePort
+  selector:
+    kubevirt.io/domain: windows-gameserver
+  ports:
+    - name: game-client
+      port: 27101
+      targetPort: 27101
+      nodePort: 31101
+      protocol: UDP
+    - name: raw-udp
+      port: 27102
+      targetPort: 27102
+      nodePort: 31102
+      protocol: UDP
+    - name: steam-query
+      port: 27015
+      targetPort: 27015
+      nodePort: 31015
+      protocol: UDP
+---
+# RCON service (TCP) - separate because K8s services can't mix TCP/UDP
+apiVersion: v1
+kind: Service
+metadata:
+  name: conan-exiles-rcon
+  labels:
+    app: windows-gameserver
+    game: conan-exiles
+spec:
+  type: NodePort
+  selector:
+    kubevirt.io/domain: windows-gameserver
+  ports:
+    - name: rcon
+      port: 27104
+      targetPort: 27104
+      nodePort: 31104
+      protocol: TCP
