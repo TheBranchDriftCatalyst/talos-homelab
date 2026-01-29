@@ -1,0 +1,88 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: kubevirt-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: kubevirt
+spec:
+  groups:
+    - name: kubevirt.recording-rules
+      rules:
+        - record: kubevirt_vmi_memory_used_ratio
+          expr: |
+            kubevirt_vmi_memory_resident_bytes
+            / on(namespace, name) kubevirt_vmi_memory_domain_bytes
+          labels:
+            source: kubevirt
+        - record: kubevirt_vmi_cpu_usage_ratio
+          expr: |
+            rate(kubevirt_vmi_cpu_usage_seconds_total[5m])
+          labels:
+            source: kubevirt
+
+    - name: kubevirt.vm-alerts
+      rules:
+        - alert: KubeVirtVMDown
+          expr: |
+            kubevirt_vmi_phase_count{phase="Running"} == 0
+            and on(name, namespace)
+            kubevirt_vm_running_status_last_transition_timestamp_seconds > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "KubeVirt VM {{ $labels.name }} is not running"
+            description: >-
+              VM {{ $labels.name }} in namespace {{ $labels.namespace }}
+              has been down for more than 5 minutes.
+
+        - alert: KubeVirtVMHighMemory
+          expr: kubevirt_vmi_memory_used_ratio > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "VM {{ $labels.name }} memory above 90%"
+            description: >-
+              VM {{ $labels.name }} in namespace {{ $labels.namespace }}
+              has memory usage above 90% for more than 10 minutes.
+
+        - alert: KubeVirtVMHighCPU
+          expr: kubevirt_vmi_cpu_usage_ratio > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "VM {{ $labels.name }} CPU above 90%"
+            description: >-
+              VM {{ $labels.name }} in namespace {{ $labels.namespace }}
+              has CPU usage above 90% for more than 10 minutes.
+
+    - name: kubevirt.component-alerts
+      rules:
+        - alert: KubeVirtComponentDown
+          expr: |
+            up{job=~".*kubevirt.*"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "KubeVirt component {{ $labels.pod }} is down"
+            description: >-
+              KubeVirt component {{ $labels.pod }} in namespace
+              {{ $labels.namespace }} has been down for 5+ minutes.
+
+        - alert: KubeVirtAPIRequestErrors
+          expr: |
+            rate(kubevirt_rest_client_requests_total{code=~"5.."}[5m])
+            > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "KubeVirt API elevated error rate"
+            description: >-
+              KubeVirt API is returning 5xx errors at a rate of
+              {{ $value }} per second.
