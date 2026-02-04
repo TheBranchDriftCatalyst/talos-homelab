@@ -24,24 +24,18 @@ spec:
       annotations:
         backup.velero.io/backup-volumes: "openclaw-data"
     spec:
-      initContainers:
-        # Write gateway config to bind on all interfaces
-        - name: configure
-          image: busybox:1.36
-          command:
-            - sh
-            - -c
-            - |
-              cat > /data/openclaw.json <<'CONF'
-              {"gateway":{"bind":"lan"}}
-              CONF
-          volumeMounts:
-            - name: openclaw-data
-              mountPath: /data
       containers:
         - name: openclaw
           image: alpine/openclaw:latest
           imagePullPolicy: IfNotPresent
+          # Override default CMD to bind on all interfaces for K8s service/probes
+          args:
+            - "node"
+            - "dist/index.js"
+            - "gateway"
+            - "--allow-unconfigured"
+            - "--bind"
+            - "lan"
           env:
             - name: OPENCLAW_GATEWAY_TOKEN
               valueFrom:
