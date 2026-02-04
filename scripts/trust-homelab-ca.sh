@@ -30,7 +30,7 @@ ok() { echo -e "  ${GREEN}✓${NC} $1"; }
 warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 err() { echo -e "  ${RED}✗${NC} $1"; }
 
-CA_SECRET_NAME="homelab-ca-tls"
+CA_SECRET_NAME="homelab-ca-secret"
 CA_SECRET_NAMESPACE="cert-manager"
 CA_CERT_LABEL="Homelab CA"
 TEMP_CERT=""
