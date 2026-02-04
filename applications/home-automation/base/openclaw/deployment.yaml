@@ -1,0 +1,72 @@
+---
+# OpenClaw - Self-hosted AI personal assistant gateway
+# https://github.com/openclaw/openclaw
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openclaw
+  labels:
+    app: openclaw
+    app.kubernetes.io/name: openclaw
+    app.kubernetes.io/part-of: home-automation
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: openclaw
+  template:
+    metadata:
+      labels:
+        app: openclaw
+        app.kubernetes.io/name: openclaw
+      annotations:
+        backup.velero.io/backup-volumes: "openclaw-data"
+    spec:
+      containers:
+        - name: openclaw
+          image: alpine/openclaw:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OPENCLAW_GATEWAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: openclaw-secrets
+                  key: gateway-token
+            # Route LLM calls through the in-cluster LiteLLM proxy
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-secrets
+                  key: master-key
+            - name: OPENAI_API_BASE
+              value: "http://litellm.home-automation.svc.cluster.local:4000"
+          ports:
+            - name: http
+              containerPort: 18789
+              protocol: TCP
+          volumeMounts:
+            - name: openclaw-data
+              mountPath: /home/node/.openclaw
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+      volumes:
+        - name: openclaw-data
+          persistentVolumeClaim:
+            claimName: openclaw-data
