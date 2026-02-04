@@ -50,6 +50,17 @@ spec:
             capabilities:
               add:
                 - NET_ADMIN
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    ip route flush table 51820 2>/dev/null || true
+                    ip -6 route flush table 51820 2>/dev/null || true
+                    while ip rule del table 51820 2>/dev/null; do :; done
+                    while ip -6 rule del table 51820 2>/dev/null; do :; done
           ports:
             - name: http-proxy
               containerPort: 8888
