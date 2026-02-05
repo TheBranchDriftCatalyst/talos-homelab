@@ -24,6 +24,28 @@ spec:
       annotations:
         backup.velero.io/backup-volumes: "openclaw-data"
     spec:
+      # Merge infrastructure config into PVC so OpenClaw can still write to it
+      initContainers:
+        - name: merge-config
+          image: alpine/openclaw:latest
+          command:
+            - "node"
+            - "-e"
+            - |
+              const fs = require('fs');
+              const defaults = JSON.parse(fs.readFileSync('/tmp/openclaw-defaults/openclaw.json', 'utf8'));
+              const configPath = '/home/node/.openclaw/openclaw.json';
+              let existing = {};
+              try { existing = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
+              // Deep merge: infrastructure settings override, user settings preserved
+              const merged = { ...existing, gateway: { ...existing.gateway, ...defaults.gateway } };
+              fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+              console.log('Config merged:', JSON.stringify(merged, null, 2));
+          volumeMounts:
+            - name: openclaw-data
+              mountPath: /home/node/.openclaw
+            - name: openclaw-config
+              mountPath: /tmp/openclaw-defaults
       containers:
         - name: openclaw
           image: alpine/openclaw:latest
@@ -61,10 +83,6 @@ spec:
           volumeMounts:
             - name: openclaw-data
               mountPath: /home/node/.openclaw
-            - name: openclaw-config
-              mountPath: /home/node/.openclaw/openclaw.json
-              subPath: openclaw.json
-              readOnly: true
           resources:
             requests:
               cpu: 100m
