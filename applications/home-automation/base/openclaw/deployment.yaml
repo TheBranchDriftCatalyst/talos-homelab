@@ -28,11 +28,14 @@ spec:
       initContainers:
         - name: merge-config
           image: alpine/openclaw:latest
+          securityContext:
+            runAsUser: 0
           command:
             - "node"
             - "-e"
             - |
               const fs = require('fs');
+              const { execSync } = require('child_process');
               const defaults = JSON.parse(fs.readFileSync('/tmp/openclaw-defaults/openclaw.json', 'utf8'));
               const configPath = '/home/node/.openclaw/openclaw.json';
               let existing = {};
@@ -40,6 +43,8 @@ spec:
               // Deep merge: infrastructure settings override, user settings preserved
               const merged = { ...existing, gateway: { ...existing.gateway, ...defaults.gateway } };
               fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
+              // Fix ownership so the node user (1000) can write to it at runtime
+              execSync('chown 1000:1000 /home/node/.openclaw/openclaw.json');
               console.log('Config merged:', JSON.stringify(merged, null, 2));
           volumeMounts:
             - name: openclaw-data
