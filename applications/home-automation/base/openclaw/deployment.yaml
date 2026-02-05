@@ -30,37 +30,32 @@ spec:
           image: alpine/openclaw:latest
           securityContext:
             runAsUser: 0
-          env:
-            - name: NOTION_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: openclaw-secrets
-                  key: notion-api-key
           command:
             - "node"
             - "-e"
             - |
               const fs = require('fs');
               const { execSync } = require('child_process');
-              const defaults = JSON.parse(fs.readFileSync('/tmp/openclaw-defaults/openclaw.json', 'utf8'));
+              // Recursive deep merge: infra values override, user values preserved
+              function deepMerge(target, source) {
+                for (const key of Object.keys(source)) {
+                  if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])
+                      && target[key] && typeof target[key] === 'object' && !Array.isArray(target[key])) {
+                    deepMerge(target[key], source[key]);
+                  } else {
+                    target[key] = source[key];
+                  }
+                }
+                return target;
+              }
+              const infra = JSON.parse(fs.readFileSync('/tmp/openclaw-defaults/openclaw.json', 'utf8'));
               const configPath = '/home/node/.openclaw/openclaw.json';
               let existing = {};
               try { existing = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch {}
-              // Deep merge: infrastructure settings override, user settings preserved
-              const merged = { ...existing, gateway: { ...existing.gateway, ...defaults.gateway } };
+              const merged = deepMerge(existing, infra);
               fs.writeFileSync(configPath, JSON.stringify(merged, null, 2));
-              // Fix ownership so the node user (1000) can write to it at runtime
               execSync('chown 1000:1000 /home/node/.openclaw/openclaw.json');
-              // Write API key files that agents/skills may look for on disk
-              const keyFiles = { 'notion/api_key': process.env.NOTION_API_KEY };
-              for (const [path, val] of Object.entries(keyFiles)) {
-                if (!val) continue;
-                const full = '/home/node/.config/' + path;
-                fs.mkdirSync(require('path').dirname(full), { recursive: true });
-                fs.writeFileSync(full, val);
-                execSync('chown -R 1000:1000 /home/node/.config');
-              }
-              console.log('Config merged:', JSON.stringify(merged, null, 2));
+              console.log('Config merged successfully');
           volumeMounts:
             - name: openclaw-data
               mountPath: /home/node/.openclaw
@@ -70,14 +65,9 @@ spec:
         - name: openclaw
           image: alpine/openclaw:latest
           imagePullPolicy: IfNotPresent
-          # Override default CMD to bind on all interfaces for K8s service/probes
-          args:
-            - "node"
-            - "dist/index.js"
-            - "gateway"
-            - "--allow-unconfigured"
-            - "--bind"
-            - "lan"
+          # Default CMD is "node dist/index.js --allow-unconfigured"
+          # --bind lan is the container default; gateway.bind set in config
+          args: ["gateway"]
           env:
             - name: OPENCLAW_GATEWAY_TOKEN
               valueFrom:
