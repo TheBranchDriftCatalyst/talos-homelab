@@ -91,7 +91,16 @@ spec:
             - /bin/bash
             - -c
             - |
-              echo "Starting VNC proxy for windows-gameserver..."
+              echo "Waiting for VMI windows-gameserver to be running..."
+              while true; do
+                PHASE=$(kubectl get vmi windows-gameserver -n gaming -o jsonpath='{.status.phase}' 2>/dev/null)
+                if [ "$PHASE" = "Running" ]; then
+                  echo "VMI is running, starting VNC proxy..."
+                  break
+                fi
+                echo "VMI phase: ${PHASE:-NotFound}, waiting..."
+                sleep 10
+              done
               /shared/virtctl vnc windows-gameserver \
                 --namespace=gaming \
                 --proxy-only \
