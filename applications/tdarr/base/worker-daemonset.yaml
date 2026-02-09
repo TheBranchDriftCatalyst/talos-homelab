@@ -1,6 +1,7 @@
 ---
-# Tdarr Universal Worker - runs on ALL worker nodes
-# Auto-detects GPU (Intel QSV, AMD VAAPI, NVIDIA NVENC) and names accordingly
+# Tdarr GPU Worker - runs on nodes with Intel GPUs (QSV/Arc)
+# Requires gpu.intel.com/i915 resource for reliable GPU access after restarts
+# Uses Intel GPU device plugin for proper GPU allocation
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -19,7 +20,8 @@ spec:
         app: tdarr-worker
         app.kubernetes.io/name: tdarr-worker
     spec:
-      # Run on all worker nodes, skip control-plane
+      # Run only on nodes with Intel GPUs (QSV/Arc capable)
+      # Uses node label set by Intel GPU device plugin
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -27,6 +29,9 @@ spec:
               - matchExpressions:
                   - key: node-role.kubernetes.io/control-plane
                     operator: DoesNotExist
+                  - key: intel.feature.node.kubernetes.io/gpu
+                    operator: In
+                    values: ["true"]
 
       securityContext:
         fsGroup: 44  # video group
@@ -161,7 +166,11 @@ spec:
             requests:
               cpu: "500m"
               memory: 1Gi
-            # No limits - let workers use available node resources
+              gpu.intel.com/i915: "1"
+            limits:
+              # GPU limit ensures exclusive access during encoding
+              gpu.intel.com/i915: "1"
+            # No CPU/memory limits - let workers use available node resources
 
       volumes:
         # Shared node info from init container
