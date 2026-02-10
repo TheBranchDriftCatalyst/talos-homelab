@@ -20,8 +20,9 @@ spec:
         app: tdarr-worker
         app.kubernetes.io/name: tdarr-worker
     spec:
-      # Run only on nodes with Intel GPUs (QSV/Arc capable)
-      # Uses node label set by Intel GPU device plugin
+      # Run only on GPU worker nodes with Intel GPUs
+      # Uses manually-managed gpu-worker role label (not auto-generated plugin label)
+      # GPU resource request filters to only Intel GPU nodes
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -29,9 +30,8 @@ spec:
               - matchExpressions:
                   - key: node-role.kubernetes.io/control-plane
                     operator: DoesNotExist
-                  - key: intel.feature.node.kubernetes.io/gpu
-                    operator: In
-                    values: ["true"]
+                  - key: node-role.kubernetes.io/gpu-worker
+                    operator: Exists
 
       securityContext:
         fsGroup: 44  # video group
