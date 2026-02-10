@@ -1,0 +1,83 @@
+---
+# PostgreSQL for LiteLLM SSO/User Management
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: litellm-postgresql
+  labels:
+    app: litellm
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: litellm-postgresql
+  labels:
+    app: litellm-postgresql
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: litellm-postgresql
+  template:
+    metadata:
+      labels:
+        app: litellm-postgresql
+    spec:
+      containers:
+        - name: postgresql
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_DB
+              value: litellm
+            - name: POSTGRES_USER
+              value: litellm
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: litellm-secrets
+                  key: postgres-password
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "litellm"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "litellm"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: litellm-postgresql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: litellm-postgresql
+  labels:
+    app: litellm-postgresql
+spec:
+  selector:
+    app: litellm-postgresql
+  ports:
+    - port: 5432
+      targetPort: 5432
