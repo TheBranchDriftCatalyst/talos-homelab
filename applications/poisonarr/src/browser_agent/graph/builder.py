@@ -311,7 +311,7 @@ class GraphRunner:
             "error_tracker": self.error_tracker,  # Pass error tracker for learning
             # Vision config for fallback
             "vision_config": {
-                "model": "llava:7b",
+                "model": "llava:13b",
                 "base_url": "http://localhost:11434",
                 "provider": "ollama",
             },

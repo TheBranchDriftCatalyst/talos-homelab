@@ -447,14 +447,19 @@ async def think_node(
     page_title = current_step.get('page_title', '')
 
     # Site-specific selector hints
-    site_hints = ""
+    site_hints = """
+**CRITICAL CODE RULES:**
+- Keep code SHORT (under 1500 chars). Do ONE action per step.
+- NO comments, NO print statements, NO explanations in code.
+- NEVER use wait_for_load_state('networkidle') - it times out!
+- Use page.wait_for_timeout(2000) or wait_for_selector() instead.
+"""
     if "localhost:8888" in page_url or "searxng" in page_title.lower():
-        site_hints = """
-**IMPORTANT: This is SearXNG (NOT Google!). Use these selectors:**
+        site_hints += """
+**SearXNG SELECTORS (NOT Google!):**
 - Search input: `page.get_by_placeholder("Search for...")`
 - Search button: `page.get_by_role("button", name="search")`
 - Results: `page.locator(".result")` or `page.locator("article")`
-**DO NOT use Google selectors like "Google Custom Search" - they don't exist here!**
 """
 
     messages.append({
