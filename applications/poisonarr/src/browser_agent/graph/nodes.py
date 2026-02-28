@@ -292,19 +292,19 @@ async def observe_node(state: Dict[str, Any]) -> Dict[str, Any]:
     a11y_tree = await _get_accessibility_tree(page, max_depth=3)
     observation = a11y_tree
 
-    # Determine if we need vision fallback
+    # Determine if we need vision fallback (be selective to avoid slowdowns)
     need_vision = False
     if perception_mode == PerceptionMode.VISION:
         need_vision = True
     elif perception_mode == PerceptionMode.HYBRID:
         need_vision = True
-    elif consecutive_failures >= 1:
-        # Use vision after failures to understand what's actually on the page
+    elif consecutive_failures >= 2:
+        # Only use vision after 2+ failures (not 1) to avoid slowdowns
         need_vision = True
         logger.info(f"[OBSERVE] Using vision fallback after {consecutive_failures} failures")
 
-    # Check if accessibility tree is too small
-    if len(a11y_tree) < 100 or "error" in a11y_tree.lower():
+    # Check if accessibility tree is too small (very strict threshold)
+    if len(a11y_tree) < 30 or "error" in a11y_tree.lower():
         need_vision = True
         logger.info("[OBSERVE] Accessibility tree too small, using vision")
 
