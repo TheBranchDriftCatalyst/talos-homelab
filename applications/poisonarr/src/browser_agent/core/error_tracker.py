@@ -94,7 +94,12 @@ class PlaywrightErrorTracker:
         "execution_timeout": {
             "pattern": r"Code execution timeout|execution timeout",
             "description": "Code took too long to execute",
-            "fix": "Avoid wait_for_load_state('networkidle') - use specific waits like wait_for_selector() or page.wait_for_timeout(2000)"
+            "fix": "NEVER use wait_for_load_state('networkidle') - use page.wait_for_timeout(2000) or wait_for_selector() instead"
+        },
+        "networkidle_timeout": {
+            "pattern": r"wait_for_load_state.*networkidle|networkidle",
+            "description": "Using networkidle which times out",
+            "fix": "REMOVE wait_for_load_state('networkidle') completely! Use page.wait_for_timeout(2000) instead"
         },
         "undefined_import": {
             "pattern": r"name '(\w+)' is not defined",
@@ -115,6 +120,21 @@ class PlaywrightErrorTracker:
             "pattern": r"localhost:8888|searxng|SearXNG",
             "description": "SearXNG search engine",
             "fix": "SearXNG selectors: input=get_by_placeholder('Search for...'), submit=get_by_role('button', name='search'), results=locator('.result')"
+        },
+        "ssl_protocol_error": {
+            "pattern": r"ERR_SSL_PROTOCOL_ERROR|SSL_ERROR|certificate",
+            "description": "Using HTTPS on HTTP-only service",
+            "fix": "Use http:// not https:// for localhost services. SearXNG is at http://localhost:8888 (no SSL)"
+        },
+        "wrong_protocol": {
+            "pattern": r"https://localhost",
+            "description": "Using HTTPS for localhost service",
+            "fix": "Local services use HTTP not HTTPS. Use http://localhost:8888 for SearXNG"
+        },
+        "code_too_long": {
+            "pattern": r"Code too long|2\d{3} chars|max 2000",
+            "description": "Generated code exceeds 2000 character limit",
+            "fix": "Keep code SHORT! Do ONE action per step. No comments, no print statements, no explanations. Just the minimal code needed for one interaction."
         },
     }
 
