@@ -309,6 +309,12 @@ class GraphRunner:
             "page": page,
             "ui_server": self.ui_server,
             "error_tracker": self.error_tracker,  # Pass error tracker for learning
+            # Vision config for fallback
+            "vision_config": {
+                "model": "llava:7b",
+                "base_url": "http://localhost:11434",
+                "provider": "ollama",
+            },
         }
 
         # Run with timeout
