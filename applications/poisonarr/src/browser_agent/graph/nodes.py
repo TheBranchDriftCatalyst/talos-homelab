@@ -243,6 +243,10 @@ async def observe_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """Observe node: capture current page state.
 
     Gets accessibility tree (primary) or falls back to vision (secondary).
+    Vision fallback triggers when:
+    - Accessibility tree is too small
+    - We have consecutive failures (selectors not working)
+    - Hybrid mode is enabled
 
     Args:
         state: Current agent state dict (must include 'page')
@@ -257,6 +261,8 @@ async def observe_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
     current_step = state.get("current_step", 0) + 1
     perception_mode = PerceptionMode(state.get("perception_mode", "accessibility"))
+    consecutive_failures = state.get("consecutive_failures", 0)
+    goal = state.get("goal", "")
 
     logger.info(f"[OBSERVE] Step {current_step}, mode={perception_mode.value}")
 
@@ -280,22 +286,64 @@ async def observe_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # Get observation based on perception mode
     observation = ""
     actual_mode = perception_mode
+    vision_context = ""
 
-    if perception_mode in (PerceptionMode.ACCESSIBILITY, PerceptionMode.HYBRID):
-        observation = await _get_accessibility_tree(page, max_depth=3)
+    # Always get accessibility tree first
+    a11y_tree = await _get_accessibility_tree(page, max_depth=3)
+    observation = a11y_tree
 
-        if perception_mode == PerceptionMode.HYBRID:
-            # Check if accessibility tree is useful
-            if len(observation) < 100 or "error" in observation.lower():
-                logger.info("[OBSERVE] Accessibility tree too small, trying vision fallback")
-                actual_mode = PerceptionMode.VISION
-                # Vision fallback would go here
-                observation = f"{observation}\n[Vision fallback not implemented]"
+    # Determine if we need vision fallback
+    need_vision = False
+    if perception_mode == PerceptionMode.VISION:
+        need_vision = True
+    elif perception_mode == PerceptionMode.HYBRID:
+        need_vision = True
+    elif consecutive_failures >= 1:
+        # Use vision after failures to understand what's actually on the page
+        need_vision = True
+        logger.info(f"[OBSERVE] Using vision fallback after {consecutive_failures} failures")
 
-    elif perception_mode == PerceptionMode.VISION:
-        # Pure vision mode (not implemented yet)
-        observation = "[Vision-only mode not implemented - using accessibility tree]"
-        observation += "\n" + await _get_accessibility_tree(page, max_depth=3)
+    # Check if accessibility tree is too small
+    if len(a11y_tree) < 100 or "error" in a11y_tree.lower():
+        need_vision = True
+        logger.info("[OBSERVE] Accessibility tree too small, using vision")
+
+    # Get vision analysis if needed
+    if need_vision:
+        try:
+            from ..core.vision import VisionAnalyzer
+
+            # Get vision config from state or use defaults
+            vision_config = state.get("vision_config", {})
+            vision = VisionAnalyzer(
+                model=vision_config.get("model", "llava:13b"),
+                base_url=vision_config.get("base_url", "http://localhost:11434"),
+                enabled=True,
+                provider=vision_config.get("provider", "ollama"),
+            )
+
+            # Get page description
+            actual_mode = PerceptionMode.HYBRID if a11y_tree else PerceptionMode.VISION
+            logger.info(f"[OBSERVE] Getting vision analysis for: {goal[:50]}...")
+
+            # Get selector suggestions for the goal
+            vision_context = await vision.suggest_selectors(page, goal)
+
+            if vision_context and "[Vision" not in vision_context:
+                observation = f"{a11y_tree}\n\n## Vision Analysis (Selector Suggestions)\n{vision_context}"
+                logger.info(f"[OBSERVE] Vision added context: {len(vision_context)} chars")
+
+            # Track vision usage
+            vision_fallback_count = state.get("vision_fallback_count", 0) + 1
+
+            await vision.close()
+
+        except Exception as e:
+            logger.warning(f"[OBSERVE] Vision fallback error: {e}")
+            vision_fallback_count = state.get("vision_fallback_count", 0)
+
+    else:
+        vision_fallback_count = state.get("vision_fallback_count", 0)
 
     # Create step state
     new_step = {
@@ -322,6 +370,7 @@ async def observe_node(state: Dict[str, Any]) -> Dict[str, Any]:
         "current_step": current_step,
         "steps": state.get("steps", []) + [new_step],
         "urls_visited": urls_visited,
+        "vision_fallback_count": vision_fallback_count,
     }
 
 
@@ -616,6 +665,8 @@ async def reflexion_node(
 
     # Get current page structure for context
     page_context = ""
+    vision_analysis = ""
+
     if page:
         try:
             url = page.url
@@ -624,6 +675,37 @@ async def reflexion_node(
             if snapshot:
                 page_context = f"\n## Current Page Structure (URL: {url})\n"
                 page_context += _format_a11y_tree(snapshot, max_depth=2)[:1500]
+
+            # Get vision analysis for better understanding
+            try:
+                from ..core.vision import VisionAnalyzer
+
+                vision_config = state.get("vision_config", {})
+                vision = VisionAnalyzer(
+                    model=vision_config.get("model", "llava:13b"),
+                    base_url=vision_config.get("base_url", "http://localhost:11434"),
+                    enabled=True,
+                    provider=vision_config.get("provider", "ollama"),
+                )
+
+                # Get the last failed code
+                failed_code = ""
+                for s in reversed(steps):
+                    if not s.get("success") and s.get("code"):
+                        failed_code = s.get("code", "")
+                        break
+
+                if failed_code:
+                    vision_analysis = await vision.analyze_failure(page, failed_code, last_error)
+                    if vision_analysis and "[Vision" not in vision_analysis:
+                        page_context += f"\n\n## Vision Analysis of Failure\n{vision_analysis}"
+                        logger.info(f"[REFLEXION] Vision analysis added")
+
+                await vision.close()
+
+            except Exception as ve:
+                logger.debug(f"[REFLEXION] Vision analysis skipped: {ve}")
+
         except Exception as e:
             page_context = f"\n## Page context unavailable: {e}"
 
