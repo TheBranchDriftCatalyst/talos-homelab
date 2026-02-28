@@ -136,6 +136,11 @@ class PlaywrightErrorTracker:
             "description": "Generated code exceeds 2000 character limit",
             "fix": "Keep code SHORT! Do ONE action per step. No comments, no print statements, no explanations. Just the minimal code needed for one interaction."
         },
+        "invalid_contains_selector": {
+            "pattern": r":contains\(|querySelectorAll.*contains",
+            "description": ":contains() is jQuery syntax, not valid CSS",
+            "fix": "NEVER use :contains() - it's jQuery not CSS! Use get_by_text(), get_by_role(), or locator('text=...') instead"
+        },
     }
 
     def __init__(self, persist_path: Optional[Path] = None):

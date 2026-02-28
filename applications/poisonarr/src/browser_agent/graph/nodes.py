@@ -452,6 +452,7 @@ async def think_node(
 - Keep code SHORT (under 1500 chars). Do ONE action per step.
 - NO comments, NO print statements, NO explanations in code.
 - NEVER use wait_for_load_state('networkidle') - it times out!
+- NEVER use :contains() - it's jQuery not CSS! Use get_by_text() instead.
 - Use page.wait_for_timeout(2000) or wait_for_selector() instead.
 """
     if "localhost:8888" in page_url or "searxng" in page_title.lower():
