@@ -7,7 +7,15 @@ data:
   config.yaml: |
     # LLM Settings
     litellm_url: "http://litellm.catalyst-llm.svc.cluster.local:4000/v1"
-    model: "ollama/llama3.2"
+
+    # Two-model architecture
+    # Navigator: Handles browser actions (smaller/faster model)
+    navigator_model: "ollama/qwen2.5:14b"
+    # Reasoner: Handles content understanding (larger/smarter model)
+    reasoner_model: "ollama/qwen2.5:32b"
+
+    # Legacy single model (fallback)
+    model: "ollama/qwen2.5:14b"
 
     # Timing
     min_delay_seconds: 60
@@ -24,6 +32,29 @@ data:
       tech: 20
       search: 25
       social: 10
+
+    # Browser persistence - saves cookies, sessions, login state
+    browser:
+      persist_sessions: true
+      user_data_dir: "/data/browser"  # Mounted via PVC
+
+    # Graph mode (LangGraph orchestration)
+    graph:
+      enabled: true
+      checkpointing: true
+
+    # Reflexion (self-critique on failures)
+    reflexion:
+      enabled: true
+      max_per_session: 5
+      use_reasoner_model: true  # Use 32B model for reflexion
+      consecutive_failures_threshold: 2
+
+    # Plan-and-Execute (upfront planning for known patterns)
+    planning:
+      enabled: true
+      pattern_library_path: "/data/patterns.json"
+      min_confidence: 0.8
 
     # Sites per category
     sites:
