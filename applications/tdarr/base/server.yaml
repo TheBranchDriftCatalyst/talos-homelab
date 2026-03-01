@@ -40,38 +40,41 @@ spec:
             - /bin/sh
             - -c
             - |
+              API="http://localhost:8265/api/v2/cruddb"
+
               echo "Waiting for Tdarr server to be ready..."
               until curl -sf http://localhost:8265/ >/dev/null 2>&1; do
                 sleep 5
               done
               echo "Tdarr server is ready"
 
+              # Get existing flow IDs
+              EXISTING=$(curl -sf "$API" -X POST -H "Content-Type: application/json" \
+                -d '{"data":{"collection":"FlowsJSONDB","mode":"getAll"}}' 2>/dev/null || echo "[]")
+
               # Import each flow from /app/flows
               for flow in /app/flows/*.json; do
                 [ -f "$flow" ] || continue
                 FLOW_NAME=$(basename "$flow")
                 FLOW_ID=$(grep -o '"_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$flow" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+                FLOW_CONTENT=$(cat "$flow")
 
-                echo "Checking if flow $FLOW_NAME (ID: $FLOW_ID) exists..."
+                echo "Processing flow: $FLOW_NAME (ID: $FLOW_ID)"
 
-                # Check if flow already exists
-                EXISTS=$(curl -sf "http://localhost:8265/api/v2/flows" | grep -c "\"_id\":\"$FLOW_ID\"" || true)
-
-                if [ "$EXISTS" -gt 0 ]; then
-                  echo "Flow $FLOW_NAME already exists, updating..."
-                  curl -sf -X PUT "http://localhost:8265/api/v2/flows/$FLOW_ID" \
-                    -H "Content-Type: application/json" \
-                    -d @"$flow" && echo " - Updated" || echo " - Update failed"
+                if echo "$EXISTING" | grep -q "\"_id\":\"$FLOW_ID\""; then
+                  echo "  Flow exists, updating..."
+                  curl -sf "$API" -X POST -H "Content-Type: application/json" \
+                    -d "{\"data\":{\"collection\":\"FlowsJSONDB\",\"mode\":\"update\",\"docID\":\"$FLOW_ID\",\"update\":$FLOW_CONTENT}}" \
+                    && echo "  - Updated" || echo "  - Update failed"
                 else
-                  echo "Importing new flow: $FLOW_NAME"
-                  curl -sf -X POST "http://localhost:8265/api/v2/flows" \
-                    -H "Content-Type: application/json" \
-                    -d @"$flow" && echo " - Imported" || echo " - Import failed"
+                  echo "  Importing new flow..."
+                  curl -sf "$API" -X POST -H "Content-Type: application/json" \
+                    -d "{\"data\":{\"collection\":\"FlowsJSONDB\",\"mode\":\"insert\",\"docToInsert\":$FLOW_CONTENT}}" \
+                    && echo "  - Imported" || echo "  - Import failed"
                 fi
               done
 
               echo "Flow import complete. Sleeping..."
-              # Sleep forever (sidecar must stay running)
               sleep infinity
           volumeMounts:
             - name: flows
