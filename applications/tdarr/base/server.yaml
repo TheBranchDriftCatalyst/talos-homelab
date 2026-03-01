@@ -33,6 +33,52 @@ spec:
         supplementalGroups: [44, 100, 1026]
 
       containers:
+        # Sidecar: imports flows from ConfigMap on startup
+        - name: flow-importer
+          image: curlimages/curl:8.5.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Tdarr server to be ready..."
+              until curl -sf http://localhost:8265/ >/dev/null 2>&1; do
+                sleep 5
+              done
+              echo "Tdarr server is ready"
+
+              # Import each flow from /app/flows
+              for flow in /app/flows/*.json; do
+                [ -f "$flow" ] || continue
+                FLOW_NAME=$(basename "$flow")
+                FLOW_ID=$(grep -o '"_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$flow" | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+
+                echo "Checking if flow $FLOW_NAME (ID: $FLOW_ID) exists..."
+
+                # Check if flow already exists
+                EXISTS=$(curl -sf "http://localhost:8265/api/v2/flows" | grep -c "\"_id\":\"$FLOW_ID\"" || true)
+
+                if [ "$EXISTS" -gt 0 ]; then
+                  echo "Flow $FLOW_NAME already exists, updating..."
+                  curl -sf -X PUT "http://localhost:8265/api/v2/flows/$FLOW_ID" \
+                    -H "Content-Type: application/json" \
+                    -d @"$flow" && echo " - Updated" || echo " - Update failed"
+                else
+                  echo "Importing new flow: $FLOW_NAME"
+                  curl -sf -X POST "http://localhost:8265/api/v2/flows" \
+                    -H "Content-Type: application/json" \
+                    -d @"$flow" && echo " - Imported" || echo " - Import failed"
+                fi
+              done
+
+              echo "Flow import complete. Sleeping..."
+              # Sleep forever (sidecar must stay running)
+              sleep infinity
+          volumeMounts:
+            - name: flows
+              mountPath: /app/flows
+              readOnly: true
+          resources: {}
+
         - name: tdarr
           image: ghcr.io/haveagitgat/tdarr:2.58.02
           imagePullPolicy: IfNotPresent
@@ -71,6 +117,10 @@ spec:
               mountPath: /app/server
             - name: logs
               mountPath: /app/logs
+            # Flow templates (import via UI: Flows > Import)
+            - name: flows
+              mountPath: /app/flows
+              readOnly: true
             # Media access for library scanning
             - name: synology-movies
               mountPath: /media/synology/movies
@@ -107,6 +157,10 @@ spec:
         - name: logs
           persistentVolumeClaim:
             claimName: tdarr-logs
+        # Flow templates from ConfigMap (import via Tdarr UI)
+        - name: flows
+          configMap:
+            name: tdarr-flows
         - name: synology-movies
           persistentVolumeClaim:
             claimName: synology-movies
