@@ -1,4 +1,17 @@
 ---
+# Middleware to strip the buggy asset prefix
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: litellm-strip-prefix
+  labels:
+    app: litellm
+spec:
+  stripPrefix:
+    prefixes:
+      - /litellm-asset-prefix
+
+---
 # Local access (HTTP)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -12,6 +25,16 @@ spec:
   entryPoints:
     - web
   routes:
+    # Route for the buggy asset prefix - strip it and forward
+    - kind: Rule
+      match: Host(`litellm.talos00`) && PathPrefix(`/litellm-asset-prefix`)
+      middlewares:
+        - name: litellm-strip-prefix
+      services:
+        - name: litellm
+          namespace: catalyst-llm
+          port: 4000
+    # Normal routes
     - kind: Rule
       match: Host(`litellm.talos00`)
       services:
