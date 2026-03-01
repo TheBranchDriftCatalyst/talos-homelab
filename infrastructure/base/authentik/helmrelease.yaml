@@ -56,15 +56,21 @@ spec:
           memory: 512Mi
       ingress:
         enabled: false  # We'll use Traefik IngressRoute
-      # Mount custom CSS for Catalyst branding
+      # Mount custom CSS and blueprints
       volumes:
         - name: custom-css
           configMap:
             name: authentik-custom-css
+        - name: litellm-blueprint
+          configMap:
+            name: authentik-litellm-blueprint
       volumeMounts:
         - name: custom-css
           mountPath: /web/dist/custom.css
           subPath: custom.css
+        - name: litellm-blueprint
+          mountPath: /blueprints/custom/litellm-role-mapping.yaml
+          subPath: litellm-role-mapping.yaml
 
     worker:
       replicas: 1
@@ -72,6 +78,15 @@ spec:
         requests:
           cpu: 200m
           memory: 512Mi
+      # Worker needs blueprints for processing
+      volumes:
+        - name: litellm-blueprint
+          configMap:
+            name: authentik-litellm-blueprint
+      volumeMounts:
+        - name: litellm-blueprint
+          mountPath: /blueprints/custom/litellm-role-mapping.yaml
+          subPath: litellm-role-mapping.yaml
 
     # Embedded PostgreSQL
     postgresql:

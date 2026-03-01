@@ -1,5 +1,45 @@
 ---
-# PostgreSQL for LiteLLM SSO/User Management
+# PostgreSQL with pgvector for LiteLLM SSO/User Management and Vector Store
+# Uses pgvector image for embedding storage support
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: litellm-postgresql-init
+  labels:
+    app: litellm-postgresql
+    app.kubernetes.io/name: litellm-postgresql
+    app.kubernetes.io/part-of: catalyst-llm
+data:
+  init-pgvector.sql: |
+    -- Enable pgvector extension for vector similarity search
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+    -- Create vector store tables (litellm-pgvector schema)
+    CREATE TABLE IF NOT EXISTS vector_stores (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      status TEXT DEFAULT 'completed',
+      usage_bytes BIGINT DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS embeddings (
+      id TEXT PRIMARY KEY,
+      vector_store_id TEXT REFERENCES vector_stores(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      embedding vector(1536),  -- OpenAI text-embedding-3-small dimensions
+      metadata JSONB DEFAULT '{}',
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+
+    -- Index for vector similarity search
+    CREATE INDEX IF NOT EXISTS embeddings_vector_idx
+      ON embeddings USING ivfflat (embedding vector_cosine_ops)
+      WITH (lists = 100);
+
+    CREATE INDEX IF NOT EXISTS embeddings_vector_store_idx
+      ON embeddings(vector_store_id);
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -14,7 +54,7 @@ spec:
   storageClassName: local-path
   resources:
     requests:
-      storage: 1Gi
+      storage: 10Gi  # Increased for vector embeddings storage
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -38,7 +78,7 @@ spec:
     spec:
       containers:
         - name: postgresql
-          image: postgres:16-alpine
+          image: pgvector/pgvector:pg16  # PostgreSQL 16 with pgvector extension
           env:
             - name: POSTGRES_DB
               value: litellm
@@ -54,10 +94,12 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
           resources:
             requests:
-              cpu: 50m
-              memory: 128Mi
+              cpu: 100m
+              memory: 256Mi  # Increased for vector operations
           livenessProbe:
             exec:
               command: ["pg_isready", "-U", "litellm"]
@@ -72,6 +114,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: litellm-postgresql
+        - name: init-scripts
+          configMap:
+            name: litellm-postgresql-init
 ---
 apiVersion: v1
 kind: Service

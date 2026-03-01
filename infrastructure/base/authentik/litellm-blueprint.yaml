@@ -1,0 +1,50 @@
+---
+# Authentik Blueprint for LiteLLM OIDC Integration
+# This creates a scope mapping that provides user roles to LiteLLM
+#
+# MANUAL STEP REQUIRED:
+# After this blueprint is applied, add the "LiteLLM Role" scope to your
+# LiteLLM OAuth2 Provider in Authentik UI:
+#   1. Go to Applications > Providers > [LiteLLM Provider]
+#   2. Under "Advanced protocol settings" > "Scopes"
+#   3. Add "LiteLLM Role" to the selected scopes
+#
+# The scope mapping checks if user is in "authentik Admins" or "litellm-admins"
+# group and returns proxy_admin role, otherwise internal_user.
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-litellm-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  litellm-role-mapping.yaml: |
+    # Authentik Blueprint: LiteLLM Role Mapping
+    # https://docs.goauthentik.io/docs/blueprints/
+    version: 1
+    metadata:
+      name: LiteLLM Role Mapping
+      labels:
+        blueprints.goauthentik.io/description: "Scope mapping for LiteLLM proxy admin roles"
+    entries:
+      # Scope Mapping: litellm_role
+      # Returns 'proxy_admin' for users in authentik Admins group, 'internal_user' otherwise
+      - model: authentik_providers_oauth2.scopemapping
+        id: litellm-role-scope-mapping
+        state: present
+        attrs:
+          name: "LiteLLM Role"
+          scope_name: "litellm_role"
+          description: "Returns user role for LiteLLM proxy (proxy_admin or internal_user)"
+          expression: |
+            # Check if user is in the authentik Admins group or a litellm-admins group
+            admin_groups = ["authentik Admins", "litellm-admins"]
+            user_groups = [g.name for g in request.user.ak_groups.all()]
+
+            if any(g in user_groups for g in admin_groups):
+                return {"litellm_role": "proxy_admin"}
+            else:
+                return {"litellm_role": "internal_user"}

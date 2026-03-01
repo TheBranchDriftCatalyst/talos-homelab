@@ -94,6 +94,27 @@ data:
           model: "ollama/granite3.1-dense:8b"
           api_base: "http://192.168.1.86:11434"
 
+      # --- Embedding Models ---
+      # Primary: OpenAI (high quality, low cost)
+      - model_name: "text-embedding-3-small"
+        litellm_params:
+          model: "openai/text-embedding-3-small"
+          api_key: "os.environ/OPENAI_API_KEY"
+      - model_name: "text-embedding-3-large"
+        litellm_params:
+          model: "openai/text-embedding-3-large"
+          api_key: "os.environ/OPENAI_API_KEY"
+
+      # Fallback: Ollama local embeddings (free, runs on Mac workstation)
+      - model_name: "nomic-embed-text"
+        litellm_params:
+          model: "ollama/nomic-embed-text"
+          api_base: "http://192.168.1.86:11434"
+      - model_name: "mxbai-embed-large"
+        litellm_params:
+          model: "ollama/mxbai-embed-large"
+          api_base: "http://192.168.1.86:11434"
+
       # --- Custom Inference Endpoints (RunPod/EC2/vLLM) ---
       # Uncomment and configure when endpoint is ready
       #
@@ -122,3 +143,14 @@ data:
 
     litellm_settings:
       drop_params: true
+
+    # Vector Store Registry for RAG/Knowledge Base support
+    # Uses litellm-pgvector service for OpenAI-compatible vector operations
+    vector_store_registry:
+      - vector_store_name: "catalyst-knowledge-base"
+        litellm_params:
+          # Custom provider pointing to our pgvector service
+          custom_llm_provider: "openai"
+          api_base: "http://litellm-pgvector:8000"
+          api_key: "os.environ/LITELLM_MASTER_KEY"
+          vector_store_description: "Catalyst homelab knowledge base for RAG queries"

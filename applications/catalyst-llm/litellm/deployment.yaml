@@ -25,7 +25,7 @@ spec:
       containers:
         - name: litellm
           image: ghcr.io/berriai/litellm:main-latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           args:
             - "--config=/app/config.yaml"
           env:
@@ -80,9 +80,18 @@ spec:
               value: "http://authentik-server.authentik.svc.cluster.local/application/o/userinfo/"
             - name: GENERIC_CLIENT_STATE
               value: "litellm"
+            # Map Authentik's litellm_role claim to LiteLLM user roles
+            # Requires Authentik property mapping (see docs/authentik-litellm-setup.md)
+            - name: GENERIC_USER_ROLE_ATTRIBUTE
+              value: "litellm_role"
             # External URL for SSO redirect callbacks
             - name: PROXY_BASE_URL
               value: "http://litellm.talos00"
+            # Writable paths for UI assets
+            - name: LITELLM_UI_PATH
+              value: "/tmp/litellm/ui"
+            - name: LITELLM_ASSETS_PATH
+              value: "/tmp/litellm/assets"
           ports:
             - name: http
               containerPort: 4000
@@ -92,6 +101,8 @@ spec:
               mountPath: /app/config.yaml
               subPath: config.yaml
               readOnly: true
+            - name: litellm-tmp
+              mountPath: /tmp/litellm
           resources:
             requests:
               cpu: 50m
@@ -113,3 +124,5 @@ spec:
         - name: config
           configMap:
             name: litellm-config
+        - name: litellm-tmp
+          emptyDir: {}
