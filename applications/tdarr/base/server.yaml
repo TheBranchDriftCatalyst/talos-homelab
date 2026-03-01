@@ -62,14 +62,17 @@ spec:
                 echo "Processing flow: $FLOW_NAME (ID: $FLOW_ID)"
 
                 if echo "$EXISTING" | grep -q "\"_id\":\"$FLOW_ID\""; then
-                  echo "  Flow exists, updating..."
+                  echo "  Flow exists, replacing..."
+                  # Remove old, insert new (update doesn't replace all fields)
                   curl -sf "$API" -X POST -H "Content-Type: application/json" \
-                    -d "{\"data\":{\"collection\":\"FlowsJSONDB\",\"mode\":\"update\",\"docID\":\"$FLOW_ID\",\"update\":$FLOW_CONTENT}}" \
-                    && echo "  - Updated" || echo "  - Update failed"
+                    -d "{\"data\":{\"collection\":\"FlowsJSONDB\",\"mode\":\"removeOne\",\"docID\":\"$FLOW_ID\"}}"
+                  curl -sf "$API" -X POST -H "Content-Type: application/json" \
+                    -d "{\"data\":{\"collection\":\"FlowsJSONDB\",\"mode\":\"insert\",\"docID\":\"$FLOW_ID\",\"obj\":$FLOW_CONTENT}}" \
+                    && echo "  - Replaced" || echo "  - Replace failed"
                 else
                   echo "  Importing new flow..."
                   curl -sf "$API" -X POST -H "Content-Type: application/json" \
-                    -d "{\"data\":{\"collection\":\"FlowsJSONDB\",\"mode\":\"insert\",\"docToInsert\":$FLOW_CONTENT}}" \
+                    -d "{\"data\":{\"collection\":\"FlowsJSONDB\",\"mode\":\"insert\",\"docID\":\"$FLOW_ID\",\"obj\":$FLOW_CONTENT}}" \
                     && echo "  - Imported" || echo "  - Import failed"
                 fi
               done
