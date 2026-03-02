@@ -2,11 +2,16 @@
 # Media automation stack (Sonarr, Radarr, Plex, etc.)
 #
 # Can run standalone or be included by root Tiltfile.
-# Observe-only mode - Flux manages all deployments.
+# Observe-only mode - Flux manages all deployments., backup dbs etc.
+# Also attaches certain dev commands and tooling for dev tweaking of the live cluster in certain places
 
 # Load extensions
 load('ext://uibutton', 'cmd_button', 'location')
 load('ext://k8s_attach', 'k8s_attach')
+
+# Load shared modules
+load('../../tilt/_shared/kometa_ops.star', 'kometa_buttons')
+load('../../tilt/_shared/homepage_ops.star', 'homepage_sync_button')
 
 # Allow homelab context
 allow_k8s_contexts('admin@homelab-single')
@@ -68,42 +73,8 @@ k8s_attach('kometa', 'deployment/kometa', namespace='media',
 k8s_attach('posterizarr', 'deployment/posterizarr', namespace='media',
            port_forwards=['8000:8000'], labels=[LABEL_PLEX_TOOLS])
 
-# Kometa ops buttons
-cmd_button(
-    name='btn-kometa-run',
-    resource='kometa',
-    argv=['sh', '-c', '''
-        echo "Starting Kometa run..." && \
-        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run && \
-        echo "Kometa run complete"
-    '''],
-    text='Run Now',
-    icon_name='play_arrow'
-)
-
-cmd_button(
-    name='btn-kometa-overlays',
-    resource='kometa',
-    argv=['sh', '-c', '''
-        echo "Running Kometa overlays only..." && \
-        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run --overlays-only && \
-        echo "Overlays complete"
-    '''],
-    text='Overlays Only',
-    icon_name='layers'
-)
-
-cmd_button(
-    name='btn-kometa-collections',
-    resource='kometa',
-    argv=['sh', '-c', '''
-        echo "Running Kometa collections only..." && \
-        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run --collections-only && \
-        echo "Collections complete"
-    '''],
-    text='Collections Only',
-    icon_name='folder_special'
-)
+# Kometa ops buttons (from shared module)
+kometa_buttons('kometa', 'media')
 
 # ============================================
 # Dashboard
@@ -112,16 +83,8 @@ cmd_button(
 k8s_attach('homepage', 'deployment/homepage', namespace='media',
            port_forwards=['3001:3000'], labels=[LABEL_DASH])
 
-cmd_button(
-    name='btn-sync-api-keys',
-    resource='homepage',
-    argv=['sh', '-c', '''./applications/arr-stack/scripts/sync-api-keys.sh && \
-        kubectl rollout restart deployment homepage -n media && \
-        kubectl rollout status deployment homepage -n media --timeout=60s && \
-        echo "" && echo "Homepage restarted with updated API keys"'''],
-    text='Sync API Keys',
-    icon_name='sync'
-)
+# Homepage sync button (from shared module)
+homepage_sync_button('homepage', './scripts/sync-api-keys.sh')
 
 # Show namespace dashboard on Tiltfile load (--plain for non-TTY output)
 print(local('./scripts/namespace-dashboard.sh media --plain 2>/dev/null || true', quiet=True))

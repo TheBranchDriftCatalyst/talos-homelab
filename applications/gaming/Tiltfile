@@ -1,0 +1,161 @@
+# Gaming Tiltfile
+# KubeVirt VMs, OpenSim, and Guacamole remote access
+#
+# Can run standalone: cd applications/gaming && tilt up
+# Or included from root Tiltfile
+
+# Load extensions
+load('ext://uibutton', 'cmd_button', 'location', 'text_input', 'choice_input')
+load('ext://k8s_attach', 'k8s_attach')
+
+# Allow homelab context
+allow_k8s_contexts('admin@catalyst-cluster')
+
+# Configuration
+namespace = 'gaming'
+LABEL_GAMING = '1-apps-gaming'
+
+# ============================================
+# Remote Access - Guacamole
+# ============================================
+
+k8s_attach('guacamole', 'deployment/guacamole', namespace=namespace,
+           port_forwards=['8088:8080'], labels=[LABEL_GAMING],
+           links=[
+               link('http://guac.talos00', 'Guacamole (Ingress)'),
+               link('http://localhost:8088', 'Guacamole (Local)'),
+           ])
+
+k8s_attach('guacd', 'deployment/guacd', namespace=namespace, labels=[LABEL_GAMING])
+
+cmd_button(
+    name='btn-guac-status',
+    resource='guacamole',
+    argv=['sh', '-c', '''
+        echo "=== Guacamole Status ===" && \
+        kubectl get pods -n gaming -l app=guacamole -o wide && \
+        echo "" && echo "=== guacd Status ===" && \
+        kubectl get pods -n gaming -l app=guacd -o wide
+    '''],
+    text='Status',
+    icon_name='info'
+)
+
+# ============================================
+# KubeVirt Windows VM
+# ============================================
+
+# VM status resource (CRD, not standard deployment)
+local_resource(
+    'windows-gameserver',
+    cmd='''
+        echo "=== VM Status ===" && \
+        kubectl get vm windows-gameserver -n gaming -o wide 2>/dev/null || echo "VM not found" && \
+        echo "" && echo "=== VMI Status ===" && \
+        kubectl get vmi windows-gameserver -n gaming -o wide 2>/dev/null || echo "VMI not running"
+    ''',
+    auto_init=True,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=[LABEL_GAMING],
+    links=[
+        link('http://guac.talos00', 'Access via Guacamole'),
+    ]
+)
+
+cmd_button(
+    name='btn-vm-start',
+    resource='windows-gameserver',
+    argv=['sh', '-c', '''
+        echo "Starting Windows VM..." && \
+        virtctl start windows-gameserver -n gaming && \
+        echo "VM start initiated. Use 'VM Status' to check progress."
+    '''],
+    text='Start VM',
+    icon_name='play_arrow'
+)
+
+cmd_button(
+    name='btn-vm-stop',
+    resource='windows-gameserver',
+    argv=['sh', '-c', '''
+        echo "Stopping Windows VM gracefully..." && \
+        virtctl stop windows-gameserver -n gaming --grace-period=60 && \
+        echo "VM stop initiated."
+    '''],
+    text='Stop VM',
+    icon_name='stop',
+    requires_confirmation=True
+)
+
+cmd_button(
+    name='btn-vm-restart',
+    resource='windows-gameserver',
+    argv=['sh', '-c', '''
+        echo "Restarting Windows VM..." && \
+        virtctl restart windows-gameserver -n gaming --grace-period=60 && \
+        echo "VM restart initiated."
+    '''],
+    text='Restart VM',
+    icon_name='refresh',
+    requires_confirmation=True
+)
+
+cmd_button(
+    name='btn-vm-console',
+    resource='windows-gameserver',
+    argv=['sh', '-c', '''
+        echo "Opening serial console (Ctrl+] to exit)..." && \
+        virtctl console windows-gameserver -n gaming
+    '''],
+    text='Serial Console',
+    icon_name='terminal'
+)
+
+cmd_button(
+    name='btn-vm-vnc',
+    resource='windows-gameserver',
+    argv=['sh', '-c', '''
+        echo "Opening VNC viewer..." && \
+        virtctl vnc windows-gameserver -n gaming --proxy-only &
+        VNC_PID=$!
+        echo "VNC proxy started on localhost:5900" && \
+        echo "Connect with any VNC viewer" && \
+        echo "Press Enter to stop proxy..." && \
+        read && kill $VNC_PID 2>/dev/null
+    '''],
+    text='VNC Proxy',
+    icon_name='desktop_windows'
+)
+
+cmd_button(
+    name='btn-vm-rdp',
+    resource='windows-gameserver',
+    argv=['sh', '-c', '''
+        echo "Starting RDP port-forward to Windows VM..." && \
+        echo "Connect with: rdesktop localhost:3389 or Microsoft Remote Desktop" && \
+        kubectl port-forward svc/windows-gameserver-rdp -n gaming 3389:3389
+    '''],
+    text='RDP Forward',
+    icon_name='connected_tv'
+)
+
+cmd_button(
+    name='btn-vm-status',
+    resource='windows-gameserver',
+    argv=['sh', '-c', '''
+        echo "=== VirtualMachine ===" && \
+        kubectl get vm windows-gameserver -n gaming -o yaml | grep -A 20 "status:" && \
+        echo "" && echo "=== VirtualMachineInstance ===" && \
+        kubectl get vmi windows-gameserver -n gaming -o yaml 2>/dev/null | grep -A 30 "status:" || echo "VMI not running"
+    '''],
+    text='Detailed Status',
+    icon_name='assessment'
+)
+
+# ============================================
+# OpenSim (if deployed)
+# ============================================
+
+# Uncomment if OpenSim is deployed
+# k8s_attach('opensim', 'deployment/opensim', namespace=namespace,
+#            port_forwards=['9000:9000'], labels=[LABEL_GAMING])

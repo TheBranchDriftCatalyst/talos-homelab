@@ -1,0 +1,135 @@
+# Home Automation Tiltfile
+# Home Assistant, Linkwarden, Omnitools
+#
+# Can run standalone: cd applications/home-automation && tilt up
+# Or included from root Tiltfile
+
+# Load extensions
+load('ext://uibutton', 'cmd_button')
+load('ext://k8s_attach', 'k8s_attach')
+
+# Allow homelab context
+allow_k8s_contexts('admin@catalyst-cluster')
+
+# Configuration
+namespace = 'home-automation'
+LABEL_HOME = '1-apps-home'
+
+# ============================================
+# Home Assistant
+# ============================================
+
+k8s_attach('homeassistant', 'deployment/homeassistant', namespace=namespace,
+           port_forwards=['8123:8123'], labels=[LABEL_HOME],
+           links=[
+               link('http://homeassistant.talos00', 'Home Assistant (Ingress)'),
+               link('http://localhost:8123', 'Home Assistant (Local)'),
+           ])
+
+cmd_button(
+    name='btn-ha-check-config',
+    resource='homeassistant',
+    argv=['sh', '-c', '''
+        echo "Checking Home Assistant configuration..." && \
+        kubectl exec -n home-automation deploy/homeassistant -c homeassistant -- \
+            python -m homeassistant --script check_config --config /config && \
+        echo "Configuration valid!"
+    '''],
+    text='Check Config',
+    icon_name='check_circle'
+)
+
+cmd_button(
+    name='btn-ha-restart',
+    resource='homeassistant',
+    argv=['sh', '-c', '''
+        echo "Restarting Home Assistant..." && \
+        kubectl rollout restart deployment homeassistant -n home-automation && \
+        kubectl rollout status deployment homeassistant -n home-automation --timeout=120s && \
+        echo "Home Assistant restarted"
+    '''],
+    text='Restart',
+    icon_name='refresh',
+    requires_confirmation=True
+)
+
+cmd_button(
+    name='btn-ha-logs',
+    resource='homeassistant',
+    argv=['sh', '-c', '''
+        echo "=== Home Assistant Logs (last 50 lines) ===" && \
+        kubectl logs -n home-automation deploy/homeassistant -c homeassistant --tail=50
+    '''],
+    text='Logs',
+    icon_name='description'
+)
+
+cmd_button(
+    name='btn-ha-config-backup',
+    resource='homeassistant',
+    argv=['sh', '-c', '''
+        echo "Backing up Home Assistant config to local directory..." && \
+        kubectl cp home-automation/$(kubectl get pod -n home-automation -l app=homeassistant -o jsonpath="{.items[0].metadata.name}"):/config ./ha-backup-$(date +%Y%m%d-%H%M%S) && \
+        echo "Backup complete"
+    '''],
+    text='Backup Config',
+    icon_name='backup'
+)
+
+# ============================================
+# Matter Server (sidecar in HA pod)
+# ============================================
+
+cmd_button(
+    name='btn-matter-status',
+    resource='homeassistant',
+    argv=['sh', '-c', '''
+        echo "=== Matter Server Status ===" && \
+        kubectl logs -n home-automation deploy/homeassistant -c matter-server --tail=20
+    '''],
+    text='Matter Status',
+    icon_name='hub'
+)
+
+# ============================================
+# Linkwarden - Bookmark Manager
+# ============================================
+
+k8s_attach('linkwarden', 'deployment/linkwarden', namespace=namespace,
+           port_forwards=['3030:3000'], labels=[LABEL_HOME],
+           links=[
+               link('http://linkwarden.talos00', 'Linkwarden (Ingress)'),
+               link('http://localhost:3030', 'Linkwarden (Local)'),
+           ])
+
+cmd_button(
+    name='btn-linkwarden-logs',
+    resource='linkwarden',
+    argv=['sh', '-c', '''
+        echo "=== Linkwarden Logs (last 30 lines) ===" && \
+        kubectl logs -n home-automation deploy/linkwarden --tail=30
+    '''],
+    text='Logs',
+    icon_name='description'
+)
+
+# ============================================
+# Omnitools - Utility Container
+# ============================================
+
+k8s_attach('omnitools', 'deployment/omnitools', namespace=namespace,
+           port_forwards=['8080:8080'], labels=[LABEL_HOME],
+           links=[
+               link('http://omnitools.talos00', 'Omnitools (Ingress)'),
+           ])
+
+cmd_button(
+    name='btn-omnitools-shell',
+    resource='omnitools',
+    argv=['sh', '-c', '''
+        echo "Starting shell in omnitools pod..." && \
+        kubectl exec -it -n home-automation deploy/omnitools -- /bin/bash
+    '''],
+    text='Shell',
+    icon_name='terminal'
+)

@@ -12,6 +12,13 @@
 load('ext://uibutton', 'cmd_button', 'location', 'text_input', 'bool_input', 'choice_input')
 load('ext://k8s_attach', 'k8s_attach')
 
+# Load shared modules
+load('./tilt/_shared/labels.star', 'LABELS')
+load('./tilt/_shared/flux_ops.star', 'flux_nav_button')
+load('./tilt/_shared/cluster_ops.star', 'cleanup_nav_button', 'health_nav_button', 'pods_nav_button')
+load('./tilt/_shared/kometa_ops.star', 'kometa_buttons')
+load('./tilt/_shared/homepage_ops.star', 'homepage_sync_button')
+
 # Configuration
 config.define_string('k8s_context', args=False, usage='Kubernetes context to use')
 cfg = config.parse()
@@ -39,82 +46,22 @@ print("""
 """ % settings['k8s_context'])
 
 # ============================================
-# LABEL CONSTANTS - Controls UI grouping
+# LABEL CONSTANTS - From shared module
 # ============================================
-LABEL_MEDIA = '1-apps-media'
-LABEL_PLATFORM = '2-infra-platform'
-LABEL_OBSERVE = '3-infra-observe'
-LABEL_TOOLS = '4-tools'
-LABEL_OPS = '5-ops'
+LABEL_MEDIA = LABELS.MEDIA
+LABEL_PLATFORM = LABELS.PLATFORM
+LABEL_OBSERVE = LABELS.OBSERVE
+LABEL_TOOLS = LABELS.TOOLS
+LABEL_OPS = LABELS.OPS
 
 # ============================================
-# NAV BUTTONS - Quick actions
+# NAV BUTTONS - From shared modules
 # ============================================
 
-cmd_button(
-    name='btn-flux',
-    argv=['sh', '-c', '''
-        case "$FLUX_ACTION" in
-            "sync") flux reconcile kustomization flux-system --with-source && echo "Flux synced" ;;
-            "suspend") flux suspend kustomization --all && echo "All kustomizations suspended" ;;
-            "resume") flux resume kustomization --all && echo "All kustomizations resumed" ;;
-            "status") flux get all ;;
-            *) echo "Unknown action: $FLUX_ACTION" ;;
-        esac
-    '''],
-    location=location.NAV,
-    text='Flux',
-    icon_name='sync',
-    inputs=[
-        choice_input('FLUX_ACTION', 'Action', ['status', 'sync', 'suspend', 'resume'])
-    ]
-)
-
-cmd_button(
-    name='btn-cluster-health',
-    argv=['sh', '-c', '''echo "=== Nodes ===" && kubectl get nodes -o wide && \
-        echo "" && echo "=== Problem Pods ===" && \
-        kubectl get pods -A | grep -v Running | grep -v Completed | grep -v "^NAMESPACE" || echo "All pods healthy"'''],
-    location=location.NAV,
-    text='Health',
-    icon_name='favorite'
-)
-
-cmd_button(
-    name='btn-cleanup',
-    argv=['sh', '-c', '''
-        case "$CLEANUP_TYPE" in
-            "failed") kubectl delete pods --field-selector=status.phase=Failed -A && echo "Failed pods deleted" ;;
-            "completed") kubectl delete pods --field-selector=status.phase=Succeeded -A && echo "Completed pods deleted" ;;
-            "evicted") kubectl get pods -A -o json | jq -r ".items[] | select(.status.reason==\"Evicted\") | .metadata.namespace + \" \" + .metadata.name" | xargs -r -n2 sh -c "kubectl delete pod -n \\$0 \\$1" && echo "Evicted pods deleted" ;;
-            "all") kubectl delete pods --field-selector=status.phase=Failed -A 2>/dev/null; kubectl delete pods --field-selector=status.phase=Succeeded -A 2>/dev/null; echo "All stale pods deleted" ;;
-            *) echo "Unknown cleanup type: $CLEANUP_TYPE" ;;
-        esac
-    '''],
-    location=location.NAV,
-    text='Cleanup',
-    icon_name='auto_delete',
-    inputs=[
-        choice_input('CLEANUP_TYPE', 'Type', ['all', 'failed', 'completed', 'evicted'])
-    ],
-    requires_confirmation=True
-)
-
-cmd_button(
-    name='btn-pods',
-    argv=['sh', '-c', '''
-        case "$NAMESPACE" in
-            "all") kubectl get pods -A ;;
-            *) kubectl get pods -n "$NAMESPACE" ;;
-        esac
-    '''],
-    location=location.NAV,
-    text='Pods',
-    icon_name='view_list',
-    inputs=[
-        choice_input('NAMESPACE', 'Namespace', ['all', 'media', 'monitoring', 'observability', 'argocd', 'traefik', 'kube-system', 'intel-device-plugins'])
-    ]
-)
+flux_nav_button()
+health_nav_button()
+cleanup_nav_button()
+pods_nav_button(['all', 'media', 'monitoring', 'observability', 'argocd', 'traefik', 'kube-system', 'intel-device-plugins', 'gaming', 'home-automation', 'tdarr', 'zipline'])
 
 # ============================================
 # OPS - Manual tasks and jobs
@@ -215,53 +162,11 @@ k8s_attach('tautulli', 'deployment/tautulli', namespace='media',
 k8s_attach('posterr', 'deployment/posterr', namespace='media',
            port_forwards=['3002:3000'], labels=[LABEL_MEDIA])
 
-# Kometa ops buttons
-cmd_button(
-    name='btn-kometa-run',
-    resource='kometa',
-    argv=['sh', '-c', '''
-        echo "Starting Kometa run..." && \
-        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run && \
-        echo "Kometa run complete"
-    '''],
-    text='Run Now',
-    icon_name='play_arrow'
-)
+# Kometa ops buttons (from shared module)
+kometa_buttons('kometa', 'media')
 
-cmd_button(
-    name='btn-kometa-overlays',
-    resource='kometa',
-    argv=['sh', '-c', '''
-        echo "Running Kometa overlays only..." && \
-        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run --overlays-only && \
-        echo "Overlays complete"
-    '''],
-    text='Overlays Only',
-    icon_name='layers'
-)
-
-cmd_button(
-    name='btn-kometa-collections',
-    resource='kometa',
-    argv=['sh', '-c', '''
-        echo "Running Kometa collections only..." && \
-        kubectl exec -n media deploy/kometa -c kometa -- python kometa.py --run --collections-only && \
-        echo "Collections complete"
-    '''],
-    text='Collections Only',
-    icon_name='folder_special'
-)
-
-cmd_button(
-    name='btn-sync-api-keys',
-    resource='homepage',
-    argv=['sh', '-c', '''./applications/arr-stack/scripts/sync-api-keys.sh && \
-        kubectl rollout restart deployment homepage -n media && \
-        kubectl rollout status deployment homepage -n media --timeout=60s && \
-        echo "" && echo "✓ Homepage restarted with updated API keys"'''],
-    text='Sync API Keys',
-    icon_name='sync'
-)
+# Homepage sync button (from shared module)
+homepage_sync_button('homepage', './applications/arr-stack/scripts/sync-api-keys.sh')
 
 # ============================================
 # PLATFORM - Core infrastructure
@@ -389,6 +294,30 @@ include('./infrastructure/base/vpn-gateway/Tiltfile')
 include('./applications/catalyst-llm/Tiltfile')
 
 # ============================================
+# GAMING - KubeVirt VMs, Guacamole
+# ============================================
+
+include('./applications/gaming/Tiltfile')
+
+# ============================================
+# HOME AUTOMATION - Home Assistant, Linkwarden
+# ============================================
+
+include('./applications/home-automation/Tiltfile')
+
+# ============================================
+# TDARR - Distributed transcoding
+# ============================================
+
+include('./applications/tdarr/Tiltfile')
+
+# ============================================
+# ZIPLINE - Image/file sharing
+# ============================================
+
+include('./applications/zipline/Tiltfile')
+
+# ============================================
 # CONFIGURATION
 # ============================================
 
@@ -400,7 +329,9 @@ update_settings(
 
 print("""
 Ready! UI Groups:
-  1-apps-media     - Sonarr, Radarr, Plex, Jellyfin, etc.
+  1-apps-media     - Sonarr, Radarr, Plex, Jellyfin, Tdarr, Zipline
+  1-apps-home      - Home Assistant, Linkwarden, Omnitools
+  1-apps-gaming    - Windows VM, Guacamole
   2-infra-platform - ArgoCD, Traefik, Registry, External Secrets
   3-infra-observe  - Grafana, Mimir, Loki, Tempo, Alloy
   5-ops            - Cluster status, GPU tests, deployments

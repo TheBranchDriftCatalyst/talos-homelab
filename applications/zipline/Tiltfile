@@ -1,0 +1,105 @@
+# Zipline Tiltfile
+# Self-hosted image/file sharing
+#
+# Can run standalone: cd applications/zipline && tilt up
+# Or included from root Tiltfile
+
+# Load extensions
+load('ext://uibutton', 'cmd_button')
+load('ext://k8s_attach', 'k8s_attach')
+
+# Allow homelab context
+allow_k8s_contexts('admin@catalyst-cluster')
+
+# Configuration
+namespace = 'zipline'
+LABEL_ZIPLINE = '1-apps-media'
+
+# ============================================
+# Zipline Application
+# ============================================
+
+k8s_attach('zipline', 'deployment/zipline', namespace=namespace,
+           port_forwards=['3050:3000'],
+           labels=[LABEL_ZIPLINE],
+           links=[
+               link('http://zipline.talos00', 'Zipline (Ingress)'),
+               link('http://localhost:3050', 'Zipline (Local)'),
+           ])
+
+cmd_button(
+    name='btn-zipline-logs',
+    resource='zipline',
+    argv=['sh', '-c', '''
+        echo "=== Zipline Logs (last 50 lines) ===" && \
+        kubectl logs -n zipline deploy/zipline -c zipline --tail=50
+    '''],
+    text='App Logs',
+    icon_name='description'
+)
+
+cmd_button(
+    name='btn-zipline-db-logs',
+    resource='zipline',
+    argv=['sh', '-c', '''
+        echo "=== PostgreSQL Logs (last 30 lines) ===" && \
+        kubectl logs -n zipline deploy/zipline -c postgres --tail=30
+    '''],
+    text='DB Logs',
+    icon_name='storage'
+)
+
+cmd_button(
+    name='btn-zipline-status',
+    resource='zipline',
+    argv=['sh', '-c', '''
+        echo "=== Zipline Status ===" && \
+        kubectl get pods -n zipline -o wide && \
+        echo "" && echo "=== Storage ===" && \
+        kubectl get pvc -n zipline
+    '''],
+    text='Status',
+    icon_name='info'
+)
+
+cmd_button(
+    name='btn-zipline-restart',
+    resource='zipline',
+    argv=['sh', '-c', '''
+        echo "Restarting Zipline..." && \
+        kubectl rollout restart deployment zipline -n zipline && \
+        kubectl rollout status deployment zipline -n zipline --timeout=120s && \
+        echo "Zipline restarted"
+    '''],
+    text='Restart',
+    icon_name='refresh',
+    requires_confirmation=True
+)
+
+cmd_button(
+    name='btn-zipline-upload-stats',
+    resource='zipline',
+    argv=['sh', '-c', '''
+        echo "=== Upload Directory Stats ===" && \
+        kubectl exec -n zipline deploy/zipline -c zipline -- sh -c '
+            echo "Total files: $(find /zipline/uploads -type f 2>/dev/null | wc -l)"
+            echo "Total size: $(du -sh /zipline/uploads 2>/dev/null | cut -f1)"
+            echo ""
+            echo "Recent uploads (last 10):"
+            ls -lt /zipline/uploads 2>/dev/null | head -10
+        '
+    '''],
+    text='Upload Stats',
+    icon_name='analytics'
+)
+
+cmd_button(
+    name='btn-zipline-db-shell',
+    resource='zipline',
+    argv=['sh', '-c', '''
+        echo "Starting PostgreSQL shell..." && \
+        kubectl exec -it -n zipline deploy/zipline -c postgres -- psql -U zipline -d zipline
+    '''],
+    text='DB Shell',
+    icon_name='terminal'
+)

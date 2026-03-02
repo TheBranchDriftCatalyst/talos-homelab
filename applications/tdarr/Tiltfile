@@ -1,0 +1,182 @@
+# Tdarr Tiltfile
+# Distributed transcoding with GPU workers
+#
+# Can run standalone: cd applications/tdarr && tilt up
+# Or included from root Tiltfile
+
+# Load extensions
+load('ext://uibutton', 'cmd_button', 'choice_input')
+load('ext://k8s_attach', 'k8s_attach')
+
+# Allow homelab context
+allow_k8s_contexts('admin@catalyst-cluster')
+
+# Configuration
+namespace = 'tdarr'
+LABEL_TDARR = '1-apps-media'
+
+# ============================================
+# Tdarr Server
+# ============================================
+
+k8s_attach('tdarr-server', 'deployment/tdarr-server', namespace=namespace,
+           port_forwards=[
+               '8265:8265',  # Web UI
+               '8266:8266',  # Server API (for workers)
+           ],
+           labels=[LABEL_TDARR],
+           links=[
+               link('http://tdarr.talos00', 'Tdarr (Ingress)'),
+               link('http://localhost:8265', 'Tdarr (Local)'),
+           ])
+
+cmd_button(
+    name='btn-tdarr-dashboard',
+    resource='tdarr-server',
+    argv=['sh', '-c', '''
+        ./scripts/tdarr-dashboard.sh 2>/dev/null || echo "Dashboard script not found"
+    '''],
+    text='Dashboard',
+    icon_name='dashboard'
+)
+
+cmd_button(
+    name='btn-tdarr-workers',
+    resource='tdarr-server',
+    argv=['sh', '-c', '''
+        echo "=== Tdarr Workers ===" && \
+        kubectl get pods -n tdarr -l app=tdarr-worker -o wide && \
+        echo "" && echo "=== Worker Nodes ===" && \
+        kubectl get nodes -l node-role.kubernetes.io/gpu-worker -o wide
+    '''],
+    text='List Workers',
+    icon_name='groups'
+)
+
+cmd_button(
+    name='btn-tdarr-restart-server',
+    resource='tdarr-server',
+    argv=['sh', '-c', '''
+        echo "Restarting Tdarr server..." && \
+        kubectl rollout restart deployment tdarr-server -n tdarr && \
+        kubectl rollout status deployment tdarr-server -n tdarr --timeout=120s && \
+        echo "Server restarted"
+    '''],
+    text='Restart Server',
+    icon_name='refresh',
+    requires_confirmation=True
+)
+
+cmd_button(
+    name='btn-tdarr-queue',
+    resource='tdarr-server',
+    argv=['sh', '-c', '''
+        echo "=== Tdarr Queue Status ===" && \
+        curl -sf http://localhost:8265/api/v2/get-nodes 2>/dev/null | jq '.nodes | to_entries[] | {name: .value.nodeName, queue: .value.queue}' || \
+        echo "Could not fetch queue status. Is port-forward active?"
+    '''],
+    text='Queue Status',
+    icon_name='queue'
+)
+
+cmd_button(
+    name='btn-tdarr-logs',
+    resource='tdarr-server',
+    argv=['sh', '-c', '''
+        echo "=== Tdarr Server Logs (last 50 lines) ===" && \
+        kubectl logs -n tdarr deploy/tdarr-server -c tdarr --tail=50
+    '''],
+    text='Server Logs',
+    icon_name='description'
+)
+
+# ============================================
+# Tdarr Worker DaemonSet
+# ============================================
+
+# Attach to DaemonSet for log streaming
+k8s_attach('tdarr-workers', 'daemonset/tdarr-worker', namespace=namespace,
+           labels=[LABEL_TDARR])
+
+cmd_button(
+    name='btn-tdarr-worker-status',
+    resource='tdarr-workers',
+    argv=['sh', '-c', '''
+        echo "=== Worker Pods ===" && \
+        kubectl get pods -n tdarr -l app=tdarr-worker -o wide && \
+        echo "" && echo "=== Worker Resources ===" && \
+        kubectl top pods -n tdarr -l app=tdarr-worker 2>/dev/null || echo "(metrics not available)"
+    '''],
+    text='Worker Status',
+    icon_name='info'
+)
+
+cmd_button(
+    name='btn-tdarr-worker-logs',
+    resource='tdarr-workers',
+    argv=['sh', '-c', '''
+        echo "=== Worker Logs (all pods, last 20 lines each) ===" && \
+        for pod in $(kubectl get pods -n tdarr -l app=tdarr-worker -o jsonpath='{.items[*].metadata.name}'); do
+            echo "" && echo "--- $pod ---"
+            kubectl logs -n tdarr "$pod" -c tdarr-node --tail=20
+        done
+    '''],
+    text='Worker Logs',
+    icon_name='description'
+)
+
+cmd_button(
+    name='btn-tdarr-restart-workers',
+    resource='tdarr-workers',
+    argv=['sh', '-c', '''
+        echo "Restarting all Tdarr workers..." && \
+        kubectl rollout restart daemonset tdarr-worker -n tdarr && \
+        kubectl rollout status daemonset tdarr-worker -n tdarr --timeout=120s && \
+        echo "Workers restarted"
+    '''],
+    text='Restart Workers',
+    icon_name='refresh',
+    requires_confirmation=True
+)
+
+cmd_button(
+    name='btn-tdarr-gpu-check',
+    resource='tdarr-workers',
+    argv=['sh', '-c', '''
+        echo "=== GPU Status on Worker Nodes ===" && \
+        for pod in $(kubectl get pods -n tdarr -l app=tdarr-worker -o jsonpath='{.items[*].metadata.name}'); do
+            NODE=$(kubectl get pod -n tdarr "$pod" -o jsonpath='{.spec.nodeName}')
+            echo "" && echo "--- $pod ($NODE) ---"
+            kubectl exec -n tdarr "$pod" -c tdarr-node -- ls -la /dev/dri/ 2>/dev/null || echo "No GPU devices found"
+        done
+    '''],
+    text='GPU Check',
+    icon_name='memory'
+)
+
+# ============================================
+# Flow Management
+# ============================================
+
+cmd_button(
+    name='btn-tdarr-flows',
+    resource='tdarr-server',
+    argv=['sh', '-c', '''
+        echo "=== Tdarr Flows (ConfigMap) ===" && \
+        kubectl get configmap tdarr-flows -n tdarr -o jsonpath='{.data}' | jq -r 'keys[]'
+    '''],
+    text='List Flows',
+    icon_name='account_tree'
+)
+
+cmd_button(
+    name='btn-tdarr-import-flows',
+    resource='tdarr-server',
+    argv=['sh', '-c', '''
+        echo "Triggering flow import (via sidecar restart)..." && \
+        kubectl rollout restart deployment tdarr-server -n tdarr && \
+        echo "Flow importer will run on startup"
+    '''],
+    text='Import Flows',
+    icon_name='upload'
+)
