@@ -1,0 +1,210 @@
+---
+# Immich - Self-hosted photo/video management
+# Exposed to public internet via Proton VPN + DuckDNS DDNS
+#
+# NOTE: This MVP focuses on the VPN+DDNS pattern. A production Immich deployment
+# also requires Redis and PostgreSQL. Add those as separate pods/deployments
+# or use the official Immich Helm chart for the full stack.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: immich
+  labels:
+    app: immich
+    app.kubernetes.io/name: immich
+    app.kubernetes.io/part-of: vpn-service
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Required for PVC mounts
+  selector:
+    matchLabels:
+      app: immich
+  template:
+    metadata:
+      labels:
+        app: immich
+        app.kubernetes.io/name: immich
+        app.kubernetes.io/part-of: vpn-service
+    spec:
+      # Clean up stale routing rules before gluetun starts
+      # Fixes "adding IPv4/IPv6 rule: file exists" error on pod restarts
+      initContainers:
+        - name: cleanup-routes
+          image: busybox:1.36
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Flushing stale wireguard routing table 51820..."
+              ip route flush table 51820 2>/dev/null || true
+              ip -6 route flush table 51820 2>/dev/null || true
+              while ip rule del table 51820 2>/dev/null; do :; done
+              while ip -6 rule del table 51820 2>/dev/null; do :; done
+              echo "Cleanup complete"
+      containers:
+        # Gluetun VPN sidecar - all traffic exits via ProtonVPN
+        - name: gluetun
+          image: qmcgaw/gluetun:latest
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: "protonvpn"
+            - name: VPN_TYPE
+              value: "wireguard"
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: protonvpn-credentials
+                  key: se-nl-1
+            - name: WIREGUARD_ADDRESSES
+              value: "10.2.0.2/32"
+            - name: SERVER_COUNTRIES
+              value: "Netherlands"
+            - name: HTTPPROXY
+              value: "off"
+            - name: SHADOWSOCKS
+              value: "off"
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              value: "10.244.0.0/16,10.96.0.0/12"
+            # Immich WebUI (2283) + gluetun control (8000)
+            - name: FIREWALL_INPUT_PORTS
+              value: "2283,8000"
+            - name: HEALTH_SERVER_ADDRESS
+              value: "0.0.0.0:9999"
+            - name: HTTP_CONTROL_SERVER_ADDRESS
+              value: "0.0.0.0:8000"
+            - name: HTTP_CONTROL_SERVER_AUTH
+              value: "false"
+            - name: HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE
+              value: '{"auth":"none"}'
+            - name: LOG_LEVEL
+              value: "info"
+            - name: DOT
+              value: "off"
+            - name: DOT_IPV6
+              value: "off"
+            - name: HEALTH_VPN_DURATION_INITIAL
+              value: "30s"
+            - name: HEALTH_VPN_DURATION_ADDITION
+              value: "15s"
+            - name: HEALTH_TARGET_ADDRESS
+              value: "1.1.1.1:443"
+            # Port forwarding for external access
+            - name: VPN_PORT_FORWARDING
+              value: "on"
+            - name: VPN_PORT_FORWARDING_PROVIDER
+              value: "protonvpn"
+          ports:
+            - name: health
+              containerPort: 9999
+              protocol: TCP
+            - name: control
+              containerPort: 8000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 5
+          volumeMounts:
+            - name: gluetun-data
+              mountPath: /tmp/gluetun
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "25m"
+
+        # Immich server - photo/video management
+        # NOTE: Requires Redis + PostgreSQL for full functionality.
+        # For MVP, this demonstrates the VPN routing pattern.
+        # Add DB_URL, REDIS_URL env vars pointing to separate services.
+        - name: immich-server
+          image: ghcr.io/immich-app/immich-server:release
+          env:
+            # TODO: Point these to actual Redis/Postgres instances
+            - name: DB_HOSTNAME
+              value: "immich-postgres"  # Placeholder - needs separate deployment
+            - name: DB_USERNAME
+              value: "postgres"
+            - name: DB_PASSWORD
+              value: "postgres"
+            - name: DB_DATABASE_NAME
+              value: "immich"
+            - name: REDIS_HOSTNAME
+              value: "immich-redis"  # Placeholder - needs separate deployment
+          ports:
+            - name: http
+              containerPort: 2283
+              protocol: TCP
+          volumeMounts:
+            - name: immich-upload
+              mountPath: /usr/src/app/upload
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+
+        # DDNS Manager sidecar - registers VPN IP with DuckDNS
+        - name: ddns-manager
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "/scripts/ddns-manager.sh"]
+          env:
+            - name: DUCKDNS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: duckdns-credentials
+                  key: DUCKDNS_TOKEN
+            - name: DUCKDNS_DOMAINS
+              valueFrom:
+                secretKeyRef:
+                  name: duckdns-credentials
+                  key: DUCKDNS_DOMAINS
+            - name: REFRESH_INTERVAL
+              value: "60"
+            # Rotate subdomain every 24 hours (set to 0 to disable)
+            - name: ROTATION_INTERVAL_SECONDS
+              value: "86400"
+          volumeMounts:
+            - name: ddns-scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: shared
+              mountPath: /shared
+            - name: gluetun-data
+              mountPath: /tmp/gluetun
+              readOnly: true
+          resources:
+            requests:
+              memory: "16Mi"
+              cpu: "5m"
+
+      volumes:
+        - name: gluetun-data
+          emptyDir: {}
+        - name: shared
+          emptyDir: {}
+        - name: ddns-scripts
+          configMap:
+            name: ddns-scripts
+            defaultMode: 0755
+        - name: immich-upload
+          persistentVolumeClaim:
+            claimName: immich-upload
