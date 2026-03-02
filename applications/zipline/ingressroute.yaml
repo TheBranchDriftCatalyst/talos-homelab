@@ -1,0 +1,46 @@
+---
+# Internal access (HTTP) - LAN only for talos00
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zipline
+  labels:
+    app: zipline
+spec:
+  entryPoints:
+    - web
+  routes:
+    # Local LAN access only
+    - match: Host(`zip.talos00`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+      services:
+        - name: zipline
+          port: 3000
+    # External access (will redirect to HTTPS)
+    - match: Host(`zip.knowledgedump.space`)
+      kind: Rule
+      services:
+        - name: zipline
+          port: 3000
+---
+# External access (HTTPS)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zipline-secure
+  labels:
+    app: zipline
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`zip.knowledgedump.space`)
+      kind: Rule
+      services:
+        - name: zipline
+          port: 3000
+  tls:
+    certResolver: letsencrypt
