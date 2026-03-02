@@ -1,0 +1,59 @@
+---
+# ArgoCD Application manifest for catalyst-llm
+#
+# DEPLOY TO TALOS-HOMELAB:
+#   Copy this file to:
+#   talos-homelab/infrastructure/base/argocd/applications/catalyst-llm.yaml
+#
+#   Then add to kustomization.yaml:
+#   - catalyst-llm.yaml
+#
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: catalyst-llm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: catalyst-llm
+    app.kubernetes.io/part-of: catalyst
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # Source repository
+  source:
+    repoURL: https://github.com/TheBranchDriftCatalyst/catalyst-llm.git
+    targetRevision: main
+    path: k8s
+
+  # Destination cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: catalyst-llm
+
+  # Sync policy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Ignore differences in certain fields
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
