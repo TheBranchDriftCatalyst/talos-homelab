@@ -1,0 +1,83 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cowrie
+  namespace: honeypot
+  labels:
+    app: cowrie
+    app.kubernetes.io/name: cowrie
+    app.kubernetes.io/component: honeypot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cowrie
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: cowrie
+        app.kubernetes.io/name: cowrie
+        app.kubernetes.io/component: honeypot
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: cowrie
+          image: cowrie/cowrie:latest
+          imagePullPolicy: Always
+          ports:
+            - name: ssh
+              containerPort: 2222
+              protocol: TCP
+            - name: telnet
+              containerPort: 2223
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: false  # Cowrie needs to write to its directories
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: cowrie-config
+              mountPath: /cowrie/cowrie-git/etc/cowrie.cfg
+              subPath: cowrie.cfg
+              readOnly: true
+            - name: cowrie-data
+              mountPath: /cowrie/var/lib/cowrie
+            - name: cowrie-logs
+              mountPath: /cowrie/var/log/cowrie
+          livenessProbe:
+            tcpSocket:
+              port: ssh
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: ssh
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: cowrie-config
+          configMap:
+            name: cowrie-config
+        - name: cowrie-data
+          persistentVolumeClaim:
+            claimName: cowrie-data
+        - name: cowrie-logs
+          emptyDir: {}

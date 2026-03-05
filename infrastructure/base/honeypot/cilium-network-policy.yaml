@@ -1,0 +1,67 @@
+---
+# Default deny all traffic to honeypot namespace
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: honeypot
+spec:
+  endpointSelector: {}
+  ingress:
+    - {}
+  egress:
+    - {}
+---
+# Allow ingress from LAN only on honeypot ports
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-lan-ingress
+  namespace: honeypot
+spec:
+  endpointSelector:
+    matchLabels:
+      app: cowrie
+  ingress:
+    # Allow from Traefik (for TCP passthrough)
+    - fromEndpoints:
+        - matchLabels:
+            app: traefik
+            io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "2222"
+              protocol: TCP
+            - port: "2223"
+              protocol: TCP
+    # Allow from LAN CIDR (192.168.1.0/24)
+    - fromCIDR:
+        - 192.168.1.0/24
+      toPorts:
+        - ports:
+            - port: "2222"
+              protocol: TCP
+            - port: "2223"
+              protocol: TCP
+---
+# Allow egress to kube-dns only (required for pod startup)
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: honeypot
+spec:
+  endpointSelector:
+    matchLabels:
+      app: cowrie
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
