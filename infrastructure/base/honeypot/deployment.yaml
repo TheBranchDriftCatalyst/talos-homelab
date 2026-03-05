@@ -41,7 +41,7 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
-            readOnlyRootFilesystem: false  # Cowrie needs to write to its directories
+            readOnlyRootFilesystem: false
             allowPrivilegeEscalation: false
             capabilities:
               drop:
@@ -54,30 +54,24 @@ spec:
               cpu: 500m
               memory: 512Mi
           volumeMounts:
-            - name: cowrie-config
-              mountPath: /cowrie/cowrie-git/etc/cowrie.cfg
-              subPath: cowrie.cfg
-              readOnly: true
-            - name: cowrie-data
-              mountPath: /cowrie/var/lib/cowrie
-            - name: cowrie-logs
-              mountPath: /cowrie/var/log/cowrie
+            # Cowrie needs writable var directories
+            - name: cowrie-var-lib
+              mountPath: /cowrie/cowrie-git/var/lib/cowrie
+            - name: cowrie-var-log
+              mountPath: /cowrie/cowrie-git/var/log/cowrie
           livenessProbe:
             tcpSocket:
               port: ssh
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 10
           readinessProbe:
             tcpSocket:
               port: ssh
-            initialDelaySeconds: 10
+            initialDelaySeconds: 30
             periodSeconds: 5
       volumes:
-        - name: cowrie-config
-          configMap:
-            name: cowrie-config
-        - name: cowrie-data
+        - name: cowrie-var-lib
           persistentVolumeClaim:
             claimName: cowrie-data
-        - name: cowrie-logs
+        - name: cowrie-var-log
           emptyDir: {}
