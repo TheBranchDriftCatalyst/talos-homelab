@@ -1,0 +1,171 @@
+# Honeypot - Cowrie SSH/Telnet honeypot
+# Observe-only: Flux manages deployment, Tilt provides ops UI
+#
+# Standalone: cd infrastructure/base/honeypot && tilt up
+# Included:   via root Tiltfile include()
+
+load('ext://uibutton', 'cmd_button')
+load('ext://k8s_attach', 'k8s_attach')
+
+allow_k8s_contexts('admin@catalyst-cluster')
+ns, label = 'honeypot', '4-security'
+
+# ============================================
+# COWRIE - SSH/Telnet Honeypot
+# ============================================
+
+k8s_attach('cowrie', 'deployment/cowrie', namespace=ns, labels=[label],
+           links=[
+               link('http://cowrie.talos00', 'Cowrie (if HTTP exposed)'),
+           ])
+
+# Status button - show pod, connections, network policies
+cmd_button(
+    name='btn-cowrie-status',
+    resource='cowrie',
+    argv=['sh', '-c', '''
+        echo "=== Pod Status ==="
+        kubectl get pods -n honeypot -l app=cowrie -owide
+        echo ""
+        echo "=== Network Policies ==="
+        kubectl get ciliumnetworkpolicy -n honeypot
+        echo ""
+        echo "=== TCP Ingress Routes ==="
+        kubectl get ingressroutetcp -n honeypot
+    '''],
+    text='Status',
+    icon_name='info'
+)
+
+# Logs button - stream cowrie logs
+cmd_button(
+    name='btn-cowrie-logs',
+    resource='cowrie',
+    argv=['sh', '-c', '''
+        echo "=== Cowrie Logs (last 50) ==="
+        kubectl logs -n honeypot deploy/cowrie --tail=50
+    '''],
+    text='Logs',
+    icon_name='description'
+)
+
+# JSON logs - parsed session data
+cmd_button(
+    name='btn-cowrie-json-logs',
+    resource='cowrie',
+    argv=['sh', '-c', '''
+        echo "=== Cowrie JSON Logs (last 20 events) ==="
+        kubectl logs -n honeypot deploy/cowrie --tail=100 2>/dev/null | grep -E "^\\{" | tail -20 | jq -c '.' 2>/dev/null || echo "No JSON logs found"
+    '''],
+    text='JSON Logs',
+    icon_name='data_object'
+)
+
+# Connection stats - count connections and login attempts
+cmd_button(
+    name='btn-cowrie-stats',
+    resource='cowrie',
+    argv=['sh', '-c', '''
+        echo "=== Connection Statistics (last 1000 lines) ==="
+        logs=$(kubectl logs -n honeypot deploy/cowrie --tail=1000 2>/dev/null)
+        echo "Total Connections: $(echo "$logs" | grep -c "New connection" || echo 0)"
+        echo "Login Attempts:    $(echo "$logs" | grep -c "login attempt" || echo 0)"
+        echo "Sessions Started:  $(echo "$logs" | grep -c "session start" || echo 0)"
+        echo ""
+        echo "=== Recent Sessions ==="
+        echo "$logs" | grep "session:" | tail -10
+    '''],
+    text='Stats',
+    icon_name='analytics'
+)
+
+# Test SSH - attempt connection to verify honeypot responds
+cmd_button(
+    name='btn-cowrie-test-ssh',
+    resource='cowrie',
+    argv=['sh', '-c', '''
+        echo "Testing SSH connection to cowrie..."
+        echo "Running: nc -zv 192.168.1.54 2222"
+        nc -zv 192.168.1.54 2222 2>&1 || echo "Connection failed (check Traefik ports)"
+    '''],
+    text='Test SSH',
+    icon_name='terminal'
+)
+
+# Test Telnet
+cmd_button(
+    name='btn-cowrie-test-telnet',
+    resource='cowrie',
+    argv=['sh', '-c', '''
+        echo "Testing Telnet connection to cowrie..."
+        echo "Running: nc -zv 192.168.1.54 2223"
+        nc -zv 192.168.1.54 2223 2>&1 || echo "Connection failed (check Traefik ports)"
+    '''],
+    text='Test Telnet',
+    icon_name='cable'
+)
+
+# Restart deployment
+cmd_button(
+    name='btn-cowrie-restart',
+    resource='cowrie',
+    argv=['sh', '-c', '''
+        echo "Restarting cowrie deployment..."
+        kubectl rollout restart deploy/cowrie -n honeypot
+        kubectl rollout status deploy/cowrie -n honeypot --timeout=120s
+        echo "Cowrie restarted"
+    '''],
+    text='Restart',
+    icon_name='refresh',
+    requires_confirmation=True
+)
+
+# Dashboard - run the dashboard script
+cmd_button(
+    name='btn-cowrie-dashboard',
+    resource='cowrie',
+    argv=['./infrastructure/base/honeypot/dashboard.sh'],
+    text='Dashboard',
+    icon_name='dashboard'
+)
+
+# ============================================
+# OPS - Honeypot operations
+# ============================================
+
+local_resource(
+    'honeypot-status',
+    cmd='./infrastructure/base/honeypot/dashboard.sh --summary 2>/dev/null || kubectl get pods -n honeypot',
+    auto_init=True,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=[label]
+)
+
+local_resource(
+    'honeypot-deploy',
+    cmd='kubectl apply -k infrastructure/base/honeypot/',
+    auto_init=False,
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    labels=[label]
+)
+
+cmd_button(
+    name='btn-deploy-honeypot',
+    resource='honeypot-deploy',
+    argv=['kubectl', 'apply', '-k', 'infrastructure/base/honeypot/'],
+    text='Deploy',
+    icon_name='rocket_launch'
+)
+
+cmd_button(
+    name='btn-delete-honeypot',
+    resource='honeypot-deploy',
+    argv=['sh', '-c', '''
+        echo "Deleting honeypot resources..."
+        kubectl delete -k infrastructure/base/honeypot/ --ignore-not-found
+        echo "Honeypot deleted"
+    '''],
+    text='Delete',
+    icon_name='delete',
+    requires_confirmation=True
+)

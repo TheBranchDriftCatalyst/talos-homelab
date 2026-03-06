@@ -318,6 +318,12 @@ include('./applications/tdarr/Tiltfile')
 include('./applications/zipline/Tiltfile')
 
 # ============================================
+# HONEYPOT - Cowrie SSH/Telnet honeypot
+# ============================================
+
+include('./infrastructure/base/honeypot/Tiltfile')
+
+# ============================================
 # CONFIGURATION
 # ============================================
 
@@ -334,6 +340,7 @@ Ready! UI Groups:
   1-apps-gaming    - Windows VM, Guacamole
   2-infra-platform - ArgoCD, Traefik, Registry, External Secrets
   3-infra-observe  - Grafana, Mimir, Loki, Tempo, Alloy
+  4-security       - Cowrie Honeypot (SSH/Telnet)
   5-ops            - Cluster status, GPU tests, deployments
   6-vpn-gateway    - Gluetun, SecureXNG, VPN rotation
   7-catalyst-llm   - LLM Scaler, Ollama, Open WebUI, SillyTavern
