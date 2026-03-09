@@ -27,6 +27,8 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+      nodeSelector:
+        kubernetes.io/hostname: talos03
       containers:
         - name: cowrie
           image: cowrie/cowrie:latest
@@ -34,9 +36,11 @@ spec:
           ports:
             - name: ssh
               containerPort: 2222
+              hostPort: 2222
               protocol: TCP
             - name: telnet
               containerPort: 2223
+              hostPort: 2223
               protocol: TCP
           securityContext:
             runAsNonRoot: true
@@ -54,7 +58,10 @@ spec:
               cpu: 500m
               memory: 512Mi
           volumeMounts:
-            # Cowrie needs writable var directories
+            - name: cowrie-config
+              mountPath: /cowrie/cowrie-git/etc/cowrie.cfg
+              subPath: cowrie.cfg
+              readOnly: true
             - name: cowrie-var-lib
               mountPath: /cowrie/cowrie-git/var/lib/cowrie
             - name: cowrie-var-log
@@ -70,6 +77,9 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 5
       volumes:
+        - name: cowrie-config
+          configMap:
+            name: cowrie-config
         - name: cowrie-var-lib
           persistentVolumeClaim:
             claimName: cowrie-data

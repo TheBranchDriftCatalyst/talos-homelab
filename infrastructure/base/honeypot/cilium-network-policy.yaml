@@ -12,31 +12,29 @@ spec:
   egress:
     - {}
 ---
-# Allow ingress from LAN only on honeypot ports
+# Allow ingress on honeypot ports from LAN and any external source (hostPort)
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-lan-ingress
+  name: allow-honeypot-ingress
   namespace: honeypot
 spec:
   endpointSelector:
     matchLabels:
       app: cowrie
   ingress:
-    # Allow from Traefik (for TCP passthrough)
-    - fromEndpoints:
-        - matchLabels:
-            app: traefik
-            io.kubernetes.pod.namespace: traefik
+    # Allow from LAN CIDR (192.168.1.0/24) — direct hostPort access
+    - fromCIDR:
+        - 192.168.1.0/24
       toPorts:
         - ports:
             - port: "2222"
               protocol: TCP
             - port: "2223"
               protocol: TCP
-    # Allow from LAN CIDR (192.168.1.0/24)
+    # Allow from pod network (node kubelet health checks)
     - fromCIDR:
-        - 192.168.1.0/24
+        - 10.244.0.0/16
       toPorts:
         - ports:
             - port: "2222"
