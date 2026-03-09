@@ -1,0 +1,23 @@
+---
+# Congress data pipeline - Dagster code location for Congress.gov ETL
+# Registers as gRPC code server with dagster platform
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: congress-data
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/congress-data/k8s
+  prune: true
+  wait: true
+  timeout: 10m
+  dependsOn:
+    - name: dagster
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
