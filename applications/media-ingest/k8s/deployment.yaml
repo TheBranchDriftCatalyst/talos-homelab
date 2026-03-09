@@ -1,0 +1,64 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-ingest
+  namespace: media-ingest
+  labels:
+    app: media-ingest
+    app.kubernetes.io/name: media-ingest
+    app.kubernetes.io/part-of: media-ingest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: media-ingest
+  template:
+    metadata:
+      labels:
+        app: media-ingest
+        app.kubernetes.io/name: media-ingest
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: code-server
+          image: ghcr.io/thebranchdriftcatalyst/media-ingest:latest
+          ports:
+            - name: grpc
+              containerPort: 4000
+              protocol: TCP
+          env:
+            - name: DAGSTER_CURRENT_IMAGE
+              value: ghcr.io/thebranchdriftcatalyst/media-ingest:latest
+          volumeMounts:
+            - name: metube-downloads
+              mountPath: /data/metube
+              readOnly: true
+            - name: tubesync-downloads
+              mountPath: /data/tubesync
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: grpc
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: metube-downloads
+          persistentVolumeClaim:
+            claimName: media-ingest-metube-downloads
+        - name: tubesync-downloads
+          persistentVolumeClaim:
+            claimName: media-ingest-tubesync-downloads
