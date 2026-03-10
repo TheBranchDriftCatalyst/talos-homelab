@@ -28,6 +28,7 @@ EMBEDDING_CONFIGS = {
     group_name="congress",
     description="Generate vector embeddings for Congress documents (requires sentence-transformers)",
     compute_kind="ml",
+    metadata={"layer": "gold"},
     op_tags={
         "dagster-k8s/config": {
             "container_config": {

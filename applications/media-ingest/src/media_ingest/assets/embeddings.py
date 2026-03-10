@@ -12,6 +12,7 @@ from dagster import AssetExecutionContext, Output, asset
     group_name="media_ingest",
     description="Generate vector embeddings for transcriptions (requires sentence-transformers)",
     compute_kind="ml",
+    metadata={"layer": "gold"},
     op_tags={
         "dagster-k8s/config": {
             "container_config": {

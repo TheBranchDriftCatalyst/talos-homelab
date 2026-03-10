@@ -14,6 +14,7 @@ from congress_data.core.document import Document
     group_name="congress",
     description="Extract S-P-O propositions from Congress documents (requires LLM)",
     compute_kind="llm",
+    metadata={"layer": "gold"},
     op_tags={
         "dagster-k8s/config": {
             "container_config": {

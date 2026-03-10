@@ -27,6 +27,7 @@ WHISPER_K8S_CONFIG = {
     group_name="media_ingest",
     description="Transcribe audio tracks using OpenAI Whisper",
     compute_kind="ml",
+    metadata={"layer": "gold"},
     op_tags=WHISPER_K8S_CONFIG,
 )
 def media_transcriptions(

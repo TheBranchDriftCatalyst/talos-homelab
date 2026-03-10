@@ -12,6 +12,7 @@ from dagster import AssetExecutionContext, Output, asset
     group_name="congress",
     description="Load Congress entities and relationships into Neo4j knowledge graph",
     compute_kind="graph",
+    metadata={"layer": "gold"},
     op_tags={
         "dagster-k8s/config": {
             "container_config": {

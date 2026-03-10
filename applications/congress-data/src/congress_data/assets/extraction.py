@@ -11,6 +11,7 @@ from congress_data.entities import Bill, Committee, Member
     group_name="congress",
     description="Extract bills from Congress.gov API",
     compute_kind="extract",
+    metadata={"layer": "bronze"},
 )
 def congress_bills(
     context: AssetExecutionContext, config: CongressionalConfig
@@ -39,6 +40,7 @@ def congress_bills(
     group_name="congress",
     description="Extract members from Congress.gov API",
     compute_kind="extract",
+    metadata={"layer": "bronze"},
 )
 def congress_members(
     context: AssetExecutionContext, config: CongressionalConfig
@@ -69,6 +71,7 @@ def congress_members(
     group_name="congress",
     description="Extract committees from Congress.gov API",
     compute_kind="extract",
+    metadata={"layer": "bronze"},
 )
 def congress_committees(
     context: AssetExecutionContext, config: CongressionalConfig

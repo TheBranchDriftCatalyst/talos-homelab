@@ -67,6 +67,7 @@ def _extract_metadata(probe: dict[str, Any]) -> dict[str, Any]:
     group_name="media_ingest",
     description="Extract media metadata using ffprobe",
     compute_kind="ffprobe",
+    metadata={"layer": "silver"},
     op_tags=NFS_VOLUMES_CONFIG,
 )
 def media_metadata(

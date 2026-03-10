@@ -14,6 +14,7 @@ from congress_data.core.document import Document
     group_name="congress",
     description="Extract named entities from Congress documents (requires spaCy or Ollama)",
     compute_kind="llm",
+    metadata={"layer": "silver"},
     op_tags={
         "dagster-k8s/config": {
             "container_config": {

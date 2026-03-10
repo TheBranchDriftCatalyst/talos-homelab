@@ -90,6 +90,7 @@ def _committee_to_document(committee: Committee) -> Document:
     group_name="congress",
     description="Transform raw Congress entities into unified Document objects",
     compute_kind="transform",
+    metadata={"layer": "silver"},
 )
 def congress_documents(
     context: AssetExecutionContext,

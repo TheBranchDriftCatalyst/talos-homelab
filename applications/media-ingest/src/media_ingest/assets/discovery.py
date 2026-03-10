@@ -51,6 +51,7 @@ def _scan_directory(root: str, extensions: set[str]) -> list[dict[str, Any]]:
     group_name="media_ingest",
     description="Scan NFS download directories for media files",
     compute_kind="filesystem",
+    metadata={"layer": "bronze"},
     op_tags=NFS_VOLUMES_CONFIG,
 )
 def media_files(

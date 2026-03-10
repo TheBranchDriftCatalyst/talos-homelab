@@ -42,6 +42,7 @@ def _file_to_document(file_info: dict[str, Any]) -> MediaDocument:
     group_name="media_ingest",
     description="Transform media metadata into Document objects",
     compute_kind="transform",
+    metadata={"layer": "silver"},
 )
 def media_documents(
     context: AssetExecutionContext,
