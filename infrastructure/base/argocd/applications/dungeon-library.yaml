@@ -1,0 +1,65 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dungeon-library
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: dungeon-library
+    app.kubernetes.io/part-of: catalyst
+  annotations:
+    # ArgoCD Image Updater configuration
+    argocd-image-updater.argoproj.io/image-list: dungeon-library=ghcr.io/thebranchdriftcatalyst/dungeon-library
+    argocd-image-updater.argoproj.io/dungeon-library.update-strategy: latest
+    argocd-image-updater.argoproj.io/dungeon-library.allow-tags: regexp:^(latest|main|[a-f0-9]{7,40})$
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # External links shown in ArgoCD UI
+  info:
+    - name: GitHub Repository
+      value: https://github.com/TheBranchDriftCatalyst/dungeon-library
+    - name: Container Registry
+      value: https://ghcr.io/thebranchdriftcatalyst/dungeon-library
+    - name: Application
+      value: http://dungeon-library.talos00
+
+  # Source repository
+  source:
+    repoURL: https://github.com/TheBranchDriftCatalyst/dungeon-library.git
+    targetRevision: main
+    path: k8s
+
+  # Destination cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dungeon-library
+
+  # Sync policy
+  syncPolicy:
+    automated:
+      prune: true # Delete resources that are no longer in git
+      selfHeal: true # Automatically sync when cluster state differs
+      allowEmpty: false # Don't delete all resources if source is empty
+
+    syncOptions:
+      - CreateNamespace=true # Automatically create the namespace if it doesn't exist
+      - PrunePropagationPolicy=foreground # Wait for resources to be deleted
+      - PruneLast=true # Prune at the end of sync
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Ignore differences in certain fields
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas # Ignore replica count changes (e.g., from HPA)
