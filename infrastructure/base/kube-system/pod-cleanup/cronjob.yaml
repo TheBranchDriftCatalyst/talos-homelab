@@ -37,10 +37,14 @@ spec:
   schedule: "0 */2 * * *"
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 1
-  concurrencyPolicy: Forbid
+  # Replace (not Forbid) so a hung run never blocks the schedule indefinitely.
+  concurrencyPolicy: Replace
   jobTemplate:
     spec:
       ttlSecondsAfterFinished: 3600
+      # Hard cap so a stuck apk/pip/kubectl call can't hang forever.
+      activeDeadlineSeconds: 600
+      backoffLimit: 2
       template:
         metadata:
           labels:
@@ -64,7 +68,9 @@ spec:
                   mountPath: /shared
           containers:
             - name: cleanup
-              image: python:3.11-alpine
+              # python:3.11-slim has manylinux wheels for python-snappy,
+              # so pip install completes in seconds with no compile toolchain.
+              image: python:3.11-slim
               envFrom:
                 - configMapRef:
                     name: pod-cleanup-config
@@ -82,8 +88,8 @@ spec:
                 - /bin/sh
                 - -c
                 - |
-                  apk add --no-cache gcc musl-dev snappy-dev >/dev/null 2>&1
-                  pip install --quiet python-snappy
+                  set -e
+                  pip install --quiet --disable-pip-version-check python-snappy
                   python3 /scripts/cleanup.py
               resources:
                 requests:
