@@ -19,16 +19,18 @@ spec:
     namespace: gateway-arr
   # The ESO controller fills in three default fields on every
   # ExternalSecret (`data[].remoteRef.conversionStrategy`,
-  # `.decodingStrategy`, `.metadataPolicy`) with its own field manager,
-  # which ArgoCD then flags as permanent drift even though they're just
-  # controller-provided defaults. Ignore fields owned by the
-  # external-secrets field manager on this CRD; ArgoCD still compares
-  # everything our manifests declare.
+  # `.decodingStrategy`, `.metadataPolicy`) that aren't in git, which
+  # ArgoCD flags as permanent drift even though the resources report
+  # SecretSynced=True. These objects have no managedFields metadata
+  # (they're created via client-side apply), so `managedFieldsManagers`
+  # doesn't help — match the three subkeys explicitly with jq pointers.
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
-      managedFieldsManagers:
-        - external-secrets
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
   syncPolicy:
     automated:
       prune: true
