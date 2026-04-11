@@ -95,6 +95,23 @@ spec:
               value: "8888,9999,8000,1080,9091"
             - name: HEALTH_SERVER_ADDRESS
               value: "0.0.0.0:9999"
+            # Point the internal VPN health check at hard-coded IPs so
+            # it never depends on DNS resolution. Historically the
+            # container has been looping ~5x/day (291+ restarts) when
+            # the default github.com/cloudflare.com lookups got
+            # cancelled — gluetun would then trigger an internal VPN
+            # restart whose goroutine-shutdown deadline is hard-wired
+            # to 400ms, blow past it, and exit(1).
+            # 1.1.1.1 = Cloudflare, 9.9.9.9 = Quad9, 8.8.8.8 = Google.
+            - name: HEALTH_TARGET_ADDRESSES
+              value: "1.1.1.1:443,9.9.9.9:443,8.8.8.8:443"
+            # Give the VPN start/recovery checks some more slack — the
+            # defaults (6s initial / 5s addition) are aggressive when
+            # the tunnel is briefly flapping.
+            - name: HEALTH_VPN_DURATION_INITIAL
+              value: "15s"
+            - name: HEALTH_VPN_DURATION_ADDITION
+              value: "10s"
             - name: HTTP_CONTROL_SERVER_ADDRESS
               value: "0.0.0.0:8000"
             - name: HTTP_CONTROL_SERVER_AUTH
@@ -113,12 +130,17 @@ spec:
               port: health
             initialDelaySeconds: 30
             periodSeconds: 30
+            # Give the health endpoint more than 1s (default) to respond
+            # while the tunnel is actively reconciling.
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /
               port: health
             initialDelaySeconds: 10
             periodSeconds: 10
+            timeoutSeconds: 5
           resources:
             requests:
               memory: "64Mi"
