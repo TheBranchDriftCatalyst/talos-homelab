@@ -1,0 +1,59 @@
+---
+# Migrated from legacy annotations on the catalyst-data Application to the
+# v1.0 ImageUpdater CRD (argocd-image-updater.argoproj.io/v1alpha1).
+#
+# Covers all six services shipped by catalyst-data CI:
+#   - congress-data  (Dagster code location)
+#   - media-ingest   (Dagster code location)
+#   - open-leaks     (Dagster code location)
+#   - knowledge-graph (Dagster code location — previously manual rollout)
+#   - data-explorer  (Streamlit UI — previously manual rollout)
+#   - knowledge-graph-api (Apollo Server GraphQL API)
+#
+# Global defaults (commonUpdateSettings, writeBackConfig) are set at the spec
+# level and apply to every image unless overridden per-image.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: catalyst-data
+  namespace: argocd
+spec:
+  namespace: argocd
+  commonUpdateSettings:
+    updateStrategy: newest-build
+    allowTags: "regexp:^(latest|main|[a-f0-9]{7,40})$"
+  writeBackConfig:
+    method: argocd
+  applicationRefs:
+    - namePattern: catalyst-data
+      images:
+        - alias: congress
+          imageName: ghcr.io/thebranchdriftcatalyst/congress-data
+          manifestTargets:
+            kustomize:
+              name: ghcr.io/thebranchdriftcatalyst/congress-data
+        - alias: media
+          imageName: ghcr.io/thebranchdriftcatalyst/media-ingest
+          manifestTargets:
+            kustomize:
+              name: ghcr.io/thebranchdriftcatalyst/media-ingest
+        - alias: leaks
+          imageName: ghcr.io/thebranchdriftcatalyst/open-leaks
+          manifestTargets:
+            kustomize:
+              name: ghcr.io/thebranchdriftcatalyst/open-leaks
+        - alias: kg
+          imageName: ghcr.io/thebranchdriftcatalyst/knowledge-graph
+          manifestTargets:
+            kustomize:
+              name: ghcr.io/thebranchdriftcatalyst/knowledge-graph
+        - alias: explorer
+          imageName: ghcr.io/thebranchdriftcatalyst/data-explorer
+          manifestTargets:
+            kustomize:
+              name: ghcr.io/thebranchdriftcatalyst/data-explorer
+        - alias: kg-api
+          imageName: ghcr.io/thebranchdriftcatalyst/knowledge-graph-api
+          manifestTargets:
+            kustomize:
+              name: ghcr.io/thebranchdriftcatalyst/knowledge-graph-api
