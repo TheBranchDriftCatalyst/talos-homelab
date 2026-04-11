@@ -28,6 +28,20 @@ spec:
     server: https://kubernetes.default.svc
     namespace: media
 
+  # The ESO controller populates three default subkeys on every
+  # ExternalSecret (`data[].remoteRef.conversionStrategy`,
+  # `.decodingStrategy`, `.metadataPolicy`) that aren't in git, which
+  # ArgoCD flags as drift even though the ESes are SecretSynced=True.
+  # Match the three subkeys with jq pointers so ArgoCD stops
+  # complaining about the controller's own bookkeeping.
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+
   syncPolicy:
     automated:
       prune: true
