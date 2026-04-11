@@ -17,6 +17,18 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: gateway-arr
+  # The ESO controller fills in three default fields on every
+  # ExternalSecret (`data[].remoteRef.conversionStrategy`,
+  # `.decodingStrategy`, `.metadataPolicy`) with its own field manager,
+  # which ArgoCD then flags as permanent drift even though they're just
+  # controller-provided defaults. Ignore fields owned by the
+  # external-secrets field manager on this CRD; ArgoCD still compares
+  # everything our manifests declare.
+  ignoreDifferences:
+    - group: external-secrets.io
+      kind: ExternalSecret
+      managedFieldsManagers:
+        - external-secrets
   syncPolicy:
     automated:
       prune: true
