@@ -89,23 +89,29 @@ spec:
             #   mountPath: /run/dbus
             #   readOnly: true
 
+          # Liveness probe tuned for NFS-backed /config volume.
+          # HA's asyncio loop can stall for many seconds when the NFS server
+          # hiccups (SQLite recorder commits, helpers/storage writes, etc.),
+          # which was causing kubelet to SIGTERM/SIGKILL the pod (~69 restarts
+          # observed before tuning, exit 137). Generous timings let HA ride out
+          # transient NFS stalls without a kill. See TALOS issue in beads.
           livenessProbe:
             httpGet:
               path: /
               port: http
-            initialDelaySeconds: 120
-            periodSeconds: 30
-            timeoutSeconds: 10
-            failureThreshold: 5
+            initialDelaySeconds: 180
+            periodSeconds: 60
+            timeoutSeconds: 30
+            failureThreshold: 10
 
           readinessProbe:
             httpGet:
               path: /
               port: http
             initialDelaySeconds: 30
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 3
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
 
           resources:
             requests:
