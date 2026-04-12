@@ -15,8 +15,11 @@ spec:
     name: flux-system
   path: ./infrastructure/base/cert-manager-issuers
   prune: true
-  wait: true
+  # wait: false - Don't block downstream kustomizations on Certificate health.
+  # Certificates can fail/expire independently (e.g. upstream DNS-01 issues) and
+  # should not cascade failures into unrelated stacks like monitoring.
+  wait: false
   dependsOn:
     - name: cert-manager
     - name: external-secrets
-    - name: traefik  # Certificate is created in traefik namespace
+    - name: traefik  # traefik namespace must exist (certs are created there)
