@@ -43,13 +43,21 @@ spec:
     deployment:
       kind: DaemonSet # Use DaemonSet for hostPort binding
       replicas: 1
-      # HostPort rollout fix: terminate all old pods before starting new ones
-      # Accepts brief downtime to avoid hostPort binding conflicts during rollouts
-      updateStrategy:
-        type: RollingUpdate
-        rollingUpdate:
-          maxUnavailable: "100%"  # All pods can be unavailable - recreate-like behavior
-          maxSurge: 0
+
+    # HostPort rollout fix: terminate all old pods before starting new
+    # ones. `maxSurge: 1` (the chart default) tries to schedule a new
+    # pod alongside the existing one on the same node, which always
+    # fails with a hostPort collision on 80/443, so every port-change
+    # rollout gets stuck.
+    # NOTE: the helm chart reads `updateStrategy` at the TOP LEVEL,
+    # not under `deployment:` — nesting it there silently falls back
+    # to the chart defaults. See:
+    # https://github.com/traefik/traefik-helm-chart/blob/v37.4.0/traefik/values.yaml
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 1
+        maxSurge: 0
 
     # Service configuration
     service:
