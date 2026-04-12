@@ -1,0 +1,107 @@
+---
+# PostgreSQL for Home Assistant recorder
+# Replaces NFS-backed SQLite which caused SIGBUS crashes and liveness probe kills.
+# Postgres uses WAL (not mmap like SQLite) so NFS storage is safe.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: homeassistant-postgres-pvc
+  labels:
+    app: homeassistant
+    component: postgres
+  annotations:
+    storage.catalyst/service: "homeassistant-postgres"
+    storage.catalyst/purpose: "recorder-database"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homeassistant-postgres
+  labels:
+    app: homeassistant-postgres
+    app.kubernetes.io/name: homeassistant-postgres
+    app.kubernetes.io/part-of: home-automation
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: homeassistant-postgres
+  template:
+    metadata:
+      labels:
+        app: homeassistant-postgres
+        app.kubernetes.io/name: homeassistant-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_DB
+              value: homeassistant
+            - name: POSTGRES_USER
+              value: homeassistant
+            - name: POSTGRES_PASSWORD
+              value: homeassistant
+            # Use a subdirectory to avoid "lost+found" init errors
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - homeassistant
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - homeassistant
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: postgres-storage
+          persistentVolumeClaim:
+            claimName: homeassistant-postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: homeassistant-postgres
+  labels:
+    app: homeassistant-postgres
+    app.kubernetes.io/name: homeassistant-postgres
+    app.kubernetes.io/part-of: home-automation
+spec:
+  selector:
+    app: homeassistant-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP

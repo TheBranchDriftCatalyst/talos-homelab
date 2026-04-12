@@ -55,6 +55,18 @@ spec:
                   - 192.168.0.0/16
               EOF
                 fi
+                # Ensure recorder is configured to use PostgreSQL (not NFS-backed SQLite)
+                if ! grep -q "recorder:" /config/configuration.yaml; then
+                  echo "Adding PostgreSQL recorder config..."
+                  cat >> /config/configuration.yaml << 'EOF'
+
+              # Recorder - PostgreSQL instead of SQLite (SQLite on NFS causes SIGBUS)
+              recorder:
+                db_url: postgresql://homeassistant:homeassistant@homeassistant-postgres.home-automation.svc.cluster.local:5432/homeassistant
+                purge_keep_days: 30
+                commit_interval: 5
+              EOF
+                fi
               fi
               # Ensure required files exist
               touch /config/automations.yaml /config/scripts.yaml /config/scenes.yaml
@@ -89,29 +101,27 @@ spec:
             #   mountPath: /run/dbus
             #   readOnly: true
 
-          # Liveness probe tuned for NFS-backed /config volume.
-          # HA's asyncio loop can stall for many seconds when the NFS server
-          # hiccups (SQLite recorder commits, helpers/storage writes, etc.),
-          # which was causing kubelet to SIGTERM/SIGKILL the pod (~69 restarts
-          # observed before tuning, exit 137). Generous timings let HA ride out
-          # transient NFS stalls without a kill. See TALOS issue in beads.
+          # Liveness probe — previously very generous (180s init, 60s period,
+          # failureThreshold 10) to work around SQLite-on-NFS SIGBUS crashes.
+          # Root cause fixed: recorder now uses PostgreSQL (see postgres.yaml).
+          # Keeping moderately generous timings for HA startup + NFS config reads.
           livenessProbe:
             httpGet:
               path: /
               port: http
-            initialDelaySeconds: 180
-            periodSeconds: 60
-            timeoutSeconds: 30
-            failureThreshold: 10
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 15
+            failureThreshold: 5
 
           readinessProbe:
             httpGet:
               path: /
               port: http
             initialDelaySeconds: 30
-            periodSeconds: 15
-            timeoutSeconds: 10
-            failureThreshold: 6
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 4
 
           resources:
             requests:
