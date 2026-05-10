@@ -1,0 +1,55 @@
+---
+# CoreDNS Corefile override for the talos-homelab cluster.
+#
+# Background:
+#   Talos ships CoreDNS configured with `forward . /etc/resolv.conf`, which
+#   resolves to `169.254.116.108` (the Talos `system/resolved` link-local DNS
+#   proxy). On this cluster that proxy has been observed to die after host
+#   restarts (e.g. UPS-2026-05-09 recovery), which breaks ALL in-cluster DNS
+#   resolution — including Flux's git clones, ArgoCD sync, and any service
+#   that needs external lookups.
+#
+# Fix:
+#   Forward upstream queries directly to the LAN router (192.168.1.1) so DNS
+#   keeps working independent of the Talos resolver proxy state.
+#
+# Notes:
+#   - CoreDNS itself is installed/managed by Talos. This ConfigMap is a
+#     server-side override that Flux owns; the kubelet/CoreDNS controller
+#     will reload pods automatically on configmap changes (no manual restart).
+#   - If Talos ever changes the default Corefile, diff this against the live
+#     value and re-sync intentionally.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns
+  namespace: kube-system
+data:
+  Corefile: |
+    .:53 {
+        errors
+        health {
+            lameduck 5s
+        }
+        ready
+        log . {
+            class error
+        }
+        prometheus :9153
+
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods insecure
+            fallthrough in-addr.arpa ip6.arpa
+            ttl 30
+        }
+        forward . 192.168.1.1 {
+           max_concurrent 1000
+        }
+        cache 30 {
+           disable success cluster.local
+           disable denial cluster.local
+        }
+        loop
+        reload
+        loadbalance
+    }
