@@ -1,0 +1,65 @@
+---
+# cert-manager-webhook-desec - DNS-01 ACME solver webhook for deSEC
+# Provides a cert-manager solver to satisfy ACME challenges via the deSEC API.
+# Chart: oci://ghcr.io/pr0ton11/helm/cert-manager-desec-webhook
+# Repo:  https://github.com/pr0ton11/cert-manager-desec-webhook
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: pr0ton11
+  namespace: cert-manager
+spec:
+  interval: 1h
+  type: oci
+  url: oci://ghcr.io/pr0ton11/helm
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cert-manager-webhook-desec
+  namespace: cert-manager
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: cert-manager-desec-webhook
+      version: '0.1.1'
+      sourceRef:
+        kind: HelmRepository
+        name: pr0ton11
+        namespace: cert-manager
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # API group for the webhook (used in the ClusterIssuer solver block).
+    groupName: acme.pr0ton11.github.com
+
+    # Secret(s) the webhook is permitted to read in cert-manager namespace.
+    # Must match the ExternalSecret target name in desec-secret.yaml.
+    secretName:
+      - desec-api-token
+
+    certManager:
+      namespace: cert-manager
+      serviceAccountName: cert-manager
+
+    image:
+      repository: ghcr.io/pr0ton11/cert-manager-desec-webhook
+      tag: latest
+      pullPolicy: IfNotPresent
+
+    service:
+      type: ClusterIP
+      port: 443
+
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 128Mi
