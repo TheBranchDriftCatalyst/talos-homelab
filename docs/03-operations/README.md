@@ -12,6 +12,7 @@ This section covers operational procedures, cluster management, and development 
 | [node-shutdown-procedure.md](node-shutdown-procedure.md) | Safe procedures for node shutdown, restart, and maintenance                | Before any hardware maintenance or planned downtime             |
 | [local-development-eso.md](local-development-eso.md)     | Local development workflow for External Secrets Operator                   | Testing secrets management changes locally                      |
 | [development-tools.md](development-tools.md)             | Git hooks, linters, formatters, and code quality automation                | Initial development environment setup or CI/CD integration      |
+| [etcd-backup-restore.md](etcd-backup-restore.md)         | How hourly etcd snapshots work + control-plane restore procedure           | Recovering from EPHEMERAL/etcd corruption (e.g. UPS-fault scenario) |
 
 ## Key Concepts
 
@@ -48,6 +49,11 @@ This section covers operational procedures, cluster management, and development 
 
 - [Test ESO changes](local-development-eso.md) - External Secrets Operator local workflow
 - [Validate infrastructure](../01-getting-started/local-testing.md) - Docker-based Talos cluster testing
+
+### Disaster Recovery
+
+- [Restore etcd from snapshot](etcd-backup-restore.md#restore-procedure) - Rebuild control plane after EPHEMERAL/etcd loss
+- [Verify backup health](etcd-backup-restore.md#verify-its-working) - Check hourly snapshot pipeline
 
 ### Troubleshooting
 
