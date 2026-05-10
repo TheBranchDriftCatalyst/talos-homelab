@@ -1,0 +1,792 @@
+---
+# PV recovery manifest — 2026-05-09 UPS fault incident
+# 32 surviving local-path PVCs across 4 worker nodes (talos00 EPHEMERAL was
+# wiped). Each PV uses claimRef pre-binding so when GitOps redeploys the
+# owning workload its PVC binds to existing data.
+# Reclaim policy: Retain — manual cleanup if no longer needed.
+# Storage class: local-path (must exist before these PVs bind).
+# See: TALOS-asv (incident retro)
+
+# ============================================================================
+# talos01 (192.168.1.177) — Mimir + Zipline
+# ============================================================================
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-monitoring-storage-mimir-ingester-0
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-18556871-bb11-4bc8-b2bc-ed9c44a99d7f_monitoring_storage-mimir-ingester-0
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos01] }
+  claimRef:
+    namespace: monitoring
+    name: storage-mimir-ingester-0
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-monitoring-storage-mimir-compactor-0
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-6691084b-ae1f-4dd3-88db-14b73bcb6cea_monitoring_storage-mimir-compactor-0
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos01] }
+  claimRef:
+    namespace: monitoring
+    name: storage-mimir-compactor-0
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-monitoring-storage-mimir-store-gateway-0
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-6f1ee039-6de2-4f2a-83bd-6f2393c8e9a8_monitoring_storage-mimir-store-gateway-0
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos01] }
+  claimRef:
+    namespace: monitoring
+    name: storage-mimir-store-gateway-0
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-monitoring-storage-mimir-alertmanager-0
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-ed0a4306-1f2d-4313-920e-c8ebdecc8f93_monitoring_storage-mimir-alertmanager-0
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos01] }
+  claimRef:
+    namespace: monitoring
+    name: storage-mimir-alertmanager-0
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-zipline-zipline-uploads
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-186b312d-7c48-4cb8-8e92-0d7cf3eb10b3_zipline_zipline-uploads
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos01] }
+  claimRef:
+    namespace: zipline
+    name: zipline-uploads
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-zipline-zipline-postgres
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-fc44e1a7-1dd3-4c1e-9728-44cb1e637777_zipline_zipline-postgres
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos01] }
+  claimRef:
+    namespace: zipline
+    name: zipline-postgres
+
+# ============================================================================
+# talos02-gpu (192.168.1.144) — media DBs + Frigate
+# ============================================================================
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-scratch-scrypted-config
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-08bb9030-f822-40d8-a0be-e3cf8ca6f604_scratch_scrypted-config
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos02-gpu] }
+  claimRef:
+    namespace: scratch
+    name: scrypted-config
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-media-plex-db-local
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-23949f3c-933e-4b08-8281-3f66f03227bb_media_plex-db-local
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos02-gpu] }
+  claimRef:
+    namespace: media
+    name: plex-db-local
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-scratch-frigate-config
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-45a6b033-c119-4413-a4bf-7f65c38a3324_scratch_frigate-config
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos02-gpu] }
+  claimRef:
+    namespace: scratch
+    name: frigate-config
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-media-jellyfin-db-local
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-55a1d770-b014-4925-b993-82fd8a78980e_media_jellyfin-db-local
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos02-gpu] }
+  claimRef:
+    namespace: media
+    name: jellyfin-db-local
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-scratch-frigate-media
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-6e17db77-ea7b-494b-bd7e-77b0c9821031_scratch_frigate-media
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos02-gpu] }
+  claimRef:
+    namespace: scratch
+    name: frigate-media
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-media-prowlarr-db-local
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-d9467658-5b51-44c1-8b58-5cf9da8560bf_media_prowlarr-db-local
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos02-gpu] }
+  claimRef:
+    namespace: media
+    name: prowlarr-db-local
+
+# ============================================================================
+# talos03 (192.168.1.30) — arr DBs + SPIRE
+# ============================================================================
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-media-radarr-db-local
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-4c1f5a77-5e17-4b92-93da-c5133ff1c166_media_radarr-db-local
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos03] }
+  claimRef:
+    namespace: media
+    name: radarr-db-local
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-media-sonarr-db-local
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-9b0459dd-505c-4469-95ab-0cc9eda9382c_media_sonarr-db-local
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos03] }
+  claimRef:
+    namespace: media
+    name: sonarr-db-local
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-cilium-spire-spire-data-spire-server-0
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-e031fb33-0e9d-48f0-b7fe-e59d2678659b_cilium-spire_spire-data-spire-server-0
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos03] }
+  claimRef:
+    namespace: cilium-spire
+    name: spire-data-spire-server-0
+
+# ============================================================================
+# talos06 (192.168.1.19) — catalyst-data, LLM, gaming, Postgres
+# ============================================================================
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-catalyst-data-model-cache
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-04044485-868e-4930-9e81-ad5c8a7bf25a_catalyst-data_model-cache
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: catalyst-data
+    name: model-cache
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-gaming-opensim-data
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-4511fbfb-8808-4435-af3d-bca0e28d6d65_gaming_opensim-data
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: gaming
+    name: opensim-data
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-gaming-windows-gameserver-disk
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-48bd1ed5-3ce1-44bb-b9b2-157a0b893cfc_gaming_windows-gameserver-disk
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: gaming
+    name: windows-gameserver-disk
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-catalyst-data-postgres-knowledge
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-557edea6-05ae-4ff9-a354-f651cc395cd3_catalyst-data_postgres-knowledge
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: catalyst-data
+    name: postgres-knowledge
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-catalyst-llm-open-webui-data
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-6a77f664-936b-4ae8-bfbd-e9f38c8b1757_catalyst-llm_open-webui-data
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: catalyst-llm
+    name: open-webui-data
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-default-postgres-knowledge
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-6b86e23e-c354-472f-bfa6-f105ca38a413_default_postgres-knowledge
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: default
+    name: postgres-knowledge
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-catalyst-llm-litellm-postgresql
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-6fa48820-3b8a-456a-895c-185f8ae9d2d3_catalyst-llm_litellm-postgresql
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: catalyst-llm
+    name: litellm-postgresql
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-catalyst-llm-lobe-chat-data
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-9feb18d0-a3bb-421a-ab84-90aae936e833_catalyst-llm_lobe-chat-data
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: catalyst-llm
+    name: lobe-chat-data
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-default-pterodactyl-kuber-config
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-aa84708e-f1b2-4717-b586-9088f63a191d_default_pterodactyl-kuber-config
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: default
+    name: pterodactyl-kuber-config
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-catalyst-data-neo4j-data
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-acfb2ce1-cf55-410c-9809-3b3fd1623eeb_catalyst-data_neo4j-data
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: catalyst-data
+    name: neo4j-data
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-dungeon-library-postgres-storage-postgres-0
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-b09feb1c-56fc-474f-9ef0-4ce8c2f9f232_dungeon-library_postgres-storage-postgres-0
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: dungeon-library
+    name: postgres-storage-postgres-0
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-gaming-windows-iso
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-b5dbcf53-2920-474f-8655-a695083c56e4_gaming_windows-iso
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: gaming
+    name: windows-iso
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-catalyst-data-dagster-postgres
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-ca2ae751-85f2-4593-99b6-966a647a0544_catalyst-data_dagster-postgres
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: catalyst-data
+    name: dagster-postgres
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-default-pterodactyl-panel
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-d2497423-b2e1-43a5-bf59-5a881d76f3a3_default_pterodactyl-panel
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: default
+    name: pterodactyl-panel
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-default-litellm-postgresql
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-de297909-9d5e-4cca-a58c-3609c77324ad_default_litellm-postgresql
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: default
+    name: litellm-postgresql
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-vpn-gateway-vpn-rotator-state
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-f6353275-df51-455e-9723-1205c1adbeba_vpn-gateway_vpn-rotator-state
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: vpn-gateway
+    name: vpn-rotator-state
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: rec-gaming-virtio-drivers
+  labels:
+    recovery.catalyst/incident: "ups-2026-05-09"
+spec:
+  capacity:
+    storage: 1Ti
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-path
+  hostPath:
+    path: /var/lib/rancher/local-path-provisioner/pvc-f908f28c-5b44-41a2-b1a8-d34608013660_gaming_virtio-drivers
+    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: [talos06] }
+  claimRef:
+    namespace: gaming
+    name: virtio-drivers
