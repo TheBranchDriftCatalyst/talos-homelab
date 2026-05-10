@@ -1,0 +1,39 @@
+---
+# KubeVirt Operator + CR
+#
+# Installs the KubeVirt operator (v1.4.0) and the cluster-scoped KubeVirt CR
+# that requests the operator deploy virt-api / virt-controller / virt-handler.
+# Required by:
+#   - applications/gaming/base/kubevirt/ (Windows VM)
+#   - infrastructure/base/nvidia-cdi/ (passes GPUs to VMs)
+#
+# wait: true so downstream Kustomizations (e.g. gaming) don't dry-run
+# VirtualMachine resources before the kubevirt.io CRDs are registered.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: kubevirt
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/kubevirt
+  prune: true
+  wait: true
+  dependsOn:
+    - name: namespaces
+    # bootstrap-crds Flux Kustomization may be created by a parallel agent.
+    # The kubevirt operator manifest installs its own kubevirt.io CRD inline,
+    # but Flux server-side dry-run of cr.yaml on a brand-new cluster needs the
+    # CRD established first. Keep this dependency commented until the
+    # bootstrap-crds Flux Kustomization is committed.
+    # - name: bootstrap-crds
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: virt-operator
+      namespace: kubevirt
