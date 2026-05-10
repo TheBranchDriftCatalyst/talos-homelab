@@ -2,6 +2,22 @@
 
 This directory contains the Flux CD bootstrap configuration for the homelab cluster.
 
+## Prerequisite: Apply Talos kubelet patches first
+
+Before bootstrapping Flux on a fresh cluster, run the kubelet machine-config
+patches so iSCSI (Democratic-CSI) and local-path PVs can mount. Without this,
+storage-dependent workloads will fail with `is not a directory` even though the
+host paths exist:
+
+```bash
+task talos:patches              # apply to all nodes (idempotent)
+# or preview first:
+task talos:patches-check
+```
+
+See [docs/05-runbooks/cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md)
+for the full bootstrap order.
+
 ## Installation
 
 Flux will be installed using the official CLI tool and bootstrap process:

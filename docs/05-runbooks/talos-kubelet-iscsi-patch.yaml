@@ -1,0 +1,28 @@
+# Machine config patch for iSCSI support
+# Apply this to all nodes to expose /etc/iscsi and /var/lib/iscsi to kubelet
+# for Democratic-CSI (TrueNAS iSCSI provisioning).
+#
+# Apply via the bootstrap helper script (preferred, idempotent across all nodes):
+#   ./scripts/bootstrap-talos-patches.sh
+#
+# Or manually for a single node:
+#   talosctl --talosconfig configs/talosconfig -e 192.168.1.54 \
+#     patch mc --nodes <node-ip> --patch @docs/05-runbooks/talos-kubelet-iscsi-patch.yaml
+#
+machine:
+  kubelet:
+    extraMounts:
+      - destination: /etc/iscsi
+        type: bind
+        source: /etc/iscsi
+        options:
+          - bind
+          - rshared
+          - rw
+      - destination: /var/lib/iscsi
+        type: bind
+        source: /var/lib/iscsi
+        options:
+          - bind
+          - rshared
+          - rw
