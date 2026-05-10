@@ -94,9 +94,45 @@ tasks:
       - echo "✅ External Secrets Operator deployed"
 
   setup-1password:
-    desc: Setup 1Password Connect secrets (interactive)
+    desc: |
+      Bootstrap 1Password Connect secrets idempotently (one-command recovery).
+      Requires:
+        - OP_CONNECT_TOKEN env var (export OP_CONNECT_TOKEN=...)
+        - ./1password-credentials.json at project root (gitignored)
+      See: docs/05-runbooks/cluster-bootstrap.md
     cmds:
-      - ./scripts/setup-1password-connect.sh
+      - |
+        if [ -z "${OP_CONNECT_TOKEN:-}" ]; then
+          echo "❌ OP_CONNECT_TOKEN environment variable is not set."
+          echo "   Retrieve the token from 1Password (developer-tools > Connect > catalyst-eso)"
+          echo "   then run:  export OP_CONNECT_TOKEN='<token>'"
+          exit 1
+        fi
+        echo "✅ OP_CONNECT_TOKEN is set"
+      - |
+        CREDS_FILE="${OP_CREDENTIALS_FILE:-./1password-credentials.json}"
+        if [ ! -f "${CREDS_FILE}" ]; then
+          echo "❌ Credentials file not found at: ${CREDS_FILE}"
+          echo "   Download 1password-credentials.json from the Connect server setup page"
+          echo "   and place it at the project root (it is gitignored)."
+          exit 1
+        fi
+        echo "✅ Credentials file present at ${CREDS_FILE}"
+      - ./scripts/external-secrets/setup-1password-connect.sh --auto
+
+  setup-1password-force:
+    desc: Re-bootstrap 1Password Connect secrets (recreates even if they exist)
+    cmds:
+      - |
+        if [ -z "${OP_CONNECT_TOKEN:-}" ]; then
+          echo "❌ OP_CONNECT_TOKEN environment variable is not set."
+          exit 1
+        fi
+        if [ ! -f "${OP_CREDENTIALS_FILE:-./1password-credentials.json}" ]; then
+          echo "❌ 1password-credentials.json not found at project root."
+          exit 1
+        fi
+      - ./scripts/external-secrets/setup-1password-connect.sh --auto --force
 
   # ============================================
   # Registry Management

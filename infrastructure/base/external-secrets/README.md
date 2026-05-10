@@ -2,6 +2,8 @@
 
 This directory contains the configuration for External Secrets Operator (ESO) integrated with 1Password Connect for secrets management in the Kubernetes cluster.
 
+> **Bootstrap / recovery:** see [`docs/05-runbooks/cluster-bootstrap.md`](../../../docs/05-runbooks/cluster-bootstrap.md) for the one-command (`task setup-1password`) procedure that re-creates the `onepassword-connect-secret` and `onepassword-connect-token` Secrets after a cluster wipe. This README focuses on how ESO is wired up and how to author `ExternalSecret` resources.
+
 ## Architecture
 
 The setup consists of three main components:
@@ -100,21 +102,31 @@ kubectl get pods -n external-secrets
 
 ### Step 2: Configure 1Password Credentials
 
-Use the setup script to create the required secrets:
+Use the Taskfile target (idempotent, one command):
 
 ```bash
-./scripts/setup-1password-connect.sh
+export OP_CONNECT_TOKEN='<token-from-1password-developer-tools>'
+# Place 1password-credentials.json at the project root (gitignored)
+task setup-1password
 ```
 
-This script will prompt you for:
+Or invoke the underlying script directly:
 
-- Path to `1password-credentials.json`
-- 1Password Connect API token
+```bash
+# Auto mode (uses OP_CONNECT_TOKEN env var + ./1password-credentials.json)
+./scripts/external-secrets/setup-1password-connect.sh --auto
 
-It creates two secrets:
+# Interactive mode (prompts for path + token)
+./scripts/external-secrets/setup-1password-connect.sh
+```
+
+It creates two secrets in the `external-secrets` namespace:
 
 - `onepassword-connect-secret` - Contains the credentials file
 - `onepassword-connect-token` - Contains the API token
+
+Both creations are skipped if the Secrets already exist; pass `--force` (or
+use `task infra:setup-1password-force`) to recreate.
 
 ### Step 3: Update Vault Configuration
 
