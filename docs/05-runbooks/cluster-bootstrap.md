@@ -12,12 +12,10 @@ catastrophic event (UPS failure, accidental wipe, fresh hardware, etc.).
 task provision
 
 # 2. Apply machine-config patches (kubelet bind mounts for iSCSI / local-path)
-talosctl --talosconfig configs/talosconfig -e "${TALOS_NODE}" \
-  patch mc --nodes "${TALOS_NODE}" \
-  --patch @docs/05-runbooks/talos-kubelet-iscsi-patch.yaml
-talosctl --talosconfig configs/talosconfig -e "${TALOS_NODE}" \
-  patch mc --nodes "${TALOS_NODE}" \
-  --patch @docs/05-runbooks/talos-kubelet-localpath-patch.yaml
+#    One command, all nodes, idempotent:
+task talos:patches
+# (Or directly: ./scripts/bootstrap-talos-patches.sh)
+# Use --check / `task talos:patches-check` for a dry-run preview.
 
 # 3. Merge kubeconfig
 task kubeconfig-merge
@@ -79,18 +77,35 @@ Two machine-config patches must be applied so kubelet can see iSCSI sockets
 (Democratic-CSI / TrueNAS) and the local-path-provisioner host directory.
 Both patches live in this directory and are idempotent.
 
+The `bootstrap-talos-patches.sh` helper applies them to every node in one
+shot. The node IP list is hard-coded in the script — edit `NODES=( ... )` at
+the top of the file when the cluster topology changes.
+
+```bash
+# Preview (no changes)
+task talos:patches-check
+# or: ./scripts/bootstrap-talos-patches.sh --check
+
+# Apply to all nodes
+task talos:patches
+# or: ./scripts/bootstrap-talos-patches.sh
+```
+
+These trigger a kubelet restart on each node — expected and finishes in a
+few seconds. Re-running on already-patched nodes is a no-op (`talosctl
+patch mc` performs a structural merge).
+
+If you only need to patch a single node manually:
+
 ```bash
 talosctl --talosconfig configs/talosconfig -e "${TALOS_NODE}" \
-  patch mc --nodes "${TALOS_NODE}" \
+  patch mc --nodes <node-ip> \
   --patch @docs/05-runbooks/talos-kubelet-iscsi-patch.yaml
 
 talosctl --talosconfig configs/talosconfig -e "${TALOS_NODE}" \
-  patch mc --nodes "${TALOS_NODE}" \
+  patch mc --nodes <node-ip> \
   --patch @docs/05-runbooks/talos-kubelet-localpath-patch.yaml
 ```
-
-These trigger a kubelet restart on each node. Repeat for every node IP in
-the cluster (control plane + workers).
 
 ## Step 3 — Merge kubeconfig
 
