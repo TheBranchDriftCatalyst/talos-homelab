@@ -1,0 +1,14 @@
+# Machine config patch to expose /var/lib/rancher/local-path-provisioner to kubelet
+# Required for Talos kubelet to mount local-path PVs (both static and dynamic).
+# Without this, kubelet's container view doesn't include /var/lib/rancher and
+# hostPath mounts fail with "is not a directory" even though the path exists on /var.
+machine:
+  kubelet:
+    extraMounts:
+      - destination: /var/lib/rancher
+        type: bind
+        source: /var/lib/rancher
+        options:
+          - bind
+          - rshared
+          - rw
