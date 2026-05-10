@@ -1,0 +1,70 @@
+---
+# Bootstrap CRDs - Foundational CustomResourceDefinitions required upfront
+#
+# Purpose:
+#   On a fresh cluster bootstrap (e.g. UPS-induced full rebuild), Flux's
+#   server-side dry-run validation fails when manifests reference Kinds
+#   whose CRDs haven't been installed yet. This Kustomization installs
+#   the foundational CRDs early so all downstream operators / HelmReleases
+#   / Application CRs can apply cleanly without circular dependencies.
+#
+# Pattern:
+#   Each operator's own Helm chart still owns CRD lifecycle for "its own"
+#   CRDs in steady-state (CreateReplace). This list pins specific known
+#   versions so that resources referencing them (ServiceMonitor,
+#   IngressRoute, Application, NodeFeatureRule, GpuDevicePlugin,
+#   GrafanaDashboard, etc.) pass dry-run BEFORE their owning operator
+#   finishes installing.
+#
+# Why vendored, not remote URLs?
+#   Kustomize 5.x rejects bare github.com release-asset URLs (it tries
+#   to clone them as git repos and fails). Even raw.githubusercontent.com
+#   URLs introduce network/availability failure modes during bootstrap.
+#   Vendoring keeps Flux deterministic and offline-safe.
+#
+# How to refresh / pin a new CRD version:
+#   1. Update the source URL comment in crds/<file>.yaml header (or here)
+#   2. Re-download:
+#        curl -sSLfo crds/<file>.yaml <URL>
+#   3. Commit and push; Flux reconciles automatically.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  # Prometheus Operator CRDs (ServiceMonitor, PodMonitor, PrometheusRule, etc.)
+  # Source: https://github.com/prometheus-operator/prometheus-operator/releases/download/v0.79.2/stripped-down-crds.yaml
+  # Used by: cert-manager, cloudnative-pg, monitoring stack, many others
+  - crds/prometheus-operator-crds.yaml
+
+  # Traefik CRDs (Middleware, IngressRoute, IngressRouteTCP, etc.)
+  # Source: https://raw.githubusercontent.com/traefik/traefik/v3.2/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml
+  # Used by: most app IngressRoutes across the cluster
+  - crds/traefik-crds.yaml
+
+  # ArgoCD CRDs (Application, ApplicationSet, AppProject)
+  # Source: https://raw.githubusercontent.com/argoproj/argo-cd/v2.13.2/manifests/crds/{application,applicationset,appproject}-crd.yaml
+  # Used by: infrastructure/base/argocd/applications/*
+  - crds/argocd-application-crd.yaml
+  - crds/argocd-applicationset-crd.yaml
+  - crds/argocd-appproject-crd.yaml
+
+  # Node Feature Discovery CRDs (NodeFeature, NodeFeatureRule, NodeFeatureGroup)
+  # Source: https://raw.githubusercontent.com/kubernetes-sigs/node-feature-discovery/v0.17.3/deployment/base/nfd-crds/nfd-api-crds.yaml
+  # Used by: infrastructure/base/intel-gpu/ (NodeFeatureRule manifests)
+  - crds/nfd-api-crds.yaml
+
+  # Intel Device Plugin Operator CRDs
+  # Source: https://raw.githubusercontent.com/intel/intel-device-plugins-for-kubernetes/main/deployments/operator/crd/bases/deviceplugin.intel.com_*.yaml
+  # Used by: infrastructure/base/intel-gpu/intel-gpu-plugin-cr.yaml
+  - crds/intel-gpudeviceplugins.yaml
+  - crds/intel-qatdeviceplugins.yaml
+  - crds/intel-sgxdeviceplugins.yaml
+  - crds/intel-dlbdeviceplugins.yaml
+  - crds/intel-dsadeviceplugins.yaml
+  - crds/intel-iaadeviceplugins.yaml
+  - crds/intel-fpgadeviceplugins.yaml
+
+  # Grafana Operator CRDs (Grafana, GrafanaDashboard, GrafanaDatasource, etc.)
+  # Source: https://github.com/grafana/grafana-operator/releases/download/v5.20.0/crds.yaml
+  # Used by: infrastructure/base/monitoring/grafana-instances/
+  - crds/grafana-operator-crds.yaml
