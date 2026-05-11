@@ -3,29 +3,36 @@
 #
 # Creates the complete chain needed for LiteLLM SSO via Authentik:
 #   1. Group         - litellm-admins (empty by default; user adds members via UI)
-#   2. ScopeMapping  - litellm_role (returns proxy_admin / internal_user based on group/superuser)
+#   2. ScopeMapping  - litellm_role (proxy_admin / internal_user based on group/superuser)
 #   3. OAuth2Provider- litellm (confidential, client_id=litellm)
 #   4. Application   - litellm (slug=litellm, bound to provider above)
 #
-# Mounted into authentik-worker as /blueprints/custom/litellm-role-mapping.yaml
-# via ConfigMap authentik/authentik-litellm-blueprint. Worker auto-discovers and
-# applies any blueprint files under /blueprints/custom/.
+# Mounted into authentik-server AND authentik-worker as
+#   /blueprints/custom/litellm-role-mapping.yaml
+# via this ConfigMap (volumeMount in helmrelease.yaml). The worker auto-discovers
+# any blueprint files under /blueprints/custom/ and reconciles them.
 #
-# IMPORTANT: client_id / client_secret in this blueprint MUST match the values
-# stored in 1Password and synced into the catalyst-llm/litellm-secrets Secret
-# (keys: oidc-client-id, oidc-client-secret). Currently:
-#   client_id     = "litellm"
-#   client_secret = (managed in 1Password; do NOT put plaintext here)
+# SECRET HANDLING (no secrets in git):
+#   The OAuth2Provider client_secret is read from the env var
+#   LITELLM_OIDC_CLIENT_SECRET via the !Env YAML tag. That env var is injected
+#   into the authentik worker pod from the in-namespace Secret
+#   "authentik-litellm-oidc" (key: client-secret), populated by the
+#   ExternalSecret of the same name from 1Password (item: litellm,
+#   property: oidc-client-secret).
 #
-# Because Authentik blueprints generate a fresh client_secret if none is provided,
-# we pin client_secret here so cluster rebuilds yield the same value LiteLLM expects.
-# The secret value below is the SAME one currently provisioned for the live cluster.
-# If you ever rotate it, update both this blueprint AND the 1Password entry.
+#   The matching value lives in the catalyst-llm/litellm-secrets Secret
+#   (oidc-client-secret) consumed by the LiteLLM container as
+#   GENERIC_CLIENT_SECRET. Both pull from the same 1Password property, so
+#   they stay in sync across cluster rebuilds with no manual coordination.
+#
+#   To rotate: update the 1Password "litellm.oidc-client-secret" field, wait
+#   for both ExternalSecrets to refresh, then restart authentik-worker
+#   (so !Env is re-evaluated) and the litellm pod.
 #
 # MANUAL POST-INSTALL STEPS (one-time, per user):
 #   1. Log into Authentik as akadmin
 #   2. Directory > Groups > "litellm-admins" > Add the user(s) who should be proxy_admin
-#   3. (Optional) edit the litellm Application meta_icon / launch URL
+#   3. (Optional) edit the litellm Application meta_icon in the UI
 #
 apiVersion: v1
 kind: ConfigMap
@@ -84,8 +91,9 @@ data:
 
       # ---------------------------------------------------------------------
       # 3. OAuth2Provider: litellm
-      #    Confidential client. Pinned client_id/client_secret so they match
-      #    the values in 1Password / litellm-secrets after any rebuild.
+      #    Confidential client. client_secret pulled from the env var
+      #    LITELLM_OIDC_CLIENT_SECRET (injected into the worker pod from the
+      #    authentik-litellm-oidc Secret, sourced from 1Password via ESO).
       # ---------------------------------------------------------------------
       - model: authentik_providers_oauth2.oauth2provider
         id: litellm-oauth2-provider
@@ -95,11 +103,7 @@ data:
           name: litellm
           client_type: confidential
           client_id: litellm
-          # client_secret matches the value stored in 1Password under "litellm-secrets"
-          # key "oidc-client-secret". Pinned here so cluster rebuilds re-create the
-          # SAME credential the LiteLLM container is already configured to send.
-          # Rotation: update 1Password AND this file together.
-          client_secret: 99LZ7Bpv7Yw7wJyIaaeU8UbVfH6qFgtPskE0aIvlWCnVAW14CStEbeQwBb0D1XEhTMKAINwx5WrL109gUSeKJxy6xEIUZ67ONGZ1kxgBd2MApbUgrdMUtsy0J0HdkYUc
+          client_secret: !Env LITELLM_OIDC_CLIENT_SECRET
           authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
@@ -122,8 +126,7 @@ data:
 
       # ---------------------------------------------------------------------
       # 4. Application: litellm
-      #    Bound to the OAuth2 provider above. Restricted to litellm-admins
-      #    group at the application level (LiteLLM also enforces via role).
+      #    Bound to the OAuth2 provider above.
       # ---------------------------------------------------------------------
       - model: authentik_core.application
         id: litellm-application
