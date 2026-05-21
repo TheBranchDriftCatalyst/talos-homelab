@@ -1,0 +1,217 @@
+---
+# Authentik PostgreSQL logical backup CronJob.
+#
+# WHY THIS EXISTS (and not just Velero):
+# Velero's fs-backup (Kopia) explicitly REJECTS hostPath volumes:
+#   "Volume data in pod authentik/authentik-postgresql-0 is a hostPath
+#    volume which is not supported for pod volume backup, skipping"
+# (see pkg/podvolume/backupper.go:349 in vmware-tanzu/velero).
+#
+# The local-path-provisioner v0.0.28 in this cluster only emits hostPath
+# PVs — it has no `volumeType: local` flag — so PVCs on the default
+# `local-path` StorageClass cannot be backed up by Velero. This affects
+# `data-authentik-postgresql-0` and most monitoring StatefulSet PVCs.
+#
+# UPS-2026-05-09 destroyed this exact PVC with no recovery path. To
+# prevent recurrence, we run a daily `pg_dump` against the live DB and
+# stream the dump to MinIO bucket `backups/authentik-postgres/`. Velero
+# also captures the K8s resources (Secret, HelmRelease, etc.) so a full
+# restore is: kubectl apply manifests → wait for pod → pg_restore dump.
+#
+# RESTORE: see docs/05-runbooks/velero-restore.md ("Authentik PostgreSQL").
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-postgres-backup-config
+  namespace: backup
+data:
+  PGHOST: "authentik-postgresql.authentik.svc.cluster.local"
+  PGPORT: "5432"
+  PGUSER: "authentik"
+  PGDATABASE: "authentik"
+  S3_ENDPOINT: "http://minio.minio.svc.cluster.local"
+  S3_BUCKET: "backups"
+  S3_PREFIX: "authentik-postgres"
+  # Keep N most recent dumps. 30 = 30 days at daily cadence.
+  RETENTION_COUNT: "30"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: authentik-postgres-backup
+  namespace: backup
+  labels:
+    app.kubernetes.io/name: authentik-postgres-backup
+    app.kubernetes.io/component: backup
+spec:
+  # Daily at 02:15 UTC (between daily-all and critical-data-daily Velero schedules)
+  schedule: "15 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: dump-and-upload
+              # Official postgres image (Debian-based, has bash + curl + gzip).
+              # Match authentik-postgresql chart version (PostgreSQL 16).
+              image: postgres:16.4-bookworm
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+                  DUMP_FILE="/tmp/authentik-${TIMESTAMP}.sql.gz"
+                  S3_KEY="${S3_PREFIX}/authentik-${TIMESTAMP}.sql.gz"
+
+                  echo "[*] pg_dump $PGHOST:$PGPORT/$PGDATABASE as $PGUSER..."
+                  PGPASSWORD="$PGPASSWORD" pg_dump \
+                    --host="$PGHOST" \
+                    --port="$PGPORT" \
+                    --username="$PGUSER" \
+                    --dbname="$PGDATABASE" \
+                    --no-owner --no-privileges --clean --if-exists \
+                    --format=plain \
+                    | gzip -9 > "$DUMP_FILE"
+
+                  SIZE=$(du -h "$DUMP_FILE" | cut -f1)
+                  echo "[*] Dump complete: $SIZE"
+
+                  echo "[*] Installing mc..."
+                  curl -fsSL --max-time 30 \
+                    https://dl.min.io/client/mc/release/linux-amd64/mc \
+                    -o /tmp/mc && chmod +x /tmp/mc
+
+                  echo "[*] Uploading to s3://${S3_BUCKET}/${S3_KEY}..."
+                  /tmp/mc alias set backup "$S3_ENDPOINT" \
+                    "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null
+                  /tmp/mc cp "$DUMP_FILE" "backup/${S3_BUCKET}/${S3_KEY}"
+
+                  echo "[*] Pruning to last $RETENTION_COUNT dumps..."
+                  S3_DIR="backup/${S3_BUCKET}/${S3_PREFIX}/"
+                  total=$(/tmp/mc ls "$S3_DIR" | wc -l | tr -d ' ')
+                  to_delete=$((total - RETENTION_COUNT))
+                  if [ "$to_delete" -gt 0 ]; then
+                    /tmp/mc ls "$S3_DIR" | head -n "$to_delete" \
+                      | awk '{print $NF}' | while read -r f; do
+                      echo "    rm $f"
+                      /tmp/mc rm "${S3_DIR}${f}"
+                    done
+                  else
+                    echo "    nothing to prune (have $total, keep $RETENTION_COUNT)"
+                  fi
+
+                  echo "[*] Done. Total dumps in s3://${S3_BUCKET}/${S3_PREFIX}/: $(/tmp/mc ls "$S3_DIR" | wc -l | tr -d ' ')"
+              env:
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: authentik-postgres-backup-creds
+                      key: PGPASSWORD
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-backup-credentials
+                      key: ACCESS_KEY_ID
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-backup-credentials
+                      key: ACCESS_SECRET_KEY
+              envFrom:
+                - configMapRef:
+                    name: authentik-postgres-backup-config
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 1Gi
+---
+# Pull the authentik DB password from authentik-secrets in the authentik
+# namespace and project it into the backup namespace so the CronJob can
+# read it. Uses ExternalSecret refresh to keep in sync with authentik
+# rotations.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: authentik-postgres-backup-creds
+  namespace: backup
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword
+    kind: ClusterSecretStore
+  target:
+    name: authentik-postgres-backup-creds
+    creationPolicy: Owner
+  data:
+    # Same 1Password item that authentik-secrets pulls — just projected
+    # into the backup namespace.
+    - secretKey: PGPASSWORD
+      remoteRef:
+        key: authentik
+        property: postgresql-password
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: authentik-postgres-backup-alerts
+  namespace: backup
+spec:
+  groups:
+    - name: authentik-postgres-backup.cronjob
+      rules:
+        - alert: AuthentikPostgresBackupJobFailed
+          expr: |
+            kube_job_status_failed{namespace="backup", job_name=~"authentik-postgres-backup-.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: authentik-backup
+          annotations:
+            summary: "authentik postgres backup job {{ $labels.job_name }} failed"
+            description: >-
+              Job {{ $labels.job_name }} in namespace backup has failed.
+              Investigate with `kubectl logs -n backup -l job-name={{ $labels.job_name }}`.
+              Without this dump, recovery from a control plane disk
+              failure (UPS-2026-05-09 redux) loses ALL authentik state.
+
+        - alert: AuthentikPostgresBackupNotRunning
+          expr: |
+            time() - max(kube_cronjob_status_last_successful_time{
+              namespace="backup", cronjob="authentik-postgres-backup"
+            }) > 93600
+          for: 30m
+          labels:
+            severity: critical
+            component: authentik-backup
+          annotations:
+            summary: "authentik postgres backup CronJob has not succeeded in over 26 hours"
+            description: >-
+              Last successful authentik-postgres-backup run was
+              {{ $value | humanizeDuration }} ago. Expected daily cadence.

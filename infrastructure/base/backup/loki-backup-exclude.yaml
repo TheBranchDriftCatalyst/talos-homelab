@@ -1,0 +1,102 @@
+---
+# Exclude Loki's local PVC from Velero backups.
+#
+# Loki uses an S3 backend (MinIO bucket `loki`) for actual log storage;
+# the local `storage-loki-0` PVC is just chunk cache / WAL — ephemeral
+# and high-churn. Backing it up would bloat backups significantly with
+# data we don't need.
+#
+# The `velero.io/exclude-from-backup=true` label tells Velero to skip
+# this resource entirely, regardless of namespace inclusion rules.
+#
+# This Job patches both the PVC (so the volume is skipped during fs-backup)
+# and the pod (so the resource itself is also skipped). It runs once per
+# Flux reconciliation; idempotent (kubectl label --overwrite).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: velero-loki-labeler
+  namespace: backup
+---
+# ClusterRole + ClusterRoleBinding so the SA in `backup` can label
+# resources in `monitoring`. (A namespaced Role in `monitoring` would be
+# cleaner but the parent kustomization sets `namespace: backup`,
+# rewriting everything into backup — see kustomization.yaml.)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: velero-loki-labeler
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "pods"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: velero-loki-labeler
+subjects:
+  - kind: ServiceAccount
+    name: velero-loki-labeler
+    namespace: backup
+roleRef:
+  kind: ClusterRole
+  name: velero-loki-labeler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: velero-loki-exclude-labeler
+  namespace: backup
+  annotations:
+    # Force re-run on Flux reconcile when the manifest changes
+    kustomize.toolkit.fluxcd.io/force: "enabled"
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 3
+  template:
+    spec:
+      serviceAccountName: velero-loki-labeler
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kubectl
+          # alpine/k8s ships kubectl + a real shell, suitable for scripted Jobs.
+          image: alpine/k8s:1.34.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              echo "[*] Labeling Loki PVCs in monitoring ns to exclude from Velero backups..."
+              # Label all PVCs belonging to loki (matches storage-loki-0 etc)
+              kubectl -n monitoring get pvc -l app.kubernetes.io/name=loki \
+                -o name | while read -r pvc; do
+                echo "    label $pvc"
+                kubectl -n monitoring label "$pvc" \
+                  velero.io/exclude-from-backup=true --overwrite
+              done
+              echo "[*] Labeling Loki pods..."
+              kubectl -n monitoring get pod -l app.kubernetes.io/name=loki \
+                -o name | while read -r pod; do
+                echo "    label $pod"
+                kubectl -n monitoring label "$pod" \
+                  velero.io/exclude-from-backup=true --overwrite
+              done
+              echo "[*] Done."
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi

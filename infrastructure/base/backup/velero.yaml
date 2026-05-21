@@ -84,12 +84,23 @@ spec:
           aws_secret_access_key=minio123
 
     # Node agent (runs on each node for PVC backups)
+    # MUST tolerate the control-plane taint so it can back up PVCs on
+    # control-plane nodes (e.g. tempo-0 on talos00). Without this,
+    # critical-data-daily backups fail with "daemonset pod not found in
+    # running state in node talos00".
     deployNodeAgent: true
     nodeAgent:
       resources:
         requests:
           cpu: 100m
           memory: 128Mi
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
 
     # Velero server resources
     resources:
@@ -156,3 +167,41 @@ spec:
           snapshotVolumes: false
           # CRITICAL: false = opt-in via pod annotations, true = backup ALL volumes
           defaultVolumesToFsBackup: false
+
+      # CRITICAL DATA: daily fs-backup of authentik DB + grafana/monitoring config.
+      # Created in response to UPS-2026-05-09 outage which lost
+      # authentik/data-authentik-postgresql-0 (total state loss) and
+      # monitoring/grafana-pvc.
+      #
+      # Unlike daily-all (opt-in via pod annotations), this schedule sets
+      # defaultVolumesToFsBackup: true so EVERY PVC in scope is backed up
+      # without requiring per-pod annotations on upstream Helm charts we
+      # don't control (authentik, kube-prometheus-stack, grafana-operator).
+      #
+      # Loki is excluded by the velero-loki-exclude-labeler Job
+      # (loki-backup-exclude.yaml), which labels loki PVCs/pods with
+      # `velero.io/exclude-from-backup=true`. Its log/chunk volume is
+      # ephemeral cache (real logs go to MinIO via S3 backend) and would
+      # bloat backups with churny data we don't need.
+      critical-data-daily:
+        disabled: false
+        schedule: "30 2 * * *"  # 2:30 AM daily (after daily-all kicks off)
+        useOwnerReferencesInBackup: false
+        template:
+          ttl: "720h"  # 30 days
+          includedNamespaces:
+            - authentik
+            - monitoring
+          excludedResources:
+            - events
+          storageLocation: default
+          snapshotVolumes: false
+          # CRITICAL: backup ALL volumes in these namespaces by default.
+          # local-path-provisioner does not support CSI snapshots, so we
+          # rely on Kopia fs-backup via the node-agent DaemonSet.
+          #
+          # Loki is excluded by labeling the loki PVC and StatefulSet
+          # pods with `velero.io/exclude-from-backup=true` — see
+          # loki-backup-exclude.yaml. (labelSelector here would also
+          # filter out unlabeled k8s resources we DO want backed up.)
+          defaultVolumesToFsBackup: true
