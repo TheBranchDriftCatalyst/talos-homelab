@@ -1,0 +1,47 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tubesync
+  labels:
+    app: tubesync
+    app.kubernetes.io/name: tubesync
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: tubesync
+  template:
+    metadata:
+      labels:
+        app: tubesync
+        app.kubernetes.io/name: tubesync
+    spec:
+      containers:
+        - name: tubesync
+          image: ghcr.io/meeb/tubesync:latest
+          ports:
+            - name: http
+              containerPort: 4848
+              protocol: TCP
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: America/Los_Angeles
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: downloads
+              mountPath: /downloads
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: tubesync-config
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: tubesync-downloads
