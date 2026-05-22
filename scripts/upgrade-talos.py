@@ -159,6 +159,20 @@ class Node:
     last_message: str = ""
     started_at: float = 0.0
     finished_at: float = 0.0
+    # Installer image base URL minus version tag, resolved from live machine config.
+    # e.g. "ghcr.io/siderolabs/installer" (stock) or
+    #      "factory.talos.dev/installer/<schematic-id>" (factory with extensions)
+    installer_base: str = ""
+    # Desired installer base, resolved from the repo's *-schematic.yaml via
+    # factory.talos.dev. If set and != installer_base, we have schematic drift
+    # and the node should be re-upgraded with this new URL.
+    target_installer_base: str = ""
+    # Path to the schematic YAML in repo (if found)
+    schematic_path: Optional[Path] = None
+    # True if the node's installer is a factory URL (schematic with extensions baked in)
+    has_factory_installer: bool = False
+    # Extensions reported by the node (post-discovery)
+    extensions: list[str] = field(default_factory=list)
 
     @property
     def is_cp(self) -> bool:
@@ -241,6 +255,72 @@ def get_node_status(name: str) -> str:
     return parts[1] if len(parts) >= 2 else "Unknown"
 
 
+# Matches an installer image URL with version tag, e.g.
+#   ghcr.io/siderolabs/installer:v1.11.1
+#   factory.talos.dev/installer/abc123:v1.11.1
+INSTALLER_IMAGE_RE = re.compile(
+    r"(?P<base>\S*?/installer(?:/[a-f0-9]+)?):v(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
+)
+
+
+def get_installer_base(ip: str) -> tuple[str, bool]:
+    """Return (installer_base, is_factory) from the node's live machine config.
+
+    installer_base is the URL minus the `:vX.Y.Z` tag.  Falls back to the stock
+    installer if the field can't be read.
+    """
+    r = talosctl("--nodes", ip, "get", "machineconfig", "-o", "yaml", timeout=20)
+    if r.returncode != 0:
+        log.warning("[%s] could not read machineconfig (rc=%d); falling back to stock installer",
+                    ip, r.returncode)
+        return (DEFAULT_INSTALLER_BASE, False)
+
+    # Find the install.image line.  The YAML structure is:
+    #   machine:
+    #     install:
+    #       image: <URL>:<tag>
+    for line in r.stdout.splitlines():
+        m = INSTALLER_IMAGE_RE.search(line)
+        if m and "kubelet" not in line:
+            base = m.group("base")
+            is_factory = "factory.talos.dev" in base
+            return (base, is_factory)
+
+    log.warning("[%s] no installer image found in machineconfig; falling back to stock", ip)
+    return (DEFAULT_INSTALLER_BASE, False)
+
+
+def get_node_extensions(ip: str) -> list[str]:
+    """Return the list of Talos system extensions installed on the node.
+
+    talosctl emits a stream of pretty-printed JSON objects (one per resource),
+    NOT one object per line. We parse with raw_decode to walk the stream.
+    """
+    import json
+    r = talosctl("--nodes", ip, "get", "extensions", "-o", "json", timeout=20)
+    if r.returncode != 0 or not r.stdout.strip():
+        return []
+    decoder = json.JSONDecoder()
+    names: list[str] = []
+    text = r.stdout
+    pos = 0
+    while pos < len(text):
+        # Skip whitespace between objects
+        while pos < len(text) and text[pos] in " \t\n\r":
+            pos += 1
+        if pos >= len(text):
+            break
+        try:
+            doc, end = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            break
+        name = doc.get("spec", {}).get("metadata", {}).get("name")
+        if name:
+            names.append(name)
+        pos = end
+    return names
+
+
 def discover_cluster(talosconfig: str) -> list[Node]:
     r = kubectl("get", "nodes", "--no-headers", "-o", "wide")
     if r.returncode != 0:
@@ -254,7 +334,15 @@ def discover_cluster(talosconfig: str) -> list[Node]:
         name, _status, roles, _age, _version, ip = parts[:6]
         role = "control-plane" if "control-plane" in roles else "worker"
         current = get_talos_version(ip) or "?"
-        nodes.append(Node(name=name, ip=ip, role=role, current_version=current))
+        base, is_factory = get_installer_base(ip)
+        exts = get_node_extensions(ip)
+        nodes.append(Node(
+            name=name, ip=ip, role=role,
+            current_version=current,
+            installer_base=base,
+            has_factory_installer=is_factory,
+            extensions=exts,
+        ))
     return nodes
 
 
@@ -327,7 +415,67 @@ def health_check(nodes: list[Node], cp: Node, talosconfig: str) -> tuple[bool, l
     else:
         log.info("health: all nodes on %s", next(iter(versions), "unknown"))
 
+    # 7. Admission webhooks must have healthy backends.
+    # See: docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md
+    # A broken admission webhook (e.g., opentelemetry-operator with no Ready
+    # endpoints) makes apiserver block on every pod create — and during a
+    # Talos upgrade we create LOTS of pods.  Catching this before we start
+    # prevents cascading meltdowns.
+    log.info("health: admission webhook backends")
+    broken_webhooks = _find_broken_webhooks()
+    if broken_webhooks:
+        for w in broken_webhooks:
+            issues.append(f"broken admission webhook: {w}")
+    else:
+        log.info("health: all admission webhooks have healthy endpoints")
+
     return (len(issues) == 0, issues)
+
+
+def _find_broken_webhooks() -> list[str]:
+    """Return a list of admission webhooks whose service backend has no Ready endpoints.
+
+    A broken webhook will cause apiserver to block on every pod admission, which
+    creates a cluster-wide outage waiting to happen.
+    """
+    import json
+    broken: list[str] = []
+    for kind in ("mutatingwebhookconfigurations", "validatingwebhookconfigurations"):
+        r = kubectl("get", kind, "-o", "json", "--request-timeout=15s", timeout=20)
+        if r.returncode != 0:
+            continue
+        try:
+            data = json.loads(r.stdout)
+        except json.JSONDecodeError:
+            continue
+        for cfg in data.get("items", []):
+            cfg_name = cfg.get("metadata", {}).get("name", "?")
+            for wh in cfg.get("webhooks", []):
+                svc_ref = wh.get("clientConfig", {}).get("service")
+                if not svc_ref:
+                    continue  # URL-based webhook, can't easily check
+                ns = svc_ref.get("namespace", "")
+                name = svc_ref.get("name", "")
+                # Check the service has Ready endpoints
+                eps = kubectl("get", "endpoints", "-n", ns, name, "-o", "json", timeout=10)
+                if eps.returncode != 0:
+                    broken.append(f"{cfg_name}/{wh.get('name','?')} → svc {ns}/{name} (endpoints missing)")
+                    continue
+                try:
+                    ep_data = json.loads(eps.stdout)
+                except json.JSONDecodeError:
+                    broken.append(f"{cfg_name}/{wh.get('name','?')} → svc {ns}/{name} (endpoints unparseable)")
+                    continue
+                subsets = ep_data.get("subsets") or []
+                # An "addresses" list (not just "notReadyAddresses") means ≥1 Ready
+                has_ready = any(s.get("addresses") for s in subsets)
+                if not has_ready:
+                    fail_policy = wh.get("failurePolicy", "Fail")
+                    broken.append(
+                        f"{cfg_name}/{wh.get('name','?')} → svc {ns}/{name} "
+                        f"(no Ready endpoints, failurePolicy={fail_policy})"
+                    )
+    return broken
 
 
 # ===========================================================================
@@ -346,6 +494,10 @@ class UpgradeOrchestrator:
         only: Optional[list[str]] = None,
         skip_intermediate: bool = False,
         uncordon_on_success: bool = True,
+        update_manifests: bool = True,
+        refresh_schematics: bool = True,
+        force: bool = False,
+        force_drain: bool = False,
     ):
         self.target = target
         self.talosconfig = talosconfig
@@ -355,6 +507,10 @@ class UpgradeOrchestrator:
         self.only = set(only) if only else None
         self.skip_intermediate = skip_intermediate
         self.uncordon_on_success = uncordon_on_success
+        self.update_manifests = update_manifests
+        self.refresh_schematics = refresh_schematics
+        self.force = force
+        self.force_drain = force_drain
 
         self.nodes: list[Node] = []
         self.cp: Optional[Node] = None
@@ -389,6 +545,116 @@ class UpgradeOrchestrator:
                  len(self.nodes),
                  self.cp.name if self.cp else "(none in scope)",
                  ", ".join(w.name for w in self.workers) or "(none in scope)")
+
+        # Pre-flight: report per-node installer + flag schematic mismatches
+        log.info("─── per-node installer images ───")
+        for n in self.nodes:
+            flavor = "factory" if n.has_factory_installer else "stock"
+            log.info("  %-14s %s (%s)  extensions: %s",
+                     n.name, n.installer_base, flavor,
+                     ", ".join(n.extensions) if n.extensions else "(none)")
+        self._warn_schematic_mismatches()
+
+    def _warn_schematic_mismatches(self) -> None:
+        """Emit a warning for nodes whose live installer disagrees with the
+        repo schematic — i.e. running stock when a factory schematic exists,
+        or factory URL says extensions but none reported by the node.
+
+        Also stashes the resolved schematic path onto each node for later
+        use by resolve_schematics_from_repo().
+        """
+        configs_dir = Path("configs/nodes")
+        if not configs_dir.exists():
+            log.info("no configs/nodes dir — skipping schematic-mismatch check")
+            return
+
+        for n in self.nodes:
+            # Look for a schematic file mentioning this node
+            schematics = list(configs_dir.glob(f"**/{n.name}*schematic*.yaml"))
+            if not schematics and n.name == "talos02-gpu":
+                schematics = list(configs_dir.glob("**/talos02*schematic*.yaml"))
+            if not schematics:
+                continue
+
+            n.schematic_path = schematics[0]
+            content = schematics[0].read_text()
+            # Crude but effective: extract extension names from the schematic
+            expected = re.findall(r"-\s+siderolabs/([\w-]+)", content)
+            if not expected:
+                continue
+
+            missing = [e for e in expected if e not in n.extensions]
+            if missing:
+                log.warning("[%s] schematic expects extensions %s, "
+                            "but node has %s — installer URL may be wrong",
+                            n.name, expected, n.extensions or "(none)")
+            if not n.has_factory_installer and expected:
+                log.warning("[%s] schematic expects extensions but installer is stock "
+                            "— upgrade will NOT restore extensions unless machine "
+                            "config is fixed to point at the factory URL",
+                            n.name)
+
+    def resolve_schematics_from_repo(self) -> None:
+        """For each node with a *-schematic.yaml in the repo, POST it to
+        factory.talos.dev and store the returned schematic ID as the desired
+        installer base.  Detects "schematic drift" — when the repo's schematic
+        YAML has been updated (e.g., new extension added) but the live machine
+        config still references an older schematic ID.
+
+        Sets node.target_installer_base to the correct factory URL.  During
+        upgrade, this URL is used instead of node.installer_base (live config).
+        """
+        if not self.refresh_schematics:
+            log.info("--no-refresh-schematics set; using live installer URLs as-is")
+            return
+
+        any_resolved = False
+        for n in self.nodes:
+            if not n.schematic_path:
+                continue
+            try:
+                content = n.schematic_path.read_bytes()
+            except OSError as e:
+                log.warning("[%s] could not read %s: %s", n.name, n.schematic_path, e)
+                continue
+
+            import urllib.request, urllib.error, json
+            try:
+                req = urllib.request.Request(
+                    "https://factory.talos.dev/schematics",
+                    data=content,
+                    method="POST",
+                    headers={"Content-Type": "application/x-yaml"},
+                )
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    data = json.loads(resp.read())
+            except (urllib.error.URLError, OSError, ValueError) as e:
+                log.warning("[%s] factory.talos.dev POST failed: %s", n.name, e)
+                continue
+
+            schematic_id = data.get("id")
+            if not schematic_id:
+                log.warning("[%s] factory.talos.dev returned no id: %s", n.name, data)
+                continue
+
+            target_base = f"factory.talos.dev/installer/{schematic_id}"
+            n.target_installer_base = target_base
+            any_resolved = True
+
+            if n.installer_base != target_base:
+                log.warning(
+                    "[%s] schematic drift detected:\n"
+                    "    live: %s\n"
+                    "    repo: %s\n"
+                    "    → will re-upgrade with new schematic",
+                    n.name, n.installer_base, target_base
+                )
+            else:
+                short = schematic_id[:12]
+                log.info("[%s] schematic up-to-date (%s…)", n.name, short)
+
+        if not any_resolved:
+            log.info("no schematic files in configs/nodes/ — using live installer URLs")
 
     def compute_path(self) -> None:
         # If skip_intermediate or only one minor away, go direct
@@ -426,22 +692,54 @@ class UpgradeOrchestrator:
 
     def upgrade_one(self, node: Node, version: str) -> bool:
         """Upgrade one node and verify it returns Ready on `version`."""
-        image = f"{self.installer_base}:{version}"
+        # Prefer target_installer_base (resolved from repo schematic via
+        # factory.talos.dev) over the live machine config's installer_base.
+        # This makes schematic updates apply automatically on next upgrade.
+        base = node.target_installer_base or node.installer_base or self.installer_base
+        image = f"{base}:{version}"
 
         # Pre-flight: if node is already on or past this version, skip.
         # This prevents accidental downgrades when a node is further ahead than
         # the phase version (e.g., partial-failure resume where some workers
         # are already on the final target).
+        #
+        # EXCEPTIONS that trigger re-upgrade even when at target version:
+        #   - --force flag explicitly set
+        #   - node.target_installer_base != node.installer_base (schematic drift)
+        #   - factory installer URL but no extensions installed (repair)
+        is_final_phase = version == self.path[-1]
+        has_schematic_drift = (
+            node.target_installer_base
+            and node.target_installer_base != node.installer_base
+        )
+        needs_extension_repair = (
+            node.has_factory_installer
+            and not node.extensions
+            and is_final_phase
+        )
         with self.lock:
             if version_ge(node.current_version, version):
-                node.state = NodeState.SKIPPED
-                node.last_message = (
-                    f"already on {node.current_version}"
-                    if node.current_version == version
-                    else f"already past ({node.current_version} ≥ {version})"
-                )
-                log.info("[%s] %s — skipping", node.name, node.last_message)
-                return True
+                if self.force:
+                    node.last_message = f"--force: re-upgrading even though at {node.current_version}"
+                    log.info("[%s] %s", node.name, node.last_message)
+                elif has_schematic_drift and is_final_phase:
+                    node.last_message = f"schematic drift — re-upgrading with new installer"
+                    log.info("[%s] %s", node.name, node.last_message)
+                elif needs_extension_repair:
+                    node.last_message = (
+                        f"factory installer but no extensions installed — "
+                        f"re-upgrading to restore"
+                    )
+                    log.info("[%s] %s", node.name, node.last_message)
+                else:
+                    node.state = NodeState.SKIPPED
+                    node.last_message = (
+                        f"already on {node.current_version}"
+                        if node.current_version == version
+                        else f"already past ({node.current_version} ≥ {version})"
+                    )
+                    log.info("[%s] %s — skipping", node.name, node.last_message)
+                    return True
             node.state = NodeState.UPGRADING
             node.target_version = version
             node.started_at = time.time()
@@ -464,6 +762,8 @@ class UpgradeOrchestrator:
             "--nodes", node.ip, "upgrade",
             "--image", image, "--wait", "--preserve=true",
         ]
+        if self.force_drain:
+            cmd.append("--force")
         log.debug("[%s] $ %s", node.name, " ".join(cmd))
 
         try:
@@ -537,8 +837,24 @@ class UpgradeOrchestrator:
         if not self.workers:
             return True
 
-        workers_needing = [w for w in self.workers if not version_ge(w.current_version, version)]
-        already = [w for w in self.workers if version_ge(w.current_version, version)]
+        def needs_upgrade(w: Node) -> bool:
+            if not version_ge(w.current_version, version):
+                return True
+            if self.force:
+                return True
+            is_final_phase = version == self.path[-1]
+            if not is_final_phase:
+                return False
+            # Schematic drift — repo's schematic resolved to a different ID
+            if w.target_installer_base and w.target_installer_base != w.installer_base:
+                return True
+            # Factory installer but no extensions installed → repair
+            if w.has_factory_installer and not w.extensions:
+                return True
+            return False
+
+        workers_needing = [w for w in self.workers if needs_upgrade(w)]
+        already = [w for w in self.workers if not needs_upgrade(w)]
         for w in already:
             with self.lock:
                 w.state = NodeState.SKIPPED
@@ -647,6 +963,109 @@ class UpgradeOrchestrator:
             else:
                 log.warning("[%s] uncordon failed: %s", name, r.stderr.strip())
 
+    def bump_manifest_versions(self) -> None:
+        """Update worker-<node>.yaml install.image fields to match the freshly
+        upgraded state:
+
+          - new Talos version tag (always)
+          - new schematic ID if refresh_schematics resolved a different URL
+
+        Also runs a generic version-tag bump against any other installer-image
+        lines (controlplane.yaml, etc.).  Skips kubelet and other unrelated
+        images.  Files unchanged are not rewritten.
+        """
+        if self.dry_run:
+            log.info("[dry-run] would update installer image lines in configs/nodes/")
+            return
+
+        configs_dir = Path("configs/nodes")
+        if not configs_dir.exists():
+            log.warning("configs/nodes not found — skipping manifest version bump")
+            return
+
+        updated: list[tuple[Path, list[str]]] = []
+
+        # 1) Per-node updates: rewrite each worker-<name>.yaml install.image to
+        #    the exact target_installer_base:target_version pair.
+        for n in self.nodes:
+            if n.state not in (NodeState.READY, NodeState.SKIPPED):
+                continue
+            # Find worker-<name>.yaml under configs/nodes/**/
+            files = list(configs_dir.glob(f"**/worker-{n.name}.yaml"))
+            if n.is_cp:
+                files += list(configs_dir.glob("controlplane.yaml"))
+            for f in files:
+                target_base = n.target_installer_base or n.installer_base
+                if not target_base:
+                    continue
+                desired_image = f"{target_base}:{self.target}"
+                if self._set_install_image(f, desired_image):
+                    updated.append((f, [f"  → {desired_image}"]))
+
+        # 2) Generic version-tag bumps for any remaining installer URLs
+        #    (e.g. worker-base.yaml referenced by all workers).
+        files = sorted(configs_dir.glob("**/*.yaml"))
+        for f in files:
+            try:
+                content = f.read_text()
+            except OSError as e:
+                log.warning("could not read %s: %s", f, e)
+                continue
+
+            replaced_lines: list[str] = []
+
+            def _sub(m: re.Match) -> str:
+                old_full = m.group(0)
+                new_full = f"{m.group('base')}:{self.target}"
+                if old_full != new_full:
+                    replaced_lines.append(
+                        f"  {f.name}: "
+                        f"v{m.group('major')}.{m.group('minor')}.{m.group('patch')} → {self.target}"
+                    )
+                return new_full
+
+            new_content = INSTALLER_IMAGE_RE.sub(_sub, content)
+            if new_content != content:
+                f.write_text(new_content)
+                # Only count if not already counted by per-node pass
+                already = any(p == f for p, _ in updated)
+                if not already:
+                    updated.append((f, replaced_lines))
+
+        if not updated:
+            log.info("manifests already on %s — nothing to bump", self.target)
+            return
+
+        log.info("updated %d manifest file(s) for target %s:", len(updated), self.target)
+        for f, lines in updated:
+            log.info("  %s", f)
+            for ln in lines:
+                log.info("    %s", ln)
+        log.info("review changes with: git diff configs/nodes/")
+
+    @staticmethod
+    def _set_install_image(path: Path, desired_image: str) -> bool:
+        """Set the `install.image: <url>` line in a machine config file.
+        Returns True if the file was modified.
+
+        Matches the first `install:` block's `image:` line.  Preserves
+        indentation.  If the file has no install.image line, no change.
+        """
+        try:
+            text = path.read_text()
+        except OSError:
+            return False
+
+        new_text, n_subs = re.subn(
+            r"(?m)^(\s*image:\s+)\S*?/installer(?:/[a-f0-9]+)?:v\d+\.\d+\.\d+",
+            lambda m: f"{m.group(1)}{desired_image}",
+            text,
+        )
+        if n_subs > 0 and new_text != text:
+            path.write_text(new_text)
+            return True
+        return False
+
     def run(self) -> bool:
         for i, v in enumerate(self.path):
             ok = self.run_phase(v)
@@ -661,6 +1080,13 @@ class UpgradeOrchestrator:
         else:
             log.info("--no-uncordon set; leaving cordon state untouched")
             log.info("to uncordon manually: kubectl uncordon <node>")
+
+        # Bump versions in repo machine configs so they match the new running state
+        if self.update_manifests:
+            self.bump_manifest_versions()
+        else:
+            log.info("--no-update-manifests set; configs/nodes/ left as-is")
+
         return True
 
 
@@ -716,6 +1142,7 @@ def make_nodes_table(orch: UpgradeOrchestrator) -> Panel:
     t.add_column("node", style="bold", no_wrap=True)
     t.add_column("ip", no_wrap=True)
     t.add_column("role")
+    t.add_column("installer", no_wrap=True)
     t.add_column("from", justify="right")
     t.add_column("→")
     t.add_column("target", justify="right")
@@ -730,10 +1157,13 @@ def make_nodes_table(orch: UpgradeOrchestrator) -> Panel:
     all_nodes.sort(key=lambda n: (0 if n.is_cp else 1, n.name))
     for n in all_nodes:
         role_style = "yellow" if n.is_cp else "white"
+        installer_label = "factory" if n.has_factory_installer else "stock"
+        installer_style = "bright_magenta" if n.has_factory_installer else "dim"
         t.add_row(
             n.name,
             Text(n.ip, style="dim"),
             Text(n.role, style=role_style),
+            Text(installer_label, style=installer_style),
             Text(n.current_version, style="dim"),
             Text("→", style="dim"),
             Text(n.target_version or orch.target, style="bright_white"),
@@ -886,6 +1316,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                    help="bypass the pre-upgrade health gate")
     p.add_argument("--no-uncordon", action="store_true",
                    help="leave successful nodes cordoned at the end (default: uncordon them)")
+    p.add_argument("--no-update-manifests", action="store_true",
+                   help="don't bump installer image version tags in configs/nodes/ after success")
+    p.add_argument("--no-refresh-schematics", action="store_true",
+                   help="don't resolve repo *-schematic.yaml files against factory.talos.dev "
+                        "(default: refresh — detects schematic drift and uses up-to-date IDs)")
+    p.add_argument("--force", action="store_true",
+                   help="re-upgrade even nodes already at the target version "
+                        "(useful for repairing dropped extensions)")
+    p.add_argument("--force-drain", action="store_true",
+                   help="pass --force to `talosctl upgrade` — skips pre-install "
+                        "drain and PDB checks. Use when a pod is blocking eviction "
+                        "(e.g. single-instance stateful workload on local-path PV)")
     p.add_argument("--settle", type=int, default=DEFAULT_SETTLE_SECONDS,
                    help=f"seconds to wait between phases (default {DEFAULT_SETTLE_SECONDS})")
     p.add_argument("--only", action="append", default=[],
@@ -939,12 +1381,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         only=args.only or None,
         skip_intermediate=args.skip_intermediate,
         uncordon_on_success=not args.no_uncordon,
+        update_manifests=not args.no_update_manifests,
+        refresh_schematics=not args.no_refresh_schematics,
+        force=args.force,
+        force_drain=args.force_drain,
     )
 
-    # Pre-flight: discover, plan, health-check
+    # Pre-flight: discover, resolve schematics, plan, health-check
     try:
         log.info("discovering cluster…")
         orch.discover()
+        log.info("resolving repo schematics via factory.talos.dev…")
+        orch.resolve_schematics_from_repo()
         log.info("computing upgrade path…")
         orch.compute_path()
     except Exception as e:

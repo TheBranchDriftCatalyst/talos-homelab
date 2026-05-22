@@ -224,6 +224,55 @@ After a UPS event or any catastrophic recovery, the operator runs
 `./1password-credentials.json` in place — that single command unblocks the
 ~9 downstream Flux Kustomizations that depend on ESO.
 
+## Sizing Considerations (verify on a re-bootstrap)
+
+### Cilium BPF map sizes
+
+`configs/cilium-values.yaml` should include explicit BPF map sizes — defaults
+are too small for a homelab cluster with ~50 namespaces:
+
+```yaml
+bpf:
+  masquerade: true
+  policyMapMax: 65536  # default 16384 — overflows at ~200 pods × many policies
+  lbMapMax: 65536      # already 65536 default, keep explicit
+```
+
+Symptoms of an undersized `policyMapMax`:
+
+```
+Failed to add PolicyMap key" ... error="update map cilium_policy_NNNN:
+update: no space left on device"
+```
+
+…followed by every new pod sandbox failing with `Cilium API client timeout`.
+See `docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md`.
+
+### Kubelet maxPods (per-node)
+
+Default is 110. For GPU nodes that gather GPU-pinned workloads (Plex, Jellyfin,
+Tdarr, ML inference) plus their dependencies, this fills quickly. If you see
+`FailedScheduling ... Too many pods` on a node, increase via Talos machine
+config:
+
+```yaml
+machine:
+  kubelet:
+    extraConfig:
+      maxPods: 200
+```
+
+Apply with `talosctl apply-config` — kubelet restarts, no node reboot required.
+
+### Admission webhook failurePolicy
+
+All operators we deploy that register MutatingWebhookConfigurations must use
+`failurePolicy: Ignore` (with a `namespaceSelector` excluding kube-system).
+The cluster meltdown of 2026-05-21 was caused by a webhook with
+`failurePolicy: Fail` whose operator had crashed — every pod admission was
+blocking. The pre-flight in `upgrade-talos.py` and `shutdown-cluster.sh`
+detects this state now, but the defense lives in the helm values too.
+
 ## Related
 
 - `infrastructure/base/external-secrets/README.md` — ESO details and ExternalSecret patterns

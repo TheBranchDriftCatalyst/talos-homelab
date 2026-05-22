@@ -141,6 +141,44 @@ else
   ok "kubectl present"
 fi
 
+# ----------------------------------------------------------------------
+# Admission webhook health gate
+# See docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md
+# A broken admission webhook blocks pod admission cluster-wide.  If we
+# proceed with a cordoning-then-shutdown sequence while one is dangling,
+# the next cluster boot will inherit the same issue and we may not be
+# able to recover cleanly without manual intervention.
+# ----------------------------------------------------------------------
+check_admission_webhooks() {
+  if ! $HAVE_KUBECTL; then
+    return 0
+  fi
+  step "Admission webhook backend check"
+  local broken=()
+  for kind in mutatingwebhookconfigurations validatingwebhookconfigurations; do
+    while IFS=$'\t' read -r cfg_name svc_ns svc_name fail_policy; do
+      [[ -z "$svc_ns" || -z "$svc_name" ]] && continue
+      # Check the service has Ready endpoints
+      local ready
+      ready=$(kubectl get endpoints -n "$svc_ns" "$svc_name" \
+        -o jsonpath='{.subsets[*].addresses[*].ip}' 2> /dev/null)
+      if [[ -z "$ready" ]]; then
+        broken+=("$cfg_name → $svc_ns/$svc_name (no Ready endpoints, failurePolicy=$fail_policy)")
+      fi
+    done < <(kubectl get "$kind" -o jsonpath='{range .items[*]}{range .webhooks[*]}{..metadata.name}{"\t"}{.clientConfig.service.namespace}{"\t"}{.clientConfig.service.name}{"\t"}{.failurePolicy}{"\n"}{end}{end}' 2> /dev/null)
+  done
+  if [[ ${#broken[@]} -eq 0 ]]; then
+    ok "all admission webhooks have healthy backends"
+  else
+    warn "broken admission webhooks detected (will not block shutdown but will be flagged):"
+    for w in "${broken[@]}"; do
+      warn "  $w"
+    done
+    warn "consider fixing or deleting these before next cluster boot"
+  fi
+}
+check_admission_webhooks
+
 WORKERS=()
 CP_NAME=""
 if $HAVE_KUBECTL && kubectl get nodes -o wide > /dev/null 2>&1; then

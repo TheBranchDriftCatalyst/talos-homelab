@@ -74,3 +74,22 @@ spec:
         enabled: false # Use self-signed if no cert-manager
       autoGenerateCert:
         enabled: true
+      # CRITICAL: failurePolicy MUST be Ignore.
+      # See: docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md
+      # If this operator crashes (it has before — see ServiceMonitor orphan bug)
+      # and failurePolicy=Fail, every pod create stalls on the webhook timeout
+      # which can cascade into a cluster-wide outage.  With Ignore, apiserver
+      # logs a warning and proceeds.
+      failurePolicy: Ignore
+      # Skip core/system namespaces — these should NEVER need OTel auto-injection,
+      # and protecting them from any webhook flakiness is good defense.
+      namespaceSelector:
+        matchExpressions:
+          - key: kubernetes.io/metadata.name
+            operator: NotIn
+            values:
+              - kube-system
+              - flux-system
+              - cilium-spire
+              - kube-node-lease
+              - kube-public
