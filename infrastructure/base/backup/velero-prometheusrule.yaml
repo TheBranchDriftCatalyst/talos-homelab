@@ -1,0 +1,103 @@
+---
+# Velero backup health alerts.
+# Sister to etcd-backup-alerts.  Catches the silent-success failure mode
+# discovered in UPS-2026-05-09 audit: backups completed "successfully" but
+# produced zero PodVolumeBackup CRs because pods were excluded.
+# See TALOS-qgu (parent), TALOS-a8g (etcd-backup sister rule, closed).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: velero-backup-alerts
+  namespace: backup
+  labels:
+    app.kubernetes.io/name: velero
+    app.kubernetes.io/component: backup
+spec:
+  groups:
+    - name: velero.backups
+      rules:
+        # ----------------------------------------------------------------
+        # 1. Hard failures — backup attempt failed outright.
+        # ----------------------------------------------------------------
+        - alert: VeleroBackupFailed
+          expr: |
+            increase(velero_backup_failure_total[1h]) > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: velero
+          annotations:
+            summary: "Velero backup schedule {{ $labels.schedule }} failed"
+            description: >-
+              `velero_backup_failure_total` increased for schedule
+              {{ $labels.schedule }} in the last hour.  Investigate with
+              `velero backup describe --details` on the most recent failed
+              backup.  Without working backups, the cluster has no recovery
+              path from the next UPS event.
+
+        # ----------------------------------------------------------------
+        # 2. Silent-success — schedule ran but backed up zero items.
+        # This is the UPS-2026-05-09 failure mode: Backup CR phase=Completed
+        # but defaultVolumesToFsBackup=false + no annotated pods = 0 items.
+        # ----------------------------------------------------------------
+        - alert: VeleroBackupZeroItems
+          expr: |
+            (
+              increase(velero_backup_success_total{schedule!=""}[25h]) > 0
+              and
+              velero_backup_items_total{schedule!=""} == 0
+            )
+          for: 5m
+          labels:
+            severity: critical
+            component: velero
+          annotations:
+            summary: "Velero schedule {{ $labels.schedule }} reported success but backed up 0 items"
+            description: >-
+              Schedule {{ $labels.schedule }} succeeded in the last 25 hours
+              but the most recent backup contained zero items.  Likely cause:
+              `excludedResources` includes `pods`, or no pods are annotated
+              with `backup.velero.io/backup-volumes`, or `defaultVolumesToFsBackup`
+              is `false` for the schedule.  Check
+              `applications/.../velero.yaml`.
+
+        # ----------------------------------------------------------------
+        # 3. Schedule overdue — no successful run in 2x the schedule interval.
+        # Detects silently-broken cron (controller not running, schedule
+        # disabled, RBAC broken, etc.).
+        # ----------------------------------------------------------------
+        - alert: VeleroScheduleNotRunning
+          expr: |
+            time() - velero_backup_last_successful_timestamp{schedule!=""} > 172800
+          for: 10m
+          labels:
+            severity: warning
+            component: velero
+          annotations:
+            summary: "Velero schedule {{ $labels.schedule }} has not run in >48h"
+            description: >-
+              Last successful backup for schedule {{ $labels.schedule }}
+              was {{ $value | humanizeDuration }} ago.  Daily schedules
+              should run every 24h, so 48h+ silence means the scheduler is
+              stuck or the schedule has been disabled.
+
+        # ----------------------------------------------------------------
+        # 4. Velero controller itself not scraping (sister of ServiceDown
+        # but Velero-specific so on-call sees a clear "your backups are
+        # currently dark" signal rather than a generic scrape failure).
+        # ----------------------------------------------------------------
+        - alert: VeleroDown
+          expr: |
+            absent(up{job=~".*velero.*"}) == 1
+            or
+            up{job=~".*velero.*"} == 0
+          for: 10m
+          labels:
+            severity: warning
+            component: velero
+          annotations:
+            summary: "Velero is not being scraped"
+            description: >-
+              Prometheus has not been able to scrape the Velero metrics
+              endpoint for 10+ minutes.  Either Velero is down or its
+              ServiceMonitor is broken.  Check `kubectl get pods -n backup`.
