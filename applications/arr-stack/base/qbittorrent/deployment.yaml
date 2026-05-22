@@ -162,6 +162,18 @@ spec:
               mountPath: /downloads/complete
             - name: downloads-incomplete
               mountPath: /downloads/incomplete
+          # startupProbe gives themepark Docker mod a 30-min grace period to
+          # apply styles to thousands of HTML files on container start.
+          # Once it passes, livenessProbe/readinessProbe take over with their
+          # normal aggressive timing.  See TALOS-0dk.
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 60  # 30s × 60 = 30 min total budget for themepark
           livenessProbe:
             httpGet:
               path: /
