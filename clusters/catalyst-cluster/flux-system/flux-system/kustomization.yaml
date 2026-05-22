@@ -28,3 +28,39 @@ patches:
       metadata:
         name: allow-webhooks
         namespace: flux-system
+
+  # Throttle Flux to prevent apiserver saturation that triggers Cilium
+  # liveness-probe death spirals (see 2026-05-21 + 2026-05-22 incidents,
+  # docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md).
+  #
+  # Defaults: --concurrent=4, --kube-api-qps=50, --kube-api-burst=100.
+  # With ~50 Kustomizations + ~30 HelmReleases reconciling on every commit,
+  # 4 concurrent + 50 QPS quickly saturates the single-CP apiserver.
+  - target:
+      kind: Deployment
+      name: kustomize-controller
+      namespace: flux-system
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --concurrent=2
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kube-api-qps=20
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kube-api-burst=40
+  - target:
+      kind: Deployment
+      name: helm-controller
+      namespace: flux-system
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --concurrent=2
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kube-api-qps=20
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kube-api-burst=40

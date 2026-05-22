@@ -1407,7 +1407,11 @@ spec:
       k8s-app: cilium
   updateStrategy:
     rollingUpdate:
-      maxUnavailable: 2
+      # Tightened from 2 → 1 after 2026-05-22 meltdown analysis.  Two agents
+      # down concurrently on a 5-node cluster caused apiserver to lose
+      # network during rolling updates.  See:
+      #   docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md
+      maxUnavailable: 1
     type: RollingUpdate
   template:
     metadata:
@@ -1454,7 +1458,13 @@ spec:
               value: "true"
           periodSeconds: 30
           successThreshold: 1
-          failureThreshold: 10
+          # Bumped from 10 → 30 (5min → 15min grace) after 2026-05-22 meltdown
+          # analysis.  Cilium's /healthz includes apiserver connectivity; when
+          # apiserver is briefly saturated by heavy Flux reconciliation,
+          # cilium-agent gets killed, BPF state goes stale, host networking
+          # breaks, apiserver becomes permanently unreachable until reboot.
+          # 15min gives apiserver time to recover from load spikes.
+          failureThreshold: 30
           timeoutSeconds: 5
         readinessProbe:
           httpGet:

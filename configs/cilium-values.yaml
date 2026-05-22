@@ -169,6 +169,18 @@ authentication:
 egressGateway:
   enabled: false
 
+# Agent stability hardening — see ADR-001 + 2026-05-22 meltdown post-mortem.
+# Cilium's /healthz includes apiserver connectivity; the default 5min liveness
+# tolerance is too aggressive on a single-CP cluster under heavy Flux load.
+agent:
+  livenessProbe:
+    failureThreshold: 30   # 30 × 30s = 15min grace (was 5min)
+# DaemonSet rolling update — tightened from 2 → 1 to prevent multi-agent
+# downtime during agent rotation breaking apiserver host-network connectivity.
+updateStrategy:
+  rollingUpdate:
+    maxUnavailable: 1
+
 # BPF masquerade required for egress gateway
 bpf:
   masquerade: true
