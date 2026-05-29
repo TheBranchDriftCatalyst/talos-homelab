@@ -30,6 +30,12 @@ nodePort:
     - 10.100.0.0/16    # Nebula overlay network
 
 # Kubernetes API server endpoint
+# 2026-05-29: tried switching to KubePrism (localhost:7445) but verification
+# showed nothing actually listening on 7445 on any node despite machineconfig
+# `kubePrism.enabled: true, port: 7445`. Reverted to direct CP IP. Known
+# upstream issue: siderolabs/talos#9132 (Cilium with kubeprism doesn't reach
+# ready). Tracking under TALOS-kp-debug — once KubePrism is verified working,
+# switch this to `localhost:7445` to decouple Cilium from single CP IP.
 k8sServiceHost: 192.168.1.54
 k8sServicePort: 6443
 
@@ -63,10 +69,11 @@ ipam:
 # Hubble observability
 hubble:
   enabled: true
-  # Increase ring buffer to prevent lost events (default 4095)
-  # At ~150 flows/sec, 4095 fills up causing drops
+  # Hubble flow buffer. Was 16383 (~64MiB) but the CP-pinned Cilium agent on
+  # talos00 was OOM-thrashing under the combined load of Hubble + SPIRE +
+  # clustermesh-apiserver against a 1GiB pod limit. Dropped to 8191 (~32MiB).
   # Must be (2^n - 1): 4095, 8191, 16383, 32767, 65535
-  eventBufferCapacity: 16383
+  eventBufferCapacity: 8191
   relay:
     enabled: true
   ui:
@@ -121,11 +128,16 @@ cgroup:
 dnsProxy:
   enableTransparentMode: false
 
-# Resource limits to prevent flannel-style throttling issues
+# Resource limits.
+# memory raised 1Gi → 2Gi after 2026-05-29 meltdown. The CP-pinned agent on
+# talos00 carries the heaviest endpoint map (system pods + SPIRE + Hubble Relay
+# + ClusterMesh apiserver), and Go's GOMEMLIMIT was thrashing GC near the 1GiB
+# ceiling. Removing the cap entirely is the Cilium-DS upstream recommendation,
+# but 2Gi gives breathing room without unbounded usage.
 resources:
   limits:
     cpu: 1000m
-    memory: 1Gi
+    memory: 2Gi
   requests:
     cpu: 100m
     memory: 256Mi
@@ -169,12 +181,14 @@ authentication:
 egressGateway:
   enabled: false
 
-# Agent stability hardening — see ADR-001 + 2026-05-22 meltdown post-mortem.
-# Cilium's /healthz includes apiserver connectivity; the default 5min liveness
-# tolerance is too aggressive on a single-CP cluster under heavy Flux load.
+# Agent liveness — REVERTED to chart default after 2026-05-29 post-mortem.
+# The 15-min grace (failureThreshold: 30) was hiding silent rot: the cluster
+# accumulated 1991 cilium-agent restarts over 5 days without alerting before
+# the 2026-05-29 meltdown made it obvious. Fail loud at 5min instead — pair
+# with PrometheusRules on restart rate (TALOS-txl) so we hear the alarm.
 agent:
   livenessProbe:
-    failureThreshold: 30   # 30 × 30s = 15min grace (was 5min)
+    failureThreshold: 10   # chart default — 10 × 30s = 5min grace
 # DaemonSet rolling update — tightened from 2 → 1 to prevent multi-agent
 # downtime during agent rotation breaking apiserver host-network connectivity.
 updateStrategy:
@@ -231,7 +245,14 @@ ipv4NativeRoutingCIDR: "10.100.0.0/16"
 clustermesh:
   useAPIServer: true
   apiserver:
-    replicas: 1
+    # SCALED TO 0 — 2026-05-29.
+    # ClusterMesh is provisioned (certs, NodePort, TLS SANs) but no peer
+    # cluster is registered yet (`enable-external-workloads=false`).
+    # Running its 3 containers (etcd + apiserver + kvstoremesh) pinned to the
+    # control-plane was load that contributed to the CP meltdowns.
+    # Restore to `replicas: 1` once the AWS lighthouse peer is actually wired
+    # up. Tracked: TALOS-fed-enable (re-enable ClusterMesh on federation cut-in)
+    replicas: 0
     service:
       type: NodePort
       nodePort: 32379
