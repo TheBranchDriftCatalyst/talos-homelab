@@ -38,6 +38,21 @@ echo "📸 Capturing meltdown evidence to ${OUTDIR}"
 echo "    Start: $(date -u +%FT%TZ)"
 echo
 
+# Detect a working timeout command (Linux ships GNU coreutils `timeout`;
+# macOS typically has neither timeout nor gtimeout unless you `brew install
+# coreutils`). Fall back to a perl one-liner that uses SIGALRM — perl is
+# part of macOS base install and is reliable.
+if command -v gtimeout > /dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout 15"
+elif command -v timeout > /dev/null 2>&1; then
+  TIMEOUT_CMD="timeout 15"
+elif command -v perl > /dev/null 2>&1; then
+  # perl -e 'alarm shift; exec @ARGV' 15 cmd args...
+  TIMEOUT_CMD="perl -e \"alarm shift @ARGV; exec @ARGV\" 15"
+else
+  TIMEOUT_CMD=""
+fi
+
 # Helper: run with timeout, swallow errors but log them
 run() {
   local label=$1
@@ -45,7 +60,11 @@ run() {
   local out=$1
   shift
   echo "  - ${label}"
-  timeout 15 "$@" > "${out}" 2>&1 || echo "  ⚠️  ${label} failed (continuing)" >&2
+  if [ -n "$TIMEOUT_CMD" ]; then
+    eval "$TIMEOUT_CMD" "$@" > "${out}" 2>&1 || echo "  ⚠️  ${label} failed (continuing)" >&2
+  else
+    "$@" > "${out}" 2>&1 || echo "  ⚠️  ${label} failed (continuing)" >&2
+  fi
 }
 
 # -------------------------------------------------------------------------
