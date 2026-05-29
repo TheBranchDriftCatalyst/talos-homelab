@@ -150,10 +150,14 @@ run "talos00 etcd members" "${OUTDIR}/cp-etcd-members.txt" talosctl ${TALOSCONFI
 run "talos00 etcd alarm list" "${OUTDIR}/cp-etcd-alarms.txt" talosctl ${TALOSCONFIG_FLAG} --nodes 192.168.1.54 etcd alarm list
 
 # Grab kube-apiserver and controller-manager logs by container ID (latest only)
+# The talosctl containers row has a tree-drawing "└─" prefix for sub-containers,
+# making column $3 the prefix. The container path is column $4.
+# Example row:
+#   192.168.1.54  k8s.io  └─ kube-system/kube-apiserver-talos00:kube-apiserver:25f26  registry.k8s.io/...  PID  CONTAINER_RUNNING
 for container in kube-apiserver kube-controller-manager kube-scheduler; do
   cid=$(talosctl ${TALOSCONFIG_FLAG} --nodes 192.168.1.54 containers -k 2> /dev/null |
     grep "kube-system/${container}-talos00:${container}" |
-    grep -v EXITED | awk '{print $3}' | head -1)
+    grep -v EXITED | awk '{print $4}' | head -1)
   if [ -n "$cid" ]; then
     run "talos00 ${container} logs" "${OUTDIR}/cp-${container}.txt" talosctl ${TALOSCONFIG_FLAG} --nodes 192.168.1.54 logs -k "$cid"
   fi
