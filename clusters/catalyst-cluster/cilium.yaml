@@ -1,0 +1,40 @@
+---
+# Cilium — INFRA, managed by Flux (TALOS-ocj).
+#
+# Wires `infrastructure/base/cilium/` into the catalyst-cluster Flux
+# reconciliation. Cilium is the CNI: foundational infrastructure that
+# Flux owns per the dual-GitOps demarcation in
+# docs/02-architecture/dual-gitops.md.
+#
+# CRITICAL: prune=false. NEVER auto-prune the CNI. A mistake could brick
+# the cluster. Manual cleanup if Cilium components are deliberately removed.
+#
+# wait=false: Cilium DaemonSet rollouts can take 5+ min per
+# `updateStrategy.rollingUpdate.maxUnavailable: 1`. Flux would mark the
+# reconcile failed and retry, compounding apiserver pressure.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cilium
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/cilium
+  prune: false  # NEVER prune the CNI
+  wait: false   # don't block on DS rollout
+  dependsOn:
+    - name: bootstrap-crds
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: DaemonSet
+      name: cilium
+      namespace: kube-system
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: cilium-operator
+      namespace: kube-system

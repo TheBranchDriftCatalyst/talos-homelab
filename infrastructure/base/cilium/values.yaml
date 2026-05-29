@@ -186,9 +186,15 @@ egressGateway:
 # accumulated 1991 cilium-agent restarts over 5 days without alerting before
 # the 2026-05-29 meltdown made it obvious. Fail loud at 5min instead — pair
 # with PrometheusRules on restart rate (TALOS-txl) so we hear the alarm.
-agent:
-  livenessProbe:
-    failureThreshold: 10   # chart default — 10 × 30s = 5min grace
+#
+# NOTE: chart schema expects `livenessProbe` at top level (not nested under
+# `agent`). Prior `agent.livenessProbe.failureThreshold: 30` was schema-
+# invalid; helm would have rejected the render. Yet the live DS had it set —
+# so it was almost certainly live-patched via `kubectl edit ds cilium`
+# during the 2026-05-22 incident response and never made it into rendered
+# manifests. Fix the structure properly now.
+livenessProbe:
+  failureThreshold: 10   # chart default — 10 × 30s = 5min grace
 # DaemonSet rolling update — tightened from 2 → 1 to prevent multi-agent
 # downtime during agent rotation breaking apiserver host-network connectivity.
 updateStrategy:

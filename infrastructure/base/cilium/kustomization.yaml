@@ -1,15 +1,34 @@
+---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Cilium CNI — Flux-managed (TALOS-ocj, 2026-05-29).
+#
+# Before 2026-05-29, Cilium was applied manually via `helm template +
+# kubectl apply` and was not in any GitOps system. After the cascade of
+# meltdowns 2026-05-21, -22, -27, -29 we moved it into Flux for proper
+# reconciliation, audit trail, and to catch drift.
+#
+# Values live in `values.yaml` (this directory) and are mounted via the
+# ConfigMap below for the HelmRelease to consume.
+#
+# Cilium is INFRA → Flux. Apps go in ArgoCD. See docs/02-architecture/dual-gitops.md.
+
+namespace: kube-system
+
 resources:
+  - helmrelease.yaml
+  # Existing Cilium-adjacent manifests that were already here
   - ingressroute.yaml
   - spire-namespace.yaml
-  # NOTE: Cilium is deployed via configs/cilium-manifest.yaml (Helm-generated)
-  # Prometheus metrics are enabled via configs/cilium-values.yaml:
-  # - prometheus.enabled: true (agent metrics on port 9962)
-  # - operator.prometheus.enabled: true (operator metrics on port 9963)
-  # - hubble.metrics.enabled: [...] (Hubble metrics on port 9965)
-  #
-  # SPIRE mTLS is enabled for workload identity:
-  # - authentication.mutual.spire.enabled: true (in cilium-values.yaml)
-  # - SPIRE server runs in cilium-spire namespace (see spire-namespace.yaml)
+
+# Generate `cilium-values` ConfigMap from values.yaml. HelmRelease references
+# it via valuesFrom. `disableNameSuffixHash: true` so the HelmRelease can
+# reference the static name; without it kustomize appends a content hash
+# that the HelmRelease wouldn't be able to predict.
+configMapGenerator:
+  - name: cilium-values
+    files:
+      - values.yaml=values.yaml
+    options:
+      disableNameSuffixHash: true

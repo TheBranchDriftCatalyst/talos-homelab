@@ -1,0 +1,75 @@
+---
+# Cilium CNI — INFRA, managed by Flux (TALOS-ocj).
+#
+# Per the dual-GitOps demarcation (docs/02-architecture/dual-gitops.md):
+#   Flux = infrastructure (CNI, ingress, storage, observability, operators)
+#   ArgoCD = applications only (plex, arr stack, catalyst-ui, etc.)
+# Cilium is CNI. It belongs in Flux. (Confirmed by user 2026-05-29.)
+#
+# Bootstrap chicken-and-egg:
+#   Cilium IS the CNI. Flux needs network. Network needs Cilium.
+#   Solution: bootstrap Cilium manually once with helm template + kubectl apply
+#   on a fresh cluster, then this HelmRelease takes over future reconciliation.
+#   On an existing cluster: `helm upgrade --install cilium cilium/cilium
+#   --version 1.16.6 -f infrastructure/base/cilium/values.yaml -n kube-system
+#   --take-ownership` once to seed the helm release secret, then Flux adopts.
+#
+# Values live next to this file (`values.yaml`) and are mounted via a
+# kustomize-generated ConfigMap (`cilium-values`) referenced by valuesFrom
+# below. This keeps the values readable as a regular YAML file editable in
+# any IDE, without inlining the 280+ line block into the HelmRelease.
+#
+# CRITICAL: prune is intentionally FALSE on the Flux Kustomization that
+# owns this file (see clusters/catalyst-cluster/cilium.yaml). NEVER let
+# Flux auto-prune the CNI — a misconfiguration could delete every
+# Cilium-related resource and brick the cluster.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  interval: 1h
+  url: https://helm.cilium.io/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  # Match the release name used by the historical manual install so the
+  # existing helm release secret (created by --take-ownership) is found.
+  releaseName: cilium
+  interval: 30m
+  chart:
+    spec:
+      chart: cilium
+      version: '1.16.6'
+      sourceRef:
+        kind: HelmRepository
+        name: cilium
+        namespace: kube-system
+      interval: 12h
+  valuesFrom:
+    - kind: ConfigMap
+      name: cilium-values
+      valuesKey: values.yaml
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+    # Force replacement of immutable fields (e.g. Service spec changes).
+    # Cilium upgrades occasionally need this when chart versions bump
+    # selector labels.
+    force: false
+    cleanupOnFail: false
+  # Don't wait for the rollout — Cilium DS restart can take 5+ minutes
+  # per the maxUnavailable: 1 + agent startup time. Flux would otherwise
+  # mark the reconcile as failed and retry, compounding API pressure.
+  test:
+    enable: false
