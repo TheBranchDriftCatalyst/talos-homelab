@@ -11,3 +11,30 @@ kind: Kustomization
 
 resources:
   - https://github.com/grafana/tempo-operator/releases/download/v0.19.0/tempo-operator.yaml
+
+# Set failurePolicy=Ignore on tempo-operator's admission webhooks.
+# Why: when the tempo-operator pod is unhealthy (it has been crash-looping
+# for 6+ days when its in-cluster apiserver routing is broken), every pod
+# admission cluster-wide stalls 10s waiting for these webhooks to time out.
+# The 2026-05-21, 2026-05-27, and 2026-05-29 control-plane meltdowns were
+# all amplified by this. Tempo's webhooks only validate TempoStack /
+# TempoMonolithic CRs anyway — a Plex pod should not block on tempo.
+# See TALOS-9cf for the cross-operator fix tracker.
+patches:
+  - target:
+      kind: MutatingWebhookConfiguration
+      name: tempo-operator-mutating-webhook-configuration
+    patch: |
+      - op: replace
+        path: /webhooks/0/failurePolicy
+        value: Ignore
+  - target:
+      kind: ValidatingWebhookConfiguration
+      name: tempo-operator-validating-webhook-configuration
+    patch: |
+      - op: replace
+        path: /webhooks/0/failurePolicy
+        value: Ignore
+      - op: replace
+        path: /webhooks/1/failurePolicy
+        value: Ignore
