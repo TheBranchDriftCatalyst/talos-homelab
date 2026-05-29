@@ -26,13 +26,13 @@ mkdir -p "${OUTDIR}"
 TALOSCONFIG_FLAG="--talosconfig $(git rev-parse --show-toplevel 2> /dev/null || pwd)/configs/talosconfig"
 
 NODES=("${@:-talos00 talos01 talos02-gpu talos03 talos06}")
-declare -A NODE_IPS=(
-  [talos00]=192.168.1.54
-  [talos01]=192.168.1.177
-  [talos02 - gpu]=192.168.1.144
-  [talos03]=192.168.1.30
-  [talos06]=192.168.1.19
-)
+# shellcheck disable=SC2034 # used via indirect lookup ${NODE_IPS[$node]}
+declare -A NODE_IPS
+NODE_IPS["talos00"]=192.168.1.54
+NODE_IPS["talos01"]=192.168.1.177
+NODE_IPS["talos02-gpu"]=192.168.1.144
+NODE_IPS["talos03"]=192.168.1.30
+NODE_IPS["talos06"]=192.168.1.19
 
 echo "📸 Capturing meltdown evidence to ${OUTDIR}"
 echo "    Start: $(date -u +%FT%TZ)"
