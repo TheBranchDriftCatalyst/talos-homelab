@@ -9,6 +9,68 @@ spec:
   configuration:
     developerConfiguration:
       featureGates: []
-  customizeComponents: {}
+  # Permanent fix for TALOS-9cf: force failurePolicy=Ignore on all virt-api
+  # admission webhooks via virt-operator's own reconcile loop.
+  #
+  # Why: virt-api-mutator (4 hooks) and virt-api-validator (18 of 19 hooks)
+  # default to failurePolicy=Fail. When virt-api pods are unhealthy (which
+  # they have been repeatedly — virt-operator has 800+ restarts/week as a
+  # downstream effect of the 2026-05-29 cilium meltdowns), every pod create
+  # cluster-wide stalls 10s × 22 webhooks waiting for them to time out.
+  # This amplifies meltdowns from "talos00 hiccup" into "cluster-wide pod
+  # admission frozen". Even non-VM workloads (plex, arr, argocd, etc.) get
+  # caught — they don't use VMs but every Pod create triggers these webhooks.
+  #
+  # Trade-off accepted: if virt-api is down AND someone creates a malformed
+  # VirtualMachine CR, the VM is admitted without validation (local impact —
+  # bad VM doesn't start). Versus Fail: cluster-wide admission stall (global
+  # impact).
+  #
+  # Real fix: HA control plane (TALOS-arx) → virt-api stops crashing →
+  # webhooks stay healthy → could revert to Fail. This Ignore patch is the
+  # short-term safety belt.
+  #
+  # Live-patched 2026-05-29 via `kubectl patch` but virt-operator reconciled
+  # them back to Fail (it's the field manager). This sets them via the CR
+  # which IS what virt-operator reads — patches stick.
+  #
+  # Note: index 0 of virt-api-validator (virt-launcher-eviction-interceptor)
+  # is already Ignore by KubeVirt default, skipped.
+  customizeComponents:
+    patches:
+      - resourceName: virt-api-mutator
+        resourceType: MutatingWebhookConfiguration
+        type: json
+        patch: |-
+          [
+            {"op":"replace","path":"/webhooks/0/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/1/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/2/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/3/failurePolicy","value":"Ignore"}
+          ]
+      - resourceName: virt-api-validator
+        resourceType: ValidatingWebhookConfiguration
+        type: json
+        patch: |-
+          [
+            {"op":"replace","path":"/webhooks/1/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/2/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/3/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/4/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/5/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/6/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/7/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/8/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/9/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/10/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/11/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/12/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/13/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/14/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/15/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/16/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/17/failurePolicy","value":"Ignore"},
+            {"op":"replace","path":"/webhooks/18/failurePolicy","value":"Ignore"}
+          ]
   imagePullPolicy: IfNotPresent
   workloadUpdateStrategy: {}
