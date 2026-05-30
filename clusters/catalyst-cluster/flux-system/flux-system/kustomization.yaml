@@ -30,12 +30,26 @@ patches:
         namespace: flux-system
 
   # Throttle Flux to prevent apiserver saturation that triggers Cilium
-  # liveness-probe death spirals (see 2026-05-21 + 2026-05-22 incidents,
-  # docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md).
+  # liveness-probe death spirals (see 2026-05-21 + 2026-05-22 + 2026-05-29
+  # incidents, docs/06-troubleshooting/2026-05-29-six-meltdowns-and-the-
+  # real-good-cause.md).
   #
-  # Defaults: --concurrent=4, --kube-api-qps=50, --kube-api-burst=100.
-  # With ~50 Kustomizations + ~30 HelmReleases reconciling on every commit,
-  # 4 concurrent + 50 QPS quickly saturates the single-CP apiserver.
+  # 2026-05-30 update: previously --concurrent=2 was still allowing
+  # synchronized reconcile bursts every 10 min (when ~30 Kustomizations
+  # all hit their interval simultaneously, 2 at a time still = a 75s
+  # apiserver burst). Hypothesis: this burst causes apiserver to slow
+  # enough that cilium-agent /healthz (which queries apiserver) fails
+  # liveness, kubelet kills cilium, cascade follows.
+  #
+  # Dropping to --concurrent=1 serializes ALL reconciles. ~30
+  # Kustomizations × ~5s each = ~2.5min steady stream instead of a 75s
+  # peak burst. Apiserver sees flat load. Per-Kustomization latency
+  # increases (worst case waits ~2.5min) but for a homelab that's fine.
+  #
+  # Also dropped --kube-api-qps 20 → 10 and --kube-api-burst 40 → 20 to
+  # further smooth load even within a single reconcile.
+  #
+  # Defaults (for reference): --concurrent=4, --kube-api-qps=50, --kube-api-burst=100.
   - target:
       kind: Deployment
       name: kustomize-controller
@@ -43,13 +57,13 @@ patches:
     patch: |
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --concurrent=2
+        value: --concurrent=1
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --kube-api-qps=20
+        value: --kube-api-qps=10
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --kube-api-burst=40
+        value: --kube-api-burst=20
   - target:
       kind: Deployment
       name: helm-controller
@@ -57,10 +71,10 @@ patches:
     patch: |
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --concurrent=2
+        value: --concurrent=1
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --kube-api-qps=20
+        value: --kube-api-qps=10
       - op: add
         path: /spec/template/spec/containers/0/args/-
-        value: --kube-api-burst=40
+        value: --kube-api-burst=20
