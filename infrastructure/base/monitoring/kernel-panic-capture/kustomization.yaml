@@ -1,0 +1,29 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Kernel Panic Capture
+#
+# Two complementary capture paths for kernel-level events that lead to
+# Talos node self-reboots (kernel.panic_on_oops=1 by default):
+#
+#   Option A — daemonset.yaml
+#     Per-node privileged DaemonSet tailing /dev/kmsg to
+#     /var/log/kernel-capture/<node>.log on host disk.
+#     Survives the panic-reboot via the EPHEMERAL partition.
+#
+#   Option B — deployment.yaml
+#     Single netconsole receiver pod (socat UDP listener) on a non-CP
+#     node, hostNetwork=true on port 6666. Writes to host disk under
+#     /var/log/netconsole-receiver/ on the receiver node. Captures live
+#     kernel stream from any node where netconsole module is configured.
+#
+# Filed: TALOS-kpcap (2026-05-30) — actual root cause investigation
+# after 6+ "meltdowns" today turned out to be Talos auto-rebooting on
+# kernel oops, not the cilium chicken-and-egg we initially blamed.
+
+namespace: kube-system
+
+resources:
+  - daemonset.yaml
+  - deployment.yaml
