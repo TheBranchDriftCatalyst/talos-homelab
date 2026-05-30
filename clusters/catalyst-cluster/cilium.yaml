@@ -1,39 +1,23 @@
 ---
-# Cilium — INFRA, designed for Flux management (TALOS-ocj).
+# Cilium — INFRA, Flux-managed (TALOS-ocj).
 #
-# ⚠️ NOT YET WIRED INTO THE CLUSTER. This file is intentionally NOT listed
-# in clusters/catalyst-cluster/flux-system/kustomization.yaml.
+# Activated 2026-05-30 after the identity-bloat root cause was fixed
+# (TALOS-yyt). The May 29 attempt to wire this in failed because the
+# Cilium DS rollout coincided with an active meltdown cascade — the new
+# cilium-agent couldn't reach apiserver because Cilium itself was the path.
+# With identity bloat eliminated (etcd now responsive, cilium-operator
+# stable, cilium-agent restarts stopped), the previously-deferred Flux
+# adoption is safe: helm release name matches existing manual install, so
+# helm-controller adopts in place (no take-ownership churn), and ConfigMap
+# changes propagate via cilium-agent's hot-reload (not DS roll).
 #
-# Why deferred:
-#   On 2026-05-29 (meltdown #4) we attempted to enable this Kustomization
-#   after `helm upgrade --install --take-ownership` to adopt the manual
-#   install. Flux's helm-controller reconciled the HelmRelease, which
-#   triggered a Cilium DaemonSet rolling restart (helm changes the DS
-#   pod template annotations during take-ownership). The new pod on
-#   talos00 hit the chicken-and-egg from cilium#41108 (config initContainer
-#   can't reach apiserver via ClusterIP because Cilium routing is being
-#   replaced), apiserver became unreachable from outside, control plane
-#   went dark, required force-reboot.
+# Originally deferred behind TALOS-arx (HA control plane) because a
+# single-CP meltdown during DS roll could brick the cluster. User decided
+# 2026-05-30 to ignore the HA prerequisite — with the meltdown root cause
+# fixed, the DS-roll risk is acceptable.
 #
-# Path to actually enable this:
-#   1. TALOS-arx: 3-node HA control plane lands — a single DS-roll-induced
-#      cilium agent flap on one node no longer kills the cluster.
-#   2. Verify TALOS-a82 KubePrism fix OR keep direct CP IP, but with HA
-#      the apiserver endpoint is resilient.
-#   3. Decide on HelmRelease `interval: 24h` (instead of 30m default) so
-#      Flux reconciles don't churn the DS.
-#   4. Decide if `rollOutCiliumPods: false` in values.yaml is the right
-#      default (currently default-false per Cilium chart) — explicitly set it.
-#   5. Then add `- ../cilium.yaml` to clusters/catalyst-cluster/flux-system/
-#      kustomization.yaml and commit.
-#
-# Until then: Cilium stays manually managed via
-#   helm upgrade --install cilium cilium/cilium --version 1.16.6 \
-#     -f infrastructure/base/cilium/values.yaml -n kube-system \
-#     --take-ownership
-#
-# CRITICAL when eventually enabled: prune=false. NEVER auto-prune the
-# CNI. A mistake could brick the cluster.
+# CRITICAL: prune=false. NEVER auto-prune the CNI. A misconfiguration
+# could delete every Cilium-related resource and brick the cluster.
 #
 # wait=false: Cilium DaemonSet rollouts can take 5+ min per
 # `updateStrategy.rollingUpdate.maxUnavailable: 1`. Flux would otherwise
