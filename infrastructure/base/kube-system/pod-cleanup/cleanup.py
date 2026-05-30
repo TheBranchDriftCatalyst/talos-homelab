@@ -32,6 +32,7 @@ CLEANUP_IMAGEPULL = os.environ.get("CLEANUP_IMAGEPULL_PODS", "true").lower() == 
 CLEANUP_CRASHLOOP = os.environ.get("CLEANUP_CRASHLOOP_PODS", "false").lower() == "true"
 CLEANUP_JOBS = os.environ.get("CLEANUP_COMPLETED_JOBS", "true").lower() == "true"
 CLEANUP_RS = os.environ.get("CLEANUP_ORPHAN_REPLICASETS", "true").lower() == "true"
+CLEANUP_CILIUM_IDS = os.environ.get("CLEANUP_CILIUM_IDENTITIES", "true").lower() == "true"
 
 
 def kubectl(*args):
@@ -185,6 +186,51 @@ def cleanup_completed_jobs():
     return count
 
 
+def cleanup_cilium_identities():
+    """Delete CiliumIdentity CRDs not referenced by any live CiliumEndpoint.
+
+    Returns (stale_count, total_count). Cilium's operator has a built-in 15m
+    GC, but a 2026-05-30 meltdown saga showed it can fall arbitrarily behind
+    when the cascade kills the operator. This belt-and-suspenders catches
+    accumulation before it saturates etcd. See TALOS-yyt.
+    """
+    if not CLEANUP_CILIUM_IDS:
+        return (0, 0)
+    print("[INFO] Cleaning stale CiliumIdentities...")
+
+    ep_data = kubectl_json("get", "ciliumendpoints", "-A", "-o", "json")
+    used = set()
+    for ep in ep_data.get("items", []):
+        ident = ep.get("status", {}).get("identity", {}).get("id")
+        if ident is not None:
+            used.add(str(ident))
+
+    id_data = kubectl_json("get", "ciliumidentities", "-o", "json")
+    all_ids = [i["metadata"]["name"] for i in id_data.get("items", [])]
+    stale = [i for i in all_ids if i not in used]
+
+    print(f"[INFO] CiliumIdentities: total={len(all_ids)} used={len(used)} stale={len(stale)}")
+
+    if not stale:
+        return (0, len(all_ids))
+
+    # batch deletes — 200 per kubectl call to avoid argv limits but stay fast
+    deleted = 0
+    BATCH = 200
+    for i in range(0, len(stale), BATCH):
+        batch = stale[i:i + BATCH]
+        args = ["delete", "ciliumidentity", "--ignore-not-found", "--wait=false"] + batch
+        if DRY_RUN:
+            print(f"[DRY-RUN] Would delete {len(batch)} CiliumIdentities")
+            deleted += len(batch)
+            continue
+        _, ok = kubectl(*args)
+        if ok:
+            deleted += len(batch)
+    print(f"[INFO] CiliumIdentities deleted: {deleted}")
+    return (deleted, len(all_ids))
+
+
 def cleanup_orphan_replicasets():
     """Clean up orphaned ReplicaSets with 0 replicas."""
     if not CLEANUP_RS:
@@ -283,15 +329,21 @@ def main():
     crashloop = cleanup_crashloop_pods()
     jobs = cleanup_completed_jobs()
     replicasets = cleanup_orphan_replicasets()
+    cilium_deleted, cilium_total = cleanup_cilium_identities()
 
     end_time = time.time()
     duration = int(end_time - start_time)
-    total = succeeded + failed + evicted + imagepull + crashloop + jobs + replicasets
+    total = succeeded + failed + evicted + imagepull + crashloop + jobs + replicasets + cilium_deleted
+
+    # status: 1 = OK (nothing to clean), 0 = WARNING (cleanup happened —
+    # indicates label-filter gap or operator GC failing; humans should look)
+    cilium_status_ok = 1 if cilium_deleted == 0 else 0
 
     print()
     print(f"=== Summary ({duration}s) ===")
-    print(f"Succeeded:{succeeded} Failed:{failed} Evicted:{evicted} ImagePull:{imagepull} CrashLoop:{crashloop} Jobs:{jobs} RS:{replicasets}")
+    print(f"Succeeded:{succeeded} Failed:{failed} Evicted:{evicted} ImagePull:{imagepull} CrashLoop:{crashloop} Jobs:{jobs} RS:{replicasets} CiliumIDs:{cilium_deleted}/{cilium_total}")
     print(f"TOTAL: {total}")
+    print(f"Cilium identity status: {'OK (no stale)' if cilium_status_ok else 'WARNING (cleanup occurred — check label filter)'}")
 
     push_metrics_to_mimir({
         "pod_cleanup_duration_seconds": duration,
@@ -304,6 +356,9 @@ def main():
         "pod_cleanup_crashloop_pods": crashloop,
         "pod_cleanup_completed_jobs": jobs,
         "pod_cleanup_orphan_replicasets": replicasets,
+        "pod_cleanup_cilium_identities_deleted": cilium_deleted,
+        "pod_cleanup_cilium_identities_total": cilium_total,
+        "pod_cleanup_cilium_identity_status": cilium_status_ok,
         "pod_cleanup_job_success": 1,
     })
 

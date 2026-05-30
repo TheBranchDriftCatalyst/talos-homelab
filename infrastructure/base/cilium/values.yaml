@@ -250,6 +250,34 @@ bpf:
 ipv4NativeRoutingCIDR: "10.100.0.0/16"
 
 # =============================================================================
+# Identity-Relevant Labels (CRITICAL — prevents identity bloat meltdowns)
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/operations/performance/scalability/identity-relevant-labels
+#
+# 2026-05-30 root cause of the week-long meltdown saga (TALOS-yyt):
+#   Cilium was using ALL pod labels for identity computation. Per the Cilium
+#   ConfigMap dump and identity audit we ran today:
+#     - 19,439 CiliumIdentity CRDs in etcd for 180 live pods (100x bloat).
+#     - 18,710 from job-name / batch.kubernetes.io/job-name (one-shot Jobs).
+#     - 14,931 from dagster/run-id (Dagster was migrated to catalyst-data repo;
+#       residue remained because identity GC could never finish).
+#     - 2,594 from velero.io/pod-volume-backup (one per backup).
+#   Each cilium-agent restart triggered a LIST returning 30MB / 9438 objects,
+#   which saturated etcd → apiserver Handler timeout → KubePrism EOF →
+#   cilium-agent fatal at startup → kubelet restart → loop. cilium-operator
+#   itself crashlooped 189x/20h on the same cascade, so identity GC (15min
+#   interval) NEVER completed.
+#
+# The fix below denies high-churn labels from contributing to identity,
+# halting NEW pollution. The accompanying one-shot cleanup script
+# (`scripts/cleanup-cilium-identities.sh`) drops the existing 19k stale CRDs.
+#
+# Format: space-separated regex; `!` prefix denies. Patterns append to chart
+# defaults (which already include the policy-relevant prefixes). We only need
+# to exclude pollution sources.
+labels: "!.*controller-uid.* !.*pod-template-hash.* !.*batch\\.kubernetes\\.io.* !job-name !.*dagster.* !helm\\.sh.* !.*velero\\.io/pod-volume-backup.* !.*velero\\.io/repo-name.*"
+
+# =============================================================================
 # ClusterMesh for Multi-Cluster Connectivity
 # =============================================================================
 # Reference: https://docs.cilium.io/en/stable/network/clustermesh/clustermesh/

@@ -1,0 +1,106 @@
+---
+# Cilium identity bloat alerts.
+#
+# Built 2026-05-30 as the safety net for the week-long meltdown saga rooted in
+# CiliumIdentity accumulation. See TALOS-yyt for the full root cause.
+#
+# Short version: Cilium computes a security identity per unique pod label set.
+# Without a `labels:` filter (now configured in infrastructure/base/cilium/
+# values.yaml), every Job, Dagster run, and Velero backup minted a new
+# identity. They accumulated to 19,439 against only 180 live pods. Each
+# cilium-agent restart did a LIST returning 30MB / 9438 entries, saturating
+# etcd → apiserver Handler timeout → KubePrism EOF → cilium-agent fatal →
+# kubelet restart → loop.
+#
+# These alerts catch a future regression:
+#   * A new high-churn label slips past the filter
+#   * Operator GC stops working (operator crashloops on something else)
+#   * Some new workload generates per-instance labels
+#
+# Two metric sources:
+#   1. cilium-operator's `cilium_identity` gauge (counts identities by type)
+#      — the canonical "how many identities exist now" signal.
+#   2. pod-cleanup job's `pod_cleanup_cilium_identity_status` — flips to 0 if
+#      our 2-hourly safety-net cron found stale identities to delete (means
+#      either the operator's 15min GC didn't catch them, or the label filter
+#      has a gap).
+#
+# References:
+#   * https://docs.cilium.io/en/stable/observability/metrics/
+#   * TALOS-yyt (root cause), TALOS-cq7 (this safety net)
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cilium-identity-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: cilium-identity-alerts
+    app.kubernetes.io/component: monitoring
+    category: cilium
+spec:
+  groups:
+    - name: cilium.identity
+      rules:
+        # --------------------------------------------------------------
+        # 1. Identity count growing — first sign of pollution
+        # --------------------------------------------------------------
+        - alert: CiliumIdentityCountElevated
+          # cilium_identity is a gauge per-type from the operator; sum gives
+          # total. Healthy clusters with ~200 pods sit around 200-400.
+          expr: sum(cilium_identity) > 1000
+          for: 30m
+          labels:
+            severity: warning
+            category: cilium
+          annotations:
+            summary: "Cilium identity count elevated ({{ $value }})"
+            description: |
+              CiliumIdentity count is {{ $value }} — expected ~200-400 for a
+              cluster this size. Identity bloat saturates etcd on cilium-agent
+              restart (each LIST is O(n) in identity count) and triggered the
+              week-long meltdown of 2026-05-29. Check `labels:` filter in
+              infrastructure/base/cilium/values.yaml — a new high-churn label
+              may need exclusion. See TALOS-yyt.
+
+        - alert: CiliumIdentityCountCritical
+          expr: sum(cilium_identity) > 5000
+          for: 15m
+          labels:
+            severity: critical
+            category: cilium
+          annotations:
+            summary: "Cilium identity count CRITICAL ({{ $value }}) — etcd saturation risk"
+            description: |
+              CiliumIdentity count is {{ $value }} — at this level each
+              cilium-agent restart issues a multi-MB LIST that can saturate
+              etcd, cause apiserver Handler timeouts, KubePrism EOF, and
+              trigger the meltdown cascade documented in TALOS-yyt. Run
+              `./scripts/cleanup-cilium-identities.sh --yes` immediately and
+              identify which workload is generating the churn.
+
+        # --------------------------------------------------------------
+        # 2. Safety-net cron observed cleanup (proxies for: GC missing it)
+        # --------------------------------------------------------------
+        - alert: CiliumIdentityCleanupOccurred
+          # The pod-cleanup cron sets status=1 when no stale identities were
+          # found, 0 when it had to delete some. A 0 means the Cilium
+          # operator's built-in 15min GC didn't catch them, OR the label
+          # filter has a gap. Either way, humans should look.
+          expr: pod_cleanup_cilium_identity_status{job="pod_cleanup"} == 0
+          for: 4h
+          labels:
+            severity: warning
+            category: cilium
+          annotations:
+            summary: "Pod-cleanup cron is deleting stale CiliumIdentities — investigate label filter"
+            description: |
+              The pod-cleanup safety-net cron has been finding stale
+              CiliumIdentities to delete for 4+ hours of consecutive runs.
+              This means Cilium's built-in operator GC (15min interval) is
+              not catching them quickly enough, or a workload is generating
+              identities faster than they retire. Check label churn:
+                kubectl get ciliumidentities -o json | \
+                  jq -r '.items[].metadata.labels | to_entries | .[].key' | \
+                  sort | uniq -c | sort -rn | head -20
+              Add high-churn label keys to the `labels:` deny list in
+              infrastructure/base/cilium/values.yaml. See TALOS-yyt / TALOS-cq7.
