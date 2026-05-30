@@ -48,14 +48,11 @@ metadata:
     app.kubernetes.io/name: etcd-backup
     app.kubernetes.io/component: backup
 spec:
-  # Hourly at :17 — moved off :00 on 2026-05-29 to test whether the previous
-  # `0 * * * *` aligned with control-plane meltdowns. The hypothesis (from the
-  # 2026-05-29 root-cause council) is that the fsync storm from
-  # `talosctl etcd snapshot` was stalling etcd, tripping cilium-agent's
-  # /healthz (which calls apiserver), and cascading. If the next meltdown
-  # timestamp shifts by ~17min, hypothesis confirmed → throttle snapshot or
-  # move it to a worker via etcd member API.
-  schedule: "17 * * * *"
+  # Hourly on the hour. The 2026-05-29 hypothesis that the snapshot's fsync
+  # storm was tripping cilium-agent's /healthz was disproven by TALOS-yyt
+  # (real cause was CiliumIdentity bloat). Reverted to `0 * * * *` for
+  # readability — backups happen at a predictable wall-clock minute.
+  schedule: "0 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

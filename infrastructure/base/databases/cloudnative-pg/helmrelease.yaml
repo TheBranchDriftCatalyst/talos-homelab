@@ -60,30 +60,10 @@ spec:
         INHERITED_ANNOTATIONS: "app.kubernetes.io/*"
         INHERITED_LABELS: "app.kubernetes.io/*"
 
-    # Webhook failurePolicy=Ignore — TALOS-9cf permanent fix (2026-05-29).
-    # Default is Fail. When cnpg-operator is unhealthy (it's been showing
-    # 3000+ restarts/week as a downstream effect of the 2026-05-29 cilium
-    # meltdowns), every pod create/update CLUSTER-WIDE stalls 10s × 7
-    # cnpg webhooks waiting for them to time out. Even non-database
-    # workloads (plex, arr, argocd) get caught because Pod admission
-    # itself hits these.
-    #
-    # Trade-off accepted: if cnpg-operator is down AND someone creates a
-    # Cluster/Backup/Pooler CR, the CR is admitted without validation.
-    # Local impact (malformed cnpg CR doesn't reconcile correctly).
-    # Versus Fail: cluster-wide pod admission stall (global impact).
-    #
-    # Real fix: HA control plane (TALOS-arx) → cnpg-operator stops
-    # crashing → webhooks stay healthy → could revert to Fail. This
-    # Ignore is the short-term safety belt.
-    #
-    # Live-patched 2026-05-29 via `kubectl patch` and surprisingly stuck
-    # (operator was crash-looping too fast to reconcile and revert) but
-    # this CR setting is the permanent declarative source of truth.
-    webhook:
-      mutating:
-        create: true
-        failurePolicy: Ignore
-      validating:
-        create: true
-        failurePolicy: Ignore
+    # Webhook failurePolicy reverted to chart default (Fail) on 2026-05-30
+    # after TALOS-yyt identified the real root cause (CiliumIdentity bloat
+    # saturating etcd) and fixed it. The original Ignore patch was applied
+    # 2026-05-29 because cnpg-operator was crashlooping and its Fail
+    # webhooks were stalling cluster-wide pod admission for 10s × 7 hooks.
+    # With the meltdown cascade eliminated, cnpg-operator is stable and
+    # Fail is correct — we want validation to actually run.

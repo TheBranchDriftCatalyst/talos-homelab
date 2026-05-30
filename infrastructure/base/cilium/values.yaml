@@ -78,11 +78,13 @@ ipam:
 # Hubble observability
 hubble:
   enabled: true
-  # Hubble flow buffer. Was 16383 (~64MiB) but the CP-pinned Cilium agent on
-  # talos00 was OOM-thrashing under the combined load of Hubble + SPIRE +
-  # clustermesh-apiserver against a 1GiB pod limit. Dropped to 8191 (~32MiB).
-  # Must be (2^n - 1): 4095, 8191, 16383, 32767, 65535
-  eventBufferCapacity: 8191
+  # Hubble flow buffer (~64MiB at 16383 events). Restored 2026-05-30 after
+  # the meltdown root cause (TALOS-yyt — CiliumIdentity bloat) was fixed
+  # and the agent memory limit raised to 2GiB. The earlier 8191 drop was
+  # an unrelated workaround. Bigger buffer = more flow history in Hubble UI
+  # and less event loss under bursts. Must be (2^n - 1): 4095, 8191, 16383,
+  # 32767, 65535.
+  eventBufferCapacity: 16383
   relay:
     enabled: true
   ui:
