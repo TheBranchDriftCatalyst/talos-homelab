@@ -29,11 +29,11 @@ spec:
     namespace: media
 
   # The ESO controller populates three default subkeys on every
-  # ExternalSecret (`data[].remoteRef.conversionStrategy`,
-  # `.decodingStrategy`, `.metadataPolicy`) that aren't in git, which
-  # ArgoCD flags as drift even though the ESes are SecretSynced=True.
-  # Match the three subkeys with jq pointers so ArgoCD stops
-  # complaining about the controller's own bookkeeping.
+  # ExternalSecret (conversionStrategy, decodingStrategy, metadataPolicy)
+  # that aren't in git, which ArgoCD flags as drift even though the ESes
+  # are SecretSynced=True. Match BOTH `data[]` and `dataFrom[]` patterns —
+  # ESes can use either; protonvpn-credentials uses dataFrom[].extract.
+  # Added dataFrom path 2026-05-30 after dashboard showed it OutOfSync.
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -41,6 +41,9 @@ spec:
         - .spec.data[].remoteRef.conversionStrategy
         - .spec.data[].remoteRef.decodingStrategy
         - .spec.data[].remoteRef.metadataPolicy
+        - .spec.dataFrom[].extract.conversionStrategy
+        - .spec.dataFrom[].extract.decodingStrategy
+        - .spec.dataFrom[].extract.metadataPolicy
 
   syncPolicy:
     automated:
