@@ -1,0 +1,189 @@
+---
+# SPIRE health alerts
+#
+# Filed 2026-05-27 after investigating SPIRE as a possible contributor to the
+# recurring single-CP cilium-agent meltdown cycle (TALOS meltdown investigation).
+#
+# Background: cilium is configured with `authentication.mutual.spire.enabled: true`
+# (see infrastructure/base/cilium/values.yaml). The spire-server StatefulSet has
+# been observed at 0/1 Ready for 20+ days. Every cilium-agent pod logs every ~10s:
+#
+#   "SPIRE Delegate API Client failed to init watcher, retrying
+#    error=\"SPIRE admin socket (/run/spire/sockets/admin.sock) does not exist\""
+#
+# These alerts surface the silent-rot state so it stops being invisible.
+#
+# What's covered:
+#   1. SPIREServerDown            — spire-server StatefulSet < 1 Ready for 5m
+#   2. SPIREAgentMissingOnNode    — spire-agent DaemonSet coverage gap
+#   3. SPIRESocketChronicWarning  — Loki rule: cilium SPIRE warnings sustained
+#   4. CiliumMeshAuthControllerErrors — cilium mesh-auth controller error rate
+#
+# Conventions match cluster-baseline-alerts (same namespace, same label scheme).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: spire-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: spire-alerts
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # 1. SPIRE server StatefulSet — the bedrock of mTLS identity issuance
+    # ----------------------------------------------------------------
+    - name: spire.server
+      rules:
+        - alert: SPIREServerDown
+          expr: |
+            kube_statefulset_status_replicas_ready{
+              statefulset="spire-server",
+              namespace="cilium-spire"
+            } < 1
+          for: 5m
+          labels:
+            severity: critical
+            category: spire
+            component: cilium-mesh-auth
+          annotations:
+            summary: "SPIRE server StatefulSet has 0 Ready replicas"
+            description: >-
+              spire-server in cilium-spire namespace has been at
+              {{ printf "%.0f" $value }} Ready replicas for 5+ minutes.
+              Cilium's mTLS authentication depends on SPIRE — when it's down,
+              cilium-agent logs "SPIRE admin socket does not exist" warnings
+              every ~10s and the mesh-auth controller can stall under load.
+              Check: kubectl describe pod -n cilium-spire -l app=spire-server.
+              Common causes: PVC unbound (local-path 1Gi), cert-manager dep
+              missing, OOMKill on tiny resource limit, or schema migration
+              failure on first start.
+
+        - alert: SPIREServerCrashLooping
+          expr: |
+            rate(kube_pod_container_status_restarts_total{
+              namespace="cilium-spire",
+              container="spire-server"
+            }[15m]) * 60 * 15 > 3
+          for: 15m
+          labels:
+            severity: warning
+            category: spire
+          annotations:
+            summary: "spire-server container restarted >3 times in 15m"
+            description: >-
+              spire-server container in cilium-spire is crash-looping
+              ({{ printf "%.1f" $value }} restarts/15m).  Check logs:
+              kubectl logs -n cilium-spire -l app=spire-server --previous.
+
+    # ----------------------------------------------------------------
+    # 2. SPIRE agent DaemonSet — one pod per node, issues per-workload SVIDs
+    # ----------------------------------------------------------------
+    - name: spire.agent
+      rules:
+        - alert: SPIREAgentDaemonSetIncomplete
+          expr: |
+            kube_daemonset_status_number_ready{
+              daemonset="spire-agent",
+              namespace="cilium-spire"
+            }
+            !=
+            kube_daemonset_status_desired_number_scheduled{
+              daemonset="spire-agent",
+              namespace="cilium-spire"
+            }
+          for: 10m
+          labels:
+            severity: warning
+            category: spire
+            component: cilium-mesh-auth
+          annotations:
+            summary: "spire-agent DaemonSet missing pods on some nodes"
+            description: >-
+              spire-agent has ready={{ $value }} but desired count differs
+              for 10+ minutes.  Nodes without a spire-agent cannot mint
+              workload SVIDs, breaking mTLS for workloads on those nodes.
+              Check: kubectl get pod -n cilium-spire -l app=spire-agent -o wide.
+
+        - alert: SPIREAgentMisscheduled
+          expr: |
+            kube_daemonset_status_number_misscheduled{
+              daemonset="spire-agent",
+              namespace="cilium-spire"
+            } > 0
+          for: 5m
+          labels:
+            severity: warning
+            category: spire
+          annotations:
+            summary: "spire-agent DaemonSet has misscheduled pods"
+            description: >-
+              {{ $value }} spire-agent pods are running on nodes that don't
+              match the DaemonSet's node selector / tolerations.  Indicates
+              recent node label changes or taint drift.
+
+    # ----------------------------------------------------------------
+    # 3. Loki rule — chronic SPIRE socket warning frequency
+    #
+    # The cilium-agent SPIRE Delegate retries every ~10s when the socket
+    # is missing. 5 cilium-agent pods × 6/min = 30 lines/min sustained
+    # when SPIRE is broken.  A sustained rate above 0.1 lines/sec (6/min)
+    # over 5 minutes means at least one cilium-agent is chronically
+    # hitting this warning — i.e. the admin socket has been absent the
+    # whole time.
+    # ----------------------------------------------------------------
+    - name: spire.loki
+      rules:
+        - alert: SPIRESocketChronicallyAbsent
+          expr: |
+            sum(
+              rate({namespace="kube-system",app="cilium"}
+                |~ "SPIRE.*failed to init"
+                [5m])
+            ) > 0.1
+          for: 15m
+          labels:
+            severity: warning
+            category: spire
+            component: cilium-mesh-auth
+          annotations:
+            summary: "cilium-agent has been logging SPIRE socket warnings continuously"
+            description: >-
+              cilium-agent pods are logging "SPIRE ... failed to init" warnings
+              at {{ printf "%.2f" $value }} lines/sec sustained over 15m.
+              This means the SPIRE admin socket is absent from at least one
+              cilium-agent pod's view of /run/spire/sockets/.  Indicates
+              SPIRE server is down OR the SPIRE agent DaemonSet is not
+              mounting the hostPath that cilium-agent expects.
+              Cilium will keep retrying every ~10s — under apiserver pressure
+              the mesh-auth I/O loop can deadlock and slow /healthz.
+              Suspect this as a contributor to cilium-agent meltdown cascades.
+
+    # ----------------------------------------------------------------
+    # 4. Cilium mesh-auth controller — internal error rate
+    #
+    # cilium-agent exposes counters for the mesh-auth subsystem when the
+    # SPIRE authentication backend is enabled. Names vary by version, so
+    # this rule alerts on ANY counter named *mesh_auth*errors* or
+    # *mutual_auth*errors* rising at >0.05/sec sustained.
+    # ----------------------------------------------------------------
+    - name: spire.cilium-mesh-auth
+      rules:
+        - alert: CiliumMeshAuthControllerErrors
+          expr: |
+            sum(rate(
+              {__name__=~"cilium_(mesh|mutual)_auth.*errors_total"}[5m]
+            )) > 0.05
+          for: 10m
+          labels:
+            severity: warning
+            category: spire
+            component: cilium-mesh-auth
+          annotations:
+            summary: "cilium mesh-auth controller errors elevated"
+            description: >-
+              cilium mesh-auth/mutual-auth error counters are increasing
+              at {{ printf "%.3f" $value }} errors/sec over 10m.
+              This usually corresponds to SPIRE socket failures or
+              workload-attest timeouts. Cross-reference with
+              SPIRESocketChronicallyAbsent — they often fire together.

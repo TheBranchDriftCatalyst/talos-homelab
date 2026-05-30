@@ -1,0 +1,376 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {"type": "loki", "uid": "loki-v2"},
+        "enable": true,
+        "iconColor": "rgba(34, 197, 94, 0.9)",
+        "name": "Snapshot Job Completions",
+        "expr": "{namespace=\"backup\", container=\"upload\"} |~ \"Done\\\\. Total snapshots\"",
+        "tagKeys": "container,pod"
+      },
+      {
+        "datasource": {"type": "loki", "uid": "loki-v2"},
+        "enable": true,
+        "iconColor": "rgba(239, 68, 68, 0.9)",
+        "name": "Cilium Agent Restarts",
+        "expr": "{namespace=\"kube-system\"} |~ \"cilium-agent\" |~ \"(?i)(Started container|killing|OOMKilled|Back-off)\"",
+        "tagKeys": "pod,reason"
+      },
+      {
+        "datasource": {"type": "loki", "uid": "loki-v2"},
+        "enable": true,
+        "iconColor": "rgba(245, 158, 11, 0.9)",
+        "name": "Snapshot Job Starts",
+        "expr": "{namespace=\"backup\", container=\"snapshot\"} |~ \"snapshot\""
+      }
+    ]
+  },
+  "description": "Correlate the hourly etcd snapshot CronJob (`talosctl etcd snapshot`) with etcd commit latency, apiserver responsiveness, and cilium-agent restarts. Built to test the TALOS-w4t hypothesis: 'does the snapshot fsync storm stall etcd long enough that cilium /healthz fails and triggers cascade?' Pairs with TALOS-r10 (Flux throttle hypothesis applied 2026-05-30) — the two hypotheses are complementary; this dashboard isolates the snapshot signal.\n\nIMPORTANT: etcd metrics may be missing if the alloy scrape config does not target the CP node :2381. The 'No Data' panels indicate that. See configs/nodes/controlplane.yaml — etcd is configured with listen-metrics-urls: http://0.0.0.0:2381 already; needs a prometheus.scrape stanza in alloy/helmrelease.yaml.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "Post-mortem 2026-05-29", "tooltip": "", "type": "link", "url": "https://github.com/TheBranchDriftCatalyst/talos-homelab/blob/main/docs/06-troubleshooting/2026-05-29-six-meltdowns-and-the-real-root-cause.md"},
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "Talos Cluster Debug", "tooltip": "", "type": "link", "url": "/d/talos-cluster-debug"},
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "etcd-backup manifest", "tooltip": "", "type": "link", "url": "https://github.com/TheBranchDriftCatalyst/talos-homelab/blob/main/infrastructure/base/backup/etcd-backup.yaml"}
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "Snapshot suspect — at-a-glance",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "etcd backend commit p99 over a 5m window. Healthy < 100ms (green), warning 100-500ms (yellow), critical > 500ms (red). If this spikes during snapshot Job runs (red annotation lines) the TALOS-w4t hypothesis is confirmed.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.5}]},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.99, sum by (le) (rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])))", "legendFormat": "etcd commit p99"}
+      ],
+      "title": "etcd commit p99 (last 5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "etcd WAL fsync p99 over a 5m window. The fsync is what blocks every write. Healthy < 25ms, warning 25-100ms, critical > 100ms. Spikes here without commit-p99 spikes = pure disk pressure.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.025}, {"color": "red", "value": 0.1}]},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.99, sum by (le) (rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m])))", "legendFormat": "WAL fsync p99"}
+      ],
+      "title": "etcd WAL fsync p99 (last 5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of active snapshot Jobs right now. Normally 0; flashes 1 for ~5-15s on the :17 mark.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "blue", "value": 1}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(kube_job_status_active{namespace=\"backup\", job_name=~\"etcd-backup-.*\"})", "legendFormat": "active snapshot Jobs"}
+      ],
+      "title": "Snapshot Jobs Active",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Cilium-agent restart count in the last 1h. A nonzero value within 30s of a snapshot completion suggests the snapshot is the trigger.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"kube-system\", container=\"cilium-agent\"}[1h]))", "legendFormat": "cilium restarts (1h)"}
+      ],
+      "title": "Cilium Restarts (1h)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "id": 101,
+      "panels": [],
+      "title": "etcd commit latency — primary signal",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "etcd backend commit duration p50/p95/p99 over a 5m rolling window. The hypothesis predicts visible spikes at the moment of snapshot Job completion (green annotation lines from Loki). If you see no spikes, snapshot is not the trigger.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 15, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "line"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "transparent", "value": null}, {"color": "yellow", "value": 0.1}, {"color": "red", "value": 0.5}]},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 6},
+      "id": 5,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])))", "legendFormat": "commit p50"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])))", "legendFormat": "commit p95"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.99, sum by (le) (rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])))", "legendFormat": "commit p99"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.99, sum by (le) (rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m])))", "legendFormat": "wal fsync p99"}
+      ],
+      "title": "etcd commit + fsync latency (p50/p95/p99)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15},
+      "id": 102,
+      "panels": [],
+      "title": "Apiserver responsiveness — the downstream effect",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "kube_apiserver request duration p99 by verb. Snapshot stalls in etcd → write-path verbs (POST/PUT/PATCH/DELETE) inflate first; reads stay flat until etcd reads also stall.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 16},
+      "id": 6,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["max", "mean"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.99, sum by (le, verb) (rate(apiserver_request_duration_seconds_bucket{verb!~\"WATCH|CONNECT\"}[5m])))", "legendFormat": "{{verb}} p99"}
+      ],
+      "title": "apiserver_request_duration p99 by verb",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Apiserver write requests per second (POST/PUT/PATCH/DELETE). If this drops to 0 around snapshot time, writes are blocked entirely.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"},
+          "unit": "reqps"
+        }
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 16},
+      "id": 7,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "min"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (verb) (rate(apiserver_request_total{verb=~\"POST|PUT|PATCH|DELETE\"}[1m]))", "legendFormat": "{{verb}} req/s"}
+      ],
+      "title": "apiserver write request rate",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 25},
+      "id": 103,
+      "panels": [],
+      "title": "Snapshot Job lifecycle",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Duration of each completed snapshot Job (completion_time - start_time). Spikes > 60s = something is competing for I/O.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1, "showPoints": "always"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 30}, {"color": "red", "value": 60}]},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
+      "id": 8,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "single"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "kube_job_status_completion_time{namespace=\"backup\", job_name=~\"etcd-backup-.*\"} - kube_job_status_start_time{namespace=\"backup\", job_name=~\"etcd-backup-.*\"}", "legendFormat": "{{job_name}}"}
+      ],
+      "title": "etcd-backup Job duration (per run)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Cumulative count of completed etcd-backup Jobs. Slope = backup cadence. Flat segments = backup paused / broken.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2, "showPoints": "never"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 26},
+      "id": 9,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last"]},
+        "tooltip": {"mode": "multi"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(kube_job_status_succeeded{namespace=\"backup\", job_name=~\"etcd-backup-.*\"})", "legendFormat": "successful runs"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(kube_job_status_failed{namespace=\"backup\", job_name=~\"etcd-backup-.*\"})", "legendFormat": "failed runs"}
+      ],
+      "title": "etcd-backup Job run count",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 34},
+      "id": 104,
+      "panels": [],
+      "title": "Cilium restarts vs snapshot completions — visual correlation",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Cilium-agent restart rate per pod (restarts/min) over 5m. Snapshot Job completions appear as green annotation lines. If the cilium restart spikes land within 30s of a green line, the snapshot is the trigger (TALOS-w4t confirmed). If they land at the :00 / :10 minute boundary, the trigger is more likely the Flux reconcile burst (TALOS-r10).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 50, "lineWidth": 1, "showPoints": "never", "stacking": {"group": "A", "mode": "none"}},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 35},
+      "id": 10,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["sum", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "rate(kube_pod_container_status_restarts_total{namespace=\"kube-system\", container=\"cilium-agent\"}[5m]) * 60", "legendFormat": "{{pod}}"}
+      ],
+      "title": "Cilium agent restart rate (restarts/min) — overlay with snapshot annotations",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-v2"},
+      "description": "Live log feed from the etcd-backup namespace. Shows snapshot start/upload/done lines. Cross-reference timestamps with the etcd commit latency panel above.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 44},
+      "id": 11,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {"datasource": {"type": "loki", "uid": "loki-v2"}, "expr": "{namespace=\"backup\"} |~ \"(Snapshot|Uploading|Done|snapshot)\"", "refId": "A"}
+      ],
+      "title": "Snapshot Job logs (Loki)",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 54},
+      "id": 105,
+      "panels": [],
+      "title": "How to read this dashboard",
+      "type": "row"
+    },
+    {
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 55},
+      "id": 12,
+      "options": {
+        "code": {"language": "plaintext", "showLineNumbers": false, "showMiniMap": false},
+        "content": "## Verdict matrix\n\nThis dashboard is wired specifically to test the **TALOS-w4t** hypothesis:\n> The hourly `talosctl etcd snapshot` triggers an fsync storm on the CP's etcd, stalling the write path, timing out kube-apiserver's etcd client, failing cilium-agent /healthz, and cascading into the cluster-wide meltdown we kept seeing on 2026-05-29.\n\n### Reading the panels\n\n| What you see | What it means |\n|---|---|\n| etcd commit p99 stays flat (< 100ms) through snapshot annotations | TALOS-w4t REFUTED. Snapshot is innocent under current load. Look at TALOS-r10 (Flux throttle, applied 2026-05-30) and HA control plane (TALOS-arx). |\n| etcd commit p99 spikes 5-15s after each green snapshot annotation | TALOS-w4t CONFIRMED. Mitigations: move snapshot to a worker etcd peer (needs HA), throttle frequency from hourly to 4-6h, or relocate snapshot target to a faster disk. |\n| etcd commit stays flat but cilium restarts spike at clock-aligned times (`:00`, `:10`) | Look at TALOS-r10. Flux mass-reconcile is the more likely trigger. |\n| No data on etcd panels | **etcd metrics aren't scraped yet.** Talos exposes them at `:2381` on the CP (`listen-metrics-urls: http://0.0.0.0:2381` in `configs/nodes/controlplane.yaml`). Add a `prometheus.scrape` stanza in `infrastructure/base/monitoring/v2-otel/alloy/helmrelease.yaml` pointing at `192.168.1.54:2381`. Until then, fall back to the apiserver-latency panel + the snapshot Job duration panel. |\n| apiserver p99 climbs during the snapshot window | Whatever the cause, write path is stalling. Either etcd is the bottleneck (look at the panel above) or apiserver is CPU-starved on the single-CP. |\n\n### Reproduce on demand\n\n```sh\n./scripts/test-suspect-etcd-snapshot.sh\n# Takes ~3-5 min. Triggers one snapshot Job, measures baseline / during / after,\n# and prints a PASS/FAIL/UNKNOWN verdict + writes artifacts to .output/etcd-snapshot-probe/.\n```\n\n### Related work\n\n- **TALOS-w4t** — snapshot timing shift `:00 → :17` to disambiguate (this hypothesis)\n- **TALOS-r10** — Flux mass-reconcile throttle (applied 2026-05-30, observation window open)\n- **TALOS-arx** — HA control plane (removes single-CP fragility entirely)\n- **TALOS-fa7** — observability epic (this dashboard is one of the artifacts)\n\nPost-mortem: [docs/06-troubleshooting/2026-05-29-six-meltdowns-and-the-real-root-cause.md](https://github.com/TheBranchDriftCatalyst/talos-homelab/blob/main/docs/06-troubleshooting/2026-05-29-six-meltdowns-and-the-real-root-cause.md)",
+        "mode": "markdown"
+      },
+      "title": "Reading guide & verdict matrix",
+      "transparent": false,
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["etcd", "snapshot", "meltdown-investigation", "cluster-health"],
+  "templating": {"list": []},
+  "time": {"from": "now-3h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "etcd Snapshot Correlation",
+  "uid": "etcd-snapshot-correlation",
+  "version": 1,
+  "weekStart": ""
+}

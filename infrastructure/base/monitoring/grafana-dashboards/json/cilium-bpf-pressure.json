@@ -1,0 +1,370 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {"type": "prometheus", "uid": "mimir"},
+        "enable": true,
+        "iconColor": "orange",
+        "name": "Cilium agent restarts",
+        "expr": "changes(kube_pod_container_status_restarts_total{namespace=\"kube-system\",container=\"cilium-agent\"}[5m]) > 0",
+        "tagKeys": "pod,node",
+        "titleFormat": "cilium-agent restart"
+      }
+    ]
+  },
+  "description": "Cilium BPF map pressure investigation dashboard. Built 2026-05-30 to root-cause whether the recurring cluster meltdowns are driven by BPF map exhaustion (policy/LB/CT maps filling, bpf_update_elem returning -ENOSPC, silent endpoint regeneration failures). Companion to PrometheusRule cilium-bpf-alerts and scripts/test-suspect-bpf-map-pressure.sh.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "tags": [], "targetBlank": true, "title": "Cilium troubleshooting: policymap pressure", "type": "link", "url": "https://docs.cilium.io/en/stable/operations/troubleshooting/#policymap-pressure-and-overflow"},
+    {"asDropdown": false, "icon": "external link", "tags": [], "targetBlank": true, "title": "Test script", "type": "link", "url": "https://github.com/TheBranchDriftCatalyst/talos-homelab/blob/main/scripts/test-suspect-bpf-map-pressure.sh"}
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "Cluster-wide BPF Map Pressure",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Most-pressured BPF map across the entire cluster. Green <70%, Yellow 70-89%, Red >=90%. >=90% means we're at the same failure mode as 2026-05-21.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]},
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 1},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(cilium_bpf_map_pressure)", "legendFormat": "max pressure"}
+      ],
+      "title": "Cluster max BPF map pressure",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Sum of nonzero rates of cilium_bpf_map_ops_total with outcome!=success across all agents. Any value >0 means a BPF map insert just failed — same kind of error as 'no space left on device' from 2026-05-21.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.001}]},
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 1},
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cilium_bpf_map_ops_total{outcome!=\"success\"}[5m]))", "legendFormat": "insert errors/s"}
+      ],
+      "title": "BPF insert error rate (cluster)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Rate of cilium_policy_import_errors_total summed across nodes. Often the downstream symptom of policy map pressure — agent receives a CNP but can't materialize it into BPF.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.001}, {"color": "red", "value": 0.01}]},
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 1},
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cilium_policy_import_errors_total[10m]))", "legendFormat": "policy import errors/s"}
+      ],
+      "title": "Policy import error rate (cluster)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Total identities Cilium has minted. Per-endpoint policy maps scale with identity count. Useful as a leading indicator: rising identity count means rising policy map utilization.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500}, {"color": "red", "value": 2000}]},
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 1},
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(cilium_identity)", "legendFormat": "identities"}
+      ],
+      "title": "Identity count (max across nodes)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6},
+      "id": 200,
+      "panels": [],
+      "title": "Per-Map Pressure (table + timeseries)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Heatmap-style view: each map's current utilization, per node. Rows colored by % (Green/Yellow/Red). Sort to find the worst offenders.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"align": "left", "displayMode": "color-background-solid"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]},
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Time"}, "properties": [{"id": "custom.hidden", "value": true}]},
+          {"matcher": {"id": "byName", "options": "node"}, "properties": [{"id": "custom.width", "value": 120}, {"id": "custom.displayMode", "value": "auto"}]},
+          {"matcher": {"id": "byName", "options": "map_name"}, "properties": [{"id": "custom.width", "value": 350}, {"id": "custom.displayMode", "value": "auto"}]}
+        ]
+      },
+      "gridPos": {"h": 14, "w": 12, "x": 0, "y": 7},
+      "id": 5,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Value"}]
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node, map_name) (cilium_bpf_map_pressure)", "format": "table", "instant": true, "refId": "A"}
+      ],
+      "title": "Per-map pressure (sorted)",
+      "type": "table",
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true, "pod": true, "namespace": true, "cluster": true, "container": true}, "renameByName": {"Value": "Pressure"}}}
+      ]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Time series of policy map pressure per node. Watch for sustained climb between cilium-agent restarts — that pattern is the smoking gun for the BPF-exhaustion hypothesis.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]
+          },
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 7},
+      "id": 6,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_bpf_map_pressure{map_name=~\"cilium_policy.*|cilium_call_policy\"})", "legendFormat": "policy — {{node}}"}
+      ],
+      "title": "Policy map pressure over time (per node)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Time series of LB map pressure per node. Because kubeProxyReplacement=true, this map backs every Service IP including the apiserver Service. Overflow = silent loss of apiserver routing.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]
+          },
+          "min": 0,
+          "max": 1,
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 14},
+      "id": 7,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_bpf_map_pressure{map_name=~\"cilium_lb[46].*\"})", "legendFormat": "lb — {{node}}"}
+      ],
+      "title": "LB map pressure over time (per node)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 21},
+      "id": 300,
+      "panels": [],
+      "title": "Insert Errors & Identity / Endpoint Counts",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Rate of failed BPF map insertions per node, per map, per operation. Any nonzero value is a real failure — this is the canary signal that a map just overflowed. Correlate spikes with cilium-agent restart annotations above.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "bars", "fillOpacity": 80, "lineWidth": 0, "showPoints": "always"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.001}]},
+          "unit": "ops"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
+      "id": 8,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "calcs": ["sum"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node, map_name, operation) (rate(cilium_bpf_map_ops_total{outcome!=\"success\"}[5m]))", "legendFormat": "{{node}} / {{map_name}} / {{operation}}"}
+      ],
+      "title": "BPF map insert error rate (per node/map/op)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of policies imported (gauge), policy import failures (counter), policy enforcement status. Climbing import errors = downstream of policy map saturation.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "fillOpacity": 5, "lineWidth": 2}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
+      "id": 9,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node) (cilium_policy)", "legendFormat": "policies imported — {{node}}"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node) (rate(cilium_policy_import_errors_total[5m]))", "legendFormat": "import errors/s — {{node}}"}
+      ],
+      "title": "Policy import: count + error rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Cilium identity count + endpoint count over time. Identity count drives per-endpoint policy map size. Sustained growth = future policy map pressure.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "fillOpacity": 5, "lineWidth": 2}
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 30},
+      "id": 10,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_identity)", "legendFormat": "identities — {{node}}"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_endpoint)", "legendFormat": "endpoints — {{node}}"}
+      ],
+      "title": "Identity + endpoint counts (per node)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Cumulative cilium-agent restart count overlaid on max policy map pressure. If pressure spikes precede restarts, that's the meltdown chain. If restarts precede pressure recovery, that's the workaround (restart clears the map).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}
+        },
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "restarts.*"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}, {"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 30},
+      "id": 11,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_bpf_map_pressure{map_name=~\"cilium_policy.*|cilium_call_policy\"})", "legendFormat": "policy pressure — {{node}}"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node) (kube_pod_container_status_restarts_total{namespace=\"kube-system\",container=\"cilium-agent\"})", "legendFormat": "cumulative restarts — {{node}}"}
+      ],
+      "title": "Policy pressure vs cilium-agent restarts (correlation)",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["cilium", "bpf", "pressure", "meltdown-investigation"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "mimir"},
+        "definition": "label_values(cilium_bpf_map_pressure, node)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Node",
+        "multi": true,
+        "name": "node",
+        "options": [],
+        "query": {"query": "label_values(cilium_bpf_map_pressure, node)", "refId": "Mimir-node-Variable-Query"},
+        "refresh": 2,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-3h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Cilium BPF Map Pressure",
+  "uid": "cilium-bpf-pressure",
+  "version": 1,
+  "weekStart": ""
+}

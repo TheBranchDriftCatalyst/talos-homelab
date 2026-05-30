@@ -1,0 +1,264 @@
+---
+# Cilium BPF map exhaustion alerts.
+#
+# Built 2026-05-30 while investigating recurring cluster meltdowns. Suspect:
+# BPF maps (policy, LB, connection-tracking, endpoint) fill up under
+# identity / policy churn, bpf_update_elem starts returning -ENOSPC, endpoint
+# regenerations fail silently, and the apiserver path via Cilium socket-LB
+# starts dropping connections.
+#
+# Precedent: 2026-05-21 incident on talos03 — "Failed to add PolicyMap key:
+# no space left on device". We bumped bpf.policyMapMax 16384 -> 65536 and
+# kept lbMapMax at 65536. These alerts catch the same failure mode before it
+# becomes apiserver-affecting.
+#
+# Metric source: cilium-agent /metrics on port 9962 (scraped by the v2-otel
+# Alloy pods scrape job thanks to prometheus.io/scrape annotations Cilium
+# adds when prometheus.enabled=true). See infrastructure/base/cilium/values.yaml.
+#
+# References:
+#   * https://docs.cilium.io/en/stable/observability/metrics/#metrics-reference
+#   * https://docs.cilium.io/en/stable/operations/troubleshooting/#policymap-pressure-and-overflow
+#   * cilium#34700 (BPF panic class) — pressure can precede this
+#
+# Sibling: cluster-baseline-alerts (this directory).
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cilium-bpf-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: cilium-bpf-alerts
+    app.kubernetes.io/component: monitoring
+    category: cilium
+spec:
+  groups:
+    # --------------------------------------------------------------
+    # 1. Policy maps — the killer from 2026-05-21
+    # --------------------------------------------------------------
+    - name: cilium.bpf.policy
+      rules:
+        - alert: CiliumBPFPolicyMapNearFull
+          # cilium_bpf_map_pressure is a gauge in [0.0, 1.0].
+          # Policy maps are named cilium_policy_v2_<endpoint-id> (per
+          # endpoint) plus cilium_call_policy. The OR matches both with and
+          # without the v2 suffix across cilium versions.
+          expr: |
+            max by (node, pod, map_name) (
+              cilium_bpf_map_pressure{map_name=~"cilium_policy.*|cilium_call_policy"}
+            ) > 0.70
+          for: 10m
+          labels:
+            severity: warning
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium BPF policy map >70% on {{ $labels.node }} ({{ $labels.map_name }})"
+            description: >-
+              cilium_bpf_map_pressure for {{ $labels.map_name }} on
+              {{ $labels.node }} is {{ printf "%.1f" (humanizePercentage $value) }}.
+              Watch closely — at 100% Cilium cannot insert new policy entries
+              and endpoint regeneration silently fails (same failure mode as
+              2026-05-21). Current bpf.policyMapMax is 65536.
+
+        - alert: CiliumBPFPolicyMapCritical
+          expr: |
+            max by (node, pod, map_name) (
+              cilium_bpf_map_pressure{map_name=~"cilium_policy.*|cilium_call_policy"}
+            ) > 0.90
+          for: 5m
+          labels:
+            severity: critical
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium BPF policy map >90% on {{ $labels.node }} ({{ $labels.map_name }})"
+            description: >-
+              {{ $labels.map_name }} on {{ $labels.node }} is at
+              {{ printf "%.1f" (humanizePercentage $value) }} capacity. Bump
+              bpf.policyMapMax in infrastructure/base/cilium/values.yaml and
+              roll cilium via scripts/safe-restart-cilium.sh — do NOT use
+              `kubectl rollout restart` (concurrent agent downtime).
+
+    # --------------------------------------------------------------
+    # 2. Service / LB maps (used by kubeProxyReplacement)
+    # --------------------------------------------------------------
+    - name: cilium.bpf.lb
+      rules:
+        - alert: CiliumBPFLBMapNearFull
+          expr: |
+            max by (node, pod, map_name) (
+              cilium_bpf_map_pressure{map_name=~"cilium_lb[46].*"}
+            ) > 0.70
+          for: 10m
+          labels:
+            severity: warning
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium LB map >70% on {{ $labels.node }} ({{ $labels.map_name }})"
+            description: >-
+              {{ $labels.map_name }} at
+              {{ printf "%.1f" (humanizePercentage $value) }}. With
+              kubeProxyReplacement=true, this map backs every service IP. If
+              it overflows, new services or pod IPs cannot be programmed and
+              apiserver Service (10.96.0.1) might lose entries — meltdown
+              shape. Current lbMapMax is 65536.
+
+        - alert: CiliumBPFLBMapCritical
+          expr: |
+            max by (node, pod, map_name) (
+              cilium_bpf_map_pressure{map_name=~"cilium_lb[46].*"}
+            ) > 0.90
+          for: 5m
+          labels:
+            severity: critical
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium LB map >90% on {{ $labels.node }} ({{ $labels.map_name }})"
+            description: >-
+              {{ $labels.map_name }} at
+              {{ printf "%.1f" (humanizePercentage $value) }}. Bump
+              bpf.lbMapMax and safe-restart Cilium. This is exactly the kind
+              of pressure that loses apiserver service entries silently.
+
+    # --------------------------------------------------------------
+    # 3. Connection-tracking maps (per-node, biggest in absolute size)
+    # --------------------------------------------------------------
+    - name: cilium.bpf.ct
+      rules:
+        - alert: CiliumBPFCTMapPressure
+          expr: |
+            max by (node, pod, map_name) (
+              cilium_bpf_map_pressure{map_name=~"cilium_ct[46].*"}
+            ) > 0.75
+          for: 15m
+          labels:
+            severity: warning
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium CT map >75% on {{ $labels.node }} ({{ $labels.map_name }})"
+            description: >-
+              Connection-tracking map {{ $labels.map_name }} is at
+              {{ printf "%.1f" (humanizePercentage $value) }}. Look for
+              connection leakers (DNS storms, retry loops, exporters that
+              forget keepalives). CT maps GC their own, but sustained
+              pressure means new connections may be evicted prematurely
+              causing app-level retries that look like network flakes.
+
+        - alert: CiliumBPFCTMapCritical
+          expr: |
+            max by (node, pod, map_name) (
+              cilium_bpf_map_pressure{map_name=~"cilium_ct[46].*"}
+            ) > 0.92
+          for: 5m
+          labels:
+            severity: critical
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium CT map >92% on {{ $labels.node }} ({{ $labels.map_name }})"
+            description: >-
+              CT map saturation on {{ $labels.node }}. New connections will
+              start failing soon. Likely culprit: connection-leaking pod.
+              Investigate `ss -tan` counts inside cilium-agent pod and
+              top-talker namespaces in Hubble flows.
+
+    # --------------------------------------------------------------
+    # 4. Endpoint / IPCache / NodeMap (smaller maps, but pressure here
+    #    is unusual and worth knowing about)
+    # --------------------------------------------------------------
+    - name: cilium.bpf.endpoint
+      rules:
+        - alert: CiliumBPFEndpointMapPressure
+          expr: |
+            max by (node, pod, map_name) (
+              cilium_bpf_map_pressure{map_name=~"cilium_lxc|cilium_ipcache.*|cilium_node_map.*|cilium_tunnel_map"}
+            ) > 0.80
+          for: 10m
+          labels:
+            severity: warning
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium {{ $labels.map_name }} >80% on {{ $labels.node }}"
+            description: >-
+              {{ $labels.map_name }} at
+              {{ printf "%.1f" (humanizePercentage $value) }}. These maps
+              size with cluster node + endpoint count and are normally
+              quiet — pressure here means cluster grew past initial sizing.
+
+    # --------------------------------------------------------------
+    # 5. BPF insert errors — the canary that tells us a map *did* overflow
+    # --------------------------------------------------------------
+    - name: cilium.bpf.ops
+      rules:
+        - alert: CiliumBPFMapInsertErrors
+          # cilium_bpf_map_ops_total{operation=..., map_name=..., outcome="fail"}
+          # Any nonzero rate over 5m is real — Cilium does not report partial
+          # success outcomes on map writes.
+          expr: |
+            sum by (node, pod, map_name, operation) (
+              rate(cilium_bpf_map_ops_total{outcome!="success"}[5m])
+            ) > 0
+          for: 5m
+          labels:
+            severity: critical
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium BPF map insert errors on {{ $labels.node }} ({{ $labels.map_name }})"
+            description: >-
+              cilium_bpf_map_ops_total{outcome!=success} is incrementing for
+              {{ $labels.map_name }} operation={{ $labels.operation }} on
+              {{ $labels.node }}. Rate: {{ printf "%.4f" $value }} ops/s.
+              This is the exact symptom of -ENOSPC seen on 2026-05-21.
+              Check pressure gauge for this map and grow the cap if needed.
+
+    # --------------------------------------------------------------
+    # 6. Policy import failures — downstream of map pressure (and
+    #    upstream of every "why didn't my CiliumNetworkPolicy take effect")
+    # --------------------------------------------------------------
+    - name: cilium.policy
+      rules:
+        - alert: CiliumPolicyImportFailures
+          expr: |
+            sum by (node, pod) (
+              rate(cilium_policy_import_errors_total[10m])
+            ) > 0
+          for: 10m
+          labels:
+            severity: warning
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium policy import errors on {{ $labels.node }}"
+            description: >-
+              cilium_policy_import_errors_total is incrementing on
+              {{ $labels.node }} (pod {{ $labels.pod }}) at
+              {{ printf "%.4f" $value }} err/s. Often a downstream of BPF
+              map pressure: agent receives a CiliumNetworkPolicy but cannot
+              materialize it into the per-endpoint policy map. Cross-check
+              with the CiliumBPFPolicyMapNearFull alert.
+
+        # Identity churn driver — useful context, not paging-worthy on its own.
+        - alert: CiliumIdentityCountGrowth
+          # Records identity count growth rate. If we add >50 identities/hour
+          # sustained, we will hit policy map limits in <a day at current cap.
+          expr: |
+            deriv(cilium_identity[1h]) * 3600 > 50
+          for: 30m
+          labels:
+            severity: info
+            category: cilium
+            suspect: bpf-map-exhaustion
+          annotations:
+            summary: "Cilium identity count growing >50/h on {{ $labels.node }}"
+            description: >-
+              cilium_identity on {{ $labels.node }} growing at
+              {{ printf "%.1f" $value }} identities/hour. Per-endpoint policy
+              maps scale roughly with identity count — if this rate continues
+              we will hit policyMapMax (65536) eventually. Find the source
+              (frequently restarting workload, label churn).

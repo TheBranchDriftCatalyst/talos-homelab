@@ -1,0 +1,377 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {"type": "loki", "uid": "loki-v2"},
+        "enable": true,
+        "iconColor": "red",
+        "name": "OOM Kills (kernel-capture)",
+        "expr": "{job=\"kernel-capture\"} |~ \"(?i)(killed process|out of memory|invoked oom-killer|Memory cgroup out of memory)\""
+      }
+    ]
+  },
+  "description": "Memory pressure deep-dive for talos00 (single CP) and cilium-agent across the cluster. Built 2026-05-29/30 to test the hypothesis that recurring meltdowns are driven by GOMEMLIMIT-induced GC thrashing on cilium-agent + occasional OOM kills.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": true, "tags": [], "targetBlank": true, "title": "Cluster Debug Dashboard", "tooltip": "", "type": "link", "url": "/d/talos-cluster-debug"},
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "Post-mortem 2026-05-29", "tooltip": "", "type": "link", "url": "https://github.com/TheBranchDriftCatalyst/talos-homelab/blob/main/docs/06-troubleshooting/2026-05-29-six-meltdowns-and-the-real-root-cause.md"}
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "Summary — OOM Kills + MemoryPressure",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Total cgroup OOM kills in the last 24h. Should be 0 on a healthy cluster.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]},
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(increase(container_oom_events_total[24h]))", "legendFormat": "OOM kills (24h)"}
+      ],
+      "title": "OOM Kills (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of nodes currently reporting MemoryPressure=True. Should be 0.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"})", "legendFormat": "MemoryPressure nodes"}
+      ],
+      "title": "Nodes in MemoryPressure",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "cilium-agent on talos00 — current % of 2Gi memory limit. Watch this climb during a meltdown cycle.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "orange", "value": 85}, {"color": "red", "value": 95}]},
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * container_memory_working_set_bytes{container=\"cilium-agent\",node=~\"talos00.*\"} / kube_pod_container_resource_limits{container=\"cilium-agent\",resource=\"memory\",node=~\"talos00.*\"}", "legendFormat": "cilium-agent on talos00"}
+      ],
+      "title": "cilium-agent on talos00 vs 2Gi limit",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "talos00 host memory used (1 - MemAvailable/MemTotal). Total RAM ~18 GiB.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "orange", "value": 80}, {"color": "red", "value": 90}]},
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * (1 - (node_memory_MemAvailable_bytes{instance=~\"talos00.*\",job=\"node-exporter\"} / node_memory_MemTotal_bytes{instance=~\"talos00.*\",job=\"node-exporter\"}))", "legendFormat": "talos00 mem%"}
+      ],
+      "title": "talos00 host memory %",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "id": 200,
+      "panels": [],
+      "title": "Cilium agent memory vs 2Gi limit (per node)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Working-set memory per cilium-agent vs the 2Gi limit set in values.yaml. The Cilium Helm chart wires limits.memory into GOMEMLIMIT so the orange/red bands also approximate the GC soft ceiling.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "spanNulls": false,
+            "showPoints": "never",
+            "thresholdsStyle": {"mode": "line+area"}
+          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1717986918}, {"color": "orange", "value": 1932735283}, {"color": "red", "value": 2040109465}]},
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 6},
+      "id": 5,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "container_memory_working_set_bytes{container=\"cilium-agent\"}", "legendFormat": "{{node}} / {{pod}}"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "kube_pod_container_resource_limits{container=\"cilium-agent\",resource=\"memory\"}", "legendFormat": "limit ({{node}})"}
+      ],
+      "title": "cilium-agent working_set + memory.limit per node",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Go GC pause time (99th percentile) per cilium-agent. When working_set approaches GOMEMLIMIT (==limits.memory) the Go runtime paces GC aggressively and pause times rise. A sustained jump from low-ms to tens-of-ms or 100ms+ here while the panel above is in the orange/red zone is the smoking gun for GC thrashing.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 1,
+            "spanNulls": false,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 6},
+      "id": 6,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.99, sum by (le, instance) (rate(go_gc_pause_seconds_bucket{job=~\".*cilium.*\"}[5m])))", "legendFormat": "p99 GC pause {{instance}}"}
+      ],
+      "title": "Go GC pause (p99) per cilium-agent — high = GOMEMLIMIT pressure",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15},
+      "id": 300,
+      "panels": [],
+      "title": "Node memory + PSI",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Memory used % per node (1 - MemAvailable/MemTotal). talos00 should be the highest.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "spanNulls": false,
+            "showPoints": "never",
+            "thresholdsStyle": {"mode": "line"}
+          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 75}, {"color": "orange", "value": 85}, {"color": "red", "value": 90}]},
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 7,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * (1 - (node_memory_MemAvailable_bytes{job=\"node-exporter\"} / node_memory_MemTotal_bytes{job=\"node-exporter\"}))", "legendFormat": "{{instance}}"}
+      ],
+      "title": "Host memory % per node",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "PSI memory 'some' — rate of seconds at least one task waited on memory. >0.1 sustained = real stalls (page cache thrash, cgroup memory.high throttling, swap thrash). Even when MemAvailable looks healthy this is the truthier signal.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "spanNulls": false,
+            "showPoints": "never"
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 8,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "rate(node_pressure_memory_waiting_seconds_total[5m])", "legendFormat": "PSI mem some {{instance}}"}
+      ],
+      "title": "PSI memory pressure (some) per node",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 24},
+      "id": 400,
+      "panels": [],
+      "title": "Where the RAM is going on talos00",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Top 10 pod memory consumers on talos00 over the dashboard time range. Sorted by mean. Use this to decide what to evict off the CP if it tips over.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "spanNulls": false,
+            "showPoints": "never",
+            "stacking": {"mode": "none"}
+          },
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 25},
+      "id": 9,
+      "options": {
+        "legend": {"calcs": ["mean", "max"], "displayMode": "table", "placement": "right"},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "topk(10, sum by (pod, namespace) (container_memory_working_set_bytes{node=~\"talos00.*\",container!=\"\",container!=\"POD\"}))", "legendFormat": "{{namespace}}/{{pod}}"}
+      ],
+      "title": "talos00 — top 10 pods by working_set_bytes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Pod working-set memory distribution across nodes — heatmap. A node with a bright high band is fuller than its peers.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"scaleDistribution": {"type": "linear"}},
+          "unit": "bytes"
+        }
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 35},
+      "id": 10,
+      "options": {
+        "calculate": false,
+        "color": {"exponent": 0.5, "fill": "dark-orange", "mode": "scheme", "reverse": false, "scale": "exponential", "scheme": "Oranges", "steps": 64},
+        "exemplars": {"color": "rgba(255,0,255,0.7)"},
+        "filterValues": {"le": 1e-9},
+        "legend": {"show": true},
+        "rowsFrame": {"layout": "auto"},
+        "tooltip": {"mode": "single", "showColorScale": false, "yHistogram": false},
+        "yAxis": {"axisPlacement": "left", "reverse": false}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node, pod) (container_memory_working_set_bytes{container!=\"\",container!=\"POD\"})", "legendFormat": "{{node}} / {{pod}}", "format": "heatmap"}
+      ],
+      "title": "Per-pod memory heatmap (by node)",
+      "type": "heatmap"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 44},
+      "id": 500,
+      "panels": [],
+      "title": "Runbook — interpreting this dashboard",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 45},
+      "id": 11,
+      "options": {
+        "code": {"language": "plaintext", "showLineNumbers": false, "showMiniMap": false},
+        "content": "## Reading this dashboard\n\n**1. Is there an OOM kill?**\n- Top-left stat panel `OOM Kills (24h)` should be 0.\n- Loki annotation `OOM Kills (kernel-capture)` overlays the timeseries with red lines from `/var/log/kernel-capture/<node>.log`. Each line is a `Killed process N (cilium-agent)` (or whatever cgroup hit the limit).\n- If kill events line up in time with a meltdown, the suspect is **confirmed**.\n\n**2. Is Go GC thrashing near GOMEMLIMIT?**\n- The Cilium Helm chart sets `GOMEMLIMIT` env var from `resources.limits.memory`. With the recent 1Gi -> 2Gi bump the soft ceiling is 2 GiB.\n- Look at `Go GC pause (p99) per cilium-agent`. Healthy = low single-digit ms. Thrashing = repeated jumps to 50-500 ms aligned with the working-set graph nearing 1.8-1.95 GiB.\n- Mitigation: set `GOMEMLIMIT` env var explicitly to e.g. `1700MiB` so Go starts GC pacing *before* the cgroup limit; OR raise `limits.memory` further; OR shed load from talos00.\n\n**3. Is talos00 the host getting evicted?**\n- `Nodes in MemoryPressure` stat panel should be 0.\n- `Host memory % per node` — if talos00 sustains >85%, the kubelet's eviction manager will flip MemoryPressure=true and start killing low-priority pods. Cilium-agent is `system-node-critical` so it won't be evicted first, but the cluster will still wobble.\n\n**4. Where is the RAM going?**\n- `talos00 — top 10 pods by working_set_bytes` is the eviction shortlist. Anything that is not control-plane / cilium / kubelet / etcd is a candidate for `nodeSelector`-ing off talos00.\n\n## If suspect is confirmed\n\n1. **Short term**: drop GOMEMLIMIT below the cgroup limit\n   ```yaml\n   # infrastructure/base/cilium/values.yaml\n   extraEnv:\n     - name: GOMEMLIMIT\n       value: \"1700MiB\"\n   ```\n2. **Medium term**: stop scheduling apps on the CP\n   ```yaml\n   # talos machine config (controlplane.yaml)\n   cluster:\n     allowSchedulingOnControlPlanes: false\n   ```\n3. **Long term**: HA control plane (3 CP nodes) — see `docs/05-runbooks/ha-control-plane-migration.md`.\n\n## If suspect is rejected\n\n- All cilium-agents < 70% limit, no OOM kills, no MemoryPressure → memory is not the bottleneck. Move on to the other suspects (BPF map overflow, conntrack, etcd snapshot timing, etc.).",
+        "mode": "markdown"
+      },
+      "title": "Runbook",
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["talos", "cluster-health", "memory", "meltdown-debug"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Talos00 Memory Deep-Dive",
+  "uid": "talos00-memory-deepdive",
+  "version": 1,
+  "weekStart": ""
+}

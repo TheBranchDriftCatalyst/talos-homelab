@@ -1,0 +1,35 @@
+---
+# SPIRE Health & Mesh-Auth Correlation dashboard
+#
+# Filed 2026-05-27 during cilium-agent meltdown investigation.
+#
+# Cilium has authentication.mutual.spire.enabled=true (see
+# infrastructure/base/cilium/values.yaml) but spire-server has been at
+# 0/1 Ready for 20+ days, causing every cilium-agent pod to log
+# "SPIRE admin socket does not exist" warnings every ~10s.
+#
+# This dashboard surfaces:
+#   - SPIRE server / agent readiness
+#   - cilium-agent SPIRE socket warning frequency (Loki)
+#   - cilium mesh-auth metric rates (if exported)
+#   - cilium-agent restart correlation (overlay panel)
+#   - Recent SPIRE-related log lines for triage
+#
+# Companion alerts in:
+#   infrastructure/base/monitoring/v2-otel/baseline-alerts/spire-alerts.yaml
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: spire-health
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: cluster-health
+spec:
+  folder: "Cluster Health"
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-spire-health
+    key: spire-health.json

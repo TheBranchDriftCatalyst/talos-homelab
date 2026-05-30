@@ -1,0 +1,27 @@
+---
+# etcd Snapshot Correlation dashboard
+# Built to test the TALOS-w4t hypothesis: does the hourly `talosctl etcd
+# snapshot` fsync storm stall etcd long enough to fail cilium /healthz and
+# trigger the cluster-wide meltdown? Pairs with TALOS-r10 (Flux throttle
+# applied 2026-05-30) — the two hypotheses are complementary; this dashboard
+# isolates the snapshot signal.
+#
+# Companion artifacts:
+#   - scripts/test-suspect-etcd-snapshot.sh
+#   - infrastructure/base/monitoring/v2-otel/baseline-alerts/etcd-snapshot-alerts.yaml
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: etcd-snapshot-correlation
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: cluster-health
+spec:
+  folder: "Cluster Health"
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-etcd-snapshot-correlation
+    key: etcd-snapshot-correlation.json

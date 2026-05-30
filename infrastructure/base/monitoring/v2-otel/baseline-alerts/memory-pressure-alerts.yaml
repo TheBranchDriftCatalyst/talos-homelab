@@ -1,0 +1,230 @@
+---
+# Memory pressure alerts — cilium-agent + node-level + talos00 profile.
+#
+# Filed as part of the 2026-05-29/30 meltdown investigation.  The hypothesis
+# being tested: talos00 (the only control-plane node) is running out of
+# memory margin and either (a) OOM-killing cilium-agent, (b) thrashing Go
+# GC near GOMEMLIMIT (the Cilium Helm chart wires limits.memory into
+# GOMEMLIMIT, so 2Gi limit == 2Gi soft ceiling), or (c) triggering kubelet
+# eviction of critical pods.
+#
+# Sister rules: cluster-baseline-alerts (NodeHighMemoryUsage there is
+# global; here we add a talos00-specific cut + cilium-agent-specific cut +
+# per-container OOMKilled detector).
+#
+# Companion: scripts/test-suspect-talos00-memory.sh,
+#            infrastructure/base/monitoring/grafana-dashboards/json/talos00-memory-deepdive.json
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: memory-pressure-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: memory-pressure
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # 1. Cilium agent memory ceiling
+    #
+    # The Cilium helm chart sets GOMEMLIMIT from resources.limits.memory.
+    # When working_set_bytes climbs toward limits.memory the Go runtime
+    # enters near-continuous GC to try to stay under the soft ceiling,
+    # which manifests as control-loop stalls (BPF map updates, identity
+    # allocations) and eventually the kubelet OOM-kills the container.
+    #
+    # warning at 80% / critical at 95%.  for: 5m to ignore transient
+    # spikes from program loads.
+    # ----------------------------------------------------------------
+    - name: cilium.memory
+      rules:
+        - alert: CiliumAgentMemoryHigh
+          expr: |
+            (
+              container_memory_working_set_bytes{container="cilium-agent"}
+              /
+              kube_pod_container_resource_limits{container="cilium-agent",resource="memory"}
+            ) > 0.80
+          for: 5m
+          labels:
+            severity: warning
+            component: cilium
+            category: memory-pressure
+          annotations:
+            summary: "cilium-agent {{ $labels.pod }} (node {{ $labels.node }}) at {{ printf \"%.0f\" (mul $value 100) }}% of memory limit"
+            description: >-
+              cilium-agent container working set is above 80% of its memory
+              limit.  Because the Helm chart sets GOMEMLIMIT from
+              limits.memory, the Go runtime is likely already pacing GC
+              aggressively.  Check `go_gc_pause_seconds` for the same pod
+              for confirmation.
+
+        - alert: CiliumAgentMemoryCritical
+          expr: |
+            (
+              container_memory_working_set_bytes{container="cilium-agent"}
+              /
+              kube_pod_container_resource_limits{container="cilium-agent",resource="memory"}
+            ) > 0.95
+          for: 2m
+          labels:
+            severity: critical
+            component: cilium
+            category: memory-pressure
+          annotations:
+            summary: "cilium-agent {{ $labels.pod }} (node {{ $labels.node }}) at {{ printf \"%.0f\" (mul $value 100) }}% of memory limit — OOMKill imminent"
+            description: >-
+              cilium-agent on {{ $labels.node }} is within 5% of its memory
+              limit.  Expected next events: (1) Go GC pause time spikes,
+              (2) cgroup memory.events.max increments, (3) kubelet OOM-kills
+              cilium-agent.  Mitigation: raise limits.memory in
+              infrastructure/base/cilium/values.yaml OR set an explicit
+              GOMEMLIMIT env that is lower than the cgroup limit (gives Go
+              a chance to GC before the hard kill).
+
+        - alert: CiliumAgentOOMKilled
+          expr: |
+            increase(kube_pod_container_status_last_terminated_reason{container="cilium-agent",reason="OOMKilled"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            component: cilium
+            category: memory-pressure
+          annotations:
+            summary: "cilium-agent {{ $labels.pod }} (node {{ $labels.node }}) was OOMKilled"
+            description: >-
+              kubelet reports lastState.terminated.reason=OOMKilled for the
+              cilium-agent container.  This is the worst-case outcome of
+              memory pressure on the agent — it forces a full BPF reload
+              when the new pod comes up and is a likely root cause of the
+              recurring meltdowns.  Investigate immediately.
+
+    # ----------------------------------------------------------------
+    # 2. Node-level memory pressure / Memory cgroup signals
+    # ----------------------------------------------------------------
+    - name: node.memory
+      rules:
+        - alert: NodeMemoryPressure
+          expr: |
+            kube_node_status_condition{condition="MemoryPressure",status="true"} == 1
+          for: 1m
+          labels:
+            severity: critical
+            category: memory-pressure
+          annotations:
+            summary: "Node {{ $labels.node }} reports MemoryPressure=True"
+            description: >-
+              kubelet has flipped the MemoryPressure node condition to True.
+              kubelet will start evicting pods (lowest priority first) to
+              reclaim memory.  See node_memory_MemAvailable_bytes on this
+              instance and `kubectl describe node {{ $labels.node }}` for
+              the eviction threshold that was crossed.
+
+        - alert: NodeMemoryHigh
+          expr: |
+            (
+              1 - (
+                node_memory_MemAvailable_bytes{job="node-exporter"}
+                /
+                node_memory_MemTotal_bytes{job="node-exporter"}
+              )
+            ) > 0.85
+          for: 5m
+          labels:
+            severity: warning
+            category: memory-pressure
+          annotations:
+            summary: "Node {{ $labels.instance }} memory usage > 85% for 5m"
+            description: >-
+              MemAvailable is below 15% of MemTotal.  Distinct from the
+              baseline NodeHighMemoryUsage (which fires at 90% for 15m) —
+              this is the faster trigger we use during meltdown debug.
+
+        - alert: NodeMemoryPSIHigh
+          expr: |
+            rate(node_pressure_memory_waiting_seconds_total[5m]) > 0.10
+          for: 5m
+          labels:
+            severity: warning
+            category: memory-pressure
+          annotations:
+            summary: "PSI memory pressure (some) > 10% on {{ $labels.instance }}"
+            description: >-
+              At least one task on this node spent >10% of the last 5m
+              waiting on memory.  Even if MemAvailable looks fine, real
+              stalls are happening — likely from page-cache thrash or
+              cgroup memory.high throttling.
+
+    # ----------------------------------------------------------------
+    # 3. Talos00 profile — the single CP, special-cased
+    #
+    # talos00 carries: kube-apiserver, etcd, controller-manager, scheduler,
+    # cilium-operator, cilium-agent, cilium-envoy, cilium-spire-server,
+    # Hubble Relay, clustermesh-apiserver, tempo, node-exporter, plus app
+    # workloads (allowSchedulingOnControlPlanes=true).  Total RAM ~18 GiB.
+    # If it tips over, the whole cluster loses its control plane.
+    # ----------------------------------------------------------------
+    - name: talos00.memory-profile
+      rules:
+        - alert: Talos00MemoryProfile
+          expr: |
+            (
+              1 - (
+                node_memory_MemAvailable_bytes{instance=~"talos00.*",job="node-exporter"}
+                /
+                node_memory_MemTotal_bytes{instance=~"talos00.*",job="node-exporter"}
+              )
+            ) > 0.75
+          for: 5m
+          labels:
+            severity: warning
+            category: memory-pressure
+            node: talos00
+          annotations:
+            summary: "talos00 (control plane) memory > 75% — lower the workload"
+            description: >-
+              talos00 is the only control-plane node and carries the
+              kube-apiserver + etcd + cilium control-plane load.  When it
+              exceeds 75% memory, GC pressure on the apiserver and cilium
+              operator becomes the dominant cluster-wide failure mode.
+              Mitigation: cordon talos00 (`kubectl cordon talos00`) or
+              flip allowSchedulingOnControlPlanes=false to push app
+              workloads off the CP.
+
+        - alert: Talos00CiliumAgentMemoryDanger
+          expr: |
+            (
+              container_memory_working_set_bytes{container="cilium-agent",node=~"talos00.*"}
+              /
+              kube_pod_container_resource_limits{container="cilium-agent",resource="memory",node=~"talos00.*"}
+            ) > 0.75
+          for: 5m
+          labels:
+            severity: warning
+            component: cilium
+            category: memory-pressure
+            node: talos00
+          annotations:
+            summary: "cilium-agent on talos00 above 75% of 2Gi limit"
+            description: >-
+              The cilium-agent on talos00 carries the heaviest endpoint
+              map (Hubble Relay + SPIRE + clustermesh-apiserver), so this
+              early-warning at 75% is intentional.  See dashboard
+              "Talos00 Memory Deep-Dive" → GC pause times.  If pauses are
+              spiking, GOMEMLIMIT is too close to the cgroup limit.
+
+        - alert: Talos00MemoryCgroupOOMKill
+          expr: |
+            increase(container_oom_events_total{node=~"talos00.*"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            category: memory-pressure
+            node: talos00
+          annotations:
+            summary: "OOM kill on talos00 (container {{ $labels.container }})"
+            description: >-
+              cgroup OOM kill on talos00.  Container={{ $labels.container }}
+              pod={{ $labels.pod }}.  Cross-reference with the
+              kernel-capture log:
+                talosctl read /var/log/kernel-capture/talos00.log | grep -i oom

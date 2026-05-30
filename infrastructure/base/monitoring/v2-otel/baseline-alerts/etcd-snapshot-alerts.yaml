@@ -1,0 +1,215 @@
+---
+# etcd snapshot / backend-health alerts
+#
+# Probes the "etcd snapshot fsync storm" hypothesis (TALOS-w4t): does the
+# hourly `talosctl etcd snapshot` CronJob stall etcd long enough to fail
+# cilium-agent's /healthz (which talks to apiserver, which talks to etcd) and
+# trigger the meltdown cascade? Pairs with TALOS-r10 (Flux mass-reconcile
+# throttle hypothesis applied 2026-05-30).
+#
+# PREREQ: etcd metrics must be scraped. Talos exposes them at :2381 on the CP
+# node (see configs/nodes/controlplane.yaml: listen-metrics-urls). Currently
+# NOT scraped — these rules will be silent until alloy is updated with a
+# prometheus.scrape stanza pointing at <controlplane-ip>:2381. Open TALOS-***
+# for that scrape config when wiring this up.
+#
+# Reference thresholds: etcd upstream "healthy" guidance is p99 backend
+# commit < 25ms (datacenter SSD), < 100ms (homelab hand-wave). Anything
+# > 500ms is pathological and almost guarantees apiserver client timeouts.
+#
+# Companion script: scripts/test-suspect-etcd-snapshot.sh
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: etcd-snapshot-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: etcd-snapshot
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # 1. Commit latency — the smoking gun for fsync stalls
+    # ----------------------------------------------------------------
+    - name: etcd.commit-latency
+      rules:
+        - alert: EtcdCommitLatencyHigh
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le, instance) (
+                rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])
+              )
+            ) > 0.1
+          for: 2m
+          labels:
+            severity: warning
+            category: etcd-health
+            hypothesis: TALOS-w4t
+          annotations:
+            summary: "etcd backend commit p99 > 100ms on {{ $labels.instance }}"
+            description: >-
+              etcd_disk_backend_commit_duration_seconds p99 on
+              {{ $labels.instance }} is {{ printf "%.0f" (mulf $value 1000.0) }}ms
+              over a 5-minute window (sustained 2m). Healthy homelab target is
+              under 100ms; sustained values above this slow every write through
+              the apiserver and increase the chance of cascading timeouts.
+              Run `scripts/test-suspect-etcd-snapshot.sh` to correlate with
+              snapshot Job runs.
+
+        - alert: EtcdCommitLatencyCritical
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le, instance) (
+                rate(etcd_disk_backend_commit_duration_seconds_bucket[5m])
+              )
+            ) > 0.5
+          for: 2m
+          labels:
+            severity: critical
+            category: etcd-health
+            hypothesis: TALOS-w4t
+          annotations:
+            summary: "etcd backend commit p99 > 500ms on {{ $labels.instance }} — apiserver timeouts likely"
+            description: >-
+              etcd_disk_backend_commit_duration_seconds p99 on
+              {{ $labels.instance }} is {{ printf "%.0f" (mulf $value 1000.0) }}ms.
+              This is in the range where kube-apiserver's etcd client
+              starts timing out and cilium-agent /healthz fails, matching
+              the 2026-05-29 meltdown signature. If the hourly snapshot
+              CronJob is running right now, the snapshot is the trigger —
+              see TALOS-w4t.
+
+        - alert: EtcdWalFsyncLatencyHigh
+          # The WAL fsync is the I/O-blocking step on every write. If this is
+          # high but commit isn't, the issue is disk; if both are high, etcd
+          # is doing too much work (snapshot, defrag, or quota approaching).
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le, instance) (
+                rate(etcd_disk_wal_fsync_duration_seconds_bucket[5m])
+              )
+            ) > 0.05
+          for: 2m
+          labels:
+            severity: warning
+            category: etcd-health
+          annotations:
+            summary: "etcd WAL fsync p99 > 50ms on {{ $labels.instance }}"
+            description: >-
+              etcd_disk_wal_fsync_duration_seconds p99 on
+              {{ $labels.instance }} is {{ printf "%.0f" (mulf $value 1000.0) }}ms.
+              Indicates underlying disk pressure (snapshot in flight,
+              co-tenant I/O, or failing drive). Look at the etcd snapshot
+              CronJob and node disk stats for the same timestamp.
+
+    # ----------------------------------------------------------------
+    # 2. Snapshot Job activity (informational; pairs with above)
+    # ----------------------------------------------------------------
+    - name: etcd.snapshot-activity
+      rules:
+        - alert: EtcdSnapshotInProgress
+          # Informational alert — fires while the hourly snapshot Job is
+          # active so the on-call has a single pane to correlate commit
+          # latency spikes against. Lifetime is ~3-15s typically; alert
+          # for=0 catches it.
+          expr: |
+            kube_job_status_active{
+              namespace="backup",
+              job_name=~"etcd-backup-.*"
+            } > 0
+          for: 0s
+          labels:
+            severity: info
+            category: etcd-health
+            hypothesis: TALOS-w4t
+          annotations:
+            summary: "etcd snapshot Job {{ $labels.job_name }} is running"
+            description: >-
+              The etcd-backup Job is currently active. If EtcdCommitLatencyHigh
+              fires within the next 30s, the snapshot is the trigger
+              (TALOS-w4t hypothesis confirmed). If commit latency stays
+              healthy throughout, snapshot is innocent — look elsewhere
+              (TALOS-r10 Flux throttle).
+
+        - alert: EtcdSnapshotDurationHigh
+          # Snapshot Job duration > 60s is suspicious — under normal load
+          # talosctl etcd snapshot of a small (~50MB) homelab etcd completes
+          # in well under 30s. > 60s suggests something is competing for I/O.
+          expr: |
+            (
+              kube_job_status_completion_time{namespace="backup", job_name=~"etcd-backup-.*"}
+              -
+              kube_job_status_start_time{namespace="backup", job_name=~"etcd-backup-.*"}
+            ) > 60
+          for: 0s
+          labels:
+            severity: warning
+            category: etcd-health
+          annotations:
+            summary: "etcd-backup Job {{ $labels.job_name }} took >60s"
+            description: >-
+              Last etcd-backup Job took {{ printf "%.0f" $value }}s to complete.
+              Expected under 30s for this etcd size. Long snapshots mean a
+              wider window of etcd write stalls — the exact correlation
+              window for the meltdown hypothesis.
+
+    # ----------------------------------------------------------------
+    # 3. Quota / capacity (preempts a different failure mode)
+    # ----------------------------------------------------------------
+    - name: etcd.capacity
+      rules:
+        - alert: EtcdBackendQuotaApproaching
+          # etcd refuses writes when the backend exceeds the quota
+          # (default 2GB, configurable via --quota-backend-bytes). At >80%
+          # there's enough time to defrag or raise the quota before writes
+          # start failing cluster-wide.
+          expr: |
+            (
+              etcd_mvcc_db_total_size_in_bytes
+              /
+              etcd_server_quota_backend_bytes
+            ) > 0.8
+          for: 5m
+          labels:
+            severity: warning
+            category: etcd-health
+          annotations:
+            summary: "etcd backend at {{ printf \"%.0f\" (mulf $value 100.0) }}% of quota on {{ $labels.instance }}"
+            description: >-
+              etcd backend DB is using {{ printf "%.0f" (mulf $value 100.0) }}%
+              of its configured quota. At 100% etcd will refuse writes and
+              the cluster effectively goes read-only. Mitigations:
+              `etcdctl compact && etcdctl defrag` to reclaim space, or raise
+              `--quota-backend-bytes` in the Talos machineconfig.
+
+        - alert: EtcdBackendQuotaCritical
+          expr: |
+            (
+              etcd_mvcc_db_total_size_in_bytes
+              /
+              etcd_server_quota_backend_bytes
+            ) > 0.95
+          for: 2m
+          labels:
+            severity: critical
+            category: etcd-health
+          annotations:
+            summary: "etcd backend at {{ printf \"%.0f\" (mulf $value 100.0) }}% of quota — writes will fail soon"
+            description: >-
+              etcd is about to start refusing writes. This is a precursor
+              to cluster-wide write outage; defrag NOW or raise the quota.
+
+        - alert: EtcdNoLeader
+          # Leader loss on a single-CP cluster IS the meltdown by definition.
+          # On HA it indicates raft instability.
+          expr: etcd_server_has_leader == 0
+          for: 1m
+          labels:
+            severity: critical
+            category: etcd-health
+          annotations:
+            summary: "etcd member {{ $labels.instance }} has no leader"
+            description: >-
+              etcd_server_has_leader is 0. Without a leader no writes
+              can succeed; apiserver will start returning errors within
+              ~5s. On a single-CP cluster this is the meltdown.
