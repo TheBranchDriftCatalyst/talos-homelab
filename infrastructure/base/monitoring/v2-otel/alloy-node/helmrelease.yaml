@@ -1,0 +1,216 @@
+---
+# Grafana Alloy — node-level DaemonSet
+#
+# Companion to the existing `alloy` Deployment in this directory.
+# Architectural split (per Grafana's recommendation):
+#   alloy (Deployment, 1 replica) — cluster-wide scraping:
+#     kube-state-metrics, minio, argocd, hubble, blackbox probes,
+#     cilium-operator, traefik, mimir rules sync, OTLP receiver, etc.
+#     These are single-instance things that should only be scraped once.
+#
+#   alloy-node (DaemonSet, this) — per-node scraping:
+#     - kernel-capture logs (/var/log/kernel-capture/<node>.log)
+#     - netconsole-receiver logs (on the receiver node only)
+#     - (future) kubelet/cadvisor local scraping (avoids API proxy overhead)
+#     - (future) pod logs via local /var/log/pods/ (avoids API watch overhead)
+#
+# Why this split:
+#   On a cluster-wide DaemonSet conversion, every node would try to scrape
+#   the same cluster-wide targets → duplicate metrics in Mimir. Per-node
+#   things benefit from running on every node — local scraping is faster
+#   and survives partial cluster outages.
+#
+# Filed in response to 2026-05-30 kernel panic investigation. The
+# per-node kernel-capture logs need to be shipped to Loki for queries
+# like {job="kernel-capture"} |~ "Kernel panic|BUG:|Oops:" so we can
+# alert on kernel events historically rather than just catching them
+# live.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: alloy-node
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: alloy
+      version: '0.10.0'   # match existing alloy deployment for consistency
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  values:
+    # Use a distinct fullnameOverride so resources don't collide with
+    # the existing `alloy` HelmRelease (which has its own SA, Deployment,
+    # ConfigMap, Service all named `alloy`).
+    fullnameOverride: alloy-node
+
+    alloy:
+      # Lower resources than the Deployment because this only does file
+      # tailing, not heavy Prometheus scraping.
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+      # Pass node name to the Alloy config via downward API.
+      extraEnv:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      # Mount host /var/log so we can read kernel-capture + netconsole files.
+      # `mounts.varlog: false` disables the chart's default /var/log → /var/log
+      # mount; we use a CUSTOM mount path /host-var-log so paths in the alloy
+      # config (local.file_match.path_targets) are unambiguous.
+      mounts:
+        varlog: false
+        dockercontainers: false
+        # `extra` adds entries to the alloy container's volumeMounts.
+        extra:
+          - name: host-var-log
+            mountPath: /host-var-log
+            readOnly: true
+      configMap:
+        create: true
+        content: |
+          // ============================================
+          // alloy-node — per-node telemetry collector
+          // ============================================
+
+          // ----------------------------------------
+          // Loki output (push endpoint)
+          // ----------------------------------------
+          loki.write "default" {
+            endpoint {
+              url = "http://loki.monitoring.svc:3100/loki/api/v1/push"
+            }
+            external_labels = {
+              cluster = "talos-homelab",
+            }
+          }
+
+          // ----------------------------------------
+          // Kernel capture logs (Option A — per-node)
+          //   Source: /host-var-log/kernel-capture/<node>.log
+          //   Written by: kernel-panic-capture DaemonSet (busybox cat /dev/kmsg)
+          // ----------------------------------------
+          local.file_match "kernel_capture" {
+            path_targets = [{
+              __path__ = "/host-var-log/kernel-capture/*.log",
+              job      = "kernel-capture",
+            }]
+          }
+
+          loki.source.file "kernel_capture" {
+            targets    = local.file_match.kernel_capture.targets
+            forward_to = [loki.process.panic_detect.receiver]
+          }
+
+          // ----------------------------------------
+          // Netconsole receiver logs (Option B)
+          //   Only exists on the node hosting the netconsole-receiver pod
+          //   (talos03 by default per nodeAffinity in the receiver Deployment).
+          //   On other nodes this matches nothing — harmless.
+          // ----------------------------------------
+          local.file_match "netconsole" {
+            path_targets = [{
+              __path__ = "/host-var-log/netconsole-receiver/*.log",
+              job      = "netconsole-receiver",
+            }]
+          }
+
+          loki.source.file "netconsole" {
+            targets    = local.file_match.netconsole.targets
+            forward_to = [loki.process.panic_detect.receiver]
+          }
+
+          // ----------------------------------------
+          // Common pipeline: add node label + flag kernel-panic-shaped lines
+          // ----------------------------------------
+          loki.process "panic_detect" {
+            // Always add the node name as a label so queries can pivot per-node
+            stage.static_labels {
+              values = {
+                cluster = "talos-homelab",
+              }
+            }
+            stage.labels {
+              values = {
+                node = "node_name",
+              }
+            }
+            // Mark lines that look like kernel panics for easier Grafana querying
+            // and LogQL alerting. Captures: panic, BUG, Oops, RIP, page fault,
+            // general protection, soft lockup, watchdog, kernel NULL pointer.
+            stage.match {
+              selector = "{job=~\"kernel-capture|netconsole-receiver\"} |~ \"(?i)(Kernel panic|BUG:|Oops:|RIP:|page fault|general protection|soft lockup|watchdog|NULL pointer)\""
+              stage.labels {
+                values = {
+                  panic_signal = "true_value",
+                }
+              }
+            }
+            forward_to = [loki.write.default.receiver]
+          }
+
+          // ----------------------------------------
+          // Self-monitoring (per-node Alloy stats)
+          // ----------------------------------------
+          prometheus.exporter.self "alloy_node" {}
+
+          prometheus.remote_write "mimir" {
+            endpoint {
+              url = "http://mimir-nginx.monitoring.svc:80/api/v1/push"
+            }
+            external_labels = {
+              cluster = "talos-homelab",
+            }
+          }
+
+          prometheus.scrape "self" {
+            targets         = prometheus.exporter.self.alloy_node.targets
+            scrape_interval = "60s"
+            forward_to      = [prometheus.remote_write.mimir.receiver]
+          }
+
+    # Controller: DaemonSet so we run on every node
+    controller:
+      type: daemonset
+      tolerations:
+        - operator: Exists   # run on all nodes including control plane
+      # `volumes.extra` adds entries to the pod's spec.volumes.
+      volumes:
+        extra:
+          - name: host-var-log
+            hostPath:
+              path: /var/log
+              type: Directory
+
+    # No cluster API scraping is done by alloy-node, so minimal RBAC needed.
+    # The default ServiceAccount + ClusterRole from the chart still gets
+    # created for symmetry (lets Alloy read CRDs if we later add features).
+    rbac:
+      create: true
+    serviceAccount:
+      create: true
+    crds:
+      create: false
+
+    # No service needed — alloy-node has no external endpoints
+    service:
+      enabled: false
+
+    # ServiceMonitor for self-scraping — disabled, alloy-node pushes to
+    # Mimir directly via prometheus.remote_write above
+    serviceMonitor:
+      enabled: false
