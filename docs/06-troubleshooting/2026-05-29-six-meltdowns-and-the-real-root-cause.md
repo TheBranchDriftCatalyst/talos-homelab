@@ -1,9 +1,41 @@
-# Post-Mortem: Six Cilium Cascading Meltdowns in One Day
+# Post-Mortem: Cluster Meltdowns 2026-05-29 (UPDATED 2026-05-30 with corrections)
 
-**Date:** 2026-05-29
-**Duration of impact:** Six episodes, each ~5–30 min until force-reboot
+**Date:** 2026-05-29 (extended into early 2026-05-30 UTC)
+**Total episodes:** 8 (six during initial response + two during instrumentation work)
+**Duration of impact:** Each ~5–30 min until force-reboot
 **Severity:** Full control-plane unreachable from kubectl, each time
 **Blast radius:** Entire cluster (single CP node design)
+
+## ⚠️ CORRECTIONS APPENDED 2026-05-30 01:55 UTC
+
+After deploying kernel-panic-capture DaemonSet + alloy-node DaemonSet + Loki integration
+and surviving meltdown #8 WITH the new instrumentation live, two findings invalidate
+parts of the original analysis below:
+
+1. **"Talos auto-reboots on kernel panic" was WRONG.** Meltdown #8's captured kernel log
+   (1203 lines in `/var/log/kernel-capture/talos00.log`) contains ZERO panic/oops/BUG
+   patterns. The kernel was healthy throughout. The reboots we attributed to "auto-panic"
+   were actually triggered by us running `talosctl reboot --mode=force` as our recovery
+   action. The 62-second gap we noted earlier between cilium death and "node boot" was a
+   misreading of timestamps.
+
+2. **"Cilium restarting every 10 min" was WRONG.** The 35 restart count over 6h49m
+   looked like a ~10 min cadence, but was actually BURSTS during recovery from each
+   force-reboot. Each recovery has ~4-5 chicken-and-egg cycles before cilium-agent
+   successfully connects to apiserver. Between meltdowns, cilium is stable for ~1-3 hours.
+
+The TRUE root cause remains the cilium-agent-restart cascade on a single CP cluster, but
+the TRIGGER for each meltdown is still under investigation. New hypothesis (filed as a
+separate beads issue): synchronized Flux Kustomization mass reconcile every 10 min
+saturates the single apiserver, cilium `/healthz` (which queries apiserver) fails,
+kubelet kills cilium, cascade follows.
+
+See the **Updated Reality** section at the bottom of this doc for the corrected
+mechanism. Original analysis preserved below for historical context.
+
+---
+
+## TL;DR (original)
 
 ---
 
