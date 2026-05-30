@@ -1,6 +1,84 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# Patches for the Flux controllers themselves (kustomize-controller +
+# helm-controller). MUST live in this outer kustomization because the
+# inner clusters/catalyst-cluster/flux-system/flux-system/kustomization.yaml
+# is NEVER processed by Flux — this outer kustomization references the
+# gotk-* files DIRECTLY (as `flux-system/gotk-components.yaml`) instead of
+# pointing at the directory. So patches in the inner kustomization are
+# dead code (silently ignored).
+#
+# This is a bootstrap-time gotcha: `flux bootstrap` writes the inner
+# kustomization with the conventional patches: pattern, but our cluster
+# was set up to reference the gotk-* files directly from the outer, so
+# the inner is bypassed. Moved here so they actually apply.
+#
+# Discovery: 2026-05-30. The May 22 throttle fix (--concurrent=2, etc.)
+# never took effect — controllers ran defaults (--concurrent=4, qps=50,
+# burst=100) the entire time. Explains why meltdowns kept happening.
+patches:
+  # Delete Flux network policies - they break connectivity with Cilium CNI
+  # because Cilium doesn't recognize the Kubernetes API as an "endpoint"
+  - patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: allow-egress
+        namespace: flux-system
+  - patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: allow-scraping
+        namespace: flux-system
+  - patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: NetworkPolicy
+      metadata:
+        name: allow-webhooks
+        namespace: flux-system
+
+  # Throttle Flux controllers to prevent apiserver saturation that triggers
+  # Cilium liveness-probe death spirals (the actual root cause of today's
+  # 8 meltdowns, per docs/06-troubleshooting/2026-05-29-six-meltdowns...).
+  #
+  # --concurrent=1 serializes ALL reconciles. ~30 Kustomizations × ~5s =
+  # ~2.5min parade instead of 75s burst. Apiserver sees flat load.
+  #
+  # Defaults (for reference): --concurrent=4, --kube-api-qps=50, --kube-api-burst=100.
+  - target:
+      kind: Deployment
+      name: kustomize-controller
+      namespace: flux-system
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --concurrent=1
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kube-api-qps=10
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kube-api-burst=20
+  - target:
+      kind: Deployment
+      name: helm-controller
+      namespace: flux-system
+    patch: |
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --concurrent=1
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kube-api-qps=10
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --kube-api-burst=20
+
 resources:
   # Flux components (added by flux bootstrap)
   - flux-system/gotk-components.yaml
