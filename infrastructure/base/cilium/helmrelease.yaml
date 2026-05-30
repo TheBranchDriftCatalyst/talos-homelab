@@ -79,3 +79,27 @@ spec:
   # mark the reconcile as failed and retry, compounding API pressure.
   test:
     enable: false
+
+  # The Cilium chart creates the cilium-spire namespace WITHOUT
+  # pod-security.kubernetes.io labels. The cluster's baseline PSA enforce
+  # then blocks SPIRE pods (hostNetwork, hostPID, hostPath are required for
+  # SPIRE agent's UDS). 2026-05-30: first Flux adoption of Cilium tripped
+  # this — SPIRE pods 0/desired for 15 min, helm timed out waiting.
+  #
+  # Patching the rendered namespace here ensures the labels exist from the
+  # very first apply, regardless of whether the namespace pre-exists. The
+  # standalone spire-namespace.yaml in kustomization.yaml is now redundant
+  # but kept as a belt-and-suspenders source-of-truth.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Namespace
+              name: cilium-spire
+            patch: |
+              - op: add
+                path: /metadata/labels/pod-security.kubernetes.io~1enforce
+                value: privileged
+              - op: add
+                path: /metadata/labels/pod-security.kubernetes.io~1warn
+                value: privileged
