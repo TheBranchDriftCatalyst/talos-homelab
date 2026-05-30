@@ -1,0 +1,387 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {"type": "loki", "uid": "loki-v2"},
+        "enable": true,
+        "iconColor": "red",
+        "name": "Kernel Panic Events",
+        "expr": "{job=\"kernel-capture\"} |~ \"(?i)(Kernel panic|BUG:|Oops:|RIP:)\""
+      }
+    ]
+  },
+  "description": "Talos cluster meltdown debugging dashboard. Built 2026-05-30 after a day of 7 cluster meltdowns turned out to be kernel panic auto-reboots. Shows at-a-glance cluster health, cilium restart trends, kernel event history, per-node status, operator health, and a debug runbook for is-Talos-misconfigured questions.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "Post-mortem 2026-05-29", "tooltip": "", "type": "link", "url": "https://github.com/TheBranchDriftCatalyst/talos-homelab/blob/main/docs/06-troubleshooting/2026-05-29-six-meltdowns-and-the-real-root-cause.md"},
+    {"asDropdown": false, "icon": "external link", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "HA Migration Runbook", "tooltip": "", "type": "link", "url": "https://github.com/TheBranchDriftCatalyst/talos-homelab/blob/main/docs/05-runbooks/ha-control-plane-migration.md"}
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "🎯 At-a-glance Cluster Health",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of nodes in Ready state per kube-state-metrics. Should be 5/5.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 4}, {"color": "green", "value": 5}]},
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 1},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})", "legendFormat": "Nodes Ready"}
+      ],
+      "title": "Nodes Ready",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of cilium-agent pods passing readiness. Should be 5/5. Any below indicates ongoing issues.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 4}, {"color": "green", "value": 5}]}
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 1},
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(kube_pod_status_ready{namespace=\"kube-system\",condition=\"true\"} * on(pod,namespace) group_left() kube_pod_labels{namespace=\"kube-system\",label_k8s_app=\"cilium\"})", "legendFormat": "Cilium Ready"}
+      ],
+      "title": "Cilium Agents Ready",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Sum of cilium-agent container restarts across all 5 pods over last 24h. Healthy: <5. Concerning: >20. Today's incident: 1000+.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "orange", "value": 20}, {"color": "red", "value": 100}]}
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 1},
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"kube-system\",container=\"cilium-agent\"}[24h]))", "legendFormat": "Cilium Restarts 24h"}
+      ],
+      "title": "Cilium Agent Restarts (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-v2"},
+      "description": "Count of lines matching panic patterns in kernel-capture logs over last 24h. Any value above 0 means a node had a kernel-level event.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 5}]}
+        }
+      },
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "loki", "uid": "loki-v2"}, "expr": "sum(count_over_time({job=\"kernel-capture\"} |~ \"(?i)(Kernel panic|BUG:|Oops:|RIP:|general protection|soft lockup)\" [24h]))", "legendFormat": "Panic Events 24h"}
+      ],
+      "title": "Kernel Panic Events (24h)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "id": 101,
+      "panels": [],
+      "title": "📊 Cluster Stability Trend — Correlated Events",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Stack of: cilium agent restart rate per node + node Ready transitions. Spikes correlate with meltdown events. Use to identify if a specific time of day, or a specific node, is the source.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 30, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 6},
+      "id": 5,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["sum", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "rate(kube_pod_container_status_restarts_total{namespace=\"kube-system\",container=\"cilium-agent\"}[5m]) * 60", "legendFormat": "cilium restarts/min — {{pod}}"}
+      ],
+      "title": "Cilium Agent Restart Rate (per pod, restarts/min)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 15},
+      "id": 102,
+      "panels": [],
+      "title": "🔬 Per-Node Status",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "One row per node. Look for high cilium restart counts (>20 is concerning) and recent reboots.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Cilium Restarts"}, "properties": [{"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "color-background"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "orange", "value": 20}, {"color": "red", "value": 100}]}}]},
+          {"matcher": {"id": "byName", "options": "Uptime"}, "properties": [{"id": "unit", "value": "s"}]}
+        ]
+      },
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 16},
+      "id": 6,
+      "options": {"cellHeight": "sm", "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false}, "showHeader": true},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "time() - node_boot_time_seconds", "format": "table", "instant": true, "legendFormat": "Uptime", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node) (kube_pod_container_status_restarts_total{namespace=\"kube-system\",container=\"cilium-agent\"})", "format": "table", "instant": true, "legendFormat": "Cilium Restarts", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "node_load1", "format": "table", "instant": true, "legendFormat": "Load 1m", "refId": "C"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100", "format": "table", "instant": true, "legendFormat": "Memory %", "refId": "D"}
+      ],
+      "title": "Per-Node Health (uptime, cilium restarts, load, memory)",
+      "transformations": [
+        {"id": "joinByField", "options": {"byField": "instance", "mode": "outer"}},
+        {"id": "organize", "options": {"excludeByName": {"Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "__name__": true, "job 1": true, "job 2": true, "job 3": true, "job 4": true}, "renameByName": {"Value #A": "Uptime", "Value #B": "Cilium Restarts", "Value #C": "Load 1m", "Value #D": "Memory %", "instance": "Node"}}}
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 23},
+      "id": 103,
+      "panels": [],
+      "title": "🧠 Cilium Agent Deep Dive",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Memory used by cilium-agent containers vs 2Gi limit (red line). Memory near limit increases OOM risk → cilium restart → meltdown.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2, "showPoints": "never"},
+          "unit": "bytes"
+        },
+        "overrides": [
+          {"matcher": {"id": "byRegexp", "options": "limit"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}, {"id": "custom.lineStyle", "value": {"dash": [10, 10], "fill": "dash"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "id": 7,
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "container_memory_working_set_bytes{namespace=\"kube-system\",container=\"cilium-agent\"}", "legendFormat": "{{pod}}"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "kube_pod_container_resource_limits{namespace=\"kube-system\",container=\"cilium-agent\",resource=\"memory\"}", "legendFormat": "limit ({{pod}})"}
+      ],
+      "title": "Cilium Agent Memory (per pod) vs 2Gi limit",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Cumulative restart count per cilium-agent pod. Rising count = ongoing instability. After a clean reboot all should be 0.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "id": 8,
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["last", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "kube_pod_container_status_restarts_total{namespace=\"kube-system\",container=\"cilium-agent\"}", "legendFormat": "{{pod}}"}
+      ],
+      "title": "Cilium Agent Cumulative Restart Count",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 32},
+      "id": 104,
+      "panels": [],
+      "title": "⚙️ Operator Health (restart counts — high values = downstream of meltdowns)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Top operators by total restart count. cnpg / virt-operator > 100 = chronic crashloop, almost certainly downstream of cilium/apiserver instability. Will stabilize when HA control plane lands.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "orange", "value": 500}, {"color": "red", "value": 1000}]}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Restarts"}, "properties": [{"id": "custom.cellOptions", "value": {"mode": "gradient", "type": "color-background"}}]}
+        ]
+      },
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 33},
+      "id": 9,
+      "options": {"cellHeight": "sm", "footer": {"show": false}, "showHeader": true, "sortBy": [{"desc": true, "displayName": "Restarts"}]},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "topk(15, sum by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace=~\"databases|kubevirt|monitoring|kube-system|cert-manager|external-secrets|flux-system|argocd\",container!=\"\"}))", "format": "table", "instant": true, "refId": "A"}
+      ],
+      "title": "Top 15 Operator Pods by Restart Count",
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true}, "renameByName": {"Value": "Restarts", "namespace": "Namespace", "pod": "Pod", "container": "Container"}, "indexByName": {"Namespace": 0, "Pod": 1, "Container": 2, "Restarts": 3}}}
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 41},
+      "id": 105,
+      "panels": [],
+      "title": "🔥 Kernel Events (Loki)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-v2"},
+      "description": "Lines from kernel-capture matching panic patterns (Kernel panic | BUG: | Oops: | RIP: | general protection | soft lockup). If you see entries here right before a node rebooted, that's the cause of the reboot. Use filename label to identify the node.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 42},
+      "id": 10,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {"datasource": {"type": "loki", "uid": "loki-v2"}, "expr": "{job=\"kernel-capture\"} |~ \"(?i)(Kernel panic|BUG:|Oops:|RIP:|general protection|soft lockup|watchdog|NULL pointer|page fault)\"", "refId": "A"}
+      ],
+      "title": "Recent Kernel Panic / BUG / Oops Events (all nodes)",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki-v2"},
+      "description": "Live kernel ring buffer from kernel-capture DaemonSet. Use the $node variable above to filter.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 52},
+      "id": 11,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {"datasource": {"type": "loki", "uid": "loki-v2"}, "expr": "{job=\"kernel-capture\", filename=~\".*${node}.*\"}", "refId": "A"}
+      ],
+      "title": "Live Kernel Stream — ${node}",
+      "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 64},
+      "id": 106,
+      "panels": [],
+      "title": "🛠 Is Talos Misconfigured? — Debugging Runbook",
+      "type": "row"
+    },
+    {
+      "gridPos": {"h": 18, "w": 24, "x": 0, "y": 65},
+      "id": 12,
+      "options": {
+        "code": {"language": "plaintext", "showLineNumbers": false, "showMiniMap": false},
+        "content": "## Is Talos Misconfigured? Quick Diagnostic Checklist\n\nThis dashboard surfaces metrics. For Talos-side config that isn't currently metric-scraped, run these `talosctl` checks. Filed under [TALOS-fa7](https://github.com/TheBranchDriftCatalyst/talos-homelab) (observability epic) is the broader goal of making these into proper metrics.\n\n### 1. Kernel panic behavior (the #1 cause of our 'meltdowns' on 2026-05-29)\n```sh\nfor ip in 192.168.1.54 192.168.1.177 192.168.1.144 192.168.1.30 192.168.1.19; do\n  echo \"--- $ip ---\"\n  talosctl --nodes $ip read /proc/sys/kernel/panic_on_oops    # should be 1 (auto-reboot) OR 0 (just log)\n  talosctl --nodes $ip read /proc/sys/kernel/panic            # reboot delay after panic (sec)\ndone\n```\nDefault: `panic_on_oops=1, panic=10`. If you want to debug WITHOUT auto-reboot, set `panic_on_oops=0` (kernel logs the oops instead of rebooting). Talos doesn't expose this in machineconfig; need a `--extra-kernel-args` patch.\n\n### 2. KubePrism health (per-node apiserver proxy)\n```sh\nfor ip in 192.168.1.54 192.168.1.177 192.168.1.144 192.168.1.30 192.168.1.19; do\n  echo \"--- $ip ---\"\n  talosctl --nodes $ip get kubeprismstatuses\ndone\n```\nExpected: `HOST=127.0.0.1:7445, HEALTHY=true` on every node. If unhealthy → Cilium and apid can't talk to apiserver properly.\n\n### 3. Talos service health\n```sh\ntalosctl --nodes 192.168.1.54 service\n```\nAll services should show `STATE=Running, HEALTH=OK`. apid, etcd, kubelet, machined, trustd are critical.\n\n### 4. etcd backend health (control plane)\n```sh\ntalosctl --nodes 192.168.1.54 etcd status\ntalosctl --nodes 192.168.1.54 etcd alarm list  # should be empty\n```\n\n### 5. conntrack table pressure (high values → service routing fails silently)\n```sh\nfor ip in 192.168.1.54 192.168.1.177 192.168.1.144 192.168.1.30 192.168.1.19; do\n  echo -n \"$ip: \"\n  count=$(talosctl --nodes $ip read /proc/sys/net/netfilter/nf_conntrack_count)\n  max=$(talosctl --nodes $ip read /proc/sys/net/netfilter/nf_conntrack_max)\n  echo \"$count / $max\"\ndone\n```\nAlert if any node is >80% full.\n\n### 6. Cilium agent BPF map pressure\n```sh\nkubectl exec -n kube-system <cilium-pod> -- cilium-dbg map list --verbose | head -30\nkubectl exec -n kube-system <cilium-pod> -- cilium-dbg metrics list | grep -E 'bpf_map_pressure|policy_count'\n```\n\n### 7. Capture script (when kubectl is dead)\n```sh\n./scripts/capture-meltdown-evidence.sh\n# Writes to .output/incidents/<UTC-timestamp>/ — see post-mortem doc\n```\n\n### Common misconfiguration sources\n- **`allowSchedulingOnControlPlanes: true`** combined with single CP → workload pressure on CP makes meltdowns worse. Mitigate via HA (TALOS-arx).\n- **Cilium `kubeProxyReplacement: true` on single CP** → cilium-agent restart on CP breaks all host networking (chicken-and-egg). KubePrism helps but doesn't fully fix.\n- **`failurePolicy: Fail` admission webhooks pointing at unhealthy operators** → cluster-wide pod admission stalls. Set Ignore (TALOS-9cf).\n- **etcd snapshot CronJob hitting single etcd member** → fsync storm during snapshot (initially suspected but not confirmed).\n- **Cilium memory limit too low** for the workload (Hubble buffer, SPIRE, etc.) → OOM kills agent. We bumped 1Gi → 2Gi.\n\n### After this dashboard says everything is fine but you're still seeing issues:\n1. Run capture-meltdown-evidence.sh BEFORE rebooting next time\n2. Read `/var/log/kernel-capture/<node>.log` directly via talosctl after a reboot — kernel ring buffer captured pre-panic\n3. Check Loki `{job=\"kernel-capture\"}` for any panic patterns in the last 24h\n4. Verify the Mimir push from alloy-node isn't timing out (we saw `context deadline exceeded` to mimir-nginx — separate issue)",
+        "mode": "markdown"
+      },
+      "title": "Talos Configuration Debug Runbook",
+      "transparent": false,
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["talos", "cluster-health", "debugging", "kernel"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "mimir"},
+        "definition": "label_values(node_uname_info, nodename)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Node",
+        "multi": true,
+        "name": "node",
+        "options": [],
+        "query": {"query": "label_values(node_uname_info, nodename)", "refId": "StandardVariableQuery"},
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Talos Cluster Debug",
+  "uid": "talos-cluster-debug",
+  "version": 1,
+  "weekStart": ""
+}
