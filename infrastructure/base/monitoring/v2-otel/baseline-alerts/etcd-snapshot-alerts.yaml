@@ -49,7 +49,7 @@ spec:
             summary: "etcd backend commit p99 > 100ms on {{ $labels.instance }}"
             description: >-
               etcd_disk_backend_commit_duration_seconds p99 on
-              {{ $labels.instance }} is {{ printf "%.0f" (mulf $value 1000.0) }}ms
+              {{ $labels.instance }} is {{ $value | humanizeDuration }}
               over a 5-minute window (sustained 2m). Healthy homelab target is
               under 100ms; sustained values above this slow every write through
               the apiserver and increase the chance of cascading timeouts.
@@ -72,7 +72,7 @@ spec:
             summary: "etcd backend commit p99 > 500ms on {{ $labels.instance }} — apiserver timeouts likely"
             description: >-
               etcd_disk_backend_commit_duration_seconds p99 on
-              {{ $labels.instance }} is {{ printf "%.0f" (mulf $value 1000.0) }}ms.
+              {{ $labels.instance }} is {{ $value | humanizeDuration }}.
               This is in the range where kube-apiserver's etcd client
               starts timing out and cilium-agent /healthz fails, matching
               the 2026-05-29 meltdown signature. If the hourly snapshot
@@ -97,7 +97,7 @@ spec:
             summary: "etcd WAL fsync p99 > 50ms on {{ $labels.instance }}"
             description: >-
               etcd_disk_wal_fsync_duration_seconds p99 on
-              {{ $labels.instance }} is {{ printf "%.0f" (mulf $value 1000.0) }}ms.
+              {{ $labels.instance }} is {{ $value | humanizeDuration }}.
               Indicates underlying disk pressure (snapshot in flight,
               co-tenant I/O, or failing drive). Look at the etcd snapshot
               CronJob and node disk stats for the same timestamp.
@@ -174,9 +174,9 @@ spec:
             severity: warning
             category: etcd-health
           annotations:
-            summary: "etcd backend at {{ printf \"%.0f\" (mulf $value 100.0) }}% of quota on {{ $labels.instance }}"
+            summary: "etcd backend at {{ $value | humanizePercentage }} of quota on {{ $labels.instance }}"
             description: >-
-              etcd backend DB is using {{ printf "%.0f" (mulf $value 100.0) }}%
+              etcd backend DB is using {{ $value | humanizePercentage }}
               of its configured quota. At 100% etcd will refuse writes and
               the cluster effectively goes read-only. Mitigations:
               `etcdctl compact && etcdctl defrag` to reclaim space, or raise
@@ -194,7 +194,7 @@ spec:
             severity: critical
             category: etcd-health
           annotations:
-            summary: "etcd backend at {{ printf \"%.0f\" (mulf $value 100.0) }}% of quota — writes will fail soon"
+            summary: "etcd backend at {{ $value | humanizePercentage }} of quota — writes will fail soon"
             description: >-
               etcd is about to start refusing writes. This is a precursor
               to cluster-wide write outage; defrag NOW or raise the quota.

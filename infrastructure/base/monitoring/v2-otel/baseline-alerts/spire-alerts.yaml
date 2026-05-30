@@ -123,41 +123,18 @@ spec:
               recent node label changes or taint drift.
 
     # ----------------------------------------------------------------
-    # 3. Loki rule — chronic SPIRE socket warning frequency
+    # 3. (REMOVED 2026-05-30) Loki-based SPIRE socket warning rule.
     #
-    # The cilium-agent SPIRE Delegate retries every ~10s when the socket
-    # is missing. 5 cilium-agent pods × 6/min = 30 lines/min sustained
-    # when SPIRE is broken.  A sustained rate above 0.1 lines/sec (6/min)
-    # over 5 minutes means at least one cilium-agent is chronically
-    # hitting this warning — i.e. the admin socket has been absent the
-    # whole time.
+    # The SPIRESocketChronicallyAbsent rule used LogQL syntax (`|~` match)
+    # against a Loki stream selector — but this PrometheusRule is loaded
+    # by Mimir's ruler, which only speaks PromQL. Alloy was failing to
+    # convert the rule group with "unexpected character: '|'" on every
+    # reconcile, polluting logs.
+    #
+    # If we want this signal back, it needs to live in a separate
+    # LokiRule CR (loki.grafana.com/v1) processed by Loki's ruler — not
+    # here. See TALOS-234 for the broader observability cleanup.
     # ----------------------------------------------------------------
-    - name: spire.loki
-      rules:
-        - alert: SPIRESocketChronicallyAbsent
-          expr: |
-            sum(
-              rate({namespace="kube-system",app="cilium"}
-                |~ "SPIRE.*failed to init"
-                [5m])
-            ) > 0.1
-          for: 15m
-          labels:
-            severity: warning
-            category: spire
-            component: cilium-mesh-auth
-          annotations:
-            summary: "cilium-agent has been logging SPIRE socket warnings continuously"
-            description: >-
-              cilium-agent pods are logging "SPIRE ... failed to init" warnings
-              at {{ printf "%.2f" $value }} lines/sec sustained over 15m.
-              This means the SPIRE admin socket is absent from at least one
-              cilium-agent pod's view of /run/spire/sockets/.  Indicates
-              SPIRE server is down OR the SPIRE agent DaemonSet is not
-              mounting the hostPath that cilium-agent expects.
-              Cilium will keep retrying every ~10s — under apiserver pressure
-              the mesh-auth I/O loop can deadlock and slow /healthz.
-              Suspect this as a contributor to cilium-agent meltdown cascades.
 
     # ----------------------------------------------------------------
     # 4. Cilium mesh-auth controller — internal error rate
