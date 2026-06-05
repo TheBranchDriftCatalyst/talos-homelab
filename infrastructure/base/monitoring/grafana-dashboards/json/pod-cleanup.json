@@ -695,6 +695,142 @@
           }
         }
       ]
+    },
+    {
+      "type": "row",
+      "id": 104,
+      "title": "Resource Deletions (per-run detail)",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 54},
+      "panels": []
+    },
+    {
+      "type": "table",
+      "id": 25,
+      "title": "Deleted Resources (Pods / Jobs / ReplicaSets)",
+      "description": "Every non-Cilium resource removed by the cleanup job, with the category that triggered removal (succeeded_pod, failed_pod, evicted_pod, imagepull_pod, crashloop_pod, completed_job, orphan_replicaset). Use the column filter to slice by Category. Sourced from cleanup-pod logs (event=resource_delete).",
+      "datasource": {"type": "loki", "uid": "loki-v2"},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 55},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "left",
+            "cellOptions": {"type": "auto"},
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Time"},
+            "properties": [
+              {"id": "custom.width", "value": 180},
+              {"id": "unit", "value": "dateTimeAsIso"}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Category"},
+            "properties": [
+              {"id": "custom.width", "value": 170},
+              {"id": "custom.cellOptions", "value": {"type": "color-text"}},
+              {"id": "mappings", "value": [
+                {"type": "value", "options": {"succeeded_pod": {"text": "succeeded_pod", "color": "green", "index": 0}}},
+                {"type": "value", "options": {"failed_pod": {"text": "failed_pod", "color": "red", "index": 1}}},
+                {"type": "value", "options": {"evicted_pod": {"text": "evicted_pod", "color": "orange", "index": 2}}},
+                {"type": "value", "options": {"imagepull_pod": {"text": "imagepull_pod", "color": "yellow", "index": 3}}},
+                {"type": "value", "options": {"crashloop_pod": {"text": "crashloop_pod", "color": "purple", "index": 4}}},
+                {"type": "value", "options": {"completed_job": {"text": "completed_job", "color": "blue", "index": 5}}},
+                {"type": "value", "options": {"orphan_replicaset": {"text": "orphan_replicaset", "color": "semi-dark-blue", "index": 6}}}
+              ]}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Kind"},
+            "properties": [{"id": "custom.width", "value": 110}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Namespace"},
+            "properties": [{"id": "custom.width", "value": 180}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Dry Run"},
+            "properties": [
+              {"id": "custom.width", "value": 90},
+              {"id": "mappings", "value": [
+                {"type": "value", "options": {"true": {"text": "dry-run", "color": "orange", "index": 0}, "false": {"text": "", "color": "transparent", "index": 1}}}
+              ]}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": true, "enablePagination": true, "fields": "", "reducer": ["count"], "show": true},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Time"}]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-v2"},
+          "expr": "{app_kubernetes_io_name=\"pod-cleanup\", namespace=\"kube-system\"} | json | event=\"resource_delete\"",
+          "refId": "A",
+          "queryType": "range",
+          "maxLines": 5000
+        }
+      ],
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "format": "json",
+            "keepTime": true,
+            "replace": false,
+            "source": "Line"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "labels": true,
+              "labelTypes": true,
+              "tsNs": true,
+              "event": true,
+              "app_kubernetes_io_name": true,
+              "container": true,
+              "detected_level": true,
+              "instance": true,
+              "job": true,
+              "namespace_extracted": true,
+              "node": true,
+              "pod": true,
+              "service_name": true,
+              "cluster": true,
+              "stream": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "category": 1,
+              "kind": 2,
+              "namespace": 3,
+              "name": 4,
+              "dry_run": 5
+            },
+            "renameByName": {
+              "category": "Category",
+              "kind": "Kind",
+              "namespace": "Namespace",
+              "name": "Name",
+              "dry_run": "Dry Run"
+            }
+          }
+        }
+      ]
     }
   ],
   "refresh": "5m",
@@ -707,6 +843,6 @@
   "timezone": "",
   "title": "Pod Cleanup Job",
   "uid": "pod-cleanup-dashboard",
-  "version": 3,
+  "version": 4,
   "weekStart": ""
 }

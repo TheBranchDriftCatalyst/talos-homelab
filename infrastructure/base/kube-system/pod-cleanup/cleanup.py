@@ -65,19 +65,41 @@ def age_seconds(ts):
     return time.time() - parse_time(ts)
 
 
-def delete_resource(kind, namespace, name):
-    """Delete a resource, returns True if deleted."""
+def delete_resource(kind, namespace, name, category=None):
+    """Delete a resource, returns True if deleted.
+
+    Emits a structured JSON event line on success (or dry-run) for the
+    Grafana/Loki deletion-detail table. `category` distinguishes the *reason*
+    a Pod was deleted (succeeded/failed/evicted/imagepull/crashloop) since
+    all of those share kind=pod. Defaults to the lowercased kind.
+    """
     if namespace in EXCLUDED_NAMESPACES:
         return False
 
     if DRY_RUN:
         print(f"[DRY-RUN] Would delete {kind} {namespace}/{name}")
+        _emit_delete_event(kind, namespace, name, category, dry_run=True)
         return True
 
     _, ok = kubectl("delete", kind, "-n", namespace, name, "--ignore-not-found", "--wait=false")
     if ok:
         print(f"[DELETE] {kind} {namespace}/{name}")
+        _emit_delete_event(kind, namespace, name, category, dry_run=False)
     return ok
+
+
+def _emit_delete_event(kind, namespace, name, category, dry_run):
+    """Emit one JSON-only line per deletion for the Grafana/Loki table.
+    Query: `{app_kubernetes_io_name="pod-cleanup"} | json | event="resource_delete"`.
+    """
+    print(json.dumps({
+        "event": "resource_delete",
+        "category": category or kind.lower(),
+        "kind": kind,
+        "namespace": namespace,
+        "name": name,
+        "dry_run": dry_run,
+    }))
 
 
 def cleanup_succeeded_pods():
@@ -86,7 +108,7 @@ def cleanup_succeeded_pods():
         return 0
     print("[INFO] Cleaning Succeeded Pods...")
     data = kubectl_json("get", "pods", "-A", "--field-selector=status.phase==Succeeded", "-o", "json")
-    count = sum(1 for p in data.get("items", []) if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"]))
+    count = sum(1 for p in data.get("items", []) if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"], category="succeeded_pod"))
     print(f"[INFO] Succeeded pods: {count}")
     return count
 
@@ -100,7 +122,7 @@ def cleanup_failed_pods():
     count = 0
     for p in data.get("items", []):
         if age_seconds(p.get("status", {}).get("startTime")) > FAILED_POD_AGE:
-            if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"]):
+            if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"], category="failed_pod"):
                 count += 1
     print(f"[INFO] Failed pods: {count}")
     return count
@@ -116,7 +138,7 @@ def cleanup_evicted_pods():
     for p in data.get("items", []):
         status = p.get("status", {})
         if status.get("reason") == "Evicted" and age_seconds(status.get("startTime")) > EVICTED_POD_AGE:
-            if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"]):
+            if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"], category="evicted_pod"):
                 count += 1
     print(f"[INFO] Evicted pods: {count}")
     return count
@@ -134,7 +156,7 @@ def cleanup_imagepull_pods():
             waiting = cs.get("state", {}).get("waiting", {})
             if waiting.get("reason") in ("ImagePullBackOff", "ErrImagePull"):
                 if age_seconds(p["metadata"].get("creationTimestamp")) > IMAGEPULL_AGE:
-                    if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"]):
+                    if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"], category="imagepull_pod"):
                         count += 1
                     break
     print(f"[INFO] ImagePullBackOff pods: {count}")
@@ -154,7 +176,7 @@ def cleanup_crashloop_pods():
             if waiting.get("reason") == "CrashLoopBackOff":
                 if cs.get("restartCount", 0) > CRASHLOOP_RESTARTS:
                     if age_seconds(p["metadata"].get("creationTimestamp")) > CRASHLOOP_AGE:
-                        if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"]):
+                        if delete_resource("pod", p["metadata"]["namespace"], p["metadata"]["name"], category="crashloop_pod"):
                             count += 1
                         break
     print(f"[INFO] CrashLoopBackOff pods: {count}")
@@ -180,7 +202,7 @@ def cleanup_completed_jobs():
         owners = j.get("metadata", {}).get("ownerReferences", [])
         if any(o.get("kind") == "CronJob" for o in owners):
             continue
-        if delete_resource("job", j["metadata"]["namespace"], j["metadata"]["name"]):
+        if delete_resource("job", j["metadata"]["namespace"], j["metadata"]["name"], category="completed_job"):
             count += 1
     print(f"[INFO] Completed jobs: {count}")
     return count
@@ -261,7 +283,7 @@ def cleanup_orphan_replicasets():
         status_replicas = rs.get("status", {}).get("replicas", 1)
         if spec_replicas == 0 and status_replicas == 0:
             if age_seconds(rs["metadata"].get("creationTimestamp")) > ORPHAN_RS_AGE:
-                if delete_resource("replicaset", rs["metadata"]["namespace"], rs["metadata"]["name"]):
+                if delete_resource("replicaset", rs["metadata"]["namespace"], rs["metadata"]["name"], category="orphan_replicaset"):
                     count += 1
     print(f"[INFO] Orphaned ReplicaSets: {count}")
     return count
