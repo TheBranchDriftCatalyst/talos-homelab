@@ -50,7 +50,6 @@ See [theme.park themes](https://docs.theme-park.dev/themes/) for full list:
 | Sonarr | `ghcr.io/themepark-dev/theme.park:sonarr` |
 | Radarr | `ghcr.io/themepark-dev/theme.park:radarr` |
 | Prowlarr | `ghcr.io/themepark-dev/theme.park:prowlarr` |
-| Overseerr | `ghcr.io/themepark-dev/theme.park:overseerr` |
 | Plex | `ghcr.io/themepark-dev/theme.park:plex` |
 | Jellyfin | `ghcr.io/themepark-dev/theme.park:jellyfin` |
 | Tautulli | `ghcr.io/themepark-dev/theme.park:tautulli` |

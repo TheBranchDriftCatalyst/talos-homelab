@@ -13,7 +13,7 @@ Media automation stack including indexers, downloaders, and media servers for TV
 - **Sonarr** - TV show management
 - **Radarr** - Movie management
 - **Readarr** - Book management (disabled - ARM64 compatibility issues)
-- **Overseerr** - Request management
+- **Seerr** - Request management (overseerr fork)
 
 ### Media Servers
 
@@ -45,7 +45,7 @@ arr-stack/
 │   ├── sonarr/
 │   ├── radarr/
 │   ├── readarr/              # Exists but disabled in main kustomization
-│   ├── overseerr/
+│   ├── seerr/
 │   ├── plex/
 │   ├── jellyfin/
 │   ├── tdarr/
@@ -90,7 +90,7 @@ tilt down
 | Prowlarr  | 9696       | http://localhost:9696      |
 | Sonarr    | 8989       | http://localhost:8989      |
 | Radarr    | 7878       | http://localhost:7878      |
-| Overseerr | 5055       | http://localhost:5055      |
+| Seerr     | 5055       | http://localhost:5055      |
 | Plex      | 32400      | http://localhost:32400/web |
 | Jellyfin  | 8096       | http://localhost:8096      |
 | Tdarr     | 8265       | http://localhost:8265      |
@@ -171,7 +171,7 @@ All services are accessible via Traefik IngressRoutes:
 | Prowlarr  | http://prowlarr.talos00  |
 | Sonarr    | http://sonarr.talos00    |
 | Radarr    | http://radarr.talos00    |
-| Overseerr | http://overseerr.talos00 |
+| Seerr     | http://seerr.talos00     |
 | Plex      | http://plex.talos00      |
 | Jellyfin  | http://jellyfin.talos00  |
 | Tdarr     | http://tdarr.talos00     |

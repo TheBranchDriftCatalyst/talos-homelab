@@ -93,13 +93,13 @@ get_arr_api_key() {
   echo "$api_key"
 }
 
-# Extract API key from Overseerr (uses settings.json)
-get_overseerr_api_key() {
+# Extract API key from Seerr (uses settings.json)
+get_seerr_api_key() {
   local api_key=""
 
-  if kubectl get deploy overseerr -n "$NAMESPACE" &> /dev/null; then
-    api_key=$(kubectl exec -n "$NAMESPACE" deploy/overseerr -- \
-      cat /config/settings.json 2> /dev/null |
+  if kubectl get deploy seerr -n "$NAMESPACE" &> /dev/null; then
+    api_key=$(kubectl exec -n "$NAMESPACE" deploy/seerr -- \
+      cat /app/config/settings.json 2> /dev/null |
       jq -r '.main.apiKey // empty' 2> /dev/null || true)
   fi
 
@@ -182,16 +182,17 @@ sync_api_keys() {
     fi
   done
 
-  # Overseerr
-  if [[ -z "$SINGLE_SERVICE" ]] || [[ "$SINGLE_SERVICE" == "overseerr" ]]; then
-    log "Checking overseerr..."
-    local overseerr_key
-    overseerr_key=$(get_overseerr_api_key)
-    if [[ -n "$overseerr_key" ]]; then
-      echo "OVERSEERR_API_KEY=$overseerr_key" >> "$keys_file"
-      success "  ✓ overseerr: ${overseerr_key:0:8}..."
+  # Seerr (still emits OVERSEERR_API_KEY to preserve the legacy
+  # 1Password field name consumed by ExternalSecret + homepage).
+  if [[ -z "$SINGLE_SERVICE" ]] || [[ "$SINGLE_SERVICE" == "seerr" ]]; then
+    log "Checking seerr..."
+    local seerr_key
+    seerr_key=$(get_seerr_api_key)
+    if [[ -n "$seerr_key" ]]; then
+      echo "OVERSEERR_API_KEY=$seerr_key" >> "$keys_file"
+      success "  ✓ seerr: ${seerr_key:0:8}..."
     else
-      warn "  ○ overseerr: not found or not running"
+      warn "  ○ seerr: not found or not running"
     fi
   fi
 

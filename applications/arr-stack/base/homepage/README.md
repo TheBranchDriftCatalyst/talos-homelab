@@ -30,7 +30,7 @@ Homepage is configured with ConfigMaps containing all service definitions, widge
 
 - **Plex** - Media server (widget enabled)
 - **Jellyfin** - Free media server (widget enabled)
-- **Overseerr** - Request management (widget enabled)
+- **Seerr** - Request management (widget enabled; uses overseerr-compatible API)
 - **Tdarr** - Media transcoding (widget enabled)
 
 ### Infrastructure
@@ -77,7 +77,7 @@ extracted and synced to the Kubernetes secret using:
 The sync script:
 
 1. Extracts API keys from `/config/config.xml` in \*arr containers
-2. Gets Overseerr key from `/config/settings.json`
+2. Gets Seerr key from `/app/config/settings.json`
 3. Gets Plex token from `Preferences.xml` (if claimed)
 4. Creates/updates `arr-api-keys` secret
 5. Patches `homepage-secrets` with the synced keys
