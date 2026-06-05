@@ -1,616 +1,292 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": {"list": []},
+  "description": "Health, throughput, and Cilium-identity hygiene for the kube-system/pod-cleanup CronJob (runs every 2h).",
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": null,
   "links": [],
   "liveNow": false,
   "panels": [
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "Failed"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "1": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "Success"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 0
-      },
+      "type": "row",
+      "id": 100,
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "panels": []
+    },
+    {
+      "type": "stat",
       "id": 1,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "last_over_time(pod_cleanup_job_success{job=\"pod_cleanup\"}[3h])",
-          "legendFormat": "Status",
-          "refId": "A"
-        }
-      ],
       "title": "Last Run Status",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
+      "description": "Result of the most recent cleanup run. Red = job exited non-zero.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 4, "w": 5, "x": 0, "y": 1},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
+          "color": {"mode": "thresholds"},
           "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "LIVE"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "1": {
-                  "color": "orange",
-                  "index": 1,
-                  "text": "DRY-RUN"
-                }
-              },
-              "type": "value"
-            }
+            {"type": "value", "options": {"0": {"text": "FAILED", "color": "red", "index": 1}}},
+            {"type": "value", "options": {"1": {"text": "SUCCESS", "color": "green", "index": 0}}}
           ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 1
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "red", "value": null},
+            {"color": "green", "value": 1}
+          ]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 4,
-        "y": 0
-      },
-      "id": 2,
       "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
         "textMode": "value"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "last_over_time(pod_cleanup_dry_run{job=\"pod_cleanup\"}[3h])",
-          "legendFormat": "Mode",
-          "refId": "A"
-        }
-      ],
-      "title": "Mode",
-      "type": "stat"
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "last_over_time(pod_cleanup_job_success{job=\"pod_cleanup\"}[3h])", "refId": "A", "legendFormat": "Status"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
+      "type": "stat",
+      "id": 2,
+      "title": "Mode",
+      "description": "LIVE = actually deletes resources. DRY-RUN = logs only.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 4, "w": 4, "x": 5, "y": 1},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "LIVE", "color": "green", "index": 0}}},
+            {"type": "value", "options": {"1": {"text": "DRY-RUN", "color": "orange", "index": 1}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "orange", "value": 1}
+          ]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "last_over_time(pod_cleanup_dry_run{job=\"pod_cleanup\"}[3h])", "refId": "A", "legendFormat": "Mode"}
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Last Run",
+      "description": "Wall-clock time of the most recent run. Cronjob fires every 2h.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 4, "w": 5, "x": 9, "y": 1},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 7200000},
+            {"color": "red", "value": 14400000}
+          ]},
           "unit": "dateTimeFromNow"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 0
-      },
-      "id": 3,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
         "textMode": "auto"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "timestamp(last_over_time(pod_cleanup_job_success{job=\"pod_cleanup\"}[3h])) * 1000",
-          "legendFormat": "Last Run",
-          "refId": "A"
-        }
-      ],
-      "title": "Last Run",
-      "type": "stat"
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "timestamp(last_over_time(pod_cleanup_job_success{job=\"pod_cleanup\"}[3h])) * 1000", "refId": "A", "legendFormat": "Last Run"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
+      "type": "stat",
+      "id": 4,
+      "title": "Duration",
+      "description": "Wall-clock seconds for the most recent run. Yellow >10s, red >30s.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 4, "w": 4, "x": 14, "y": 1},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
+          "color": {"mode": "thresholds"},
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 10
-              },
-              {
-                "color": "red",
-                "value": 30
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 10},
+            {"color": "red", "value": 30}
+          ]},
           "unit": "s"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 12,
-        "y": 0
-      },
-      "id": 4,
       "options": {
         "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
+        "graphMode": "area",
+        "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
         "textMode": "auto"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "last_over_time(pod_cleanup_duration_seconds{job=\"pod_cleanup\"}[3h])",
-          "legendFormat": "Duration",
-          "refId": "A"
-        }
-      ],
-      "title": "Duration",
-      "type": "stat"
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "last_over_time(pod_cleanup_duration_seconds{job=\"pod_cleanup\"}[3h])", "refId": "A", "legendFormat": "Duration"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
+      "type": "stat",
+      "id": 5,
+      "title": "Total Resources Cleaned",
+      "description": "Sum of all resource categories cleaned in the most recent run.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 1},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
+          "color": {"mode": "thresholds"},
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 0
-      },
-      "id": 5,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
         "textMode": "auto"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "last_over_time(pod_cleanup_resources_total{job=\"pod_cleanup\"}[3h])",
-          "legendFormat": "Total",
-          "refId": "A"
-        }
-      ],
-      "title": "Total Resources Cleaned (Last Run)",
-      "type": "stat"
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "last_over_time(pod_cleanup_resources_total{job=\"pod_cleanup\"}[3h])", "refId": "A", "legendFormat": "Total"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
-      "description": "Breakdown of resources cleaned by category in the last run",
+      "type": "row",
+      "id": 101,
+      "title": "What Got Cleaned",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "panels": []
+    },
+    {
+      "type": "piechart",
+      "id": 6,
+      "title": "Resources by Category (Last Run)",
+      "description": "Breakdown of the most recent cleanup run by resource category.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 8, "w": 10, "x": 0, "y": 6},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
           "unit": "short"
         },
         "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Succeeded Pods"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Failed Pods"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Evicted Pods"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "ImagePullBackOff"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "CrashLoopBackOff"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "purple",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Completed Jobs"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Orphan ReplicaSets"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "semi-dark-blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
+          {"matcher": {"id": "byName", "options": "Succeeded Pods"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+          {"matcher": {"id": "byName", "options": "Failed Pods"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+          {"matcher": {"id": "byName", "options": "Evicted Pods"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]},
+          {"matcher": {"id": "byName", "options": "ImagePullBackOff"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]},
+          {"matcher": {"id": "byName", "options": "CrashLoopBackOff"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]},
+          {"matcher": {"id": "byName", "options": "Completed Jobs"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]},
+          {"matcher": {"id": "byName", "options": "Orphan ReplicaSets"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "semi-dark-blue"}}]}
         ]
       },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 4
-      },
-      "id": 6,
       "options": {
-        "displayLabels": [
-          "name",
-          "value"
-        ],
-        "legend": {
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true,
-          "values": [
-            "value"
-          ]
-        },
-        "pieType": "pie",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
+        "displayLabels": ["name", "value"],
+        "legend": {"displayMode": "list", "placement": "right", "showLegend": true, "values": ["value"]},
+        "pieType": "donut",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "tooltip": {"mode": "single", "sort": "none"}
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_succeeded_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "Succeeded Pods",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_failed_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "Failed Pods",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_evicted_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "Evicted Pods",
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_imagepull_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "ImagePullBackOff",
-          "refId": "D"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_crashloop_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "CrashLoopBackOff",
-          "refId": "E"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_completed_jobs{job=\"pod_cleanup\"}",
-          "legendFormat": "Completed Jobs",
-          "refId": "F"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_orphan_replicasets{job=\"pod_cleanup\"}",
-          "legendFormat": "Orphan ReplicaSets",
-          "refId": "G"
-        }
-      ],
-      "title": "Resources by Category (Last Run)",
-      "type": "piechart"
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_succeeded_pods{job=\"pod_cleanup\"}", "refId": "A", "legendFormat": "Succeeded Pods"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_failed_pods{job=\"pod_cleanup\"}", "refId": "B", "legendFormat": "Failed Pods"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_evicted_pods{job=\"pod_cleanup\"}", "refId": "C", "legendFormat": "Evicted Pods"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_imagepull_pods{job=\"pod_cleanup\"}", "refId": "D", "legendFormat": "ImagePullBackOff"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_crashloop_pods{job=\"pod_cleanup\"}", "refId": "E", "legendFormat": "CrashLoopBackOff"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_completed_jobs{job=\"pod_cleanup\"}", "refId": "F", "legendFormat": "Completed Jobs"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_orphan_replicasets{job=\"pod_cleanup\"}", "refId": "G", "legendFormat": "Orphan ReplicaSets"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
-      "description": "Discrete data points from each job run (via Mimir remote_write)",
+      "type": "bargauge",
+      "id": 30,
+      "title": "Category Breakdown (Last Run)",
+      "description": "Horizontal bars for the same last-run breakdown — easier to read exact counts.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 8, "w": 14, "x": 10, "y": 6},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 50},
+            {"color": "red", "value": 500}
+          ]},
+          "unit": "short"
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Succeeded Pods"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+          {"matcher": {"id": "byName", "options": "Failed Pods"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+          {"matcher": {"id": "byName", "options": "Evicted Pods"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]},
+          {"matcher": {"id": "byName", "options": "ImagePullBackOff"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]},
+          {"matcher": {"id": "byName", "options": "CrashLoopBackOff"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]},
+          {"matcher": {"id": "byName", "options": "Completed Jobs"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]},
+          {"matcher": {"id": "byName", "options": "Orphan ReplicaSets"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "semi-dark-blue"}}]}
+        ]
+      },
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_succeeded_pods{job=\"pod_cleanup\"}", "refId": "A", "legendFormat": "Succeeded Pods"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_failed_pods{job=\"pod_cleanup\"}", "refId": "B", "legendFormat": "Failed Pods"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_evicted_pods{job=\"pod_cleanup\"}", "refId": "C", "legendFormat": "Evicted Pods"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_imagepull_pods{job=\"pod_cleanup\"}", "refId": "D", "legendFormat": "ImagePullBackOff"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_crashloop_pods{job=\"pod_cleanup\"}", "refId": "E", "legendFormat": "CrashLoopBackOff"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_completed_jobs{job=\"pod_cleanup\"}", "refId": "F", "legendFormat": "Completed Jobs"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_orphan_replicasets{job=\"pod_cleanup\"}", "refId": "G", "legendFormat": "Orphan ReplicaSets"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "Resources Cleaned Over Time (Stacked)",
+      "description": "Per-run breakdown of resources cleaned over time. Stacked bars; one bar per run.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 14},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
@@ -619,248 +295,64 @@
             "barAlignment": 0,
             "drawStyle": "bars",
             "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
+            "gradientMode": "opacity",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
+            "scaleDistribution": {"type": "linear"},
             "showPoints": "auto",
             "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "stacking": {"group": "A", "mode": "normal"},
+            "thresholdsStyle": {"mode": "off"}
           },
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
           "unit": "short"
         },
         "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Succeeded"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Failed"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Evicted"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "ImagePull"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "CrashLoop"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "purple",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Jobs"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "ReplicaSets"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "semi-dark-blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
+          {"matcher": {"id": "byName", "options": "Succeeded"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+          {"matcher": {"id": "byName", "options": "Failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]},
+          {"matcher": {"id": "byName", "options": "Evicted"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]},
+          {"matcher": {"id": "byName", "options": "ImagePull"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]},
+          {"matcher": {"id": "byName", "options": "CrashLoop"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "purple"}}]},
+          {"matcher": {"id": "byName", "options": "Jobs"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]},
+          {"matcher": {"id": "byName", "options": "ReplicaSets"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "semi-dark-blue"}}]}
         ]
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 12
-      },
-      "id": 7,
       "options": {
-        "legend": {
-          "calcs": [
-            "sum"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "legend": {"calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_succeeded_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "Succeeded",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_failed_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "Failed",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_evicted_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "Evicted",
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_imagepull_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "ImagePull",
-          "refId": "D"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_crashloop_pods{job=\"pod_cleanup\"}",
-          "legendFormat": "CrashLoop",
-          "refId": "E"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_completed_jobs{job=\"pod_cleanup\"}",
-          "legendFormat": "Jobs",
-          "refId": "F"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_orphan_replicasets{job=\"pod_cleanup\"}",
-          "legendFormat": "ReplicaSets",
-          "refId": "G"
-        }
-      ],
-      "title": "Resources Cleaned Over Time (Stacked)",
-      "type": "timeseries"
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_succeeded_pods{job=\"pod_cleanup\"}", "refId": "A", "legendFormat": "Succeeded"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_failed_pods{job=\"pod_cleanup\"}", "refId": "B", "legendFormat": "Failed"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_evicted_pods{job=\"pod_cleanup\"}", "refId": "C", "legendFormat": "Evicted"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_imagepull_pods{job=\"pod_cleanup\"}", "refId": "D", "legendFormat": "ImagePull"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_crashloop_pods{job=\"pod_cleanup\"}", "refId": "E", "legendFormat": "CrashLoop"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_completed_jobs{job=\"pod_cleanup\"}", "refId": "F", "legendFormat": "Jobs"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_orphan_replicasets{job=\"pod_cleanup\"}", "refId": "G", "legendFormat": "ReplicaSets"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
+      "type": "row",
+      "id": 102,
+      "title": "Job Health Over Time",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22},
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Job Duration Over Time",
+      "description": "Per-run wall-clock seconds. A creeping trend suggests etcd or apiserver pressure.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 23},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "palette-classic"},
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
@@ -868,396 +360,196 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
+            "fillOpacity": 20,
+            "gradientMode": "opacity",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "lineInterpolation": "smooth",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
+            "scaleDistribution": {"type": "linear"},
             "showPoints": "auto",
             "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "line+area"}
           },
           "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 15},
+            {"color": "red", "value": 30}
+          ]},
           "unit": "s"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 12
-      },
-      "id": 10,
       "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
+        "legend": {"calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "single", "sort": "none"}
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_duration_seconds{job=\"pod_cleanup\"}",
-          "legendFormat": "Duration",
-          "refId": "A"
-        }
-      ],
-      "title": "Job Duration Over Time",
-      "type": "timeseries"
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_duration_seconds{job=\"pod_cleanup\"}", "refId": "A", "legendFormat": "Duration"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "1": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "Success"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "Failed"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 20
-      },
+      "type": "status-history",
       "id": 11,
-      "options": {
-        "colWidth": 0.9,
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": false
-        },
-        "rowHeight": 0.9,
-        "showValue": "auto",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "pod_cleanup_job_success{job=\"pod_cleanup\"}",
-          "legendFormat": "Job Status",
-          "refId": "A"
-        }
-      ],
       "title": "Job Success History",
-      "type": "status-history"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
+      "description": "One cell per cleanup run (2h cadence). Green = success, red = failure. Query is bucketed at 2h to avoid Grafana's point-limit warning.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 23},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
+          "color": {"mode": "thresholds"},
           "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "WARNING (cleanup occurred)"
-                }
-              },
-              "type": "value"
-            },
-            {
-              "options": {
-                "1": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "OK (no stale identities)"
-                }
-              },
-              "type": "value"
-            }
+            {"type": "value", "options": {"1": {"text": "Success", "color": "green", "index": 0}}},
+            {"type": "value", "options": {"0": {"text": "Failed", "color": "red", "index": 1}}}
           ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          },
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "red", "value": null},
+            {"color": "green", "value": 1}
+          ]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 0,
-        "y": 26
+      "options": {
+        "colWidth": 0.9,
+        "legend": {"displayMode": "list", "placement": "bottom", "showLegend": false},
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {"mode": "single", "sort": "none"}
       },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "mimir"},
+          "expr": "last_over_time(pod_cleanup_job_success{job=\"pod_cleanup\"}[2h])",
+          "refId": "A",
+          "legendFormat": "Job Status",
+          "interval": "2h"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 103,
+      "title": "Cilium Identity Hygiene",
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 31},
+      "panels": []
+    },
+    {
+      "type": "stat",
       "id": 20,
+      "title": "Identity Cleanup Status",
+      "description": "OK = no stale identities found. WARNING = cleanup occurred. Persistent WARNING means the cilium label filter has gaps (see TALOS-yyt).",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 32},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "WARNING (cleanup occurred)", "color": "red", "index": 1}}},
+            {"type": "value", "options": {"1": {"text": "OK (no stale identities)", "color": "green", "index": 0}}}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "red", "value": null},
+            {"color": "green", "value": 1}
+          ]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
       "options": {
         "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
         "textMode": "value_and_name"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "last_over_time(pod_cleanup_cilium_identity_status{job=\"pod_cleanup\"}[3h])",
-          "legendFormat": "Status",
-          "refId": "A"
-        }
-      ],
-      "title": "Cilium Identity Status",
-      "type": "stat",
-      "description": "OK = no stale identities found. WARNING = cleanup occurred. Investigate label filter in infrastructure/base/cilium/values.yaml (TALOS-yyt)."
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "last_over_time(pod_cleanup_cilium_identity_status{job=\"pod_cleanup\"}[3h])", "refId": "A", "legendFormat": "Status"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1000
-              },
-              {
-                "color": "red",
-                "value": 5000
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 8,
-        "y": 26
-      },
+      "type": "stat",
       "id": 21,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      },
-      "pluginVersion": "10.0.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "last_over_time(pod_cleanup_cilium_identities_total{job=\"pod_cleanup\"}[3h])",
-          "legendFormat": "Total",
-          "refId": "A"
-        }
-      ],
       "title": "Total CiliumIdentities",
-      "type": "stat",
-      "description": "Total identity count. Healthy: <500 (matches pod count). Warning: >1000. Critical: >5000 (etcd saturation risk)."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
+      "description": "Total identity CRD count. Healthy: ≈ workload count. Yellow >1000. Critical >5000 (etcd saturation risk).",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 32},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 50
-              },
-              {
-                "color": "red",
-                "value": 500
-              }
-            ]
-          },
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 1000},
+            {"color": "red", "value": 5000}
+          ]},
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 26
-      },
-      "id": 22,
       "options": {
         "colorMode": "background",
         "graphMode": "area",
         "justifyMode": "center",
         "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
         "textMode": "value"
       },
       "pluginVersion": "10.0.0",
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
-          },
-          "expr": "last_over_time(pod_cleanup_cilium_identities_deleted{job=\"pod_cleanup\"}[3h])",
-          "legendFormat": "Deleted",
-          "refId": "A"
-        }
-      ],
-      "title": "CiliumIdentities Deleted (Last Run)",
-      "type": "stat",
-      "description": "Stale identities removed in the most recent cleanup run."
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "last_over_time(pod_cleanup_cilium_identities_total{job=\"pod_cleanup\"}[3h])", "refId": "A", "legendFormat": "Total"}
+      ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
-      },
+      "type": "stat",
+      "id": 22,
+      "title": "Deleted Last Run",
+      "description": "Stale CiliumIdentities removed in the most recent cleanup run.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 32},
       "fieldConfig": {
         "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
+          "color": {"mode": "thresholds"},
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [
+            {"color": "green", "value": null},
+            {"color": "yellow", "value": 50},
+            {"color": "red", "value": 500}
+          ]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value"
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "last_over_time(pod_cleanup_cilium_identities_deleted{job=\"pod_cleanup\"}[3h])", "refId": "A", "legendFormat": "Deleted"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 23,
+      "title": "Cilium Identity Trend",
+      "description": "Total CiliumIdentity count over time and stale identities cleaned per run. Steady deletions indicate the label filter has gaps.",
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 36},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
           "custom": {
             "axisCenteredZero": false,
             "axisColorMode": "text",
@@ -1265,109 +557,156 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {"legend": false, "tooltip": false, "viz": false},
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
+            "scaleDistribution": {"type": "linear"},
             "showPoints": "auto",
             "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Total CiliumIdentities"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]},
+          {"matcher": {"id": "byName", "options": "Deleted (stale) per run"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]}
+        ]
       },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 30
-      },
-      "id": 23,
       "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"mode": "multi", "sort": "desc"}
       },
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_cilium_identities_total{job=\"pod_cleanup\"}", "refId": "A", "legendFormat": "Total CiliumIdentities"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "pod_cleanup_cilium_identities_deleted{job=\"pod_cleanup\"}", "refId": "B", "legendFormat": "Deleted (stale) per run"}
+      ]
+    },
+    {
+      "type": "table",
+      "id": 24,
+      "title": "Deleted Identities (per-run detail)",
+      "description": "Every CiliumIdentity removed by the cleanup job, with its k8s workload labels. Sourced from the cleanup pod's logs (event=cilium_id_delete).",
+      "datasource": {"type": "loki", "uid": "loki-v2"},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 44},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {
+            "align": "left",
+            "cellOptions": {"type": "auto"},
+            "filterable": true,
+            "inspect": false
           },
-          "expr": "pod_cleanup_cilium_identities_total{job=\"pod_cleanup\"}",
-          "legendFormat": "Total CiliumIdentities",
-          "refId": "A"
+          "mappings": [],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
         },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Time"},
+            "properties": [
+              {"id": "custom.width", "value": 180},
+              {"id": "unit", "value": "dateTimeAsIso"}
+            ]
           },
-          "expr": "pod_cleanup_cilium_identities_deleted{job=\"pod_cleanup\"}",
-          "legendFormat": "Deleted (stale) per run",
-          "refId": "B"
+          {
+            "matcher": {"id": "byName", "options": "Identity"},
+            "properties": [{"id": "custom.width", "value": 110}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Namespace"},
+            "properties": [{"id": "custom.width", "value": 200}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "App"},
+            "properties": [{"id": "custom.width", "value": 200}]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": {"countRows": true, "enablePagination": true, "fields": "", "reducer": ["count"], "show": true},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "Time"}]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": {"type": "loki", "uid": "loki-v2"},
+          "expr": "{app_kubernetes_io_name=\"pod-cleanup\", namespace=\"kube-system\"} | json | event=\"cilium_id_delete\"",
+          "refId": "A",
+          "queryType": "range",
+          "maxLines": 5000
         }
       ],
-      "title": "Cilium Identity Trend",
-      "type": "timeseries",
-      "description": "Total CiliumIdentity count over time and stale identities cleaned each run. Steady deletions indicate label filter has gaps."
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "format": "json",
+            "keepTime": true,
+            "replace": false,
+            "source": "Line"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "labels": true,
+              "labelTypes": true,
+              "tsNs": true,
+              "id_extracted": true,
+              "event": true,
+              "app_kubernetes_io_name": true,
+              "container": true,
+              "detected_level": true,
+              "instance": true,
+              "job": true,
+              "namespace_extracted": true,
+              "node": true,
+              "pod": true,
+              "service_name": true,
+              "cluster": true,
+              "stream": true,
+              "namespace": false
+            },
+            "indexByName": {
+              "Time": 0,
+              "id": 1,
+              "namespace": 2,
+              "app": 3,
+              "component": 4,
+              "serviceaccount": 5
+            },
+            "renameByName": {
+              "id": "Identity",
+              "namespace": "Namespace",
+              "app": "App",
+              "component": "Component",
+              "serviceaccount": "ServiceAccount"
+            }
+          }
+        }
+      ]
     }
   ],
   "refresh": "5m",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": [
-    "pod-cleanup",
-    "infrastructure",
-    "maintenance",
-    "cronjob"
-  ],
-  "templating": {
-    "list": []
-  },
-  "time": {
-    "from": "now-7d",
-    "to": "now"
-  },
+  "tags": ["pod-cleanup", "infrastructure", "maintenance", "cronjob", "cilium"],
+  "templating": {"list": []},
+  "time": {"from": "now-7d", "to": "now"},
   "timepicker": {},
   "timezone": "",
   "title": "Pod Cleanup Job",
   "uid": "pod-cleanup-dashboard",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

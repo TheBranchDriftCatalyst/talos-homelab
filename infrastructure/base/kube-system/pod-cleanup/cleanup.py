@@ -206,13 +206,31 @@ def cleanup_cilium_identities():
             used.add(str(ident))
 
     id_data = kubectl_json("get", "ciliumidentities", "-o", "json")
-    all_ids = [i["metadata"]["name"] for i in id_data.get("items", [])]
+    id_items = id_data.get("items", [])
+    all_ids = [i["metadata"]["name"] for i in id_items]
+    # name -> labels map for diagnostics. metadata.labels carries the clean
+    # k8s form (security-labels has "k8s:" prefixes that aren't useful in a UI).
+    id_labels = {i["metadata"]["name"]: i.get("metadata", {}).get("labels", {}) for i in id_items}
     stale = [i for i in all_ids if i not in used]
 
     print(f"[INFO] CiliumIdentities: total={len(all_ids)} used={len(used)} stale={len(stale)}")
 
     if not stale:
         return (0, len(all_ids))
+
+    # One pure-JSON line per stale identity so the Grafana/Loki panel can
+    # parse it with `| json` and filter on `event="cilium_id_delete"`.
+    # Kept distinct from the human-readable [INFO]/[DRY-RUN] lines above.
+    for sid in stale:
+        labels = id_labels.get(sid, {})
+        print(json.dumps({
+            "event": "cilium_id_delete",
+            "id": sid,
+            "namespace": labels.get("io.kubernetes.pod.namespace", ""),
+            "app": labels.get("app.kubernetes.io/name") or labels.get("k8s-app") or "",
+            "component": labels.get("app.kubernetes.io/component", ""),
+            "serviceaccount": labels.get("io.cilium.k8s.policy.serviceaccount", ""),
+        }))
 
     # batch deletes — 200 per kubectl call to avoid argv limits but stay fast
     deleted = 0
