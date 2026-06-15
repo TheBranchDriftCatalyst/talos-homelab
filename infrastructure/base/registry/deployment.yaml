@@ -222,17 +222,12 @@ metadata:
   name: nexus-docker
   namespace: registry
 spec:
-  # Listen on both web (HTTP) and websecure (HTTPS). Docker Desktop on macOS
-  # tries HTTPS first; without a matching websecure route Traefik returns 404
-  # with its fallback cert, and Docker treats that as a hard failure rather
-  # than falling back to HTTP (2026-06-15: that's the "unknown: 404 page not
-  # found" symptom we hit while debugging the hot-ones build). The wildcard
-  # cert (*.knowledgedump.space / *.kelsboi.dedyn.io) doesn't match
-  # registry.talos00, but Docker daemon's insecure-registries entry for
-  # registry.talos00 makes it ignore the cert mismatch.
+  # Plain HTTP path — talos containerd mirror config routes registry.talos00
+  # to http://registry.talos00, so kubelet pulls hit this entrypoint. Do NOT
+  # add tls here: the tls block applies IngressRoute-wide and makes Traefik
+  # treat the web entrypoint as HTTPS-only, which 404s plain HTTP requests.
   entryPoints:
     - web
-    - websecure
   routes:
     # Handle /v2/ and /v1/ Docker API paths explicitly
     - match: Host(`registry.talos00`) && PathPrefix(`/v2`)
@@ -250,6 +245,43 @@ spec:
         - name: nexus-docker
           port: 5000
     # Fallback for other paths (catalog, etc)
+    - match: Host(`registry.talos00`)
+      kind: Rule
+      middlewares:
+        - name: docker-registry-buffering
+      services:
+        - name: nexus-docker
+          port: 5000
+---
+# HTTPS variant — Docker Desktop on macOS tries HTTPS first regardless of
+# the insecure-registries config, so without this route docker push hits the
+# Traefik wildcard fallback 404. The wildcard cert
+# (*.knowledgedump.space / *.kelsboi.dedyn.io) doesn't match registry.talos00,
+# but registry.talos00 is in Docker daemon insecure-registries so the cert
+# mismatch is ignored.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: nexus-docker-tls
+  namespace: registry
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`registry.talos00`) && PathPrefix(`/v2`)
+      kind: Rule
+      middlewares:
+        - name: docker-registry-buffering
+      services:
+        - name: nexus-docker
+          port: 5000
+    - match: Host(`registry.talos00`) && PathPrefix(`/v1`)
+      kind: Rule
+      middlewares:
+        - name: docker-registry-buffering
+      services:
+        - name: nexus-docker
+          port: 5000
     - match: Host(`registry.talos00`)
       kind: Rule
       middlewares:
