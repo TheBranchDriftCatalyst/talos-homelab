@@ -55,3 +55,46 @@ spec:
       services:
         - name: authentik-server
           port: 80
+---
+# IngressRoute for Authentik portal on the deSEC domain.
+# Exposing Authentik under auth.kelsboi.dedyn.io is what allows the session
+# cookie to be scoped to .kelsboi.dedyn.io, which is what gives SSO across
+# all the *-desec routes in media-private (whoami, stash, whisparr, immich,
+# zipline, hot-ones). DNS handled by external-dns-desec.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-desec
+  namespace: authentik
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: auth.kelsboi.dedyn.io
+    external-dns.alpha.kubernetes.io/target: kelsboi.dedyn.io
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`auth.kelsboi.dedyn.io`)
+      kind: Rule
+      services:
+        - name: authentik-server
+          port: 80
+  tls: {}
+---
+# HTTP to HTTPS redirect for the deSEC variant
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-desec-http-redirect
+  namespace: authentik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`auth.kelsboi.dedyn.io`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: authentik-server
+          port: 80
