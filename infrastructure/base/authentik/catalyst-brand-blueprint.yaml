@@ -1,0 +1,62 @@
+---
+# Authentik Blueprint: catalyst (default) brand
+#
+# Default brand — fires for any request that doesn't match a more specific
+# brand domain (e.g. the kelsboi brand owned by talos-private). Lives in
+# talos-homelab because it's the cluster's "home" identity, and Authentik
+# itself is deployed here.
+#
+# Mounted into authentik-server AND authentik-worker as
+#   /blueprints/custom/catalyst-brand.yaml
+# via this ConfigMap (volumeMount in helmrelease.yaml). The worker
+# auto-discovers any blueprint files under /blueprints/custom/ and reconciles
+# them on a schedule (typically within ~minute of pod start).
+#
+# REFERENCES:
+#   - Brand asset bytes live in authentik-catalyst-brand-assets ConfigMap,
+#     mounted at /web/dist/catalyst-brand-logo.svg and
+#     /web/dist/catalyst-brand-favicon.svg (Authentik serves them as
+#     /static/dist/catalyst-brand-*.svg).
+#   - Authentik Brand model docs:
+#     https://docs.goauthentik.io/docs/sys-mgmt/brands
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-catalyst-brand-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+    brand: catalyst
+data:
+  catalyst-brand.yaml: |
+    version: 1
+    metadata:
+      name: Catalyst Brand
+      labels:
+        blueprints.goauthentik.io/description: "Default brand for the Catalyst homelab"
+    entries:
+      - model: authentik_brands.brand
+        id: catalyst-brand
+        identifiers:
+          domain: catalyst-default
+        attrs:
+          # `domain` is required but ignored when default=true. We give it a
+          # sentinel value so it's obviously the catch-all if anyone greps.
+          domain: catalyst-default
+          default: true
+          branding_title: "Catalyst"
+          branding_logo: /static/dist/catalyst-brand-logo.svg
+          branding_favicon: /static/dist/catalyst-brand-favicon.svg
+          # Per-brand CSS overlay is unset — the global custom.css ConfigMap
+          # already paints the cyberpunk theme across all brands. Uncomment
+          # to add catalyst-only overrides on top.
+          # branding_custom_css: |
+          #   :root { --ak-accent: #00fcd6 !important; }
+
+          # Leaving flow_* unset → falls through to the globally-default flows.
+          # flow_authentication: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
+          # flow_invalidation:   !Find [authentik_flows.flow, [slug, default-invalidation-flow]]
+          # flow_recovery:       !Find [authentik_flows.flow, [slug, default-recovery-flow]]
+          # flow_unenrollment:   !Find [authentik_flows.flow, [slug, default-unenrollment-flow]]
+          # flow_user_settings:  !Find [authentik_flows.flow, [slug, default-user-settings-flow]]

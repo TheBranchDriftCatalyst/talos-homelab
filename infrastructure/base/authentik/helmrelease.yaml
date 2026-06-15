@@ -56,7 +56,13 @@ spec:
           memory: 512Mi
       ingress:
         enabled: false  # We'll use Traefik IngressRoute
-      # Mount custom CSS and blueprints
+      # Mount custom CSS and blueprints.
+      #
+      # Brands split across two repos:
+      #   - catalyst-* ConfigMaps owned by this repo (talos-homelab / Flux).
+      #   - kelsboi-*  ConfigMaps owned by talos-private (ArgoCD-synced); we
+      #     reference them with optional: true so the pod still starts if
+      #     Argo hasn't created them yet.
       volumes:
         - name: custom-css
           configMap:
@@ -64,6 +70,20 @@ spec:
         - name: litellm-blueprint
           configMap:
             name: authentik-litellm-blueprint
+        - name: catalyst-brand-assets
+          configMap:
+            name: authentik-catalyst-brand-assets
+        - name: catalyst-brand-blueprint
+          configMap:
+            name: authentik-catalyst-brand-blueprint
+        - name: kelsboi-brand-assets
+          configMap:
+            name: authentik-kelsboi-brand-assets
+            optional: true
+        - name: kelsboi-brand-blueprint
+          configMap:
+            name: authentik-kelsboi-brand-blueprint
+            optional: true
       volumeMounts:
         - name: custom-css
           mountPath: /web/dist/custom.css
@@ -71,6 +91,24 @@ spec:
         - name: litellm-blueprint
           mountPath: /blueprints/custom/litellm-role-mapping.yaml
           subPath: litellm-role-mapping.yaml
+        - name: catalyst-brand-assets
+          mountPath: /web/dist/catalyst-brand-logo.svg
+          subPath: catalyst-brand-logo.svg
+        - name: catalyst-brand-assets
+          mountPath: /web/dist/catalyst-brand-favicon.svg
+          subPath: catalyst-brand-favicon.svg
+        - name: catalyst-brand-blueprint
+          mountPath: /blueprints/custom/catalyst-brand.yaml
+          subPath: catalyst-brand.yaml
+        - name: kelsboi-brand-assets
+          mountPath: /web/dist/kelsboi-brand-logo.svg
+          subPath: kelsboi-brand-logo.svg
+        - name: kelsboi-brand-assets
+          mountPath: /web/dist/kelsboi-brand-favicon.svg
+          subPath: kelsboi-brand-favicon.svg
+        - name: kelsboi-brand-blueprint
+          mountPath: /blueprints/custom/kelsboi-brand.yaml
+          subPath: kelsboi-brand.yaml
 
     worker:
       replicas: 1
@@ -92,10 +130,23 @@ spec:
         - name: litellm-blueprint
           configMap:
             name: authentik-litellm-blueprint
+        - name: catalyst-brand-blueprint
+          configMap:
+            name: authentik-catalyst-brand-blueprint
+        - name: kelsboi-brand-blueprint
+          configMap:
+            name: authentik-kelsboi-brand-blueprint
+            optional: true
       volumeMounts:
         - name: litellm-blueprint
           mountPath: /blueprints/custom/litellm-role-mapping.yaml
           subPath: litellm-role-mapping.yaml
+        - name: catalyst-brand-blueprint
+          mountPath: /blueprints/custom/catalyst-brand.yaml
+          subPath: catalyst-brand.yaml
+        - name: kelsboi-brand-blueprint
+          mountPath: /blueprints/custom/kelsboi-brand.yaml
+          subPath: kelsboi-brand.yaml
 
     # Embedded PostgreSQL
     postgresql:
