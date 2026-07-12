@@ -1,0 +1,69 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boomtime
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: boomtime
+    app.kubernetes.io/part-of: catalyst
+  # Image update config lives in
+  # infrastructure/base/argocd/image-updater/boomtime-image-updater.yaml (TBD).
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  info:
+    - name: GitHub Repository
+      value: https://github.com/TheBranchDriftCatalyst/hakatime
+    - name: Container Registry
+      value: https://ghcr.io/thebranchdriftcatalyst/hakatime
+    - name: Application
+      value: https://boomtime.knowledgedump.space
+
+  source:
+    # Repo is still named `hakatime` upstream; rename to `boomtime` is a
+    # separate concern. Tracking `gakatime` branch during initial rollout —
+    # flip to `master` after merge.
+    repoURL: https://github.com/TheBranchDriftCatalyst/hakatime.git
+    targetRevision: gakatime
+    path: k8s/overlays/talos00-knowledgedump
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boomtime
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ServerSideApply=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    # HPA / operator-managed replica count.
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    # ESO injects conversionStrategy / decodingStrategy / metadataPolicy into
+    # spec.data[].remoteRef that aren't in git.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
