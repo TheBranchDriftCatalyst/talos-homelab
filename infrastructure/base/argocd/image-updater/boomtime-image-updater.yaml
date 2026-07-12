@@ -1,0 +1,31 @@
+---
+# Auto-rolls the boomtime Deployment when a new image tag matches allowTags.
+# The tag list is intentionally narrow — we want deterministic writes:
+#   - `latest`     ← pushed only from default-branch master pushes (post-merge)
+#   - `master`     ← docker-publish workflow branch tag
+#   - `gakatime`   ← docker-publish workflow branch tag (remove after merge)
+#   - `sha-<7c>`   ← immutable per-commit ref
+# Image Updater rewrites the pinned tag in the overlay's `images:` block, so
+# k8s/overlays/talos00-knowledgedump/kustomization.yaml gets updated in git and
+# Argo picks up the sync.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: boomtime
+  namespace: argocd
+spec:
+  namespace: argocd
+  commonUpdateSettings:
+    updateStrategy: newest-build
+    allowTags: "regexp:^(latest|master|gakatime|sha-[a-f0-9]{7,40})$"
+    pullSecret: pullsecret:argocd-image-updater-system/ghcr-secret
+  writeBackConfig:
+    method: argocd
+  applicationRefs:
+    - namePattern: boomtime
+      images:
+        - alias: boomtime
+          imageName: ghcr.io/thebranchdriftcatalyst/hakatime
+          manifestTargets:
+            kustomize:
+              name: ghcr.io/thebranchdriftcatalyst/hakatime
