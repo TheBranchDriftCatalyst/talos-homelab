@@ -12,6 +12,22 @@ kind: Kustomization
 resources:
   - https://github.com/grafana/tempo-operator/releases/download/v0.19.0/tempo-operator.yaml
 
+# Drop upstream Namespace/tempo-operator-system. The parent kustomization sets
+# `namespace: monitoring`, which would rewrite metadata.name → `monitoring`
+# and fight `infrastructure/base/namespaces/monitoring.yaml` for ownership.
+# The flap caused cilium to re-resolve identity on every endpoint in the ns
+# every ~5 min → BPF reload cascade → operator restart storm.
+patches:
+  - target:
+      kind: Namespace
+      name: tempo-operator-system
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: tempo-operator-system
+
 # 2026-05-30: removed the patches that forced tempo-operator's admission
 # webhooks to failurePolicy=Ignore. The original rationale (operator
 # crashlooping → Fail webhooks stalled cluster-wide pod admission) was
