@@ -168,12 +168,21 @@ spec:
           // ----------------------------------------
           prometheus.exporter.self "alloy_node" {}
 
+          // WAL bounds (2026-07-15 TALOS-234 root cause fix — see alloy
+          // helmrelease.yaml for the full rationale). Tight
+          // max_keepalive_time prevents a Mimir outage from producing
+          // an infinite WAL replay loop of stale samples.
           prometheus.remote_write "mimir" {
             endpoint {
               url = "http://mimir-nginx.monitoring.svc:80/api/v1/push"
             }
             external_labels = {
               cluster = "talos-homelab",
+            }
+            wal {
+              truncate_frequency = "15m"
+              min_keepalive_time = "30m"
+              max_keepalive_time = "2h"
             }
           }
 

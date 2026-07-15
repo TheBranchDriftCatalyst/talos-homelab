@@ -859,9 +859,24 @@ spec:
           // ============================================
           // Remote Write to Mimir
           // ============================================
+          // WAL bounds (2026-07-15 TALOS-234 root cause fix):
+          // Alloy's default max_keepalive_time is 8h, but during the 30d
+          // meltdown the WAL grew to 30 DAYS of samples that Mimir kept
+          // rejecting as "sample-timestamp-too-old", blocking fresh samples.
+          // Explicit tight bounds guarantee that a Mimir outage of any
+          // duration only backlogs 2h of WAL — after that, samples are
+          // forcibly dropped and fresh scrapes flow again. Trades
+          // recoverability of long outages (>2h) for pipeline liveness.
+          // (Also mitigates alloy/alloy#4038 — default truncate_frequency
+          // reportedly not respected in clustering mode.)
           prometheus.remote_write "mimir" {
             endpoint {
               url = "http://mimir-nginx.monitoring.svc:80/api/v1/push"
+            }
+            wal {
+              truncate_frequency = "15m"
+              min_keepalive_time = "30m"
+              max_keepalive_time = "2h"
             }
           }
 
