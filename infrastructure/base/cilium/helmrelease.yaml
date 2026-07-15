@@ -103,3 +103,23 @@ spec:
               - op: add
                 path: /metadata/labels/pod-security.kubernetes.io~1warn
                 value: privileged
+          # Raise spire-agent's projected SA token TTL from Cilium's hardcoded
+          # 600s → 3600s. The 10-min TTL is too short for kubelet's TokenManager
+          # to reliably refresh once a pod enters CrashLoopBackOff: the refresh
+          # bookkeeping wedges and every subsequent container-restart reads an
+          # already-expired token from tmpfs → apiserver rejects via TokenReview
+          # → the pod loops forever. Observed on talos01 (2500+ restarts) while
+          # the same DaemonSet on the other 4 nodes stayed healthy.
+          # The `op: test` guard fails loudly if a Cilium chart bump reorders
+          # the volumes array.
+          - target:
+              kind: DaemonSet
+              name: spire-agent
+              namespace: cilium-spire
+            patch: |
+              - op: test
+                path: /spec/template/spec/volumes/3/projected/sources/0/serviceAccountToken/audience
+                value: spire-server
+              - op: replace
+                path: /spec/template/spec/volumes/3/projected/sources/0/serviceAccountToken/expirationSeconds
+                value: 3600
