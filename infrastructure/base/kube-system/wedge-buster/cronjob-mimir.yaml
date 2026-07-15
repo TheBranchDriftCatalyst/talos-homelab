@@ -1,0 +1,72 @@
+---
+# Monday 03:07 UTC — rolling restart of Mimir query-path.
+#
+# Why: Mimir uses memberlist gossip (UDP :7946) to publish ring state
+# across components. If the ring hits packet loss during ANY cluster
+# stress, individual components can end up with a stale local view of
+# the ring — for example the 2026-07-15 incident where mimir-querier's
+# view of mimir-ingester's heartbeat was 30 DAYS stale even though the
+# ingester itself was healthy. Every query then errored with "too many
+# unhealthy instances in the ring." Restarting the affected component
+# forces a fresh memberlist join and re-syncs the view.
+#
+# Restart scope: query-path only (Deployments — no persistent state).
+# Ingester / store-gateway / compactor / alertmanager are StatefulSets
+# with local data and are LEFT ALONE by this job to avoid unnecessary
+# TSDB block cutting. If those wedge, they need a different playbook.
+#
+# nginx + gateway are also restarted because they hold long-lived HTTP
+# upstream keep-alive connections to the query-path pods; if we restart
+# the backends without also cycling the fronts, requests can hit stale
+# TCP connections to terminated pods for a while.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wedge-buster-mimir-query-path
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: wedge-buster
+    app.kubernetes.io/component: maintenance
+    wedge-buster.io/target: mimir-query-path
+spec:
+  schedule: "7 3 * * 1"
+  timeZone: "Etc/UTC"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  concurrencyPolicy: Forbid
+  # Skip a fire that's more than 5 min late; avoids catch-up storms.
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      # 6 Deployments × ~2 min each with rolling wait = ~15 min budget.
+      activeDeadlineSeconds: 1500
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: wedge-buster
+            wedge-buster.io/target: mimir-query-path
+        spec:
+          serviceAccountName: wedge-buster
+          restartPolicy: OnFailure
+          containers:
+            - name: restart
+              image: bitnami/kubectl:latest
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  for d in mimir-distributor mimir-querier mimir-query-frontend mimir-ruler mimir-nginx mimir-gateway; do
+                    echo "== $(date -u) rollout restart deploy/$d =="
+                    kubectl -n monitoring rollout restart deploy/$d
+                    kubectl -n monitoring rollout status deploy/$d --timeout=3m
+                  done
+                  echo "== $(date -u) done =="

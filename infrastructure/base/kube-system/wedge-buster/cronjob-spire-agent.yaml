@@ -1,0 +1,66 @@
+---
+# Tuesday 03:07 UTC — rolling restart of spire-agent DaemonSet.
+#
+# Why: kubelet's TokenManager per-pod refresh bookkeeping can wedge
+# during long CrashLoopBackOff cycles. A spire-agent pod stuck in that
+# state reads an already-expired token from tmpfs on every restart
+# attempt, apiserver rejects via TokenReview, and the pod loops forever
+# with no self-recovery path. The 2026-07-15 incident had talos01's
+# spire-agent stuck at 2500+ restarts for 30 days for exactly this
+# reason. A weekly rolling restart resets kubelet's TokenManager view
+# of every spire-agent pod cluster-wide, breaking any wedge before it
+# self-perpetuates.
+#
+# See also the HR postRenderer (infrastructure/base/cilium/helmrelease.yaml)
+# that raises the token TTL 600s → 3600s — that fix reduces the class-of-
+# failures probability; this cron makes any residual case self-heal.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wedge-buster-spire-agent
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: wedge-buster
+    app.kubernetes.io/component: maintenance
+    wedge-buster.io/target: spire-agent
+spec:
+  schedule: "7 3 * * 2"
+  timeZone: "Etc/UTC"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  concurrencyPolicy: Forbid
+  # Skip a fire that's more than 5 min late; avoids catch-up storms.
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      # DS RollingUpdate maxUnavailable: 1 across 5 nodes with ~1min
+      # per pod recovery = ~8 min budget. Give some slack.
+      activeDeadlineSeconds: 900
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: wedge-buster
+            wedge-buster.io/target: spire-agent
+        spec:
+          serviceAccountName: wedge-buster
+          restartPolicy: OnFailure
+          containers:
+            - name: restart
+              image: bitnami/kubectl:latest
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  echo "== $(date -u) rollout restart ds/spire-agent =="
+                  kubectl -n cilium-spire rollout restart ds/spire-agent
+                  kubectl -n cilium-spire rollout status ds/spire-agent --timeout=8m
+                  echo "== $(date -u) done =="

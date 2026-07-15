@@ -1,0 +1,50 @@
+---
+# ServiceAccount for the wedge-buster CronJobs. Each CronJob runs
+# `kubectl rollout restart <kind>/<name> -n <ns>` on wedge-prone workloads
+# (Alloy WAL, Mimir memberlist, spire-agent TokenManager). All the SA needs
+# is the ability to PATCH the targeted Deployments/DaemonSets — that's what
+# `kubectl rollout restart` does under the hood (adds an annotation to the
+# pod template that triggers a rolling update).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wedge-buster
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: wedge-buster
+    app.kubernetes.io/component: maintenance
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: wedge-buster
+  labels:
+    app.kubernetes.io/name: wedge-buster
+    app.kubernetes.io/component: maintenance
+rules:
+  # `kubectl rollout restart` patches the Deployment/DaemonSet/StatefulSet
+  # template's kubectl.kubernetes.io/restartedAt annotation. That requires
+  # `get` (to fetch current state) and `patch` (to update the annotation).
+  - apiGroups: ['apps']
+    resources: ['deployments', 'daemonsets', 'statefulsets']
+    verbs: ['get', 'patch']
+  # `rollout status` polls until the rollout completes — read-only.
+  - apiGroups: ['apps']
+    resources: ['deployments/status', 'daemonsets/status', 'statefulsets/status']
+    verbs: ['get']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: wedge-buster
+  labels:
+    app.kubernetes.io/name: wedge-buster
+    app.kubernetes.io/component: maintenance
+subjects:
+  - kind: ServiceAccount
+    name: wedge-buster
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: wedge-buster
+  apiGroup: rbac.authorization.k8s.io

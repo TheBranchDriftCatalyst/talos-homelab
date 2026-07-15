@@ -1,0 +1,29 @@
+---
+# wedge-buster — staggered weekly rolling restarts of workloads whose
+# distributed-state bookkeeping can wedge silently under cluster stress
+# and never self-recover.
+#
+# One CronJob per target so a stuck rollout on one component doesn't
+# block the others (see concurrencyPolicy: Forbid on each).
+#
+# Schedule stagger: Sun / Mon / Tue at 03:07 UTC (avoids top-of-hour
+# scrape/reconcile bursts). One target per day so a bad restart is
+# easy to correlate to yesterday's schedule and rolled back before the
+# next day's cron fires.
+#
+# Related design notes:
+#   - infrastructure/base/cilium/helmrelease.yaml
+#       (spire-agent token TTL 3600s override — reduces underlying wedge
+#        probability that this cron backstops)
+#   - .claude/memory/spire-agent-token-ttl-fragility.md
+#   - .claude/memory/helm-postrenderer-add-vs-smp.md
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: kube-system
+
+resources:
+  - rbac.yaml
+  - cronjob-alloy.yaml
+  - cronjob-mimir.yaml
+  - cronjob-spire-agent.yaml

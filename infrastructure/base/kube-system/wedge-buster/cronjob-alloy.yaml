@@ -1,0 +1,70 @@
+---
+# Sunday 03:07 UTC — rolling restart of Alloy.
+#
+# Why: Alloy's Prometheus remote_write WAL grows unbounded if Mimir is
+# briefly unreachable. Once the WAL contains samples older than Mimir's
+# out-of-order/max-sample-age tolerance, Alloy loops forever retrying
+# already-rejected batches instead of pushing fresh ones. The 2026-07-15
+# incident had a 30-day-old WAL replay loop that only ended when the pods
+# were manually restarted. Weekly restart bounds WAL growth to at most
+# one week of drift on any Mimir outage.
+#
+# The DaemonSet restart also freshens the per-node scrape targets, which
+# helps if Alloy has cached stale service-discovery entries after any
+# node comes back from reboot / cordon.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wedge-buster-alloy
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: wedge-buster
+    app.kubernetes.io/component: maintenance
+    wedge-buster.io/target: alloy
+spec:
+  schedule: "7 3 * * 0"
+  timeZone: "Etc/UTC"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  # Skip a fire if a previous one is still running (rollout stuck) —
+  # spamming rollouts on a stuck deployment doesn't help.
+  concurrencyPolicy: Forbid
+  # Skip a fire that's more than 5 min late (e.g. control-plane was
+  # asleep at 03:07). Avoids catch-up storms when the cluster resumes.
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      # Hard cap: allow ~15 min per component rollout (alloy DS has 5 pods
+      # × ~1 min startup + settle).
+      activeDeadlineSeconds: 1200
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: wedge-buster
+            wedge-buster.io/target: alloy
+        spec:
+          serviceAccountName: wedge-buster
+          restartPolicy: OnFailure
+          containers:
+            - name: restart
+              image: bitnami/kubectl:latest
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  echo "== $(date -u) rollout restart deploy/alloy =="
+                  kubectl -n monitoring rollout restart deploy/alloy
+                  kubectl -n monitoring rollout status deploy/alloy --timeout=5m
+                  echo "== $(date -u) rollout restart ds/alloy-node =="
+                  kubectl -n monitoring rollout restart ds/alloy-node
+                  kubectl -n monitoring rollout status ds/alloy-node --timeout=8m
+                  echo "== $(date -u) done =="
