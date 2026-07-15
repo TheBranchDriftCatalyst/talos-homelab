@@ -86,10 +86,13 @@ spec:
   # SPIRE agent's UDS). 2026-05-30: first Flux adoption of Cilium tripped
   # this — SPIRE pods 0/desired for 15 min, helm timed out waiting.
   #
-  # Patching the rendered namespace here ensures the labels exist from the
-  # very first apply, regardless of whether the namespace pre-exists. The
-  # standalone spire-namespace.yaml in kustomization.yaml is now redundant
-  # but kept as a belt-and-suspenders source-of-truth.
+  # Strategic-merge patch below adds the PSA labels to the chart-rendered
+  # namespace. (Prior JSON patch with `op: add` failed silently for weeks:
+  # the rendered ns has no `metadata.labels` at all, so `add` at
+  # `/metadata/labels/<key>` fails with "doc is missing path" and helm-
+  # controller aborts the entire postRender. The standalone
+  # spire-namespace.yaml in kustomization.yaml has been quietly doing all
+  # the work; SMP restores the belt-and-suspenders intent.)
   postRenderers:
     - kustomize:
         patches:
@@ -97,12 +100,13 @@ spec:
               kind: Namespace
               name: cilium-spire
             patch: |
-              - op: add
-                path: /metadata/labels/pod-security.kubernetes.io~1enforce
-                value: privileged
-              - op: add
-                path: /metadata/labels/pod-security.kubernetes.io~1warn
-                value: privileged
+              apiVersion: v1
+              kind: Namespace
+              metadata:
+                name: cilium-spire
+                labels:
+                  pod-security.kubernetes.io/enforce: privileged
+                  pod-security.kubernetes.io/warn: privileged
           # Raise spire-agent's projected SA token TTL from Cilium's hardcoded
           # 600s → 3600s. The 10-min TTL is too short for kubelet's TokenManager
           # to reliably refresh once a pod enters CrashLoopBackOff: the refresh
