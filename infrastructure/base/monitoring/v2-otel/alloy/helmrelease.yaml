@@ -805,6 +805,15 @@ spec:
               regex         = "prometheus-pushgateway"
               action        = "drop"
             }
+            // Exclude blackbox-exporter (handled by dedicated `blackbox` +
+            // `blackbox_probes` scrapes; leaving it enabled here would
+            // double-scrape the `up{}` series and wedge Alloy's WAL with
+            // out-of-order rejects — see AlloyWALSampleRejection alert).
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "prometheus-blackbox-exporter"
+              action        = "drop"
+            }
             // Use custom port if specified
             rule {
               source_labels = ["__address__", "__meta_kubernetes_service_annotation_prometheus_io_port"]
