@@ -1,0 +1,247 @@
+---
+# Pipeline-health alerts — surfaces the classes of silent wedge that bit us
+# during the 2026-06/07 outage window. Every rule here targets a failure
+# mode that had no self-recovery signal at the time and was invisible on
+# every dashboard because the dashboards themselves depended on the very
+# pipeline that was broken.
+#
+# What's covered:
+#   1. AlloyWALSampleRejection    — samples rejected by Mimir remote_write
+#      (catches "sample-timestamp-too-old" replay loops immediately)
+#   2. MimirRingUnhealthy         — cortex_ring_members{state="Unhealthy"}
+#      (catches memberlist wedges where /ready lies — mimir#5811)
+#   3. CiliumAgentRestartStorm    — implements TALOS-txl
+#   4. PipelineHeartbeat          — always-firing watchdog / dead-man's
+#      switch for external-observer routing
+#   5. ScrapeTargetsAbsent        — critical scrape sources vanished
+#
+# Convention: matches spire-alerts.yaml / cilium-*-alerts.yaml (same
+# namespace, label scheme, style). Loaded by Alloy's
+# `mimir.rules.kubernetes` component into Mimir Ruler.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: pipeline-health-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: pipeline-health-alerts
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # 1. Alloy WAL replay wedge — the 2026-07-15 outage root cause.
+    #
+    # Alloy's remote_write pushes were rejected by Mimir with
+    # err-mimir-sample-timestamp-too-old for 30 straight days because
+    # its WAL was stuck on June 15 samples. Fresh scrapes never landed.
+    # Every dashboard read "No data" until Alloy was manually restarted.
+    #
+    # Trigger: any sustained non-recoverable-error rate on the mimir
+    # remote_write client. Alloy emits both dropped-sample and error
+    # counters; alert on either.
+    # ----------------------------------------------------------------
+    - name: pipeline.alloy
+      rules:
+        - alert: AlloyWALSampleRejection
+          expr: |
+            sum by (instance, remote_name) (
+              rate(prometheus_remote_storage_samples_failed_total[5m])
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: critical
+            category: pipeline
+            component: alloy
+          annotations:
+            summary: "Alloy remote_write to Mimir failing sustainably"
+            description: >-
+              Alloy instance {{ $labels.instance }} is failing to push
+              samples to Mimir at {{ printf "%.1f" $value }} rejects/sec
+              over 10m. Most common cause: WAL replay loop on samples
+              older than Mimir's max-sample-age (see 2026-07-15 incident).
+              Check Alloy logs for "sample-timestamp-too-old". Fix by
+              restarting Alloy (deploy/alloy + ds/alloy-node). Root-cause
+              mitigation already in place — WAL max_keepalive_time=2h.
+
+        - alert: AlloyPushesStopped
+          expr: |
+            sum by (instance) (
+              rate(prometheus_remote_storage_samples_total[5m])
+            ) < 10
+          for: 15m
+          labels:
+            severity: warning
+            category: pipeline
+            component: alloy
+          annotations:
+            summary: "Alloy has stopped pushing samples to Mimir"
+            description: >-
+              Alloy instance {{ $labels.instance }} pushed
+              {{ printf "%.1f" $value }} samples/sec over the last 15m
+              (threshold: 10/sec). Either the scrape pipeline stopped
+              or Mimir became unreachable. Cross-reference
+              AlloyWALSampleRejection.
+
+    # ----------------------------------------------------------------
+    # 2. Mimir memberlist ring wedge — the 2026-07-15 discovery.
+    #
+    # A single-replica homelab Mimir is fragile to memberlist gossip
+    # loss: any component's local view of the ring can go stale (up to
+    # 30 DAYS stale in the observed incident) while its own /ready
+    # endpoint reports 200. Every query then errors with "too many
+    # unhealthy instances in the ring." See grafana/mimir#5811 for the
+    # ongoing upstream discussion.
+    # ----------------------------------------------------------------
+    - name: pipeline.mimir-ring
+      rules:
+        - alert: MimirRingUnhealthy
+          expr: |
+            sum by (name, pod) (
+              cortex_ring_members{state="Unhealthy", namespace="monitoring"}
+            ) > 0
+          for: 2m
+          labels:
+            severity: critical
+            category: pipeline
+            component: mimir
+          annotations:
+            summary: "Mimir {{ $labels.name }} ring has unhealthy members on {{ $labels.pod }}"
+            description: >-
+              {{ $labels.pod }}'s view of the {{ $labels.name }} ring
+              shows {{ $value }} Unhealthy members for 2m+. This means
+              memberlist gossip has stalled between this pod and the
+              affected ring member. Every query hitting this pod will
+              error "too many unhealthy instances in the ring." Restart
+              the affected pod (`kubectl -n monitoring rollout restart
+              deploy/<component>`) to force a fresh memberlist join.
+              Backstop: wedge-buster-mimir-query-path CronJob runs
+              Monday 03:07 UTC.
+
+        - alert: MimirMemberlistDegraded
+          expr: |
+            memberlist_client_cluster_node_health_score{namespace="monitoring"} > 3
+          for: 5m
+          labels:
+            severity: warning
+            category: pipeline
+            component: mimir
+          annotations:
+            summary: "Mimir memberlist gossip degraded on {{ $labels.pod }}"
+            description: >-
+              memberlist health score is {{ $value }} (0 = perfect,
+              higher = more gossip failures). Sustained >3 means the
+              node is drifting toward being marked Unhealthy by peers.
+              Precursor to MimirRingUnhealthy.
+
+    # ----------------------------------------------------------------
+    # 3. Cilium agent restart storm — implements TALOS-txl.
+    #
+    # 2026-05-27: two cilium agents were in CrashLoopBackOff for 5+
+    # days with no alert. Plex breaking was the smoke alarm. This rule
+    # gives us 15 min of restart signal before the cascade compounds.
+    # ----------------------------------------------------------------
+    - name: pipeline.cilium
+      rules:
+        - alert: CiliumAgentRestartStorm
+          expr: |
+            rate(kube_pod_container_status_restarts_total{
+              namespace="kube-system",
+              container="cilium-agent"
+            }[15m]) * 60 > 1
+          for: 10m
+          labels:
+            severity: warning
+            category: pipeline
+            component: cilium
+          annotations:
+            summary: "Cilium agent on {{ $labels.pod }} restarting >1x/min for 10m"
+            description: >-
+              Node {{ $labels.node }} is likely hitting the cilium
+              startup-probe death loop. See
+              docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md.
+              First-check: kubectl get ciliumidentities | wc -l (>1000
+              → identity bloat, see TALOS-yyt runbook).
+
+    # ----------------------------------------------------------------
+    # 4. Pipeline heartbeat — dead-man's switch for external observer.
+    #
+    # This alert always fires (expr: vector(1)). It's meant to be routed
+    # to an EXTERNAL dead-man's-switch service (healthchecks.io,
+    # cronitor, grafana synthetic monitoring). If the external service
+    # stops receiving the heartbeat, the internal metrics pipeline is
+    # dead — Mimir/Alloy/Ruler broken. This is the ONLY way to detect
+    # "the observability stack itself is down" from outside.
+    #
+    # DO NOT filter, silence, or route this to Discord/Slack — its
+    # entire value is that it's routed to an out-of-band service.
+    # ----------------------------------------------------------------
+    - name: pipeline.watchdog
+      rules:
+        - alert: PipelineHeartbeat
+          expr: vector(1)
+          labels:
+            severity: none
+            category: pipeline
+            component: watchdog
+          annotations:
+            summary: "Metrics pipeline heartbeat — routed to external observer"
+            description: >-
+              Dead-man's switch. If this stops firing, the internal
+              metrics pipeline is broken and you won't see other alerts
+              until it's fixed. External observer should page on
+              absence, not presence.
+
+    # ----------------------------------------------------------------
+    # 5. Critical scrape sources absent — belt for #1's suspenders.
+    #
+    # If Alloy scrape jobs stop producing metrics from foundational
+    # sources (kube-state-metrics, node-exporter, cadvisor), our
+    # dashboards go dark. Alert catches "config regressed" or "target
+    # discovery broke" scenarios that AlloyWALSampleRejection misses.
+    # ----------------------------------------------------------------
+    - name: pipeline.scrape-targets
+      rules:
+        - alert: KubeStateMetricsAbsent
+          expr: |
+            absent(kube_pod_info) == 1
+          for: 10m
+          labels:
+            severity: critical
+            category: pipeline
+            component: kube-state-metrics
+          annotations:
+            summary: "kube-state-metrics scrape has been absent for 10m"
+            description: >-
+              No kube_pod_info series ingested for 10m. Either
+              kube-state-metrics is down, Alloy stopped scraping it,
+              or the Mimir push pipeline is broken.
+
+        - alert: NodeExporterAbsent
+          expr: |
+            absent(node_load1) == 1
+          for: 10m
+          labels:
+            severity: critical
+            category: pipeline
+            component: node-exporter
+          annotations:
+            summary: "node-exporter scrape has been absent for 10m"
+            description: >-
+              No node_load1 series ingested for 10m. Either
+              node-exporter DaemonSet is down or Alloy's scrape config
+              regressed.
+
+        - alert: CadvisorAbsent
+          expr: |
+            absent(container_cpu_usage_seconds_total) == 1
+          for: 10m
+          labels:
+            severity: warning
+            category: pipeline
+            component: cadvisor
+          annotations:
+            summary: "cadvisor scrape has been absent for 10m"
+            description: >-
+              No container_cpu_usage_seconds_total series ingested for
+              10m. cadvisor is scraped via kubelet's proxy — usually
+              means Alloy lost its SA token or the kubelet API blocked.
