@@ -1,0 +1,39 @@
+---
+# alertmanager-config — pushes tenant config into Mimir's multi-tenant
+# Alertmanager for the 'anonymous' tenant.
+#
+# Wiring:
+#   PrometheusRule CRs (baseline-alerts/)
+#     → Alloy mimir.rules.kubernetes sync → Mimir Ruler
+#     → alerts fire against this tenant config
+#     → routed to Discord webhook or watchdog receiver
+#
+# What still needs to be wired (external observer / TALOS-2pz):
+#   The `watchdog-null` receiver in config-template.yaml is a no-op
+#   today. To finish external observation:
+#     1. Create a healthchecks.io check (https://healthchecks.io — free,
+#        no account required for one-off UUIDs). Copy the ping URL.
+#     2. Store it as a Secret in this namespace (add another
+#        ExternalSecret alongside discord-webhook, or paste as
+#        a k8s Secret if you don't want it in 1Password).
+#     3. In config-template.yaml, replace the empty `watchdog-null`
+#        receiver with:
+#          - name: watchdog-null
+#            webhook_configs:
+#              - url: $HEALTHCHECKS_URL
+#                send_resolved: false
+#     4. Add a HEALTHCHECKS_URL env to cronjob.yaml sourced from the
+#        new Secret.
+#   Result: healthchecks.io pings every 1 minute (PipelineHeartbeat
+#   route interval). If pings stop for the check's configured grace,
+#   healthchecks.io emails/pages you — the observability stack itself
+#   has failed.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+
+resources:
+  - externalsecret.yaml
+  - rbac.yaml
+  - config-template.yaml
+  - cronjob.yaml

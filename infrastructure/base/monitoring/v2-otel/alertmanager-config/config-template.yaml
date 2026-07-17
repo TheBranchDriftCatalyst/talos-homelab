@@ -1,0 +1,84 @@
+---
+# Alertmanager config template for the Mimir Alertmanager 'anonymous'
+# tenant. Pushed by the alertmanager-config-pusher CronJob after
+# substituting ${DISCORD_WEBHOOK_URL} from the discord-webhook Secret.
+#
+# Two routes:
+#   1. Watchdog → dedicated receiver for future external observer wiring
+#      (currently a null receiver; see external-observer TODO in kustomization.yaml).
+#      This is the PipelineHeartbeat alert; when routed to an out-of-band
+#      service like healthchecks.io, absence of the ping means the
+#      observability stack itself is broken.
+#   2. Everything else → Discord webhook via the shared flux-discord
+#      URL.
+#
+# Grouping: 5m group_wait / 5m group_interval / 4h repeat_interval —
+# suitable for a homelab where duplicate pages are worse than latency.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config-template
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alertmanager-config-template
+    app.kubernetes.io/component: alertmanager-config
+data:
+  alertmanager.tmpl.yaml: |
+    global:
+      resolve_timeout: 5m
+
+    route:
+      # Top-level route: fan out by category then by severity.
+      receiver: discord-default
+      group_by: ['alertname', 'severity', 'category']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        # Watchdog — dead-man's switch. Routed to a NULL receiver by
+        # default; wire this to healthchecks.io / cronitor when you set
+        # up the external observer (see external-observer TODO).
+        - matchers:
+            - alertname="PipelineHeartbeat"
+          receiver: watchdog-null
+          # Fast heartbeat cadence; external observer sees a steady stream.
+          group_wait: 10s
+          group_interval: 1m
+          repeat_interval: 1m
+          continue: false
+
+        # Critical alerts get their own group so pages aren't merged
+        # with warnings on the same 5m group_interval window.
+        - matchers:
+            - severity="critical"
+          receiver: discord-critical
+          group_wait: 15s
+          repeat_interval: 1h
+          continue: false
+
+    receivers:
+      - name: discord-default
+        webhook_configs:
+          - url: "$DISCORD_WEBHOOK_URL"
+            send_resolved: true
+
+      - name: discord-critical
+        webhook_configs:
+          - url: "$DISCORD_WEBHOOK_URL"
+            send_resolved: true
+
+      # Watchdog receiver — currently a no-op. Replace with a
+      # webhook_configs pointing to healthchecks.io / cronitor / etc.
+      # when you set up external observation. See kustomization.yaml
+      # TODO for the exact snippet.
+      - name: watchdog-null
+
+    # Inhibit rules — a critical alert on a component silences the
+    # matching warning-severity alert on the same component so pages
+    # aren't duplicated.
+    inhibit_rules:
+      - source_matchers:
+          - severity="critical"
+        target_matchers:
+          - severity="warning"
+        equal: ['alertname', 'component', 'category']
