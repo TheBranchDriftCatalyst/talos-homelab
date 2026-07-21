@@ -36,7 +36,7 @@ data:
     import time
     import urllib.request
     import urllib.error
-    from datetime import datetime
+    from datetime import datetime, timezone
     from typing import Dict, List, Optional, Tuple
 
     # Configuration from environment
@@ -87,7 +87,7 @@ data:
 
     def log(msg: str, level: str = "INFO"):
         """Structured logging"""
-        ts = datetime.utcnow().isoformat() + "Z"
+        ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         print(f'{{"ts":"{ts}","level":"{level}","msg":"{msg}"}}', flush=True)
 
     def apply_jitter():
@@ -507,12 +507,12 @@ data:
     def get_healthy_servers(servers: List[str], state: Dict) -> List[str]:
         """Filter out servers that failed recently (within cooldown period)"""
         failed = state.get("failed_servers", {})
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         healthy = []
 
         for server in servers:
             if server in failed:
-                failed_at = datetime.fromisoformat(failed[server].replace("Z", ""))
+                failed_at = datetime.fromisoformat(failed[server].replace("Z", "+00:00"))
                 age_seconds = (now - failed_at).total_seconds()
                 if age_seconds < FAILED_SERVER_COOLDOWN:
                     log(f"Excluding {server}: failed {int(age_seconds)}s ago (cooldown: {FAILED_SERVER_COOLDOWN}s)")
@@ -523,7 +523,7 @@ data:
 
     def mark_server_failed(state: Dict, server: str):
         """Mark a server as failed with current timestamp"""
-        state.setdefault("failed_servers", {})[server] = datetime.utcnow().isoformat() + "Z"
+        state.setdefault("failed_servers", {})[server] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         log(f"Marked {server} as failed (cooldown: {FAILED_SERVER_COOLDOWN}s)")
 
     def main():
@@ -568,7 +568,7 @@ data:
             if not blue_green_deployments:
                 log("No rotation targets found at all", "WARN")
             # Still save state and exit cleanly
-            state["last_rotation"] = datetime.utcnow().isoformat() + "Z"
+            state["last_rotation"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             save_state(state)
             sys.exit(0)
         log(f"Discovered {len(pods)} pods for API-based rotation")
@@ -628,7 +628,7 @@ data:
                     time.sleep(STAGGER_DELAY)
 
         # Update last rotation timestamp
-        state["last_rotation"] = datetime.utcnow().isoformat() + "Z"
+        state["last_rotation"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         # Save state (exporter will read this file for metrics)
         save_state(state)
