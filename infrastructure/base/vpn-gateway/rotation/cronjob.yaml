@@ -17,6 +17,12 @@ spec:
     spec:
       backoffLimit: 1
       ttlSecondsAfterFinished: 3600
+      # A stuck rotate.py (or hung `apk add` during Python install) must
+      # NOT wedge the schedule forever — concurrencyPolicy: Forbid means
+      # one stuck job blocks all subsequent windows. 25 min < the 35 min
+      # cron interval, so a wedged job dies before the next fire. See
+      # TALOS-r22 (2026-07-21) for the 54-day apk-hang that motivated this.
+      activeDeadlineSeconds: 1500
       template:
         metadata:
           labels:
@@ -27,14 +33,15 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: rotator
-              image: dtzar/helm-kubectl:latest
+              # alpine/k8s bundles kubectl, helm, python3, jq, and yq — no
+              # runtime `apk add` needed. Previous `dtzar/helm-kubectl:latest`
+              # forced `apk add python3` at start; a single failed apk fetch
+              # wedged the job forever (TALOS-r22 — 54-day hang until 07-21).
+              # Pin the tag to match cluster k8s minor (v1.34.x).
+              image: alpine/k8s:1.34.9
               command:
-                - /bin/sh
-                - -c
-                - |
-                  # Install Python (Alpine)
-                  apk add --quiet --no-cache python3 > /dev/null 2>&1
-                  python3 /scripts/rotate.py
+                - python3
+                - /scripts/rotate.py
               env:
                 - name: VPN_ROTATION_MODE
                   valueFrom:
