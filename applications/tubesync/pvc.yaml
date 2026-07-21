@@ -1,5 +1,44 @@
 ---
 apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: downloads-tubesync-downloads
+  labels:
+    app: tubesync
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    server: 192.168.1.36
+    path: /volume1/appdata/downloads/tubesync-downloads
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+  claimRef:
+    namespace: downloads
+    name: tubesync-downloads
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tubesync-downloads
+  labels:
+    app: tubesync
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: downloads-tubesync-downloads
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: tubesync-config
@@ -12,17 +51,3 @@ spec:
   resources:
     requests:
       storage: 1Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: tubesync-downloads
-  labels:
-    app: tubesync
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: fatboy-nfs-appdata
-  resources:
-    requests:
-      storage: 10Gi
