@@ -20,18 +20,18 @@ spec:
         app: tdarr-worker
         app.kubernetes.io/name: tdarr-worker
     spec:
-      # Run only on GPU worker nodes with Intel GPUs
-      # Uses manually-managed gpu-worker role label (not auto-generated plugin label)
-      # GPU resource request filters to only Intel GPU nodes
+      # Run only on nodes with a real Intel Arc GPU (usable gpu.intel.com/i915).
+      # Label is stamped durably by NFD rule 'intel.gpu-arc' (infrastructure/base/intel-gpu).
+      # Narrower than the generic intel.feature.node.kubernetes.io/gpu label, which also
+      # matches talos01's iGPU (no usable i915) and would strand a Pending DaemonSet pod.
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
               - matchExpressions:
-                  - key: node-role.kubernetes.io/control-plane
-                    operator: DoesNotExist
-                  - key: node-role.kubernetes.io/gpu-worker
-                    operator: Exists
+                  - key: intel.feature.node.kubernetes.io/gpu-arc
+                    operator: In
+                    values: ["true"]
 
       securityContext:
         fsGroup: 44  # video group
