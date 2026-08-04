@@ -1,0 +1,151 @@
+---
+# Authentik Blueprint for Boomtime OIDC SSO
+#
+# Creates the complete chain needed for Boomtime SSO via Authentik, modeled on
+# litellm-blueprint.yaml (the proven full-IaC pattern in this repo):
+#   1. Groups        - boomtime-admin / boomtime-full / boomtime-light
+#                      (empty by default; add members via UI or another blueprint)
+#   2. OAuth2Provider- boomtime (confidential, client_id=boomtime)
+#   3. Application   - boomtime (slug=boomtime, bound to the provider above)
+#
+# Mounted into authentik-server AND authentik-worker as
+#   /blueprints/custom/boomtime-oidc.yaml
+# via this ConfigMap (volumeMount in helmrelease.yaml). The worker auto-discovers
+# any blueprint files under /blueprints/custom/ and reconciles them.
+#
+# FOLLOW-UP (gaka-93f.21): this blueprint lives in the INFRA repo only because
+# Authentik's file-mount ingestion requires a helmrelease volumeMount. The plan
+# is to relocate it INTO the boomtime repo and have ArgoCD deliver it via an
+# apply-Job (POST to Authentik's /api/v3/managed/blueprints/), so boomtime owns
+# its own Authentik wiring with zero talos-homelab edits. Kept as a file-mount
+# for now to match the litellm/brand pattern. Do not add more per-app blueprints
+# here without revisiting gaka-93f.21.
+#
+# ROLE MAPPING: Boomtime maps the OIDC `groups` claim → its own role
+# (BOOM_AUTHENTIK_GROUP_TO_ROLE=boomtime-admin:admin,boomtime-full:full,
+# boomtime-light:light). Authentik's default "profile" scope mapping already
+# emits `groups`, and include_claims_in_id_token=true puts it in the id_token,
+# which is what Boomtime verifies. An identity in none of the three groups falls
+# back to the light tier (fail-closed, in Boomtime's RoleFromGroups).
+#
+# SECRET HANDLING (no secrets in git):
+#   The OAuth2Provider client_secret is read from the env var
+#   BOOMTIME_OIDC_CLIENT_SECRET via the !Env YAML tag. That env var is injected
+#   into the authentik worker pod from the in-namespace Secret
+#   "authentik-boomtime-oidc" (key: client-secret), populated by the
+#   ExternalSecret of the same name from 1Password (item: boomtime,
+#   property: oidc-client-secret).
+#
+#   Boomtime's own side (k8s: boomtime ns, overlay talos00-knowledgedump)
+#   reads BOOM_OIDC_CLIENT_SECRET from the SAME 1Password property
+#   (boomtime.oidc-client-secret) via its own ExternalSecret, so both ends of
+#   the OAuth handshake stay in lockstep across cluster rebuilds with no manual
+#   coordination — identical discipline to litellm.
+#
+#   To rotate: update the 1Password "boomtime.oidc-client-secret" field, wait
+#   for both ExternalSecrets to refresh, then restart authentik-worker (so !Env
+#   is re-evaluated) and the boomtime deployment.
+#
+# ISSUER: issuer_mode=per_provider → the OpenID Configuration Issuer is
+#   https://auth.knowledgedump.space/application/o/boomtime/
+# which is exactly what Boomtime's BOOM_OIDC_ISSUER must be set to.
+#
+# MIGRATION NOTE: Boomtime ships to prod on BOOM_AUTH_PROVIDER=local first. The
+# operator signs in locally, links their superuser to Authentik, verifies, then
+# flips to oidc. This blueprint only needs to EXIST for the link flow to work;
+# it does not force anything on the Boomtime side.
+#
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-boomtime-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  boomtime-oidc.yaml: |
+    # Authentik Blueprint: Boomtime OIDC SSO (full IaC)
+    # Docs: https://docs.goauthentik.io/docs/customize/blueprints
+    version: 1
+    metadata:
+      name: Boomtime OIDC SSO
+      labels:
+        blueprints.goauthentik.io/description: "Complete Boomtime OIDC SSO: role groups, OAuth2 provider, and application"
+    entries:
+
+      # ---------------------------------------------------------------------
+      # 1. Role groups. Boomtime maps these group NAMES → its role tiers via
+      #    BOOM_AUTHENTIK_GROUP_TO_ROLE. Empty by default; assign members in the
+      #    Authentik UI (Directory → Groups) or via a follow-up blueprint.
+      # ---------------------------------------------------------------------
+      - model: authentik_core.group
+        id: boomtime-admin-group
+        identifiers:
+          name: boomtime-admin
+        attrs:
+          is_superuser: false
+      - model: authentik_core.group
+        id: boomtime-full-group
+        identifiers:
+          name: boomtime-full
+        attrs:
+          is_superuser: false
+      - model: authentik_core.group
+        id: boomtime-light-group
+        identifiers:
+          name: boomtime-light
+        attrs:
+          is_superuser: false
+
+      # ---------------------------------------------------------------------
+      # 2. OAuth2Provider: boomtime
+      #    Confidential client. client_secret pulled from the env var
+      #    BOOMTIME_OIDC_CLIENT_SECRET (injected into the worker pod from the
+      #    authentik-boomtime-oidc Secret, sourced from 1Password via ESO).
+      # ---------------------------------------------------------------------
+      - model: authentik_providers_oauth2.oauth2provider
+        id: boomtime-oauth2-provider
+        identifiers:
+          name: boomtime
+        attrs:
+          name: boomtime
+          client_type: confidential
+          client_id: boomtime
+          client_secret: !Env BOOMTIME_OIDC_CLIENT_SECRET
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+          access_code_validity: minutes=1
+          access_token_validity: minutes=10
+          refresh_token_validity: days=30
+          include_claims_in_id_token: true
+          sub_mode: hashed_user_id
+          issuer_mode: per_provider
+          redirect_uris:
+            - matching_mode: strict
+              url: https://boomtime.knowledgedump.space/auth/callback/oidc
+            - matching_mode: strict
+              url: http://boomtime.talos00/auth/callback/oidc
+          property_mappings:
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+
+      # ---------------------------------------------------------------------
+      # 3. Application: boomtime
+      #    Bound to the OAuth2 provider above.
+      # ---------------------------------------------------------------------
+      - model: authentik_core.application
+        id: boomtime-application
+        identifiers:
+          slug: boomtime
+        attrs:
+          name: Boomtime
+          slug: boomtime
+          provider: !KeyOf boomtime-oauth2-provider
+          meta_launch_url: https://boomtime.knowledgedump.space
+          meta_description: "Boomtime - self-hosted coding-time analytics (Wakatime-compatible)"
+          meta_publisher: "Catalyst Homelab"
+          open_in_new_tab: false
+          policy_engine_mode: any

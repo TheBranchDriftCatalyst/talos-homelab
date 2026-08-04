@@ -70,6 +70,9 @@ spec:
         - name: litellm-blueprint
           configMap:
             name: authentik-litellm-blueprint
+        - name: boomtime-blueprint
+          configMap:
+            name: authentik-boomtime-blueprint
         - name: catalyst-brand-assets
           configMap:
             name: authentik-catalyst-brand-assets
@@ -91,6 +94,9 @@ spec:
         - name: litellm-blueprint
           mountPath: /blueprints/custom/litellm-role-mapping.yaml
           subPath: litellm-role-mapping.yaml
+        - name: boomtime-blueprint
+          mountPath: /blueprints/custom/boomtime-oidc.yaml
+          subPath: boomtime-oidc.yaml
         - name: catalyst-brand-assets
           mountPath: /web/dist/catalyst-brand-logo.svg
           subPath: catalyst-brand-logo.svg
@@ -125,11 +131,30 @@ spec:
             secretKeyRef:
               name: authentik-litellm-oidc
               key: client-secret
+        # !Env source for boomtime-blueprint.yaml's OAuth2Provider client_secret.
+        # optional:true is DELIBERATE: it lets the worker start even before the
+        # authentik-boomtime-oidc Secret exists (i.e. before the 1Password
+        # `boomtime.oidc-client-secret` field is provisioned) — so shipping this
+        # blueprint can NEVER CrashLoop the worker and take down existing SSO
+        # (litellm/kelsboi). Until the secret is populated, the boomtime provider
+        # is created with an empty client_secret (harmless — nothing points at it
+        # yet). AFTER provisioning the 1P field: `kubectl rollout restart
+        # deploy/authentik-worker -n authentik` so !Env re-evaluates and the
+        # provider gets the real secret.
+        - name: BOOMTIME_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: authentik-boomtime-oidc
+              key: client-secret
+              optional: true
       # Worker needs blueprints for processing
       volumes:
         - name: litellm-blueprint
           configMap:
             name: authentik-litellm-blueprint
+        - name: boomtime-blueprint
+          configMap:
+            name: authentik-boomtime-blueprint
         - name: catalyst-brand-blueprint
           configMap:
             name: authentik-catalyst-brand-blueprint
@@ -141,6 +166,9 @@ spec:
         - name: litellm-blueprint
           mountPath: /blueprints/custom/litellm-role-mapping.yaml
           subPath: litellm-role-mapping.yaml
+        - name: boomtime-blueprint
+          mountPath: /blueprints/custom/boomtime-oidc.yaml
+          subPath: boomtime-oidc.yaml
         - name: catalyst-brand-blueprint
           mountPath: /blueprints/custom/catalyst-brand.yaml
           subPath: catalyst-brand.yaml
