@@ -1,0 +1,28 @@
+---
+# LoadBalancer IPAM pool for LAN-facing services. Scoped by serviceSelector to
+# Pi-hole ONLY (so the two minio LoadBalancers stay cluster-internal/pending).
+# Requires l2announcements.enabled + kubeProxyReplacement (values.yaml).
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: lan-pihole-pool
+spec:
+  blocks:
+    - start: "192.168.1.240"
+      stop: "192.168.1.250"
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: pihole
+---
+# Announce the pool's LoadBalancer IPs on the LAN via ARP (L2). No BGP needed.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: lan-pihole-l2
+spec:
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: pihole
+  loadBalancerIPs: true
+  externalIPs: false
+  # interfaces omitted → announce on the interface holding the node's LAN IP.
