@@ -1,0 +1,76 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: mojo2600
+  namespace: pihole
+spec:
+  interval: 24h
+  url: https://mojo2600.github.io/pihole-kubernetes/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: pihole
+  namespace: pihole
+spec:
+  interval: 30m
+  timeout: 10m
+  chart:
+    spec:
+      chart: pihole
+      version: '2.38.0' # appVersion 2026.07.2 = Pi-hole v6
+      sourceRef:
+        kind: HelmRepository
+        name: mojo2600
+        namespace: pihole
+      interval: 12h
+  install:
+    createNamespace: false
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  values:
+    image:
+      repository: pihole/pihole
+      # tag inherits chart appVersion (Pi-hole v6)
+    replicaCount: 1
+    # Stateful (local-path PVC is node-local) → pin to a stable node.
+    nodeSelector:
+      kubernetes.io/hostname: talos03
+
+    # Admin password from ESO (same value feeds external-dns-pihole).
+    admin:
+      enabled: true
+      existingSecret: pihole-admin
+      passwordKey: password
+
+    # DNS service: dedicated LAN IP via Cilium LB IPAM (pool selects app: pihole).
+    serviceDns:
+      type: LoadBalancer
+      mixedService: true # single Service carrying TCP+UDP :53
+      annotations:
+        lbipam.cilium.io/ips: "192.168.1.240"
+
+    # Web/admin UI: ClusterIP (external-dns-pihole talks to this API; users via IngressRoute).
+    serviceWeb:
+      type: ClusterIP
+      http:
+        enabled: true
+        port: 80
+      https:
+        enabled: false
+
+    persistentVolumeClaim:
+      enabled: true
+      storageClass: local-path
+      size: 1Gi
+
+    # Upstream resolvers for everything that isn't a local talos00.lan record.
+    dnsmasq:
+      upstreamServers:
+        - 1.1.1.1
+        - 1.0.0.1
