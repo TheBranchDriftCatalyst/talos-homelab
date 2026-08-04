@@ -1,0 +1,104 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: librarr
+  labels:
+    app: librarr
+    app.kubernetes.io/name: librarr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: librarr
+  template:
+    metadata:
+      labels:
+        app: librarr
+        app.kubernetes.io/name: librarr
+      annotations:
+        backup.velero.io/backup-volumes: "config"
+    spec:
+      # local-path appdata → pin to talos03 (matches arr-stack convention)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos03]
+      securityContext:
+        fsGroup: 1000
+        supplementalGroups: [100, 1000]  # 100 = Synology 'users' for NFS write
+      containers:
+        - name: librarr
+          image: ghcr.io/jeremiahm37/librarr:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: America/New_York
+            # TODO: replace changeme creds + API_KEY post-deploy
+            - name: AUTH_USERNAME
+              value: "admin"
+            - name: AUTH_PASSWORD
+              value: "changeme"
+            - name: API_KEY
+              value: "changeme-generate-me"
+            - name: QB_URL
+              value: "http://qbittorrent.media.svc.cluster.local:8080"
+          ports:
+            - name: http
+              containerPort: 5050
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /data
+            - name: books
+              mountPath: /books/ebooks
+            - name: audiobooks
+              mountPath: /books/audiobooks
+            - name: comics
+              mountPath: /books/manga
+            - name: downloads-complete
+              mountPath: /downloads
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: librarr-config
+        - name: books
+          persistentVolumeClaim:
+            claimName: books
+        - name: audiobooks
+          persistentVolumeClaim:
+            claimName: audiobooks
+        - name: comics
+          persistentVolumeClaim:
+            claimName: comics
+        - name: downloads-complete
+          persistentVolumeClaim:
+            claimName: downloads-complete

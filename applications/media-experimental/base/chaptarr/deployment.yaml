@@ -1,0 +1,94 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chaptarr
+  labels:
+    app: chaptarr
+    app.kubernetes.io/name: chaptarr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: chaptarr
+  template:
+    metadata:
+      labels:
+        app: chaptarr
+        app.kubernetes.io/name: chaptarr
+      annotations:
+        backup.velero.io/backup-volumes: "config"
+    spec:
+      # local-path appdata → pin to talos03 (matches arr-stack convention)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos03]
+      securityContext:
+        fsGroup: 1000
+        supplementalGroups: [100, 1000]  # 100 = Synology 'users' for NFS write
+      containers:
+        - name: chaptarr
+          image: robertlordhood/chaptarr:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: America/New_York
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+          ports:
+            - name: http
+              containerPort: 8787
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: books
+              mountPath: /books
+            - name: audiobooks
+              mountPath: /audiobooks
+            - name: downloads
+              mountPath: /downloads
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: chaptarr-config
+        - name: books
+          persistentVolumeClaim:
+            claimName: books
+        - name: audiobooks
+          persistentVolumeClaim:
+            claimName: audiobooks
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: downloads-complete

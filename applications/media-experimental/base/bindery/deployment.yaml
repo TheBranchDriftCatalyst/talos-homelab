@@ -1,0 +1,94 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bindery
+  labels:
+    app: bindery
+    app.kubernetes.io/name: bindery
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: bindery
+  template:
+    metadata:
+      labels:
+        app: bindery
+        app.kubernetes.io/name: bindery
+      annotations:
+        backup.velero.io/backup-volumes: "config"
+    spec:
+      # local-path appdata → pin to talos03 (matches arr-stack convention)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos03]
+      securityContext:
+        fsGroup: 1000
+        supplementalGroups: [100, 1000]  # 100 = Synology 'users' for NFS write
+      containers:
+        - name: bindery
+          image: ghcr.io/vavallee/bindery:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: America/New_York
+            - name: BINDERY_PUID
+              value: "1000"
+            - name: BINDERY_PGID
+              value: "1000"
+          ports:
+            - name: http
+              containerPort: 8787
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: books
+              mountPath: /books
+            - name: audiobooks
+              mountPath: /audiobooks
+            - name: downloads
+              mountPath: /downloads
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: bindery-config
+        - name: books
+          persistentVolumeClaim:
+            claimName: books
+        - name: audiobooks
+          persistentVolumeClaim:
+            claimName: audiobooks
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: downloads-complete

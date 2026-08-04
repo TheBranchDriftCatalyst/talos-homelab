@@ -1,0 +1,90 @@
+# EXPERIMENTAL: alpha software, expect rough edges
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: livrarr
+  labels:
+    app: livrarr
+    app.kubernetes.io/name: livrarr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: livrarr
+  template:
+    metadata:
+      labels:
+        app: livrarr
+        app.kubernetes.io/name: livrarr
+      annotations:
+        backup.velero.io/backup-volumes: "config"
+    spec:
+      # local-path appdata → pin to talos03 (matches arr-stack convention)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos03]
+      securityContext:
+        fsGroup: 1000
+        supplementalGroups: [100, 1000]  # 100 = Synology 'users' for NFS write
+      containers:
+        - name: livrarr
+          image: ghcr.io/kkodecs/livrarr:0.1.0-alpha6
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: America/New_York
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+          ports:
+            - name: http
+              containerPort: 8789
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: books
+              mountPath: /books
+            - name: downloads-complete
+              mountPath: /downloads
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: livrarr-config
+        - name: books
+          persistentVolumeClaim:
+            claimName: books
+        - name: downloads-complete
+          persistentVolumeClaim:
+            claimName: downloads-complete

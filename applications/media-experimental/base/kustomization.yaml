@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: media-experimental
+
+resources:
+  - storage.yaml
+  # Ebook / comic readers
+  - kavita/
+  - komga/
+  # Audiobook servers
+  - audiobookshelf/
+  - booksonic/
+  - storyteller/
+  # Book *arr managers (Readarr-replacement bake-off)
+  - chaptarr/
+  - bindery/
+  - librarr/
+  - livrarr/
+  # Audible tools
+  - libation/
+
+# Common labels across the whole experimental stack.
+# (labels: does not touch selectors, so it's safe on Deployments.)
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: media-experimental
+      experimental: "true"
+
+# Reduce stale ReplicaSets (matches arr-stack convention)
+patches:
+  - target:
+      kind: Deployment
+    patch: |
+      - op: add
+        path: /spec/revisionHistoryLimit
+        value: 3
