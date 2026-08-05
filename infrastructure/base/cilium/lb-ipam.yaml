@@ -23,12 +23,10 @@ spec:
   serviceSelector:
     matchLabels:
       app: pihole
-  # Announce ONLY from talos03 — where the Pi-hole pod is pinned. The serviceDns
-  # is externalTrafficPolicy:Local (preserves client IPs for Pi-hole per-device
-  # stats), so the announcing node MUST hold a local backend or it drops traffic.
-  nodeSelector:
-    matchLabels:
-      kubernetes.io/hostname: talos03
+  # No nodeSelector: Pi-hole now runs on EVERY node (one-per-node HA), so whichever
+  # node Cilium elects to announce the VIP has a local backend — required for
+  # externalTrafficPolicy:Local (client-IP preservation). Node dies → lease + VIP
+  # move to another node that also has a Pi-hole. Automatic failover.
   loadBalancerIPs: true
   externalIPs: false
   # interfaces omitted → announce on the interface holding the node's LAN IP.

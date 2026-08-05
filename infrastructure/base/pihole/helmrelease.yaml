@@ -37,40 +37,63 @@ spec:
     image:
       repository: pihole/pihole
       # tag inherits chart appVersion (Pi-hole v6)
-    replicaCount: 1
-    # Stateful (local-path PVC is node-local) → pin to a stable node.
-    nodeSelector:
-      kubernetes.io/hostname: talos03
+    # HA: one Pi-hole per node (DaemonSet-equivalent via replicas + hard anti-affinity),
+    # so a single node failure never takes DNS down. Config is entirely FTLCONF env
+    # (wildcard/upstreams/revServers/password) → storage can be ephemeral, each pod
+    # self-configures identically. No node pin.
+    replicaCount: 5 # = node count
+    strategyType: RollingUpdate
+    priorityClassName: pihole-critical # critical infra: schedule first, never evict
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: pihole
+            topologyKey: kubernetes.io/hostname
 
-    # Admin password from ESO (same value feeds external-dns-pihole).
+    # Admin password from ESO.
     admin:
       enabled: true
       existingSecret: pihole-admin
       passwordKey: password
 
-    # DNS service: dedicated LAN IP via Cilium LB IPAM (pool selects app: pihole).
+    # DNS (:53) + web (:80) SHARE one LAN IP (.240) via Cilium LB IP-sharing.
+    # Single VIP + externalTrafficPolicy:Local → whichever node holds the L2 lease
+    # serves DNS from its local pod; node dies → lease + traffic move to another node
+    # that also has a Pi-hole. Automatic failover, one IP, client IPs preserved.
     serviceDns:
       type: LoadBalancer
       mixedService: true # single Service carrying TCP+UDP :53
+      externalTrafficPolicy: Local # preserve client IPs (per-client stats/hostnames)
       annotations:
         lbipam.cilium.io/ips: "192.168.1.240"
-
-    # Web/admin UI: dedicated LAN IP (.241) so it's reachable without DNS/hosts,
-    # plus the IngressRoute. external-dns-pihole talks to this service's API.
+        lbipam.cilium.io/sharing-key: "pihole"
     serviceWeb:
       type: LoadBalancer
       annotations:
-        lbipam.cilium.io/ips: "192.168.1.241"
+        lbipam.cilium.io/ips: "192.168.1.240"
+        lbipam.cilium.io/sharing-key: "pihole"
       http:
         enabled: true
         port: 80
       https:
         enabled: false
 
+    # Ephemeral: PVC disabled so the N replicas don't contend on one RWO volume.
+    # (Gravity/blocklists re-download on pod start; HA masks the per-pod warm-up.)
     persistentVolumeClaim:
-      enabled: true
-      storageClass: local-path
-      size: 1Gi
+      enabled: false
+
+    # Sane limits — Pi-hole is lightweight; generous CPU burst keeps it snappy
+    # under query spikes, memory bounded so it can't starve a node.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 384Mi
 
     # Upstreams: rely on the chart defaults (FTLCONF_dns_upstreams=8.8.8.8;8.8.4.4,
     # FTLCONF_dns_listeningMode=all). Do NOT set FTLCONF_dns_upstreams here — the
