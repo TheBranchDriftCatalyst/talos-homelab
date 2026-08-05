@@ -117,7 +117,13 @@ data:
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
           access_code_validity: minutes=1
-          access_token_validity: minutes=10
+          # gaka-93f.11.6: boomtime's OIDC web session lifetime = the id_token
+          # exp, and Authentik derives the id_token exp from access_token_validity.
+          # 10m forced a re-auth every 10 minutes. 12h gives a full working
+          # session. (The proper fix — boomtime using the stored refresh_token to
+          # silently mint a fresh id_token — is tracked in gaka-93f.11.6; this is
+          # the immediate-relief bump.)
+          access_token_validity: hours=12
           refresh_token_validity: days=30
           include_claims_in_id_token: true
           sub_mode: hashed_user_id
