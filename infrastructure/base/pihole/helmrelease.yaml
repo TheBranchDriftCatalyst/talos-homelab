@@ -76,3 +76,11 @@ spec:
     # FTLCONF_dns_listeningMode=all). Do NOT set FTLCONF_dns_upstreams here — the
     # chart already renders it, and a second entry is a duplicate-env error.
     # (Legacy dnsmasq.upstreamServers is also avoided — v6 rejects server= lines.)
+    extraEnvVars:
+      FTLCONF_dns_listeningMode: "all" # answer on the LB IP (belt-and-suspenders)
+      # Conditional forwarding: send reverse (PTR) lookups for the LAN subnet to the
+      # router so Pi-hole can show CLIENT HOSTNAMES instead of raw IPs in the graphs.
+      # Format: <enabled>,<cidr>,<router-ip>#<port>,<local-domain>
+      # Domain matches the router's DHCP "Domain Name" (localdomain).
+      # ⚠ Adjust 192.168.1.1 if your gateway/DHCP-DNS is elsewhere.
+      FTLCONF_dns_revServers: "true,192.168.1.0/24,192.168.1.1#53,localdomain"
