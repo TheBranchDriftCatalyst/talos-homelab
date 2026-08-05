@@ -21,5 +21,15 @@ spec:
     - match: Host(`pihole.${CLUSTER_DOMAIN}`)
       kind: Rule
       services:
+        # Sticky sessions: pin each browser to ONE pod. Pi-hole v6 keeps its API
+        # session store PER-INSTANCE (no shared backend), so without stickiness
+        # Traefik round-robins the 5 endpoints and the post-login SID lands on a
+        # different pod than the next request → 401 on /api/auth. The cookie keeps
+        # a session on the pod that authenticated it. (The VIP path works already
+        # because externalTrafficPolicy:Local pins to the VIP-node's local pod.)
         - name: pihole-web
           port: 80
+          sticky:
+            cookie:
+              name: pihole_lb
+              httpOnly: true
