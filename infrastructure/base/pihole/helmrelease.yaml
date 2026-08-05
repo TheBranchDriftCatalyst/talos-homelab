@@ -44,13 +44,20 @@ spec:
     replicaCount: 5 # = node count
     strategyType: RollingUpdate
     priorityClassName: pihole-critical # critical infra: schedule first, never evict
+    # SOFT anti-affinity (preferred, not required): pods still spread one-per-node
+    # in steady state, but rolling updates never deadlock — a new pod can schedule
+    # even while an old pod still occupies its target node (brief co-location is fine).
+    # Hard/required anti-affinity + per-pod gravity downloads made helm upgrades time
+    # out and roll back → DNS outage. Soft avoids that.
     affinity:
       podAntiAffinity:
-        requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app: pihole
-            topologyKey: kubernetes.io/hostname
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: pihole
+              topologyKey: kubernetes.io/hostname
     # Tolerate the control-plane taint so a Pi-hole also runs on talos00 — every
     # node needs a local backend for the eTP:Local VIP to fail over to any node.
     tolerations:
