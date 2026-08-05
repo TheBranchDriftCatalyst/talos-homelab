@@ -84,7 +84,9 @@ spec:
       # Domain matches the router's DHCP "Domain Name" (localdomain).
       # ⚠ Adjust 192.168.1.1 if your gateway/DHCP-DNS is elsewhere.
       FTLCONF_dns_revServers: "true,192.168.1.0/24,192.168.1.1#53,localdomain"
-      # SINGLE-POINT wildcard: every *.talos00 resolves to Traefik (192.168.1.54).
-      # Replaces per-service /etc/hosts entries AND avoids annotating 58 IngressRoutes.
+      # SINGLE-POINT wildcard: every *.${CLUSTER_DOMAIN} resolves to Traefik.
+      # Derived from cluster-settings (Flux postBuild substitutes ${...} here):
+      #   CLUSTER_DOMAIN=talos00, TALOS_NODE_IP=192.168.1.54 → address=/talos00/192.168.1.54
+      # Replaces per-service /etc/hosts AND avoids annotating 58 IngressRoutes.
       # v6-native (FTLCONF misc.dnsmasq_lines), not the legacy server= path that crashes.
-      FTLCONF_misc_dnsmasq_lines: "address=/talos00/192.168.1.54"
+      FTLCONF_misc_dnsmasq_lines: "address=/${CLUSTER_DOMAIN}/${TALOS_NODE_IP}"
