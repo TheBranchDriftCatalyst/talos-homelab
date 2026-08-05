@@ -1,0 +1,29 @@
+---
+# Pi-hole — Cluster Aggregate dashboard
+#
+# Aggregates DNS/ad-blocking stats ACROSS all Pi-hole instances (replicaCount 5,
+# one pod per node, single VIP 192.168.1.240 with externalTrafficPolicy Local so
+# only one instance actively serves DNS at a time). Each Pi-hole has its own
+# independent FTL stats DB, so panels use sum()/sum by() over the per-pod exporter
+# series to produce cluster-wide totals, and block% is computed from the summed
+# counters (never averaged across instances).
+#
+# Metrics source: ekofr/pihole-exporter sidecar (Pi-hole v6 REST API) scraped via
+# infrastructure/base/pihole/podmonitor.yaml. The exporter's own `hostname` label is
+# identical on every pod (sidecar hits 127.0.0.1) — per-instance breakout uses `pod`.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: pihole
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: networking
+spec:
+  folder: "Networking"
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-pihole
+    key: pihole.json

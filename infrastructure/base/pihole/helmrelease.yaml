@@ -71,6 +71,19 @@ spec:
       existingSecret: pihole-admin
       passwordKey: password
 
+    # Prometheus metrics via the chart's exporter sidecar (ekofr/pihole-exporter),
+    # which speaks the Pi-hole v6 REST API and re-exposes metrics on :9617 (port
+    # name "prometheus"). It auths using the SAME pihole-admin secret (PIHOLE_PASSWORD).
+    # The chart's own PodMonitor stays DISABLED — this repo owns the scrape config
+    # explicitly in git via infrastructure/base/pihole/podmonitor.yaml (avoids the
+    # double-scrape you'd get from two PodMonitors). See that file for scrape/label notes.
+    monitoring:
+      podMonitor:
+        enabled: false
+      sidecar:
+        enabled: true
+        port: 9617
+
     # DNS (:53) + web (:80) SHARE one LAN IP (.240) via Cilium LB IP-sharing.
     # Single VIP + externalTrafficPolicy:Local → whichever node holds the L2 lease
     # serves DNS from its local pod; node dies → lease + traffic move to another node
