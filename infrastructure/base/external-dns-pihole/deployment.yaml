@@ -36,7 +36,11 @@ spec:
             - --provider=pihole
             - --pihole-server=http://pihole-web.pihole.svc.cluster.local
             - --pihole-api-version=6 # supported in v0.17.0 (not v0.16.1); selects v6 REST API
-            - --domain-filter=talos00.lan
+            # Manage the EXISTING .talos00 zone directly — no hostname rename needed.
+            # traefik-proxy source reads every IngressRoute's Host() rule; each x.talos00
+            # becomes an A-record → 192.168.1.54 in Pi-hole. registry.talos00 included
+            # (replicates today's /etc/hosts behavior).
+            - --domain-filter=talos00
             # Traefik is hostPort (no LB IP) → point all records at the node IP
             - --default-targets=192.168.1.54
             - --policy=upsert-only
