@@ -21,10 +21,19 @@ spec:
     - match: Host(`pihole.${CLUSTER_DOMAIN}`)
       kind: Rule
       services:
-        # Active/standby failover (NOT round-robin): route through the VIP-backed
-        # pihole-web-vip Service (see web-vip-endpoint.yaml) so ALL web traffic
-        # converges on the single active pod behind the eTP:Local VIP. Pi-hole v6
-        # keeps its API session store per-instance, so one shared active pod means
-        # sessions always work; the L2 lease fails over to another node on failure.
-        - name: pihole-web-vip
+        # Session affinity: pin each browser to ONE pod. Pi-hole v6 keeps its API
+        # session store PER-INSTANCE (proven: a SID from pod A is invalid on pod B),
+        # so any spreading of a browser's requests across pods → 401 logout.
+        #
+        # IMPORTANT: point at pihole-web (the pod-endpoint Service), NOT the VIP.
+        # Traefik dials pod IPs directly here, so the sticky cookie deterministically
+        # pins a browser to one pod. Routing via the LB VIP does NOT work: eTP:Local
+        # only pins EXTERNAL traffic; for in-cluster (Traefik→VIP) traffic Cilium
+        # fans the VIP back out across all 5 pods (measured 1/8 session hits), which
+        # is why the VIP-as-failover attempt logged users straight back out.
+        - name: pihole-web
           port: 80
+          sticky:
+            cookie:
+              name: pihole_lb
+              httpOnly: true
