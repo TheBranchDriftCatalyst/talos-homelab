@@ -1,0 +1,43 @@
+---
+# Authentik Blueprint: talos-private access group
+#
+# Part of the kelsboi -> talos-private migration (bead TALOS-h4j). The old kelsboi
+# forward-auth Application + Proxy Provider + access Group are MANUAL (in the Authentik
+# DB, not IaC); this rebuilds them properly as blueprints under the repo-matching name
+# "talos-private". The user retires the manual kelsboi objects via the UI once this is live.
+#
+# THIS FILE = the shared access group only. The forward-auth Proxy Provider + Application +
+# the PolicyBinding that requires this group are added in a follow-up (they need the new
+# external domain that replaces kelsboi.dedyn.io — see TALOS-h4j). Creating the group first
+# is safe and lets you start adding members immediately.
+#
+# Mounted into authentik-server + authentik-worker at /blueprints/custom/talos-private.yaml
+# via the volume/volumeMount in helmrelease.yaml. The worker auto-reconciles it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-talos-private-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  talos-private.yaml: |
+    # Authentik Blueprint: talos-private group (IaC)
+    # Docs: https://docs.goauthentik.io/docs/customize/blueprints
+    version: 1
+    metadata:
+      name: talos-private access group
+      labels:
+        blueprints.goauthentik.io/description: "Shared access group gating all talos-private services"
+    entries:
+      # Shared access group. Empty by default — add members via the UI (Directory > Groups).
+      # The follow-up forward-auth Application binds a policy requiring membership in this group,
+      # so only its members reach the private services.
+      - model: authentik_core.group
+        id: talos-private-group
+        identifiers:
+          name: talos-private
+        attrs:
+          attributes:
+            description: "Members may access all talos-private services (immich, stash, whisparr, zipline, hot-ones, whoami)."
