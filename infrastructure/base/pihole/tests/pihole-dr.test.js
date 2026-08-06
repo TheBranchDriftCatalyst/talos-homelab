@@ -30,12 +30,14 @@ const C = {
   reset: "\x1b[0m", bold: "\x1b[1m", dim: "\x1b[2m",
   green: "\x1b[32m", red: "\x1b[31m", yellow: "\x1b[33m", cyan: "\x1b[36m", grey: "\x1b[90m",
 };
-const step = (m) => console.log(`\n${C.bold}${C.cyan}▶ ${m}${C.reset}`);
-const info = (m) => console.log(`   ${C.grey}${m}${C.reset}`);
+// write straight to stdout so Jest doesn't wrap every line with "console.log / at log (...)"
+const out = (s = "") => process.stdout.write(String(s) + "\n");
+const step = (m) => out(`\n${C.bold}${C.cyan}▶ ${m}${C.reset}`);
+const info = (m) => out(`   ${C.grey}${m}${C.reset}`);
 function check(label, ok, detail = "") {
   const mark = ok ? `${C.green}✓${C.reset}` : `${C.red}✗${C.reset}`;
   const d = detail ? `  ${C.dim}${detail}${C.reset}` : "";
-  console.log(`   ${mark} ${label}${d}`);
+  out(`   ${mark} ${label}${d}`);
   return ok;
 }
 function gauge(label, value, threshold, unit = "s") {
@@ -127,20 +129,20 @@ const record = (name, m) => METRICS.push({ name, ...m });
 function printSummary() {
   if (!METRICS.length) return;
   const pad = (s, n) => String(s).padEnd(n);
-  console.log(`\n${C.bold}${C.cyan}══════════════════ DR TEST — MEASUREMENTS ══════════════════${C.reset}`);
-  console.log(`   ${C.dim}${pad("Metric", 40)}${pad("Measured", 11)}${pad("Threshold", 11)}Result${C.reset}`);
-  console.log(`   ${C.dim}${"─".repeat(68)}${C.reset}`);
+  out(`\n${C.bold}${C.cyan}══════════════════ DR TEST — MEASUREMENTS ══════════════════${C.reset}`);
+  out(`   ${C.dim}${pad("Metric", 40)}${pad("Measured", 11)}${pad("Threshold", 11)}Result${C.reset}`);
+  out(`   ${C.dim}${"─".repeat(68)}${C.reset}`);
   for (const m of METRICS) {
     const meas = m.value !== undefined ? `${m.value}${m.unit || ""}` : m.text || "—";
     const thr = m.threshold !== undefined ? `≤ ${m.threshold}${m.unit || ""}` : m.thresholdText || "—";
     const mark = m.ok ? `${C.green}✓ PASS${C.reset}` : `${C.red}✗ FAIL${C.reset}`;
     const mc = m.ok ? C.green : C.red;
-    console.log(`   ${pad(m.name, 40)}${mc}${pad(meas, 11)}${C.reset}${C.dim}${pad(thr, 11)}${C.reset}${mark}`);
+    out(`   ${pad(m.name, 40)}${mc}${pad(meas, 11)}${C.reset}${C.dim}${pad(thr, 11)}${C.reset}${mark}`);
   }
   const passed = METRICS.filter((m) => m.ok).length;
-  console.log(`   ${C.dim}${"─".repeat(68)}${C.reset}`);
-  console.log(`   ${C.bold}${passed}/${METRICS.length} metrics within threshold${C.reset}`);
-  console.log(`${C.bold}${C.cyan}════════════════════════════════════════════════════════════${C.reset}\n`);
+  out(`   ${C.dim}${"─".repeat(68)}${C.reset}`);
+  out(`   ${C.bold}${passed}/${METRICS.length} metrics within threshold${C.reset}`);
+  out(`${C.bold}${C.cyan}════════════════════════════════════════════════════════════${C.reset}\n`);
 }
 
 // ============================================================================
