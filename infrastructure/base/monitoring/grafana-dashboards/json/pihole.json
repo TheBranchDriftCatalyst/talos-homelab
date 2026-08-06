@@ -9,6 +9,16 @@
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
         "type": "dashboard"
+      },
+      {
+        "datasource": {"type": "prometheus", "uid": "mimir"},
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(163, 100, 255, 1)",
+        "name": "nebula-sync run",
+        "expr": "changes(nebula_sync_last_success_timestamp_seconds[1m]) > 0",
+        "step": "30s",
+        "titleFormat": "nebula-sync run"
       }
     ]
   },
@@ -387,6 +397,105 @@
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (pod) (rate(pihole_dns_queries_today[10m]))", "legendFormat": "{{pod}}"}],
       "title": "DNS Served per Instance (q/s, by pod) — spot handoffs & split-brain",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 80},
+      "id": 106,
+      "panels": [],
+      "title": "Config Sync (nebula-sync)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Seconds since the last FULLY-clean sync (active backed up + every standby restored 200). Yellow past 10m, red past 15m — the worker's liveness probe restarts it if its heartbeat exceeds 900s. Metric: time() - nebula_sync_last_success_timestamp_seconds.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 600}, {"color": "red", "value": 900}]}, "unit": "s"}},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 81},
+      "id": 30,
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "time() - nebula_sync_last_success_timestamp_seconds", "legendFormat": "Age"}],
+      "title": "Last Sync Age",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Wall-clock duration of the most recent sync cycle (discover active → Teleporter backup → restore to standbys). Metric: nebula_sync_duration_seconds.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "s"}},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 81},
+      "id": 31,
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_duration_seconds", "legendFormat": "Duration"}],
+      "title": "Last Sync Duration",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Standby replicas restored OK in the last cycle (active is skipped, so expected = replicas - 1 = 4). Metric: nebula_sync_replicas_synced.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}, "unit": "none"}},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 81},
+      "id": 32,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_replicas_synced", "legendFormat": "Synced"}],
+      "title": "Replicas Synced (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Standby replicas that FAILED restore in the last cycle. 0 = healthy (green); any failure turns red and holds back Last Sync Age. Metric: nebula_sync_replicas_failed.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}, "unit": "none"}},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 81},
+      "id": 33,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_replicas_failed", "legendFormat": "Failed"}],
+      "title": "Replicas Failed (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Share of sync cycles that were fully clean over the last hour: rate(runs_total{result=success}) / rate(runs_total). Below 99% = recurring skips or partial restores.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 80}, {"color": "green", "value": 99}]}, "unit": "percent", "min": 0, "max": 100}},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 81},
+      "id": 34,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(nebula_sync_runs_total{result=\"success\"}[1h])) / clamp_min(sum(rate(nebula_sync_runs_total[1h])), 0.0001) * 100", "legendFormat": "Success %"}],
+      "title": "Sync Success Rate (1h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Total sync cycles the worker completed in the last 24h (any result). At SYNC_INTERVAL=300s the expected steady-state is ~288/day. Metric: increase(nebula_sync_runs_total[24h]).",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "text"}, "unit": "none"}},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 81},
+      "id": 35,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(increase(nebula_sync_runs_total[24h]))", "legendFormat": "Runs (24h)"}],
+      "title": "Sync Runs (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Sync cycles per interval, split success vs failure (increase of nebula_sync_runs_total by result). Green bars = clean cycles; red bars = skips or partial restores. Steady green cadence = healthy config propagation.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 70, "gradientMode": "none", "lineWidth": 1, "showPoints": "never", "spanNulls": false, "stacking": {"mode": "normal", "group": "A"}}, "unit": "none"}, "overrides": [{"matcher": {"id": "byName", "options": "success"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]}, {"matcher": {"id": "byName", "options": "failure"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}]},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 85},
+      "id": 36,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["sum"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (result) (increase(nebula_sync_runs_total[$__rate_interval]))", "legendFormat": "{{result}}"}],
+      "title": "Sync Runs (success / failure)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Per-cycle sync duration (left axis, seconds) with failed-replica count overlaid (right axis). A duration spike or a non-zero failed count marks a troubled cycle — cross-reference the 'nebula-sync run' annotation on the query-rate panels above.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "auto", "spanNulls": true}, "unit": "s"}, "overrides": [{"matcher": {"id": "byName", "options": "Replicas failed"}, "properties": [{"id": "unit", "value": "none"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "custom.axisLabel", "value": "replicas failed"}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}, {"id": "custom.drawStyle", "value": "bars"}, {"id": "custom.fillOpacity", "value": 40}]}]},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 85},
+      "id": 37,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_duration_seconds", "legendFormat": "Duration"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_replicas_failed", "legendFormat": "Replicas failed"}
+      ],
+      "title": "Sync Duration & Failed Replicas",
       "type": "timeseries"
     }
   ],
