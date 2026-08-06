@@ -50,7 +50,7 @@ spec:
             capabilities: {drop: ["ALL"]}
           env:
             - name: SYNC_INTERVAL
-              value: "60" # seconds between syncs (tunable)
+              value: "300" # seconds between syncs (5 min; config/failover are infrequent)
             - name: PIHOLE_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -87,9 +87,9 @@ spec:
           resources:
             requests: {cpu: 10m, memory: 32Mi}
             limits: {memory: 64Mi}
-          livenessProbe: # self-heal if the loop wedges (no successful sync in ~5 min)
+          livenessProbe: # self-heal if the loop wedges (no successful sync in ~2 intervals)
             exec:
-              command: ["/bin/sh", "-c", "test $(( $(date +%s) - $(cat /tmp/last-sync 2>/dev/null || echo 0) )) -lt 300"]
+              command: ["/bin/sh", "-c", "test $(( $(date +%s) - $(cat /tmp/last-sync 2>/dev/null || echo 0) )) -lt 900"]
             initialDelaySeconds: 30
             periodSeconds: 60
             failureThreshold: 3
