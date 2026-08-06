@@ -15,13 +15,19 @@
 #
 # A long-running loop (not a per-minute CronJob) avoids spinning up ~1440 pods/day. Restores
 # only ever hit IDLE standbys (the active pod is skipped), so the interval has no DNS impact.
+#
+# LABELS: this pod is deliberately app=nebula-sync, NOT app=pihole — carrying app=pihole would
+# (a) make it a phantom endpoint of the DNS VIP Service and (b) make it a self-sync target.
+# The loop selects real Pi-hole pods with `app=pihole,statefulset.kubernetes.io/pod-name`.
+# SHELL VARS use bare $VAR (no braces): Flux postBuild envsubst rewrites ${...} tokens even
+# inside this args block, so ${VAR} would be eaten — bare $VAR is left for the shell to expand.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: nebula-sync
   namespace: pihole
   labels:
-    app: pihole
+    app: nebula-sync
     app.kubernetes.io/component: config-sync
 spec:
   replicas: 1
@@ -29,12 +35,11 @@ spec:
     type: Recreate
   selector:
     matchLabels:
-      app: pihole
-      app.kubernetes.io/component: config-sync
+      app: nebula-sync
   template:
     metadata:
       labels:
-        app: pihole
+        app: nebula-sync
         app.kubernetes.io/component: config-sync
     spec:
       serviceAccountName: nebula-sync
@@ -60,34 +65,40 @@ spec:
           args:
             - |
               set -u
-              auth() { curl -s --max-time 10 -X POST "http://$1/api/auth" -H 'Content-Type: application/json' --data "{\"password\":\"$PIHOLE_PASSWORD\"}" | sed -n 's/.*"sid":"\([^"]*\)".*/\1/p'; }
+              KUBECTL="kubectl --request-timeout=10s"
+              # password via stdin (never on the curl argv / process list)
+              auth() { printf '{"password":"%s"}' "$PIHOLE_PASSWORD" | curl -s --max-time 10 -X POST "http://$1/api/auth" -H 'Content-Type: application/json' --data @- | sed -n 's/.*"sid":"\([^"]*\)".*/\1/p'; }
+              # only real StatefulSet pihole pods (excludes THIS worker + anything else)
+              PSEL='app=pihole,statefulset.kubernetes.io/pod-name'
               sync_once() {
-                NODE=$(kubectl get lease cilium-l2announce-pihole-pihole -n kube-system -o jsonpath='{.spec.holderIdentity}' 2>/dev/null)
+                NODE=$($KUBECTL get lease cilium-l2announce-pihole-pihole -n kube-system -o jsonpath='{.spec.holderIdentity}' 2>/dev/null)
                 [ -n "$NODE" ] || { echo "no L2 lease holder yet; skip"; return 0; }
-                ACTIVE_IP=$(kubectl get pods -n pihole -l app=pihole --field-selector spec.nodeName="$NODE" -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
-                ACTIVE_POD=$(kubectl get pods -n pihole -l app=pihole --field-selector spec.nodeName="$NODE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                ACTIVE_IP=$($KUBECTL get pods -n pihole -l "$PSEL" --field-selector spec.nodeName="$NODE" -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
+                ACTIVE_POD=$($KUBECTL get pods -n pihole -l "$PSEL" --field-selector spec.nodeName="$NODE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
                 [ -n "$ACTIVE_IP" ] || { echo "cannot resolve active pod on $NODE; skip"; return 0; }
                 SID=$(auth "$ACTIVE_IP"); [ -n "$SID" ] || { echo "auth to active $ACTIVE_POD failed; skip"; return 0; }
                 curl -s --max-time 20 -o /tmp/tele.zip -H "X-FTL-SID: $SID" "http://$ACTIVE_IP/api/teleporter"
                 SZ=$(wc -c </tmp/tele.zip 2>/dev/null || echo 0)
                 [ "$SZ" -gt 100 ] || { echo "backup too small ($SZ); skip"; return 0; }
+                # heartbeat: a healthy cycle reached the active primary + got its config.
+                # (Liveness tracks loop-alive, NOT per-replica restore success.)
+                date +%s > /tmp/last-sync
                 OK=0; FAIL=0
-                for IP in $(kubectl get pods -n pihole -l app=pihole -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null); do
+                for IP in $($KUBECTL get pods -n pihole -l "$PSEL" -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null); do
                   { [ -z "$IP" ] || [ "$IP" = "$ACTIVE_IP" ]; } && continue
-                  RSID=$(auth "$IP"); [ -n "$RSID" ] || { FAIL=$((FAIL+1)); continue; }
+                  RSID=$(auth "$IP"); [ -n "$RSID" ] || { echo "  $IP auth failed"; FAIL=$((FAIL+1)); continue; }
                   CODE=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H "X-FTL-SID: $RSID" -F "file=@/tmp/tele.zip" "http://$IP/api/teleporter")
                   [ "$CODE" = "200" ] && OK=$((OK+1)) || { echo "  $IP restore HTTP=$CODE"; FAIL=$((FAIL+1)); }
                 done
                 echo "$(date -u +%FT%TZ) primary=$ACTIVE_POD synced=$OK failed=$FAIL"
-                [ "$FAIL" -eq 0 ] && date +%s > /tmp/last-sync || true
               }
-              echo "nebula-sync worker starting (interval ${SYNC_INTERVAL}s)"
+              echo "nebula-sync worker starting (interval $SYNC_INTERVAL s)"
               date +%s > /tmp/last-sync
-              while true; do sync_once; sleep "${SYNC_INTERVAL:-60}"; done
+              while true; do sync_once; sleep "$SYNC_INTERVAL"; done
           resources:
             requests: {cpu: 10m, memory: 32Mi}
             limits: {memory: 64Mi}
-          livenessProbe: # self-heal if the loop wedges (no successful sync in ~2 intervals)
+          livenessProbe: # self-heal if the loop wedges (no reached-active in ~2 intervals)
             exec:
               command: ["/bin/sh", "-c", "test $(( $(date +%s) - $(cat /tmp/last-sync 2>/dev/null || echo 0) )) -lt 900"]
             initialDelaySeconds: 30
