@@ -84,15 +84,14 @@ spec:
       mode: console
       level: info
 
-  # Persistence for dashboards and settings
-  persistentVolumeClaim:
-    spec:
-      accessModes:
-        - ReadWriteOnce
-      resources:
-        requests:
-          storage: 1Gi
-      storageClassName: local-path
+  # NO persistence — Grafana runs as pure cattle. /var/lib/grafana is ephemeral
+  # (emptyDir). ALL state is code: dashboards are GrafanaDashboard CRs and
+  # datasources are GrafanaDatasource CRs, re-pushed by grafana-operator on every
+  # restart. Any dashboard worth keeping MUST be promoted to a CR under
+  # infrastructure/base/monitoring/grafana-dashboards/ — UI-only edits do not
+  # survive a pod roll. (A persistentVolumeClaim block used to live here but was
+  # never wired into the deployment by grafana-operator v5, so it did nothing for
+  # 52 days; removed to avoid the misleading Pending PVC.)
 
   # Service configuration
   service:
