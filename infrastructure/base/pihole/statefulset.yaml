@@ -1,0 +1,152 @@
+---
+# Pi-hole as a StatefulSet (replaces the mojo2600 Deployment chart).
+#
+# WHY a StatefulSet: we need PER-POD persistent storage (each FTL keeps its own
+# SQLite pihole-FTL.db + gravity.db — SQLite must NOT be shared/NFS or it corrupts)
+# and STABLE pod identities (pihole-0..4) so nebula-sync can address replicas by DNS.
+# The chart renders a Deployment and can do neither.
+#
+# HA model: 5 pods, one per node (soft anti-affinity). A SINGLE LoadBalancer Service
+# (service-vip.yaml) carries DNS :53 + web :80 on VIP .240 with externalTrafficPolicy
+# Local → one Cilium L2 lease → the lease-holder node's pod serves BOTH DNS and web.
+# So the web UI always follows the current DNS-active primary (real live stats), and
+# there is no split (the split was two Services sharing the VIP; one multi-port Service
+# gets one lease). nebula-sync keeps the other pods' config in step.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: pihole
+  namespace: pihole
+  labels:
+    app: pihole
+spec:
+  serviceName: pihole-headless
+  replicas: 5 # = node count (one-per-node HA)
+  podManagementPolicy: Parallel # bring all pods up together (DNS fleet, not ordered)
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: pihole
+  template:
+    metadata:
+      labels:
+        app: pihole
+    spec:
+      priorityClassName: pihole-critical # LAN-critical DNS: schedule first, evict last
+      terminationGracePeriodSeconds: 30
+      # SOFT one-per-node anti-affinity (preferred): steady-state spread without
+      # deadlocking rollouts (a new pod can schedule while an old one still occupies
+      # its target node). Every node needs a local backend for the eTP:Local VIP.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: pihole
+                topologyKey: kubernetes.io/hostname
+      # Tolerate the control-plane taint so a Pi-hole also runs on talos00.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: pihole
+          image: pihole/pihole:2026.07.2 # Pi-hole v6
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: false
+          ports:
+            - {name: http, containerPort: 80, protocol: TCP}
+            - {name: dns, containerPort: 53, protocol: TCP}
+            - {name: dns-udp, containerPort: 53, protocol: UDP}
+          env:
+            - name: FTLCONF_webserver_port
+              value: "80"
+            - name: VIRTUAL_HOST
+              value: "pi.hole"
+            - name: FTLCONF_misc_etc_dnsmasq_d
+              value: "true"
+            # Admin/API password from ESO (1Password). nebula-sync + exporter reuse it.
+            - name: FTLCONF_webserver_api_password
+              valueFrom:
+                secretKeyRef:
+                  name: pihole-admin
+                  key: password
+            # Let nebula-sync apply config via the v6 API (Teleporter restore).
+            - name: FTLCONF_webserver_api_app_sudo
+              value: "true"
+            - name: FTLCONF_dns_listeningMode
+              value: "all"
+            # Conditional forwarding so graphs show client hostnames.
+            - name: FTLCONF_dns_revServers
+              value: "true,192.168.1.0/24,192.168.1.1#53,localdomain"
+            - name: FTLCONF_dns_upstreams
+              value: "8.8.8.8;8.8.4.4"
+            # TWO dnsmasq lines (verified: newline block → 2-element array):
+            #   1) wildcard *.talos00 → Traefik ingress (all other services).
+            #   2) MORE-SPECIFIC pihole.talos00 → the VIP .240 directly (longest-match
+            #      wins) so the browser hits the ACTIVE pod's UI (external → eTP:Local →
+            #      single active pod → real live stats + sticky session). No Traefik.
+            - name: FTLCONF_misc_dnsmasq_lines
+              value: |-
+                address=/${CLUSTER_DOMAIN}/${TALOS_NODE_IP}
+                address=/pihole.${CLUSTER_DOMAIN}/192.168.1.240
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 384Mi}
+          volumeMounts:
+            - name: etc-pihole
+              mountPath: /etc/pihole
+          startupProbe: # allow slow first-boot gravity download (persisted after)
+            exec:
+              command: ["/bin/sh", "-c", "curl --silent http://localhost/api/info/login | jq 'if (.dns | not) then halt_error(1) end'"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "curl --silent http://localhost/api/info/login | jq 'if (.dns | not) then halt_error(1) end'"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "curl --silent http://localhost/api/info/login | jq 'if (.dns | not) then halt_error(1) end'"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+        # Prometheus exporter sidecar (Pi-hole v6 has no native /metrics). Speaks the
+        # v6 REST API on 127.0.0.1 and re-exposes metrics on :9617 (name "prometheus",
+        # scraped by podmonitor.yaml). Auths with the same pihole-admin secret.
+        - name: exporter
+          image: ekofr/pihole-exporter:v1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: prometheus, containerPort: 9617, protocol: TCP}
+          env:
+            - name: PIHOLE_HOSTNAME
+              value: "127.0.0.1"
+            - name: PIHOLE_PORT
+              value: "80"
+            - name: PIHOLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pihole-admin
+                  key: password
+          resources:
+            limits: {memory: 128Mi}
+  # Per-pod persistent storage. local-path = node-bound RWO, SQLite-safe (the repo
+  # rule: "SQLite CANNOT use NFS due to locking"). Each pod gets etc-pihole-pihole-<n>.
+  volumeClaimTemplates:
+    - metadata:
+        name: etc-pihole
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 2Gi

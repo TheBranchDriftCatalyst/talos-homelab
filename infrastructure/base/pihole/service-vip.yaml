@@ -1,0 +1,35 @@
+---
+# THE single Pi-hole VIP: DNS (:53 TCP+UDP) AND web (:80) on ONE Service, one LAN IP.
+#
+# One Service ⇒ one Cilium LB-IPAM allocation ⇒ ONE L2 announcement lease ⇒ ONE node
+# announces .240 ⇒ that node's local pod (eTP:Local) serves BOTH DNS and web. So the
+# web UI ALWAYS follows the current DNS-active primary (real live stats), and there is
+# NO split (TALOS-ghw was two Services sharing the VIP → two leases on two nodes).
+# externalTrafficPolicy:Local preserves client IPs and pins external traffic to the
+# active node's pod (sessions stick — single pod per browser).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pihole
+  namespace: pihole
+  labels:
+    app: pihole # LB-IPAM pool + L2 policy select on this
+  annotations:
+    lbipam.cilium.io/ips: "192.168.1.240"
+    lbipam.cilium.io/sharing-key: "pihole"
+    # Homepage tile (moved here from the retired Traefik IngressRoute).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Pi-hole"
+    gethomepage.dev/description: "LAN DNS + ad-blocking (HA, active-follows-VIP)"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/icon: "pi-hole.png"
+    gethomepage.dev/href: "http://pihole.${CLUSTER_DOMAIN}/admin"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local # single-active + client-IP preservation
+  selector:
+    app: pihole
+  ports:
+    - {name: dns-tcp, port: 53, targetPort: dns, protocol: TCP}
+    - {name: dns-udp, port: 53, targetPort: dns-udp, protocol: UDP}
+    - {name: web, port: 80, targetPort: http, protocol: TCP}
