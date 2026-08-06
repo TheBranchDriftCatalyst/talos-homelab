@@ -380,14 +380,14 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Which Pi-hole instance is actively serving DNS over time (serving = request rate > 0.05 q/s). HEALTHY = exactly ONE band 'serving' at a time; a VIP handoff shows the lit band moving between pods (this is normal failover). TWO+ 'serving' at once = split (the shared VIP is being announced by multiple nodes) — that's the anomaly to investigate. Idle instances stay visible (gray), nothing hidden.",
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"fillOpacity": 85, "lineWidth": 0}, "mappings": [{"type": "value", "options": {"0": {"color": "dark-gray", "index": 0, "text": "idle"}, "1": {"color": "green", "index": 1, "text": "serving"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "dark-gray", "value": null}, {"color": "green", "value": 1}]}, "min": 0, "max": 1, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 72},
+      "description": "DNS queries/sec served by EACH instance over time, derived from the per-pod cumulative query counter (10m rate). The active instance's line rides high while idle instances sit near zero; a VIP handoff shows one line dropping as another climbs (e.g. an earlier instance this morning → the current mainline). TWO lines high at once = split (the shared VIP being announced by multiple nodes) — the anomaly to catch. Real magnitude, every instance visible.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 72},
       "id": 27,
-      "options": {"alignValue": "left", "legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "mergeValues": true, "rowHeight": 0.9, "showValue": "never", "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (pod) (pihole_request_rate) > bool 0.05", "legendFormat": "{{pod}}"}],
-      "title": "DNS Serving Instance — active over time (spot handoffs & split-brain)",
-      "type": "state-timeline"
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (pod) (rate(pihole_dns_queries_today[10m]))", "legendFormat": "{{pod}}"}],
+      "title": "DNS Served per Instance (q/s, by pod) — spot handoffs & split-brain",
+      "type": "timeseries"
     }
   ],
   "preload": false,
