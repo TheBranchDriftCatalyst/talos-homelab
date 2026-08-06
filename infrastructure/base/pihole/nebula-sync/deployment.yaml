@@ -65,6 +65,11 @@ spec:
           args:
             - |
               set -u
+              # This kubectl build doesn't auto-detect in-cluster config, so write a
+              # kubeconfig pointing at the in-cluster API + reading the SA token from its
+              # file (tokenFile → no token on argv, survives rotation). Bare $VARs dodge Flux.
+              printf 'apiVersion: v1\nkind: Config\nclusters:\n- name: c\n  cluster:\n    server: https://%s:%s\n    certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt\ncontexts:\n- name: c\n  context:\n    cluster: c\n    user: u\ncurrent-context: c\nusers:\n- name: u\n  user:\n    tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token\n' "$KUBERNETES_SERVICE_HOST" "$KUBERNETES_SERVICE_PORT" > /tmp/kubeconfig
+              export KUBECONFIG=/tmp/kubeconfig
               KUBECTL="kubectl --request-timeout=10s"
               # password via stdin (never on the curl argv / process list)
               auth() { printf '{"password":"%s"}' "$PIHOLE_PASSWORD" | curl -s --max-time 10 -X POST "http://$1/api/auth" -H 'Content-Type: application/json' --data @- | sed -n 's/.*"sid":"\([^"]*\)".*/\1/p'; }
