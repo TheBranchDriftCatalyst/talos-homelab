@@ -1,6 +1,16 @@
 ---
 # GrafanaDashboard CRD for External-DNS monitoring
-# Dashboard: https://grafana.com/grafana/dashboards/15038-external-dns/
+#
+# Custom operator-focused dashboard (replaces the weak community dashboard 15038,
+# which was just a wall of raw internal counters + generic cgroup panels).
+# Answers "what DNS records do I actually manage?" via a Loki-sourced record-change
+# audit + live registry counts, plus real sync/health signal (last-sync AGE, drift
+# between desired vs managed, error rates).
+#
+# JSON lives at ../json/external-dns.json and is packaged into the
+# `dashboard-external-dns` ConfigMap by the grafana-dashboards kustomization
+# (configMapGenerator). The dashboard `uid` (eea5u_I7z) is preserved so this
+# REPLACES the existing "External DNS" dashboard rather than duplicating it.
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
@@ -14,8 +24,6 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: 'grafana'
-  grafanaCom:
-    id: 15038
-  datasources:
-    - inputName: 'DS_PROMETHEUS'
-      datasourceName: 'Mimir'
+  configMapRef:
+    name: dashboard-external-dns
+    key: external-dns.json

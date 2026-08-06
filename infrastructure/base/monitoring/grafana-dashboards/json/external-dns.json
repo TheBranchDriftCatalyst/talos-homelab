@@ -1,0 +1,520 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "mimir" },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "name": "DNS record change",
+        "expr": "changes(external_dns_registry_endpoints_total{job=\"external-dns\"}[2m]) != 0",
+        "step": "60s",
+        "titleFormat": "endpoints changed"
+      }
+    ]
+  },
+  "description": "Operational view of external-dns (Cloudflare provider, zone knowledgedump.space). Answers 'what records do I actually manage?' via a Loki-sourced record-change audit and live registry counts, plus real sync/health signal (last-sync AGE, drift between desired and managed, error rates).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "preload": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Status & Sync Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Is the external-dns controller pod up and being scraped? Sourced from the Prometheus `up` series for the external-dns job.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 1 } } },
+            { "type": "value", "options": { "1": { "text": "UP", "color": "green", "index": 0 } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(up{job=\"external-dns\"})", "legendFormat": "up" }
+      ],
+      "title": "Controller Health",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Time since the last SUCCESSFUL sync with Cloudflare. This is the number that matters — a low age means records are being reconciled. Green < 3 min (interval is 1 min), amber < 5 min, red = stale (controller stuck / provider unreachable).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 180 }, { "color": "red", "value": 300 } ] },
+          "unit": "s"
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 3, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "time() - max(external_dns_controller_last_sync_timestamp_seconds{job=\"external-dns\"})", "legendFormat": "sync age" }
+      ],
+      "title": "Last Sync Age",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Time since the last reconcile loop ran (with or without changes). Confirms the controller loop is alive independent of whether a provider sync was needed.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 180 }, { "color": "red", "value": 300 } ] },
+          "unit": "s"
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 6, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "time() - max(external_dns_controller_last_reconcile_timestamp_seconds{job=\"external-dns\"})", "legendFormat": "reconcile age" }
+      ],
+      "title": "Last Reconcile Age",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "How many DNS records external-dns currently OWNS in Cloudflare (tracked via the TXT registry, owner id `talos-homelab`). This is the count behind the inventory table below.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" }, "unit": "short" }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 9, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_endpoints_total{job=\"external-dns\"})", "legendFormat": "managed" }
+      ],
+      "title": "Managed Records",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "How many records the SOURCES (ingress, traefik-proxy, DNSEndpoint CRDs) want to exist. Compare with Managed Records — the difference is drift (see next panel).",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" }, "unit": "short" }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 12, "y": 1 },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_source_endpoints_total{job=\"external-dns\"})", "legendFormat": "desired" }
+      ],
+      "title": "Desired Records (sources)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Desired − Managed. Records the sources want that external-dns does not (yet) own. A small non-zero value is expected (policy is upsert-only, and the root A record is owned by the separate cloudflare-ddns deployment, not this registry). A growing value means reconciliation is failing to keep up.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "orange", "value": 5 } ] },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 15, "y": 1 },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_source_endpoints_total{job=\"external-dns\"}) - max(external_dns_registry_endpoints_total{job=\"external-dns\"})", "legendFormat": "drift" }
+      ],
+      "title": "Unreconciled (drift)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Errors talking to the SOURCES (k8s API) in the last 15 min, plus provider/registry errors. Any non-zero value here is why the sync age above might be climbing. Sums `source_errors_total` + `registry_errors_total`.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 18, "y": 1 },
+      "id": 7,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(increase(external_dns_registry_errors_total{job=\"external-dns\"}[15m])) + sum(increase(external_dns_source_errors_total{job=\"external-dns\"}[15m]))", "legendFormat": "errors" }
+      ],
+      "title": "Errors (15m)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Reconcile loops in the last 15 min that completed with no change needed (`no_op_runs_total`). A steady non-zero rate is the healthy heartbeat — the controller is looping (every ~1 min) and Cloudflare already matches desired state.",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "fixed", "fixedColor": "green" }, "unit": "short" }
+      },
+      "gridPos": { "h": 4, "w": 3, "x": 21, "y": 1 },
+      "id": 8,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "value"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(increase(external_dns_controller_no_op_runs_total{job=\"external-dns\"}[15m]))", "legendFormat": "no-op runs" }
+      ],
+      "title": "Reconcile Heartbeat (15m)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "id": 101,
+      "panels": [],
+      "title": "Record Inventory — What external-dns Manages",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki-v2" },
+      "description": "THE inventory of DNS changes external-dns has applied to Cloudflare — every CREATE / UPDATE / DELETE with the FQDN, record type and TTL. Sourced from the controller's own logs (`msg=\"Changing record.\"`). Use the column filters + pagination to find a specific hostname. NOTE: this is a change/audit history bounded by Loki retention — records created before the retention window (or that have never changed) won't appear here; the live counts are in the stat row above and the type breakdown to the right.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": { "align": "left", "cellOptions": { "type": "auto" }, "filterable": true, "inspect": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Time" },
+            "properties": [ { "id": "custom.width", "value": 190 }, { "id": "unit", "value": "dateTimeAsIso" } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Action" },
+            "properties": [
+              { "id": "custom.width", "value": 100 },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } },
+              { "id": "mappings", "value": [
+                { "type": "value", "options": { "CREATE": { "color": "green", "index": 0 }, "UPDATE": { "color": "yellow", "index": 1 }, "DELETE": { "color": "red", "index": 2 } } }
+              ] }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Type" },
+            "properties": [ { "id": "custom.width", "value": 90 } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "TTL" },
+            "properties": [ { "id": "custom.width", "value": 80 } ]
+          }
+        ]
+      },
+      "gridPos": { "h": 12, "w": 18, "x": 0, "y": 6 },
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": true, "enablePagination": true, "fields": "", "reducer": [ "count" ], "show": true },
+        "showHeader": true,
+        "sortBy": [ { "desc": true, "displayName": "Time" } ]
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-v2" },
+          "expr": "{namespace=\"external-dns\", app_kubernetes_io_name=\"external-dns\"} | logfmt | msg=`Changing record.`",
+          "refId": "A",
+          "queryType": "range",
+          "maxLines": 5000
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "labels": true,
+              "labelTypes": true,
+              "tsNs": true,
+              "id": true,
+              "level": true,
+              "msg": true,
+              "zone": true,
+              "detected_level": true,
+              "app_kubernetes_io_name": true,
+              "container": true,
+              "instance": true,
+              "job": true,
+              "namespace": true,
+              "node": true,
+              "pod": true,
+              "service_name": true,
+              "cluster": true,
+              "stream": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "action": 1,
+              "record": 2,
+              "type": 3,
+              "ttl": 4
+            },
+            "renameByName": {
+              "action": "Action",
+              "record": "Record (FQDN)",
+              "type": "Type",
+              "ttl": "TTL"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Live composition of the records external-dns owns in the Cloudflare registry, by type. A and AAAA come from dedicated metrics; 'CNAME / TXT / other' is the remainder of the total endpoint count (external-dns only exports per-type gauges for A and AAAA). TXT records are the ownership markers external-dns writes for every record it manages.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] },
+          "unit": "short"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Total endpoints" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } } ] }
+        ]
+      },
+      "gridPos": { "h": 12, "w": 6, "x": 18, "y": 6 },
+      "id": 10,
+      "options": {
+        "displayMode": "gradient",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "left",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "showUnfilled": true,
+        "valueMode": "color"
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_a_records{job=\"external-dns\"})", "legendFormat": "A records", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_aaaa_records{job=\"external-dns\"})", "legendFormat": "AAAA records", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_endpoints_total{job=\"external-dns\"}) - max(external_dns_registry_a_records{job=\"external-dns\"}) - max(external_dns_registry_aaaa_records{job=\"external-dns\"})", "legendFormat": "CNAME / TXT / other", "refId": "C" },
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_endpoints_total{job=\"external-dns\"})", "legendFormat": "Total endpoints", "refId": "D" }
+      ],
+      "title": "Managed Records by Type",
+      "type": "bargauge"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 102,
+      "panels": [],
+      "title": "Sync Health Over Time",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Desired (from sources) vs Managed (in the Cloudflare registry) endpoint counts over time. When the two lines diverge, external-dns has records it wants to create/delete but hasn't reconciled — the gap is the drift stat above, shown historically.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "gradientMode": "opacity", "lineInterpolation": "stepAfter", "lineWidth": 2, "showPoints": "never", "spanNulls": true },
+          "unit": "short"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Managed (registry)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } } ] },
+          { "matcher": { "id": "byName", "options": "Desired (sources)" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } } ] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "id": 11,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": [ "last", "max" ] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_source_endpoints_total{job=\"external-dns\"})", "legendFormat": "Desired (sources)" },
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_endpoints_total{job=\"external-dns\"})", "legendFormat": "Managed (registry)" }
+      ],
+      "title": "Desired vs Managed Endpoints",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Managed records broken out by type over time (A, AAAA, and CNAME/TXT/other remainder). Watch for step changes that correspond to CREATE/DELETE events in the audit table.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 12, "gradientMode": "opacity", "lineInterpolation": "stepAfter", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": { "mode": "normal", "group": "A" } },
+          "unit": "short"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "id": 12,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": [ "last" ] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_a_records{job=\"external-dns\"})", "legendFormat": "A", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_aaaa_records{job=\"external-dns\"})", "legendFormat": "AAAA", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max(external_dns_registry_endpoints_total{job=\"external-dns\"}) - max(external_dns_registry_a_records{job=\"external-dns\"}) - max(external_dns_registry_aaaa_records{job=\"external-dns\"})", "legendFormat": "CNAME / TXT / other", "refId": "C" }
+      ],
+      "title": "Managed Records by Type (over time)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Error rate talking to sources (k8s API) and to the registry/provider (Cloudflare). Flat zero is healthy. Any sustained rate here explains a climbing Last Sync Age.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 15, "gradientMode": "opacity", "lineInterpolation": "linear", "lineWidth": 2, "showPoints": "never", "spanNulls": true },
+          "unit": "short"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "registry errors" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] },
+          { "matcher": { "id": "byName", "options": "source errors" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } } ] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "id": 13,
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": [ "last", "max" ] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(rate(external_dns_source_errors_total{job=\"external-dns\"}[$__rate_interval]))", "legendFormat": "source errors" },
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(rate(external_dns_registry_errors_total{job=\"external-dns\"}[$__rate_interval]))", "legendFormat": "registry errors" }
+      ],
+      "title": "Error Rate",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "description": "Reconcile heartbeat — no-op reconcile loops per second (`rate(no_op_runs_total)`). A steady line proves the controller is looping on schedule; a drop to zero means it has stopped reconciling even if the pod is still 'up'.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "green" },
+          "custom": { "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true },
+          "unit": "ops"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "id": 14,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(rate(external_dns_controller_no_op_runs_total{job=\"external-dns\"}[$__rate_interval]))", "legendFormat": "reconcile loops/s" }
+      ],
+      "title": "Reconcile Heartbeat",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "id": 103,
+      "panels": [],
+      "title": "Activity Log",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki-v2" },
+      "description": "Live external-dns controller log, with the steady-state 'All records are already up to date' heartbeat filtered out so only meaningful activity (startup, record changes, warnings, errors) shows. Remove the `!=` filter in the query to see everything.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 36 },
+      "id": 15,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki-v2" },
+          "expr": "{namespace=\"external-dns\", app_kubernetes_io_name=\"external-dns\"} != `All records are already up to date`",
+          "refId": "A",
+          "queryType": "range",
+          "maxLines": 1000
+        }
+      ],
+      "title": "external-dns Activity Log (heartbeat filtered)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [ "dns", "external-dns", "networking" ],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "External DNS",
+  "uid": "eea5u_I7z",
+  "version": 1,
+  "weekStart": ""
+}
