@@ -181,9 +181,58 @@ describe("VPN gateway — disaster recovery", () => {
     expect(rot).toBe("disabled");
   });
 
+  // --- stale-route (table 51820) regression guards [TALOS-4qwy] -----------------------------
+  // History: stale WireGuard rules persist across an in-pod gluetun restart -> `ip rule add ...
+  // file exists` -> crashloop (README: 257+ restarts). Fix = cleanup init (pod-create) + preStop
+  // (graceful exit). We can't inject the ungraceful-crash path from kubectl (SIGTERM cleans up
+  // gracefully; SIGKILL to PID 1 is kernel-blocked), so we guard the two observable invariants:
+  // the cleanup must EXIST, and the crashloop symptom must be ABSENT.
+  test("every gluetun pod carries the stale-route cleanup (init + preStop) [TALOS-4qwy]", async () => {
+    step("Regression guard: table-51820 cleanup must exist on every gluetun workload");
+    const deps = JSON.parse((await kubectl(`get deploy -n ${NS} -o json`, { check: false })) || '{"items":[]}');
+    const gluetunDeps = deps.items.filter((d) => (d.spec.template.spec.containers || []).some((c) => c.name === "gluetun"));
+    let allOk = gluetunDeps.length > 0;
+    for (const d of gluetunDeps) {
+      const spec = d.spec.template.spec;
+      const initOk = (spec.initContainers || []).some((c) => JSON.stringify(c.command || "").includes("51820"));
+      const g = spec.containers.find((c) => c.name === "gluetun");
+      const preStopOk = !!(g.lifecycle && g.lifecycle.preStop);
+      const ok = initOk && preStopOk;
+      allOk = allOk && ok;
+      check(`${d.metadata.name}: cleanup-init=${initOk} preStop=${preStopOk}`, ok);
+    }
+    record("gluetun pods have stale-route cleanup", { text: allOk ? `all ${gluetunDeps.length}` : "MISSING", thresholdText: "all", ok: allOk });
+    expect(allOk).toBe(true);
+  });
+
+  test("no gluetun pod is crash-looping (stale-route symptom) [TALOS-4qwy]", async () => {
+    step("Regression symptom: bounded gluetun restart rate (a table-51820 crashloop spikes it)");
+    const MAX_RATE = parseFloat(process.env.VPN_MAX_RESTART_RATE || "5"); // restarts/day
+    const pods = JSON.parse((await kubectl(`get pods -n ${NS} -o json`, { check: false })) || '{"items":[]}');
+    let worst = 0, allOk = true, seen = 0;
+    for (const p of pods.items) {
+      const cs = (p.status.containerStatuses || []).find((c) => c.name === "gluetun");
+      if (!cs) continue;
+      seen++;
+      const start = p.status.startTime ? new Date(p.status.startTime).getTime() : Date.now();
+      const ageDays = Math.max((Date.now() - start) / 86400000, 1 / 24); // floor at 1h
+      const rate = cs.restartCount / ageDays;
+      const ok = rate < MAX_RATE;
+      allOk = allOk && ok;
+      worst = Math.max(worst, rate);
+      check(`${p.metadata.name}: ${cs.restartCount} restarts / ${ageDays.toFixed(1)}d = ${rate.toFixed(2)}/day`, ok);
+    }
+    record("gluetun restart rate (worst pod)", { value: worst.toFixed(2), unit: "/day", threshold: MAX_RATE, ok: allOk });
+    expect(seen).toBeGreaterThan(0);
+    expect(allOk).toBe(true);
+  });
+
   dtest("T0 baseline — canary egress is a VPN exit IP BEFORE any chaos", async () => {
     step("T0 pre-flight: canary must already be tunnelled out a VPN exit before we break anything");
-    const ip = await canaryEgressIP();
+    // retry the read — a single busybox wget over VPN egress can transiently time out even
+    // though beforeAll already confirmed the tunnel is up.
+    let ip = "";
+    await waitUntil(async () => { const x = await canaryEgressIP(); if (isPublicIPv4(x) && x !== HOME_WAN) { ip = x; return true; } return false; }, 30000, 3000);
     const tunnelUp = await canaryTunnelUp();
     const vpnOk = isPublicIPv4(ip) && ip !== HOME_WAN;
     check("canary tunnel is up (control API = running)", tunnelUp);

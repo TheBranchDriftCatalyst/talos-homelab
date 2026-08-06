@@ -19,15 +19,40 @@ spec:
   restartPolicy: Always
   terminationGracePeriodSeconds: 5
   initContainers:
-    # flush any stale WireGuard policy rules so a gluetun restart doesn't crash-loop
+    # MIRRORS the real pods (deployment.yaml / securexng.yaml) EXACTLY — full IPv4+IPv6
+    # table-51820 flush + rule-del loop — so the DR test validates the ACTUAL production
+    # cleanup, not a weaker stand-in. This is the TALOS-4qwy stale-route guard (init side).
     - name: cleanup-routes
       image: busybox:1.36
       securityContext: {capabilities: {add: ["NET_ADMIN"]}}
-      command: ["/bin/sh", "-c", "ip rule del table 51820 2>/dev/null; ip -6 rule del table 51820 2>/dev/null; true"]
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Flushing stale wireguard routing table 51820..."
+          ip route flush table 51820 2>/dev/null || true
+          ip -6 route flush table 51820 2>/dev/null || true
+          while ip rule del table 51820 2>/dev/null; do :; done
+          while ip -6 rule del table 51820 2>/dev/null; do :; done
+          echo "Cleanup complete"
   containers:
     - name: gluetun
       image: qmcgaw/gluetun:v3.41.1
       securityContext: {capabilities: {add: ["NET_ADMIN"]}}
+      # preStop mirrors the real pods: flush stale rules on GRACEFUL exit (the other half of
+      # the TALOS-4qwy guard). Note: does NOT fire on an ungraceful crash-restart — the
+      # stale-rule-injection test below covers that uncovered path.
+      lifecycle:
+        preStop:
+          exec:
+            command:
+              - /bin/sh
+              - -c
+              - |
+                ip route flush table 51820 2>/dev/null || true
+                ip -6 route flush table 51820 2>/dev/null || true
+                while ip rule del table 51820 2>/dev/null; do :; done
+                while ip -6 rule del table 51820 2>/dev/null; do :; done
       env:
         - {name: VPN_SERVICE_PROVIDER, value: protonvpn}
         - {name: VPN_TYPE, value: wireguard}
