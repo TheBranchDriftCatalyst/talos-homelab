@@ -1,0 +1,62 @@
+# Cloudflare DNS records exporter (TALOS-2kg) — gives the external-dns dashboard a LIVE
+# record inventory + status buckets that external-dns's own metrics/logs can't provide.
+# Reuses the external-dns Cloudflare token (secret cloudflare-api-token / CF_API_TOKEN).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: external-dns-cf-exporter
+  namespace: external-dns
+  labels:
+    app: external-dns-cf-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: external-dns-cf-exporter
+  template:
+    metadata:
+      labels:
+        app: external-dns-cf-exporter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: exporter
+          image: python:3.12-alpine
+          command: ["python", "/app/exporter.py"]
+          env:
+            - name: CF_API_TOKEN
+              valueFrom:
+                secretKeyRef: {name: cloudflare-api-token, key: CF_API_TOKEN}
+            - {name: CF_ZONE, value: "knowledgedump.space"}
+            - {name: TXT_OWNER_ID, value: "talos-homelab"}
+            - {name: SCRAPE_INTERVAL, value: "60"}
+            - {name: PYTHONDONTWRITEBYTECODE, value: "1"} # readOnlyRootFilesystem: no __pycache__ writes
+          ports:
+            - {name: metrics, containerPort: 9100}
+          readinessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          livenessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 25
+            periodSeconds: 60
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          volumeMounts:
+            - {name: script, mountPath: /app, readOnly: true}
+      volumes:
+        - name: script
+          configMap:
+            name: cf-records-exporter-script # configMapGenerator (see kustomization.yaml)
+            defaultMode: 0555
