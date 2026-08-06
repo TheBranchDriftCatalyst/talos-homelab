@@ -13,6 +13,6 @@
 module.exports = {
   projects: [
     "<rootDir>/infrastructure/base/pihole/tests",
-    // "<rootDir>/infrastructure/base/vpn-gateway/tests", // ← VPN rotator DR (next)
+    "<rootDir>/infrastructure/base/vpn-gateway/tests",
   ],
 };
