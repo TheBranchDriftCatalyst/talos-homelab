@@ -22,7 +22,7 @@ const LEASE = process.env.PIHOLE_LEASE || "cilium-l2announce-pihole-pihole";
 const PROBE_DOMAIN = process.env.PIHOLE_PROBE_DOMAIN || "cloudflare.com";
 const SYNC_INTERVAL = parseInt(process.env.PIHOLE_SYNC_INTERVAL || "300", 10);
 const DESTRUCTIVE = process.env.PIHOLE_DR_DESTRUCTIVE === "1";
-const MAX_FAILOVER_S = parseFloat(process.env.PIHOLE_MAX_FAILOVER_S || "30");
+const MAX_FAILOVER_S = parseFloat(process.env.PIHOLE_MAX_FAILOVER_S || "5");
 const MAX_NOIMPACT_S = parseFloat(process.env.PIHOLE_MAX_NOIMPACT_S || "2");
 
 // ---- pretty output --------------------------------------------------------
@@ -121,6 +121,28 @@ function startProbe(intervalMs = 200) {
 
 const dtest = DESTRUCTIVE ? test : test.skip;
 
+// ---- measurements collector (printed as a summary table at the end) --------
+const METRICS = [];
+const record = (name, m) => METRICS.push({ name, ...m });
+function printSummary() {
+  if (!METRICS.length) return;
+  const pad = (s, n) => String(s).padEnd(n);
+  console.log(`\n${C.bold}${C.cyan}══════════════════ DR TEST — MEASUREMENTS ══════════════════${C.reset}`);
+  console.log(`   ${C.dim}${pad("Metric", 40)}${pad("Measured", 11)}${pad("Threshold", 11)}Result${C.reset}`);
+  console.log(`   ${C.dim}${"─".repeat(68)}${C.reset}`);
+  for (const m of METRICS) {
+    const meas = m.value !== undefined ? `${m.value}${m.unit || ""}` : m.text || "—";
+    const thr = m.threshold !== undefined ? `≤ ${m.threshold}${m.unit || ""}` : m.thresholdText || "—";
+    const mark = m.ok ? `${C.green}✓ PASS${C.reset}` : `${C.red}✗ FAIL${C.reset}`;
+    const mc = m.ok ? C.green : C.red;
+    console.log(`   ${pad(m.name, 40)}${mc}${pad(meas, 11)}${C.reset}${C.dim}${pad(thr, 11)}${C.reset}${mark}`);
+  }
+  const passed = METRICS.filter((m) => m.ok).length;
+  console.log(`   ${C.dim}${"─".repeat(68)}${C.reset}`);
+  console.log(`   ${C.bold}${passed}/${METRICS.length} metrics within threshold${C.reset}`);
+  console.log(`${C.bold}${C.cyan}════════════════════════════════════════════════════════════${C.reset}\n`);
+}
+
 // ============================================================================
 describe("Pi-hole HA — disaster recovery", () => {
   beforeAll(async () => {
@@ -132,9 +154,19 @@ describe("Pi-hole HA — disaster recovery", () => {
       info("read-only mode — set PIHOLE_DR_DESTRUCTIVE=1 for the chaos scenarios");
   });
 
+  beforeEach(async () => {
+    // each scenario starts from a healthy 5/5 (previous chaos may still be recovering)
+    await waitUntil(async () =>
+      (await kubectl(`get statefulset pihole -n ${NS} -o jsonpath={.status.readyReplicas}`,
+        { check: false })) === "5", 180000, 3000);
+  });
+
+  afterAll(printSummary);
+
   test("DNS resolves via the VIP", async () => {
     const ok = await dnsOk();
     check(`dig @${VIP} ${PROBE_DOMAIN}`, ok);
+    record("DNS resolves via VIP", { text: ok ? "yes" : "no", thresholdText: "yes", ok });
     expect(ok).toBe(true);
   });
 
@@ -143,6 +175,7 @@ describe("Pi-hole HA — disaster recovery", () => {
     const act = await activePod();
     check("one l2announce-pihole lease", n === 1, `count=${n}`);
     check("active pod resolvable from lease", !!act, act ? `${act.name} @ ${act.node}` : "none");
+    record("L2 leases (split-brain check)", { value: n, thresholdText: "= 1", ok: n === 1 });
     expect(n).toBe(1);
     expect(act).not.toBeNull();
   });
@@ -159,20 +192,23 @@ describe("Pi-hole HA — disaster recovery", () => {
     const probe = startProbe();
     await sleep(1200);
     await kubectl(`delete pod ${before.name} -n ${NS} --wait=false`);
-    info("waiting for the L2 lease + VIP to hand off to another pod…");
-    const failedOver = await waitUntil(async () => {
-      const a = await activePod();
-      return a && a.name !== before.name && (await dnsOk());
-    }, 120000);
+    info("waiting for DNS to recover via VIP/L2 failover…");
+    // Success = DNS is answering again (the pod name may stay the same — StatefulSet — and
+    // recovery can be fast; the meaningful signal is "DNS came back" + the measured blip).
+    const recovered = await waitUntil(async () => await dnsOk(), 120000, 1000);
     await sleep(4000);
     probe.stop();
     const dt = probe.worstDowntime();
     const now = await activePod();
-    check("failover completed", failedOver, now ? `new primary ${now.name}` : "TIMEOUT");
-    gauge("DNS downtime", dt, MAX_FAILOVER_S);
+    check("DNS recovered after active-pod kill", recovered, now ? `serving pod ${now.name}` : "TIMEOUT");
+    gauge("DNS failover downtime", dt, MAX_FAILOVER_S);
     check("no split-brain after failover", (await leaseCount()) === 1);
-    info(`overall DNS availability during test: ${(probe.availability() * 100).toFixed(1)}%`);
-    expect(failedOver).toBe(true);
+    info(`overall DNS availability during the kill window: ${(probe.availability() * 100).toFixed(1)}%`);
+    record("Failover DNS downtime (active-pod kill)", {
+      value: dt.toFixed(2), unit: "s", threshold: MAX_FAILOVER_S, ok: recovered && dt <= MAX_FAILOVER_S });
+    record("DNS availability during failover", {
+      value: (probe.availability() * 100).toFixed(1), unit: "%", thresholdText: "—", ok: recovered });
+    expect(recovered).toBe(true);
     expect(dt).toBeLessThanOrEqual(MAX_FAILOVER_S);
     expect(await leaseCount()).toBe(1);
   });
@@ -186,8 +222,10 @@ describe("Pi-hole HA — disaster recovery", () => {
     await kubectl(`delete pod ${standby.name} -n ${NS} --wait=false`);
     await sleep(15000);
     probe.stop();
-    gauge("DNS downtime", probe.worstDowntime(), MAX_NOIMPACT_S);
-    expect(probe.worstDowntime()).toBeLessThanOrEqual(MAX_NOIMPACT_S);
+    const dt = probe.worstDowntime();
+    gauge("DNS downtime", dt, MAX_NOIMPACT_S);
+    record("Standby-kill DNS downtime", { value: dt.toFixed(2), unit: "s", threshold: MAX_NOIMPACT_S, ok: dt <= MAX_NOIMPACT_S });
+    expect(dt).toBeLessThanOrEqual(MAX_NOIMPACT_S);
   });
 
   dtest("ISOLATION: kill nebula-sync → zero DNS impact + self-heal", async () => {
@@ -199,30 +237,36 @@ describe("Pi-hole HA — disaster recovery", () => {
     await kubectl(`delete pod ${p} -n ${NS} --wait=false`);
     await sleep(10000);
     probe.stop();
-    gauge("DNS downtime (sync worker is independent)", probe.worstDowntime(), MAX_NOIMPACT_S);
+    const dt = probe.worstDowntime();
+    gauge("DNS downtime (sync worker is independent)", dt, MAX_NOIMPACT_S);
     const healed = await waitUntil(async () =>
-      (await kubectl(`get deploy nebula-sync -n ${NS} -o jsonpath={.status.availableReplicas}`)) === "1",
+      (await kubectl(`get deploy nebula-sync -n ${NS} -o jsonpath={.status.availableReplicas}`, { check: false })) === "1",
       90000);
     check("nebula-sync self-healed", healed);
-    expect(probe.worstDowntime()).toBeLessThanOrEqual(MAX_NOIMPACT_S);
+    record("nebula-sync-kill DNS downtime", { value: dt.toFixed(2), unit: "s", threshold: MAX_NOIMPACT_S, ok: dt <= MAX_NOIMPACT_S });
+    record("nebula-sync self-heals", { text: healed ? "yes" : "no", thresholdText: "yes", ok: healed });
+    expect(dt).toBeLessThanOrEqual(MAX_NOIMPACT_S);
     expect(healed).toBe(true);
   });
 
-  dtest("PERSISTENCE: restart the active pod → stats survive (local-path PVC)", async () => {
+  dtest("PERSISTENCE: restart a pod → data on its PVC survives (local-path)", async () => {
+    // Directly prove the per-pod PVC persists across a pod restart via a marker file in
+    // /etc/pihole (the volumeClaimTemplate mount that holds pihole-FTL.db + gravity.db).
     const act = await activePod();
-    const before = await queriesToday(act.ip);
-    step(`Chaos: restart active ${C.yellow}${act.name}${C.reset} (had ${before} queries today)`);
+    const marker = `/etc/pihole/dr-marker-${Date.now()}`;
+    step(`Chaos: write ${C.yellow}${marker}${C.reset} then restart ${act.name}`);
+    await kubectl(`exec ${act.name} -n ${NS} -c pihole -- sh -c "echo dr-test > ${marker}"`);
     await kubectl(`delete pod ${act.name} -n ${NS} --wait=false`);
-    await waitUntil(async () =>
-      (await kubectl(`get pod ${act.name} -n ${NS} -o jsonpath={.status.containerStatuses[0].ready}`,
-        { check: false })) === "true", 180000);
-    await sleep(5000);
-    const ip = (await pods()).find((p) => p.name === act.name)?.ip;
-    const after = await queriesToday(ip);
-    check("stats survived restart", after !== null && after >= before * 0.5,
-      `before=${before} after=${after}`);
-    expect(after).not.toBeNull();
-    expect(after).toBeGreaterThanOrEqual(Math.floor(before * 0.5));
+    // wait for the POD (all containers, incl. pihole) to be Ready — not just sidecar[0]
+    await kubectl(`wait --for=condition=Ready pod/${act.name} -n ${NS} --timeout=180s`, { check: false });
+    await sleep(2000);
+    const found = await kubectl(
+      `exec ${act.name} -n ${NS} -c pihole -- sh -c "test -f ${marker} && echo YES || echo NO"`,
+      { check: false });
+    check("PVC data survived the restart", found.includes("YES"), `marker → ${found.trim()}`);
+    await kubectl(`exec ${act.name} -n ${NS} -c pihole -- rm -f ${marker}`, { check: false }); // cleanup
+    record("PVC data survives pod restart", { text: found.includes("YES") ? "YES" : "NO", thresholdText: "YES", ok: found.includes("YES") });
+    expect(found).toContain("YES");
   });
 });
 
