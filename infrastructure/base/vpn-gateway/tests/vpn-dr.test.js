@@ -114,13 +114,47 @@ async function vpnRunning(pod) {
   return /running/.test(o);
 }
 
+// ---- ad-hoc canary (destructive chaos target — real services untouched) ----
+const path = require("path");
+const CANARY = "vpn-canary";
+const CANARY_YAML = path.join(__dirname, "canary-pod.yaml");
+// egress IP from the canary's OWN netns (busybox probe container; http = busybox has no TLS)
+async function canaryEgressIP() {
+  const o = await kubectl(`exec ${CANARY} -n ${NS} -c probe -- sh -c "wget -qO- --timeout=4 http://api.ipify.org 2>/dev/null || true"`, { check: false, timeout: 25000 });
+  const m = o.match(IPV4); return m ? m[1] : "";
+}
+async function canaryTunnelUp() {
+  const o = await kubectl(`exec ${CANARY} -n ${NS} -c gluetun -- sh -c "wget -qO- --timeout=5 http://localhost:8000/v1/vpn/status 2>/dev/null || true"`, { check: false, timeout: 20000 });
+  return /running/.test(o);
+}
+async function createCanary() {
+  await kubectl(`apply -f ${CANARY_YAML}`);
+  await kubectl(`wait --for=condition=Ready pod/${CANARY} -n ${NS} --timeout=120s`, { check: false });
+  await waitUntil(canaryTunnelUp, 120000, 4000);
+  await waitUntil(async () => { const ip = await canaryEgressIP(); return isPublicIPv4(ip) && ip !== HOME_WAN; }, 120000, 4000);
+}
+const deleteCanary = () => kubectl(`delete pod ${CANARY} -n ${NS} --ignore-not-found --wait=false`, { check: false });
+// rotate the canary to a different ProtonVPN country via ITS OWN control API (as the real rotator
+// does). Belgium→India: both keys unused by real pods, so no duplicate-connection conflict.
+async function rotateCanary() {
+  const inKey = Buffer.from(await kubectl(`get secret protonvpn-credentials -n ${NS} -o jsonpath={.data.se-in-1}`, { check: false }), "base64").toString().trim();
+  const ip = await kubectl(`get pod ${CANARY} -n ${NS} -o jsonpath={.status.podIP}`);
+  const body = JSON.stringify({ wireguard: { private_key: inKey }, provider: { server_selection: { countries: ["India"] } } });
+  await kubectl(`run rot-${Date.now()} -n ${NS} --rm -i --restart=Never --image=curlimages/curl:8.10.1 --command -- curl -s -X PUT --max-time 15 --data '${body}' http://${ip}:8000/v1/vpn/settings`, { check: false, timeout: 45000 });
+}
+
 const dtest = DESTRUCTIVE ? test : test.skip;
 
 // ============================================================================
 describe("VPN gateway — disaster recovery", () => {
   jest.setTimeout(300000);
-  beforeAll(() => { if (!DESTRUCTIVE) step("read-only mode — set VPN_DR_DESTRUCTIVE=1 for chaos scenarios"); });
-  afterAll(printSummary);
+  beforeAll(async () => {
+    if (!DESTRUCTIVE) { step("read-only mode — set VPN_DR_DESTRUCTIVE=1 for chaos scenarios"); return; }
+    step("Spinning up the ad-hoc VPN canary (chaos target — real services stay untouched)");
+    await createCanary();
+    info(`canary ${CANARY} ready; exit IP ${await canaryEgressIP()}`);
+  }, 200000);
+  afterAll(async () => { if (DESTRUCTIVE) await deleteCanary(); printSummary(); });
 
   test("gateway tunnel is up (gluetun control API)", async () => {
     step("Pre-flight");
@@ -147,41 +181,47 @@ describe("VPN gateway — disaster recovery", () => {
     expect(rot).toBe("disabled");
   });
 
-  dtest("ROTATION does not disrupt the service pod (exit IP changes, app not restarted)", async () => {
-    const pod = await firstPod(SIDECAR.deploy);
-    const appRestarts = await restartCount(pod, SIDECAR.vpnContainer);
-    const ipBefore = await proxyExitIP();
-    step(`Chaos: force a rotation (was exit ${C.yellow}${ipBefore}${C.reset}); ${SIDECAR.deploy} must NOT restart`);
-    const job = `vpn-rotator-drtest-${Date.now()}`;
-    await kubectl(`create job ${job} -n ${NS} --from=cronjob/vpn-rotator`);
-    info("waiting for the rotation job to complete…");
-    await waitUntil(async () =>
-      (await kubectl(`get job ${job} -n ${NS} -o jsonpath={.status.succeeded}`, { check: false })) === "1", 180000, 4000);
-    await sleep(4000);
-    const ipAfter = await proxyExitIP();
-    const appRestartsAfter = await restartCount(pod, SIDECAR.vpnContainer);
-    const rotated = isPublicIPv4(ipAfter) && ipAfter !== HOME_WAN;
-    const noRestart = appRestartsAfter === appRestarts;
-    const ready = await podReady(pod);
-    check("exit IP is still a VPN IP after rotation", rotated, `${ipBefore} → ${ipAfter}`);
-    check("service pod NOT restarted by rotation", noRestart, `restarts ${appRestarts} → ${appRestartsAfter}`);
-    check(`${SIDECAR.deploy} still Ready`, ready);
-    await kubectl(`delete job ${job} -n ${NS} --ignore-not-found`, { check: false });
-    record("Rotation keeps a VPN exit IP", { text: ipAfter || "none", thresholdText: `≠ ${HOME_WAN}`, ok: rotated });
-    record("Rotation does NOT restart the app", { value: appRestartsAfter - appRestarts, unit: " restarts", threshold: 0, ok: noRestart });
-    expect(rotated).toBe(true);
-    expect(noRestart).toBe(true);
-    expect(ready).toBe(true);
+  dtest("T0 baseline — canary egress is a VPN exit IP BEFORE any chaos", async () => {
+    step("T0 pre-flight: canary must already be tunnelled out a VPN exit before we break anything");
+    const ip = await canaryEgressIP();
+    const tunnelUp = await canaryTunnelUp();
+    const vpnOk = isPublicIPv4(ip) && ip !== HOME_WAN;
+    check("canary tunnel is up (control API = running)", tunnelUp);
+    check("canary egress is a public VPN IP (not home WAN)", vpnOk, `${ip || "none"} ≠ ${HOME_WAN}`);
+    record("Canary baseline egress (T0)", { text: ip || "none", thresholdText: `≠ ${HOME_WAN}`, ok: vpnOk });
+    expect(tunnelUp).toBe(true);
+    expect(vpnOk).toBe(true);
   });
 
-  dtest("KILL-SWITCH holds — no home-WAN leak when the tunnel drops", async () => {
-    const pod = await firstPod(SIDECAR.deploy);
-    step(`Chaos: kill the gluetun tunnel in ${C.yellow}${pod}${C.reset}; app egress must NEVER be the home WAN`);
-    // kill gluetun's PID 1 → container exits + restarts; the pod netns (kill-switch iptables) persists
-    await kubectl(`exec ${pod} -n ${NS} -c ${SIDECAR.vpnContainer} -- sh -c "kill 1"`, { check: false });
+  dtest("ROTATION does not disrupt the canary app container (exit IP changes, no restart)", async () => {
+    const before = await canaryEgressIP();
+    const rcBefore = await restartCount(CANARY, "probe");
+    step(`Chaos: rotate the canary (was exit ${C.yellow}${before}${C.reset}); its 'app' container must NOT restart`);
+    await rotateCanary();
+    info("waiting for the new tunnel + exit IP…");
+    // capture the confirmed IP INSIDE the wait — re-reading afterward can catch the tunnel
+    // mid-flap (new server still stabilizing) and read empty.
+    let after = "";
+    await waitUntil(async () => { const ip = await canaryEgressIP(); if (isPublicIPv4(ip) && ip !== HOME_WAN) { after = ip; return true; } return false; }, 120000, 4000);
+    const rcAfter = await restartCount(CANARY, "probe");
+    const vpnOk = isPublicIPv4(after) && after !== HOME_WAN;
+    const noRestart = rcAfter === rcBefore;
+    check("exit IP still a VPN IP after rotation", vpnOk, `${before} → ${after}`);
+    check("exit IP actually changed (rotated)", after !== before, after !== before ? "changed" : "same server");
+    check("app container NOT restarted by rotation", noRestart, `restarts ${rcBefore} → ${rcAfter}`);
+    record("Rotation keeps a VPN exit", { text: after || "none", thresholdText: `≠ ${HOME_WAN}`, ok: vpnOk });
+    record("Rotation does NOT restart the app", { value: rcAfter - rcBefore, unit: " restarts", threshold: 0, ok: noRestart });
+    expect(vpnOk).toBe(true);
+    expect(noRestart).toBe(true);
+  });
+
+  dtest("KILL-SWITCH holds on the canary — no home-WAN leak when the tunnel drops", async () => {
+    step("Chaos: kill the canary gluetun tunnel; app egress must NEVER be the home WAN");
+    // kill gluetun PID 1 → container exits + restarts; the pod netns (kill-switch iptables) persists
+    await kubectl(`exec ${CANARY} -n ${NS} -c gluetun -- sh -c "kill 1"`, { check: false });
     let leaked = false, samples = 0;
     for (let i = 0; i < 12; i++) {
-      const ip = await podEgressIP(pod, SIDECAR.probeContainer); // "" = blocked (good)
+      const ip = await canaryEgressIP(); // "" = blocked (good)
       samples++;
       if (ip === HOME_WAN) { leaked = true; info(`  ${C.red}LEAK: egress = ${ip}${C.reset}`); break; }
       await sleep(1000);
@@ -191,16 +231,15 @@ describe("VPN gateway — disaster recovery", () => {
     expect(leaked).toBe(false);
   });
 
-  dtest("RECOVERY — tunnel + VPN egress restored after the kill", async () => {
-    const pod = await firstPod(SIDECAR.deploy);
-    step(`Recovery: waiting for ${pod} tunnel to come back with a VPN exit IP…`);
+  dtest("RECOVERY — canary VPN egress restored after the kill", async () => {
+    step("Recovery: waiting for the canary tunnel + VPN exit IP to come back…");
     const t0 = Date.now();
     const recovered = await waitUntil(async () => {
-      const ip = await podEgressIP(pod, SIDECAR.probeContainer);
+      const ip = await canaryEgressIP();
       return isPublicIPv4(ip) && ip !== HOME_WAN;
     }, MAX_RECOVERY_S * 1000, 3000);
     const dt = (Date.now() - t0) / 1000;
-    const restarts = await restartCount(pod, SIDECAR.vpnContainer);
+    const restarts = await restartCount(CANARY, "gluetun");
     gauge("VPN egress recovery time", dt, MAX_RECOVERY_S);
     check("no crash-loop (restarts bounded)", restarts >= 0 && restarts < 10, `gluetun restarts=${restarts}`);
     record("VPN egress recovery time", { value: dt.toFixed(1), unit: "s", threshold: MAX_RECOVERY_S, ok: recovered });
