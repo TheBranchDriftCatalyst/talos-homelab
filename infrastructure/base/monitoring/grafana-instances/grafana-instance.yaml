@@ -56,11 +56,13 @@ spec:
     # the Authentik "Sign in" button is added alongside it (auto_login off).
     # OIDC SSO via Authentik (blueprint: infrastructure/base/authentik/grafana-blueprint.yaml).
     #
-    # All OAuth URLs point at http://auth.talos00 so the browser redirect and
-    # the pod-side token/userinfo exchange hit the same host — keeping the
-    # id_token `iss` claim consistent. The pod reaches auth.talos00 by
-    # hairpinning through Traefik. If hairpin fails, switch token_url/api_url to
-    # http://authentik-server.authentik.svc.cluster.local/application/o/...
+    # Split-host OIDC (deliberate): the browser-facing auth_url uses
+    # http://auth.talos00 (what the user's browser resolves via /etc/hosts),
+    # while the pod-side token_url/api_url use in-cluster service DNS. The
+    # Grafana pod CANNOT hairpin to auth.talos00 (node LB IP), so a single-host
+    # config fails token exchange with "Failed to get token from provider".
+    # Grafana's generic_oauth does not enforce id_token issuer matching, so the
+    # host mismatch between auth_url and token_url is harmless.
     auth.generic_oauth:
       enabled: 'true'
       name: Authentik
@@ -69,8 +71,8 @@ spec:
       # client_secret comes from GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET env (above)
       scopes: 'openid profile email'
       auth_url: http://auth.talos00/application/o/authorize/
-      token_url: http://auth.talos00/application/o/token/
-      api_url: http://auth.talos00/application/o/userinfo/
+      token_url: http://authentik-server.authentik.svc.cluster.local/application/o/token/
+      api_url: http://authentik-server.authentik.svc.cluster.local/application/o/userinfo/
       use_pkce: 'true'
       allow_sign_up: 'true'
       auto_login: 'false'
