@@ -1,0 +1,95 @@
+---
+# ⚠️ NAMING: "nebula-sync" here = PI-HOLE CONFIG SYNC (v6 Teleporter backup/restore).
+# It is NOT related to "Nebula" the Slack overlay-network mesh VPN or its "lighthouse"
+# nodes — entirely unrelated project, just an unfortunate name collision. This worker
+# only touches Pi-hole's REST API; it has nothing to do with networking/VPN.
+#
+# Pi-hole config sync worker that FOLLOWS THE ACTIVE PRIMARY.
+#
+# With one VIP for DNS+web, the user's UI + config changes land on whatever pod holds the
+# Cilium L2 lease (the active primary). This worker loops every SYNC_INTERVAL seconds:
+# it discovers that pod, backs up its config via the v6 Teleporter API, and restores it to
+# every OTHER pod — so settings/blocklists made through the single UI propagate and standbys
+# stay failover-ready. Teleporter carries pihole.toml + gravity.db (adlists, allow/deny,
+# clients, groups) — NOT stats (those stay per-pod, which is correct).
+#
+# A long-running loop (not a per-minute CronJob) avoids spinning up ~1440 pods/day. Restores
+# only ever hit IDLE standbys (the active pod is skipped), so the interval has no DNS impact.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nebula-sync
+  namespace: pihole
+  labels:
+    app: pihole
+    app.kubernetes.io/component: config-sync
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pihole
+      app.kubernetes.io/component: config-sync
+  template:
+    metadata:
+      labels:
+        app: pihole
+        app.kubernetes.io/component: config-sync
+    spec:
+      serviceAccountName: nebula-sync
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: sync
+          image: alpine/k8s:1.34.1 # bundles kubectl + curl
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          env:
+            - name: SYNC_INTERVAL
+              value: "60" # seconds between syncs (tunable)
+            - name: PIHOLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pihole-admin
+                  key: password
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -u
+              auth() { curl -s --max-time 10 -X POST "http://$1/api/auth" -H 'Content-Type: application/json' --data "{\"password\":\"$PIHOLE_PASSWORD\"}" | sed -n 's/.*"sid":"\([^"]*\)".*/\1/p'; }
+              sync_once() {
+                NODE=$(kubectl get lease cilium-l2announce-pihole-pihole -n kube-system -o jsonpath='{.spec.holderIdentity}' 2>/dev/null)
+                [ -n "$NODE" ] || { echo "no L2 lease holder yet; skip"; return 0; }
+                ACTIVE_IP=$(kubectl get pods -n pihole -l app=pihole --field-selector spec.nodeName="$NODE" -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
+                ACTIVE_POD=$(kubectl get pods -n pihole -l app=pihole --field-selector spec.nodeName="$NODE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+                [ -n "$ACTIVE_IP" ] || { echo "cannot resolve active pod on $NODE; skip"; return 0; }
+                SID=$(auth "$ACTIVE_IP"); [ -n "$SID" ] || { echo "auth to active $ACTIVE_POD failed; skip"; return 0; }
+                curl -s --max-time 20 -o /tmp/tele.zip -H "X-FTL-SID: $SID" "http://$ACTIVE_IP/api/teleporter"
+                SZ=$(wc -c </tmp/tele.zip 2>/dev/null || echo 0)
+                [ "$SZ" -gt 100 ] || { echo "backup too small ($SZ); skip"; return 0; }
+                OK=0; FAIL=0
+                for IP in $(kubectl get pods -n pihole -l app=pihole -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2>/dev/null); do
+                  { [ -z "$IP" ] || [ "$IP" = "$ACTIVE_IP" ]; } && continue
+                  RSID=$(auth "$IP"); [ -n "$RSID" ] || { FAIL=$((FAIL+1)); continue; }
+                  CODE=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H "X-FTL-SID: $RSID" -F "file=@/tmp/tele.zip" "http://$IP/api/teleporter")
+                  [ "$CODE" = "200" ] && OK=$((OK+1)) || { echo "  $IP restore HTTP=$CODE"; FAIL=$((FAIL+1)); }
+                done
+                echo "$(date -u +%FT%TZ) primary=$ACTIVE_POD synced=$OK failed=$FAIL"
+                [ "$FAIL" -eq 0 ] && date +%s > /tmp/last-sync || true
+              }
+              echo "nebula-sync worker starting (interval ${SYNC_INTERVAL}s)"
+              date +%s > /tmp/last-sync
+              while true; do sync_once; sleep "${SYNC_INTERVAL:-60}"; done
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          livenessProbe: # self-heal if the loop wedges (no successful sync in ~5 min)
+            exec:
+              command: ["/bin/sh", "-c", "test $(( $(date +%s) - $(cat /tmp/last-sync 2>/dev/null || echo 0) )) -lt 300"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
