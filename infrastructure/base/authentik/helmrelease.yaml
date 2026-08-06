@@ -73,6 +73,9 @@ spec:
         - name: boomtime-blueprint
           configMap:
             name: authentik-boomtime-blueprint
+        - name: grafana-blueprint
+          configMap:
+            name: authentik-grafana-blueprint
         - name: catalyst-brand-assets
           configMap:
             name: authentik-catalyst-brand-assets
@@ -97,6 +100,9 @@ spec:
         - name: boomtime-blueprint
           mountPath: /blueprints/custom/boomtime-oidc.yaml
           subPath: boomtime-oidc.yaml
+        - name: grafana-blueprint
+          mountPath: /blueprints/custom/grafana-oidc.yaml
+          subPath: grafana-oidc.yaml
         - name: catalyst-brand-assets
           mountPath: /web/dist/catalyst-brand-logo.svg
           subPath: catalyst-brand-logo.svg
@@ -147,6 +153,20 @@ spec:
               name: authentik-boomtime-oidc
               key: client-secret
               optional: true
+        # !Env source for grafana-blueprint.yaml's OAuth2Provider client_secret.
+        # optional:true (same rationale as boomtime): the worker starts even
+        # before authentik-grafana-oidc exists, so shipping this blueprint can
+        # never CrashLoop the worker and take down existing SSO. Until the
+        # 1Password `grafana.oidc-client-secret` field is populated, the grafana
+        # provider is created with an empty client_secret (harmless — Grafana
+        # just won't complete the handshake yet). AFTER provisioning the field:
+        # `kubectl rollout restart deploy/authentik-worker -n authentik`.
+        - name: GRAFANA_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: authentik-grafana-oidc
+              key: client-secret
+              optional: true
       # Worker needs blueprints for processing
       volumes:
         - name: litellm-blueprint
@@ -155,6 +175,9 @@ spec:
         - name: boomtime-blueprint
           configMap:
             name: authentik-boomtime-blueprint
+        - name: grafana-blueprint
+          configMap:
+            name: authentik-grafana-blueprint
         - name: catalyst-brand-blueprint
           configMap:
             name: authentik-catalyst-brand-blueprint
@@ -169,6 +192,9 @@ spec:
         - name: boomtime-blueprint
           mountPath: /blueprints/custom/boomtime-oidc.yaml
           subPath: boomtime-oidc.yaml
+        - name: grafana-blueprint
+          mountPath: /blueprints/custom/grafana-oidc.yaml
+          subPath: grafana-oidc.yaml
         - name: catalyst-brand-blueprint
           mountPath: /blueprints/custom/catalyst-brand.yaml
           subPath: catalyst-brand.yaml

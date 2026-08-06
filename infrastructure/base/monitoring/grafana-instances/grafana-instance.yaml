@@ -34,14 +34,50 @@ spec:
                     secretKeyRef:
                       name: grafana-admin-credentials
                       key: GF_SECURITY_ADMIN_PASSWORD
+                # Authentik OIDC client secret (from 1Password via ESO).
+                # Grafana auto-maps this env var to
+                # [auth.generic_oauth] client_secret, so the secret never
+                # touches git or the spec.config block below.
+                - name: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-oidc
+                      key: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
 
   # Grafana configuration
   config:
     server:
       root_url: http://grafana.talos00
+    # Anonymous viewer access stays ON (unauthenticated read-only dashboards).
     auth.anonymous:
       enabled: 'true'
       org_role: Viewer
+    # Built-in admin/password login stays enabled as a break-glass fallback;
+    # the Authentik "Sign in" button is added alongside it (auto_login off).
+    # OIDC SSO via Authentik (blueprint: infrastructure/base/authentik/grafana-blueprint.yaml).
+    #
+    # All OAuth URLs point at http://auth.talos00 so the browser redirect and
+    # the pod-side token/userinfo exchange hit the same host — keeping the
+    # id_token `iss` claim consistent. The pod reaches auth.talos00 by
+    # hairpinning through Traefik. If hairpin fails, switch token_url/api_url to
+    # http://authentik-server.authentik.svc.cluster.local/application/o/...
+    auth.generic_oauth:
+      enabled: 'true'
+      name: Authentik
+      icon: signin
+      client_id: grafana
+      # client_secret comes from GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET env (above)
+      scopes: 'openid profile email'
+      auth_url: http://auth.talos00/application/o/authorize/
+      token_url: http://auth.talos00/application/o/token/
+      api_url: http://auth.talos00/application/o/userinfo/
+      use_pkce: 'true'
+      allow_sign_up: 'true'
+      auto_login: 'false'
+      # Map Authentik groups -> Grafana role. Members of "Catalyst Admins" or
+      # "grafana-admins" become Admin; everyone else who logs in gets Viewer.
+      role_attribute_path: "(contains(groups[*], 'Catalyst Admins') || contains(groups[*], 'grafana-admins')) && 'Admin' || 'Viewer'"
+      role_attribute_strict: 'false'
     log:
       mode: console
       level: info
