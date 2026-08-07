@@ -1,0 +1,52 @@
+---
+# provider-kubernetes install + RBAC (TALOS-ja5). MOVED here from the operators/crossplane dir:
+# these reference pkg.crossplane.io CRDs that only exist AFTER the Crossplane HelmRelease
+# reconciles, so they must live in a Kustomization that dependsOn `operators` (this demo does),
+# not alongside the HelmRelease (which made the operators Kustomization fail dry-run).
+#
+# DeploymentRuntimeConfig pins the provider controller SA name to "provider-kubernetes" so the
+# ClusterRoleBinding below can reference it deterministically (no hashed name, no manual step).
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: provider-kubernetes
+spec:
+  serviceAccountTemplate:
+    metadata:
+      name: provider-kubernetes
+---
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-kubernetes
+spec:
+  package: xpkg.crossplane.io/crossplane-contrib/provider-kubernetes:v1.2.1
+  runtimeConfigRef:
+    name: provider-kubernetes
+---
+# provider-kubernetes uses ProviderConfig InjectedIdentity (its own pod SA). To manage arbitrary
+# in-cluster objects (the demo Object → a ConfigMap) it needs these verbs bound to its SA.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: provider-kubernetes-admin
+rules:
+  - apiGroups: [""]
+    resources: [configmaps, secrets, services, serviceaccounts, namespaces, pods, persistentvolumeclaims]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: [deployments, statefulsets, daemonsets, replicasets]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: provider-kubernetes-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: provider-kubernetes-admin
+subjects:
+  - kind: ServiceAccount
+    name: provider-kubernetes
+    namespace: crossplane-system
