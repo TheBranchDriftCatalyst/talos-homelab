@@ -85,15 +85,22 @@ spec:
               value: "true,192.168.1.0/24,192.168.1.1#53,localdomain"
             - name: FTLCONF_dns_upstreams
               value: "8.8.8.8;8.8.4.4"
-            # TWO dnsmasq lines (verified: newline block → 2-element array):
+            # THREE dnsmasq lines (newline block → 3-element array):
             #   1) wildcard *.talos00 → Traefik ingress (all other services).
             #   2) MORE-SPECIFIC pihole.talos00 → the VIP .240 directly (longest-match
             #      wins) so the browser hits the ACTIVE pod's UI (external → eTP:Local →
             #      single active pod → real live stats + sticky session). No Traefik.
+            #   3) SPLIT-HORIZON registry.knowledgedump.space → Traefik. The public
+            #      record is a Cloudflare CNAME-to-apex (DNS-only → home IP), which
+            #      Pi-hole's rebind protection strips (returns NODATA). Overriding it to
+            #      the internal Traefik IP lets LAN clients reach the Zot registry (and
+            #      keeps the traffic internal instead of hairpinning to the WAN IP).
+            #      External clients still use the public record. TALOS-6vf.
             - name: FTLCONF_misc_dnsmasq_lines
               value: |-
                 address=/${CLUSTER_DOMAIN}/${TALOS_NODE_IP}
                 address=/pihole.${CLUSTER_DOMAIN}/192.168.1.240
+                address=/registry.knowledgedump.space/${TALOS_NODE_IP}
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 384Mi}
