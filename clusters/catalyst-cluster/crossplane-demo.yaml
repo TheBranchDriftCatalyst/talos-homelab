@@ -20,13 +20,13 @@ spec:
     name: flux-system
   path: ./applications/crossplane-demo
   prune: true
-  wait: true
+  # wait:false — this Kustomization only needs to APPLY the CRs; the operators provision them
+  # asynchronously and the provisioning-demo Jest suite verifies functionality. Gating Flux
+  # readiness on the flex Deployment (a test driver that pulls from the in-cluster registry) made
+  # a registry hiccup cascade-block the dependent crossplane-demo-object Kustomization. Decouple:
+  # Flux = "applied", Jest = "works". (TALOS-ja5)
+  wait: false
   dependsOn:
     - name: operators
     - name: databases # MinIO tenant lives under the databases/minio stack
     - name: storage
-  healthChecks:
-    - apiVersion: apps/v1
-      kind: Deployment
-      name: demo-flex
-      namespace: crossplane-demo
