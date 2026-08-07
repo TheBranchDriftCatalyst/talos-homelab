@@ -6,9 +6,10 @@
  * land (progressive linking).
  *
  *   npm install            # once (installs jest at the repo root)
- *   npm test               # run every suite (destructive scenarios stay skipped)
+ *   npm test               # interactive picker — choose suites + flags (scripts/jest-select.js)
+ *   npm run test:all       # run every suite non-interactively (destructive scenarios stay skipped)
  *   npm run test:dr        # include the destructive chaos scenarios (⚠️ disrupts live infra)
- *   npm test -- --selectProjects pihole-dr    # just one suite
+ *   npm test -- --selectProjects pihole-dr    # args bypass the picker → straight to jest
  */
 module.exports = {
   projects: [
