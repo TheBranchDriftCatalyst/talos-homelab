@@ -49,9 +49,12 @@ spec:
         - name: zot
           port: 5000
 ---
-# TEMPORARY internal test route (zot.talos00). HTTP only, so OIDC login won't
-# work here (see above) — use it for docker push/pull + browsing. Retired at
-# cutover when registry.talos00 is flipped from Nexus to Zot.
+# Internal route: registry.talos00 (cutover from Nexus). HTTP (web entrypoint)
+# for in-cluster + LAN docker push/pull with the panda htpasswd token — same
+# hostname the cluster already pulls from, so nothing that pulls has to change.
+# OIDC UI login does NOT work over this HTTP host (Secure cookie); use the public
+# HTTPS host (registry.knowledgedump.space) for SSO. zot.talos00 test route
+# retired at cutover.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -67,7 +70,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`zot.talos00`)
+    - match: Host(`registry.talos00`)
       kind: Rule
       services:
         - name: zot
