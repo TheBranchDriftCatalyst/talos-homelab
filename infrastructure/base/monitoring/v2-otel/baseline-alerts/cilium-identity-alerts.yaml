@@ -45,9 +45,18 @@ spec:
         # 1. Identity count growing — first sign of pollution
         # --------------------------------------------------------------
         - alert: CiliumIdentityCountElevated
-          # cilium_identity is a gauge per-type from the operator; sum gives
-          # total. Healthy clusters with ~200 pods sit around 200-400.
-          expr: sum(cilium_identity) > 1000
+          # cilium_identity is a per-type gauge exported by EACH cilium-agent
+          # (every agent caches the full identity set). It must be deduped two
+          # ways before thresholding, or it reads ~20x high:
+          #   * container="cilium-agent"  — the pod-annotation scrape attaches
+          #     ~7 container-name label variants per node; this picks the one
+          #     real series. (Without it, sum(cilium_identity) = 1763 vs a true
+          #     ~79, which FALSE-FIRES this alert. See TALOS-cq7 / TALOS-57t.)
+          #   * max(sum by (pod) ...)      — sum types within one agent, then
+          #     take one agent (all agents agree), removing the node multiplier.
+          # Result ≈ per-agent identity count. Healthy here ~79; meltdown was
+          # ~19k. Thresholds unchanged (1000 warn / 5000 crit) still bracket that.
+          expr: max(sum by (pod) (cilium_identity{container="cilium-agent"})) > 1000
           for: 30m
           labels:
             severity: warning
@@ -63,7 +72,8 @@ spec:
               may need exclusion. See TALOS-yyt.
 
         - alert: CiliumIdentityCountCritical
-          expr: sum(cilium_identity) > 5000
+          # Same dedup as CiliumIdentityCountElevated above (per-agent count).
+          expr: max(sum by (pod) (cilium_identity{container="cilium-agent"})) > 5000
           for: 15m
           labels:
             severity: critical
