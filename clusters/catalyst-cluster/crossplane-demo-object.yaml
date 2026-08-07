@@ -1,0 +1,27 @@
+---
+# The crossplane demo Object + ProviderConfig, split from crossplane-demo so the Provider CR
+# (in crossplane-demo) installs provider-kubernetes FIRST — its kubernetes.crossplane.io CRDs
+# (Object/ProviderConfig) must exist before these apply. Gated on the provider-kubernetes
+# Deployment being healthy. TALOS-ja5.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: crossplane-demo-object
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/crossplane-demo/object
+  prune: true
+  wait: true
+  dependsOn:
+    - name: crossplane-demo
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: provider-kubernetes
+      namespace: crossplane-system

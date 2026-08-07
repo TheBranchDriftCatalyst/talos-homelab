@@ -1,0 +1,50 @@
+---
+# Postgres for Plausible CE — provisioned by CloudNativePG (TALOS-4gg).
+# Minimal single instance on local-path. CNPG auto-creates:
+#   * Service  `plausible-db-rw`  (read-write, port 5432)
+#   * Secret   `plausible-db-app` (owner-user creds; generated random password)
+#       keys: username, password, dbname, host, port, uri, jdbc-uri, ...
+# Plausible consumes the generated `uri` key directly as DATABASE_URL
+# (postgresql://plausible:<pass>@plausible-db-rw:5432/plausible_db) — no
+# hardcoded password in git; the operator owns the credential.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: plausible-db
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible-db
+    app.kubernetes.io/part-of: plausible
+    app.kubernetes.io/component: database
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+
+  bootstrap:
+    initdb:
+      database: plausible_db
+      owner: plausible
+      # No `secret:` given → CNPG generates `plausible-db-app` with a random
+      # password and a ready-to-use `uri` connection string.
+
+  storage:
+    size: 2Gi
+    storageClass: local-path
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+  # PodMonitor left off — this is a demo namespace, keep it minimal.
+  monitoring:
+    enablePodMonitor: false
+
+  postgresql:
+    parameters:
+      shared_buffers: "128MB"
+      effective_cache_size: "256MB"
+      work_mem: "8MB"
+      maintenance_work_mem: "64MB"
