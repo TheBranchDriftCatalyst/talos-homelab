@@ -1,0 +1,294 @@
+{
+  "uid": "cnpg-databases",
+  "title": "CloudNativePG Databases",
+  "tags": ["db", "postgres", "cnpg", "cloudnative-pg"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "mimir" },
+        "query": { "query": "label_values(cnpg_collector_up, namespace)", "refId": "StandardVariableQuery" },
+        "regex": "",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "cluster",
+        "label": "Cluster",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "mimir" },
+        "query": { "query": "label_values(cnpg_collector_up{namespace=~\"$namespace\"}, pod)", "refId": "StandardVariableQuery" },
+        "regex": "/(.*)-[0-9]+$/",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    { "id": 1, "type": "row", "title": "Fleet Overview", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+
+    {
+      "id": 2, "type": "stat", "title": "Clusters",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "count(max by (namespace, pod) (cnpg_pg_replication_in_recovery{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}) == 0)" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Instances",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "count(max by (namespace, pod) (cnpg_collector_up{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}))" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Instances Healthy",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "count(max by (namespace, pod) (cnpg_collector_up{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}) == 1)" } ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Total DB Size",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "decbytes", "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, datname) (cnpg_pg_database_size_bytes{datname!~\"template.*\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}))" } ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Connections",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod, state) (cnpg_backends_total{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}))" } ]
+    },
+    {
+      "id": 7, "type": "stat", "title": "Fleet TPS",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_xact_commit{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[$__rate_interval]))) + sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_xact_rollback{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[$__rate_interval])))" } ]
+    },
+
+    {
+      "id": 8, "type": "table", "title": "Provisioned Databases & Instances",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 5 },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Started" }, "properties": [ { "id": "unit", "value": "dateTimeFromNow" } ] },
+          { "matcher": { "id": "byName", "options": "Role" }, "properties": [ { "id": "mappings", "value": [ { "type": "value", "options": { "0": { "text": "primary", "color": "green", "index": 0 }, "1": { "text": "replica", "color": "blue", "index": 1 } } } ] }, { "id": "custom.cellOptions", "value": { "type": "color-text" } } ] },
+          { "matcher": { "id": "byName", "options": "Healthy" }, "properties": [ { "id": "mappings", "value": [ { "type": "value", "options": { "1": { "text": "up", "color": "green", "index": 0 }, "0": { "text": "down", "color": "red", "index": 1 } } } ] }, { "id": "custom.cellOptions", "value": { "type": "color-text" } } ] },
+          { "matcher": { "id": "byName", "options": "DB Size" }, "properties": [ { "id": "unit", "value": "decbytes" } ] },
+          { "matcher": { "id": "byName", "options": "Max Conn" }, "properties": [ { "id": "unit", "value": "short" } ] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "container": true, "endpoint": true, "cluster": true, "service": true }, "renameByName": { "namespace": "Namespace", "pod": "Instance", "Value #Version": "PG Version", "Value #Role": "Role", "Value #Started": "Started", "Value #Up": "Healthy", "Value #Conn": "Connections", "Value #Max": "Max Conn" } } }
+      ],
+      "targets": [
+        { "refId": "Version", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_collector_postgres_version{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" },
+        { "refId": "Role", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_pg_replication_in_recovery{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" },
+        { "refId": "Started", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_pg_postmaster_start_time{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}) * 1000" },
+        { "refId": "Up", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_collector_up{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" },
+        { "refId": "Conn", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum by (namespace, pod) (max by (namespace, pod, state) (cnpg_backends_total{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}))" },
+        { "refId": "Max", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_pg_settings_setting{name=\"max_connections\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" }
+      ]
+    },
+
+    { "id": 10, "type": "row", "title": "Provisioned Resources (requests / limits / usage)", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 } },
+
+    {
+      "id": 11, "type": "timeseries", "title": "CPU — requests / limits / usage",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/limit/" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }, { "matcher": { "id": "byRegexp", "options": "/request/" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [4, 4], "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{pod}} usage", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\", container=\"postgres\"}[$__rate_interval]))" },
+        { "refId": "B", "legendFormat": "{{pod}} request", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (kube_pod_container_resource_requests{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\", container=\"postgres\", resource=\"cpu\"})" },
+        { "refId": "C", "legendFormat": "{{pod}} limit", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (kube_pod_container_resource_limits{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\", container=\"postgres\", resource=\"cpu\"})" }
+      ]
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Memory — requests / limits / usage",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/limit/" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] }, { "matcher": { "id": "byRegexp", "options": "/request/" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [4, 4], "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{pod}} usage", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (container_memory_working_set_bytes{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\", container=\"postgres\"})" },
+        { "refId": "B", "legendFormat": "{{pod}} request", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (kube_pod_container_resource_requests{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\", container=\"postgres\", resource=\"memory\"})" },
+        { "refId": "C", "legendFormat": "{{pod}} limit", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (kube_pod_container_resource_limits{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\", container=\"postgres\", resource=\"memory\"})" }
+      ]
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Storage — provisioned PVC vs data size",
+      "description": "Provisioned = PVC requested storage (kube-state-metrics). Data = logical size of all non-template databases (CNPG). kubelet_volume_stats is unavailable on this cluster (Talos / NFS), so provisioned PVC size is the disk-allocation figure.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/provisioned/" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{persistentvolumeclaim}} provisioned", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, persistentvolumeclaim) (kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace=~\"$namespace\", persistentvolumeclaim=~\"($cluster)-[0-9]+$\"})" },
+        { "refId": "B", "legendFormat": "{{pod}} data", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum by (namespace, pod) (max by (namespace, pod, datname) (cnpg_pg_database_size_bytes{datname!~\"template.*\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}))" }
+      ]
+    },
+
+    { "id": 20, "type": "row", "title": "Connections & Transactions", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 } },
+
+    {
+      "id": 21, "type": "timeseries", "title": "Connections by state",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" }, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}} {{state}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod, state) (cnpg_backends_total{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" } ]
+    },
+    {
+      "id": 22, "type": "gauge", "title": "Connection usage % of max",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 4, "x": 8, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 70 }, { "color": "red", "value": 90 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "100 * sum by (namespace, pod) (max by (namespace, pod, state) (cnpg_backends_total{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})) / max by (namespace, pod) (cnpg_pg_settings_setting{name=\"max_connections\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" } ]
+    },
+    {
+      "id": 23, "type": "timeseries", "title": "Transactions/sec — commit vs rollback",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/rollback/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{pod}} commit", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (rate(cnpg_pg_stat_database_xact_commit{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m]))" },
+        { "refId": "B", "legendFormat": "{{pod}} rollback", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (rate(cnpg_pg_stat_database_xact_rollback{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m]))" }
+      ]
+    },
+
+    { "id": 30, "type": "row", "title": "Performance", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 31 } },
+
+    {
+      "id": 31, "type": "timeseries", "title": "Cache hit ratio",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "100 * max by (namespace, pod) (rate(cnpg_pg_stat_database_blks_hit{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])) / (max by (namespace, pod) (rate(cnpg_pg_stat_database_blks_hit{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])) + max by (namespace, pod) (rate(cnpg_pg_stat_database_blks_read{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])))" } ]
+    },
+    {
+      "id": 32, "type": "timeseries", "title": "Tuple I/O [5m]",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "fetched", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_tup_fetched{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])))" },
+        { "refId": "B", "legendFormat": "returned", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_tup_returned{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])))" },
+        { "refId": "C", "legendFormat": "inserted", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_tup_inserted{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])))" },
+        { "refId": "D", "legendFormat": "updated", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_tup_updated{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])))" },
+        { "refId": "E", "legendFormat": "deleted", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_tup_deleted{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])))" }
+      ]
+    },
+    {
+      "id": 33, "type": "timeseries", "title": "Deadlocks & temp bytes [5m]",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byName", "options": "temp bytes/s" }, "properties": [ { "id": "unit", "value": "Bps" }, { "id": "custom.axisPlacement", "value": "right" } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "deadlocks/s", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_deadlocks{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])))" },
+        { "refId": "B", "legendFormat": "temp bytes/s", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, pod) (rate(cnpg_pg_stat_database_temp_bytes{datname=\"\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m])))" }
+      ]
+    },
+
+    { "id": 40, "type": "row", "title": "Replication & WAL", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 40 } },
+
+    {
+      "id": 41, "type": "timeseries", "title": "Replication lag",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 41 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_pg_replication_lag{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" } ]
+    },
+    {
+      "id": 42, "type": "stat", "title": "Streaming replicas",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 4, "x": 8, "y": 41 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_pg_replication_streaming_replicas{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" } ]
+    },
+    {
+      "id": 43, "type": "timeseries", "title": "WAL segments",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 41 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_collector_pg_wal{value=\"count\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" } ]
+    },
+    {
+      "id": 44, "type": "timeseries", "title": "WAL archiver [5m]",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 41 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/failed/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{pod}} archived", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (rate(cnpg_pg_stat_archiver_archived_count{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m]))" },
+        { "refId": "B", "legendFormat": "{{pod}} failed", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (rate(cnpg_pg_stat_archiver_failed_count{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"}[5m]))" }
+      ]
+    },
+
+    { "id": 50, "type": "row", "title": "Backup & Collector Health", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 } },
+
+    {
+      "id": 51, "type": "stat", "title": "Time since last successful backup",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 50 },
+      "fieldConfig": { "defaults": { "unit": "dtdurations", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 86400 }, { "color": "red", "value": 172800 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "time() - max by (namespace, pod) ({__name__=~\"cnpg_collector_last_available_backup_timestamp|barman_cloud_cloudnative_pg_io_last_available_backup_timestamp\", namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"} > 0)" } ]
+    },
+    {
+      "id": 52, "type": "stat", "title": "Last collection error (0 = OK)",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 50 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_collector_last_collection_error{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" } ]
+    },
+    {
+      "id": 53, "type": "timeseries", "title": "Metrics collection duration",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 50 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{pod}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, pod) (cnpg_collector_collection_duration_seconds{namespace=~\"$namespace\", pod=~\"($cluster)-[0-9]+$\"})" } ]
+    }
+  ]
+}
