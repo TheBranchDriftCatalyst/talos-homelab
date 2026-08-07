@@ -14,5 +14,6 @@ module.exports = {
   projects: [
     "<rootDir>/infrastructure/base/pihole/tests",
     "<rootDir>/infrastructure/base/vpn-gateway/tests",
+    "<rootDir>/applications/crossplane-demo/tests",
   ],
 };

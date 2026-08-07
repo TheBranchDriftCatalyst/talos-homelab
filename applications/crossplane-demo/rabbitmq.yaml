@@ -1,0 +1,34 @@
+---
+# RabbitMQ broker — provisioned by the RabbitMQ Cluster Operator (RabbitmqCluster CRD).
+# The operator creates a `demo-rabbit` Service + a default-user Secret `demo-rabbit-default-user`
+# (keys: username, password, host, port). The flex util + Celery worker connect via that Secret.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: demo-rabbit
+  namespace: crossplane-demo
+spec:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  persistence:
+    storageClassName: local-path
+    storage: 1Gi
+---
+# A queue provisioned declaratively by the Messaging Topology Operator (Queue CRD) — proves
+# git-defined topology. The flex util publishes/consumes here.
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: demo
+  namespace: crossplane-demo
+spec:
+  name: demo
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: demo-rabbit

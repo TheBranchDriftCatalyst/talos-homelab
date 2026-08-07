@@ -1,0 +1,16 @@
+---
+# crossplane-demo (TALOS-ja5): provisions ONE minimal CR of each operator + the Go flex
+# service + Celery/KEDA. No global `namespace:` — the Crossplane ProviderConfig/Object are
+# cluster-scoped; every namespaced CR carries its own `namespace: crossplane-demo`.
+# The tests/ dir is dev tooling (Jest), NOT part of this build.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - dragonfly.yaml # Dragonfly (Redis)
+  - rabbitmq.yaml # RabbitmqCluster + Queue
+  - clickhouse.yaml # ClickHouseInstallation
+  - opensearch.yaml # OpenSearchCluster
+  - crossplane.yaml # ProviderConfig + Object → a ConfigMap
+  - argo-workflow.yaml # WorkflowTemplate + workflow SA/RBAC
+  - celery/ # Celery worker + KEDA ScaledObject
+  - flex/ # the Go flex service + RBAC
