@@ -1,0 +1,22 @@
+---
+# Central analytics-injection middlewares (infrastructure/base/analytics/). dependsOn traefik so
+# the rewritebody/rewriteHeaders plugins are enabled before these Middleware CRs land (Traefik only
+# validates plugin refs at request time, but ordering keeps intent clear). wait:false — these are
+# just Middleware objects, nothing to health-check. TALOS-4gg.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: analytics
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/analytics
+  prune: true
+  wait: false
+  dependsOn:
+    - name: traefik

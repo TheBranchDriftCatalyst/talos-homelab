@@ -191,3 +191,19 @@ spec:
 
     # Namespace
     namespaceOverride: 'traefik'
+
+    # Traefik plugins (Yaegi-loaded from GitHub at startup) powering the central
+    # analytics-injection middleware chain (infrastructure/base/analytics/):
+    #   rewritebody     — injects the Plausible <script> before </head> in HTML responses
+    #   rewriteHeaders  — additively allows analytics.knowledgedump.space in an app's CSP
+    # NOTE: enabling these means each Traefik pod fetches the plugin source on startup, so a
+    # rollout needs egress to github.com. The keys here (rewritebody/rewriteHeaders) are the
+    # names Middleware.spec.plugin.<key> references. TALOS-4gg.
+    experimental:
+      plugins:
+        rewritebody:
+          moduleName: github.com/traefik/plugin-rewritebody
+          version: v0.3.1
+        rewriteHeaders:
+          moduleName: github.com/XciD/traefik-plugin-rewrite-headers
+          version: v0.0.4
