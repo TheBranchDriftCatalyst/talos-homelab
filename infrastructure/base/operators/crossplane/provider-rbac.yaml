@@ -1,0 +1,49 @@
+---
+# RBAC for provider-kubernetes when using ProviderConfig identity
+# "InjectedIdentity" (the provider uses its own pod ServiceAccount to talk to
+# the local cluster). Crossplane grants the provider SA only the CRDs the
+# provider owns; managing *arbitrary* in-cluster objects (e.g. ConfigMaps)
+# requires explicitly binding those permissions to the provider SA.
+#
+# The SA name is deterministic ("provider-kubernetes" in crossplane-system)
+# because provider.yaml's DeploymentRuntimeConfig pins it via
+# serviceAccountTemplate.metadata.name — so NO manual post-install step is
+# needed. If the DeploymentRuntimeConfig were removed, the SA would be named
+# provider-kubernetes-<hash> and this binding's subject would need updating.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: provider-kubernetes-admin
+rules:
+  # Core resources the demo Object provisions (ConfigMaps) plus common
+  # namespaced primitives a provider-kubernetes Object might manage.
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - secrets
+      - services
+      - serviceaccounts
+      - namespaces
+      - pods
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: provider-kubernetes-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: provider-kubernetes-admin
+subjects:
+  - kind: ServiceAccount
+    name: provider-kubernetes
+    namespace: crossplane-system

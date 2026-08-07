@@ -1,0 +1,76 @@
+---
+# RabbitMQ Cluster Operator + Messaging Topology Operator (Bitnami single chart)
+# This ONE chart installs BOTH operators (msgTopologyOperator.enabled=true).
+#
+# CRDs provided:
+#   Cluster Operator:  RabbitmqCluster (rabbitmq.com/v1beta1)
+#   Topology Operator: Queue, Exchange, Binding, User, Permission, Vhost,
+#                      Policy, (+ Federation, Shovel, OperatorPolicy, etc.)
+#                      (rabbitmq.com/v1beta1)
+#
+# Cert handling: useCertManager=true — the topology operator's admission
+# webhook is served with a cert-manager Issuer + Certificate (cert-manager IS
+# installed in this cluster). The ValidatingWebhookConfiguration gets its CA
+# injected via cert-manager.io/inject-ca-from. If cert-manager were ever
+# removed, flip useCertManager=false to fall back to the chart's built-in
+# self-signed cert generation.
+#
+# Docs: https://www.rabbitmq.com/kubernetes/operator/operator-overview
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: bitnami
+  namespace: rabbitmq-system
+spec:
+  type: oci
+  interval: 1h
+  url: oci://registry-1.docker.io/bitnamicharts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: rabbitmq-cluster-operator
+  namespace: rabbitmq-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: rabbitmq-cluster-operator
+      version: '4.4.34'
+      sourceRef:
+        kind: HelmRepository
+        name: bitnami
+        namespace: rabbitmq-system
+      interval: 12h
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    # Serve the messaging-topology-operator webhook via cert-manager.
+    useCertManager: true
+
+    # RabbitMQ Cluster Operator (manages RabbitmqCluster CRs)
+    clusterOperator:
+      replicaCount: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # RabbitMQ Messaging Topology Operator (Queue/Exchange/User/... CRs)
+    msgTopologyOperator:
+      enabled: true
+      replicaCount: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi

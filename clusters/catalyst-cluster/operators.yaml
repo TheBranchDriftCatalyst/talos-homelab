@@ -1,0 +1,53 @@
+---
+# Self-service operator catalog (TALOS-ja5): RabbitMQ (+topology), KEDA, Dragonfly, Crossplane
+# (+provider-kubernetes), ClickHouse (Altinity), OpenSearch, Argo Workflows.
+# wait:true + per-operator healthChecks ensure each operator's CRDs are registered before the
+# crossplane-demo Kustomization applies its CRs (which dependsOn this).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: operators
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/operators
+  prune: true
+  wait: true
+  dependsOn:
+    - name: bootstrap-crds
+    - name: cert-manager # RabbitMQ messaging-topology-operator webhook uses cert-manager
+    - name: storage # RabbitMQ/ClickHouse/OpenSearch PVCs
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: rabbitmq-cluster-operator
+      namespace: rabbitmq-system
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: keda-operator
+      namespace: keda
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: dragonfly-operator
+      namespace: dragonfly-operator-system
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: crossplane
+      namespace: crossplane-system
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: clickhouse-operator
+      namespace: clickhouse
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: opensearch-operator-controller-manager
+      namespace: opensearch-operator-system
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: argo-workflows-workflow-controller
+      namespace: argo

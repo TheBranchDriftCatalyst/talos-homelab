@@ -1,0 +1,66 @@
+---
+# Crossplane
+# Provides (pkg.crossplane.io): Provider, Configuration, Function,
+#   DeploymentRuntimeConfig
+# Provides (apiextensions.crossplane.io): CompositeResourceDefinition,
+#   Composition
+# provider-kubernetes (installed via provider.yaml) additionally provides
+#   (kubernetes.crossplane.io): Object, ProviderConfig
+# Docs: https://docs.crossplane.io/
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: crossplane
+  namespace: crossplane-system
+spec:
+  interval: 1h
+  url: https://charts.crossplane.io/stable
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crossplane
+  namespace: crossplane-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: crossplane
+      version: '2.3.4'
+      sourceRef:
+        kind: HelmRepository
+        name: crossplane
+        namespace: crossplane-system
+      interval: 12h
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  values:
+    # Single core replica for homelab
+    replicas: 1
+
+    # Small resources for the core Crossplane controller
+    resourcesCrossplane:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    # rbac-manager keeps provider ClusterRoles aggregated
+    rbacManager:
+      replicas: 1
+
+    resourcesRBACManager:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 100m
+        memory: 256Mi
