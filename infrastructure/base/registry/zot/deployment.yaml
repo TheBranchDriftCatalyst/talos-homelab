@@ -25,6 +25,16 @@ spec:
         # Roll the pod when the templated config/htpasswd changes.
         reloader.stakater.com/auto: "true"
     spec:
+      # Resolve auth.talos00 to the authentik-server ClusterIP so the pod can do
+      # OIDC discovery + token exchange in-cluster under Host auth.talos00 (no
+      # Cloudflare, no node-LB hairpin). Browser resolves auth.talos00 via
+      # /etc/hosts -> Traefik -> same Authentik, so the issuer stays consistent.
+      # If the authentik-server Service is ever recreated with a new ClusterIP,
+      # update this IP (kubectl get svc -n authentik authentik-server). TALOS-6vf.
+      hostAliases:
+        - ip: "10.106.147.209"
+          hostnames:
+            - auth.talos00
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
