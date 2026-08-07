@@ -1,0 +1,34 @@
+---
+# Wildcard certificate for *.amber.knowledgedump.space
+#
+# kelsboi -> talos-private migration (TALOS-h4j). The private services move off
+# the deSEC *.kelsboi.dedyn.io zone onto amber.knowledgedump.space, which is a
+# subdomain delegated within the Cloudflare knowledgedump.space zone. The
+# existing *.knowledgedump.space wildcard does NOT cover a second label
+# (*.amber.knowledgedump.space), so this dedicated wildcard is required.
+#
+# Issued by the existing letsencrypt-production ClusterIssuer via its Cloudflare
+# DNS-01 solver (selector dnsZone = knowledgedump.space, which is a suffix of
+# amber.knowledgedump.space, so cert-manager routes the challenge through
+# Cloudflare — NOT deSEC). Stored in the traefik namespace and registered in the
+# Traefik TLSStore so any IngressRoute with `tls: {}` on a *.amber.knowledgedump.space
+# host is served this cert via SNI.
+#
+# amber.knowledgedump.space is TEMPORARY — on the future rename, change the two
+# dnsNames here (and the other amber.knowledgedump.space references; grep the repo).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: amber-wildcard
+  namespace: traefik
+spec:
+  secretName: amber-wildcard-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  # Wildcard + apex of the temporary private-services subdomain
+  dnsNames:
+    - "*.amber.knowledgedump.space"
+    - "amber.knowledgedump.space"
+  duration: 2160h # 90 days
+  renewBefore: 720h # 30 days before expiry

@@ -93,6 +93,18 @@ spec:
           configMap:
             name: authentik-kelsboi-brand-blueprint
             optional: true
+        # talos-private brand (kelsboi -> talos-private migration, TALOS-h4j).
+        # ConfigMaps owned by the talos-private repo (ArgoCD-synced); optional:true
+        # so the pod still starts if Argo hasn't created them yet — same pattern as
+        # the kelsboi brand above.
+        - name: talos-private-brand-assets
+          configMap:
+            name: authentik-talos-private-brand-assets
+            optional: true
+        - name: talos-private-brand-blueprint
+          configMap:
+            name: authentik-talos-private-brand-blueprint
+            optional: true
       volumeMounts:
         - name: custom-css
           mountPath: /web/dist/custom.css
@@ -127,6 +139,16 @@ spec:
         - name: kelsboi-brand-blueprint
           mountPath: /blueprints/custom/kelsboi-brand.yaml
           subPath: kelsboi-brand.yaml
+        # talos-private brand assets + blueprint (TALOS-h4j)
+        - name: talos-private-brand-assets
+          mountPath: /web/dist/talos-private-brand-logo.svg
+          subPath: talos-private-brand-logo.svg
+        - name: talos-private-brand-assets
+          mountPath: /web/dist/talos-private-brand-favicon.svg
+          subPath: talos-private-brand-favicon.svg
+        - name: talos-private-brand-blueprint
+          mountPath: /blueprints/custom/talos-private-brand.yaml
+          subPath: talos-private-brand.yaml
 
     worker:
       replicas: 1
@@ -194,6 +216,11 @@ spec:
           configMap:
             name: authentik-kelsboi-brand-blueprint
             optional: true
+        # talos-private brand blueprint — worker reconciles it (TALOS-h4j)
+        - name: talos-private-brand-blueprint
+          configMap:
+            name: authentik-talos-private-brand-blueprint
+            optional: true
       volumeMounts:
         - name: litellm-blueprint
           mountPath: /blueprints/custom/litellm-role-mapping.yaml
@@ -213,6 +240,9 @@ spec:
         - name: kelsboi-brand-blueprint
           mountPath: /blueprints/custom/kelsboi-brand.yaml
           subPath: kelsboi-brand.yaml
+        - name: talos-private-brand-blueprint
+          mountPath: /blueprints/custom/talos-private-brand.yaml
+          subPath: talos-private-brand.yaml
 
     # Embedded PostgreSQL
     postgresql:
