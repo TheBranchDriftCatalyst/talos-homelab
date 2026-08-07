@@ -44,12 +44,15 @@ spec:
               memory: 128Mi
             limits:
               memory: 512Mi
+          # TCP probes: with htpasswd auth enabled, GET /v2/ returns 401 (auth
+          # challenge), which k8s httpGet probes treat as failure. A TCP check
+          # confirms Zot is listening without tripping on the auth challenge.
           livenessProbe:
-            httpGet: { path: /v2/, port: http }
+            tcpSocket: { port: http }
             initialDelaySeconds: 10
             periodSeconds: 30
           readinessProbe:
-            httpGet: { path: /v2/, port: http }
+            tcpSocket: { port: http }
             initialDelaySeconds: 5
             periodSeconds: 10
           volumeMounts:
