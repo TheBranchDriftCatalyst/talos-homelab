@@ -814,6 +814,19 @@ spec:
               regex         = "prometheus-blackbox-exporter"
               action        = "drop"
             }
+            // Exclude kube-state-metrics (handled by the dedicated
+            // `kube_state_metrics` scrape above with honor_labels=true). Without
+            // this drop KSM is scraped TWICE: here with honor_labels=false, so
+            // its `namespace` label collides to "monitoring" and the real value
+            // is shoved into `exported_namespace`. That doubled every KSM series
+            // (~491x2), corrupted namespace/node labels forcing every dashboard
+            // to filter job="kube-state-metrics", and threw
+            // err-mimir-sample-duplicate-timestamp WAL rejects. See TALOS-57t.
+            rule {
+              source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+              regex         = "kube-state-metrics"
+              action        = "drop"
+            }
             // Use custom port if specified
             rule {
               source_labels = ["__address__", "__meta_kubernetes_service_annotation_prometheus_io_port"]
