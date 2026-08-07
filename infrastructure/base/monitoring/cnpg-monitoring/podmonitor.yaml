@@ -29,7 +29,12 @@ metadata:
     app.kubernetes.io/part-of: cloudnative-pg
 spec:
   # Discover CNPG instance pods in ALL namespaces.
-  namespaceSelector: {}
+  # NOTE: `{}` means "the PodMonitor's OWN namespace" in Prometheus Operator
+  # semantics — `any: true` is required to scrape across all namespaces. (The
+  # operator's per-cluster PodMonitors use `{}` only because they are co-located
+  # with their pods; this global one lives in `monitoring`, so it MUST use any.)
+  namespaceSelector:
+    any: true
   selector:
     matchLabels:
       cnpg.io/podRole: instance
