@@ -1,0 +1,33 @@
+---
+# PodMonitor for the NFS backend free-space exporter.
+#
+# probe.sh writes Prometheus exposition text to a shared emptyDir; a busybox-httpd
+# sidecar serves it on port "metrics" (9092, path /metrics). The v2-otel Alloy runs
+# prometheus.operator.podmonitors with NO selector, so any PodMonitor in any
+# namespace is scraped — same discovery path as pihole/nebula-sync.
+#
+# METRICS emitted (see nfs-storage-exporter/probe.sh):
+#   nfs_backend_size_bytes{storageclass,server,export}   gauge — NAS filesystem total
+#   nfs_backend_used_bytes{...}                           gauge — used
+#   nfs_backend_avail_bytes{...}                          gauge — free (drives dashboard "NAS Free")
+#   nfs_backend_scrape_success{storageclass}             gauge — 1 if df succeeded
+#   nfs_backend_last_scrape_timestamp_seconds{...}       gauge — last probe time
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: nfs-storage-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: nfs-storage-exporter
+    app.kubernetes.io/component: metrics
+spec:
+  namespaceSelector:
+    matchNames:
+      - monitoring
+  selector:
+    matchLabels:
+      app: nfs-storage-exporter
+  podMetricsEndpoints:
+    - port: metrics # busybox httpd sidecar containerPort name (9092)
+      path: /metrics
+      interval: 60s

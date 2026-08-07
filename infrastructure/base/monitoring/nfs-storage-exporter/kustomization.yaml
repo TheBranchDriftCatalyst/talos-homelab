@@ -1,0 +1,25 @@
+---
+# NFS backend free-space exporter — closes the gap node-exporter can't reach (the
+# NAS behind the NFS storage classes). Feeds the "NAS Free" panels on the Central
+# Cluster Storage dashboard. Included by ../v2-otel/kustomization.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - pvc.yaml
+  - deployment.yaml
+  - podmonitor.yaml
+
+# probe.sh shipped as a ConfigMap. disableNameSuffixHash → the Deployment can
+# reference `nfs-storage-exporter-script` by a stable name. The substitute:disabled
+# annotation keeps Flux postBuild envsubst from touching the shell $VARs / awk $N.
+configMapGenerator:
+  - name: nfs-storage-exporter-script
+    files:
+      - probe.sh
+    options:
+      annotations:
+        kustomize.toolkit.fluxcd.io/substitute: disabled
+
+generatorOptions:
+  disableNameSuffixHash: true
