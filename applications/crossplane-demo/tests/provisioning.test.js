@@ -57,7 +57,7 @@ describe("crossplane-demo — operator catalog", () => {
     { label: "RabbitMQ (RabbitmqCluster)", kind: "rabbitmqclusters.rabbitmq.com", name: "demo-rabbit", ready: `-o jsonpath={.status.conditions[?(@.type=='AllReplicasReady')].status}`, want: "True" },
     { label: "Dragonfly (Dragonfly)", kind: "dragonflies.dragonflydb.io", name: "demo", ready: `-o jsonpath={.status.phase}`, want: "Ready" },
     { label: "ClickHouse (ClickHouseInstallation)", kind: "clickhouseinstallations.clickhouse.altinity.com", name: "demo", ready: `-o jsonpath={.status.status}`, want: "Completed" },
-    { label: "OpenSearch (OpenSearchCluster)", kind: "opensearchclusters.opensearch.opster.io", name: "demo", ready: `-o jsonpath={.status.phase}`, want: "RUNNING" },
+    { label: "OpenSearch (OpenSearchCluster)", kind: "opensearchclusters.opensearch.org", name: "demo", ready: `-o jsonpath={.status.phase}`, want: "RUNNING" },
     { label: "KEDA (ScaledObject)", kind: "scaledobjects.keda.sh", name: "demo-celery", ready: `-o jsonpath={.status.conditions[?(@.type=='Ready')].status}`, want: "True" },
     { label: "Argo (WorkflowTemplate)", kind: "workflowtemplates.argoproj.io", name: "demo-hello", ready: "", want: "" },
     { label: "Crossplane (Object)", kind: "objects.kubernetes.crossplane.io", name: "crossplane-made-this", ready: `-o jsonpath={.status.conditions[?(@.type=='Ready')].status}`, want: "True" },
