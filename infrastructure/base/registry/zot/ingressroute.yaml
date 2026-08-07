@@ -1,0 +1,27 @@
+---
+# TEMPORARY test route on zot.talos00 so we can validate Zot (UI + OIDC + push)
+# alongside the still-running Nexus BEFORE cutting registry.talos00 over. At
+# cutover, registry.talos00 is repointed from nexus-docker to this zot service
+# and this zot.talos00 route can be retired. Zot serves both the zui web UI and
+# the /v2 Docker API on the same port.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zot
+  namespace: registry
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Zot Registry"
+    gethomepage.dev/description: "OCI registry (Nexus replacement)"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/icon: "https://raw.githubusercontent.com/project-zot/zot/main/pkg/extensions/_zot.svg"
+    gethomepage.dev/href: "http://zot.talos00"
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`zot.talos00`)
+      kind: Rule
+      services:
+        - name: zot
+          port: 5000

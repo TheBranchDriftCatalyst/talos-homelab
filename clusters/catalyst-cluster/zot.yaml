@@ -1,0 +1,28 @@
+---
+# Flux Kustomization for Zot (OCI registry — Nexus replacement, TALOS-6vf).
+# Separate from the `registry` (Nexus) Kustomization so the two lifecycles are
+# independent: Zot runs alongside Nexus during migration, then the Nexus
+# Kustomization/manifests are removed with no impact here. Also avoids the
+# nexus label transformer in infrastructure/base/registry/kustomization.yaml.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: zot
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/registry/zot
+  prune: true
+  wait: true
+  timeout: 10m
+  dependsOn:
+    - name: namespaces
+    - name: storage
+    - name: external-secrets
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

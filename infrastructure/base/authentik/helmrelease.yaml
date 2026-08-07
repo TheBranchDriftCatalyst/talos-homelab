@@ -76,6 +76,9 @@ spec:
         - name: grafana-blueprint
           configMap:
             name: authentik-grafana-blueprint
+        - name: zot-blueprint
+          configMap:
+            name: authentik-zot-blueprint
         - name: talos-private-blueprint
           configMap:
             name: authentik-talos-private-blueprint
@@ -118,6 +121,9 @@ spec:
         - name: grafana-blueprint
           mountPath: /blueprints/custom/grafana-oidc.yaml
           subPath: grafana-oidc.yaml
+        - name: zot-blueprint
+          mountPath: /blueprints/custom/zot-oidc.yaml
+          subPath: zot-oidc.yaml
         - name: talos-private-blueprint
           mountPath: /blueprints/custom/talos-private.yaml
           subPath: talos-private.yaml
@@ -195,6 +201,17 @@ spec:
               name: authentik-grafana-oidc
               key: client-secret
               optional: true
+        # !Env source for zot-blueprint.yaml's OAuth2Provider client_secret.
+        # optional:true (same rationale as grafana/boomtime) — the worker starts
+        # even before authentik-zot-oidc exists, so shipping this blueprint can
+        # never CrashLoop the worker. Restart authentik-worker after the
+        # 1Password zot.oidc-client-secret field is populated. See TALOS-6vf.
+        - name: ZOT_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: authentik-zot-oidc
+              key: client-secret
+              optional: true
       # Worker needs blueprints for processing
       volumes:
         - name: litellm-blueprint
@@ -206,6 +223,9 @@ spec:
         - name: grafana-blueprint
           configMap:
             name: authentik-grafana-blueprint
+        - name: zot-blueprint
+          configMap:
+            name: authentik-zot-blueprint
         - name: talos-private-blueprint
           configMap:
             name: authentik-talos-private-blueprint
@@ -231,6 +251,9 @@ spec:
         - name: grafana-blueprint
           mountPath: /blueprints/custom/grafana-oidc.yaml
           subPath: grafana-oidc.yaml
+        - name: zot-blueprint
+          mountPath: /blueprints/custom/zot-oidc.yaml
+          subPath: zot-oidc.yaml
         - name: talos-private-blueprint
           mountPath: /blueprints/custom/talos-private.yaml
           subPath: talos-private.yaml
