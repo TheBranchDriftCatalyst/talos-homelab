@@ -1,8 +1,9 @@
 ---
-# Internal LAN-only ingress for Plausible (TALOS-4gg).
+# Internal LAN-only ingress for the Plausible DASHBOARD (TALOS-4gg).
 # Reach the dashboard at http://plausible.talos00 (requires the *.talos00
 # /etc/hosts entry). The `lan-only` middleware (ns traefik) restricts access to
-# the LAN, mirroring applications/zipline/ingressroute.yaml.
+# the LAN, mirroring applications/zipline/ingressroute.yaml. The admin UI never
+# faces the internet — only the tracking surface below is public.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -19,6 +20,57 @@ spec:
       kind: Rule
       middlewares:
         - name: lan-only
+          namespace: traefik
+      services:
+        - name: plausible
+          port: 8000
+---
+# PUBLIC tracking-only ingress (TALOS-4gg). Only the static tracker script (/js/*)
+# and the event-ingest endpoint (/api/event) are exposed to the internet so public
+# sites can load script.js and POST pageviews. The path match means EVERYTHING else on
+# this host (the dashboard, login, admin, other /api) 404s — the admin UI stays LAN-only
+# above. external-dns creates the Cloudflare record (proxied); TLS = *.knowledgedump.space
+# wildcard. NO auth middleware on purpose: the tracker must reach these anonymously.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: plausible-public-tracking
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/part-of: plausible
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: analytics.knowledgedump.space
+    external-dns.alpha.kubernetes.io/target: knowledgedump.space
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`analytics.knowledgedump.space`) && (PathPrefix(`/js/`) || PathPrefix(`/api/event`))
+      kind: Rule
+      services:
+        - name: plausible
+          port: 8000
+  tls: {} # *.knowledgedump.space wildcard via the TLSStore default certificate
+---
+# HTTP→HTTPS redirect for the public tracking host (so any http:// script src upgrades).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: plausible-public-redirect
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/part-of: plausible
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`analytics.knowledgedump.space`) && (PathPrefix(`/js/`) || PathPrefix(`/api/event`))
+      kind: Rule
+      middlewares:
+        - name: redirect-https
           namespace: traefik
       services:
         - name: plausible
