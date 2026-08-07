@@ -1,0 +1,34 @@
+---
+# GrafanaDashboard CR: "Catalyst K8s — Full System Ops".
+#
+# ONE opinionated, question-first operational dashboard for the whole cluster:
+# health at a glance, what's broken, capacity/allocation pressure per node, node
+# inventory, and top consumers. Replaces the three overlapping generic community
+# dashboards (grafana.com 315 / 15760 / 21173) that were wall-of-metrics noise.
+#
+# CORRECTNESS: all kube-state-metrics queries are scoped to
+# job="kube-state-metrics". KSM is double-scraped on this cluster (also via
+# job="kubernetes-service-endpoints", honor_labels collision -> namespace becomes
+# "monitoring", real value in exported_namespace). Scoping to the clean job both
+# avoids 2x double-counting AND gets the correct namespace/node labels. See
+# TALOS-57t (fix the double-scrape) and the ksm-double-scraped bd memory.
+#
+# JSON at ../json/catalyst-k8s-dashboard.json -> ConfigMap
+# dashboard-catalyst-k8s-dashboard (configMapGenerator, disableNameSuffixHash).
+# uid "catalyst-k8s-dashboard" is stable. See TALOS-9h2.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: catalyst-k8s-dashboard
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folder: 'Infrastructure'
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-catalyst-k8s-dashboard
+    key: catalyst-k8s-dashboard.json
