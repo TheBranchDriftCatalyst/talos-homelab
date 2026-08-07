@@ -9,9 +9,15 @@ metadata:
   namespace: crossplane-demo
 spec:
   replicas: 1
+  # Dragonfly sizes itself to the HOST thread count (16 here) and would demand ~4Gi
+  # (256Mi/thread) → OOM-exits under a small limit. Pin it to 2 proactor threads + an
+  # explicit maxmemory so it fits the demo footprint. (TALOS-ja5)
+  args:
+    - "--proactor_threads=2"
+    - "--maxmemory=384mb"
   resources:
     requests:
       cpu: 50m
       memory: 128Mi
     limits:
-      memory: 256Mi
+      memory: 512Mi
