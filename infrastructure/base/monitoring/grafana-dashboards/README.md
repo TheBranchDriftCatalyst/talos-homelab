@@ -179,7 +179,6 @@ kubectl describe grafanadashboard -n monitoring cilium-agent
 | Dashboard               | File                           | Grafana.com ID | Description                           |
 | ----------------------- | ------------------------------ | -------------- | ------------------------------------- |
 | hybrid-cluster-overview | hybrid-cluster-dashboards.yaml | Custom         | Multi-cluster overview (Liqo peering) |
-| liqo-overview           | hybrid-cluster-dashboards.yaml | Custom         | Liqo multi-cluster metrics            |
 | aws-ec2-instances       | hybrid-cluster-dashboards.yaml | 15310          | AWS EC2 instance monitoring           |
 
 ### Custom Application Dashboards (8 dashboards)
