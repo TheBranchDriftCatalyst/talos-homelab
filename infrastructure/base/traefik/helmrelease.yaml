@@ -188,6 +188,13 @@ spec:
       - --serversTransport.insecureSkipVerify=true # For self-signed certs
       - --api.insecure=true # Enable insecure API (homelab only)
       - --api.dashboard=true
+      # Bind the CrowdSec bouncer globally on both entrypoints so ALL ingress is
+      # checked against CrowdSec decisions (from the Traefik/AppSec parsers) before
+      # reaching any service. FAIL-OPEN (see bouncer-middleware.yaml) so a LAPI/AppSec
+      # outage can never take ingress down; LAN + pod CIDRs are in clientTrustedIPs so
+      # internal traffic always bypasses. This is the "go-live" bind for TALOS-pbn/e9h.
+      - --entrypoints.web.http.middlewares=traefik-bouncer@kubernetescrd
+      - --entrypoints.websecure.http.middlewares=traefik-bouncer@kubernetescrd
 
     # Security context - needed for hostPort
     securityContext:
@@ -261,3 +268,11 @@ spec:
         bouncer:
           moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
           version: v1.7.1
+        # Bot Wrangler — serves /robots.txt from the ai-robots-txt list and, for LLM
+        # scraper UAs that ignore it, PROXIES them (unbuffered) into the iocaine tarpit
+        # via the `bot-wrangler` Middleware. Attached per-route on PUBLIC IngressRoutes
+        # (not an entrypoint bind). Like the others, fetched from GitHub at pod start.
+        # TALOS-mko.
+        botWrangler:
+          moduleName: github.com/holysoles/bot-wrangler-traefik-plugin
+          version: v0.10.2
