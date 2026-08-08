@@ -1,0 +1,34 @@
+---
+# Cowrie SSH/telnet honeypot — INTERNAL-ONLY sensor (TALOS-u3l).
+#
+# Deliberately NOT internet-exposed: no external-dns, no knowledgedump.space
+# IngressRoute, no Cloudflare. Reachable on the LAN only via hostPort 2222/2223
+# on its scheduled node (soft nodeSelector: talos03 — the node is NOT tainted;
+# dedicating a box is a later phase). It runs as a comparison/lab honeypot and,
+# once TALOS-e9h lands, feeds CrowdSec (Cowrie acquisition -> decisions -> the
+# Traefik bouncer) and ships logs to OpenSearch/Graylog + Loki (TALOS-l05).
+#
+# dependsOn cilium: the base ships a default-deny CiliumNetworkPolicy, so the
+# Cilium CRDs must exist first. wait:false — nothing here is a HelmRelease to
+# health-check. Part of epic TALOS-hg7.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: honeypot
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/honeypot
+  prune: true
+  wait: false
+  dependsOn:
+    - name: cilium
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
