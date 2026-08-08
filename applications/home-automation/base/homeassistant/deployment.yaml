@@ -72,6 +72,12 @@ spec:
               # Ensure required files exist
               touch /config/automations.yaml /config/scripts.yaml /config/scenes.yaml
               mkdir -p /config/themes
+              # Enforce recorder db_url from the CNPG secret every boot. The base
+              # configmap ships a stale db_url, so patch it unconditionally here
+              # (HA_DB_URL = homeassistant-postgres-app `uri`). TALOS-hx77.1
+              if grep -q "db_url:" /config/configuration.yaml; then
+                sed -i "s|db_url:.*|db_url: ${HA_DB_URL}|" /config/configuration.yaml
+              fi
           env:
             # recorder db_url is built from the CNPG-generated secret (TALOS-hx77.1)
             - name: HA_DB_URL
