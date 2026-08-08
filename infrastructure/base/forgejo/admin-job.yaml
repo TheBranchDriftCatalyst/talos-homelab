@@ -35,12 +35,15 @@ spec:
               valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: password } }
             - name: ADMIN_PW
               valueFrom: { secretKeyRef: { name: forgejo-secrets, key: admin-password } }
+          # NOTE: every runtime shell variable is DOUBLED ($$) so Flux's postBuild
+          # ${VAR} substitution leaves it alone (Flux turns $$ into a literal $;
+          # the shell then expands it). A single $ here gets eaten by Flux ->
+          # empty app.ini values ("dbname is empty").
           command:
             - sh
             - -c
             - |
               set -e
-              export GITEA_WORK_DIR=/tmp/forgejo
               mkdir -p /tmp/forgejo/conf
               cat > /tmp/forgejo/conf/app.ini <<EOF
               APP_NAME = Forgejo
@@ -51,20 +54,20 @@ spec:
               [database]
               DB_TYPE  = postgres
               HOST     = forgejo-postgres-rw.forgejo.svc.cluster.local:5432
-              NAME     = ${DB_NAME}
-              USER     = ${DB_USER}
-              PASSWD   = ${DB_PASSWD}
+              NAME     = $${DB_NAME}
+              USER     = $${DB_USER}
+              PASSWD   = $${DB_PASSWD}
               SSL_MODE = require
               EOF
               CFG=/tmp/forgejo/conf/app.ini
               echo "==> migrate (idempotent, ensures schema)"
-              forgejo -c "$CFG" migrate
+              forgejo -c "$$CFG" migrate
               echo "==> ensure admin 'panda'"
-              if forgejo -c "$CFG" admin user list 2>/dev/null | awk '{print $2}' | grep -qx panda; then
+              if forgejo -c "$$CFG" admin user list 2>/dev/null | awk '{print $$2}' | grep -qx panda; then
                 echo "    admin 'panda' already exists"
               else
-                forgejo -c "$CFG" admin user create --admin --username panda \
-                  --email panda@catalyst.local --password "$ADMIN_PW" --must-change-password=false
+                forgejo -c "$$CFG" admin user create --admin --username panda \
+                  --email panda@catalyst.local --password "$${ADMIN_PW}" --must-change-password=false
                 echo "    admin 'panda' created"
               fi
               echo "==> done"
