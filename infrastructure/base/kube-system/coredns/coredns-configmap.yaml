@@ -47,6 +47,18 @@ data:
         # See TALOS-6vf (also fixes the Grafana pod's auth.talos00 hairpin).
         rewrite name auth.talos00 authentik-server.authentik.svc.cluster.local
 
+        # In-cluster resolution for auth.knowledgedump.space -> Traefik (which
+        # serves the *.knowledgedump.space wildcard cert and routes to Authentik).
+        # This lets pods doing server-side OIDC use the PUBLIC HTTPS issuer
+        # https://auth.knowledgedump.space with a VALID cert and no Cloudflare
+        # (in-cluster path). Critical for Zot: its OAuth state cookie is
+        # SameSite=Lax, so the IdP must share the registrable domain
+        # (knowledgedump.space) with the app (registry.knowledgedump.space) or the
+        # cross-site callback drops the cookie ("failed to get state: named cookie
+        # not present"). Browser resolves auth.knowledgedump.space via Pi-hole
+        # wildcard -> same Traefik. TALOS-6vf.
+        rewrite name auth.knowledgedump.space traefik.traefik.svc.cluster.local
+
         kubernetes cluster.local in-addr.arpa ip6.arpa {
             pods insecure
             fallthrough in-addr.arpa ip6.arpa
