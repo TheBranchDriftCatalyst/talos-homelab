@@ -41,6 +41,13 @@ spec:
       initContainers:
         - name: bootstrap
           image: codeberg.org/forgejo/forgejo:16.0.2
+          # Run as the git user (1000). Our custom command bypasses the image's
+          # s6 entrypoint that normally drops privileges, and forgejo refuses to
+          # run as root. The main container keeps the default entrypoint (starts
+          # as root, drops internally).
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
           env: &forgejoEnv
             - name: FORGEJO__database__DB_TYPE
               value: postgres
