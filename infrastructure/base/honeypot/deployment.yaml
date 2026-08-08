@@ -76,6 +76,31 @@ spec:
               port: ssh
             initialDelaySeconds: 30
             periodSeconds: 5
+        # Log-shipper sidecar: streams Cowrie's JSON event log to STDOUT so it
+        # reaches both (a) Alloy -> Loki (durable, queryable in Grafana) and
+        # (b) the CrowdSec agent (CRI stdout tail -> crowdsecurity/cowrie parser
+        # -> decisions). Cowrie's output_jsonlog only writes a file in the shared
+        # emptyDir; nothing tailed it before (TALOS-l05 / TALOS-e9h). `touch`
+        # first so `tail -F` doesn't race Cowrie creating the file.
+        - name: logship
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - 'touch /var/log/cowrie/cowrie.json; exec tail -n+1 -F /var/log/cowrie/cowrie.json'
+          volumeMounts:
+            - name: cowrie-var-log
+              mountPath: /var/log/cowrie
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
       volumes:
         - name: cowrie-config
           configMap:
