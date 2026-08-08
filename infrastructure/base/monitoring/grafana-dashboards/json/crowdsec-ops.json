@@ -30,7 +30,7 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Currently-active decisions (bans/captchas) held by the LAPI, summed across all origins (crowdsec local scenarios, CAPI community blocklist, subscribed lists, manual cscli). Metric: cs_active_decisions (gauge; labels reason, origin, action). Empty until the engine is scraped; large numbers usually mean the CAPI community blocklist is enrolled.",
+      "description": "Currently-active decisions (bans/captchas) held by the LAPI, summed across all origins (crowdsec local scenarios, CAPI community blocklist, subscribed lists, manual cscli). Metric: cs_active_decisions (gauge; labels reason, origin, action). POPULATES once attacks are seen locally or the CrowdSec Console/CAPI is enrolled (community blocklist) — reads empty/0 until then, which is expected on a fresh engine.",
       "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "red"}, "unit": "short"}},
       "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
       "id": 1,
@@ -63,34 +63,34 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "LAPI / engine reachability. Uses presence of cs_info (the engine's version/info metric) as the up signal: >=1 = the engine is being scraped and its LAPI is serving. Metric: count(cs_info). If you have a proper scrape job label you can swap this for up{job=~\"crowdsec.*\"}.",
+      "description": "LAPI / engine reachability. Uses the CrowdSec LAPI pod's cs_info metric as the up signal: 1 = the LAPI is being scraped and serving. Metric: max(cs_info{namespace=\"crowdsec\",pod=~\"crowdsec-lapi.*\"}). The scrape job label is kubernetes-pods (Alloy), so components are distinguished by the pod-name prefix, not a crowdsec job.",
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "unit": "none", "mappings": [{"type": "value", "options": {"0": {"text": "DOWN"}}}]}},
       "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
       "id": 4,
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(cs_info)", "legendFormat": "LAPI Up"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(cs_info{namespace=\"crowdsec\",pod=~\"crowdsec-lapi.*\"})", "legendFormat": "LAPI Up"}],
       "title": "LAPI / Engine Up",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Number of CrowdSec engine (agent) instances reporting metrics — one series per scraped pod/instance. With the agent running as a DaemonSet this should equal the node count. Metric: count(count by (instance)(cs_info)).",
+      "description": "Number of CrowdSec agent (parser/bucket engine) pods reporting metrics — one cs_info series per agent pod. With the agent running as a DaemonSet this should equal the node count. Metric: count(cs_info{namespace=\"crowdsec\",pod=~\"crowdsec-agent.*\"}).",
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "unit": "none"}},
       "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
       "id": 5,
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(count by (instance) (cs_info))", "legendFormat": "Agents"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(cs_info{namespace=\"crowdsec\",pod=~\"crowdsec-agent.*\"})", "legendFormat": "Agents"}],
       "title": "Agents Reporting",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Number of AppSec (WAF) engines emitting metrics. AppSec only publishes cs_appsec_* series once an AppSec engine + acquisition is configured AND at least one HTTP request has been inspected — so this is EMPTY until AppSec is wired up and traffic flows. Metric: count(count by (appsec_engine)(cs_appsec_reqs_total)).",
-      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}, {"color": "green", "value": 1}]}, "unit": "none"}},
+      "description": "Whether the AppSec (WAF) engine pod is up and scraped, via its cs_info metric. Metric: max(cs_info{namespace=\"crowdsec\",pod=~\"crowdsec-appsec.*\"}). NOTE: this reads 1 as soon as the appsec pod is running; the cs_appsec_* traffic series (reqs/blocks/rule hits) stay EMPTY until Traefik forwards requests to it (:7422) and rules match.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}, {"color": "green", "value": 1}]}, "unit": "none", "mappings": [{"type": "value", "options": {"0": {"text": "DOWN"}}}]}},
       "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
       "id": 6,
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(count by (appsec_engine) (cs_appsec_reqs_total))", "legendFormat": "AppSec"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(cs_info{namespace=\"crowdsec\",pod=~\"crowdsec-appsec.*\"})", "legendFormat": "AppSec"}],
       "title": "AppSec Engines Up",
       "type": "stat"
     },
@@ -215,27 +215,27 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Log lines read into the parsers per second, by acquisition type (file/syslog/docker/...). Metric: rate(cs_parser_hits_total[$__rate_interval]) (labels source, type). NOTE: some CrowdSec versions split this into cs_parser_hits_ok_total / cs_parser_hits_ko_total — if this panel is empty check for those variants.",
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "lps"}},
+      "description": "LIVE. Log lines read into the parsers per second, by acquisition source. Metric: rate(cs_parser_hits_total[$__rate_interval]) (labels source, type) on the agent pods. Total line = all sources.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "lps"}, "overrides": [{"matcher": {"id": "byName", "options": "Total"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}, {"id": "custom.lineWidth", "value": 3}]}]},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
       "id": 30,
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_parser_hits_total[$__rate_interval]))", "legendFormat": "Total"},
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (type) (rate(cs_parser_hits_total[$__rate_interval]))", "legendFormat": "{{type}}"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (source) (rate(cs_parser_hits_total[$__rate_interval]))", "legendFormat": "{{source}}"}
       ],
-      "title": "Lines Parsed/s (by acquisition type)",
+      "title": "Lines Parsed/s (by acquisition source)",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Parse failures per second — parser nodes that did NOT match (a proxy for malformed/unrecognized log lines). Metric: rate(cs_node_hits_ko_total[$__rate_interval]) by source. Sustained non-zero = a log format the parsers don't understand (check the acquisition config).",
+      "description": "LIVE. Parse failures per second — parser hits that did NOT match (a proxy for malformed/unrecognized log lines). Metric: rate(cs_parser_hits_ko_total[$__rate_interval]) by source. Sustained non-zero = a log format the parsers don't understand (check the acquisition config). Should sit near zero once acquisition matches the log sources.",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "cps"}},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
       "id": 31,
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (source) (rate(cs_node_hits_ko_total[$__rate_interval]))", "legendFormat": "{{source}}"}],
-      "title": "Parse Failures/s (unmatched nodes)",
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (source) (rate(cs_parser_hits_ko_total[$__rate_interval]))", "legendFormat": "{{source}}"}],
+      "title": "Parse Failures/s (unmatched)",
       "type": "timeseries"
     },
     {
@@ -331,7 +331,7 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "LAPI requests coming FROM the Traefik bouncer, per second, by bouncer. Metric: rate(cs_lapi_bouncer_requests_total[$__rate_interval]) (labels bouncer, route, method). A healthy traefik bouncer polls /v1/decisions/stream on a fixed interval — a flat non-zero rate = the bouncer is alive and talking to LAPI.",
+      "description": "LAPI requests coming FROM the Traefik bouncer, per second, by bouncer. Metric: rate(cs_lapi_bouncer_requests_total[$__rate_interval]) (labels bouncer, route, method). POPULATES once a bouncer is bound to the LAPI — a healthy traefik bouncer polls /v1/decisions/stream on a fixed interval, so a flat non-zero rate = the bouncer is alive and talking to LAPI. Empty until then.",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "reqps"}},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 70},
       "id": 50,
@@ -388,45 +388,45 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Engine up (presence of cs_info). >=1 = the security engine is scraped and serving. Metric: count(cs_info).",
+      "description": "Total CrowdSec component pods scraped (lapi + agent + appsec), via cs_info. >=1 = the security engine is scraped and serving. Metric: count(cs_info{namespace=\"crowdsec\"}).",
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "unit": "none"}},
       "gridPos": {"h": 4, "w": 4, "x": 0, "y": 83},
       "id": 60,
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(cs_info)", "legendFormat": "Engine"}],
-      "title": "Engine Up",
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(cs_info{namespace=\"crowdsec\"})", "legendFormat": "Components"}],
+      "title": "Components Up",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Engine version string, read from the cs_info metric labels. Metric: cs_info.",
+      "description": "CrowdSec version string, read from the cs_info metric's version label. Metric: cs_info{namespace=\"crowdsec\"} (label version).",
       "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "text"}, "unit": "none"}},
       "gridPos": {"h": 4, "w": 8, "x": 4, "y": 83},
       "id": 61,
       "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "/^version$/", "values": true}, "textMode": "value"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "cs_info", "format": "table", "instant": true}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "cs_info{namespace=\"crowdsec\",pod=~\"crowdsec-lapi.*\"}", "format": "table", "instant": true}],
       "title": "Engine Version",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Time Prometheus took to scrape the CrowdSec target. Adjust the job matcher to your scrape job. Metric: scrape_duration_seconds{job=~\".*crowdsec.*\"}. If empty, the job label doesn't match — check the ServiceMonitor/PodMonitor job name.",
+      "description": "Time the Alloy scrape of the CrowdSec pods took. Metric: scrape_duration_seconds{namespace=\"crowdsec\"} (scrape meta-series carry the target's namespace/pod labels; the job label is kubernetes-pods).",
       "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}, "unit": "s", "decimals": 3}},
       "gridPos": {"h": 4, "w": 4, "x": 12, "y": 83},
       "id": 62,
       "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(scrape_duration_seconds{job=~\".*crowdsec.*\"})", "legendFormat": "Scrape"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(scrape_duration_seconds{namespace=\"crowdsec\"})", "legendFormat": "Scrape"}],
       "title": "Scrape Duration",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Series scraped from the CrowdSec target — a rough proxy for engine metric richness. Metric: scrape_samples_scraped{job=~\".*crowdsec.*\"}. (Adjust job matcher as above.)",
+      "description": "Series scraped from the CrowdSec pods — a rough proxy for engine metric richness. Metric: scrape_samples_scraped{namespace=\"crowdsec\"}.",
       "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "short"}},
       "gridPos": {"h": 4, "w": 4, "x": 16, "y": 83},
       "id": 63,
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(scrape_samples_scraped{job=~\".*crowdsec.*\"})", "legendFormat": "Series"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(scrape_samples_scraped{namespace=\"crowdsec\"})", "legendFormat": "Series"}],
       "title": "Series Scraped",
       "type": "stat"
     },
@@ -443,13 +443,76 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Scrape duration over time for the CrowdSec target — watch for creep as decision/series count grows. Metric: scrape_duration_seconds{job=~\".*crowdsec.*\"}.",
+      "description": "Scrape duration over time per CrowdSec pod — watch for creep as decision/series count grows. Metric: scrape_duration_seconds{namespace=\"crowdsec\"}.",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "s"}},
       "gridPos": {"h": 6, "w": 24, "x": 0, "y": 87},
       "id": 65,
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "scrape_duration_seconds{job=~\".*crowdsec.*\"}", "legendFormat": "{{instance}}"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "scrape_duration_seconds{namespace=\"crowdsec\"}", "legendFormat": "{{pod}}"}],
       "title": "Scrape Duration Over Time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 93},
+      "id": 107,
+      "panels": [],
+      "title": "LAPI Activity & Whitelist (live)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "LIVE. Whitelist hits per second by source — parser/scenario nodes that MATCHED a whitelist and were suppressed. Proves internal/trusted traffic is being whitelisted (not banned). Metric: rate(cs_node_wl_hits_ok_total[$__rate_interval]) by source (labels source, type, name) on the agent pods.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal", "group": "A"}}, "unit": "cps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 94},
+      "id": 70,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_node_wl_hits_ok_total[$__rate_interval]))", "legendFormat": "Total"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (source) (rate(cs_node_wl_hits_ok_total[$__rate_interval]))", "legendFormat": "{{source}}"}
+      ],
+      "title": "Whitelist Hits/s (by source)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "LIVE. Average parse time per event, by parser type/source — how long the agent spends parsing each event. Metric: rate(cs_parsing_time_seconds_sum[$__rate_interval]) / rate(cs_parsing_time_seconds_count[$__rate_interval]) on the agent pods. Watch for creep under heavy log volume.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "s"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 94},
+      "id": 71,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_parsing_time_seconds_sum[$__rate_interval])) / sum(rate(cs_parsing_time_seconds_count[$__rate_interval]))", "legendFormat": "avg"}
+      ],
+      "title": "Avg Parse Time/event",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "LIVE. LAPI HTTP request rate by route (e.g. /v1/decisions/stream, /v1/watchers, /v1/heartbeat) — the LAPI's own API activity, dominated by agent/bouncer polling. Metric: rate(cs_lapi_route_requests_total[$__rate_interval]) by route (labels route, method) on the lapi pod.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "reqps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 102},
+      "id": 72,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_lapi_route_requests_total{pod=~\"crowdsec-lapi.*\"}[$__rate_interval]))", "legendFormat": "Total"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (route) (rate(cs_lapi_route_requests_total{pod=~\"crowdsec-lapi.*\"}[$__rate_interval]))", "legendFormat": "{{route}}"}
+      ],
+      "title": "LAPI Requests/s (by route)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "LIVE. LAPI request latency p95 and p50, computed from the request-duration histogram. Metric: histogram_quantile(q, sum by (le)(rate(cs_lapi_request_duration_seconds_bucket{pod=~\"crowdsec-lapi.*\"}[$__rate_interval]))). Rising p95 = the LAPI is under pressure.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "s"}, "overrides": [{"matcher": {"id": "byName", "options": "p95"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]}]},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 102},
+      "id": 73,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.95, sum by (le) (rate(cs_lapi_request_duration_seconds_bucket{pod=~\"crowdsec-lapi.*\"}[$__rate_interval])))", "legendFormat": "p95"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.50, sum by (le) (rate(cs_lapi_request_duration_seconds_bucket{pod=~\"crowdsec-lapi.*\"}[$__rate_interval])))", "legendFormat": "p50"}
+      ],
+      "title": "LAPI Request Latency (p95 / p50)",
       "type": "timeseries"
     }
   ],
