@@ -122,6 +122,16 @@ spec:
         - namespace: traefik
           podName: "traefik-*"
           program: traefik # → crowdsecurity/traefik parser
+        # Cowrie honeypot events (the `logship` sidecar emits Cowrie JSON on
+        # stdout). Pipes honeypot activity into CrowdSec for visibility/signals.
+        # NOTE: there is NO crowdsecurity/cowrie hub collection — a custom parser
+        # + ssh-bf mapping is a follow-up (TALOS-e9h). AND while the honeypot is
+        # internal-only, its source IPs are RFC1918 -> matched by the homelab
+        # whitelist parser above -> no auto-ban (by design; bans will fire once
+        # the honeypot is publicly exposed). Unparsed lines are dropped harmlessly.
+        - namespace: honeypot
+          podName: "cowrie-*"
+          program: cowrie
       env:
         # (crowdsecurity/whitelists is NOT a collection; RFC1918/CF whitelisting is the custom
         #  homelab/whitelist parser above. whitelist-good-actors = community known-good bots.)
