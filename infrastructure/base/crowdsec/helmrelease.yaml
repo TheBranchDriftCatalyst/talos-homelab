@@ -100,11 +100,9 @@ spec:
           size: 1Gi
         config:
           enabled: false
-      # local-path binds the PV to talos00 (control-plane) — tolerate the taint + flag for Velero.
-      tolerations:
-        - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
+      # Keep the LAPI + its local-path DB OFF the small control-plane node (talos00): NO toleration →
+      # talos00's taint blocks it → schedules on a worker. Fresh PVC binds there; the decisions DB is
+      # rebuildable (bouncer re-registers + Console re-enrolls from env on restart). (TALOS-pbn)
       podAnnotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "6060"
