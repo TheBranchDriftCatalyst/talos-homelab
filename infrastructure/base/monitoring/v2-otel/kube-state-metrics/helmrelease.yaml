@@ -65,6 +65,25 @@ spec:
       requests:
         cpu: 10m
         memory: 64Mi
+      limits:
+        # Hygiene ceiling only — NOT the crashloop cause. KSM was never OOMKilled
+        # (no limit existed; it died exit 1, not 137). ~3-5x expected usage @275 pods.
+        memory: 256Mi
+
+    # Root cause of the 1198-restart/70d crashloop is NOT memory or cardinality: at
+    # pod startup KSM connects to the apiserver ClusterIP (10.96.0.1:443) before
+    # Cilium programs its endpoint → EPERM "operation not permitted" → exit 1 (KSM
+    # has zero client-creation retry). A too-tight liveness probe then amplifies it
+    # (503 → kill → restart → re-hits the race). Loosen both probes so a transient
+    # CNI/watch blip is tolerated instead of triggering a kill-restart cascade.
+    # (TALOS-uylg — deeper Cilium startup-race fix tracked separately.)
+    livenessProbe:
+      initialDelaySeconds: 20
+      periodSeconds: 15
+      failureThreshold: 8
+    readinessProbe:
+      initialDelaySeconds: 10
+      failureThreshold: 6
 
     # Self-monitoring
     selfMonitor:
