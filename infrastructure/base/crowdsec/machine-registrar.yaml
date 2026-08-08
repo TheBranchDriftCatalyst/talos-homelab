@@ -1,14 +1,13 @@
 ---
 # Self-healing registrar for the `crowdsec-web-ui` LAPI machine (TALOS-pbn).
 #
-# WHY: the LAPI's decisions/machines DB is currently EPHEMERAL (no crowdsec-lapi
-# PVC is created by the chart), so every LAPI restart/reschedule wipes manually-
-# added machines. The built-in agent + the `traefik` bouncer survive because the
-# entrypoint re-registers them from env each boot — but the web-ui machine (added
-# imperatively) does not, so the Web UI goes "LAPI Offline / 401" after any LAPI
-# restart. Until the LAPI DB is made persistent (TALOS-<db-persist>), this CronJob
-# idempotently re-registers the machine from the crowdsec-web-ui-creds secret, so
-# the UI auto-recovers within the schedule window with zero manual steps.
+# WHY: the web-ui machine is added imperatively (`cscli machines add crowdsec-web-ui`),
+# so unlike the agents + `traefik` bouncer (which re-register from env each boot) it has
+# no automatic re-register path. The LAPI datastore is now durable CNPG Postgres
+# (postgres.yaml), so a registered machine normally persists across restarts — but this
+# CronJob still (a) performs the FIRST registration idempotently and (b) is a
+# belt-and-suspenders safety net if the Postgres DB is ever rebuilt/migrated. It only
+# (re)registers when the machine is absent, so a healthy LAPI is never disturbed.
 apiVersion: v1
 kind: ServiceAccount
 metadata:

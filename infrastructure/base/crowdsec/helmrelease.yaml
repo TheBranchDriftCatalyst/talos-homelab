@@ -116,16 +116,36 @@ spec:
           value: "talos-homelab"
         - name: ENROLL_TAGS
           value: "k8s talos traefik"
+        # ---- Datastore: CloudNativePG Postgres (postgres.yaml, TALOS-pbn) ----
+        # Replaces SQLite-on-local-path. The crowdsec entrypoint templates config.yaml's
+        # db_config from these DB_* env vars. LAPI is now stateless → survives any reschedule
+        # (state lives in Postgres). Creds come from the CNPG-generated crowdsec-postgres-app
+        # secret; host/type/sslmode are static.
+        - name: DB_TYPE
+          value: "pgx" # postgres via the pgx driver (crowdsec's recommended pg backend)
+        - name: DB_HOST
+          value: "crowdsec-postgres-rw" # CNPG read-write service
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_SSLMODE
+          value: "require" # CNPG serves TLS; encrypt without client-cert verification
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef: {name: crowdsec-postgres-app, key: dbname}
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef: {name: crowdsec-postgres-app, key: username}
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: crowdsec-postgres-app, key: password}
       persistentVolume:
-        data: # SQLite decisions DB + registered bouncer keys
-          enabled: true
-          storageClassName: local-path
-          size: 1Gi
+        data: # No SQLite PVC — the datastore is now CNPG Postgres (postgres.yaml)
+          enabled: false
         config:
           enabled: false
-      # Keep the LAPI + its local-path DB OFF the small control-plane node (talos00): NO toleration →
-      # talos00's taint blocks it → schedules on a worker. Fresh PVC binds there; the decisions DB is
-      # rebuildable (bouncer re-registers + Console re-enrolls from env on restart). (TALOS-pbn)
+      # Keep the LAPI OFF the small control-plane node (talos00): NO toleration → talos00's taint
+      # blocks it → schedules on a worker. LAPI is now stateless (Postgres-backed), so it reschedules
+      # freely; the machines/decisions DB persists in CNPG across any reschedule. (TALOS-pbn)
       podAnnotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "6060"

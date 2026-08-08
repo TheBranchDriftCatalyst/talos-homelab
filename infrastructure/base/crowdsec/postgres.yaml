@@ -1,0 +1,38 @@
+---
+# CloudNativePG database for CrowdSec LAPI (TALOS-pbn). Replaces the previous SQLite-on-
+# local-path datastore, whose failure mode was: local-path is node-local + Delete-reclaim, so
+# any LAPI reschedule or PVC recreation silently wiped EVERY registered machine. Agents, the
+# traefik bouncer, and the web-ui re-register from env / the machine-registrar CronJob — but the
+# appsec component registers via a ONE-SHOT init container with no re-register path, so it then
+# CrashLoopBackOff'd forever ("API error: ent: machine not found" / 401) and the Web UI's AppSec
+# metrics endpoint failed. Moving the datastore to Postgres makes LAPI stateless + node-
+# independent (it reconnects over the network after any reschedule); durability/backups are
+# CNPG's job. SQLite-on-NFS was rejected (NFS advisory-lock flakiness → corruption).
+#
+# CNPG creates:
+#   - a 'crowdsec' database owned by user 'crowdsec'
+#   - Secret 'crowdsec-postgres-app' (username/password/dbname/host/port/uri) — LAPI reads DB
+#     creds from it; no manual password, no 1Password field
+#   - Service 'crowdsec-postgres-rw' (read-write endpoint)
+# Auto-discovered by the cluster-wide cnpg-clusters PodMonitor + the CloudNativePG dashboard.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: crowdsec-postgres
+  namespace: crowdsec
+spec:
+  instances: 1
+  imagePullPolicy: IfNotPresent
+  storage:
+    size: 5Gi
+    storageClass: local-path
+  monitoring:
+    enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
+  bootstrap:
+    initdb:
+      database: crowdsec
+      owner: crowdsec
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
