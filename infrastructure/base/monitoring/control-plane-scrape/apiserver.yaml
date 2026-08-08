@@ -1,0 +1,33 @@
+---
+# kube-apiserver metrics — scrape the built-in default/kubernetes Service
+# (port name "https", 443 → 6443). Bearer token + skip-verify; the
+# metricRelabelings keep list bounds cardinality (~apiserver histograms are
+# the biggest offenders on a full apiserver scrape).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-apiserver
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-apiserver
+spec:
+  selector:
+    matchLabels:
+      component: apiserver
+      provider: kubernetes
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    - port: https
+      scheme: https
+      interval: 30s
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        insecureSkipVerify: true
+      metricRelabelings:
+        # Cardinality control: keep only the request/latency families we
+        # actually alert and dashboard on.
+        - sourceLabels: [__name__]
+          regex: (apiserver_request_.*|etcd_request_.*)
+          action: keep

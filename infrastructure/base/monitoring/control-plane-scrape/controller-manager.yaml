@@ -1,0 +1,54 @@
+---
+# kube-controller-manager metrics — https://192.168.1.54:10257/metrics
+# (HTTPS + bearer token). workqueue_* / leader-election metrics.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-controller-manager-metrics
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-controller-manager-metrics
+spec:
+  clusterIP: None
+  ports:
+    - name: https-metrics
+      port: 10257
+      protocol: TCP
+      targetPort: 10257
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: kube-controller-manager-metrics
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-controller-manager-metrics
+subsets:
+  - addresses:
+      - ip: 192.168.1.54
+    ports:
+      - name: https-metrics
+        port: 10257
+        protocol: TCP
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-controller-manager
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-controller-manager-metrics
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-controller-manager-metrics
+  namespaceSelector:
+    matchNames:
+      - kube-system
+  endpoints:
+    - port: https-metrics
+      scheme: https
+      interval: 30s
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        insecureSkipVerify: true
