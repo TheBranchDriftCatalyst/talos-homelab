@@ -1,0 +1,112 @@
+---
+# jetstack/version-checker — image-version exporter.
+# Enumerates every running container cluster-wide, queries its source registry
+# for newer tags, and exposes:
+#   version_checker_is_latest{namespace,pod,container,image,current_version,latest_version}
+#   (gauge: 1=latest, 0=out-of-date)
+# Powers the "App Ops — Image Versions" Grafana dashboard (metrics land in Mimir
+# via the ServiceMonitor -> Alloy cluster-wide scrape).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: version-checker
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: version-checker
+    app.kubernetes.io/component: exporter
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: version-checker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: version-checker
+        app.kubernetes.io/component: exporter
+    spec:
+      serviceAccountName: version-checker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: version-checker
+          image: quay.io/jetstack/version-checker:v0.11.0
+          command: ["version-checker"]
+          args:
+            # Automatically check EVERY container on the cluster without needing
+            # a per-pod enable annotation. Opt individual containers OUT with
+            # `enable.version-checker.io/<container>: "false"`.
+            - --test-all-containers
+            # Metrics + /metrics endpoint (matches Service/ServiceMonitor port).
+            - --metrics-serving-address=0.0.0.0:8080
+            # How long a resolved image->tags lookup is cached before re-querying
+            # the registry. Long TTL keeps us well under registry rate limits;
+            # version drift changes slowly so freshness isn't a concern.
+            - --image-cache-timeout=30m
+            - --log-level=info
+          # NOISE GUARD (a): Docker Hub anonymous pulls are rate-limited
+          # (~100 manifest reqs / 6h / IP). --test-all-containers across the whole
+          # cluster can throttle for docker.io images; with a 30m cache this is
+          # acceptable for a first pass. If Docker Hub 429s become noisy, add
+          # Docker Hub creds via the env below (see NOISE GUARD (b)).
+          #
+          # NOISE GUARD (b) — PRIVATE REGISTRY AUTH (TODO, not wired this pass):
+          # These in-cluster private registries need credentials to be checked
+          # and WILL error/log failures until wired (only a handful of images):
+          #   - registry.knowledgedump.space (Zot)
+          #   - forge.knowledgedump.space / codeberg.org (Forgejo)
+          # version-checker reads per-registry creds from env vars, e.g.:
+          #   env:
+          #     - name: VERSION_CHECKER_SELFHOSTED_HOST_ZOT
+          #       value: https://registry.knowledgedump.space
+          #     - name: VERSION_CHECKER_SELFHOSTED_USERNAME_ZOT
+          #       valueFrom: { secretKeyRef: { name: version-checker-registry-creds, key: zot-user } }
+          #     - name: VERSION_CHECKER_SELFHOSTED_PASSWORD_ZOT
+          #       valueFrom: { secretKeyRef: { name: version-checker-registry-creds, key: zot-pass } }
+          # (and DOCKERHUB_USERNAME/DOCKERHUB_PASSWORD to lift the Docker Hub
+          # rate limit). Provision the Secret via ESO, then uncomment. Until then
+          # those few images simply report a lookup error — not fatal.
+          #
+          # NOISE GUARD (c) — TAG NOISE: pre-release / SHA / date-stamped tags can
+          # produce false "out-of-date" flips. Suppress per-container with pod
+          # annotations (opt-in): `use-metadata.version-checker.io/<container>`,
+          # `match-regex.version-checker.io/<container>`, and the pin-* family
+          # (`pin-major`/`pin-minor`/`pin-patch`.version-checker.io/<container>).
+          # Add those on the noisy workload's pod template, not here.
+          ports:
+            - name: web
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: web
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: web
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
