@@ -66,16 +66,22 @@ spec:
               mountPath: /cowrie/cowrie-git/var/lib/cowrie
             - name: cowrie-var-log
               mountPath: /cowrie/cowrie-git/var/log/cowrie
+          # NOTE: the cowrie/cowrie image is shell-less (no /bin/sh) so exec
+          # probes are impossible, and the only listening ports ARE the honeypot
+          # ports — so every tcpSocket probe is logged by Cowrie as a
+          # session.connect/closed and pollutes the capture data. The old 5s
+          # readiness + 10s liveness produced ~700 fake sessions/hour (8x real
+          # traffic in load tests). Readiness is meaningless here (access is via
+          # hostPort, not the Service), so it's removed; liveness is slowed to
+          # 5-min so noise is negligible. Honeypot analytics/CrowdSec additionally
+          # filter the pod CIDR (10.244.0.0/16) — kubelet probe traffic is never a
+          # real attacker. (TALOS-u3l follow-up.)
           livenessProbe:
             tcpSocket:
               port: ssh
             initialDelaySeconds: 60
-            periodSeconds: 10
-          readinessProbe:
-            tcpSocket:
-              port: ssh
-            initialDelaySeconds: 30
-            periodSeconds: 5
+            periodSeconds: 300
+            failureThreshold: 3
         # Log-shipper sidecar: streams Cowrie's JSON event log to STDOUT so it
         # reaches both (a) Alloy -> Loki (durable, queryable in Grafana) and
         # (b) the CrowdSec agent (CRI stdout tail -> crowdsecurity/cowrie parser
