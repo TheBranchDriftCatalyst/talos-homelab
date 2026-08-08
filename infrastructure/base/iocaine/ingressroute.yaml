@@ -3,11 +3,14 @@
 # door: anything hitting this host is served iocaine's infinite garbage maze.
 # Modeled on the Zot public-HTTPS route.
 #
-# cloudflare-proxied=true (unlike the registry, which must be DNS-only for large
-# push bodies): a tarpit WANTS Cloudflare's proxy in front — it hides the home
-# IP, and the maze responses are small HTML pages well under the 100MB proxy
-# cap. external-dns creates the Cloudflare record; the *.knowledgedump.space
-# wildcard cert (TLSStore default) terminates TLS.
+# cloudflare-proxied=FALSE (DNS-only, like the registry): when proxied, browsers
+# coalescing HTTP/2 connections across Cloudflare's shared *.knowledgedump.space
+# edge get intermittent 421 Misdirected Request on the trap host (the origin is
+# healthy — curl direct to the home IP returns 200 every time; the 421 is a
+# CF-edge coalescing artifact). DNS-only points trap straight at the home IP ->
+# Traefik terminates the *.knowledgedump.space wildcard and serves the maze
+# reliably (same path registry/forge already use). Home IP is already exposed via
+# those DNS-only hosts, and a tarpit WANTS to be directly reachable anyway.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -16,7 +19,7 @@ metadata:
   annotations:
     external-dns.alpha.kubernetes.io/hostname: trap.knowledgedump.space
     external-dns.alpha.kubernetes.io/target: knowledgedump.space
-    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "false"
 spec:
   entryPoints:
     - websecure
@@ -43,6 +46,30 @@ spec:
       middlewares:
         - name: redirect-https
           namespace: traefik
+      services:
+        - name: iocaine
+          port: 8080
+---
+# Internal LAN maze at http://trap.talos00 — plain HTTP, no TLS, no Cloudflare,
+# no wildcard-cert HTTP/2 coalescing. The reliable way to view the tarpit from
+# the LAN (requires the *.talos00 /etc/hosts entry). Same iocaine backend.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: iocaine-internal
+  namespace: iocaine
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "iocaine tarpit"
+    gethomepage.dev/description: "LLM/AI-crawler sinkhole maze"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/href: "http://trap.talos00"
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`trap.talos00`)
+      kind: Rule
       services:
         - name: iocaine
           port: 8080
