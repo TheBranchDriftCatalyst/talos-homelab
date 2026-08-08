@@ -88,3 +88,232 @@ spec:
     # Self-monitoring
     selfMonitor:
       enabled: true
+
+    # ------------------------------------------------------------------------
+    # Flux (GitOps Toolkit) per-object metrics via KSM Custom Resource State.
+    #
+    # Emits, for every Flux object (Kustomization, HelmRelease, and all
+    # source-controller kinds):
+    #   gotk_resource_info        — Info: ready/suspended/revision/url as labels
+    #   gotk_reconcile_condition  — StateSet: Ready condition one-hot over
+    #                               status="True"|"False"|"Unknown" (type="Ready")
+    #   gotk_suspend_status       — Gauge: 1 when .spec.suspend is true
+    # KSM also auto-adds customresource_group/version/kind labels to all three.
+    #
+    # resource_info label schema is verbatim from the canonical upstream config:
+    # https://github.com/fluxcd/flux2-monitoring-example/blob/main/monitoring/controllers/kube-prometheus-stack/kube-state-metrics-config.yaml
+    # (upstream ships resource_info only; reconcile_condition + suspend_status are
+    # added here on the same schema to restore the Flux v0.x metric shapes).
+    # image.toolkit.fluxcd.io kinds are omitted — those CRDs are not installed.
+    # NOTE: do NOT set --custom-resource-state-only (upstream does) — this KSM
+    # instance also serves the core collectors above.
+    # NOTE: this change restarts the KSM pod (new config hash/args). KSM is
+    # stable after the probe loosening above; expect one clean restart.
+    # ------------------------------------------------------------------------
+
+    # Required: the chart's default ClusterRole only covers core collectors; the
+    # CRS reflectors get Forbidden on the Flux API groups without these rules.
+    rbac:
+      extraRules:
+        - apiGroups:
+            - source.toolkit.fluxcd.io
+            - kustomize.toolkit.fluxcd.io
+            - helm.toolkit.fluxcd.io
+            - notification.toolkit.fluxcd.io
+          resources:
+            - gitrepositories
+            - buckets
+            - helmrepositories
+            - helmcharts
+            - ocirepositories
+            - kustomizations
+            - helmreleases
+            - alerts
+            - providers
+            - receivers
+          verbs: ['get', 'list', 'watch']
+
+    customResourceState:
+      enabled: true
+      config:
+        spec:
+          resources:
+            - groupVersionKind:
+                group: kustomize.toolkit.fluxcd.io
+                version: v1
+                kind: Kustomization
+              metricNamePrefix: gotk
+              metrics:
+                - name: 'resource_info'
+                  help: 'The current state of a Flux Kustomization resource.'
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    suspended: [spec, suspend]
+                    revision: [status, lastAppliedRevision]
+                    source_name: [spec, sourceRef, name]
+                # Anchored once; aliased into every other kind below (identical
+                # shape — kinds are distinguished by the auto customresource_kind
+                # label). YAML aliases are expanded at parse time by Flux/kustomize.
+                - &gotk_reconcile_condition
+                  name: 'reconcile_condition'
+                  help: 'The Ready condition of a GitOps Toolkit resource (one-hot over True/False/Unknown).'
+                  commonLabels:
+                    type: Ready
+                  labelsFromPath:
+                    name: [metadata, name]
+                    exported_namespace: [metadata, namespace]
+                  each:
+                    type: StateSet
+                    stateSet:
+                      labelName: status
+                      path: [status, conditions, '[type=Ready]']
+                      valueFrom: [status]
+                      list: ['True', 'False', 'Unknown']
+                - &gotk_suspend_status
+                  name: 'suspend_status'
+                  help: 'Whether a GitOps Toolkit resource is suspended (1 = suspended).'
+                  labelsFromPath:
+                    name: [metadata, name]
+                    exported_namespace: [metadata, namespace]
+                  each:
+                    type: Gauge
+                    gauge:
+                      path: [spec, suspend]
+                      nilIsZero: true
+            - groupVersionKind:
+                group: helm.toolkit.fluxcd.io
+                version: v2
+                kind: HelmRelease
+              metricNamePrefix: gotk
+              metrics:
+                - name: 'resource_info'
+                  help: 'The current state of a Flux HelmRelease resource.'
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    suspended: [spec, suspend]
+                    revision: [status, history, '0', chartVersion]
+                    chart_name: [status, history, '0', chartName]
+                    chart_app_version: [status, history, '0', appVersion]
+                    chart_ref_name: [spec, chartRef, name]
+                    chart_source_name: [spec, chart, spec, sourceRef, name]
+                - *gotk_reconcile_condition
+                - *gotk_suspend_status
+            - groupVersionKind:
+                group: source.toolkit.fluxcd.io
+                version: v1
+                kind: GitRepository
+              metricNamePrefix: gotk
+              metrics:
+                - name: 'resource_info'
+                  help: 'The current state of a Flux GitRepository resource.'
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    suspended: [spec, suspend]
+                    revision: [status, artifact, revision]
+                    url: [spec, url]
+                - *gotk_reconcile_condition
+                - *gotk_suspend_status
+            - groupVersionKind:
+                group: source.toolkit.fluxcd.io
+                version: v1
+                kind: Bucket
+              metricNamePrefix: gotk
+              metrics:
+                - name: 'resource_info'
+                  help: 'The current state of a Flux Bucket resource.'
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    suspended: [spec, suspend]
+                    revision: [status, artifact, revision]
+                    endpoint: [spec, endpoint]
+                    bucket_name: [spec, bucketName]
+                - *gotk_reconcile_condition
+                - *gotk_suspend_status
+            - groupVersionKind:
+                group: source.toolkit.fluxcd.io
+                version: v1
+                kind: HelmRepository
+              metricNamePrefix: gotk
+              metrics:
+                - name: 'resource_info'
+                  help: 'The current state of a Flux HelmRepository resource.'
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    suspended: [spec, suspend]
+                    revision: [status, artifact, revision]
+                    url: [spec, url]
+                - *gotk_reconcile_condition
+                - *gotk_suspend_status
+            - groupVersionKind:
+                group: source.toolkit.fluxcd.io
+                version: v1
+                kind: HelmChart
+              metricNamePrefix: gotk
+              metrics:
+                - name: 'resource_info'
+                  help: 'The current state of a Flux HelmChart resource.'
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    suspended: [spec, suspend]
+                    revision: [status, artifact, revision]
+                    chart_name: [spec, chart]
+                    chart_version: [spec, version]
+                - *gotk_reconcile_condition
+                - *gotk_suspend_status
+            - groupVersionKind:
+                group: source.toolkit.fluxcd.io
+                version: v1
+                kind: OCIRepository
+              metricNamePrefix: gotk
+              metrics:
+                - name: 'resource_info'
+                  help: 'The current state of a Flux OCIRepository resource.'
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    suspended: [spec, suspend]
+                    revision: [status, artifact, revision]
+                    url: [spec, url]
+                - *gotk_reconcile_condition
+                - *gotk_suspend_status
