@@ -1,0 +1,48 @@
+---
+# Public HTTPS maze at trap.knowledgedump.space. This is the honeypot front
+# door: anything hitting this host is served iocaine's infinite garbage maze.
+# Modeled on the Zot public-HTTPS route.
+#
+# cloudflare-proxied=true (unlike the registry, which must be DNS-only for large
+# push bodies): a tarpit WANTS Cloudflare's proxy in front — it hides the home
+# IP, and the maze responses are small HTML pages well under the 100MB proxy
+# cap. external-dns creates the Cloudflare record; the *.knowledgedump.space
+# wildcard cert (TLSStore default) terminates TLS.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: iocaine-public
+  namespace: iocaine
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: trap.knowledgedump.space
+    external-dns.alpha.kubernetes.io/target: knowledgedump.space
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`trap.knowledgedump.space`)
+      kind: Rule
+      services:
+        - name: iocaine
+          port: 8080
+  tls: {}  # served via TLSStore default (*.knowledgedump.space wildcard)
+---
+# HTTP -> HTTPS redirect for the public host.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: iocaine-public-http
+  namespace: iocaine
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`trap.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: iocaine
+          port: 8080
