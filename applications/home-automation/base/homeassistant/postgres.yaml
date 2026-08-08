@@ -1,10 +1,27 @@
 ---
+# Pinned app credentials for the HA recorder DB (TALOS-hx77.1). Pre-created so CNPG adopts
+# it via bootstrap.initdb.secret instead of generating a random password — this lets the
+# recorder db_url stay STATIC and declarative in configmap.yaml (no runtime templating, no
+# init-container config munging). HA recorder data is disposable, so this throwaway
+# credential living in git is acceptable; harden to ESO later if HA gains real use.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: homeassistant-postgres-app
+  labels:
+    app.kubernetes.io/name: homeassistant-postgres
+    app.kubernetes.io/part-of: home-automation
+type: kubernetes.io/basic-auth
+stringData:
+  username: homeassistant
+  password: homeassistant
+---
 # CloudNativePG Postgres for the Home Assistant recorder (TALOS-hx77.1 / TALOS-hx77).
 # Replaces the raw postgres:15-alpine Deployment on NFS with a CNPG-managed cluster
 # (repo standard: forgejo/plausible/crowdsec). HA recorder history is DISPOSABLE — it
 # rebuilds on connect — so there is NO data migration: HA reconnects to a fresh DB on
-# its next (full) restart. CNPG generates the homeassistant-postgres-app secret; the HA
-# init container builds recorder.db_url from that secret's `uri` key (see deployment.yaml).
+# restart. The app reaches it via the CNPG homeassistant-postgres-rw service; creds are
+# pinned by the secret above so configmap.yaml can hold a static db_url.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -24,6 +41,8 @@ spec:
     initdb:
       database: homeassistant
       owner: homeassistant
+      secret:
+        name: homeassistant-postgres-app # pinned creds (above); CNPG won't randomize
   resources:
     requests:
       cpu: 50m

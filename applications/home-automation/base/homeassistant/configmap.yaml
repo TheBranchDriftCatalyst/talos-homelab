@@ -22,10 +22,12 @@ data:
     script: !include scripts.yaml
     scene: !include scenes.yaml
 
-    # Recorder configuration - use PostgreSQL instead of NFS-backed SQLite
-    # SQLite on NFS causes SIGBUS crashes due to mmap incompatibility.
+    # Recorder configuration - CloudNativePG Postgres (see postgres.yaml, TALOS-hx77.1).
+    # Static, declarative db_url: the CNPG -rw service + a password pinned via the
+    # homeassistant-postgres-app secret (postgres.yaml bootstrap.initdb.secret). HA recorder
+    # data is disposable, so the throwaway credential lives in git; no runtime templating.
     recorder:
-      db_url: postgresql://homeassistant:homeassistant@homeassistant-postgres.home-automation.svc.cluster.local:5432/homeassistant
+      db_url: postgresql://homeassistant:homeassistant@homeassistant-postgres-rw.home-automation.svc.cluster.local:5432/homeassistant
       purge_keep_days: 30
       commit_interval: 5
 
