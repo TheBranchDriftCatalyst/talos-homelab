@@ -1,0 +1,25 @@
+---
+# CrowdSec IPS (infrastructure/base/crowdsec/) — LAPI + agent DaemonSet + AppSec + the bouncer
+# Middleware (ns traefik). dependsOn traefik (bouncer Middleware + key land in ns traefik; the plugin
+# is enabled in the Traefik helmrelease) + external-secrets (keys) + storage (LAPI PVC). wait:true
+# gates on the HelmRelease being Ready. The GLOBAL entrypoint bind is added separately (staged
+# go-live) only after verification, so this can never break ingress. TALOS-pbn.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: crowdsec
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 15m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/crowdsec
+  prune: true
+  wait: true
+  dependsOn:
+    - name: external-secrets
+    - name: traefik
+    - name: storage

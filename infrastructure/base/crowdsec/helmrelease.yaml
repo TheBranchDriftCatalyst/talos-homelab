@@ -1,0 +1,173 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crowdsec
+  namespace: crowdsec
+spec:
+  interval: 30m
+  timeout: 15m
+  chart:
+    spec:
+      chart: crowdsec
+      version: '0.20.0'
+      sourceRef:
+        kind: HelmRepository
+        name: crowdsec
+        namespace: crowdsec
+      interval: 12h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  values:
+    # Talos runs containerd, not docker — the agent must read CRI-format container logs.
+    container_runtime: containerd
+    image:
+      repository: crowdsecurity/crowdsec
+      tag: v1.7.8-2
+
+    # ---- custom whitelist parser (mounted into the agent) — never ban internal/LAN/Cloudflare ----
+    config:
+      parsers:
+        s02-enrich:
+          homelab-whitelist.yaml: |
+            name: homelab/whitelist
+            description: "Never ban internal, cluster, LAN, or Cloudflare-edge traffic"
+            whitelist:
+              reason: "trusted internal + LAN + CDN"
+              ip:
+                - "127.0.0.1"
+              cidr:
+                # RFC1918 — pods/services (Cilium, 10.96.0.0/12 svc) + LAN
+                - "10.0.0.0/8"
+                - "172.16.0.0/12"
+                - "192.168.0.0/16"
+                # Cloudflare edge (safety net; real client IP already resolves past CF via forwardedHeaders)
+                - "173.245.48.0/20"
+                - "103.21.244.0/22"
+                - "103.22.200.0/22"
+                - "103.31.4.0/22"
+                - "141.101.64.0/18"
+                - "108.162.192.0/18"
+                - "190.93.240.0/20"
+                - "188.114.96.0/20"
+                - "197.234.240.0/22"
+                - "198.41.128.0/17"
+                - "162.158.0.0/15"
+                - "104.16.0.0/13"
+                - "104.24.0.0/14"
+                - "172.64.0.0/13"
+                - "131.0.72.0/22"
+                - "2400:cb00::/32"
+                - "2606:4700::/32"
+                - "2803:f800::/32"
+                - "2405:b500::/32"
+                - "2405:8100::/32"
+                - "2a06:98c0::/29"
+                - "2c0f:f248::/32"
+
+    # ---- LAPI: Local API + decisions DB + Console enrollment + bouncer registration ----
+    lapi:
+      env:
+        # Auto-registers a bouncer named "traefik" with this key (same value the plugin uses).
+        - name: BOUNCER_KEY_traefik
+          valueFrom:
+            secretKeyRef:
+              name: crowdsec-keys
+              key: BOUNCER_KEY_traefik
+        # Console enrollment (community blocklists + app.crowdsec.net dashboard).
+        - name: ENROLL_KEY
+          valueFrom:
+            secretKeyRef:
+              name: crowdsec-keys
+              key: ENROLL_KEY
+        - name: ENROLL_INSTANCE_NAME
+          value: "talos-homelab"
+        - name: ENROLL_TAGS
+          value: "k8s talos traefik"
+      persistentVolume:
+        data: # SQLite decisions DB + registered bouncer keys
+          enabled: true
+          storageClassName: local-path
+          size: 1Gi
+        config:
+          enabled: false
+      # local-path binds the PV to talos00 (control-plane) — tolerate the taint + flag for Velero.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6060"
+        prometheus.io/path: "/metrics"
+        backup.velero.io/backup-volumes: data
+      metrics:
+        enabled: true # exposes :6060 (Alloy scrapes via the annotations above)
+      resources:
+        requests: {cpu: 100m, memory: 200Mi}
+        limits: {memory: 500Mi}
+
+    # ---- AGENT: log-processor DaemonSet reading Traefik pod logs on every node ----
+    agent:
+      acquisition:
+        - namespace: traefik
+          podName: "traefik-*"
+          program: traefik # → crowdsecurity/traefik parser
+      env:
+        - name: COLLECTIONS
+          value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/whitelists"
+      # Traefik is a DaemonSet on every node incl control-plane — the agent must be too.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6060"
+        prometheus.io/path: "/metrics"
+      metrics:
+        enabled: true
+      resources:
+        requests: {cpu: 100m, memory: 150Mi}
+        limits: {memory: 250Mi}
+
+    # ---- APPSEC / WAF on :7422 — DETECT-ONLY first (default_remediation: allow) ----
+    appsec:
+      enabled: true
+      acquisitions:
+        - source: appsec
+          listen_addr: "0.0.0.0:7422"
+          path: /
+          appsec_config: homelab/appsec-detect
+          labels:
+            type: appsec
+      configs:
+        appsec-detect.yaml: |
+          name: homelab/appsec-detect
+          # DETECT-ONLY: log matches but never block. Flip to `ban` after observing no false
+          # positives (TALOS-pbn). CRS stays out-of-band permanently (low false-positive risk).
+          default_remediation: allow
+          default_pass_action: allow
+          blocked_http_code: 403
+          inband_rules:
+            - crowdsecurity/base-config
+            - crowdsecurity/vpatch-*
+          outofband_rules:
+            - crowdsecurity/crs
+      env:
+        - name: COLLECTIONS
+          value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-crs"
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6060"
+        prometheus.io/path: "/metrics"
+      metrics:
+        enabled: true
+      resources:
+        requests: {cpu: 100m, memory: 150Mi}
+        limits: {memory: 300Mi}

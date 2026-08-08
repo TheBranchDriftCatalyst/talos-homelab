@@ -43,6 +43,18 @@ spec:
     deployment:
       kind: DaemonSet # Use DaemonSet for hostPort binding
       replicas: 1
+      # Mount the CrowdSec bouncer API key so the bouncer plugin can read it via
+      # crowdsecLapiKeyFile: /etc/traefik/crowdsec/lapi-key. (TALOS-pbn)
+      additionalVolumes:
+        - name: crowdsec-bouncer-key
+          secret:
+            secretName: crowdsec-bouncer-key
+
+    # Mount for the CrowdSec bouncer key volume above (into the Traefik container).
+    additionalVolumeMounts:
+      - name: crowdsec-bouncer-key
+        mountPath: /etc/traefik/crowdsec
+        readOnly: true
 
     # HostPort rollout fix: terminate all old pods before starting new
     # ones. `maxSurge: 1` (the chart default) tries to schedule a new
@@ -71,11 +83,40 @@ spec:
         exposedPort: 80
         protocol: TCP
         hostPort: 80 # Bind to host port 80
+        # Trust Cloudflare + pod proxies' X-Forwarded-For so ClientHost = the real visitor IP
+        # (feeds the CrowdSec traefik parser + the bouncer plugin). (TALOS-pbn)
+        forwardedHeaders:
+          trustedIPs: &cfTrustedIPs
+            - "10.0.0.0/8" # pods/services (Cilium, svc 10.96/12)
+            - "173.245.48.0/20"
+            - "103.21.244.0/22"
+            - "103.22.200.0/22"
+            - "103.31.4.0/22"
+            - "141.101.64.0/18"
+            - "108.162.192.0/18"
+            - "190.93.240.0/20"
+            - "188.114.96.0/20"
+            - "197.234.240.0/22"
+            - "198.41.128.0/17"
+            - "162.158.0.0/15"
+            - "104.16.0.0/13"
+            - "104.24.0.0/14"
+            - "172.64.0.0/13"
+            - "131.0.72.0/22"
+            - "2400:cb00::/32"
+            - "2606:4700::/32"
+            - "2803:f800::/32"
+            - "2405:b500::/32"
+            - "2405:8100::/32"
+            - "2a06:98c0::/29"
+            - "2c0f:f248::/32"
       websecure:
         port: 443
         exposedPort: 443
         protocol: TCP
         hostPort: 443 # Bind to host port 443
+        forwardedHeaders:
+          trustedIPs: *cfTrustedIPs
       traefik:
         port: 9000
         exposedPort: 9000
@@ -117,12 +158,18 @@ spec:
         matchRule: Host(`traefik.${DOMAIN}`)
         entryPoints: ['web']
 
-    # Enable access logs
+    # Enable access logs. JSON format + kept fields so the CrowdSec `crowdsecurity/traefik`
+    # parser can read `ClientHost` (the real visitor IP). Still writes to stdout → Loki. (TALOS-pbn)
     logs:
       general:
         level: INFO
       access:
         enabled: true
+        format: json
+        fields:
+          defaultmode: keep
+          headers:
+            defaultmode: keep
 
     # Providers
     providers:
@@ -207,3 +254,9 @@ spec:
         rewriteHeaders:
           moduleName: github.com/XciD/traefik-plugin-rewrite-headers
           version: v0.0.4
+        # CrowdSec IPS bouncer — the `bouncer` Middleware (infrastructure/base/crowdsec/) queries the
+        # CrowdSec LAPI to block malicious IPs + forwards to AppSec/WAF. Bound globally once verified
+        # (see the entrypoint middlewares in additionalArguments). TALOS-pbn.
+        bouncer:
+          moduleName: github.com/maxlerebourg/crowdsec-bouncer-traefik-plugin
+          version: v1.7.1

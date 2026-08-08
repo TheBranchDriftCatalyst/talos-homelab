@@ -1,0 +1,519 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Security Ops — CrowdSec engine, bouncer, and AppSec (WAF) observability. Metrics scraped from the CrowdSec security engine's Prometheus endpoint on :6060 (cs_* series). Many panels stay EMPTY until (a) the engine is scraped, (b) real traffic/attacks flow through Traefik, and (c) the CrowdSec Console / CAPI enrollment and AppSec engine are configured. NOTE on per-IP data: CrowdSec deliberately does NOT expose per-IP decisions in Prometheus (unbounded cardinality) — 'top blocked IPs' lives in `cscli decisions list` / the LAPI, not here.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "Overview — Security KPIs",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Currently-active decisions (bans/captchas) held by the LAPI, summed across all origins (crowdsec local scenarios, CAPI community blocklist, subscribed lists, manual cscli). Metric: cs_active_decisions (gauge; labels reason, origin, action). Empty until the engine is scraped; large numbers usually mean the CAPI community blocklist is enrolled.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "red"}, "unit": "short"}},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "id": 1,
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(cs_active_decisions{origin=~\"$origin\"})", "legendFormat": "Active"}],
+      "title": "Active Decisions (bans)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Locally-generated decisions in the last 24h, proxied by bucket overflows (each scenario overflow raises one alert → one decision). Metric: increase(cs_bucket_overflowed_total[24h]). NOTE: this counts only LOCAL scenario decisions — CAPI/list-sourced decisions bump the active-decisions gauge without a local overflow, so this undercounts total additions.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "orange"}, "unit": "short"}},
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 1},
+      "id": 2,
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(increase(cs_bucket_overflowed_total{name=~\"$scenario\"}[24h]))", "legendFormat": "Added"}],
+      "title": "Decisions Added (24h, local)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Local alerts raised in the last 24h (bucket overflows). Metric: increase(cs_bucket_overflowed_total[24h]). Locally, alerts ≈ decisions added; this stays empty until a scenario actually overflows (needs malicious traffic).",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "yellow"}, "unit": "short"}},
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 1},
+      "id": 3,
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(increase(cs_bucket_overflowed_total[24h]))", "legendFormat": "Alerts"}],
+      "title": "Alerts (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "LAPI / engine reachability. Uses presence of cs_info (the engine's version/info metric) as the up signal: >=1 = the engine is being scraped and its LAPI is serving. Metric: count(cs_info). If you have a proper scrape job label you can swap this for up{job=~\"crowdsec.*\"}.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "unit": "none", "mappings": [{"type": "value", "options": {"0": {"text": "DOWN"}}}]}},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 1},
+      "id": 4,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(cs_info)", "legendFormat": "LAPI Up"}],
+      "title": "LAPI / Engine Up",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of CrowdSec engine (agent) instances reporting metrics — one series per scraped pod/instance. With the agent running as a DaemonSet this should equal the node count. Metric: count(count by (instance)(cs_info)).",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "unit": "none"}},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 1},
+      "id": 5,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(count by (instance) (cs_info))", "legendFormat": "Agents"}],
+      "title": "Agents Reporting",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of AppSec (WAF) engines emitting metrics. AppSec only publishes cs_appsec_* series once an AppSec engine + acquisition is configured AND at least one HTTP request has been inspected — so this is EMPTY until AppSec is wired up and traffic flows. Metric: count(count by (appsec_engine)(cs_appsec_reqs_total)).",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}, {"color": "green", "value": 1}]}, "unit": "none"}},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 1},
+      "id": 6,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value_and_name"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(count by (appsec_engine) (cs_appsec_reqs_total))", "legendFormat": "AppSec"}],
+      "title": "AppSec Engines Up",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 5},
+      "id": 101,
+      "panels": [],
+      "title": "Decisions & Bans",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Rate of new bans over time, proxied by bucket overflows/s (local decisions being created). Metric: rate(cs_bucket_overflowed_total[$__rate_interval]). Total line = all scenarios; empty until scenarios overflow.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 22, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "cps"}, "overrides": [{"matcher": {"id": "byName", "options": "Total"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}, {"id": "custom.lineWidth", "value": 3}]}]},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6},
+      "id": 10,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_bucket_overflowed_total{name=~\"$scenario\"}[$__rate_interval]))", "legendFormat": "Total"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (name) (rate(cs_bucket_overflowed_total{name=~\"$scenario\"}[$__rate_interval]))", "legendFormat": "{{name}}"}
+      ],
+      "title": "Bans / Decisions Added Over Time (overflows/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Active decisions broken down by origin: crowdsec (local scenarios), CAPI (community blocklist), lists (subscribed blocklists), cscli (manual). Metric: cs_active_decisions by origin. This is where CAPI/list enrollment shows up — expect the bulk of decisions from CAPI once Console-enrolled.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true, "stacking": {"mode": "normal", "group": "A"}}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6},
+      "id": 11,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (origin) (cs_active_decisions{origin=~\"$origin\"})", "legendFormat": "{{origin}}"}],
+      "title": "Active Decisions by Origin",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Share of active decisions by scenario (the `reason` label on cs_active_decisions = the scenario that triggered the ban, e.g. crowdsecurity/http-probing). Empty until decisions exist.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 14},
+      "id": 12,
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"]}, "pieType": "donut", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "tooltip": {"mode": "single", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "topk(12, sum by (reason) (cs_active_decisions{origin=~\"$origin\"}))", "legendFormat": "{{reason}}"}],
+      "title": "Active Decisions by Scenario",
+      "type": "piechart"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Share of active decisions by origin (crowdsec / CAPI / lists / cscli). Metric: cs_active_decisions by origin.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 14},
+      "id": 13,
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"]}, "pieType": "donut", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "tooltip": {"mode": "single", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (origin) (cs_active_decisions)", "legendFormat": "{{origin}}"}],
+      "title": "Active Decisions by Origin (share)",
+      "type": "piechart"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Share of active decisions by action (ban, captcha, ...). Metric: cs_active_decisions by action.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "unit": "short"}},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 14},
+      "id": 14,
+      "options": {"legend": {"displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"]}, "pieType": "donut", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "tooltip": {"mode": "single", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (action) (cs_active_decisions{origin=~\"$origin\"})", "legendFormat": "{{action}}"}],
+      "title": "Decisions by Action",
+      "type": "piechart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 22},
+      "id": 102,
+      "panels": [],
+      "title": "Top Lists",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Top scenarios by number of currently-active decisions (reason label). Effectively 'what is getting banned the most right now'. Metric: cs_active_decisions by reason.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": true}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}]}, "unit": "short"}, "overrides": [{"matcher": {"id": "byName", "options": "Decisions"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}, {"id": "custom.width", "value": 160}]}]},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 23},
+      "id": 20,
+      "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Decisions"}]},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "topk(20, sum by (reason) (cs_active_decisions{origin=~\"$origin\"}))", "format": "table", "instant": true}],
+      "title": "Top Scenarios (active decisions)",
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true, "namespace": true, "pod": true, "action": true, "origin": true}, "renameByName": {"Value": "Decisions", "reason": "Scenario"}}}
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Top scenarios by bucket overflows in the last 24h — which detection scenarios are firing most. Metric: increase(cs_bucket_overflowed_total[24h]) by name. Empty until scenarios overflow.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": true}, "thresholds": {"mode": "absolute", "steps": [{"color": "orange", "value": null}]}, "unit": "short"}, "overrides": [{"matcher": {"id": "byName", "options": "Overflows"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}, {"id": "custom.width", "value": 160}]}]},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 23},
+      "id": 21,
+      "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Overflows"}]},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "topk(20, sum by (name) (increase(cs_bucket_overflowed_total{name=~\"$scenario\"}[24h])))", "format": "table", "instant": true}],
+      "title": "Top Bucket Overflows (24h)",
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true, "namespace": true, "pod": true}, "renameByName": {"Value": "Overflows", "name": "Scenario"}}}
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "",
+      "gridPos": {"h": 3, "w": 24, "x": 0, "y": 32},
+      "id": 22,
+      "options": {"code": {"language": "plaintext", "showLineNumbers": false, "showMiniMap": false}, "content": "**Top blocked IPs is intentionally not shown here.** CrowdSec does **not** expose per-IP decisions in Prometheus (per-IP labels would be unbounded cardinality). The metrics only carry `reason` (scenario), `origin`, and `action`. For the actual banned-IP list use **`cscli decisions list`**, the CrowdSec Console, or query the LAPI `/v1/decisions` endpoint — not this dashboard.", "mode": "markdown"},
+      "title": "Note — Top Blocked IPs",
+      "type": "text"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 35},
+      "id": 103,
+      "panels": [],
+      "title": "Parser & Acquisition",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Log lines read into the parsers per second, by acquisition type (file/syslog/docker/...). Metric: rate(cs_parser_hits_total[$__rate_interval]) (labels source, type). NOTE: some CrowdSec versions split this into cs_parser_hits_ok_total / cs_parser_hits_ko_total — if this panel is empty check for those variants.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "lps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+      "id": 30,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_parser_hits_total[$__rate_interval]))", "legendFormat": "Total"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (type) (rate(cs_parser_hits_total[$__rate_interval]))", "legendFormat": "{{type}}"}
+      ],
+      "title": "Lines Parsed/s (by acquisition type)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Parse failures per second — parser nodes that did NOT match (a proxy for malformed/unrecognized log lines). Metric: rate(cs_node_hits_ko_total[$__rate_interval]) by source. Sustained non-zero = a log format the parsers don't understand (check the acquisition config).",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "cps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+      "id": 31,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (source) (rate(cs_node_hits_ko_total[$__rate_interval]))", "legendFormat": "{{source}}"}],
+      "title": "Parse Failures/s (unmatched nodes)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Buckets overflowing per second, by scenario — the core detection signal (an overflow = a scenario fired). Metric: rate(cs_bucket_overflowed_total[$__rate_interval]) by name.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 60, "gradientMode": "none", "lineWidth": 1, "showPoints": "never", "spanNulls": false, "stacking": {"mode": "normal", "group": "A"}}, "unit": "cps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 44},
+      "id": 32,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["sum", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (name) (rate(cs_bucket_overflowed_total{name=~\"$scenario\"}[$__rate_interval]))", "legendFormat": "{{name}}"}],
+      "title": "Buckets Overflowing (by scenario)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Events poured into leaky buckets per second, by source — how much traffic each acquisition source is contributing to detection. Metric: rate(cs_bucket_poured_total[$__rate_interval]) (labels source, type, name).",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "cps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 44},
+      "id": 33,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "topk(15, sum by (source) (rate(cs_bucket_poured_total[$__rate_interval])))", "legendFormat": "{{source}}"}],
+      "title": "Events Poured to Buckets/s (by source)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 52},
+      "id": 104,
+      "panels": [],
+      "title": "AppSec (WAF)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "HTTP requests inspected by the AppSec engine per second, by source. Metric: rate(cs_appsec_reqs_total[$__rate_interval]) (labels source, appsec_engine). EMPTY until an AppSec engine is configured and Traefik forwards requests to it (:7422).",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "reqps"}},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 53},
+      "id": 40,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_appsec_reqs_total[$__rate_interval]))", "legendFormat": "Inspected"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_appsec_block_total[$__rate_interval]))", "legendFormat": "Blocked"}
+      ],
+      "title": "AppSec Requests Inspected vs Blocked",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "AppSec rule matches per second, split by in-band vs out-of-band. In-band rules can block the request; out-of-band rules only observe/log. Metric: rate(cs_appsec_rule_hits[$__rate_interval]) by type (inband/outofband).",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "cps"}, "overrides": [{"matcher": {"id": "byName", "options": "inband"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}, {"matcher": {"id": "byName", "options": "outofband"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}}]}]},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 53},
+      "id": 41,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (type) (rate(cs_appsec_rule_hits[$__rate_interval]))", "legendFormat": "{{type}}"}],
+      "title": "Rules Matched (in-band vs out-of-band)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Blocked vs detected requests. REMEMBER: AppSec starts in detect-only mode — 'Blocked' (cs_appsec_block_total) will read ~0 until you flip the engine out of detect-only, even while 'Matched' rises. Metrics: rate(cs_appsec_block_total) vs rate(cs_appsec_rule_hits).",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "cps"}, "overrides": [{"matcher": {"id": "byName", "options": "Blocked"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}, {"matcher": {"id": "byName", "options": "Detected (rule hits)"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]}]},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 53},
+      "id": 42,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_appsec_block_total[$__rate_interval]))", "legendFormat": "Blocked"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_appsec_rule_hits[$__rate_interval]))", "legendFormat": "Detected (rule hits)"}
+      ],
+      "title": "Blocked vs Detected (detect-only aware)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Top AppSec rules by hit count. Metric: cs_appsec_rule_hits (labels rule_name, type, appsec_engine, source). EMPTY until AppSec is configured and rules match real requests.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "filterable": true}, "thresholds": {"mode": "absolute", "steps": [{"color": "purple", "value": null}]}, "unit": "short"}, "overrides": [{"matcher": {"id": "byName", "options": "Hits"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}, {"id": "custom.width", "value": 160}]}]},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 61},
+      "id": 43,
+      "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Hits"}]},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "topk(20, sum by (rule_name, type) (cs_appsec_rule_hits))", "format": "table", "instant": true}],
+      "title": "Top AppSec Rules",
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true, "namespace": true, "pod": true, "appsec_engine": true, "source": true}, "renameByName": {"Value": "Hits", "rule_name": "Rule", "type": "Band"}}}
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 69},
+      "id": 105,
+      "panels": [],
+      "title": "Bouncer (Traefik)",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "LAPI requests coming FROM the Traefik bouncer, per second, by bouncer. Metric: rate(cs_lapi_bouncer_requests_total[$__rate_interval]) (labels bouncer, route, method). A healthy traefik bouncer polls /v1/decisions/stream on a fixed interval — a flat non-zero rate = the bouncer is alive and talking to LAPI.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 20, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "reqps"}},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 70},
+      "id": 50,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (bouncer) (rate(cs_lapi_bouncer_requests_total{bouncer=~\"$bouncer\"}[$__rate_interval]))", "legendFormat": "{{bouncer}}"}
+      ],
+      "title": "LAPI Requests from Bouncer/s",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Decision-lookup calls the LAPI answered for each bouncer, per second: ok = returned decisions, ko = errored. Metrics: rate(cs_lapi_decisions_ok_total) / rate(cs_lapi_decisions_ko_total) by bouncer. Sustained ko > 0 = the bouncer's LAPI calls are failing (auth / connectivity).",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "reqps"}, "overrides": [{"matcher": {"id": "byRegexp", "options": ".*ko.*"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}]},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 70},
+      "id": 51,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (bouncer) (rate(cs_lapi_decisions_ok_total{bouncer=~\"$bouncer\"}[$__rate_interval]))", "legendFormat": "{{bouncer}} ok"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (bouncer) (rate(cs_lapi_decisions_ko_total{bouncer=~\"$bouncer\"}[$__rate_interval]))", "legendFormat": "{{bouncer}} ko"}
+      ],
+      "title": "LAPI Decision Lookups Served (ok/ko)/s",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Active decisions currently served to bouncers (the enforcement set the Traefik bouncer pulls). Same source as the overview KPI. Metric: sum(cs_active_decisions).",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "red"}, "unit": "short"}},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 78},
+      "id": 52,
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(cs_active_decisions)", "legendFormat": "Served"}],
+      "title": "Active Decisions Served",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "LAPI errors returned to bouncers per second (aggregate). Metric: rate(cs_lapi_decisions_ko_total[$__rate_interval]). Should be 0.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 0.001}]}, "unit": "reqps", "decimals": 3}},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 78},
+      "id": 53,
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cs_lapi_decisions_ko_total[$__rate_interval]))", "legendFormat": "LAPI Errors"}],
+      "title": "LAPI Errors/s",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 82},
+      "id": 106,
+      "panels": [],
+      "title": "Health",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Engine up (presence of cs_info). >=1 = the security engine is scraped and serving. Metric: count(cs_info).",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "unit": "none"}},
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 83},
+      "id": 60,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(cs_info)", "legendFormat": "Engine"}],
+      "title": "Engine Up",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Engine version string, read from the cs_info metric labels. Metric: cs_info.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "text"}, "unit": "none"}},
+      "gridPos": {"h": 4, "w": 8, "x": 4, "y": 83},
+      "id": 61,
+      "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "/^version$/", "values": true}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "cs_info", "format": "table", "instant": true}],
+      "title": "Engine Version",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Time Prometheus took to scrape the CrowdSec target. Adjust the job matcher to your scrape job. Metric: scrape_duration_seconds{job=~\".*crowdsec.*\"}. If empty, the job label doesn't match — check the ServiceMonitor/PodMonitor job name.",
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}, "unit": "s", "decimals": 3}},
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 83},
+      "id": 62,
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(scrape_duration_seconds{job=~\".*crowdsec.*\"})", "legendFormat": "Scrape"}],
+      "title": "Scrape Duration",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Series scraped from the CrowdSec target — a rough proxy for engine metric richness. Metric: scrape_samples_scraped{job=~\".*crowdsec.*\"}. (Adjust job matcher as above.)",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "blue"}, "unit": "short"}},
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 83},
+      "id": 63,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(scrape_samples_scraped{job=~\".*crowdsec.*\"})", "legendFormat": "Series"}],
+      "title": "Series Scraped",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "DB size is NOT exposed by CrowdSec's Prometheus endpoint (no cs_* series for it). This panel intentionally has no data — check DB size via the engine's data volume / `cscli` instead. Left here per the dashboard spec so the gap is explicit.",
+      "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "text"}, "unit": "bytes", "noValue": "n/a — not exposed by CrowdSec Prometheus"}},
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 83},
+      "id": 64,
+      "options": {"colorMode": "none", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "cs_database_size_bytes", "legendFormat": "DB Size"}],
+      "title": "DB Size (not exposed)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Scrape duration over time for the CrowdSec target — watch for creep as decision/series count grows. Metric: scrape_duration_seconds{job=~\".*crowdsec.*\"}.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never", "spanNulls": true}, "unit": "s"}},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 87},
+      "id": 65,
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "scrape_duration_seconds{job=~\".*crowdsec.*\"}", "legendFormat": "{{instance}}"}],
+      "title": "Scrape Duration Over Time",
+      "type": "timeseries"
+    }
+  ],
+  "preload": false,
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["security", "crowdsec", "ips"],
+  "templating": {
+    "list": [
+      {
+        "name": "origin",
+        "type": "query",
+        "label": "Decision origin",
+        "description": "Filter active-decision panels by origin (crowdsec / CAPI / lists / cscli).",
+        "datasource": {"type": "prometheus", "uid": "mimir"},
+        "definition": "label_values(cs_active_decisions, origin)",
+        "query": {"query": "label_values(cs_active_decisions, origin)", "refId": "origin"},
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"text": "All", "value": "$__all"},
+        "hide": 0
+      },
+      {
+        "name": "scenario",
+        "type": "query",
+        "label": "Scenario",
+        "description": "Filter bucket/overflow panels by scenario name.",
+        "datasource": {"type": "prometheus", "uid": "mimir"},
+        "definition": "label_values(cs_bucket_overflowed_total, name)",
+        "query": {"query": "label_values(cs_bucket_overflowed_total, name)", "refId": "scenario"},
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"text": "All", "value": "$__all"},
+        "hide": 0
+      },
+      {
+        "name": "bouncer",
+        "type": "query",
+        "label": "Bouncer",
+        "description": "Filter bouncer/LAPI panels by bouncer name (e.g. the traefik bouncer).",
+        "datasource": {"type": "prometheus", "uid": "mimir"},
+        "definition": "label_values(cs_lapi_bouncer_requests_total, bouncer)",
+        "query": {"query": "label_values(cs_lapi_bouncer_requests_total, bouncer)", "refId": "bouncer"},
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {"text": "All", "value": "$__all"},
+        "hide": 0
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "Security Ops — CrowdSec",
+  "uid": "crowdsec-ops",
+  "version": 1,
+  "weekStart": ""
+}
