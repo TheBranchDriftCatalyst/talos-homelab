@@ -28,6 +28,19 @@ data:
     # Allow `exec` commands (otherwise SSH clients get "not implemented")
     exec_enabled = true
 
+    # The cowrie/cowrie image ships pre-created var/lib/cowrie/{tty,downloads}
+    # subdirs, but the deployment mounts an emptyDir over var/lib/cowrie which
+    # wipes them. Cowrie does NOT recreate these at runtime, so opening the
+    # per-session ttylog (var/lib/cowrie/tty/<ts>.log) throws FileNotFoundError
+    # inside openShell/execCommand — the interactive shell and exec channel both
+    # fail, so NO cowrie.command.input is ever logged (login succeeds, then the
+    # session hangs idle). Likewise the download artifact tempfile
+    # (var/lib/cowrie/downloads/) can't be created, breaking file_download.
+    # Repoint both leaf paths at the mount root (which exists) so no missing
+    # subdir is required. (Alternative: an initContainer that mkdirs the subdirs.)
+    ttylog_path = var/lib/cowrie
+    download_path = var/lib/cowrie
+
     [ssh]
     enabled = true
     listen_endpoints = tcp:2222:interface=0.0.0.0
