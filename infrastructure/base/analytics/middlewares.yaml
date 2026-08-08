@@ -29,6 +29,9 @@ spec:
 #    ADDITIVE via regex — it does NOT replace the app's policy, so no existing restriction is weakened.
 #    Apps with NO CSP need nothing (the injected script isn't blocked). Apps whose CSP uses only
 #    default-src (no explicit script-src/connect-src) won't match — handle those per-app.
+#    Also pre-authorizes Google Analytics (googletagmanager.com / google-analytics.com) so the
+#    future GA dual-tag drop-in (see sites-middlewares.yaml) works without a second CSP edit —
+#    still purely additive. GA fires an <img> beacon, so google-analytics.com is added to img-src too.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -40,10 +43,13 @@ spec:
       rewrites:
         - header: "Content-Security-Policy"
           regex: "script-src ([^;]*)"
-          replacement: "script-src $1 https://analytics.knowledgedump.space"
+          replacement: "script-src $1 https://analytics.knowledgedump.space https://www.googletagmanager.com https://www.google-analytics.com"
         - header: "Content-Security-Policy"
           regex: "connect-src ([^;]*)"
-          replacement: "connect-src $1 https://analytics.knowledgedump.space"
+          replacement: "connect-src $1 https://analytics.knowledgedump.space https://www.googletagmanager.com https://www.google-analytics.com"
+        - header: "Content-Security-Policy"
+          regex: "img-src ([^;]*)"
+          replacement: "img-src $1 https://www.google-analytics.com"
 
 ---
 # 3) THE REGISTRY: inject the Plausible tracker before </head>. This is the single source of truth
