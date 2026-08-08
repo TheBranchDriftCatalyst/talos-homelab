@@ -69,6 +69,29 @@ spec:
                 - "2405:8100::/32"
                 - "2a06:98c0::/29"
                 - "2c0f:f248::/32"
+      # Tarpit → CrowdSec (LOG-ONLY): any IP that reaches the iocaine AI-tarpit host
+      # (trap.knowledgedump.space) is a confirmed bot/scraper. This scenario alerts on it; the
+      # simulation.yaml below keeps it DETECT-ONLY (alert, never ban) until we choose to enforce.
+      # target_fqdn is the host field the crowdsecurity/traefik-logs parser sets. (TALOS-mko/pbn)
+      scenarios:
+        iocaine-tarpit.yaml: |
+          type: trigger
+          name: homelab/iocaine-tarpit
+          description: "IP reached the iocaine AI-tarpit (trap.knowledgedump.space) — confirmed bot/scraper"
+          filter: "evt.Meta.target_fqdn == 'trap.knowledgedump.space'"
+          groupby: "evt.Meta.source_ip"
+          blackhole: 5m
+          labels:
+            remediation: true
+            type: scan
+            service: http
+            behavior: "http:scan"
+      # DETECT-ONLY for the tarpit: exclude it from enforcement so it ALERTS but never bans yet.
+      # Delete this exclusion (and flip nothing else) to turn tarpit hits into real bans.
+      simulation.yaml: |
+        simulation: false
+        exclusions:
+          - homelab/iocaine-tarpit
 
     # ---- LAPI: Local API + decisions DB + Console enrollment + bouncer registration ----
     lapi:
