@@ -182,6 +182,22 @@ tasks:
     vars:
       VERSION: '{{.VERSION | default "v1.11.1"}}'
 
+  upgrade-k8s:
+    desc: Upgrade Kubernetes components (kubelet + control plane) cluster-wide, no node reboots. Pass version via CLI_ARGS, e.g. `task talos:upgrade-k8s -- 1.34.10`
+    summary: |
+      Runs `talosctl upgrade-k8s` against the control plane node. This rolls the
+      kubelet image and kube-apiserver/controller-manager/scheduler static pods
+      on every node to the target version by patching machine configs in place.
+      After upgrading, keep configs/nodes/*.yaml kubelet image pins in sync so a
+      future apply-config does not downgrade nodes.
+      NOTE: k8s v1.34.0 had a regression (kubernetes/kubernetes#133847) that
+      dropped all kubelet_volume_stats_* metrics from the kubelet /metrics
+      endpoint (fixed in v1.34.2) — stay on >= v1.34.2 so PVC usage dashboards work.
+    cmds:
+      - >-
+        talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}}
+        upgrade-k8s --to {{.CLI_ARGS}}
+
   # ============================================
   # Config Management
   # ============================================
