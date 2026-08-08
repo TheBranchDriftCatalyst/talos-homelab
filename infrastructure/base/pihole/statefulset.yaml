@@ -86,22 +86,23 @@ spec:
             - name: FTLCONF_dns_upstreams
               value: "8.8.8.8;8.8.4.4"
             # THREE dnsmasq lines (newline block → 3-element array):
-            #   1) wildcard *.talos00 → Traefik ingress (all other services).
+            #   1) wildcard *.talos00 → Traefik ingress (all internal services).
             #   2) MORE-SPECIFIC pihole.talos00 → the VIP .240 directly (longest-match
             #      wins) so the browser hits the ACTIVE pod's UI (external → eTP:Local →
             #      single active pod → real live stats + sticky session). No Traefik.
-            #   3) SPLIT-HORIZON registry.knowledgedump.space → Traefik. The public
-            #      record is a Cloudflare CNAME-to-apex (DNS-only → home IP), which
-            #      Pi-hole's rebind protection strips (returns NODATA). Overriding it to
-            #      the internal Traefik IP lets LAN clients reach the Zot registry (and
-            #      keeps the traffic internal instead of hairpinning to the WAN IP).
-            #      External clients still use the public record. TALOS-6vf.
+            #   3) WILDCARD SPLIT-HORIZON *.knowledgedump.space → Traefik. Public
+            #      DNS-only records (proxied=false) are Cloudflare CNAME-to-apex → home
+            #      IP, which Pi-hole's rebind protection strips (NODATA). One wildcard
+            #      (mirroring the *.talos00 line) makes EVERY current AND future public
+            #      *.knowledgedump.space service resolve to Traefik internally on the LAN
+            #      — no per-endpoint edit needed. External clients still use the public
+            #      Cloudflare records. Any *.knowledgedump.space host Traefik doesn't
+            #      route just 404s on the LAN (use the external path). TALOS-6vf/6nf.
             - name: FTLCONF_misc_dnsmasq_lines
               value: |-
                 address=/${CLUSTER_DOMAIN}/${TALOS_NODE_IP}
                 address=/pihole.${CLUSTER_DOMAIN}/192.168.1.240
-                address=/registry.knowledgedump.space/${TALOS_NODE_IP}
-                address=/forge.knowledgedump.space/${TALOS_NODE_IP}
+                address=/knowledgedump.space/${TALOS_NODE_IP}
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 384Mi}
