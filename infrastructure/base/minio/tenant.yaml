@@ -12,6 +12,12 @@ stringData:
   config.env: |
     export MINIO_ROOT_USER="minio"
     export MINIO_ROOT_PASSWORD="minio123"
+    # Serve /minio/v2/metrics/* without bearer-token auth so Alloy's ServiceMonitor
+    # scrape works (the operator injects THIS config.env into the server pods;
+    # Tenant.spec.env is NOT propagated by this operator version). Revives the
+    # MinIO row of central-cluster-storage. Internal ClusterIP scrape only.
+    # (TALOS-qtix / epic TALOS-vmd)
+    export MINIO_PROMETHEUS_AUTH_TYPE="public"
 ---
 apiVersion: minio.min.io/v2
 kind: Tenant
@@ -74,12 +80,6 @@ spec:
       value: "http://mimir-nginx.monitoring.svc:80/prometheus"
     - name: MINIO_PROMETHEUS_JOB_ID
       value: "minio"
-    # Expose /minio/v2/metrics/* WITHOUT bearer-token auth so Alloy can scrape it
-    # via the PodMonitor (podmonitor.yaml). Without this the endpoint requires a
-    # JWT and nothing scrapes it → the entire MinIO row of central-cluster-storage
-    # renders No-data. Internal ClusterIP scrape only. (TALOS-qtix / epic TALOS-vmd)
-    - name: MINIO_PROMETHEUS_AUTH_TYPE
-      value: "public"
 ---
 # Service account for tenant
 apiVersion: v1
