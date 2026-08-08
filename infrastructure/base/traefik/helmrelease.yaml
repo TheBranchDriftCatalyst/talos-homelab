@@ -188,14 +188,13 @@ spec:
       - --serversTransport.insecureSkipVerify=true # For self-signed certs
       - --api.insecure=true # Enable insecure API (homelab only)
       - --api.dashboard=true
-      # NOTE: CrowdSec bouncer entrypoint bind is DEFERRED — binding it before the
-      # crowdsec-bouncer-key secret exists at /etc/traefik/crowdsec/lapi-key makes the
-      # plugin fail validateParams, which breaks the entrypoint middleware chain and
-      # 404s ALL routes. The ESO secret `crowdsec-bouncer-key` (traefik ns, from
-      # 1Password crowdsec.bouncer-api-key) must exist + be mounted FIRST. Re-add these
-      # once verified (TALOS-e9h / TALOS-pbn):
-      #   - --entrypoints.web.http.middlewares=traefik-bouncer@kubernetescrd
-      #   - --entrypoints.websecure.http.middlewares=traefik-bouncer@kubernetescrd
+      # Bind the CrowdSec bouncer on both entrypoints — ALL ingress checked against
+      # CrowdSec decisions before reaching services. Key verified mounted at
+      # /etc/traefik/crowdsec/lapi-key (64 bytes) + bouncer "traefik" registered with
+      # LAPI. FAIL-OPEN (bouncer-middleware.yaml); LAN/pods in clientTrustedIPs bypass.
+      # TALOS-e9h / TALOS-pbn.
+      - --entrypoints.web.http.middlewares=traefik-bouncer@kubernetescrd
+      - --entrypoints.websecure.http.middlewares=traefik-bouncer@kubernetescrd
 
     # Security context - needed for hostPort
     securityContext:
