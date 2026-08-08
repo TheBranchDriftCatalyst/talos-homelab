@@ -1,0 +1,30 @@
+# Talos control-plane metrics exposure (TALOS-hzl0 / epic TALOS-vmd)
+#
+# Exposes control-plane component metrics so Alloy/Prometheus can scrape them.
+# By default on Talos these are unreachable:
+#   - kube-scheduler + kube-controller-manager bind to 127.0.0.1 → set 0.0.0.0
+#     (they still serve /metrics over HTTPS with bearer-token auth on
+#      :10259 / :10257 — Alloy scrapes with a ServiceAccount token).
+#   - etcd exposes a dedicated, cert-free metrics listener on :2381.
+# This unblocks the control-plane row on catalyst-k8s-dashboard + revives the
+# etcd-snapshot-correlation dashboard (etcd_*/apiserver_request_* were ZERO).
+#
+# CONTROL-PLANE ONLY (cluster.* is control-plane config; workers ignore it).
+#
+# TRACKING: this file is git-tracked (configs/ is gitignored) and wired into
+# `task talos:gen-config` via --config-patch-control-plane, so a cluster rebuild
+# re-applies it automatically. Live-apply to the running control-plane with:
+#   talosctl --talosconfig configs/talosconfig -e 192.168.1.54 -n 192.168.1.54 \
+#     patch mc --patch @docs/05-runbooks/talos-controlplane-metrics-patch.yaml
+# `talosctl patch mc` merges + is idempotent; it restarts the affected static
+# pods (etcd/scheduler/KCM) rather than rebooting the node — brief API blip only.
+cluster:
+  etcd:
+    extraArgs:
+      listen-metrics-urls: http://0.0.0.0:2381
+  controllerManager:
+    extraArgs:
+      bind-address: 0.0.0.0
+  scheduler:
+    extraArgs:
+      bind-address: 0.0.0.0

@@ -20,7 +20,10 @@ tasks:
     desc: Generate fresh Talos configuration files
     cmds:
       - mkdir -p configs
-      - talosctl gen config {{.CLUSTER_NAME}} {{.CLUSTER_ENDPOINT}} --output-dir ./configs
+      # --config-patch-control-plane bakes control-plane metrics exposure (etcd/
+      # scheduler/KCM) into the generated controlplane.yaml so a cluster rebuild
+      # re-applies it automatically (TALOS-hzl0). Add more --config-patch* here as needed.
+      - talosctl gen config {{.CLUSTER_NAME}} {{.CLUSTER_ENDPOINT}} --output-dir ./configs --config-patch-control-plane @docs/05-runbooks/talos-controlplane-metrics-patch.yaml
       - echo "✅ Configs generated in ./configs/"
 
   # ============================================
