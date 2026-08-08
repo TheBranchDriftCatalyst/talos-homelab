@@ -57,12 +57,13 @@ spec:
                 fi
                 # Ensure recorder is configured to use PostgreSQL (not NFS-backed SQLite)
                 if ! grep -q "recorder:" /config/configuration.yaml; then
-                  echo "Adding PostgreSQL recorder config..."
-                  cat >> /config/configuration.yaml << 'EOF'
+                  echo "Adding PostgreSQL recorder config (db_url from CNPG secret)..."
+                  cat >> /config/configuration.yaml << EOF
 
-              # Recorder - PostgreSQL instead of SQLite (SQLite on NFS causes SIGBUS)
+              # Recorder - CNPG Postgres. db_url injected from the CNPG-generated
+              # homeassistant-postgres-app secret (uri key) via the HA_DB_URL env below.
               recorder:
-                db_url: postgresql://homeassistant:homeassistant@homeassistant-postgres.home-automation.svc.cluster.local:5432/homeassistant
+                db_url: ${HA_DB_URL}
                 purge_keep_days: 30
                 commit_interval: 5
               EOF
@@ -71,6 +72,13 @@ spec:
               # Ensure required files exist
               touch /config/automations.yaml /config/scripts.yaml /config/scenes.yaml
               mkdir -p /config/themes
+          env:
+            # recorder db_url is built from the CNPG-generated secret (TALOS-hx77.1)
+            - name: HA_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: homeassistant-postgres-app
+                  key: uri
           volumeMounts:
             - name: config
               mountPath: /config
