@@ -74,6 +74,12 @@ spec:
       value: "http://mimir-nginx.monitoring.svc:80/prometheus"
     - name: MINIO_PROMETHEUS_JOB_ID
       value: "minio"
+    # Expose /minio/v2/metrics/* WITHOUT bearer-token auth so Alloy can scrape it
+    # via the PodMonitor (podmonitor.yaml). Without this the endpoint requires a
+    # JWT and nothing scrapes it → the entire MinIO row of central-cluster-storage
+    # renders No-data. Internal ClusterIP scrape only. (TALOS-qtix / epic TALOS-vmd)
+    - name: MINIO_PROMETHEUS_AUTH_TYPE
+      value: "public"
 ---
 # Service account for tenant
 apiVersion: v1
