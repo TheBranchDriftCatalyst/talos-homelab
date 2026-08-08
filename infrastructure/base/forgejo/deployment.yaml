@@ -11,10 +11,31 @@ spec:
     requests:
       storage: 20Gi
 ---
+# Non-secret Forgejo config as env vars (the image entrypoint runs
+# environment-to-ini to turn these into app.ini). Shared by the Deployment and
+# the admin Job via envFrom.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-env
+  namespace: forgejo
+data:
+  FORGEJO__database__DB_TYPE: postgres
+  FORGEJO__database__HOST: forgejo-postgres-rw.forgejo.svc.cluster.local:5432
+  FORGEJO__database__SSL_MODE: require
+  FORGEJO__server__DOMAIN: forge.knowledgedump.space
+  FORGEJO__server__ROOT_URL: https://forge.knowledgedump.space/
+  FORGEJO__server__HTTP_PORT: "3000"
+  FORGEJO__security__INSTALL_LOCK: "true"
+  FORGEJO__service__DISABLE_REGISTRATION: "true"
+  FORGEJO__packages__ENABLED: "true"
+  FORGEJO__actions__ENABLED: "false"
+---
 # Forgejo — git forge + multi-format package registry (npm, PyPI, Maven, NuGet,
-# Cargo, RubyGems, Composer, Conan, ...). Config via FORGEJO__<section>__<KEY>
-# env vars. DB creds come from the CNPG-generated forgejo-postgres-app secret.
-# SECRET_KEY/INTERNAL_TOKEN self-generate on first boot and persist in the PVC.
+# Cargo, RubyGems, Composer, Conan, ...). The image entrypoint (s6) generates
+# app.ini from FORGEJO__ env, auto-migrates the DB, and serves. DB creds come
+# from the CNPG-generated forgejo-postgres-app secret. The 'panda' admin is
+# seeded by the forgejo-admin Job.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -36,65 +57,18 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
-      # Wait for the CNPG DB, run migrations, then ensure the 'panda' admin
-      # exists (idempotent — ignores "user already exists" on restarts).
-      initContainers:
-        - name: bootstrap
+      containers:
+        - name: forgejo
           image: codeberg.org/forgejo/forgejo:16.0.2
-          # Run as the git user (1000). Our custom command bypasses the image's
-          # s6 entrypoint that normally drops privileges, and forgejo refuses to
-          # run as root. The main container keeps the default entrypoint (starts
-          # as root, drops internally).
-          securityContext:
-            runAsUser: 1000
-            runAsGroup: 1000
-          env: &forgejoEnv
-            - name: FORGEJO__database__DB_TYPE
-              value: postgres
-            - name: FORGEJO__database__HOST
-              value: forgejo-postgres-rw.forgejo.svc.cluster.local:5432
+          envFrom:
+            - configMapRef: { name: forgejo-env }
+          env:
             - name: FORGEJO__database__NAME
               valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: dbname } }
             - name: FORGEJO__database__USER
               valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: username } }
             - name: FORGEJO__database__PASSWD
               valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: password } }
-            - name: FORGEJO__database__SSL_MODE
-              value: require
-            - name: FORGEJO__server__DOMAIN
-              value: forge.knowledgedump.space
-            - name: FORGEJO__server__ROOT_URL
-              value: https://forge.knowledgedump.space/
-            - name: FORGEJO__server__HTTP_PORT
-              value: "3000"
-            - name: FORGEJO__security__INSTALL_LOCK
-              value: "true"
-            - name: FORGEJO__service__DISABLE_REGISTRATION
-              value: "true"
-            - name: FORGEJO__packages__ENABLED
-              value: "true"
-            - name: FORGEJO__actions__ENABLED
-              value: "false"
-            - name: FORGEJO_ADMIN_PW
-              valueFrom: { secretKeyRef: { name: forgejo-secrets, key: admin-password } }
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-              echo "==> waiting for postgres"
-              until forgejo migrate 2>/dev/null; do echo "  db not ready, retrying"; sleep 3; done
-              echo "==> ensuring admin user 'panda'"
-              forgejo admin user create --admin --username panda \
-                --email panda@catalyst.local --password "$FORGEJO_ADMIN_PW" \
-                --must-change-password=false 2>&1 | grep -v "already exists" || true
-              echo "==> bootstrap done"
-          volumeMounts:
-            - { name: data, mountPath: /data }
-      containers:
-        - name: forgejo
-          image: codeberg.org/forgejo/forgejo:16.0.2
-          env: *forgejoEnv
           ports:
             - { name: http, containerPort: 3000 }
           resources:
@@ -102,11 +76,11 @@ spec:
             limits: { memory: 1Gi }
           livenessProbe:
             httpGet: { path: /api/healthz, port: http }
-            initialDelaySeconds: 30
+            initialDelaySeconds: 45
             periodSeconds: 30
           readinessProbe:
             httpGet: { path: /api/healthz, port: http }
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 10
           volumeMounts:
             - { name: data, mountPath: /data }
