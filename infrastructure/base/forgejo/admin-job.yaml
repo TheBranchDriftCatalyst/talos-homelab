@@ -35,6 +35,8 @@ spec:
               valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: password } }
             - name: ADMIN_PW
               valueFrom: { secretKeyRef: { name: forgejo-secrets, key: admin-password } }
+            - name: OIDC_SECRET
+              valueFrom: { secretKeyRef: { name: forgejo-secrets, key: oidc-client-secret, optional: true } }
           # NOTE: every runtime shell variable is DOUBLED ($$) so Flux's postBuild
           # ${VAR} substitution leaves it alone (Flux turns $$ into a literal $;
           # the shell then expands it). A single $ here gets eaten by Flux ->
@@ -69,5 +71,18 @@ spec:
                 forgejo -c "$$CFG" admin user create --admin --username panda \
                   --email panda@catalyst.local --password "$${ADMIN_PW}" --must-change-password=false
                 echo "    admin 'panda' created"
+              fi
+              echo "==> ensure Authentik OIDC auth source"
+              if [ -z "$${OIDC_SECRET}" ]; then
+                echo "    OIDC secret not set (1Password forgejo.oidc-client-secret) — skipping"
+              elif forgejo -c "$$CFG" admin auth list 2>/dev/null | awk '{print $$2}' | grep -qx authentik; then
+                echo "    oauth source 'authentik' already exists"
+              else
+                forgejo -c "$$CFG" admin auth add-oauth --name authentik \
+                  --provider openidConnect --key forgejo --secret "$${OIDC_SECRET}" \
+                  --auto-discover-url http://auth.talos00/application/o/forgejo/.well-known/openid-configuration \
+                  --scopes "openid email profile" \
+                  --group-claim-name groups --admin-group forgejo-admins
+                echo "    oauth source 'authentik' added"
               fi
               echo "==> done"
