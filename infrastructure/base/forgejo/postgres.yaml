@@ -1,0 +1,29 @@
+---
+# CloudNativePG database for Forgejo (TALOS-6nf). CNPG creates:
+#   - a 'forgejo' database owned by user 'forgejo'
+#   - Secret 'forgejo-postgres-app' (username/password/dbname/host/port/uri)
+#   - Service 'forgejo-postgres-rw' (read-write endpoint)
+# The Forgejo Deployment reads DB creds from that generated secret — no manual
+# password, no 1Password field. Auto-discovered by the cluster-wide
+# cnpg-clusters PodMonitor + shows up in the CloudNativePG Databases dashboard.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: forgejo-postgres
+  namespace: forgejo
+spec:
+  instances: 1
+  imagePullPolicy: IfNotPresent
+  storage:
+    size: 10Gi
+    storageClass: local-path
+  monitoring:
+    enablePodMonitor: false  # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
+  bootstrap:
+    initdb:
+      database: forgejo
+      owner: forgejo
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
