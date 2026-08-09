@@ -1,11 +1,13 @@
 ---
-# MongoDB Community Operator
-# Provides: MongoDBCommunity CRD
-# Docs: https://github.com/mongodb/mongodb-kubernetes-operator
+# MongoDB Controllers for Kubernetes (MCK) — the unified community + enterprise
+# operator that supersedes the deprecated community-operator (mongodb-kubernetes-operator).
+# Community MongoDB (ReplicaSet + SCRAM) is FREE — no Ops Manager / licensed component.
+# Reconciles the SAME MongoDBCommunity (mongodbcommunity.mongodb.com/v1) kind.
+# Chart: mongodb/mongodb-kubernetes  |  Docs: https://github.com/mongodb/mongodb-kubernetes
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
-  name: mongodb-community
+  name: mongodb
   namespace: databases
 spec:
   interval: 1h
@@ -14,17 +16,17 @@ spec:
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: mongodb-community-operator
+  name: mongodb-kubernetes
   namespace: databases
 spec:
   interval: 30m
   chart:
     spec:
-      chart: community-operator
-      version: '0.11.0'
+      chart: mongodb-kubernetes
+      version: '1.10.0'
       sourceRef:
         kind: HelmRepository
-        name: mongodb-community
+        name: mongodb
         namespace: databases
       interval: 12h
   install:
@@ -36,13 +38,25 @@ spec:
     remediation:
       retries: 3
   values:
-    # Operator configuration
     operator:
-      # Watch all namespaces for MongoDBCommunity CRs
+      # Watch all namespaces for MongoDBCommunity CRs (creates ClusterRole/Binding).
       watchNamespace: "*"
 
-      # Resources for homelab
+      # Community-only homelab: reconcile just MongoDBCommunity, skip
+      # enterprise/opsmanager/search/voyageai workers. (CRDs still install; harmless.)
+      watchedResources:
+        - mongodbcommunity
+
+      # Leaner than chart defaults (500m/200Mi req, 1100m/1Gi lim) for homelab.
       resources:
         requests:
           cpu: 100m
-          memory: 128Mi
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+
+      # Don't phone home from the homelab.
+      telemetry:
+        send:
+          enabled: false
