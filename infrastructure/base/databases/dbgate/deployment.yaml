@@ -1,12 +1,14 @@
 ---
 # DbGate - Lightweight web-based database management UI
-# Supports PostgreSQL, MongoDB, MySQL, SQLite
-# Docs: https://dbgate.org/
+# Supports PostgreSQL, MongoDB, MySQL, SQLite. Docs: https://dbgate.org/
+# Promoted out of scratch into the databases namespace (TALOS-zadf) — lives alongside the
+# CNPG / MongoDB / MinIO operators as the fleet's DB GUI. Fresh data volume on the move
+# (old scratch connections not carried over; re-add as needed).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dbgate
-  namespace: scratch
+  namespace: databases
   labels:
     app.kubernetes.io/name: dbgate
     app.kubernetes.io/component: database-ui
@@ -26,7 +28,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: dbgate
-          image: dbgate/dbgate:5.5.6
+          image: dbgate/dbgate:7.2.4
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -36,7 +38,7 @@ spec:
             # Enable web mode
             - name: WEB_ROOT
               value: "/"
-            # Disable login for scratch environment
+            # No login (LAN-only via dbgate.talos00 / *.talos00 hosts entry)
             - name: LOGINS
               value: ""
           volumeMounts:
