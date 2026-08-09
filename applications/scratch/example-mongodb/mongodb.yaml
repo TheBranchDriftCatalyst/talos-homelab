@@ -1,17 +1,19 @@
 ---
-# ServiceAccount required by MongoDB Community Operator
-# The operator expects this SA to exist in the target namespace
+# ServiceAccount for the MongoDBCommunity pods.
+# The mongodb-kubernetes (MCK) operator defaults the community StatefulSet pod SA
+# to `mongodb-kubernetes-appdb` (renamed from community-operator's `mongodb-database`).
+# The operator does NOT auto-create it in watched resource namespaces, so we provide it here.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: mongodb-database
+  name: mongodb-kubernetes-appdb
   namespace: scratch
 ---
 # Role to allow MongoDB agent to patch pods (set annotations)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: mongodb-database
+  name: mongodb-kubernetes-appdb
   namespace: scratch
 rules:
   - apiGroups: [""]
@@ -25,19 +27,19 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mongodb-database
+  name: mongodb-kubernetes-appdb
   namespace: scratch
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: mongodb-database
+  name: mongodb-kubernetes-appdb
 subjects:
   - kind: ServiceAccount
-    name: mongodb-database
+    name: mongodb-kubernetes-appdb
     namespace: scratch
 ---
-# Example MongoDB using MongoDB Community Operator
-# Docs: https://github.com/mongodb/mongodb-kubernetes-operator/blob/master/docs/users/README.md
+# Example MongoDB using the mongodb-kubernetes (MCK) operator — MongoDBCommunity kind
+# Docs: https://github.com/mongodb/mongodb-kubernetes/tree/master/docs/mongodbcommunity
 apiVersion: mongodbcommunity.mongodb.com/v1
 kind: MongoDBCommunity
 metadata:
