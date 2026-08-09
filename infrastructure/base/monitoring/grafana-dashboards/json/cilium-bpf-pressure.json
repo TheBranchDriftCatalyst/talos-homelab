@@ -109,7 +109,7 @@
         "textMode": "value"
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cilium_policy_import_errors_total[10m]))", "legendFormat": "policy import errors/s"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(rate(cilium_policy_change_total{outcome=\"failure\"}[10m]))", "legendFormat": "policy import errors/s"}
       ],
       "title": "Policy import error rate (cluster)",
       "type": "stat"
@@ -181,34 +181,6 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Time series of policy map pressure per node. Watch for sustained climb between cilium-agent restarts — that pattern is the smoking gun for the BPF-exhaustion hypothesis.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"},
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 0.7}, {"color": "red", "value": 0.9}]
-          },
-          "min": 0,
-          "max": 1,
-          "unit": "percentunit"
-        }
-      },
-      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 7},
-      "id": 6,
-      "options": {
-        "legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]},
-        "tooltip": {"mode": "multi", "sort": "desc"}
-      },
-      "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_bpf_map_pressure{map_name=~\"cilium_policy.*|cilium_call_policy\"})", "legendFormat": "policy — {{node}}"}
-      ],
-      "title": "Policy map pressure over time (per node)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {"type": "prometheus", "uid": "mimir"},
       "description": "Time series of LB map pressure per node. Because kubeProxyReplacement=true, this map backs every Service IP including the apiserver Service. Overflow = silent loss of apiserver routing.",
       "fieldConfig": {
         "defaults": {
@@ -230,7 +202,7 @@
         "tooltip": {"mode": "multi", "sort": "desc"}
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_bpf_map_pressure{map_name=~\"cilium_lb[46].*\"})", "legendFormat": "lb — {{node}}"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_bpf_map_pressure{map_name=~\"lb[46].*\"})", "legendFormat": "lb — {{node}}"}
       ],
       "title": "LB map pressure over time (per node)",
       "type": "timeseries"
@@ -283,7 +255,7 @@
       },
       "targets": [
         {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node) (cilium_policy)", "legendFormat": "policies imported — {{node}}"},
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node) (rate(cilium_policy_import_errors_total[5m]))", "legendFormat": "import errors/s — {{node}}"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node) (rate(cilium_policy_change_total{outcome=\"failure\"}[5m]))", "legendFormat": "import errors/s — {{node}}"}
       ],
       "title": "Policy import: count + error rate",
       "type": "timeseries"
@@ -329,7 +301,6 @@
         "tooltip": {"mode": "multi", "sort": "desc"}
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (node) (cilium_bpf_map_pressure{map_name=~\"cilium_policy.*|cilium_call_policy\"})", "legendFormat": "policy pressure — {{node}}"},
         {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (node) (kube_pod_container_status_restarts_total{namespace=\"kube-system\",container=\"cilium-agent\"})", "legendFormat": "cumulative restarts — {{node}}"}
       ],
       "title": "Policy pressure vs cilium-agent restarts (correlation)",

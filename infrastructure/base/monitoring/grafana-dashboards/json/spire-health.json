@@ -167,25 +167,28 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "All cilium-agent metrics that match 'mesh_auth' or 'mutual_auth'. If none of these exist after import time, cilium's mesh-auth subsystem is not emitting metrics (Cilium may have skipped registering them when SPIRE init failed). If they exist with rising error counts, that confirms the suspect.",
+      "description": "Whether cilium's mutual-auth (SPIRE-backed) feature is enabled, from the cilium_feature_network_policies_mutual_auth_enabled gauge (1=enabled, 0=disabled). The per-agent mesh_auth/mutual_auth rate metrics this panel originally queried are not emitted by this Cilium build, so this feature gauge is the authoritative signal that mesh-auth is wired on.",
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "palette-classic"},
-          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never"},
+          "color": {"mode": "thresholds"},
+          "mappings": [{"type": "value", "options": {"0": {"text": "Disabled", "color": "red"}, "1": {"text": "Enabled", "color": "green"}}}],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]},
           "unit": "short"
         }
       },
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 15},
       "id": 6,
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["mean", "max"]},
-        "tooltip": {"mode": "multi", "sort": "desc"}
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum by (__name__) (rate({__name__=~\"cilium_(mesh|mutual)_auth.*\"}[5m]))", "legendFormat": "{{__name__}}"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max(cilium_feature_network_policies_mutual_auth_enabled)", "legendFormat": "mutual auth enabled"}
       ],
       "title": "Cilium mesh-auth Metric Rates",
-      "type": "timeseries"
+      "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},

@@ -107,7 +107,7 @@
         "textMode": "value_and_name"
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * container_memory_working_set_bytes{container=\"cilium-agent\",node=~\"talos00.*\"} / kube_pod_container_resource_limits{container=\"cilium-agent\",resource=\"memory\",node=~\"talos00.*\"}", "legendFormat": "cilium-agent on talos00"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * container_memory_working_set_bytes{container=\"cilium-agent\",node=~\"talos00.*\"} / on(namespace,pod) kube_pod_container_resource_limits{container=\"cilium-agent\",resource=\"memory\",node=~\"talos00.*\"}", "legendFormat": "cilium-agent on talos00"}
       ],
       "title": "cilium-agent on talos00 vs 2Gi limit",
       "type": "stat"
@@ -133,7 +133,7 @@
         "textMode": "value_and_name"
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * (1 - (node_memory_MemAvailable_bytes{instance=~\"talos00.*\",job=\"node-exporter\"} / node_memory_MemTotal_bytes{instance=~\"talos00.*\",job=\"node-exporter\"}))", "legendFormat": "talos00 mem%"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * (1 - (node_memory_MemAvailable_bytes{instance=~\"talos00.*\",job=\"kubernetes-service-endpoints\"} / node_memory_MemTotal_bytes{instance=~\"talos00.*\",job=\"kubernetes-service-endpoints\"}))", "legendFormat": "talos00 mem%"}
       ],
       "title": "talos00 host memory %",
       "type": "stat"
@@ -204,7 +204,7 @@
         "tooltip": {"mode": "multi", "sort": "desc"}
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "histogram_quantile(0.99, sum by (le, instance) (rate(go_gc_pause_seconds_bucket{job=~\".*cilium.*\"}[5m])))", "legendFormat": "p99 GC pause {{instance}}"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "max by (pod) (go_gc_duration_seconds{quantile=\"1\",namespace=\"kube-system\",pod=~\"cilium-.*\",job=\"kubernetes-pods\"})", "legendFormat": "GC pause (max) {{pod}}"}
       ],
       "title": "Go GC pause (p99) per cilium-agent — high = GOMEMLIMIT pressure",
       "type": "timeseries"
@@ -244,7 +244,7 @@
         "tooltip": {"mode": "multi", "sort": "desc"}
       },
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * (1 - (node_memory_MemAvailable_bytes{job=\"node-exporter\"} / node_memory_MemTotal_bytes{job=\"node-exporter\"}))", "legendFormat": "{{instance}}"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "100 * (1 - (node_memory_MemAvailable_bytes{job=\"kubernetes-service-endpoints\"} / node_memory_MemTotal_bytes{job=\"kubernetes-service-endpoints\"}))", "legendFormat": "{{instance}}"}
       ],
       "title": "Host memory % per node",
       "type": "timeseries"
