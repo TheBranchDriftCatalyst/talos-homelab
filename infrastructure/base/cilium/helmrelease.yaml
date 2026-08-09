@@ -127,3 +127,88 @@ spec:
               - op: replace
                 path: /spec/template/spec/volumes/3/projected/sources/0/serviceAccountToken/expirationSeconds
                 value: 3600
+          # DURABLE FIX for the recurring spire-agent CrashLoop (TALOS-spire-keymgr).
+          # Root cause (Fable-5 analysis + spiffe/spire#4341): agent uses KeyManager
+          # "memory" → keys aren't persisted → it MUST re-attest via k8s_psat on every
+          # container restart, reading the projected SA token; and it EXITS (no retry)
+          # on attestation failure. So a single crash that outlasts one token lifetime
+          # → CrashLoopBackOff → kubelet stops refreshing the token for a dying pod →
+          # every restart reads an expired token → self-perpetuating wedge. The 3600s
+          # TTL above only lowers the odds; it cannot break the loop.
+          # FIX: KeyManager "disk" on an emptyDir data_dir. emptyDir survives CONTAINER
+          # restarts (the crashloop case; cleared only on pod delete), so the agent
+          # renews its SVID via the server instead of re-attesting — it never touches
+          # the projected token during a loop. Cold starts (pod reschedule) still
+          # re-attest once with the fresh 3600s token. Matches the server (KeyManager
+          # "disk" on a PVC), which is why the server never wedges. Fully reversible.
+          # (a) rewrite agent.conf: data_dir under the new volume + KeyManager disk.
+          #     Byte-identical to the chart-rendered conf except those two lines.
+          - target:
+              kind: ConfigMap
+              name: spire-agent
+              namespace: cilium-spire
+            patch: |
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: spire-agent
+                namespace: cilium-spire
+              data:
+                agent.conf: |
+                  agent {
+                    data_dir = "/run/spire/data"
+                    log_level = "ERROR"
+                    server_address = "spire-server"
+                    server_port = "8081"
+                    socket_path = "/run/spire/sockets/agent/agent.sock"
+                    admin_socket_path = "/run/spire/sockets/admin.sock"
+                    trust_bundle_path = "/run/spire/bundle/bundle.crt"
+                    trust_domain = "spiffe.cilium"
+                    authorized_delegates = [
+                      "spiffe://spiffe.cilium/cilium-agent",
+                    ]
+                  }
+
+                  plugins {
+                    NodeAttestor "k8s_psat" {
+                      plugin_data {
+                        cluster = "talos-home"
+                      }
+                    }
+
+                    KeyManager "disk" {
+                      plugin_data {
+                        keys_path = "/run/spire/data/keys.json"
+                      }
+                    }
+
+                    WorkloadAttestor "k8s" {
+                      plugin_data {
+                        skip_kubelet_verification = true
+                      }
+                    }
+                  }
+
+                  health_checks {
+                    listener_enabled = true
+                    bind_address = "0.0.0.0"
+                    bind_port = "4251"
+                    live_path = "/live"
+                    ready_path = "/ready"
+                  }
+          # (b) give data_dir an emptyDir that survives container restarts.
+          - target:
+              kind: DaemonSet
+              name: spire-agent
+              namespace: cilium-spire
+            patch: |
+              - op: add
+                path: /spec/template/spec/volumes/-
+                value:
+                  name: spire-agent-data
+                  emptyDir: {}
+              - op: add
+                path: /spec/template/spec/containers/0/volumeMounts/-
+                value:
+                  mountPath: /run/spire/data
+                  name: spire-agent-data
