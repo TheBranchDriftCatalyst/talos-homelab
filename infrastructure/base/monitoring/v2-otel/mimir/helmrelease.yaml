@@ -42,6 +42,12 @@ spec:
     # Single-zone deployment for homelab
     mimir:
       structuredConfig:
+        # Force the CLASSIC push architecture. chart 6.x leaves ingest_storage.enabled=true even
+        # when kafka.enabled=false (it only strips the broker address → a broken broker-less
+        # config), so disable it explicitly here. Together with kafka.enabled=false above this
+        # removes the mimir-kafka SPOF + startup crashloop race. (audit SEV-2)
+        ingest_storage:
+          enabled: false
         # Multi-tenancy disabled for simplicity
         multitenancy_enabled: false
         # Limits
