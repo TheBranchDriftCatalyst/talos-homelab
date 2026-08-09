@@ -77,3 +77,10 @@ Order: low-blast-radius first (P3 → P2 → P1), majors elevated to operator, k
 
 ## Changes
 _(none applied yet — awaiting operator direction on strategy + local-path-provisioner)_
+
+### argocd-image-updater + python tool images (commit d129421) ✅
+| Image | Bump | Ticket |
+|---|---|---|
+| quay.io/argoprojlabs/argocd-image-updater | v1.0.1 → v1.2.2 | zadf.46 (argocd-image-updater-system, ready) |
+| python (vpn-gateway maintenance + exporter) | 3.11-alpine → 3.14-alpine | zadf.22/.44/.45 |
+- python kept on `-alpine` variant; both pods `1/1 Running 0-restarts` — `exporter.py` runs clean on 3.14 (no removed-stdlib breakage). Reported 3.11-slim/3.12-alpine were stale pod images, not in manifests.
