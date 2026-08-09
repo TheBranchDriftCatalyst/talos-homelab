@@ -1,0 +1,48 @@
+---
+# Cluster-wide auto-discovery PodMonitor for ALL Dragonfly cache instances.
+#
+# WHY: the dragonfly-operator does NOT create a PodMonitor/ServiceMonitor of its
+# own, so Dragonfly metrics are not scraped out of the box. This single
+# PodMonitor selects EVERY Dragonfly pod in EVERY namespace by the
+# operator-managed label `app.kubernetes.io/part-of: dragonfly`, so any
+# newly-provisioned Dragonfly (boomtime-cache, argocd/authentik caches as they
+# convert) is scraped automatically with zero per-instance config. Alloy's
+# `prometheus.operator.podmonitors "default"` already discovers PodMonitors
+# across all namespaces (no selector), so this Just Works the moment it lands.
+#
+# SCRAPE TARGET: Dragonfly serves Prometheus exposition on its MAIN port over
+# HTTP GET /metrics (the operator names that container port `redis` = 6379 — it
+# multiplexes RESP and HTTP on the same socket). Metrics land in Mimir with
+# labels namespace + pod; the "Dragonfly Cache" dashboard templates on those.
+#
+# NOTE: as of authoring, the only Dragonfly is crossplane-demo/demo and it is
+# scaled to replicas: 0, so NO dragonfly_* series exist yet — panels populate
+# once an instance is running and scraped. If /metrics is not reachable on the
+# `redis` port for a given image, switch `port` below to `admin` (9999).
+#
+# METRICS emitted (dragonfly_prometheus built-in exporter): dragonfly_version,
+# dragonfly_uptime_in_seconds, dragonfly_memory_used_bytes,
+# dragonfly_memory_max_bytes, dragonfly_used_memory_rss_bytes,
+# dragonfly_connected_clients, dragonfly_blocked_clients,
+# dragonfly_commands_processed_total, dragonfly_keyspace_hits_total,
+# dragonfly_keyspace_misses_total, dragonfly_evicted_keys_total,
+# dragonfly_expired_keys_total, dragonfly_db_keys, dragonfly_net_input_bytes_total,
+# dragonfly_net_output_bytes_total.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: dragonfly-instances
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dragonfly-monitoring
+    app.kubernetes.io/part-of: dragonfly
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: dragonfly
+  podMetricsEndpoints:
+    - port: redis # Dragonfly main port (6379) — serves /metrics over HTTP
+      path: /metrics
+      interval: 30s

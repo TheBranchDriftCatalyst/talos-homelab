@@ -1,0 +1,35 @@
+---
+# GrafanaDashboard CR: "Dragonfly Cache".
+#
+# Custom, fully label-driven dashboard for every Dragonfly cache instance in the
+# fleet — fed by Dragonfly's built-in dragonfly_* Prometheus metrics, scraped
+# cluster-wide by the dragonfly-instances PodMonitor
+# (infrastructure/base/monitoring/dragonfly-monitoring/podmonitor.yaml).
+#
+# Templated on $namespace + $pod, so ANY newly-provisioned Dragonfly appears
+# automatically with no edits (boomtime-cache is the initial target; the
+# argocd/authentik caches follow as they convert off Redis).
+#
+# NOTE: dragonfly_* series only exist once a Dragonfly instance is running AND
+# scraped by the PodMonitor. The only current instance (crossplane-demo/demo) is
+# scaled to replicas: 0, so panels stay empty until an instance is up.
+#
+# JSON lives at ../json/dragonfly-cache.json, packaged into the
+# `dashboard-dragonfly-cache` ConfigMap by the kustomization configMapGenerator
+# (disableNameSuffixHash: true). uid "dragonfly-cache" is stable.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: dragonfly-cache
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folderRef: ops-databases
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-dragonfly-cache
+    key: dragonfly-cache.json
