@@ -98,25 +98,47 @@ spec:
         scrapeTimeout: 30s
 
       # Probe targets - add your endpoints here
+      # NOTE (2026-08-08, TALOS-5356): these targets were written for the old
+      # kube-prometheus-stack and never updated after the v2-otel/Mimir
+      # migration. The kube-prometheus-stack-* services no longer exist, so
+      # every probe read DOWN (probe_success=0). Corrected to the real
+      # v2-otel service names + per-service health paths below.
       targets:
+        # Grafana is served by grafana-operator as `grafana-service:3000`
+        # (old kube-prometheus-stack-grafana:80 no longer exists).
         - name: grafana
-          url: http://kube-prometheus-stack-grafana.monitoring.svc:80
+          url: http://grafana-service.monitoring.svc:3000/api/health
           module: http_2xx
-        - name: prometheus
-          url: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
-          module: http_2xx
+        # Alertmanager is now Mimir's Alertmanager (mimir-alertmanager:8080).
+        # The old kube-prometheus-stack-alertmanager:9093 service is gone.
         - name: alertmanager
-          url: http://kube-prometheus-stack-alertmanager.monitoring.svc:9093
+          url: http://mimir-alertmanager.monitoring.svc:8080/
           module: http_2xx
+        # Traefik dashboard/api/ping live on the `traefik-internal` service
+        # port 9000 — the `traefik` service does NOT expose 9000, so probing
+        # traefik:9000 hung until the 5s module timeout (probe_success=0).
         - name: traefik-dashboard
-          url: http://traefik.traefik.svc:9000/dashboard/
+          url: http://traefik-internal.traefik.svc:9000/ping
           module: http_2xx
-        - name: graylog
-          url: http://graylog.observability.svc:9000
-          module: http_2xx
-        - name: opensearch
-          url: http://opensearch-cluster-master.observability.svc:9200
-          module: http_2xx
+        # DISABLED: v2-otel replaced the Prometheus server with Mimir. There is
+        # no kube-prometheus-stack-prometheus service. The Mimir gateway is
+        # already probed by the Alloy `blackbox-probes` job (instance=mimir),
+        # so a second probe here would just duplicate it.
+        # - name: prometheus
+        #   url: http://mimir-nginx.monitoring.svc:80/
+        #   module: http_2xx
+        # DISABLED: Graylog is not deployed (the `observability` namespace has
+        # no workloads). Re-enable when Graylog is running.
+        # - name: graylog
+        #   url: http://graylog.observability.svc:9000
+        #   module: http_2xx
+        # DISABLED: no OpenSearch cluster is deployed yet — only the
+        # opensearch-operator is installed. When a cluster exists it serves
+        # HTTPS with auth, so an http_2xx probe would fail; probe reachability
+        # with tcp_connect against :9200 instead.
+        # - name: opensearch
+        #   url: opensearch-cluster-master.observability.svc:9200
+        #   module: tcp_connect
 
     # Pod labels
     podLabels:

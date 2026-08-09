@@ -661,10 +661,16 @@ spec:
           discovery.relabel "blackbox_probes" {
             targets = [
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://grafana-service.monitoring:3000", "instance" = "grafana" },
-              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://mimir-nginx.monitoring:80/ready", "instance" = "mimir" },
+              // mimir-nginx is the Mimir gateway: it serves 200 on "/" but
+              // 404 on "/ready" (only individual Mimir components expose
+              // /ready). Probing /ready read DOWN (http 404). Use "/". TALOS-5356.
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://mimir-nginx.monitoring:80/", "instance" = "mimir" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://loki.monitoring:3100/ready", "instance" = "loki" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://tempo.monitoring:3200/ready", "instance" = "tempo" },
-              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://traefik.traefik:9000/dashboard/", "instance" = "traefik" },
+              // Traefik dashboard/api/ping are on the `traefik-internal` service
+              // (port 9000). The `traefik` service does not expose 9000, so the
+              // probe hung to the 5s timeout and read DOWN. TALOS-5356.
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://traefik-internal.traefik:9000/ping", "instance" = "traefik" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://argocd-server.argocd:80", "instance" = "argocd" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://hubble-ui.kube-system:80", "instance" = "hubble-ui" },
             ]
