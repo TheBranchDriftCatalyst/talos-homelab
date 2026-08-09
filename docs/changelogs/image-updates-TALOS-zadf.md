@@ -28,6 +28,18 @@ Order: low-blast-radius first (P3 → P2 → P1), majors elevated to operator, k
 
 **Skipped (report stale/pinned):** curl (novnc) digest-pinned; alpine/k8s (rotation cronjob) already at 1.34.9.
 
+### external-dns v0.14.2 → v0.21.0   [zadf.60] ✅ — BREAKING (resolved)
+- ⚠️ **BREAKING:** v0.21 **removed the `--traefik-disable-legacy` flag** (legacy `traefik.containo.us` API support dropped entirely; `traefik.io`-only is now the default). New pod went `fatal: unknown long flag`. **Resolved:** removed the flag from args (commit cdc5df9); its behavior is now the built-in default (`TraefikEnableLegacy:false`). v0.21's other breaking changes (DigitalOcean/CloudFoundry provider removal) don't apply — we use Cloudflare.
+- Gotcha: the Flux ks health-gate stalled on the crashing pod (didn't advance to the fix commit) — applied git directly (`kubectl apply -k`) to unstick; ks then recovered to Ready.
+- Zero DNS impact: `--policy=upsert-only` + records persist in Cloudflare; old pod served until the fix.
+- Verified: pod 1/1, "All records are already up to date", sources `[ingress traefik-proxy crd]` intact.
+- Manifest: `infrastructure/base/external-dns/deployment.yaml` · Rollback: `git revert 2c77f34..799a106`.
+
+### 1password-connect (connect-api + connect-sync) 1.7.3 → 1.8.2   [zadf.33/.34] ✅
+- Both containers in lockstep; minor API-compatible bump.
+- Verified functionally: **all 97 ExternalSecrets `SecretSynced=True`** — ESO resolves secrets through the new Connect fine.
+- Manifest: `infrastructure/base/external-secrets/onepassword-connect/deployment.yaml` · Rollback: `git revert 2c77f34`.
+
 ## Changes
 ### rancher/local-path-provisioner v0.0.28 → v0.0.37   [TALOS-zadf.63]
 - Namespace: local-path-storage (default storage-class provisioner).
