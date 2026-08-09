@@ -43,15 +43,21 @@ write_metrics() {
           i = index(src, ":")
           if (i > 0) { srv = substr(src, 1, i - 1); xport = substr(src, i + 1) }
           size = $2 * 1024; used = $3 * 1024; avail = $4 * 1024
+          # IMPORTANT: format byte gauges with %.0f, NOT %d. busybox awk (alpine)
+          # converts %d through a 32-bit C int, so any value > 2 GiB saturates to
+          # INT32_MIN (-2147483648 = -2 GiB). A multi-TB NAS therefore emitted
+          # size/used/avail all = -2 GiB (and %used = 100%) on the dashboard.
+          # %.0f prints the double as a full-precision integer with no 32-bit cast
+          # (exact for byte counts well past 2^53 / petabytes).
           printf "# HELP nfs_backend_size_bytes Total size of the NAS filesystem backing the NFS storage class.\n"
           printf "# TYPE nfs_backend_size_bytes gauge\n"
-          printf "nfs_backend_size_bytes{storageclass=\"%s\",server=\"%s\",export=\"%s\"} %d\n", sc, srv, xport, size
+          printf "nfs_backend_size_bytes{storageclass=\"%s\",server=\"%s\",export=\"%s\"} %.0f\n", sc, srv, xport, size
           printf "# HELP nfs_backend_used_bytes Used bytes on the NAS filesystem.\n"
           printf "# TYPE nfs_backend_used_bytes gauge\n"
-          printf "nfs_backend_used_bytes{storageclass=\"%s\",server=\"%s\",export=\"%s\"} %d\n", sc, srv, xport, used
+          printf "nfs_backend_used_bytes{storageclass=\"%s\",server=\"%s\",export=\"%s\"} %.0f\n", sc, srv, xport, used
           printf "# HELP nfs_backend_avail_bytes Available bytes on the NAS filesystem.\n"
           printf "# TYPE nfs_backend_avail_bytes gauge\n"
-          printf "nfs_backend_avail_bytes{storageclass=\"%s\",server=\"%s\",export=\"%s\"} %d\n", sc, srv, xport, avail
+          printf "nfs_backend_avail_bytes{storageclass=\"%s\",server=\"%s\",export=\"%s\"} %.0f\n", sc, srv, xport, avail
         }'
     fi
   } > "$METRICS_FILE.tmp" 2> /dev/null && mv "$METRICS_FILE.tmp" "$METRICS_FILE" 2> /dev/null
