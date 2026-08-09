@@ -24,6 +24,30 @@ spec:
       annotations:
         backup.velero.io/backup-volumes: data
     spec:
+      # SA lets the initContainer (and it alone here) discover CNPG clusters + read the mirrored
+      # -app secrets + write the connections Secret. (dbgate is a LAN DB-admin GUI that already
+      # holds every DB credential, so this is not a meaningful escalation.)
+      serviceAccountName: dbgate-connection-sync
+      initContainers:
+        # "a deploy = a run": regenerate the CNPG connections Secret BEFORE dbgate starts, so
+        # every (re)deploy self-syncs — no CronJob lag, never an empty fresh pod. DO_RESTART=false
+        # (the main container envFroms the freshly-written Secret on start). Same script the
+        # CronJob uses (dbgate-connection-sync-script ConfigMap).
+        - name: sync-connections
+          image: alpine/k8s:1.31.7
+          command: [sh, /scripts/sync.sh]
+          env:
+            - { name: DO_RESTART, value: "false" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - { name: sync-script, mountPath: /scripts }
+            - { name: sync-tmp, mountPath: /tmp }
       securityContext:
         fsGroup: 1000
       containers:
@@ -81,3 +105,8 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: dbgate-data
+        - name: sync-script
+          configMap:
+            name: dbgate-connection-sync-script
+        - name: sync-tmp
+          emptyDir: {}

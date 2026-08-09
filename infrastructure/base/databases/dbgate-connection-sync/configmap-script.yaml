@@ -1,0 +1,65 @@
+---
+# Shared sync script used by BOTH the dbgate-connection-sync CronJob (periodic catch-up, with
+# rollout-restart) and the dbgate initContainer (runs on every dbgate (re)deploy → "a deploy =
+# a run", no restart needed since the main container envFroms the freshly-written Secret on start).
+# Single writer either way — each run rebuilds the COMPLETE set, so even overlapping runs converge.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dbgate-connection-sync-script
+  namespace: databases
+data:
+  sync.sh: |
+    #!/bin/sh
+    set -eu
+    NS=databases
+    TMP=$(mktemp -d)
+    # discover every CNPG cluster: namespace|name|initdb-database
+    kubectl get clusters.postgresql.cnpg.io -A \
+      -o jsonpath='{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.spec.bootstrap.initdb.database}{"\n"}{end}' \
+      > "$TMP/clusters"
+    CONNS=""
+    : > "$TMP/data"
+    while IFS='|' read -r ns name db; do
+      [ -z "$name" ] && continue
+      id=$(printf '%s' "$name" | sed -e 's/-postgres$//' -e 's/-db$//' -e 's/[^A-Za-z0-9]/_/g')
+      sec="${name}-app"
+      user=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)
+      pass=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+      if [ -z "$user" ]; then echo "skip $ns/$name (no mirrored $sec yet)"; continue; fi
+      [ -z "$db" ] && db=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.dbname}' 2>/dev/null | base64 -d 2>/dev/null || true)
+      [ -z "$db" ] && db="$user"
+      CONNS="${CONNS:+$CONNS,}$id"
+      {
+        echo "  ENGINE_$id: \"postgres@dbgate-plugin-postgres\""
+        echo "  SERVER_$id: \"${name}-rw.${ns}.svc.cluster.local\""
+        echo "  PORT_$id: \"5432\""
+        echo "  USER_$id: \"$user\""
+        echo "  PASSWORD_$id: \"$pass\""
+        echo "  DATABASE_$id: \"$db\""
+        echo "  LABEL_$id: \"$name ($ns)\""
+      } >> "$TMP/data"
+    done < "$TMP/clusters"
+    HASH=$(md5sum < "$TMP/data" | cut -d' ' -f1)
+    OLD=$(kubectl -n "$NS" get secret dbgate-cnpg-connections -o jsonpath='{.metadata.annotations.dbgate\.sync/hash}' 2>/dev/null || true)
+    {
+      echo "apiVersion: v1"
+      echo "kind: Secret"
+      echo "metadata:"
+      echo "  name: dbgate-cnpg-connections"
+      echo "  namespace: $NS"
+      echo "  annotations: { dbgate.sync/hash: \"$HASH\" }"
+      echo "stringData:"
+      echo "  CONNECTIONS: \"$CONNS\""
+      cat "$TMP/data"
+    } > "$TMP/secret.yaml"
+    kubectl apply -f "$TMP/secret.yaml"
+    echo "connections: [$CONNS]"
+    # DO_RESTART=true (CronJob): roll dbgate when the set changed. initContainer sets false —
+    # the main container will envFrom the freshly-written Secret when it starts.
+    if [ "${DO_RESTART:-true}" = "true" ] && [ "$HASH" != "$OLD" ]; then
+      echo "connection set changed -> rolling dbgate"
+      kubectl -n "$NS" rollout restart deploy/dbgate
+    else
+      echo "no restart (DO_RESTART=${DO_RESTART:-true})"
+    fi

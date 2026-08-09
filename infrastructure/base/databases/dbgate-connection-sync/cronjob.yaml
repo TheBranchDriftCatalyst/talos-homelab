@@ -1,24 +1,22 @@
 ---
 # dbgate-connection-sync (TALOS-7jxm): the SINGLE WRITER that wires dbgate ⟶ every CNPG cluster.
 #
-# Why a CronJob and not a Kyverno mutate policy: dbgate needs ONE aggregate of ALL clusters. A
-# Kyverno mutateExisting rule fires once per source secret and each patches the SAME dbgate
+# Why a single writer (not a Kyverno mutate policy): dbgate needs ONE aggregate of ALL clusters.
+# A Kyverno mutateExisting rule fires once per source secret and each patches the SAME dbgate
 # Deployment — concurrent patches collide on optimistic-concurrency ("object has been modified")
-# and Kyverno does not retry, so a random subset of connections is silently dropped, and the
-# injected env doesn't survive a Deployment recreation. A single-writer reconcile job has none of
-# those failure modes: it builds the COMPLETE set atomically into a Secret that dbgate envFroms
-# (persistent across pod/Deployment restarts), and only rolls dbgate when the set actually changes.
+# and Kyverno does not retry, so a random subset of connections is silently dropped. A single
+# writer rebuilds the COMPLETE set atomically into a Secret that dbgate envFroms.
 #
-# Every 10 min: discover all cnpg Clusters, read each one's reflector-mirrored <cluster>-app secret
-# (in `databases`), regenerate the `dbgate-cnpg-connections` Secret. New CNPG cluster → mirrored
-# secret (Kyverno reflect + reflector) → picked up here → appears in dbgate, with NO manual changes.
+# This CronJob is the PERIODIC catch-up (new clusters appearing between dbgate deploys); the
+# dbgate initContainer runs the same script on every (re)deploy ("a deploy = a run"). Script is
+# shared via the dbgate-connection-sync-script ConfigMap.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: dbgate-connection-sync
   namespace: databases
 spec:
-  schedule: "*/10 * * * *"
+  schedule: "*/15 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 2
@@ -48,60 +46,13 @@ spec:
                 readOnlyRootFilesystem: true
                 capabilities:
                   drop: [ALL]
-              command: [sh, -c]
-              args:
-                - |
-                  set -eu
-                  NS=databases
-                  TMP=$(mktemp -d)
-                  # discover every CNPG cluster: namespace|name|initdb-database
-                  kubectl get clusters.postgresql.cnpg.io -A \
-                    -o jsonpath='{range .items[*]}{.metadata.namespace}|{.metadata.name}|{.spec.bootstrap.initdb.database}{"\n"}{end}' \
-                    > "$TMP/clusters"
-                  CONNS=""
-                  : > "$TMP/data"
-                  while IFS='|' read -r ns name db; do
-                    [ -z "$name" ] && continue
-                    id=$(printf '%s' "$name" | sed -e 's/-postgres$//' -e 's/-db$//' -e 's/[^A-Za-z0-9]/_/g')
-                    sec="${name}-app"
-                    user=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)
-                    pass=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
-                    if [ -z "$user" ]; then echo "skip $ns/$name (no mirrored $sec yet)"; continue; fi
-                    [ -z "$db" ] && db=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.dbname}' 2>/dev/null | base64 -d 2>/dev/null || true)
-                    [ -z "$db" ] && db="$user"
-                    CONNS="${CONNS:+$CONNS,}$id"
-                    {
-                      echo "  ENGINE_$id: \"postgres@dbgate-plugin-postgres\""
-                      echo "  SERVER_$id: \"${name}-rw.${ns}.svc.cluster.local\""
-                      echo "  PORT_$id: \"5432\""
-                      echo "  USER_$id: \"$user\""
-                      echo "  PASSWORD_$id: \"$pass\""
-                      echo "  DATABASE_$id: \"$db\""
-                      echo "  LABEL_$id: \"$name ($ns)\""
-                    } >> "$TMP/data"
-                  done < "$TMP/clusters"
-                  HASH=$(md5sum < "$TMP/data" | cut -d' ' -f1)
-                  OLD=$(kubectl -n "$NS" get secret dbgate-cnpg-connections -o jsonpath='{.metadata.annotations.dbgate\.sync/hash}' 2>/dev/null || true)
-                  {
-                    echo "apiVersion: v1"
-                    echo "kind: Secret"
-                    echo "metadata:"
-                    echo "  name: dbgate-cnpg-connections"
-                    echo "  namespace: $NS"
-                    echo "  annotations: { dbgate.sync/hash: \"$HASH\" }"
-                    echo "stringData:"
-                    echo "  CONNECTIONS: \"$CONNS\""
-                    cat "$TMP/data"
-                  } > "$TMP/secret.yaml"
-                  kubectl apply -f "$TMP/secret.yaml"
-                  echo "connections: [$CONNS]"
-                  if [ "$HASH" != "$OLD" ]; then
-                    echo "connection set changed -> rolling dbgate"
-                    kubectl -n "$NS" rollout restart deploy/dbgate
-                  else
-                    echo "no change -> dbgate left as-is"
-                  fi
+              command: [sh, /scripts/sync.sh]
+              env:
+                - { name: DO_RESTART, value: "true" } # roll dbgate when the set changes
               volumeMounts:
+                - { name: script, mountPath: /scripts }
                 - { name: tmp, mountPath: /tmp }
           volumes:
+            - name: script
+              configMap: { name: dbgate-connection-sync-script }
             - { name: tmp, emptyDir: {} }
