@@ -33,21 +33,13 @@ spec:
       extraEnvFrom:
         - secretRef:
             name: mimir-s3-credentials
-    # chart 6.x (Mimir 3.x) DEFAULTS Kafka ingest-storage ON (experimental Kafka-based ingest):
-    # a single-broker mimir-kafka SPOF + a startup crashloop race (distributor/ingester/querier
-    # crash dialing Kafka on every restart until it's up). Pin OFF → the stable classic push
-    # architecture. (TALOS-zadf.1 / metrics-audit SEV-2)
-    kafka:
-      enabled: false
+    # NOTE (audit SEV-2): chart 6.x defaults kafka.enabled=true (experimental Kafka ingest-storage,
+    # a single-broker SPOF). Disabling it live crashes the ingester on the kafka→classic transition
+    # (StatefulSet ingester 'Failed'), so we KEEP kafka enabled for now — the disable needs a
+    # careful offline/scaled migration, tracked separately. Do NOT set kafka.enabled=false here.
     # Single-zone deployment for homelab
     mimir:
       structuredConfig:
-        # Force the CLASSIC push architecture. chart 6.x leaves ingest_storage.enabled=true even
-        # when kafka.enabled=false (it only strips the broker address → a broken broker-less
-        # config), so disable it explicitly here. Together with kafka.enabled=false above this
-        # removes the mimir-kafka SPOF + startup crashloop race. (audit SEV-2)
-        ingest_storage:
-          enabled: false
         # Multi-tenancy disabled for simplicity
         multitenancy_enabled: false
         # Limits
