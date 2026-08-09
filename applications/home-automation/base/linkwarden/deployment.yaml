@@ -21,7 +21,9 @@ spec:
         app: linkwarden
         app.kubernetes.io/name: linkwarden
       annotations:
-        backup.velero.io/backup-volumes: "linkwarden-data,postgres-data,meili-data"
+        # postgres-data dropped: the DB now lives in the CNPG linkwarden-postgres
+        # cluster (its own PVCs + object-store backups), not an in-pod volume.
+        backup.velero.io/backup-volumes: "linkwarden-data,meili-data"
     spec:
       containers:
         # Linkwarden main app
@@ -36,17 +38,15 @@ spec:
                 secretKeyRef:
                   name: linkwarden-secrets
                   key: nextauth-secret
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: linkwarden-secrets
-                  key: postgres-password
-            # DATABASE_URL constructed from secret - see external-secret.yaml
+            # Full connection string from the CNPG-generated linkwarden-postgres-app
+            # secret (`uri` key = postgresql://linkwarden:<pass>@linkwarden-postgres-rw:5432/linkwarden).
+            # Prisma reads DATABASE_URL directly — no separate POSTGRES_PASSWORD, no
+            # 1Password templating, no plaintext creds in git. (TALOS-3eui)
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: linkwarden-secrets
-                  key: database-url
+                  name: linkwarden-postgres-app
+                  key: uri
             - name: MEILI_HOST
               value: "http://localhost:7700"
             - name: MEILI_MASTER_KEY
@@ -99,29 +99,9 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 10
 
-        # PostgreSQL database
-        - name: postgres
-          image: postgres:16-alpine
-          imagePullPolicy: IfNotPresent
-          env:
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: linkwarden-secrets
-                  key: postgres-password
-            - name: POSTGRES_DB
-              value: "linkwarden"
-          ports:
-            - name: postgres
-              containerPort: 5432
-              protocol: TCP
-          volumeMounts:
-            - name: postgres-data
-              mountPath: /var/lib/postgresql/data
-          resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
+        # PostgreSQL co-pod REMOVED (TALOS-3eui): the DB now lives in the CNPG
+        # `linkwarden-postgres` Cluster (see postgres.yaml). Bookmarks were migrated
+        # via pg_dump/pg_restore before this container was dropped — see runbook.
 
         # Meilisearch for full-text search
         - name: meilisearch
@@ -155,9 +135,7 @@ spec:
         - name: linkwarden-data
           persistentVolumeClaim:
             claimName: linkwarden-data
-        - name: postgres-data
-          persistentVolumeClaim:
-            claimName: linkwarden-postgres
+        # postgres-data volume REMOVED — DB moved to CNPG linkwarden-postgres cluster
         - name: meili-data
           persistentVolumeClaim:
             claimName: linkwarden-meili
