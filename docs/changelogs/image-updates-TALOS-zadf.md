@@ -84,3 +84,6 @@ _(none applied yet — awaiting operator direction on strategy + local-path-prov
 | quay.io/argoprojlabs/argocd-image-updater | v1.0.1 → v1.2.2 | zadf.46 (argocd-image-updater-system, ready) |
 | python (vpn-gateway maintenance + exporter) | 3.11-alpine → 3.14-alpine | zadf.22/.44/.45 |
 - python kept on `-alpine` variant; both pods `1/1 Running 0-restarts` — `exporter.py` runs clean on 3.14 (no removed-stdlib breakage). Reported 3.11-slim/3.12-alpine were stale pod images, not in manifests.
+
+### dbgate 5.5.6 → 7.2.4 + namespace move (commit bd56285) ✅
+- Promoted scratch → **databases** ns (`infrastructure/base/databases/dbgate/`, alongside CNPG/MongoDB/MinIO operators) + major image bump. New pod ready ("DbGate API listening on port 3000"); old scratch copy pruned. Fresh NFS data volume (saved connections not carried; re-add). Removed the dbgate healthCheck from scratch.yaml.
