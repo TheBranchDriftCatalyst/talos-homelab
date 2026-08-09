@@ -1,0 +1,134 @@
+---
+# CloudNativePG database for Authentik (TALOS-fijt). Replaces the Authentik
+# Helm chart's BUNDLED `postgresql` subchart (StatefulSet authentik-postgresql-0
+# on node-local `local-path` — the same node-pinned, single-replica failure mode
+# we've been retiring fleet-wide). Authentik is the SSO/OIDC backend for Grafana,
+# MinIO, Forgejo, litellm, zot and boomtime, so it moves to a 3-instance,
+# streaming-replicated, node-independent CNPG cluster with object-store backups.
+#
+# PASSWORD STRATEGY — Option B (adopt the EXISTING password):
+#   The app role's credential is supplied by the `authentik-postgres-app`
+#   ExternalSecret below (type kubernetes.io/basic-auth, username=authentik,
+#   password = the SAME 1Password `authentik.postgresql-password` field that
+#   `authentik-secrets.AUTHENTIK_POSTGRESQL__PASSWORD` already reads). CNPG's
+#   `bootstrap.initdb.secret` consumes it instead of generating a random
+#   `authentik-postgres-app`. Net effect: the `authentik` role's password in the
+#   new cluster is byte-identical to what Authentik already sends, so the app's
+#   existing `AUTHENTIK_POSTGRESQL__PASSWORD` env keeps working untouched and the
+#   ONLY helmrelease change is the DB host + disabling the bundled subchart.
+#   (Option A — rewiring Authentik's env to a CNPG-generated -app secret — was
+#   rejected: it edits the critical secret wiring of the SSO backend for no
+#   benefit here, since the 1Password field already gives us a stable password.)
+#
+# NOTE: because we supply our own app secret, CNPG does NOT create (and the
+# reflect-cnpg-app-secrets Kyverno policy does NOT match) a generated
+# `<cluster>-app`. We therefore stamp the emberstack/reflector annotations +
+# `cnpg.io/cluster` label directly on the ExternalSecret target so dbgate still
+# pre-connects, exactly as it does for the generated secrets elsewhere.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: authentik-postgres
+  namespace: authentik
+spec:
+  instances: 3 # HA: streaming-replicated across nodes; survives a node loss (TALOS-hx77)
+  imagePullPolicy: IfNotPresent
+  storage:
+    size: 8Gi # matches the retired bundled PVC data-authentik-postgresql-0 (8Gi)
+    storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
+  monitoring:
+    enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
+  # Object-store backups → MinIO (TALOS-a1hk). CNPG in-tree barman API.
+  # Continuous WAL archiving + base backups land in the shared `cnpg-backups`
+  # bucket under a per-cluster prefix. Creds reuse the MinIO root key via the
+  # cnpg-minio-backup Secret (see other clusters' backup-credentials.yaml).
+  backup:
+    retentionPolicy: "30d"
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/authentik-postgres
+      endpointURL: http://minio-hl.minio.svc:9000
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-minio-backup
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-minio-backup
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+  bootstrap:
+    initdb:
+      database: authentik
+      owner: authentik
+      # Adopt the pre-provisioned app credential (Option B). username in this
+      # secret MUST equal owner (authentik) per the CNPG basic-auth contract.
+      secret:
+        name: authentik-postgres-app
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+---
+# Pre-provisioned app-role credential for the CNPG cluster above (Option B).
+# type: kubernetes.io/basic-auth with username=authentik + password sourced from
+# the SAME 1Password property Authentik's own secret uses, so both ends stay in
+# lockstep across cluster rebuilds with zero manual coordination.
+#
+# MUST exist before the Cluster bootstraps — CNPG's initdb references it. Flux
+# applies both in the same kustomization; CNPG simply retries until ESO has
+# materialized this secret (a few seconds against 1Password).
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: authentik-postgres-app
+  namespace: authentik
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword
+    kind: ClusterSecretStore
+  target:
+    name: authentik-postgres-app
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      metadata:
+        labels:
+          # Lets tooling that keys off the CNPG cluster label find this secret,
+          # since CNPG won't stamp its own label on a user-supplied secret.
+          cnpg.io/cluster: authentik-postgres
+        annotations:
+          # dbgate auto-connect: mirror into the `databases` namespace. We set
+          # these directly because the reflect-cnpg-app-secrets Kyverno policy
+          # only matches CNPG-GENERATED -app secrets. (TALOS-7jxm parity)
+          reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+          reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "databases"
+          reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+          reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "databases"
+      data:
+        username: authentik
+        password: "{{ .pgpassword }}"
+  data:
+    - secretKey: pgpassword
+      remoteRef:
+        key: authentik
+        property: postgresql-password
+---
+# Daily base backup for authentik-postgres → MinIO object store (TALOS-a1hk).
+# Continuous WAL archiving is handled by the Cluster's barmanObjectStore; this
+# ScheduledBackup drives the periodic base backups WAL replays sit on top of.
+# 30-day retention is enforced by the Cluster's backup.retentionPolicy.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: authentik-postgres-daily
+  namespace: authentik
+spec:
+  # 02:15 every day. CNPG cron is 6-field (seconds first): sec min hour dom mon dow.
+  schedule: "0 15 2 * * *"
+  immediate: true # take one right away so backups exist before the first tick
+  backupOwnerReference: self
+  cluster:
+    name: authentik-postgres
