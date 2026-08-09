@@ -21,6 +21,15 @@ metadata:
   name: crowdsec-postgres
   namespace: crowdsec
 spec:
+  # Mirror the CNPG-generated <name>-app secret into the `databases` namespace so dbgate can
+  # pre-connect to this cluster. inheritedMetadata propagates these onto the -app secret; the
+  # emberstack/reflector controller then reflects it into databases. (TALOS-7jxm)
+  inheritedMetadata:
+    annotations:
+      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "databases"
+      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "databases"
   instances: 3 # HA: streaming-replicated across nodes; survives a node loss (TALOS-hx77)
   imagePullPolicy: IfNotPresent
   storage:
