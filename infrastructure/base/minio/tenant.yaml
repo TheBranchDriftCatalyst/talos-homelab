@@ -63,9 +63,18 @@ spec:
   requestAutoCert: false
 
   # Expose services
+  # exposeServices:true makes the operator create the `minio`/`minio-console`
+  # services as type=LoadBalancer. This cluster's Cilium LB-IPAM pool
+  # (lan-pihole-pool) is intentionally scoped to app=pihole ONLY, so those two
+  # LB services never match a pool and sit unsatisfied forever
+  # (cilium_operator_lbipam_services_unsatisfied_total=2, TALOS-6jco).
+  # MinIO is reached via Traefik IngressRoutes (s3.talos00 / minio.talos00) and
+  # internally by Mimir/Loki/Tempo over the ClusterIP service — no LB IP needed.
+  # false => operator reconciles both services back to ClusterIP (they still
+  # exist, just not LoadBalancer), which clears the unsatisfied metric.
   exposeServices:
-    minio: true
-    console: true
+    minio: false
+    console: false
 
   # Features
   features:
