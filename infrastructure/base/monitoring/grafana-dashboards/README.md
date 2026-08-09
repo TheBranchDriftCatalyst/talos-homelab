@@ -122,27 +122,24 @@ kubectl describe grafanadashboard -n monitoring cilium-agent
 
 ## Dashboard Inventory
 
-### Cilium CNI & Hubble (5 dashboards)
+### Cilium CNI & Hubble (2 dashboards)
 
-| Dashboard              | File                   | Grafana.com ID | Description                                            |
-| ---------------------- | ---------------------- | -------------- | ------------------------------------------------------ |
-| cilium-agent           | cilium-dashboards.yaml | 16611          | Cilium agent pods, BPF operations, endpoint management |
-| cilium-operator        | cilium-dashboards.yaml | 16612          | Cilium operator, CRD management, IPAM                  |
-| cilium-hubble          | cilium-dashboards.yaml | 16613          | Hubble flow metrics, network observability             |
-| cilium-hubble-flows    | cilium-dashboards.yaml | 21327          | Detailed flow analysis, L3/L4/L7 traffic               |
-| cilium-policy-verdicts | cilium-dashboards.yaml | 21328          | Network policy verdicts, security decisions            |
+| Dashboard           | File                   | Grafana.com ID | Description                              |
+| ------------------- | ---------------------- | -------------- | ---------------------------------------- |
+| cilium-operator     | cilium-dashboards.yaml | 16612          | Cilium operator, CRD management, IPAM    |
+| cilium-hubble-flows | cilium-dashboards.yaml | 23862          | Detailed flow analysis, L3/L4/L7 traffic |
 
-### Kubernetes Core (7 dashboards)
+Retired (Legacy cleanup): cilium-agent (16611), cilium-hubble (16613), and
+cilium-policy-verdicts (18015) — replaced by the custom "Network Ops — Cilium &
+Hubble" dashboard (`json/network-ops.json`) and cilium-bpf-pressure in Ops/Network.
 
-| Dashboard                  | File                            | Grafana.com ID | Description                                        |
-| -------------------------- | ------------------------------- | -------------- | -------------------------------------------------- |
-| k8s-cluster-monitoring     | kubernetes-dashboards.yaml      | 315            | Overall cluster health, node/pod status            |
-| k8s-comprehensive          | kubernetes-dashboards.yaml      | 15661          | Comprehensive K8s metrics - nodes, pods, resources |
-| k8s-pods-view              | kubernetes-dashboards.yaml      | 15760          | Pod-level metrics, CPU/memory by pod               |
-| k8s-monitoring-overview    | kubernetes-dashboards.yaml      | 14623          | Quick overview of cluster state                    |
-| k8s-pvc                    | kubernetes-dashboards.yaml      | 13646          | Persistent volume claims, storage usage            |
-| k8s-volumes                | kubernetes-dashboards.yaml      | 11454          | Volume metrics, PV/PVC details                     |
-| cluster-overview-dashboard | cluster-overview-dashboard.yaml | Custom         | Unified cluster overview with key metrics          |
+### Kubernetes Core
+
+`kubernetes-dashboards.yaml` was removed entirely (Legacy cleanup). Its last two
+entries — k8s-pvc (13646) and k8s-volumes (11454) — are replaced by the custom
+"Central Cluster Storage" dashboard (`json/central-cluster-storage.json`) in
+Ops/Storage. Earlier entries (315, 15661, 15760, 14623) were removed before that;
+cluster health lives in the custom "Catalyst K8s — Full System Ops" dashboard.
 
 ### Infrastructure (2 dashboards)
 
@@ -151,12 +148,12 @@ kubectl describe grafanadashboard -n monitoring cilium-agent
 | node-exporter-full  | infrastructure-dashboards.yaml | 1860           | Node hardware metrics (CPU, memory, disk, network) |
 | postgresql-database | infrastructure-dashboards.yaml | 9628           | PostgreSQL database metrics                        |
 
-### Traefik Ingress (2 dashboards)
+### Traefik Ingress
 
-| Dashboard        | File                    | Grafana.com ID | Description                            |
-| ---------------- | ----------------------- | -------------- | -------------------------------------- |
-| traefik-services | traefik-dashboards.yaml | 17347          | Traefik service metrics, request rates |
-| traefik-v2-alt   | traefik-dashboards.yaml | 4475           | Alternative Traefik v2 dashboard       |
+`traefik-dashboards.yaml` was removed entirely (Legacy cleanup). Its entries —
+traefik-v2-alt (4475, "Traefik") and traefik-services (12250, "Traefik 2.2") —
+are replaced by the custom "Traefik Ops" dashboard (`json/traefik-ops.json`)
+in Ops/Network.
 
 ### GitOps & ArgoCD (2 dashboards)
 
