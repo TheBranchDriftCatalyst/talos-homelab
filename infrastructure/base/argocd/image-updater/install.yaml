@@ -827,6 +827,13 @@ spec:
           command:
             - /manager
           env:
+            # v1.2.x defaults the watch scope to the controller's OWN namespace
+            # (argocd-image-updater-system), which holds NO ImageUpdater CRs — so it silently
+            # updated nothing and auto-deploy broke cluster-wide. The CRs (boomtime, catalyst-ui,
+            # catalyst-data) live in `argocd`. "*" = watch all namespaces for CRs, restoring the
+            # pre-v1.2 behavior and surviving CRs landing anywhere. (fix-forward, boomtime gaka-vuu)
+            - name: IMAGE_UPDATER_WATCH_NAMESPACES
+              value: "*"
             - name: IMAGE_UPDATER_INTERVAL
               valueFrom:
                 configMapKeyRef:
