@@ -23,11 +23,11 @@ data:
     scene: !include scenes.yaml
 
     # Recorder configuration - CloudNativePG Postgres (see postgres.yaml, TALOS-hx77.1).
-    # Static, declarative db_url: the CNPG -rw service + a password pinned via the
-    # homeassistant-postgres-app secret (postgres.yaml bootstrap.initdb.secret). HA recorder
-    # data is disposable, so the throwaway credential lives in git; no runtime templating.
+    # db_url is injected at runtime from the CNPG-GENERATED homeassistant-postgres-app
+    # secret via the RECORDER_DB_URL env var (deployment.yaml secretKeyRef -> `uri` key),
+    # so NO plaintext password lives in git (de-hardcoded, TALOS-mf91 / epic TALOS-031k).
     recorder:
-      db_url: postgresql://homeassistant:homeassistant@homeassistant-postgres-rw.home-automation.svc.cluster.local:5432/homeassistant
+      db_url: !env_var RECORDER_DB_URL
       purge_keep_days: 30
       commit_interval: 5
 

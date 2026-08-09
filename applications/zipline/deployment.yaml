@@ -33,8 +33,14 @@ spec:
           env:
             - name: POSTGRES_USER
               value: zipline
+            # Password sourced from the zipline-secrets ExternalSecret (1Password
+            # item `zipline`, field postgres-password). Same value the app's
+            # DATABASE_URL uses — see externalsecret.yaml.
             - name: POSTGRES_PASSWORD
-              value: zipline
+              valueFrom:
+                secretKeyRef:
+                  name: zipline-secrets
+                  key: POSTGRES_PASSWORD
             - name: POSTGRES_DB
               value: zipline
           volumeMounts:
@@ -57,11 +63,19 @@ spec:
               containerPort: 3000
               protocol: TCP
           env:
-            # Core configuration
+            # Core configuration — CORE_SECRET + DATABASE_URL come from the
+            # zipline-secrets ExternalSecret (1Password item `zipline`). The URL is
+            # templated with the SAME postgres-password the DB sidecar uses.
             - name: CORE_SECRET
-              value: "catalyst-zipline-secret-key-32ch"
+              valueFrom:
+                secretKeyRef:
+                  name: zipline-secrets
+                  key: CORE_SECRET
             - name: DATABASE_URL
-              value: "postgresql://zipline:zipline@localhost:5432/zipline"
+              valueFrom:
+                secretKeyRef:
+                  name: zipline-secrets
+                  key: DATABASE_URL
             # Website configuration
             - name: WEBSITE_TITLE
               value: "Catalyst Share"

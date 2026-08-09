@@ -1,45 +1,19 @@
 ---
-# Pinned app credentials for the HA recorder DB (TALOS-hx77.1). Pre-created so CNPG adopts
-# it via bootstrap.initdb.secret instead of generating a random password — this lets the
-# recorder db_url stay STATIC and declarative in configmap.yaml (no runtime templating, no
-# init-container config munging). HA recorder data is disposable, so this throwaway
-# credential living in git is acceptable; harden to ESO later if HA gains real use.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: homeassistant-postgres-app
-  labels:
-    app.kubernetes.io/name: homeassistant-postgres
-    app.kubernetes.io/part-of: home-automation
-    # USER-PROVIDED secret (pinned password) → CNPG doesn't stamp cnpg.io/cluster on it. Add it
-    # manually so BOTH Kyverno policies treat HA uniformly with every generated -app secret:
-    #   - reflect-cnpg-app-secrets  → mirror into `databases`
-    #   - dbgate-cnpg-connections   → auto-inject the dbgate connection
-    # (was previously a special-cased static dbgate entry; now flows through the same path).
-    # (TALOS-5ccm)
-    cnpg.io/cluster: homeassistant-postgres
-  annotations:
-    # Belt-and-suspenders: reflect-cnpg-app-secrets now also matches this secret (via the label
-    # above), but keep the explicit reflector annotations so mirroring is robust even if that
-    # policy's selector ever changes. (TALOS-7jxm / TALOS-5ccm)
-    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
-    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "databases"
-    reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
-    reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "databases"
-type: kubernetes.io/basic-auth
-stringData:
-  username: homeassistant
-  password: homeassistant
-  # dbname so dbgate-cnpg-connections' DATABASE_<id> secretKeyRef resolves uniformly (CNPG's
-  # own generated -app secrets carry a dbname key; this user-provided one must too).
-  dbname: homeassistant
----
 # CloudNativePG Postgres for the Home Assistant recorder (TALOS-hx77.1 / TALOS-hx77).
 # Replaces the raw postgres:15-alpine Deployment on NFS with a CNPG-managed cluster
 # (repo standard: forgejo/plausible/crowdsec). HA recorder history is DISPOSABLE — it
 # rebuilds on connect — so there is NO data migration: HA reconnects to a fresh DB on
-# restart. The app reaches it via the CNPG homeassistant-postgres-rw service; creds are
-# pinned by the secret above so configmap.yaml can hold a static db_url.
+# restart. The app reaches it via the CNPG homeassistant-postgres-rw service.
+#
+# CREDENTIALS (TALOS-mf91, epic TALOS-031k): the old pinned `homeassistant-postgres-app`
+# Secret (password `homeassistant`, exposed on the PUBLIC repo) is GONE. With no
+# bootstrap.initdb.secret, CNPG GENERATES the `homeassistant-postgres-app` secret itself
+# with a random password — that generated secret is the rotation, and it needs NO 1Password
+# item. HA reads the connection string from that secret's `uri` key (see deployment.yaml
+# RECORDER_DB_URL + configmap.yaml !env_var), so no plaintext password lives in git.
+# CNPG stamps `cnpg.io/cluster` on the generated secret automatically, so the Kyverno
+# reflect-cnpg-app-secrets + dbgate-cnpg-connections policies pick HA up like every other
+# CNPG cluster (the manual label/annotations the old pinned secret needed are unnecessary).
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -48,8 +22,6 @@ metadata:
     app.kubernetes.io/name: homeassistant-postgres
     app.kubernetes.io/part-of: home-automation
 spec:
-  # (reflection handled by annotating the pre-created -app secret above, since inheritedMetadata
-  # doesn't apply to a user-provided bootstrap secret. TALOS-7jxm)
   instances: 3 # HA: streaming-replicated across nodes; survives a node loss (TALOS-hx77)
   imagePullPolicy: IfNotPresent
   storage:
@@ -61,8 +33,7 @@ spec:
     initdb:
       database: homeassistant
       owner: homeassistant
-      secret:
-        name: homeassistant-postgres-app # pinned creds (above); CNPG won't randomize
+      # No `secret:` → CNPG generates homeassistant-postgres-app with a random password.
   resources:
     requests:
       cpu: 50m
