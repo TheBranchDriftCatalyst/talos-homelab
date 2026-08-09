@@ -33,7 +33,16 @@ spec:
                 secretKeyRef: {name: cloudflare-api-token, key: CF_API_TOKEN}
             - {name: CF_ZONE, value: "knowledgedump.space"}
             - {name: TXT_OWNER_ID, value: "talos-homelab"}
-            - {name: SCRAPE_INTERVAL, value: "60"}
+            # TALOS-lfxg: poll CF every 5m (was 60s) so this exporter's slice of the SHARED
+            # cloudflare-api-token rate budget (cert-manager + external-dns + cloudflare-ddns
+            # also use it) stays tiny — ~2 CF calls per 5m. Metrics are served from cache
+            # between polls, so the 60s PodMonitor scrape is unaffected.
+            - {name: SCRAPE_INTERVAL, value: "300"}
+            # TALOS-lfxg: generous timeout + bounded retry/backoff so a transient CF
+            # 401/403/429 blip doesn't fail the whole refresh (exporter.py caches last good).
+            - {name: CF_HTTP_TIMEOUT, value: "30"}
+            - {name: CF_MAX_RETRIES, value: "3"}
+            - {name: CF_BACKOFF, value: "2.0"}
             - {name: PYTHONDONTWRITEBYTECODE, value: "1"} # readOnlyRootFilesystem: no __pycache__ writes
           ports:
             - {name: metrics, containerPort: 9100}
