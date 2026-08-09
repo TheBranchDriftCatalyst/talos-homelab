@@ -13,7 +13,7 @@ from urllib.error import URLError
 # Config from environment
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 EXCLUDED_NAMESPACES = set(os.environ.get("EXCLUDED_NAMESPACES", "kube-system,kube-public,kube-node-lease").split(","))
-MIMIR_URL = os.environ.get("MIMIR_URL", "http://mimir-nginx.monitoring.svc:80/api/v1/push")
+MIMIR_URL = os.environ.get("MIMIR_URL", "http://mimir-gateway.monitoring.svc:80/api/v1/push")
 
 # Thresholds in seconds
 FAILED_POD_AGE = int(os.environ.get("FAILED_POD_AGE_THRESHOLD", "3600"))

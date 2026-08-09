@@ -95,7 +95,7 @@ spec:
           // Metrics -> Mimir (via OTLP HTTP)
           otelcol.exporter.otlphttp "mimir" {
             client {
-              endpoint = "http://mimir-nginx.monitoring.svc:80/otlp"
+              endpoint = "http://mimir-gateway.monitoring.svc:80/otlp"
               tls {
                 insecure = true
               }
@@ -661,10 +661,10 @@ spec:
           discovery.relabel "blackbox_probes" {
             targets = [
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://grafana-service.monitoring:3000", "instance" = "grafana" },
-              // mimir-nginx is the Mimir gateway: it serves 200 on "/" but
+              // mimir-gateway is the Mimir gateway: it serves 200 on "/" but
               // 404 on "/ready" (only individual Mimir components expose
               // /ready). Probing /ready read DOWN (http 404). Use "/". TALOS-5356.
-              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://mimir-nginx.monitoring:80/", "instance" = "mimir" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://mimir-gateway.monitoring:80/", "instance" = "mimir" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://loki.monitoring:3100/ready", "instance" = "loki" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://tempo.monitoring:3200/ready", "instance" = "tempo" },
               // Traefik dashboard/api/ping are on the `traefik-internal` service
@@ -899,7 +899,7 @@ spec:
           // reportedly not respected in clustering mode.)
           prometheus.remote_write "mimir" {
             endpoint {
-              url = "http://mimir-nginx.monitoring.svc:80/api/v1/push"
+              url = "http://mimir-gateway.monitoring.svc:80/api/v1/push"
             }
             wal {
               truncate_frequency = "15m"
@@ -915,7 +915,7 @@ spec:
           // This allows recording rules defined in app repos to be automatically
           // provisioned to Mimir when deployed via ArgoCD/Flux
           mimir.rules.kubernetes "rules" {
-            address = "http://mimir-nginx.monitoring.svc:80"
+            address = "http://mimir-gateway.monitoring.svc:80"
             tenant_id = "anonymous"
 
             // Sync rules every 30 seconds
