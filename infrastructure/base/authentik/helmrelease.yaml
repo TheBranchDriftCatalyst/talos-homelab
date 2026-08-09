@@ -42,7 +42,11 @@ spec:
       error_reporting:
         enabled: false
       postgresql:
-        host: authentik-postgresql
+        # Migrated off the bundled subchart to the CloudNativePG cluster
+        # (authentik-postgres, TALOS-fijt). -rw = the read-write primary
+        # endpoint. name/user unchanged; the password env below still reads the
+        # SAME 1Password-backed value (Option B), so no credential change.
+        host: authentik-postgres-rw
         name: authentik
         user: authentik
       redis:
@@ -308,9 +312,15 @@ spec:
           mountPath: /blueprints/custom/talos-private-brand.yaml
           subPath: talos-private-brand.yaml
 
-    # Embedded PostgreSQL
+    # Embedded PostgreSQL — RETIRED (TALOS-fijt). Disabled in favor of the
+    # CloudNativePG cluster `authentik-postgres` (see postgres.yaml). Setting
+    # enabled:false makes Helm remove the bundled `authentik-postgresql`
+    # StatefulSet on upgrade; its PVC `data-authentik-postgresql-0` is a
+    # volumeClaimTemplate PVC and is RETAINED (not deleted) — that's the
+    # rollback net. Redis below is a SEPARATE subchart and is untouched. The
+    # auth block is kept (inert while disabled) purely to document prior state.
     postgresql:
-      enabled: true
+      enabled: false
       auth:
         database: authentik
         username: authentik
