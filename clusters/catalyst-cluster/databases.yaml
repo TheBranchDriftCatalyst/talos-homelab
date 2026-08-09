@@ -16,6 +16,18 @@ spec:
   path: ./infrastructure/base/databases
   prune: true
   wait: true
+  # dbgate's CNPG connection env is owned by the Kyverno `dbgate-cnpg-connections`
+  # mutateExisting policy (event-driven per CNPG cluster), NOT by git. Tell Flux to ignore
+  # drift on that container's env so it doesn't revert Kyverno's injected connections.
+  # Requires Flux >= 2.9 (Kustomization.spec.ignore). See TALOS-5ccm and
+  # docs/patterns/cross-namespace-secret-reflection.md.
+  ignore:
+    - target:
+        kind: Deployment
+        name: dbgate
+        namespace: databases
+      paths:
+        - /spec/template/spec/containers/0/env
   dependsOn:
     - name: namespaces
     - name: storage

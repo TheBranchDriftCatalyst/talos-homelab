@@ -11,10 +11,17 @@ metadata:
   labels:
     app.kubernetes.io/name: homeassistant-postgres
     app.kubernetes.io/part-of: home-automation
+    # USER-PROVIDED secret (pinned password) → CNPG doesn't stamp cnpg.io/cluster on it. Add it
+    # manually so BOTH Kyverno policies treat HA uniformly with every generated -app secret:
+    #   - reflect-cnpg-app-secrets  → mirror into `databases`
+    #   - dbgate-cnpg-connections   → auto-inject the dbgate connection
+    # (was previously a special-cased static dbgate entry; now flows through the same path).
+    # (TALOS-5ccm)
+    cnpg.io/cluster: homeassistant-postgres
   annotations:
-    # USER-PROVIDED secret (pinned password) → CNPG doesn't label it cnpg.io/cluster, so the
-    # reflect-cnpg-app-secrets Kyverno policy skips it. Annotate directly so reflector still
-    # mirrors it into `databases` for dbgate. (TALOS-7jxm)
+    # Belt-and-suspenders: reflect-cnpg-app-secrets now also matches this secret (via the label
+    # above), but keep the explicit reflector annotations so mirroring is robust even if that
+    # policy's selector ever changes. (TALOS-7jxm / TALOS-5ccm)
     reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
     reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "databases"
     reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
@@ -23,6 +30,9 @@ type: kubernetes.io/basic-auth
 stringData:
   username: homeassistant
   password: homeassistant
+  # dbname so dbgate-cnpg-connections' DATABASE_<id> secretKeyRef resolves uniformly (CNPG's
+  # own generated -app secrets carry a dbname key; this user-provided one must too).
+  dbname: homeassistant
 ---
 # CloudNativePG Postgres for the Home Assistant recorder (TALOS-hx77.1 / TALOS-hx77).
 # Replaces the raw postgres:15-alpine Deployment on NFS with a CNPG-managed cluster

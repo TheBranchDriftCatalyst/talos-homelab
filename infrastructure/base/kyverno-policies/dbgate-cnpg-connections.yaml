@@ -1,0 +1,148 @@
+---
+# RBAC: Kyverno's BACKGROUND controller cannot read Secrets nor update Deployments outside
+# its own perms by default. mutateExisting needs both here:
+#   - list Secrets cluster-wide (the apiCall that recomputes the CONNECTIONS csv)
+#   - get/list/update/patch Deployments (to mutate the dbgate Deployment's env)
+# Granted via an aggregated ClusterRole (the aggregation label wires these rules into the
+# kyverno background-controller's role). Without it the policy reports "not authorized".
+# (TALOS-5ccm)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background:dbgate-cnpg-connections
+  labels:
+    app.kubernetes.io/part-of: kyverno
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, list, watch, update, patch]
+---
+# The REPORTS controller also evaluates this policy's apiCall context when producing
+# PolicyReports; grant it read on Secrets so those reports don't error. (deployment write is
+# NOT needed here — reports-controller never mutates.) (TALOS-5ccm)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:reports:dbgate-cnpg-connections
+  labels:
+    app.kubernetes.io/part-of: kyverno
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, list, watch]
+---
+# Event-driven dbgate <-> CNPG auto-connect (TALOS-5ccm).
+#
+# For EVERY CloudNativePG cluster, inject a dbgate connection into the dbgate Deployment in ns
+# `databases` — with ZERO per-cluster config. dbgate's env-connection format is `<PARAM>_<id>`
+# (CONNECTIONS is the csv enumerator; ENGINE_/SERVER_/PORT_/USER_/PASSWORD_/DATABASE_/LABEL_
+# carry each connection). env var names must be [A-Za-z0-9_], so id = cluster with '-' -> '_'.
+#
+# TRIGGER = the SOURCE `<cluster>-app` secret in the cluster's OWN namespace (it carries the
+# `cnpg.io/cluster` label, and request.object.metadata.namespace gives us the ns for the -rw
+# FQDN). The injected secretKeyRefs, however, point at the MIRROR of the same name in
+# `databases` (reflector-mirrored by the reflect-cnpg-app-secrets policy) — secretKeyRef is
+# namespace-local, so dbgate can only read the mirror.
+#
+# TARGET = Deployment/dbgate (container 0) via patchStrategicMerge: env is strategic-merge-keyed
+# by `name`, so re-applying a cluster's block is idempotent (updates in place, no dupes).
+# CONNECTIONS is recomputed from an apiCall listing ALL CNPG `-app` secrets cluster-wide and
+# replaced wholesale — so adding a cluster extends the csv and a deleted cluster drops out of it
+# on the next mutation (its now-orphaned *_<id> env keys are inert; CONNECTIONS no longer lists
+# them). Flux ignores drift on this env path (databases Kustomization spec.ignore) so it never
+# reverts these injections.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: dbgate-cnpg-connections
+  annotations:
+    policies.kyverno.io/title: Auto-inject CNPG Postgres connections into dbgate
+    policies.kyverno.io/category: Database
+    policies.kyverno.io/subject: Deployment
+    policies.kyverno.io/description: >-
+      For every CloudNativePG cluster, injects a dbgate connection (env vars) into the dbgate
+      Deployment in the `databases` namespace, event-driven off the CNPG <cluster>-app secret.
+      CONNECTIONS is recomputed cluster-wide so add/remove of a cluster self-corrects, with zero
+      per-cluster configuration.
+spec:
+  admission: true
+  background: true
+  # mutateExisting is background/async — do not gate secret admission on it.
+  rules:
+    - name: inject-dbgate-connection
+      match:
+        any:
+          - resources:
+              kinds:
+                - Secret
+              names:
+                - "*-app"
+              selector:
+                matchExpressions:
+                  - key: cnpg.io/cluster
+                    operator: Exists
+      context:
+        # All CNPG app-secret names cluster-wide (drives the CONNECTIONS csv). Uses the
+        # background controller's SA (RBAC above grants secrets list).
+        - name: cnpgAppSecrets
+          apiCall:
+            urlPath: "/api/v1/secrets?labelSelector=cnpg.io%2Fcluster"
+            jmesPath: "items[?ends_with(metadata.name, '-app')].metadata.name"
+        # cluster = <name> minus the trailing '-app' (e.g. crowdsec-postgres-app -> crowdsec-postgres)
+        - name: cluster
+          variable:
+            value: "{{ regex_replace_all('-app$', '{{request.object.metadata.name}}', '') }}"
+        # id = cluster with '-' -> '_' (valid env-var suffix)
+        - name: id
+          variable:
+            value: "{{ regex_replace_all('-', '{{cluster}}', '_') }}"
+        # CONNECTIONS csv = each app-secret name, '-app' stripped, '-' -> '_', comma-joined.
+        - name: connections
+          variable:
+            value: "{{ regex_replace_all('-', regex_replace_all('-app', join(',', cnpgAppSecrets), ''), '_') }}"
+      mutate:
+        # Retrofit the deployment for all already-existing CNPG clusters when this policy is
+        # installed/updated (not just on future secret events).
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: apps/v1
+            kind: Deployment
+            name: dbgate
+            namespace: databases
+        patchStrategicMerge:
+          spec:
+            template:
+              spec:
+                containers:
+                  - name: dbgate
+                    env:
+                      - name: CONNECTIONS
+                        value: "{{ connections }}"
+                      - name: "ENGINE_{{ id }}"
+                        value: "postgres@dbgate-plugin-postgres"
+                      - name: "SERVER_{{ id }}"
+                        value: "{{ cluster }}-rw.{{ request.object.metadata.namespace }}.svc.cluster.local"
+                      - name: "PORT_{{ id }}"
+                        value: "5432"
+                      - name: "LABEL_{{ id }}"
+                        value: "{{ cluster }}"
+                      - name: "USER_{{ id }}"
+                        valueFrom:
+                          secretKeyRef:
+                            name: "{{ request.object.metadata.name }}"
+                            key: username
+                      - name: "PASSWORD_{{ id }}"
+                        valueFrom:
+                          secretKeyRef:
+                            name: "{{ request.object.metadata.name }}"
+                            key: password
+                      - name: "DATABASE_{{ id }}"
+                        valueFrom:
+                          secretKeyRef:
+                            name: "{{ request.object.metadata.name }}"
+                            key: dbname
