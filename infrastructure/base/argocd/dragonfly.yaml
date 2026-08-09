@@ -34,6 +34,12 @@ spec:
   args:
     - "--proactor_threads=1" # 256Mi/thread floor → fits the 512Mi limit
     - "--maxmemory=256mb"
+    # Prometheus /metrics: the operator defaults to --primary_port_http_enabled=false (RESP-only
+    # on 6379), which DISABLES the /metrics endpoint → nothing to scrape. Re-enable HTTP on the
+    # main port; it coexists with RESP (Argo's redis client is unaffected, verified PING→PONG),
+    # and the dragonfly-instances PodMonitor scrapes :6379/metrics. REQUIRED for the Dragonfly
+    # Grafana dashboard to populate — apply the same flag to every Dragonfly CR. (TALOS-0tbh)
+    - "--primary_port_http_enabled=true"
   resources:
     requests:
       cpu: 50m
