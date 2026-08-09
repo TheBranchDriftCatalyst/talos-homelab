@@ -40,6 +40,17 @@ Order: low-blast-radius first (P3 → P2 → P1), majors elevated to operator, k
 - Verified functionally: **all 97 ExternalSecrets `SecretSynced=True`** — ESO resolves secrets through the new Connect fine.
 - Manifest: `infrastructure/base/external-secrets/onepassword-connect/deployment.yaml` · Rollback: `git revert 2c77f34`.
 
+### meilisearch v1.12.8 → v1.52.0 (linkwarden)   [zadf.40] ✅ — DB migration
+- ⚠️ **Migration required:** v1.52 engine refused the v1.12.8 on-disk DB (incompatible format). Fix = added `MEILI_UPGRADE_DB=true` env → in-place dumpless migration on startup (commit 426be94). Idempotent (no-op once current). No dump/import or reindex needed.
+- Verified: `/health {"status":"available"}`, linkwarden pod 3/3, index scheduler processing tasks.
+- Manifest: `applications/home-automation/base/linkwarden/deployment.yaml` · Rollback: `git revert 426be94 c62092e`.
+
+### virt-operator v1.4.0 → v1.9.0 (KubeVirt)   [zadf.31] ⏸ ATTEMPTED → ROLLED BACK
+- ⚠️ **Approach failed:** the ref-bump stepped upgrade (bumping only the operator image/version in `operator.yaml`) drove the operator to v1.5.0 but component deployment **failed** — v1.5.0 operator tried to create ClusterRole `kubevirt.io:admin` with new subresource perms (`virtualmachineinstances/reset`, …) it doesn't hold → RBAC escalation block → `DeploymentFailed`/`Degraded`.
+- **Root lesson:** KubeVirt minor upgrades need the **full per-version release manifest** (updated operator RBAC + CRDs), not just an image tag. Recorded in beads memory.
+- **Resolved:** rolled back to v1.4.0 (commit 9b53e76) → healthy (`Available=True, Degraded=False`). Zero impact (VM halted, components never left v1.4.0).
+- Ticket zadf.31 kept OPEN for a proper redo (replace operator.yaml with each version's release YAML, one minor at a time).
+
 ## Changes
 ### rancher/local-path-provisioner v0.0.28 → v0.0.37   [TALOS-zadf.63]
 - Namespace: local-path-storage (default storage-class provisioner).
