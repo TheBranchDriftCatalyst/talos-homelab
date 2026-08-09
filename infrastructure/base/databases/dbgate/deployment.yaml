@@ -41,6 +41,54 @@ spec:
             # No login (LAN-only via dbgate.talos00 / *.talos00 hosts entry)
             - name: LOGINS
               value: ""
+            # ---- Auto-linked CNPG Postgres connections (TALOS-7jxm) ----
+            # Creds come from the reflector-mirrored <cluster>-app secrets in THIS namespace
+            # (Kyverno annotates them → reflector mirrors them here). dbgate env format is
+            # <PARAM>_<id>. See docs/patterns/cross-namespace-secret-reflection.md.
+            - name: CONNECTIONS
+              value: "crowdsec,forgejo,boomtime"
+            - name: LABEL_crowdsec
+              value: "crowdsec (CNPG)"
+            - name: ENGINE_crowdsec
+              value: "postgres@dbgate-plugin-postgres"
+            - name: SERVER_crowdsec
+              value: "crowdsec-postgres-rw.crowdsec.svc.cluster.local"
+            - name: PORT_crowdsec
+              value: "5432"
+            - name: USER_crowdsec
+              valueFrom: { secretKeyRef: { name: crowdsec-postgres-app, key: username } }
+            - name: PASSWORD_crowdsec
+              valueFrom: { secretKeyRef: { name: crowdsec-postgres-app, key: password } }
+            - name: DATABASE_crowdsec
+              valueFrom: { secretKeyRef: { name: crowdsec-postgres-app, key: dbname } }
+            - name: LABEL_forgejo
+              value: "forgejo (CNPG)"
+            - name: ENGINE_forgejo
+              value: "postgres@dbgate-plugin-postgres"
+            - name: SERVER_forgejo
+              value: "forgejo-postgres-rw.forgejo.svc.cluster.local"
+            - name: PORT_forgejo
+              value: "5432"
+            - name: USER_forgejo
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: username } }
+            - name: PASSWORD_forgejo
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: password } }
+            - name: DATABASE_forgejo
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: dbname } }
+            - name: LABEL_boomtime
+              value: "boomtime (CNPG)"
+            - name: ENGINE_boomtime
+              value: "postgres@dbgate-plugin-postgres"
+            - name: SERVER_boomtime
+              value: "boomtime-postgres-rw.boomtime.svc.cluster.local"
+            - name: PORT_boomtime
+              value: "5432"
+            - name: USER_boomtime
+              valueFrom: { secretKeyRef: { name: boomtime-postgres-app, key: username } }
+            - name: PASSWORD_boomtime
+              valueFrom: { secretKeyRef: { name: boomtime-postgres-app, key: password } }
+            - name: DATABASE_boomtime
+              valueFrom: { secretKeyRef: { name: boomtime-postgres-app, key: dbname } }
           volumeMounts:
             - name: data
               mountPath: /root/.dbgate
