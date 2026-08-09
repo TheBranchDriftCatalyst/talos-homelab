@@ -12,13 +12,8 @@ metadata:
   name: forgejo-postgres
   namespace: forgejo
 spec:
-  # Mirror the CNPG-generated <name>-app secret into the `databases` namespace for dbgate. (TALOS-7jxm)
-  inheritedMetadata:
-    annotations:
-      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
-      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "databases"
-      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
-      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "databases"
+  # (secret reflection to `databases` for dbgate now handled globally by the
+  # reflect-cnpg-app-secrets Kyverno policy — no per-cluster inheritedMetadata needed. TALOS-7jxm)
   instances: 3 # HA: streaming-replicated across nodes; survives a node loss (TALOS-hx77)
   imagePullPolicy: IfNotPresent
   storage:
@@ -26,6 +21,26 @@ spec:
     storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
   monitoring:
     enablePodMonitor: false  # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
+  # Object-store backups → MinIO (TALOS-a1hk). CNPG 1.24.1 in-tree barman API
+  # (NOT the plugin). Continuous WAL archiving + base backups land in the shared
+  # `cnpg-backups` bucket under a per-cluster prefix. Creds reuse the MinIO root
+  # key via the cnpg-minio-backup Secret (see backup-credentials.yaml).
+  backup:
+    retentionPolicy: "30d"          # prune backups + WALs older than 30 days
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/forgejo-postgres
+      endpointURL: http://minio-hl.minio.svc:9000
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-minio-backup
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-minio-backup
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
   bootstrap:
     initdb:
       database: forgejo

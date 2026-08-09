@@ -11,6 +11,14 @@ metadata:
   labels:
     app.kubernetes.io/name: homeassistant-postgres
     app.kubernetes.io/part-of: home-automation
+  annotations:
+    # USER-PROVIDED secret (pinned password) → CNPG doesn't label it cnpg.io/cluster, so the
+    # reflect-cnpg-app-secrets Kyverno policy skips it. Annotate directly so reflector still
+    # mirrors it into `databases` for dbgate. (TALOS-7jxm)
+    reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+    reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "databases"
+    reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+    reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "databases"
 type: kubernetes.io/basic-auth
 stringData:
   username: homeassistant
@@ -30,13 +38,8 @@ metadata:
     app.kubernetes.io/name: homeassistant-postgres
     app.kubernetes.io/part-of: home-automation
 spec:
-  # Mirror the CNPG-generated <name>-app secret into the `databases` namespace for dbgate. (TALOS-7jxm)
-  inheritedMetadata:
-    annotations:
-      reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
-      reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: "databases"
-      reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
-      reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: "databases"
+  # (reflection handled by annotating the pre-created -app secret above, since inheritedMetadata
+  # doesn't apply to a user-provided bootstrap secret. TALOS-7jxm)
   instances: 3 # HA: streaming-replicated across nodes; survives a node loss (TALOS-hx77)
   imagePullPolicy: IfNotPresent
   storage:

@@ -46,7 +46,7 @@ spec:
             # (Kyverno annotates them → reflector mirrors them here). dbgate env format is
             # <PARAM>_<id>. See docs/patterns/cross-namespace-secret-reflection.md.
             - name: CONNECTIONS
-              value: "crowdsec,forgejo,boomtime"
+              value: "crowdsec,forgejo,boomtime,homeassistant"
             - name: LABEL_crowdsec
               value: "crowdsec (CNPG)"
             - name: ENGINE_crowdsec
@@ -89,6 +89,21 @@ spec:
               valueFrom: { secretKeyRef: { name: boomtime-postgres-app, key: password } }
             - name: DATABASE_boomtime
               valueFrom: { secretKeyRef: { name: boomtime-postgres-app, key: dbname } }
+            - name: LABEL_homeassistant
+              value: "homeassistant (CNPG)"
+            - name: ENGINE_homeassistant
+              value: "postgres@dbgate-plugin-postgres"
+            - name: SERVER_homeassistant
+              value: "homeassistant-postgres-rw.home-automation.svc.cluster.local"
+            - name: PORT_homeassistant
+              value: "5432"
+            # HA secret is user-provided (only username/password) — DB name is static.
+            - name: DATABASE_homeassistant
+              value: "homeassistant"
+            - name: USER_homeassistant
+              valueFrom: { secretKeyRef: { name: homeassistant-postgres-app, key: username } }
+            - name: PASSWORD_homeassistant
+              valueFrom: { secretKeyRef: { name: homeassistant-postgres-app, key: password } }
           volumeMounts:
             - name: data
               mountPath: /root/.dbgate
