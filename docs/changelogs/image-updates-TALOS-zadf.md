@@ -18,6 +18,16 @@ Order: low-blast-radius first (P3 → P2 → P1), majors elevated to operator, k
 | intel/intel-gpu-plugin | 0.30.0 → 0.36.0 | zadf.26 ✅ |
 | velero/velero-plugin-for-aws | v1.11.1 → v1.14.2 | zadf.62 ✅ |
 
+### vpn-gateway utility batch (commit 0130604) — zero-downtime
+| Image | Bump | Ticket |
+|---|---|---|
+| busybox (securexng init/cleanup) | 1.36 → 1.38.0 | zadf.15 ✅ |
+| kasmweb/chrome (secure-chrome) | 1.16.0 → 1.19.0 | zadf.43 ✅ |
+
+**Component tests (all 6 of the first batch, functionally verified):** goldilocks→creates VPAs · vpa-recommender→recommendations populated · intel-gpu-plugin→`i915=10` on talos02-gpu+talos06 · velero→BSL Available · pihole-exporter→started · local-path v0.0.37→live PVC provision test passed.
+
+**Skipped (report stale/pinned):** curl (novnc) digest-pinned; alpine/k8s (rotation cronjob) already at 1.34.9.
+
 ## Changes
 ### rancher/local-path-provisioner v0.0.28 → v0.0.37   [TALOS-zadf.63]
 - Namespace: local-path-storage (default storage-class provisioner).
