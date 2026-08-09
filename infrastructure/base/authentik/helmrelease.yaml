@@ -89,6 +89,9 @@ spec:
         - name: minio-blueprint
           configMap:
             name: authentik-minio-blueprint
+        - name: linkwarden-blueprint
+          configMap:
+            name: authentik-linkwarden-blueprint
         - name: talos-private-blueprint
           configMap:
             name: authentik-talos-private-blueprint
@@ -140,6 +143,9 @@ spec:
         - name: minio-blueprint
           mountPath: /blueprints/custom/minio-oidc.yaml
           subPath: minio-oidc.yaml
+        - name: linkwarden-blueprint
+          mountPath: /blueprints/custom/linkwarden-oidc.yaml
+          subPath: linkwarden-oidc.yaml
         - name: talos-private-blueprint
           mountPath: /blueprints/custom/talos-private.yaml
           subPath: talos-private.yaml
@@ -245,6 +251,25 @@ spec:
               name: authentik-minio-oidc
               key: client-secret
               optional: true
+        # !Env sources for linkwarden-blueprint.yaml (TALOS-zuia). Linkwarden's
+        # client_id is itself a secret, so BOTH id and secret are injected here.
+        # optional:true (same rationale as minio) — the worker starts even before
+        # authentik-linkwarden-oidc exists, so shipping this blueprint can never
+        # CrashLoop the worker. Restart authentik-worker after the 1Password
+        # linkwarden.authentik-client-id/-secret fields are populated so !Env
+        # re-evaluates and the provider gets the real credentials.
+        - name: LINKWARDEN_OIDC_CLIENT_ID
+          valueFrom:
+            secretKeyRef:
+              name: authentik-linkwarden-oidc
+              key: client-id
+              optional: true
+        - name: LINKWARDEN_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: authentik-linkwarden-oidc
+              key: client-secret
+              optional: true
       # Worker needs blueprints for processing
       volumes:
         - name: litellm-blueprint
@@ -265,6 +290,9 @@ spec:
         - name: minio-blueprint
           configMap:
             name: authentik-minio-blueprint
+        - name: linkwarden-blueprint
+          configMap:
+            name: authentik-linkwarden-blueprint
         - name: talos-private-blueprint
           configMap:
             name: authentik-talos-private-blueprint
@@ -299,6 +327,9 @@ spec:
         - name: minio-blueprint
           mountPath: /blueprints/custom/minio-oidc.yaml
           subPath: minio-oidc.yaml
+        - name: linkwarden-blueprint
+          mountPath: /blueprints/custom/linkwarden-oidc.yaml
+          subPath: linkwarden-oidc.yaml
         - name: talos-private-blueprint
           mountPath: /blueprints/custom/talos-private.yaml
           subPath: talos-private.yaml
