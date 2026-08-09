@@ -4,8 +4,26 @@ Source report: `.output/image-version-report.json` · Skill: `image-update-imple
 Order: low-blast-radius first (P3 → P2 → P1), majors elevated to operator, k8s upgrade last.
 
 ## Summary
-- Updated: 0 · Elevated to operator: (pending) · Deferred/blocked: (see below)
+- Updated: 6 · Elevated/answered: chart-strategy, local-path, safe-batch(auto), 4 greenlit (ext-dns/virt-operator/meilisearch/1password) · Deferred: 54 chart-managed
 - Breaking changes encountered: 0 so far
+- Strategy (operator): raw `image:` bumps in this epic; chart/operator-managed images deferred to per-chart work.
+- Skipped (mis-parse, tracked TALOS-zpoa): alpine→20260805, gluetun→1243, socat→1.0.5. Digest-pinned (14) = pinned-on-purpose, held.
+
+### Clean utility batch (commit 7e3cae1) — all verified latest, rolled, pod-confirmed
+| Image | Bump | Ticket |
+|---|---|---|
+| us-docker.pkg.dev/fairwinds-ops/oss/goldilocks | v4.14.7 → v4.15.1 | zadf.32 ✅ |
+| registry.k8s.io/autoscaling/vpa-recommender | 1.0.0 → 1.7.1 | zadf.59 ✅ |
+| ekofr/pihole-exporter | v1.0.0 → v1.2.0 | zadf.20 ✅ |
+| intel/intel-gpu-plugin | 0.30.0 → 0.36.0 | zadf.26 ✅ |
+| velero/velero-plugin-for-aws | v1.11.1 → v1.14.2 | zadf.62 ✅ |
+
+## Changes
+### rancher/local-path-provisioner v0.0.28 → v0.0.37   [TALOS-zadf.63]
+- Namespace: local-path-storage (default storage-class provisioner).
+- No breaking change: verified v0.0.37 is latest (gh, 2026-08-05); only governs NEW PVC provisioning, existing hostPath volumes unaffected.
+- Decision (operator): storage golden-rule → "Proceed (recommended)".
+- Manifest: `infrastructure/base/storage/local-path-provisioner.yaml` · Rollback: `git revert 74b27ab` · Verified: deploy rolled, pod 1/1 Running v0.0.37.
 
 ## Triage notes
 
