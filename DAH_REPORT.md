@@ -24,7 +24,7 @@ The platform demonstrates remarkable sophistication for a personal infrastructur
 **Top 5 Risks (cross-cutting):**
 
 1. **Backup circular dependency** -- Velero backs up to MinIO on the same NAS; a NAS failure loses both data and backups
-2. **Hardcoded MinIO credentials** -- `minio`/`minio123` in 6+ manifest files; immediate risk if repo becomes public
+2. **~~Hardcoded MinIO credentials~~ (RESOLVED — TALOS-tmqq)** -- the former public MinIO root literal has been rotated and moved to 1Password (item `minio`); all S3 consumers now source it via per-namespace ExternalSecrets. No credential literal remains in git.
 3. **Single control plane** -- no etcd quorum, no API server redundancy
 4. **No network policies** on most namespaces -- lateral movement risk from any compromised pod
 5. **No alerting rules defined** -- Mimir rules directory is empty; no alerts for pipeline failures, disk space, or backup failures
@@ -259,7 +259,7 @@ Git Push to main
 
 **Secrets Management:**
 - 1Password + ESO for ArgoCD, Cloudflare, Authentik, VPN, External DNS, Kasa
-- **CRITICAL GAP:** MinIO `minio`/`minio123` hardcoded in 6+ manifests
+- **RESOLVED (TALOS-tmqq):** MinIO root credential rotated and sourced from 1Password (item `minio`) via ExternalSecrets in every consumer namespace; no credential literal remains in git.
 
 **Network Security:**
 - Cilium eBPF with kube-proxy replacement and SPIRE mTLS (enabled, not enforced)

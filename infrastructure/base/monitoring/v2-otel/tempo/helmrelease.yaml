@@ -66,8 +66,8 @@ spec:
                       s3:
                         bucket: tempo
                         endpoint: minio-hl.minio.svc:9000
-                        access_key: minio
-                        secret_key: minio123
+                        access_key: "${AWS_ACCESS_KEY_ID}"
+                        secret_key: "${AWS_SECRET_ACCESS_KEY}"
                         insecure: true
                       local:
                         path: /var/tempo/traces
@@ -94,6 +94,15 @@ spec:
   values:
     # Single binary mode (appropriate for homelab)
     tempo:
+      # Expand ${AWS_ACCESS_KEY_ID}/${AWS_SECRET_ACCESS_KEY} in the tempo config
+      # (both the chart values block below and the postRenderer-patched ConfigMap)
+      # and source them from the tempo-s3-credentials Secret (ESO → 1Password
+      # `minio`). extraArgs is a map → renders `-config.expand-env=true`. TALOS-tmqq
+      extraArgs:
+        config.expand-env: "true"
+      extraEnvFrom:
+        - secretRef:
+            name: tempo-s3-credentials
       metricsGenerator:
         enabled: true
         remoteWriteUrl: 'http://mimir-nginx.monitoring.svc:80/api/v1/push'
@@ -104,8 +113,8 @@ spec:
           s3:
             bucket: tempo
             endpoint: minio-hl.minio.svc:9000
-            access_key: minio
-            secret_key: minio123
+            access_key: "${AWS_ACCESS_KEY_ID}"
+            secret_key: "${AWS_SECRET_ACCESS_KEY}"
             insecure: true
 
     # Enable OTLP receivers

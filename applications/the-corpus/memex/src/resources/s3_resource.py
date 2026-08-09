@@ -16,9 +16,12 @@ class S3Resource(ConfigurableResource):
     Used for storing intermediate pipeline data.
     """
 
+    # Credentials come from the environment only — no hardcoded fallback
+    # (TALOS-tmqq). In-cluster these are injected from the MinIO root creds in
+    # 1Password (via ESO); locally, export S3_ACCESS_KEY / S3_SECRET_KEY.
     endpoint_url: str = os.environ.get("S3_ENDPOINT_URL", "http://localhost:9000")
-    access_key: str = os.environ.get("S3_ACCESS_KEY", "minio")
-    secret_key: str = os.environ.get("S3_SECRET_KEY", "minio123")
+    access_key: str = os.environ.get("S3_ACCESS_KEY", "")
+    secret_key: str = os.environ.get("S3_SECRET_KEY", "")
     bucket: str = os.environ.get("S3_BUCKET", "memex")
     region: str = "us-east-1"
 

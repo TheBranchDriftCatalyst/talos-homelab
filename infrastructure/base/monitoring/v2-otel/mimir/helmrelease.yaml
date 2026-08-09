@@ -24,6 +24,15 @@ spec:
     remediation:
       retries: 3
   values:
+    # S3 (MinIO) credentials injected into every Mimir pod from the
+    # mimir-s3-credentials Secret (ESO → 1Password `minio`). structuredConfig
+    # below references ${AWS_ACCESS_KEY_ID}/${AWS_SECRET_ACCESS_KEY}; the
+    # mimir-distributed chart runs all services with -config.expand-env=true by
+    # default, so Mimir expands them at startup. (TALOS-tmqq)
+    global:
+      extraEnvFrom:
+        - secretRef:
+            name: mimir-s3-credentials
     # Single-zone deployment for homelab
     mimir:
       structuredConfig:
@@ -78,8 +87,8 @@ spec:
             s3:
               endpoint: minio-hl.minio.svc:9000
               bucket_name: mimir
-              access_key_id: minio
-              secret_access_key: minio123
+              access_key_id: "${AWS_ACCESS_KEY_ID}"
+              secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
               insecure: true
         # Blocks storage configuration
         blocks_storage:
@@ -87,8 +96,8 @@ spec:
           s3:
             endpoint: minio-hl.minio.svc:9000
             bucket_name: mimir
-            access_key_id: minio
-            secret_access_key: minio123
+            access_key_id: "${AWS_ACCESS_KEY_ID}"
+            secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
             insecure: true
           bucket_store:
             sync_dir: /data/mimir-sync
@@ -98,8 +107,8 @@ spec:
           s3:
             endpoint: minio-hl.minio.svc:9000
             bucket_name: mimir
-            access_key_id: minio
-            secret_access_key: minio123
+            access_key_id: "${AWS_ACCESS_KEY_ID}"
+            secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
             insecure: true
           storage_prefix: alertmanager
         # Ruler storage - must use different prefix than blocks
@@ -108,8 +117,8 @@ spec:
           s3:
             endpoint: minio-hl.minio.svc:9000
             bucket_name: mimir
-            access_key_id: minio
-            secret_access_key: minio123
+            access_key_id: "${AWS_ACCESS_KEY_ID}"
+            secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
             insecure: true
           storage_prefix: ruler
           # OTLP ingestion is enabled by default in Mimir 2.9+

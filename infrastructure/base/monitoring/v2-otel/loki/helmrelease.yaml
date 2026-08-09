@@ -51,8 +51,11 @@ spec:
           admin: loki
         s3:
           endpoint: minio-hl.minio.svc:9000
-          accessKeyId: minio
-          secretAccessKey: minio123
+          # ${...} expanded at runtime via -config.expand-env=true (see
+          # singleBinary.extraArgs). Creds injected from loki-s3-credentials
+          # (ESO → 1Password `minio`) via singleBinary.extraEnvFrom. TALOS-tmqq
+          accessKeyId: "${AWS_ACCESS_KEY_ID}"
+          secretAccessKey: "${AWS_SECRET_ACCESS_KEY}"
           s3ForcePathStyle: true
           insecure: true
       # Limits
@@ -79,6 +82,15 @@ spec:
     # Single binary config
     singleBinary:
       replicas: 1
+      # Expand ${AWS_ACCESS_KEY_ID}/${AWS_SECRET_ACCESS_KEY} in the Loki config
+      # and source them from the loki-s3-credentials Secret (ESO → 1Password
+      # `minio`). SingleBinary reads singleBinary.extraArgs/extraEnvFrom (NOT
+      # the top-level loki.* equivalents). TALOS-tmqq
+      extraArgs:
+        - -config.expand-env=true
+      extraEnvFrom:
+        - secretRef:
+            name: loki-s3-credentials
       # Tolerate control-plane taint - local-path PV is bound to talos00
       tolerations:
         - key: node-role.kubernetes.io/control-plane

@@ -32,10 +32,13 @@ spec:
             - {name: http, containerPort: 8080}
           env:
             - {name: DEMO_NAMESPACE, value: crossplane-demo}
-            # --- MinIO (existing tenant in ns minio; default tenant creds) ---
+            # --- MinIO (existing tenant in ns minio; root creds from 1Password
+            #     via the demo-minio-credentials ExternalSecret) — TALOS-tmqq ---
             - {name: MINIO_ENDPOINT, value: "minio.minio.svc.cluster.local:80"}
-            - {name: MINIO_ACCESS_KEY, value: "minio"}
-            - {name: MINIO_SECRET_KEY, value: "minio123"}
+            - name: MINIO_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: demo-minio-credentials, key: MINIO_ACCESS_KEY}}
+            - name: MINIO_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: demo-minio-credentials, key: MINIO_SECRET_KEY}}
             - {name: MINIO_BUCKET, value: "demo"}
             # --- RabbitMQ (assembled from the operator's default-user Secret) ---
             - name: RABBIT_USER

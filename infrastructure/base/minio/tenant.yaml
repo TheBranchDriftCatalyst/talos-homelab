@@ -2,22 +2,122 @@
 # MinIO Tenant - Operator-managed S3 storage
 # Replaces standalone HelmRelease with operator-managed tenant
 # Provides S3 backend for: Mimir, Tempo, Loki
-apiVersion: v1
-kind: Secret
+#
+# config.env is the ONE channel this operator honors: the server pod
+# (minio-pool-0-0) gets only MINIO_CONFIG_ENV_FILE=/tmp/minio/config.env,
+# projected from THIS Secret. Tenant.spec.env is NOT propagated (verified —
+# MINIO_PROMETHEUS_URL/JOB_ID below never reach the pod). So every runtime env
+# — including the Authentik OIDC settings — must live in config.env here.
+#
+# WHY THIS IS AN ExternalSecret (was a plain Secret): the OIDC client_secret
+# must land inside config.env, but config.env is a single opaque blob so it
+# can't reference another Secret's key. Templating config.env via ESO is the
+# only way to inject the client_secret from 1Password without hardcoding it in
+# git. See the OIDC block below and TALOS-475t.
+#
+# ROOT CREDS (TALOS-tmqq — rotated + de-hardcoded): MINIO_ROOT_USER /
+# MINIO_ROOT_PASSWORD are now templated from the 1Password `minio` item
+# (root-user=pandamin, root-password=new strong pw). The old public
+# old public root literals (minio/****) are GONE from git. Every S3 consumer (Mimir, Loki,
+# Tempo, Velero, etcd-backup, authentik-pg-backup, flex) sources these SAME two
+# 1Password properties via a per-namespace ExternalSecret, so a single rotation
+# in 1Password cascades to the whole fleet on the next ESO refresh.
+#
+# ATOMICITY: because MinIO's root user IS these values, the MinIO server and
+# every consumer must converge on the same 1Password revision. Land this commit
+# as one Flux reconcile (see deploy-order notes). Consumers retry/buffer on
+# transient S3-auth failure during the brief cutover window.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
 metadata:
   name: minio-env-config
   namespace: minio
-type: Opaque
-stringData:
-  config.env: |
-    export MINIO_ROOT_USER="minio"
-    export MINIO_ROOT_PASSWORD="minio123"
-    # Serve /minio/v2/metrics/* without bearer-token auth so Alloy's ServiceMonitor
-    # scrape works (the operator injects THIS config.env into the server pods;
-    # Tenant.spec.env is NOT propagated by this operator version). Revives the
-    # MinIO row of central-cluster-storage. Internal ClusterIP scrape only.
-    # (TALOS-qtix / epic TALOS-vmd)
-    export MINIO_PROMETHEUS_AUTH_TYPE="public"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword
+    kind: ClusterSecretStore
+  target:
+    name: minio-env-config
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      type: Opaque
+      data:
+        config.env: |
+          export MINIO_ROOT_USER="{{ .rootUser }}"
+          export MINIO_ROOT_PASSWORD="{{ .rootPassword }}"
+          # Serve /minio/v2/metrics/* without bearer-token auth so Alloy's ServiceMonitor
+          # scrape works (the operator injects THIS config.env into the server pods;
+          # Tenant.spec.env is NOT propagated by this operator version). Revives the
+          # MinIO row of central-cluster-storage. Internal ClusterIP scrape only.
+          # (TALOS-qtix / epic TALOS-vmd)
+          export MINIO_PROMETHEUS_AUTH_TYPE="public"
+          # --- Authentik OIDC SSO for the MinIO Console (TALOS-475t) ---
+          # Discovery uses the per-provider issuer on auth.talos00 (internal-only,
+          # like grafana) so browser redirect + pod-side token exchange hit the
+          # same host and the id_token `iss` stays consistent. The server pod
+          # reaches auth.talos00 in-cluster via the CoreDNS rewrite -> Traefik.
+          export MINIO_IDENTITY_OPENID_CONFIG_URL="http://auth.talos00/application/o/minio/.well-known/openid-configuration"
+          export MINIO_IDENTITY_OPENID_CLIENT_ID="minio"
+          export MINIO_IDENTITY_OPENID_CLIENT_SECRET="{{ .oidcClientSecret }}"
+          # claim_name=policy -> MinIO reads the `policy` claim the Authentik
+          # minio scope mapping emits (consoleAdmin for admins, readonly else).
+          export MINIO_IDENTITY_OPENID_CLAIM_NAME="policy"
+          # `minio` scope MUST be requested or Authentik never runs the policy
+          # scope mapping and the claim is absent (see minio-blueprint.yaml).
+          export MINIO_IDENTITY_OPENID_SCOPES="openid,profile,email,minio"
+          export MINIO_IDENTITY_OPENID_REDIRECT_URI="http://minio.talos00/oauth_callback"
+          export MINIO_IDENTITY_OPENID_DISPLAY_NAME="Authentik"
+  data:
+    # Root credentials — the MinIO server's own root user/password. Rotating
+    # these two 1Password fields IS the root-credential rotation (TALOS-tmqq).
+    - secretKey: rootUser
+      remoteRef:
+        key: minio
+        property: root-user
+    - secretKey: rootPassword
+      remoteRef:
+        key: minio
+        property: root-password
+    # OIDC client_secret — SAME 1Password field the authentik-minio-oidc
+    # ExternalSecret reads, so both ends of the handshake stay in lockstep.
+    # PROVISION FIRST: create 1Password item "minio" field "oidc-client-secret"
+    # (openssl rand -hex 32) BEFORE this reconciles, or the target Secret won't
+    # populate and the tenant will lack config.env.
+    - secretKey: oidcClientSecret
+      remoteRef:
+        key: minio
+        property: oidc-client-secret
+---
+# Root credentials as discrete env keys for in-cluster mc/S3 clients (the
+# create-buckets Job below). config.env is a single opaque blob and can't be
+# consumed key-by-key, so this small ExternalSecret exposes the SAME 1Password
+# `minio` root-user/root-password as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: minio-root-credentials
+  namespace: minio
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword
+    kind: ClusterSecretStore
+  target:
+    name: minio-root-credentials
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      type: Opaque
+      data:
+        AWS_ACCESS_KEY_ID: '{{ .rootUser }}'
+        AWS_SECRET_ACCESS_KEY: '{{ .rootPassword }}'
+  data:
+    - secretKey: rootUser
+      remoteRef: {key: minio, property: root-user}
+    - secretKey: rootPassword
+      remoteRef: {key: minio, property: root-password}
 ---
 apiVersion: minio.min.io/v2
 kind: Tenant
@@ -115,6 +215,11 @@ spec:
       containers:
         - name: mc
           image: minio/mc:latest
+          envFrom:
+            # Root creds (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY) from 1Password
+            # via the minio-root-credentials ExternalSecret above.
+            - secretRef:
+                name: minio-root-credentials
           command:
             - /bin/sh
             - -c
@@ -125,7 +230,7 @@ spec:
 
               # Configure mc alias using tenant service
               # Tenant creates service named 'minio' in same namespace
-              mc alias set local http://minio.minio.svc.cluster.local minio minio123 --api S3v4
+              mc alias set local http://minio.minio.svc.cluster.local "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" --api S3v4
 
               # Create buckets for OTEL stack
               mc mb local/mimir --ignore-existing
@@ -134,6 +239,11 @@ spec:
 
               # Create bucket for Dagster IO manager
               mc mb local/dagster --ignore-existing
+
+              # Create bucket for CNPG PostgreSQL object-store backups (TALOS-a1hk)
+              # One bucket for the whole CNPG fleet; each cluster gets its own
+              # prefix (destinationPath: s3://cnpg-backups/<cluster-name>).
+              mc mb local/cnpg-backups --ignore-existing
 
               # Enable versioning for datalake time-travel
               mc version enable local/dagster

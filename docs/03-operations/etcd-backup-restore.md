@@ -61,7 +61,11 @@ kubectl get cronjob -n backup etcd-backup \
 kubectl run mc-check --rm -it --restart=Never \
   --image=minio/mc:latest --namespace=backup \
   --command -- /bin/sh -c '
-    mc alias set m http://minio.minio.svc.cluster.local minio minio123 >/dev/null
+    # Root creds live in 1Password (item "minio": root-user / root-password);
+    # export them first, e.g. from the etcd-backup-s3-creds Secret:
+    #   AWS_ACCESS_KEY_ID=$(kubectl get secret -n backup etcd-backup-s3-creds -o jsonpath="{.data.AWS_ACCESS_KEY_ID}" | base64 -d)
+    #   AWS_SECRET_ACCESS_KEY=$(kubectl get secret -n backup etcd-backup-s3-creds -o jsonpath="{.data.AWS_SECRET_ACCESS_KEY}" | base64 -d)
+    mc alias set m http://minio.minio.svc.cluster.local "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null
     mc ls m/backups/etcd/ | tail -20
   '
 ```
@@ -92,7 +96,10 @@ You want the latest snapshot from BEFORE the corruption. If the corruption was s
 ```bash
 # Download via mc port-forward, or directly from the MinIO web UI
 kubectl port-forward -n minio svc/minio 9000:9000 &
-mc alias set local http://localhost:9000 minio minio123
+# MinIO root creds are in 1Password (item "minio"); pull them from the Secret:
+AWS_ACCESS_KEY_ID=$(kubectl get secret -n backup etcd-backup-s3-creds -o jsonpath='{.data.AWS_ACCESS_KEY_ID}' | base64 -d)
+AWS_SECRET_ACCESS_KEY=$(kubectl get secret -n backup etcd-backup-s3-creds -o jsonpath='{.data.AWS_SECRET_ACCESS_KEY}' | base64 -d)
+mc alias set local http://localhost:9000 "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"
 mc ls local/backups/etcd/
 mc cp local/backups/etcd/etcd-20260509-230000.snapshot ./db.snapshot
 ```

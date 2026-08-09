@@ -82,6 +82,9 @@ spec:
         - name: forgejo-blueprint
           configMap:
             name: authentik-forgejo-blueprint
+        - name: minio-blueprint
+          configMap:
+            name: authentik-minio-blueprint
         - name: talos-private-blueprint
           configMap:
             name: authentik-talos-private-blueprint
@@ -130,6 +133,9 @@ spec:
         - name: forgejo-blueprint
           mountPath: /blueprints/custom/forgejo-oidc.yaml
           subPath: forgejo-oidc.yaml
+        - name: minio-blueprint
+          mountPath: /blueprints/custom/minio-oidc.yaml
+          subPath: minio-oidc.yaml
         - name: talos-private-blueprint
           mountPath: /blueprints/custom/talos-private.yaml
           subPath: talos-private.yaml
@@ -225,6 +231,16 @@ spec:
               name: authentik-forgejo-oidc
               key: client-secret
               optional: true
+        # !Env source for minio-blueprint.yaml (TALOS-475t). optional:true —
+        # worker starts even before authentik-minio-oidc exists, so shipping
+        # this blueprint can never CrashLoop the worker. Restart authentik-worker
+        # after the 1Password minio.oidc-client-secret field is populated.
+        - name: MINIO_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: authentik-minio-oidc
+              key: client-secret
+              optional: true
       # Worker needs blueprints for processing
       volumes:
         - name: litellm-blueprint
@@ -242,6 +258,9 @@ spec:
         - name: forgejo-blueprint
           configMap:
             name: authentik-forgejo-blueprint
+        - name: minio-blueprint
+          configMap:
+            name: authentik-minio-blueprint
         - name: talos-private-blueprint
           configMap:
             name: authentik-talos-private-blueprint
@@ -273,6 +292,9 @@ spec:
         - name: forgejo-blueprint
           mountPath: /blueprints/custom/forgejo-oidc.yaml
           subPath: forgejo-oidc.yaml
+        - name: minio-blueprint
+          mountPath: /blueprints/custom/minio-oidc.yaml
+          subPath: minio-oidc.yaml
         - name: talos-private-blueprint
           mountPath: /blueprints/custom/talos-private.yaml
           subPath: talos-private.yaml
