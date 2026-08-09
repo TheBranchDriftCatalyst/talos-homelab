@@ -19,7 +19,7 @@ spec:
   chart:
     spec:
       chart: traefik
-      version: '>=37.0.0 <38.0.0' # Lock to v37.x (Traefik v3.5.x)
+      version: '>=41.0.0 <42.0.0' # Lock to v41.x (Traefik v3.7.x) — TALOS-zadf.19 (was 37.x/v3.6.2)
       sourceRef:
         kind: HelmRepository
         name: traefik
@@ -43,6 +43,9 @@ spec:
     deployment:
       kind: DaemonSet # Use DaemonSet for hostPort binding
       replicas: 1
+      # chart v41 moved podLabels under deployment (was top-level). (TALOS-zadf.19)
+      podLabels:
+        app: traefik
       # Mount the CrowdSec bouncer API key so the bouncer plugin can read it via
       # crowdsecLapiKeyFile: /etc/traefik/crowdsec/lapi-key. (TALOS-pbn)
       additionalVolumes:
@@ -161,16 +164,16 @@ spec:
 
     # Enable access logs. JSON format + kept fields so the CrowdSec `crowdsecurity/traefik`
     # parser can read `ClientHost` (the real visitor IP). Still writes to stdout → Loki. (TALOS-pbn)
-    logs:
-      general:
-        level: INFO
-      access:
-        enabled: true
-        format: json
-        fields:
-          defaultmode: keep
-          headers:
-            defaultmode: keep
+    # chart v41 renamed these: logs.general→log, logs.access→accessLog, defaultmode→defaultMode. (TALOS-zadf.19)
+    log:
+      level: INFO
+    accessLog:
+      enabled: true
+      format: json
+      fields:
+        defaultMode: keep
+        headers:
+          defaultMode: keep
 
     # Providers
     providers:
@@ -233,10 +236,6 @@ spec:
         # ServiceMonitor for Alloy/Mimir (not kube-prometheus-stack)
         serviceMonitor:
           enabled: false  # We use Alloy scraping instead
-
-    # Pod labels
-    podLabels:
-      app: traefik
 
     # Tolerations - allow scheduling on control-plane nodes
     tolerations:
