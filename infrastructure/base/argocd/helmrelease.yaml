@@ -39,13 +39,19 @@ spec:
     # Global settings
     global:
       domain: argocd.talos00
-    # Redis
+    # Redis — replaced by the dragonfly-operator-managed Dragonfly CR (see dragonfly.yaml).
+    # Disabling the bundled redis removes the argocd-redis Deployment/Service. The chart's
+    # externalRedis path also auto-skips the redis-secret-init pre-install Job (its templates
+    # are guarded by `not externalRedis.host`).
     redis:
-      enabled: true
-      resources:
-        requests:
-          cpu: 50m
-          memory: 64Mi
+      enabled: false
+    # Point all Argo components (server / repo-server / application-controller) at the
+    # Dragonfly service. externalRedis sets the `redis.server` cmd-param to host:port.
+    # No password / existingSecret → REDIS_PASSWORD resolves optional:true and Argo sends no
+    # AUTH, matching the no-auth Dragonfly (see dragonfly.yaml AUTH note). Cache is ephemeral.
+    externalRedis:
+      host: argocd-dragonfly
+      port: 6379
     # Argo CD Server
     server:
       replicas: 1
