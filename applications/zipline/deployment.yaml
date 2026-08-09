@@ -1,6 +1,13 @@
 ---
 # Zipline - Self-hosted image/file sharing
 # https://github.com/diced/zipline
+#
+# GitOps + CNPG migration (TALOS-0w6d): the co-pod `postgres:15-alpine` sidecar
+# is GONE. Zipline talks to the CNPG `zipline-postgres-rw` service and reads its
+# full connection string from the CNPG-generated `zipline-postgres-app` secret
+# (`uri` key = postgresql://zipline:<pass>@zipline-postgres-rw:5432/zipline).
+# CORE_SECRET comes from the zipline-secrets ExternalSecret (1Password item
+# `zipline`, field `core-secret`). No plaintext secrets remain in git.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -20,41 +27,10 @@ spec:
       labels:
         app: zipline
       annotations:
-        backup.velero.io/backup-volumes: postgres-data,uploads
+        # DB is CNPG-managed now; only the uploads volume needs Velero coverage.
+        backup.velero.io/backup-volumes: uploads
     spec:
       containers:
-        # PostgreSQL database
-        - name: postgres
-          image: postgres:15-alpine
-          ports:
-            - name: postgres
-              containerPort: 5432
-              protocol: TCP
-          env:
-            - name: POSTGRES_USER
-              value: zipline
-            # Password sourced from the zipline-secrets ExternalSecret (1Password
-            # item `zipline`, field postgres-password). Same value the app's
-            # DATABASE_URL uses — see externalsecret.yaml.
-            - name: POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: zipline-secrets
-                  key: POSTGRES_PASSWORD
-            - name: POSTGRES_DB
-              value: zipline
-          volumeMounts:
-            - name: postgres-data
-              mountPath: /var/lib/postgresql/data
-              subPath: pgdata
-          resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
-
         # Zipline application
         - name: zipline
           image: ghcr.io/diced/zipline:latest
@@ -63,19 +39,21 @@ spec:
               containerPort: 3000
               protocol: TCP
           env:
-            # Core configuration — CORE_SECRET + DATABASE_URL come from the
-            # zipline-secrets ExternalSecret (1Password item `zipline`). The URL is
-            # templated with the SAME postgres-password the DB sidecar uses.
+            # CORE_SECRET (token-signing key) from the zipline-secrets
+            # ExternalSecret (1Password item `zipline`, field core-secret).
             - name: CORE_SECRET
               valueFrom:
                 secretKeyRef:
                   name: zipline-secrets
                   key: CORE_SECRET
+            # Full DB connection string straight from the CNPG-generated
+            # zipline-postgres-app secret — points at the -rw service, carries
+            # the random rotated password. No plaintext, no templating needed.
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: zipline-secrets
-                  key: DATABASE_URL
+                  name: zipline-postgres-app
+                  key: uri
             # Website configuration
             - name: WEBSITE_TITLE
               value: "Catalyst Share"
@@ -105,9 +83,7 @@ spec:
             periodSeconds: 10
 
       volumes:
-        - name: postgres-data
-          persistentVolumeClaim:
-            claimName: zipline-postgres
+        # The uploaded FILES — preserved across the migration (see pvc.yaml).
         - name: uploads
           persistentVolumeClaim:
             claimName: zipline-uploads

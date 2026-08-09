@@ -1,0 +1,48 @@
+---
+# CloudNativePG database for Zipline (TALOS-0w6d, epic TALOS-031k).
+# Replaces the co-pod `postgres:15-alpine` container (plaintext creds on the
+# PUBLIC repo) with a CNPG-managed cluster — the repo standard (forgejo /
+# home-assistant / crowdsec). CNPG creates:
+#   - a 'zipline' database owned by user 'zipline'
+#   - Secret 'zipline-postgres-app' (username/password/dbname/host/port/uri)
+#   - Service 'zipline-postgres-rw' (read-write endpoint)
+# Zipline reads its whole connection string from that secret's `uri` key (see
+# deployment.yaml DATABASE_URL) — no plaintext password lives in git, and NO
+# 1Password item is needed for the DB (CNPG-native, like the HA migration).
+#
+# DATA IS DISPOSABLE: the old co-pod `zipline-postgres` PVC is NOT migrated.
+# Zipline (diced/zipline) runs its own Prisma schema migrations against an EMPTY
+# database on first boot, so a fresh CNPG DB self-initializes. The uploaded FILES
+# live on the SEPARATE `zipline-uploads` PVC (see pvc.yaml) and are preserved.
+#
+# INSTANCES: single (1). The fleet runs 3 for HA, but zipline is a minor
+# file-sharing app with a disposable, self-rebuilding DB — one instance is
+# sufficient and saves the NFS footprint. Bump to 3 later if it earns HA.
+#
+# No `imageName:` pin — inherits the operator default (currently PG 17.0),
+# exactly like the forgejo/home-assistant clusters, keeping the whole fleet on
+# one PG major without hardcoding a floating tag.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: zipline-postgres
+  labels:
+    app.kubernetes.io/name: zipline-postgres
+    app.kubernetes.io/part-of: media-private
+spec:
+  instances: 1
+  imagePullPolicy: IfNotPresent
+  storage:
+    size: 2Gi
+    storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
+  monitoring:
+    enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
+  bootstrap:
+    initdb:
+      database: zipline
+      owner: zipline
+      # No `secret:` → CNPG generates zipline-postgres-app with a random password.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
