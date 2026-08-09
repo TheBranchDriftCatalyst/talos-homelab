@@ -48,6 +48,21 @@ still surface them as a single "apply this safe batch?" confirmation rather than
 
 ### Research kinks to bake in (learned the hard way)
 
+- **READ THE FULL upstream migration guide / changelog for a major bump — not a summary, and not
+  just `helm template`.** `helm template` renders CLEAN even when the upgrade is about to break the
+  cluster, because it cannot see: (1) a **removed/renamed Service or component** — mimir chart 6
+  dropped the `nginx` gateway (unified into `gateway`), so every producer pointing at
+  `mimir-nginx.svc` got NXDOMAIN and ingestion died cluster-wide; (2) an **architecture-DEFAULT
+  flip** — mimir chart 6 turned on experimental **Kafka ingest-storage by default** (a new
+  single-broker SPOF the chart itself calls "demo/testing only"); (3) a **companion value a change
+  requires** — reverting that kafka to classic needs `ingest_storage.enabled:false` **AND**
+  `kafka.enabled:false` **AND** `push_grpc_method_enabled:true`; missing the last one leaves the
+  ingester with no ingest path → CrashLoopBackOff. Always open the upstream MIGRATION guide for the
+  exact version span and grep it for `removed`, `renamed`, `default`, `breaking`, `migrate`,
+  `deprecat`. The research subagent MUST fetch + summarize the actual migration doc, not
+  release-note headlines. And for anything data/ingest-path (metrics/logs/traces backends), plan a
+  **post-upgrade pipeline audit** (verify ingestion + query + continuity with evidence, not just
+  "pods Running") — a chart that renders and rolls can still be silently wedged.
 - **Chart delta ≠ app delta.** A HelmRelease pins a *chart* version, not an image tag; a minor *app*
   bump can be a *major chart* jump. E.g. kube-state-metrics app 2.14→2.19.1 is chart **5.27 → 8.2**
   (three major chart versions) — near-certain values-schema churn. Always compute the CHART delta and
