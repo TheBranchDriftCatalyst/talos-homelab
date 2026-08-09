@@ -93,6 +93,40 @@ spec:
         exclusions:
           - homelab/iocaine-tarpit
 
+      # ---- LAPI general config (config.yaml.local, mounted ONLY into the LAPI pod) ----
+      # The crowdsec v1.7.8 entrypoint (docker_start.sh) does NOT template db_config from the
+      # DB_* env vars — it only handles sqlite WAL/perms. So the LAPI reads its datastore config
+      # from THIS file. The chart's default config.yaml.local ships db_config COMMENTED OUT, which
+      # silently leaves the effective datastore as ephemeral SQLite (/var/lib/crowdsec/data/
+      # crowdsec.db) — wiped on every LAPI reschedule → agents/appsec fail "machine not found" +
+      # CrashLoopBackOff. Overriding config.yaml.local here activates the CNPG Postgres datastore.
+      #
+      # crowdsec expands ${ENV} in this file at load time, so we reuse the DB_* env vars already
+      # injected into lapi.env (creds from the CNPG-generated crowdsec-postgres-app secret; host/
+      # sslmode static). ${REGISTRATION_TOKEN} is chart-generated + injected into LAPI/agent/appsec
+      # pods — keep the auto_registration block verbatim so agents/appsec re-register cleanly once
+      # the Postgres schema exists (they run `cscli lapi register --token $REGISTRATION_TOKEN`).
+      config.yaml.local: |
+        api:
+          server:
+            auto_registration: # Activate if not using TLS for authentication
+              enabled: true
+              token: "${REGISTRATION_TOKEN}" # /!\ Do not modify this variable (auto-generated and handled by the chart)
+              allowed_ranges: # /!\ Make sure to adapt to the pod IP ranges used by your cluster
+                - "127.0.0.1/32"
+                - "192.168.0.0/16"
+                - "10.0.0.0/8"
+                - "172.16.0.0/12"
+        db_config:
+          type: pgx # postgres via the pgx driver (crowdsec's recommended pg backend)
+          user: ${DB_USER} # from crowdsec-postgres-app secret (via lapi.env)
+          password: ${DB_PASSWORD} # from crowdsec-postgres-app secret (via lapi.env)
+          db_name: ${DB_NAME} # from crowdsec-postgres-app secret (via lapi.env)
+          host: ${DB_HOST} # crowdsec-postgres-rw (CNPG read-write service)
+          port: 5432
+          sslmode: require # CNPG serves TLS; encrypt without client-cert verification
+          use_wal: true # sqlite-only knob; ignored for pgx (harmless) — silences the WAL warning
+
     # ---- LAPI: Local API + decisions DB + Console enrollment + bouncer registration ----
     lapi:
       env:
