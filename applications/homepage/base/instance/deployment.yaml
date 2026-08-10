@@ -1,0 +1,194 @@
+---
+# Per-instance homepage Deployment (forked from arr-stack homepage).
+# All instances are identical except for what the overlays patch:
+#   - HOMEPAGE_ALLOWED_HOSTS env (per-instance host)
+#   - the homepage-settings ConfigMap (instanceName)
+#   - nameSuffix + app.kubernetes.io/instance selector label
+# Env carries the full SUPERSET of HOMEPAGE_VAR_* secrets (all optional:true)
+# so every board can render any widget its discovered services declare.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: homepage
+  labels:
+    app: homepage
+    app.kubernetes.io/name: homepage
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: homepage
+  template:
+    metadata:
+      labels:
+        app: homepage
+        app.kubernetes.io/name: homepage
+    spec:
+      serviceAccountName: homepage
+      containers:
+        - name: homepage
+          # renovate: datasource=github-releases depName=gethomepage/homepage
+          image: ghcr.io/gethomepage/homepage:v1.13.2
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TZ
+              value: 'America/Los_Angeles'
+            # Patched per overlay: <domain>.homepage.talos00 (master: homepage.talos00)
+            - name: HOMEPAGE_ALLOWED_HOSTS
+              value: 'homepage.talos00'
+            # Grafana credentials (from 1Password via ExternalSecret)
+            - name: HOMEPAGE_VAR_GRAFANA_USER
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-grafana-credentials
+                  key: GRAFANA_USER
+                  optional: true
+            - name: HOMEPAGE_VAR_GRAFANA_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-grafana-credentials
+                  key: GRAFANA_PASS
+                  optional: true
+            # arr-stack-secrets is reflected from ns `media` into ns `homepage`
+            # by emberstack/reflector (annotations on the source ExternalSecret
+            # in applications/arr-stack/base/shared/external-secret.yaml).
+            - name: HOMEPAGE_VAR_SONARR_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-secrets
+                  key: sonarr-api-key
+                  optional: true
+            - name: HOMEPAGE_VAR_RADARR_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-secrets
+                  key: radarr-api-key
+                  optional: true
+            - name: HOMEPAGE_VAR_PROWLARR_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-secrets
+                  key: prowlarr-api-key
+                  optional: true
+            - name: HOMEPAGE_VAR_SABNZBD_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-secrets
+                  key: sabnzbd-api-key
+                  optional: true
+            - name: HOMEPAGE_VAR_PLEX_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-plex-credentials
+                  key: PLEX_TOKEN
+                  optional: true
+            - name: HOMEPAGE_VAR_ARGOCD_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-argocd-credentials
+                  key: ARGOCD_API_KEY
+                  optional: true
+            - name: HOMEPAGE_VAR_AUTHENTIK_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-authentik-credentials
+                  key: AUTHENTIK_API_KEY
+                  optional: true
+            - name: HOMEPAGE_VAR_JELLYFIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-secrets
+                  key: jellyfin-api-key
+                  optional: true
+            - name: HOMEPAGE_VAR_OVERSEERR_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-stack-secrets
+                  key: overseerr-api-key
+                  optional: true
+            # qBittorrent web UI credentials (ExternalSecret currently
+            # commented out pending 1Password item — TALOS-e01)
+            - name: HOMEPAGE_VAR_QBITTORRENT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-qbittorrent-credentials
+                  key: QBITTORRENT_USER
+                  optional: true
+            - name: HOMEPAGE_VAR_QBITTORRENT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-qbittorrent-credentials
+                  key: QBITTORRENT_PASS
+                  optional: true
+            # Tautulli API key (ExternalSecret commented out — TALOS-e01)
+            - name: HOMEPAGE_VAR_TAUTULLI_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-tautulli-credentials
+                  key: TAUTULLI_API_KEY
+                  optional: true
+            # Home Assistant token (ExternalSecret commented out — TALOS-e01)
+            - name: HOMEPAGE_VAR_HOMEASSISTANT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: homepage-homeassistant-credentials
+                  key: HOMEASSISTANT_TOKEN
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - name: settings
+              mountPath: /app/config/settings.yaml
+              subPath: settings.yaml
+            - name: settings
+              mountPath: /app/config/kubernetes.yaml
+              subPath: kubernetes.yaml
+            - name: shared
+              mountPath: /app/config/services.yaml
+              subPath: services.yaml
+            - name: shared
+              mountPath: /app/config/widgets.yaml
+              subPath: widgets.yaml
+            - name: shared
+              mountPath: /app/config/bookmarks.yaml
+              subPath: bookmarks.yaml
+            - name: shared
+              mountPath: /app/config/docker.yaml
+              subPath: docker.yaml
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Sized for P95 usage (~1m CPU, ~104Mi memory)
+          resources:
+            requests:
+              cpu: 10m
+              memory: 130Mi
+      volumes:
+        # Per-instance CM — nameSuffix renames it and kustomize's built-in
+        # nameReference fixup rewrites this ref to homepage-settings-<domain>.
+        - name: settings
+          configMap:
+            name: homepage-settings
+        # Shared singleton CM from base/shared — NOT part of the overlay
+        # build, so the reference stays exactly `homepage-shared`.
+        - name: shared
+          configMap:
+            name: homepage-shared

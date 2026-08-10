@@ -1,0 +1,117 @@
+---
+# RBAC: Kyverno's background controller has NO write access to Traefik IngressRoutes by
+# default. mutateExisting (retroactive stamping of the ~34 existing IngressRoutes) needs it —
+# grant via an aggregated ClusterRole. The rbac.kyverno.io/aggregate-to-background-controller
+# label wires these rules into the kyverno background-controller's aggregated role. Without
+# this the policy reports "not authorized to update IngressRoute". (TALOS-qt7u)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background:homepage-instance
+  labels:
+    app.kubernetes.io/part-of: kyverno
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups: ["traefik.io"]
+    resources: [ingressroutes]
+    verbs: [get, list, watch, update, patch]
+---
+# Mutating policy: for every Traefik IngressRoute annotated gethomepage.dev/enabled: "true",
+# stamp per-instance annotations so the resource is picked up by the homepage boards:
+#   - gethomepage.dev/instance.master: "true"  ALWAYS — the master board catches everything.
+#   - gethomepage.dev/instance.<domain>: "true" where <domain> is derived from the
+#     IngressRoute's namespace via the homepage-ns-domain-map ConfigMap — lands it on the
+#     matching per-domain board too.
+#
+# Two rules (one per stamp) because the domain is interpolated into the JSON pointer PATH
+# (a variable map KEY), which patchStrategicMerge cannot express — patchesJson6902 can.
+# Both rules run at admission (new/updated IngressRoutes) AND retroactively via
+# mutateExistingOnPolicyUpdate (existing IngressRoutes, when this policy is created/updated).
+#
+# Legacy gethomepage.dev/instance: "main" annotations are left intact — inert, since the
+# master board's instance is named `master`, not `main`.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: homepage-instance-assignment
+  annotations:
+    policies.kyverno.io/title: Homepage per-instance auto-assignment
+    policies.kyverno.io/category: Homepage
+    policies.kyverno.io/subject: IngressRoute
+    policies.kyverno.io/description: >-
+      Stamps gethomepage.dev/instance.master and gethomepage.dev/instance.<domain> annotations
+      onto every homepage-enabled Traefik IngressRoute, so each service lands on both the master
+      board and its per-domain board. Domain is derived from namespace via the
+      homepage-ns-domain-map ConfigMap. Applies retroactively to existing IngressRoutes.
+spec:
+  admission: true
+  background: true
+  rules:
+    # --- Rule 1: always stamp the master instance ---------------------------------------
+    - name: stamp-master
+      match:
+        any:
+          - resources:
+              kinds:
+                - IngressRoute
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        # Retroactively stamp already-existing IngressRoutes when this policy is created/updated.
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        # `/` in the annotation key -> `~1` in the JSON pointer. `.` needs no escaping.
+        # op:add on an existing key is idempotent. /metadata/annotations already exists
+        # (the enabled annotation the precondition matched guarantees a non-empty map).
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.master"
+            value: "true"
+    # --- Rule 2: stamp the per-domain instance derived from the namespace ----------------
+    - name: stamp-domain
+      match:
+        any:
+          - resources:
+              kinds:
+                - IngressRoute
+      context:
+        # Load the namespace->domain lookup table.
+        - name: nsmap
+          configMap:
+            name: homepage-ns-domain-map
+            namespace: kyverno
+        # Resolve this IngressRoute's namespace to a domain. Key is quoted so hyphenated
+        # namespaces (kube-system, catalyst-llm, ...) resolve correctly. Unmapped ns -> "".
+        - name: domain
+          variable:
+            jmesPath: 'nsmap.data."{{ request.object.metadata.namespace }}"'
+            default: ""
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+          # Skip namespaces absent from the map (they still get the master stamp).
+          - key: "{{ domain }}"
+            operator: NotEquals
+            value: ""
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        # Domain is interpolated into the PATH (a variable map key) — patchStrategicMerge
+        # cannot do this, hence patchesJson6902.
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.{{ domain }}"
+            value: "true"

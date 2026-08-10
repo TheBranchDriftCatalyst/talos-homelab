@@ -1,0 +1,137 @@
+---
+# ConfigMap shared by ALL homepage instances (mounted read-only by every
+# instance Deployment). Content migrated from the old arr-stack
+# configmap-services.yaml. services.yaml here is an EMPTY placeholder — real
+# services are auto-discovered per-instance via IngressRoute annotations
+# (gethomepage.dev/instance.<name>, stamped by the Kyverno policy), and the
+# master overlay swaps in its own static-services ConfigMap for the entries
+# that cannot be auto-discovered.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-shared
+  labels:
+    app: homepage
+    app.kubernetes.io/name: homepage
+data:
+  services.yaml: |
+    ---
+    # Intentionally empty. Services are auto-discovered from IngressRoute
+    # annotations filtered by this instance's instanceName. The master
+    # instance overrides this file via its own ConfigMap (see
+    # overlays/master/configmap-services.yaml).
+    []
+
+  widgets.yaml: |
+    ---
+    # Homepage Widgets Configuration
+    # Documentation: https://gethomepage.dev/configs/info-widgets/
+
+    # Kubernetes cluster information
+    - kubernetes:
+        cluster:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+          label: "Talos Cluster"
+        nodes:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+
+    # Search bar - use private search
+    - search:
+        provider: ["duckduckgo", "google", "bing"]
+        focus: false
+        showSearchSuggestions: true
+        target: _blank
+
+    # Greeting with date/time
+    - greeting:
+        text_size: 2xl
+        text: "Catalyst Homelab"
+
+    - datetime:
+        text_size: xl
+        format:
+          dateStyle: long
+          timeStyle: short
+          hour12: true
+
+    # OpenMeteo weather
+    - openmeteo:
+        label: San Francisco
+        latitude: 37.7749
+        longitude: -122.4194
+        timezone: America/Los_Angeles
+        units: imperial
+        cache: 5
+
+  bookmarks.yaml: |
+    ---
+    # Homepage Bookmarks Configuration
+    # Documentation: https://gethomepage.dev/configs/bookmarks/
+
+    - Quick Links:
+        - GitHub:
+            - icon: github.png
+              href: https://github.com/TheBranchDriftCatalyst
+              description: My GitHub Profile
+
+        - Homelab Repo:
+            - icon: github.png
+              href: https://github.com/TheBranchDriftCatalyst/talos-homelab
+              description: This Infrastructure
+
+        - Claude:
+            - icon: https://www.anthropic.com/images/icons/apple-touch-icon.png
+              href: https://claude.ai
+              description: AI Assistant
+
+    - Documentation:
+        - Kubernetes:
+            - icon: kubernetes.png
+              href: https://kubernetes.io/docs/
+              description: K8s Docs
+
+        - Talos Linux:
+            - icon: https://www.talos.dev/images/logo.svg
+              href: https://www.talos.dev/
+              description: Talos OS
+
+        - Homepage:
+            - icon: homepage.png
+              href: https://gethomepage.dev/
+              description: Dashboard Docs
+
+        - Cilium:
+            - icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/cilium.png
+              href: https://docs.cilium.io/
+              description: CNI & Network Policy
+
+    - DevOps:
+        - ArgoCD:
+            - icon: argocd.png
+              href: https://argo-cd.readthedocs.io/
+              description: GitOps CD
+
+        - Flux:
+            - icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/flux-cd.png
+              href: https://fluxcd.io/docs/
+              description: GitOps Toolkit
+
+        - Traefik:
+            - icon: traefik.png
+              href: https://doc.traefik.io/traefik/
+              description: Ingress
+
+        - Helm Charts:
+            - icon: helm.png
+              href: https://artifacthub.io/
+              description: Artifact Hub
+
+  docker.yaml: |
+    ---
+    # Not used - Kubernetes handles container management
