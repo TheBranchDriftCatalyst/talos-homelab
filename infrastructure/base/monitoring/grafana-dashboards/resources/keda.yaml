@@ -1,0 +1,40 @@
+---
+# GrafanaDashboard CR: "KEDA Autoscaling".
+#
+# Custom, label-driven dashboard for KEDA event-driven autoscaling — fed by
+# KEDA's keda_* Prometheus metrics (scraped by the keda-operator PodMonitor,
+# infrastructure/base/monitoring/keda-monitoring/podmonitor.yaml) plus
+# kube-state-metrics for the resulting HPA replica counts.
+#
+# Templated on $namespace + $scaledObject, so any newly-created ScaledObject
+# appears automatically with no edits.
+#
+# NOTE: the rich keda_scaler_* / keda_trigger_totals / keda_resource_totals
+# series are only emitted when the keda-operator's Prometheus metrics server is
+# enabled (HelmRelease value prometheus.operator.enabled: true; currently
+# disabled via --enable-prometheus-metrics=false). Until then only the HPA
+# replica panels (kube-state-metrics) and the metrics-apiserver gRPC panel
+# populate. See the dashboard's top text panel.
+#
+# Autoscaling is a cluster concern, so this lives in Ops/Cluster (folderRef
+# ops-cluster) rather than Ops/Databases.
+#
+# JSON lives at ../json/keda.json, packaged into the `dashboard-keda` ConfigMap
+# by the kustomization configMapGenerator (disableNameSuffixHash: true).
+# uid "keda-autoscaling" is stable.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: keda
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folderRef: ops-cluster
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-keda
+    key: keda.json
