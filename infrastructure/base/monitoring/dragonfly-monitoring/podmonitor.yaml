@@ -46,3 +46,8 @@ spec:
     - port: redis # Dragonfly main port (6379) — serves /metrics over HTTP
       path: /metrics
       interval: 30s
+      # Dragonfly's minimal HTTP-on-RESP-port server speaks HTTP/1.1 ONLY (h2c fails
+      # → curl --http2-prior-knowledge = 000). Alloy/Prometheus attempts HTTP/2 by
+      # default → scrape up=0 despite the endpoint returning 200+metrics on HTTP/1.1.
+      # Force HTTP/1.1. (Also requires --primary_port_http_enabled=true on the CR.) TALOS-tf6o
+      enableHttp2: false
