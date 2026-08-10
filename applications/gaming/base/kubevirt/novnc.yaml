@@ -152,14 +152,37 @@ metadata:
     gethomepage.dev/description: "noVNC console for the Windows gameserver VM"
     gethomepage.dev/group: "Gaming"
     gethomepage.dev/icon: "mdi-microsoft-windows"
-    gethomepage.dev/href: "http://windows-vnc.talos00"
+    gethomepage.dev/href: "https://windows-vnc.priv.talos00"
     gethomepage.dev/siteMonitor: "http://windows-novnc.gaming.svc.cluster.local:8080"
+# SSO-protected on windows-vnc.priv.talos00 (Authentik forward-auth, talos-gaming group).
+# Moved off the unauthenticated windows-vnc.talos00 plain-HTTP route. (TALOS-xgrl.13)
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`windows-vnc.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: windows-novnc
+          port: 8080
+  tls: {}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: windows-novnc-http
 spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`windows-vnc.talos00`)
+    - match: Host(`windows-vnc.priv.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: windows-novnc
           port: 8080
