@@ -34,11 +34,13 @@ spec:
   args:
     - "--proactor_threads=1" # 256Mi/thread floor → fits the 512Mi limit
     - "--maxmemory=256mb"
-    # Prometheus /metrics: the operator defaults to --primary_port_http_enabled=false (RESP-only
-    # on 6379), which DISABLES the /metrics endpoint → nothing to scrape. Re-enable HTTP on the
-    # main port; it coexists with RESP (Argo's redis client is unaffected, verified PING→PONG),
-    # and the dragonfly-instances PodMonitor scrapes :6379/metrics. REQUIRED for the Dragonfly
-    # Grafana dashboard to populate — apply the same flag to every Dragonfly CR. (TALOS-0tbh)
+    # LEGACY (now optional, harmless — safe to drop): re-enables Dragonfly's HTTP /metrics on
+    # the main :6379 port. That direct-scrape path was abandoned — Alloy could not scrape
+    # Dragonfly's multiplexed RESP+HTTP socket (scrape hangs/times out, TALOS-tf6o). Monitoring
+    # is now done by a dedicated oliver006/redis_exporter that talks pure RESP to this cache and
+    # re-exposes clean redis_* over its own HTTP :9121 (infrastructure/base/monitoring/
+    # redis-monitoring/). The exporter does NOT need this flag. Left in place because it is
+    # inert for Argo's redis client (verified PING→PONG); remove on the next CR touch if desired.
     - "--primary_port_http_enabled=true"
   resources:
     requests:

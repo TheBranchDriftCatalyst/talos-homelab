@@ -1,18 +1,21 @@
 ---
-# GrafanaDashboard CR: "Dragonfly Cache".
+# GrafanaDashboard CR: "Dragonfly / Redis Cache".
 #
-# Custom, fully label-driven dashboard for every Dragonfly cache instance in the
-# fleet — fed by Dragonfly's built-in dragonfly_* Prometheus metrics, scraped
-# cluster-wide by the dragonfly-instances PodMonitor
-# (infrastructure/base/monitoring/dragonfly-monitoring/podmonitor.yaml).
+# Custom, label-driven dashboard for every Dragonfly cache in the fleet — fed by
+# redis_exporter's redis_* Prometheus metrics. Each Dragonfly gets a dedicated
+# oliver006/redis_exporter (infrastructure/base/monitoring/redis-monitoring/)
+# that talks pure RESP to the cache and exposes clean redis_* over HTTP :9121,
+# scraped by the redis-exporter PodMonitor. This REPLACES the abandoned
+# direct-scrape of Dragonfly's multiplexed RESP+HTTP :6379/metrics, which Alloy
+# could not scrape (scrape hangs/times out — TALOS-tf6o).
 #
-# Templated on $namespace + $pod, so ANY newly-provisioned Dragonfly appears
-# automatically with no edits (boomtime-cache is the initial target; the
-# argocd/authentik caches follow as they convert off Redis).
+# Templated on $redis (the redis_cache pod label the PodMonitor projects onto
+# every series), so ANY newly-added exporter shows up automatically — add a cache
+# by dropping another exporter Deployment into redis-monitoring/.
 #
-# NOTE: dragonfly_* series only exist once a Dragonfly instance is running AND
-# scraped by the PodMonitor. The only current instance (crossplane-demo/demo) is
-# scaled to replicas: 0, so panels stay empty until an instance is up.
+# NOTE: redis_* series only exist once the redis_exporter Deployments are running
+# and scraped. Until this base is reconciled, panels stay empty; they populate as
+# soon as redis_up == 1 for each cache.
 #
 # JSON lives at ../json/dragonfly-cache.json, packaged into the
 # `dashboard-dragonfly-cache` ConfigMap by the kustomization configMapGenerator

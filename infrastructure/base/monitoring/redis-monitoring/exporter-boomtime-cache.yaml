@@ -1,0 +1,61 @@
+---
+# redis_exporter Deployment for the boomtime/boomtime-cache Dragonfly.
+#
+# Same pattern as exporter-argocd-dragonfly.yaml (see that file's header for the
+# full rationale: Dragonfly's multiplexed RESP+HTTP :6379 can't be scraped
+# directly, so redis_exporter talks pure RESP and re-exposes clean redis_* over
+# HTTP :9121). boomtime-cache's Dragonfly CR is owned by the boomtime APP repo
+# (ArgoCD-managed), NOT this Flux repo — another reason the exporter lives here
+# in `monitoring` and reaches the cache cross-namespace via the ClusterIP svc
+# `boomtime-cache.boomtime:6379` (password-less). (TALOS-tf6o / epic TALOS-0tbh)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter-boomtime-cache
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: redis-exporter
+    app.kubernetes.io/part-of: dragonfly-monitoring
+    redis_cache: boomtime-cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-exporter
+      redis_cache: boomtime-cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-exporter
+        app.kubernetes.io/part-of: dragonfly-monitoring
+        redis_cache: boomtime-cache
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 59000
+        runAsGroup: 59000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: redis-exporter
+          image: oliver006/redis_exporter:v1.89.0-alpine
+          args:
+            - "--redis.addr=redis://boomtime-cache.boomtime.svc.cluster.local:6379"
+            - "--web.listen-address=:9121"
+          ports:
+            - name: metrics
+              containerPort: 9121
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          livenessProbe:
+            httpGet: {path: /health, port: metrics}
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: {path: /health, port: metrics}
+            initialDelaySeconds: 5
+            periodSeconds: 15
