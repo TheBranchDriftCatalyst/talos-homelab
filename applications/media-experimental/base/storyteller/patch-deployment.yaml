@@ -1,0 +1,63 @@
+---
+# storyteller deltas vs ../_instance/deployment.yaml (SMP; container merge
+# key is the placeholder name — renamed afterwards in kustomization.yaml).
+# Heavy app (whisper transcription): big resources + long probe windows.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-template
+  labels:
+    app.kubernetes.io/name: storyteller
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: storyteller
+    spec:
+      containers:
+        - name: app-template
+          image: registry.gitlab.com/storyteller-platform/storyteller:latest
+          env:
+            - name: TZ
+              value: America/New_York
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            # SQLite in /data (local-path, SQLite-safe) — Storyteller has no Postgres support.
+            - name: STORYTELLER_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: storyteller-secret
+                  key: STORYTELLER_SECRET_KEY
+          volumeMounts:
+            - name: config
+              mountPath: /data
+            - name: books
+              mountPath: /books
+            - name: audiobooks
+              mountPath: /audiobooks
+          livenessProbe:
+            initialDelaySeconds: 120
+            failureThreshold: 6
+          readinessProbe:
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              memory: 4Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: storyteller-config
+        - name: books
+          persistentVolumeClaim:
+            claimName: books
+        - name: audiobooks
+          persistentVolumeClaim:
+            claimName: audiobooks

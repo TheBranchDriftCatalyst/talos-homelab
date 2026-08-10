@@ -1,0 +1,71 @@
+---
+# Skeleton Deployment — placeholder name/image/port are ALWAYS overridden by
+# the including app dir. Defaults below are the stack's modal values; apps
+# that differ patch just the delta (SMP merges maps, e.g. probe timings).
+# env/volumeMounts/volumes are deliberately absent: every app differs (and
+# SMP env merge would reorder), so each patch-deployment.yaml carries them
+# in full (TZ first, matching the original manifests).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-template
+  labels:
+    app: app-template
+    app.kubernetes.io/name: app-template
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: app-template
+  template:
+    metadata:
+      labels:
+        app: app-template
+        app.kubernetes.io/name: app-template
+      annotations:
+        backup.velero.io/backup-volumes: "config"
+    spec:
+      # local-path appdata → pin to talos03 (matches arr-stack convention)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos03]
+      securityContext:
+        fsGroup: 1000
+        supplementalGroups: [100, 1000]  # 100 = Synology 'users' for NFS write
+      containers:
+        - name: app-template
+          image: overridden-per-app
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 65535  # overridden per app (JSON patch)
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 25m
+              memory: 256Mi
+            limits:
+              memory: 1Gi

@@ -1,0 +1,48 @@
+---
+# komga deltas vs ../_instance/deployment.yaml (SMP; container merge key is
+# the placeholder name — renamed afterwards in kustomization.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-template
+  labels:
+    app.kubernetes.io/name: komga
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: komga
+    spec:
+      containers:
+        - name: app-template
+          image: gotson/komga:latest
+          env:
+            - name: TZ
+              value: America/New_York
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: comics
+              mountPath: /comics
+            - name: books
+              mountPath: /books
+          livenessProbe:
+            initialDelaySeconds: 40
+          readinessProbe:
+            initialDelaySeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: komga-config
+        - name: comics
+          persistentVolumeClaim:
+            claimName: comics
+        - name: books
+          persistentVolumeClaim:
+            claimName: books

@@ -1,13 +1,38 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# libation = ../_instance skeleton + deltas only (see patch-*.yaml).
+
 resources:
-  - ingressroute.yaml
-  - deployment.yaml
-  - service.yaml
-  - pvc.yaml
+  - ../_instance
 
 labels:
+  # App identity — stamped into metadata + selectors + pod template.
+  - pairs:
+      app: libation
+    includeSelectors: true
   - pairs:
       app.kubernetes.io/component: audible-tool
       category: audible-tool
+
+patches:
+  - path: patch-deployment.yaml
+    target: {kind: Deployment}
+  - path: patch-ingressroute.yaml
+    target: {kind: IngressRoute}
+  # Rename template placeholders + set ports.
+  - target: {kind: Deployment, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: libation}
+      - {op: replace, path: /spec/template/spec/containers/0/name, value: libation}
+      - {op: replace, path: /spec/template/spec/containers/0/ports/0/containerPort, value: 6080}
+  - target: {kind: Service, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: libation}
+      - {op: replace, path: /spec/ports/0/port, value: 6080}
+  - target: {kind: IngressRoute, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: libation}
+  - target: {kind: PersistentVolumeClaim, name: app-template-config}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: libation-config}
