@@ -24,6 +24,59 @@ spec:
         backup.velero.io/backup-volumes: "config"
     spec:
       # NFS storage - can schedule on any node
+      # Assert the GitOps-owned API key (ESO-generated Secret
+      # `tautulli-api-key`, see externalsecret.yaml) into config.ini on EVERY
+      # pod start, so a UI-side regeneration can never drift from the Secret
+      # the homepage widget uses.
+      # First run: config.ini doesn't exist yet — skip and let Tautulli
+      # generate it; the NEXT pod start asserts our key.
+      initContainers:
+        - name: seed-api-key
+          image: busybox:1.36
+          # Run as the tautulli user (PUID/PGID 1000) so config.ini keeps its
+          # ownership and NFS root-squash can never bite.
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          env:
+            - name: TAUTULLI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tautulli-api-key
+                  key: apikey
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+          command:
+            - /bin/sh
+            - -c
+            - |
+              CONF=/config/config.ini
+              if [ ! -f "$CONF" ]; then
+                echo "config.ini absent - first run; Tautulli will create it." \
+                     "The next pod start asserts the GitOps api_key."
+                exit 0
+              fi
+              if grep -q "^api_key *= *${TAUTULLI_API_KEY}\$" "$CONF"; then
+                echo "api_key already matches the GitOps value"
+                exit 0
+              fi
+              if grep -q "^api_key *=" "$CONF"; then
+                sed -i "s|^api_key *=.*|api_key = ${TAUTULLI_API_KEY}|" "$CONF"
+                echo "api_key re-asserted from Secret tautulli-api-key"
+              elif grep -q "^\[General\]" "$CONF"; then
+                sed -i "/^\[General\]/a api_key = ${TAUTULLI_API_KEY}" "$CONF"
+                echo "api_key inserted under [General]"
+              else
+                # Mid-state/unrecognized conf: touch nothing, never break a
+                # running install. Tautulli still starts; widget stays down
+                # until the conf heals.
+                echo "WARNING: no api_key line and no [General] section - leaving config.ini untouched"
+              fi
       containers:
         - name: tautulli
           image: lscr.io/linuxserver/tautulli:latest

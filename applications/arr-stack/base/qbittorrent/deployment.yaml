@@ -52,6 +52,98 @@ spec:
               ip -6 rule del table 51820 2>/dev/null || true
               ip -6 rule del table 51820 2>/dev/null || true
               echo "Cleanup complete"
+        # Seed the WebUI credentials from the ESO-generated Secret
+        # `qbittorrent-webui` (see webui-credentials.yaml) BEFORE qBittorrent
+        # starts. qBittorrent rewrites qBittorrent.conf on every shutdown (and
+        # once dropped the password entirely — 2026-05-31), so this RE-ASSERTS
+        # the GitOps-owned username + PBKDF2 hash on EVERY pod start.
+        # Idempotent: only the two WebUI auth keys are touched, everything
+        # else in the conf is preserved byte-for-byte; a missing conf (true
+        # first run) gets a minimal [Preferences] section.
+        - name: seed-webui-auth
+          image: python:3.11-alpine
+          # Run as the qbittorrent user (PUID/PGID 1000, arr-common-env) so
+          # the conf keeps abc ownership and NFS root-squash can never bite.
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          env:
+            - name: QBIT_WEBUI_USER
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-webui
+                  key: username
+            - name: QBIT_WEBUI_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-webui
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+          command: ["python3", "-c"]
+          args:
+            - |
+              import base64, hashlib, os
+
+              CONF_DIR = "/config/qBittorrent"
+              CONF = CONF_DIR + "/qBittorrent.conf"
+              USER_KEY = "WebUI\\Username"
+              PASS_KEY = "WebUI\\Password_PBKDF2"
+
+              user = os.environ["QBIT_WEBUI_USER"]
+              password = os.environ["QBIT_WEBUI_PASS"]
+
+              # qBittorrent's exact KDF (src/base/utils/password.cpp):
+              # PBKDF2-HMAC-SHA512, 100000 iterations, 16-byte random salt,
+              # 64-byte derived key, stored as "@ByteArray(b64salt:b64dk)".
+              # Salt is random per seeding run — same password, new line each
+              # start; qBittorrent only ever reads it, so that is harmless.
+              salt = os.urandom(16)
+              dk = hashlib.pbkdf2_hmac(
+                  "sha512", password.encode("utf-8"), salt, 100000, dklen=64)
+              value = "@ByteArray({}:{})".format(
+                  base64.b64encode(salt).decode("ascii"),
+                  base64.b64encode(dk).decode("ascii"))
+
+              os.makedirs(CONF_DIR, exist_ok=True)
+              lines = []
+              if os.path.isfile(CONF):
+                  with open(CONF, "r", encoding="utf-8", errors="replace") as f:
+                      lines = f.read().splitlines()
+
+              # Drop every existing occurrence of the two keys we own (any
+              # section, any mid-state); keep all other lines untouched.
+              def ours(line):
+                  s = line.lstrip()
+                  return (s.startswith(USER_KEY + "=")
+                          or s.startswith(PASS_KEY + "="))
+              lines = [l for l in lines if not ours(l)]
+
+              new = [USER_KEY + "=" + user, PASS_KEY + '="' + value + '"']
+              out, inserted = [], False
+              for l in lines:
+                  out.append(l)
+                  if not inserted and l.strip() == "[Preferences]":
+                      out.extend(new)
+                      inserted = True
+              if not inserted:
+                  # True first run, or a conf with no [Preferences] yet.
+                  if out and out[-1].strip():
+                      out.append("")
+                  out.append("[Preferences]")
+                  out.extend(new)
+
+              # Atomic swap so a kill mid-write never leaves a torn conf.
+              tmp = CONF + ".seed.tmp"
+              with open(tmp, "w", encoding="utf-8") as f:
+                  f.write("\n".join(out) + "\n")
+              os.replace(tmp, CONF)
+              print("Asserted WebUI auth for user %r in %s" % (user, CONF))
       containers:
         # Gluetun VPN sidecar - routes all qBittorrent traffic through VPN
         - name: gluetun
@@ -199,6 +291,21 @@ spec:
         # Syncs VPN forwarded port to qBittorrent and exports Prometheus metrics
         - name: port-sync
           image: python:3.11-alpine
+          env:
+            # WebUI creds from the ESO-generated Secret (webui-credentials.yaml)
+            # — the same values seed-webui-auth seeds into qBittorrent.conf.
+            # Replaces the hardcoded admin/admin that 403'd after the WebUI
+            # password was lost, leaving the forwarded VPN port unapplied.
+            - name: QBIT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-webui
+                  key: username
+            - name: QBIT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-webui
+                  key: password
           command: ["python3", "-c"]
           args:
             - |
@@ -213,8 +320,8 @@ spec:
 
               METRICS_PORT = 9091
               QBIT_URL = "http://localhost:8080"
-              QBIT_USER = "admin"
-              QBIT_PASS = "admin"
+              QBIT_USER = os.environ["QBIT_USER"]
+              QBIT_PASS = os.environ["QBIT_PASS"]
               PORT_FILE = "/tmp/gluetun/forwarded_port"
 
               last_synced_port = None
