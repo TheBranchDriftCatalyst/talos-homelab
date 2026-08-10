@@ -95,3 +95,25 @@ spec:
       services:
         - name: authentik-server
           port: 80
+---
+# forward_single outpost routing (TALOS-xgrl.13): each *.priv.talos00 forward-auth app's
+# /outpost.goauthentik.io/* path must reach the embedded outpost (authentik-server), not
+# the app. This one route covers all of them (more specific than the apps' Host() routes,
+# so it wins for that path). NO auth middleware — the outpost serves it directly.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-outpost-priv
+  namespace: authentik
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: >-
+        (Host(`kubeview.priv.talos00`) || Host(`headlamp.priv.talos00`) || Host(`guacamole.priv.talos00`) || Host(`windows-vnc.priv.talos00`) || Host(`zipline.priv.talos00`)) && PathPrefix(`/outpost.goauthentik.io/`)
+      kind: Rule
+      priority: 20
+      services:
+        - name: authentik-server
+          port: 80
+  tls: {}
