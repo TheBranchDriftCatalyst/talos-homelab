@@ -57,15 +57,32 @@ data:
           continue: false
 
     receivers:
+      # Discord via its Slack-COMPATIBLE endpoint ($WEBHOOK/slack). Alertmanager's
+      # webhook_configs posts AM's native JSON which Discord 400s (clientError) — the
+      # audit found 5/5 notifications failing. slack_configs posts Slack-format
+      # attachments which Discord's /slack route accepts. `channel` is required by
+      # Alertmanager but ignored by Discord. (TALOS-xgrl.3)
       - name: discord-default
-        webhook_configs:
-          - url: "$DISCORD_WEBHOOK_URL"
+        slack_configs:
+          - api_url: "$DISCORD_WEBHOOK_URL/slack"
+            channel: "#alerts"
             send_resolved: true
+            title: '{{ if eq .Status "firing" }}🔥 FIRING{{ else }}✅ RESOLVED{{ end }} · {{ .CommonLabels.alertname }} ({{ .Alerts | len }})'
+            text: >-
+              {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* — {{ .Annotations.summary }}{{ if .Annotations.description }}
+              {{ .Annotations.description }}{{ end }}
+              {{ end }}
 
       - name: discord-critical
-        webhook_configs:
-          - url: "$DISCORD_WEBHOOK_URL"
+        slack_configs:
+          - api_url: "$DISCORD_WEBHOOK_URL/slack"
+            channel: "#alerts"
             send_resolved: true
+            title: '{{ if eq .Status "firing" }}🚨 CRITICAL{{ else }}✅ RESOLVED{{ end }} · {{ .CommonLabels.alertname }} ({{ .Alerts | len }})'
+            text: >-
+              {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* — {{ .Annotations.summary }}{{ if .Annotations.description }}
+              {{ .Annotations.description }}{{ end }}
+              {{ end }}
 
       # Watchdog receiver — currently a no-op. Replace with a
       # webhook_configs pointing to healthchecks.io / cronitor / etc.
