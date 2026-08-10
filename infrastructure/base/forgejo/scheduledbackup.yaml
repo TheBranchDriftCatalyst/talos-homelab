@@ -1,0 +1,17 @@
+---
+# Daily base backup for forgejo-postgres → MinIO object store (TALOS-a1hk).
+# Continuous WAL archiving is handled by the Cluster's barmanObjectStore; this
+# ScheduledBackup drives the periodic base backups that WAL replays sit on top
+# of. 30-day retention is enforced by the Cluster's backup.retentionPolicy.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: forgejo-postgres-daily
+  namespace: forgejo
+spec:
+  # 02:00 every day. CNPG cron is 6-field (seconds first): sec min hour dom mon dow.
+  schedule: "0 0 2 * * *"
+  immediate: true # take one right away so backups exist before the first 02:00 tick
+  backupOwnerReference: self
+  cluster:
+    name: forgejo-postgres
