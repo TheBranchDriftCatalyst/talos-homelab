@@ -1,5 +1,5 @@
 ---
-# IngressRoute for Authentik portal (local access)
+# Authentik portal — local LAN access (HTTP)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -15,14 +15,13 @@ spec:
         - name: authentik-server
           port: 80
 ---
-# IngressRoute for Authentik portal (external HTTPS)
+# Authentik portal — public HTTPS (Cloudflare)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: authentik
   namespace: authentik
   annotations:
-    # External-DNS: Create Cloudflare CNAME record
     external-dns.alpha.kubernetes.io/hostname: auth.knowledgedump.space
     external-dns.alpha.kubernetes.io/target: knowledgedump.space
     external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
@@ -35,9 +34,8 @@ spec:
       services:
         - name: authentik-server
           port: 80
-  tls: {}  # Uses TLSStore default certificate
+  tls: {}
 ---
-# HTTP to HTTPS redirect
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -56,41 +54,40 @@ spec:
         - name: authentik-server
           port: 80
 ---
-# IngressRoute for Authentik portal on the deSEC domain.
-# Exposing Authentik under auth.kelsboi.dedyn.io is what allows the session
-# cookie to be scoped to .kelsboi.dedyn.io, which is what gives SSO across
-# all the *-desec routes in media-private (whoami, stash, whisparr, immich,
-# zipline, hot-ones). DNS handled by external-dns-desec.
+# talos-private SSO endpoint — auth.priv.knowledgedump.space (HTTPS, LAN-only).
+# This is the external_host of the talos-private forward_domain proxy provider:
+# serving Authentik here scopes the SSO session cookie to .priv.knowledgedump.space,
+# giving single-sign-on across every *.priv.knowledgedump.space service.
+# NO external-dns annotation → no Cloudflare record; pihole resolves it internally
+# (the *.knowledgedump.space wildcard → Traefik), so it's reachable on the LAN only.
+# TLS served via TLSStore SNI from the *.priv.knowledgedump.space wildcard.
+# (TALOS-h4j / TALOS-xgrl.13)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: authentik-desec
+  name: authentik-priv
   namespace: authentik
-  annotations:
-    external-dns.alpha.kubernetes.io/hostname: auth.kelsboi.dedyn.io
-    external-dns.alpha.kubernetes.io/target: kelsboi.dedyn.io
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`auth.kelsboi.dedyn.io`)
+    - match: Host(`auth.priv.knowledgedump.space`)
       kind: Rule
       services:
         - name: authentik-server
           port: 80
   tls: {}
 ---
-# HTTP to HTTPS redirect for the deSEC variant
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: authentik-desec-http-redirect
+  name: authentik-priv-http
   namespace: authentik
 spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`auth.kelsboi.dedyn.io`)
+    - match: Host(`auth.priv.knowledgedump.space`)
       kind: Rule
       middlewares:
         - name: redirect-https
@@ -98,57 +95,3 @@ spec:
       services:
         - name: authentik-server
           port: 80
----
-# # IngressRoute for Authentik portal on the amber.knowledgedump.space domain
-# # (kelsboi -> talos-private migration, TALOS-h4j). This is the external_host of
-# # the talos-private forward_domain proxy provider: exposing Authentik at
-# # auth.amber.knowledgedump.space is what scopes the SSO session cookie to
-# # .amber.knowledgedump.space, giving SSO across all *.amber.knowledgedump.space
-# # services (immich=maitresse, stash, whisparr, zipline=xzip, hot-ones=ho, whoami).
-# #
-# # amber.knowledgedump.space is a TEMPORARY domain — the user moves to a new
-# # hostname soon. It is a Cloudflare zone (knowledgedump.space), so DNS is handled
-# # by the existing Cloudflare external-dns and TLS by the *.amber.knowledgedump.space
-# # wildcard (cert-manager-issuers/amber-wildcard-certificate.yaml, served via the
-# # Traefik TLSStore). cloudflare-proxied=false keeps it a direct DNS-only record to
-# # the home IP (matches the deSEC behaviour and avoids Cloudflare's proxy upload
-# # limits for the media services). Mirrors the auth.kelsboi.dedyn.io route above.
-# apiVersion: traefik.io/v1alpha1
-# kind: IngressRoute
-# metadata:
-#   name: authentik-amber
-#   namespace: authentik
-#   annotations:
-#     external-dns.alpha.kubernetes.io/hostname: auth.amber.knowledgedump.space
-#     external-dns.alpha.kubernetes.io/target: knowledgedump.space
-#     external-dns.alpha.kubernetes.io/cloudflare-proxied: "false"
-# spec:
-#   entryPoints:
-#     - websecure
-#   routes:
-#     - match: Host(`auth.amber.knowledgedump.space`)
-#       kind: Rule
-#       services:
-#         - name: authentik-server
-#           port: 80
-#   tls: {}  # Served via TLSStore SNI from the *.amber.knowledgedump.space wildcard
----
-# # HTTP to HTTPS redirect for the amber variant
-# apiVersion: traefik.io/v1alpha1
-# kind: IngressRoute
-# metadata:
-#   name: authentik-amber-http-redirect
-#   namespace: authentik
-# spec:
-#   entryPoints:
-#     - web
-#   routes:
-#     - match: Host(`auth.amber.knowledgedump.space`)
-#       kind: Rule
-#       middlewares:
-#         - name: redirect-https
-#           namespace: traefik
-#       services:
-#         - name: authentik-server
-#           port: 80
-#

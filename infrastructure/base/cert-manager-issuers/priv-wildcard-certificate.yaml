@@ -1,0 +1,21 @@
+---
+# Wildcard cert for the talos-private hierarchy: *.priv.knowledgedump.space.
+# LAN-only (pihole resolves *.knowledgedump.space → internal Traefik; no Cloudflare
+# A records), but a REAL LE cert + REAL parent domain so Authentik forward_domain
+# SSO cookies work (cookie_domain=priv.knowledgedump.space). Replaces the abandoned
+# amber-wildcard + kelsboi-wildcard. (TALOS-h4j / TALOS-xgrl.13)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: priv-knowledgedump-wildcard
+  namespace: traefik
+spec:
+  secretName: priv-knowledgedump-wildcard-tls
+  issuerRef:
+    name: letsencrypt-production
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.priv.knowledgedump.space"
+    - "priv.knowledgedump.space"
+  duration: 2160h # 90 days
+  renewBefore: 720h # 30 days before expiry

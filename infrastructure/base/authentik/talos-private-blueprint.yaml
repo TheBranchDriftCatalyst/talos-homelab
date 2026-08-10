@@ -1,42 +1,19 @@
 ---
-# Authentik Blueprint: talos-private access group
+# Authentik Blueprint: talos-private forward-auth (clean-slate rebuild, TALOS-h4j).
 #
-# Part of the kelsboi -> talos-private migration (bead TALOS-h4j). The old kelsboi
-# forward-auth Application + Proxy Provider + access Group are MANUAL (in the Authentik
-# DB, not IaC); this rebuilds them properly as blueprints under the repo-matching name
-# "talos-private". The user retires the manual kelsboi objects via the UI once this is live.
+# Domain: priv.knowledgedump.space (LAN-only via pihole; real LE cert + real parent
+# domain so the forward_domain SSO cookie works — .talos00 single-label can't).
+# The old kelsboi + amber objects are RETIRED (this replaces them entirely; the
+# manual kelsboi objects in the Authentik DB are the operator's to delete via the UI).
 #
-# THIS FILE now contains the FULL forward-auth chain (built from the live kelsboi objects,
-# mapped read-only out of the authentik Postgres — TALOS-h4j Step 1):
-#   1. authentik_core.group                 talos-private   (shared access group)
-#   2. authentik_providers_proxy.proxyprovider talos-private (forward_domain, mirrors kelsboi)
+# Full forward-auth chain, all IaC:
+#   1. authentik_core.group                 talos-private   (access group; gates all private apps)
+#   2. authentik_providers_proxy.proxyprovider talos-private (forward_domain, cookie=priv.knowledgedump.space)
 #   3. authentik_core.application           talos-private   (bound to the provider)
 #   4. authentik_policies.policybinding      app <- talos-private group (order 0, gates access)
-#   5. authentik_outposts.outpost            embedded outpost += talos-private provider
-#      (kelsboi provider KEPT — the embedded outpost carries BOTH until the user retires
-#       kelsboi via the UI; the M2M `providers` field is a full replace, so both are listed).
+#   5. authentik_outposts.outpost            embedded outpost = [talos-private]  (kelsboi dropped)
 #
-# LIVE kelsboi topology this mirrors (source of truth, do not weaken):
-#   provider mode=forward_domain, external_host=https://auth.kelsboi.dedyn.io,
-#   cookie_domain=kelsboi.dedyn.io, internal_host_ssl_validation=true,
-#   intercept_header_auth=true, basic_auth_enabled=false,
-#   authorization_flow=default-provider-authorization-implicit-consent,
-#   invalidation_flow=default-provider-invalidation-flow,
-#   access_token_validity=hours=24, refresh_token_validity=days=30,
-#   property_mappings = the 5 default proxy scopes (openid/email/profile/entitlements/proxy).
-#   application kelsboi has a PolicyBinding to the "kelsboi" group (order 0) — access is
-#   group-gated, which is exactly what we reproduce here with the talos-private group.
-#
-# DOMAIN (amber.knowledgedump.space) IS TEMPORARY — TALOS-h4j. On the Flux side the domain
-# string lives in TWO provider fields below (external_host, cookie_domain). It ALSO appears in:
-#   - infrastructure/base/authentik/ingressroute.yaml         (auth.amber.knowledgedump.space)
-#   - infrastructure/base/cert-manager-issuers/amber-wildcard-certificate.yaml
-#   - talos-private repo authentik-brand-talos-private/brand-blueprint.yaml (brand domain)
-#   - talos-private repo base/cluster-config.yaml (PRIVATE_DOMAIN — the service hostnames)
-# grep the repos for `amber.knowledgedump.space` to find every rename point.
-#
-# Mounted into authentik-server + authentik-worker at /blueprints/custom/talos-private.yaml
-# via the volume/volumeMount in helmrelease.yaml. The worker auto-reconciles it.
+# Mounted at /blueprints/custom/talos-private.yaml (helmrelease volume); the worker auto-reconciles.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -47,38 +24,25 @@ metadata:
     app.kubernetes.io/component: blueprint
 data:
   talos-private.yaml: |
-    # Authentik Blueprint: talos-private group (IaC)
-    # Docs: https://docs.goauthentik.io/docs/customize/blueprints
     version: 1
     metadata:
-      name: talos-private access group
+      name: talos-private forward-auth
       labels:
-        blueprints.goauthentik.io/description: "Shared access group gating all talos-private services"
+        blueprints.goauthentik.io/description: "talos-private group + forward_domain proxy gating all *.priv.knowledgedump.space services"
     entries:
-      # Shared access group. Empty by default — add members via the UI (Directory > Groups).
-      # The follow-up forward-auth Application binds a policy requiring membership in this group,
-      # so only its members reach the private services.
+      # 1. Shared access group. Add members via the UI (Directory > Groups).
       - model: authentik_core.group
         id: talos-private-group
         identifiers:
           name: talos-private
         attrs:
           attributes:
-            description: "Members may access all talos-private services (immich, stash, whisparr, zipline, hot-ones, whoami)."
+            description: "Members may access all talos-private services (kubeview, headlamp, guacamole, immich, stash, whisparr, zipline, hot-ones, whoami)."
 
-      # ---------------------------------------------------------------------
-      # 2. Proxy Provider: talos-private (forward-auth, DOMAIN level).
-      #    Faithful mirror of the manual kelsboi proxy provider, repointed at
-      #    the amber.knowledgedump.space domain. forward_domain mode means the
-      #    ONE shared Traefik `authentik` middleware (embedded outpost) can gate
-      #    every *.amber.knowledgedump.space host with a single SSO cookie.
-      #
-      #    external_host MUST be the authentik URL under the cookie domain (the
-      #    outpost redirects unauthenticated users here). auth.amber.knowledgedump.space
-      #    is served by the IngressRoute added in authentik/ingressroute.yaml.
-      #    cookie_domain is the parent so the cookie is shared across all
-      #    *.amber.knowledgedump.space services.
-      # ---------------------------------------------------------------------
+      # 2. Proxy Provider — forward_domain, scoped to priv.knowledgedump.space so the
+      #    ONE shared Traefik `authentik` middleware gates every *.priv.knowledgedump.space
+      #    host with a single SSO cookie. external_host is the Authentik URL under the
+      #    cookie domain (unauthenticated users are redirected there).
       - model: authentik_providers_proxy.proxyprovider
         id: talos-private-provider
         identifiers:
@@ -86,8 +50,8 @@ data:
         attrs:
           name: talos-private
           mode: forward_domain
-          external_host: https://auth.amber.knowledgedump.space   # TEMPORARY domain (TALOS-h4j)
-          cookie_domain: amber.knowledgedump.space                # TEMPORARY domain (TALOS-h4j)
+          external_host: https://auth.priv.knowledgedump.space
+          cookie_domain: priv.knowledgedump.space
           internal_host_ssl_validation: true
           intercept_header_auth: true
           basic_auth_enabled: false
@@ -102,9 +66,7 @@ data:
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-entitlements]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
 
-      # ---------------------------------------------------------------------
-      # 3. Application: talos-private — bound to the proxy provider above.
-      # ---------------------------------------------------------------------
+      # 3. Application bound to the proxy provider.
       - model: authentik_core.application
         id: talos-private-application
         identifiers:
@@ -113,17 +75,13 @@ data:
           name: talos-private
           slug: talos-private
           provider: !KeyOf talos-private-provider
-          meta_launch_url: https://auth.amber.knowledgedump.space   # TEMPORARY domain (TALOS-h4j)
-          meta_description: "Private services (immich, stash, whisparr, zipline, hot-ones, whoami) behind Authentik forward-auth"
+          meta_launch_url: https://auth.priv.knowledgedump.space
+          meta_description: "Private LAN services behind Authentik forward-auth (talos-private group)"
           meta_publisher: "Catalyst Homelab"
           open_in_new_tab: false
           policy_engine_mode: any
 
-      # ---------------------------------------------------------------------
-      # 4. PolicyBinding: gate the application on the talos-private group.
-      #    Only members of the talos-private group may pass forward-auth —
-      #    identical discipline to the live kelsboi app (group binding, order 0).
-      # ---------------------------------------------------------------------
+      # 4. Gate the application on the talos-private group — only members pass forward-auth.
       - model: authentik_policies.policybinding
         id: talos-private-group-binding
         identifiers:
@@ -135,21 +93,11 @@ data:
           negate: false
           timeout: 30
 
-      # ---------------------------------------------------------------------
-      # 5. Embedded outpost: attach the talos-private provider so the shared
-      #    Traefik forward-auth middleware actually enforces it.
-      #    `providers` is a FULL-REPLACE M2M, so the existing kelsboi provider
-      #    is listed too — the embedded outpost carries BOTH until the user
-      #    retires kelsboi via the UI (forward_domain selects the provider per
-      #    request host, so kelsboi.dedyn.io and amber.knowledgedump.space
-      #    coexist cleanly). AFTER retiring kelsboi, delete the kelsboi !Find
-      #    line below.
-      # ---------------------------------------------------------------------
+      # 5. Embedded outpost — enforce ONLY the talos-private provider (kelsboi retired).
       - model: authentik_outposts.outpost
         id: embedded-outpost
         identifiers:
           managed: goauthentik.io/outposts/embedded
         attrs:
           providers:
-            - !Find [authentik_providers_proxy.proxyprovider, [name, kelsboi]]  # KEEP until kelsboi retired (TALOS-h4j)
             - !KeyOf talos-private-provider
