@@ -8,14 +8,19 @@
 #     → alerts fire against this tenant config
 #     → routed to Discord webhook or watchdog receiver
 #
+# The `discord-webhook` Secret (key `address`) is NOT created here: it is
+# reflected into this namespace from flux-system by emberstack/reflector —
+# source ExternalSecret:
+#   infrastructure/base/flux-notifications/discord-webhook-externalsecret.yaml
+#
 # What still needs to be wired (external observer / TALOS-2pz):
 #   The `watchdog-null` receiver in config-template.yaml is a no-op
 #   today. To finish external observation:
 #     1. Create a healthchecks.io check (https://healthchecks.io — free,
 #        no account required for one-off UUIDs). Copy the ping URL.
-#     2. Store it as a Secret in this namespace (add another
-#        ExternalSecret alongside discord-webhook, or paste as
-#        a k8s Secret if you don't want it in 1Password).
+#     2. Store it as a Secret in this namespace (add an
+#        ExternalSecret here, or paste as a k8s Secret if you
+#        don't want it in 1Password).
 #     3. In config-template.yaml, replace the empty `watchdog-null`
 #        receiver with:
 #          - name: watchdog-null
@@ -33,7 +38,6 @@ kind: Kustomization
 namespace: monitoring
 
 resources:
-  - externalsecret.yaml
   - rbac.yaml
   - config-template.yaml
   - cronjob.yaml
