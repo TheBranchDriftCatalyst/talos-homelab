@@ -1,0 +1,19 @@
+---
+# Daily base backup for zipline-postgres → cnpg-backups (TALOS-xgrl).
+# Continuous WAL archiving is handled by the Cluster's barmanObjectStore; this
+# ScheduledBackup drives the periodic base backups WAL replays sit on top of.
+# 30-day retention is enforced by the Cluster's backup.retentionPolicy.
+# (No metadata.namespace — the kustomization stamps media-private, like the
+# Cluster in postgres.yaml.)
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: zipline-postgres-daily
+spec:
+  # 03:30 daily — staggered fleet-wide (forgejo 02:00 ... plausible 03:15,
+  # boomtime 03:45). 6-field cron: sec min hour dom mon dow.
+  schedule: "0 30 3 * * *"
+  immediate: true # take one right away so backups exist before the first tick
+  backupOwnerReference: self
+  cluster:
+    name: zipline-postgres

@@ -1,0 +1,18 @@
+---
+# Daily base backup for homeassistant-postgres → cnpg-backups (TALOS-xgrl).
+# Continuous WAL archiving is handled by the Cluster's barmanObjectStore; this
+# ScheduledBackup drives the periodic base backups WAL replays sit on top of.
+# 30-day retention is enforced by the Cluster's backup.retentionPolicy.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: homeassistant-postgres-daily
+  namespace: home-automation
+spec:
+  # 03:00 daily — staggered fleet-wide (forgejo 02:00, authentik 02:15,
+  # crowdsec 02:30, linkwarden 02:45, ...). 6-field cron: sec min hour dom mon dow.
+  schedule: "0 0 3 * * *"
+  immediate: true # take one right away so backups exist before the first tick
+  backupOwnerReference: self
+  cluster:
+    name: homeassistant-postgres

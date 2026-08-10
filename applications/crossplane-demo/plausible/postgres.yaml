@@ -42,6 +42,26 @@ spec:
   monitoring:
     enablePodMonitor: false
 
+  # Object-store backups → MinIO (TALOS-xgrl). Same stanza as forgejo/authentik;
+  # WAL archiving + daily base backups (scheduledbackup.yaml) into the shared
+  # cnpg-backups bucket. Creds via the reflected cnpg-minio-backup Secret.
+  backup:
+    retentionPolicy: "30d" # prune backups + WALs older than 30 days
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/plausible-db
+      endpointURL: http://minio-hl.minio.svc:9000
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-minio-backup
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-minio-backup
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
+
   postgresql:
     parameters:
       shared_buffers: "128MB"

@@ -37,6 +37,27 @@ spec:
     storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
   monitoring:
     enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
+  # Object-store backups → MinIO (TALOS-xgrl). The DB schema self-rebuilds, but
+  # upload METADATA (URLs, ownership, expiry) does not — losing it orphans the
+  # files on zipline-uploads. WAL archiving + daily base backups
+  # (scheduledbackup.yaml) make single-instance PVC loss a restore. Same stanza
+  # as forgejo/linkwarden; creds via the reflected cnpg-minio-backup Secret.
+  backup:
+    retentionPolicy: "30d" # prune backups + WALs older than 30 days
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/zipline-postgres
+      endpointURL: http://minio-hl.minio.svc:9000
+      s3Credentials:
+        accessKeyId:
+          name: cnpg-minio-backup
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: cnpg-minio-backup
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+      data:
+        compression: gzip
   bootstrap:
     initdb:
       database: zipline

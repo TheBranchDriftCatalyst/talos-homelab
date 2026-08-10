@@ -1,0 +1,18 @@
+---
+# Daily base backup for crowdsec-postgres → MinIO object store (TALOS-xgrl).
+# Continuous WAL archiving is handled by the Cluster's barmanObjectStore; this
+# ScheduledBackup drives the periodic base backups WAL replays sit on top of.
+# 30-day retention is enforced by the Cluster's backup.retentionPolicy.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: crowdsec-postgres-daily
+  namespace: crowdsec
+spec:
+  # 02:30 daily — staggered fleet-wide (forgejo 02:00, authentik 02:15,
+  # linkwarden 02:45, ...). CNPG cron is 6-field: sec min hour dom mon dow.
+  schedule: "0 30 2 * * *"
+  immediate: true # take one right away so backups exist before the first tick
+  backupOwnerReference: self
+  cluster:
+    name: crowdsec-postgres
