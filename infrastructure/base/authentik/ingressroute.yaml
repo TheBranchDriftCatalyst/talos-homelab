@@ -54,13 +54,13 @@ spec:
         - name: authentik-server
           port: 80
 ---
-# talos-private SSO endpoint — auth.priv.knowledgedump.space (HTTPS, LAN-only).
+# talos-private SSO endpoint — auth.priv.talos00 (HTTPS, LAN-only).
 # This is the external_host of the talos-private forward_domain proxy provider:
-# serving Authentik here scopes the SSO session cookie to .priv.knowledgedump.space,
-# giving single-sign-on across every *.priv.knowledgedump.space service.
-# NO external-dns annotation → no Cloudflare record; pihole resolves it internally
-# (the *.knowledgedump.space wildcard → Traefik), so it's reachable on the LAN only.
-# TLS served via TLSStore SNI from the *.priv.knowledgedump.space wildcard.
+# serving Authentik here scopes the SSO session cookie to .priv.talos00 (a valid
+# registrable domain — talos00 is the public suffix), giving single-sign-on across
+# every *.priv.talos00 service. pihole's *.talos00 wildcard resolves it internally;
+# TLS served via TLSStore SNI from the *.priv.talos00 homelab-ca wildcard.
+# FUTURE: a parallel auth.priv.knowledgedump.space route (LE + Cloudflare) when public.
 # (TALOS-h4j / TALOS-xgrl.13)
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -71,7 +71,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`auth.priv.knowledgedump.space`)
+    - match: Host(`auth.priv.talos00`)
       kind: Rule
       services:
         - name: authentik-server
@@ -87,7 +87,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`auth.priv.knowledgedump.space`)
+    - match: Host(`auth.priv.talos00`)
       kind: Rule
       middlewares:
         - name: redirect-https

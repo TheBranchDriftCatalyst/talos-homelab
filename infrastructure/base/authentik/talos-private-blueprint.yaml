@@ -1,14 +1,15 @@
 ---
 # Authentik Blueprint: talos-private forward-auth (clean-slate rebuild, TALOS-h4j).
 #
-# Domain: priv.knowledgedump.space (LAN-only via pihole; real LE cert + real parent
-# domain so the forward_domain SSO cookie works — .talos00 single-label can't).
+# Domain: priv.talos00 (LAN-only via pihole; homelab-ca cert). priv.talos00 is a valid
+# registrable domain (talos00 = the public suffix), so the forward_domain SSO cookie
+# for Domain=priv.talos00 is accepted — bare `talos00` (a public suffix) would be rejected.
 # The old kelsboi + amber objects are RETIRED (this replaces them entirely; the
 # manual kelsboi objects in the Authentik DB are the operator's to delete via the UI).
 #
 # Full forward-auth chain, all IaC:
 #   1. authentik_core.group                 talos-private   (access group; gates all private apps)
-#   2. authentik_providers_proxy.proxyprovider talos-private (forward_domain, cookie=priv.knowledgedump.space)
+#   2. authentik_providers_proxy.proxyprovider talos-private (forward_domain, cookie=priv.talos00)
 #   3. authentik_core.application           talos-private   (bound to the provider)
 #   4. authentik_policies.policybinding      app <- talos-private group (order 0, gates access)
 #   5. authentik_outposts.outpost            embedded outpost = [talos-private]  (kelsboi dropped)
@@ -28,7 +29,7 @@ data:
     metadata:
       name: talos-private forward-auth
       labels:
-        blueprints.goauthentik.io/description: "talos-private group + forward_domain proxy gating all *.priv.knowledgedump.space services"
+        blueprints.goauthentik.io/description: "talos-private group + forward_domain proxy gating all *.priv.talos00 services"
     entries:
       # 1. Shared access group. Add members via the UI (Directory > Groups).
       - model: authentik_core.group
@@ -39,8 +40,8 @@ data:
           attributes:
             description: "Members may access all talos-private services (kubeview, headlamp, guacamole, immich, stash, whisparr, zipline, hot-ones, whoami)."
 
-      # 2. Proxy Provider — forward_domain, scoped to priv.knowledgedump.space so the
-      #    ONE shared Traefik `authentik` middleware gates every *.priv.knowledgedump.space
+      # 2. Proxy Provider — forward_domain, scoped to priv.talos00 so the
+      #    ONE shared Traefik `authentik` middleware gates every *.priv.talos00
       #    host with a single SSO cookie. external_host is the Authentik URL under the
       #    cookie domain (unauthenticated users are redirected there).
       - model: authentik_providers_proxy.proxyprovider
@@ -50,8 +51,8 @@ data:
         attrs:
           name: talos-private
           mode: forward_domain
-          external_host: https://auth.priv.knowledgedump.space
-          cookie_domain: priv.knowledgedump.space
+          external_host: https://auth.priv.talos00
+          cookie_domain: priv.talos00
           internal_host_ssl_validation: true
           intercept_header_auth: true
           basic_auth_enabled: false
@@ -75,7 +76,7 @@ data:
           name: talos-private
           slug: talos-private
           provider: !KeyOf talos-private-provider
-          meta_launch_url: https://auth.priv.knowledgedump.space
+          meta_launch_url: https://auth.priv.talos00
           meta_description: "Private LAN services behind Authentik forward-auth (talos-private group)"
           meta_publisher: "Catalyst Homelab"
           open_in_new_tab: false
