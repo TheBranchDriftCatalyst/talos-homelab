@@ -8,9 +8,31 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kubeview
+# SEV-1 fix (TALOS-xgrl.1): was apiGroups/resources ['*'] which INCLUDED secrets
+# cluster-wide — an unauthenticated UI reading every Secret. Scoped to exactly the
+# kinds KubeView renders in its topology; secrets are deliberately excluded.
 rules:
-  - apiGroups: ['*']
-    resources: ['*']
+  - apiGroups: ['']
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - services
+      - endpoints
+      - configmaps
+      - persistentvolumeclaims
+      - persistentvolumes
+      - replicationcontrollers
+      - events
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['apps']
+    resources: ['deployments', 'replicasets', 'statefulsets', 'daemonsets']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['networking.k8s.io']
+    resources: ['ingresses']
+    verbs: ['get', 'list', 'watch']
+  - apiGroups: ['batch']
+    resources: ['jobs', 'cronjobs']
     verbs: ['get', 'list', 'watch']
 ---
 apiVersion: rbac.authorization.k8s.io/v1
