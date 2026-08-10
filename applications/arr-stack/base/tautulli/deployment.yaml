@@ -56,20 +56,20 @@ spec:
             - -c
             - |
               CONF=/config/config.ini
-              if [ ! -f "$CONF" ]; then
+              if [ ! -f "$$CONF" ]; then
                 echo "config.ini absent - first run; Tautulli will create it." \
                      "The next pod start asserts the GitOps api_key."
                 exit 0
               fi
-              if grep -q "^api_key *= *${TAUTULLI_API_KEY}\$" "$CONF"; then
+              if grep -q "^api_key *= *$${TAUTULLI_API_KEY}\$$" "$$CONF"; then
                 echo "api_key already matches the GitOps value"
                 exit 0
               fi
-              if grep -q "^api_key *=" "$CONF"; then
-                sed -i "s|^api_key *=.*|api_key = ${TAUTULLI_API_KEY}|" "$CONF"
+              if grep -q "^api_key *=" "$$CONF"; then
+                sed -i "s|^api_key *=.*|api_key = $${TAUTULLI_API_KEY}|" "$$CONF"
                 echo "api_key re-asserted from Secret tautulli-api-key"
-              elif grep -q "^\[General\]" "$CONF"; then
-                sed -i "/^\[General\]/a api_key = ${TAUTULLI_API_KEY}" "$CONF"
+              elif grep -q "^\[General\]" "$$CONF"; then
+                sed -i "/^\[General\]/a api_key = $${TAUTULLI_API_KEY}" "$$CONF"
                 echo "api_key inserted under [General]"
               else
                 # Mid-state/unrecognized conf: touch nothing, never break a
