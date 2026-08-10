@@ -1,0 +1,49 @@
+---
+# Dragonfly (Redis-compatible) cache for Authentik.
+# Replaces the authentik chart's (now-removed) bundled redis subchart. As of the
+# authentik chart 2025.12.x the `redis:` block renders NOTHING — no redis pod/svc
+# is created — so `authentik.redis.host: authentik-redis-master` pointed at a
+# service that never existed. Authentik silently fell back to its local cache.
+# We give it a real, shared Dragonfly cache instead (replicates argocd→Dragonfly,
+# TALOS-5aop / epic TALOS-0tbh).
+#
+# CACHE-ONLY / EPHEMERAL: Authentik uses redis purely as a rebuildable cache
+# (session/task/throttle cache). Authentik SESSIONS are DB-backed (PostgreSQL /
+# CloudNativePG authentik-postgres), so dropping this cache on restart does NOT
+# log anyone out. No snapshot PVC — a restart just drops the cache and Authentik
+# repopulates it. Cutover therefore needs no data migration.
+#
+# AUTH — intentionally NO password: Authentik reaches this only in-cluster via
+# ClusterIP; no external exposure. The chart's AUTHENTIK_REDIS__PASSWORD is unset,
+# so Authentik sends no AUTH and connects cleanly to this no-auth Dragonfly.
+#
+# SERVICE: the operator creates `svc/authentik-cache:6379` (named after this CR),
+# plus a per-Dragonfly NetworkPolicy allowing :6379 ingress from same-namespace
+# pods only. Both the authentik server/worker AND the redis_exporter are in this
+# `authentik` namespace, so both reach it fine.
+apiVersion: dragonflydb.io/v1alpha1
+kind: Dragonfly
+metadata:
+  name: authentik-cache
+  namespace: authentik
+spec:
+  replicas: 1
+  # Pin the image to the same known-good version as argocd-dragonfly, on the
+  # operator's own registry. (prefer-latest: bump alongside the operator.)
+  image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.39.0
+  # Dragonfly sizes itself to the HOST thread count (~16 here) and would demand
+  # ~256Mi/thread → OOM-exits under a small limit. Pin 1 proactor thread + an
+  # explicit maxmemory so it fits the cache footprint (~512Mi limit).
+  args:
+    - "--proactor_threads=1" # 256Mi/thread floor → fits the 512Mi limit
+    - "--maxmemory=256mb"
+    # NOTE: deliberately NO --primary_port_http_enabled here. That was the
+    # abandoned direct-scrape hack (Alloy can't scrape Dragonfly's multiplexed
+    # RESP+HTTP :6379). We monitor via a dedicated redis_exporter instead
+    # (infrastructure/base/monitoring/redis-monitoring/exporter-authentik-cache.yaml).
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi

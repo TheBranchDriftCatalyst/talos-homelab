@@ -50,7 +50,13 @@ spec:
         name: authentik
         user: authentik
       redis:
-        host: authentik-redis-master
+        # Points at the Dragonfly cache `authentik-cache` (dragonfly.yaml,
+        # TALOS-5aop). This chart value becomes AUTHENTIK_REDIS__HOST in the
+        # server/worker env — it is the ONLY redis host knob (no separate env
+        # override exists in this HelmRelease). Was `authentik-redis-master`,
+        # the bundled subchart svc that the chart no longer renders. Port stays
+        # the default 6379; the operator's svc is authentik-cache:6379.
+        host: authentik-cache
 
     server:
       replicas: 1
@@ -377,9 +383,15 @@ spec:
             cpu: 50m
             memory: 128Mi
 
-    # Embedded Redis
+    # Embedded Redis — RETIRED (TALOS-5aop). Migrated to the Dragonfly cache
+    # `authentik-cache` (dragonfly.yaml); authentik.redis.host above points there.
+    # As of chart 2025.12.x this bundled `redis` subchart no longer renders ANY
+    # resources anyway (no pod/svc created), so authentik-redis-master never
+    # existed and authentik silently ran on its local cache. Setting enabled:false
+    # makes the intent explicit — stop declaring the dead subchart. The remaining
+    # keys are inert while disabled; kept purely to document prior state.
     redis:
-      enabled: true
+      enabled: false
       architecture: standalone
       auth:
         enabled: false

@@ -1,0 +1,29 @@
+---
+# Additive NetworkPolicy: allow the monitoring namespace to scrape authentik's
+# Dragonfly (redis) cache. The dragonfly-operator renders a per-Dragonfly
+# NetworkPolicy (`authentik-cache`) that restricts :6379 ingress to
+# same-namespace peers only — which black-holes the redis_exporter. That exporter
+# (redis-monitoring/exporter-authentik-cache.yaml) actually runs in the
+# `monitoring` namespace, because the v2-otel kustomization applies a global
+# `namespace: monitoring` that overrides the exporter's own namespace (same as
+# the argocd exporter). k8s UNIONS all NetworkPolicies selecting a pod, so this
+# purely OPENS the scrape path on :6379 without touching the operator-managed
+# policy. Mirrors infrastructure/base/argocd/netpol-allow-monitoring.yaml.
+# (TALOS-5aop / epic TALOS-0tbh)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-monitoring-to-dragonfly
+  namespace: authentik
+spec:
+  podSelector:
+    matchLabels:
+      app: authentik-cache
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - {protocol: TCP, port: 6379}

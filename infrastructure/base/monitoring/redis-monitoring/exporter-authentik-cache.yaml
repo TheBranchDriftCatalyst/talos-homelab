@@ -1,0 +1,83 @@
+---
+# redis_exporter Deployment for the authentik/authentik-cache Dragonfly.
+#
+# WHY a separate exporter instead of scraping Dragonfly directly: Dragonfly
+# multiplexes RESP + a minimal HTTP/1.1 server on the SAME :6379 socket, which
+# Alloy's Prometheus scraper cannot cleanly pull (scrape hangs/times out —
+# TALOS-tf6o). oliver006/redis_exporter connects to Dragonfly over pure RESP
+# (fully redis-compatible) and re-exposes clean `redis_*` metrics over plain
+# HTTP :9121/metrics, which the shared PodMonitor scrapes normally.
+#
+# NAMESPACE — this file pins `namespace: authentik` for parity with
+# exporter-argocd-dragonfly.yaml (which pins `argocd`), but note: when built via
+# ../v2-otel that kustomization applies a global `namespace: monitoring` that
+# OVERRIDES this — so in the deployed cluster BOTH exporters actually run in the
+# `monitoring` namespace (verified live: redis-exporter-argocd-dragonfly runs in
+# monitoring). The pinned namespace only matters if redis-monitoring is ever
+# built standalone. Because the exporter really lives in monitoring, cross-ns
+# reachability to the cache is NOT automatic: the dragonfly-operator's
+# per-Dragonfly NetworkPolicy (`authentik-cache`) restricts :6379 ingress to
+# same-namespace peers, which would black-hole this exporter. The additive
+# NetworkPolicy `allow-monitoring-to-dragonfly` in
+# infrastructure/base/authentik/netpol-allow-monitoring.yaml opens :6379 from the
+# monitoring namespace (k8s unions all NetworkPolicies selecting a pod), exactly
+# as argocd/netpol-allow-monitoring.yaml does for argocd-dragonfly. WITHOUT that
+# netpol redis_up stays 0. (TALOS-5aop)
+#
+# The pod carries label `redis_cache: authentik-cache`; the shared PodMonitor
+# projects it onto every series via podTargetLabels, so the "Dragonfly / Redis
+# Cache" dashboard's $redis variable picks up authentik-cache. (TALOS-5aop /
+# epic TALOS-0tbh)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-exporter-authentik-cache
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: redis-exporter
+    app.kubernetes.io/part-of: dragonfly-monitoring
+    redis_cache: authentik-cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-exporter
+      redis_cache: authentik-cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis-exporter
+        app.kubernetes.io/part-of: dragonfly-monitoring
+        redis_cache: authentik-cache
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 59000
+        runAsGroup: 59000
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: redis-exporter
+          # oliver006/redis_exporter — the de-facto redis/valkey/dragonfly exporter.
+          # (prefer-latest: bump alongside the redis_exporter release cadence.)
+          image: oliver006/redis_exporter:v1.89.0-alpine
+          args:
+            - "--redis.addr=redis://authentik-cache.authentik.svc.cluster.local:6379"
+            - "--web.listen-address=:9121"
+          ports:
+            - name: metrics # PodMonitor references this port name
+              containerPort: 9121
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          livenessProbe:
+            httpGet: {path: /health, port: metrics}
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: {path: /health, port: metrics}
+            initialDelaySeconds: 5
+            periodSeconds: 15
