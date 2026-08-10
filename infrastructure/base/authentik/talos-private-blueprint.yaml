@@ -1,20 +1,20 @@
 ---
-# Authentik Blueprint: talos-private forward-auth (clean-slate rebuild, TALOS-h4j).
+# Authentik Blueprint: talos SSO group model + forward-auth (TALOS-h4j / TALOS-xgrl.13).
 #
-# Domain: priv.talos00 (LAN-only via pihole; homelab-ca cert). priv.talos00 is a valid
-# registrable domain (talos00 = the public suffix), so the forward_domain SSO cookie
-# for Domain=priv.talos00 is accepted — bare `talos00` (a public suffix) would be rejected.
-# The old kelsboi + amber objects are RETIRED (this replaces them entirely; the
-# manual kelsboi objects in the Authentik DB are the operator's to delete via the UI).
+# Domain: priv.talos00 (LAN-only, homelab-ca cert, real cookie domain).
 #
-# Full forward-auth chain, all IaC:
-#   1. authentik_core.group                 talos-private   (access group; gates all private apps)
-#   2. authentik_providers_proxy.proxyprovider talos-private (forward_domain, cookie=priv.talos00)
-#   3. authentik_core.application           talos-private   (bound to the provider)
-#   4. authentik_policies.policybinding      app <- talos-private group (order 0, gates access)
-#   5. authentik_outposts.outpost            embedded outpost = [talos-private]  (kelsboi dropped)
+# GROUP MODEL (cluster-admin is a SUPERSET — its members reach every app):
+#   - cluster-admin  : super-group; reaches EVERY app.
+#   - talos-admin    : infra/admin UIs (kubeview, headlamp).
+#   - talos-gaming   : gaming / remote-desktop (guacamole, windows-vnc).
+#   - talos-private  : private media/arr apps (immich, stash, whisparr, ...).
 #
-# Mounted at /blueprints/custom/talos-private.yaml (helmrelease volume); the worker auto-reconciles.
+# ENFORCEMENT: ONE forward_domain provider covers *.priv.talos00 (shared SSO cookie, single
+# login, no per-app routing). A single EXPRESSION POLICY on the application maps the requested
+# HOST → the required group (OR cluster-admin). This keeps the app URLs + Traefik config
+# untouched while giving per-app group gating. Add a new app by editing HOST_GROUP below.
+#
+# Mounted at /blueprints/custom/talos-private.yaml; the worker auto-reconciles.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -27,27 +27,36 @@ data:
   talos-private.yaml: |
     version: 1
     metadata:
-      name: talos-private forward-auth
+      name: talos SSO group model + forward-auth
       labels:
-        blueprints.goauthentik.io/description: "talos-private group + forward_domain proxy gating all *.priv.talos00 services"
+        blueprints.goauthentik.io/description: "cluster-admin/talos-admin/talos-gaming/talos-private groups + per-host group gating on *.priv.talos00"
     entries:
-      # 1. Shared access group. Add members via the UI (Directory > Groups).
+      # ---------- Groups ----------
+      - model: authentik_core.group
+        id: cluster-admin-group
+        identifiers: {name: cluster-admin}
+        attrs:
+          attributes: {description: "Super-group: reaches EVERY talos-private service (superset of all groups)."}
+      - model: authentik_core.group
+        id: talos-admin-group
+        identifiers: {name: talos-admin}
+        attrs:
+          attributes: {description: "Cluster admin UIs (kubeview, headlamp)."}
+      - model: authentik_core.group
+        id: talos-gaming-group
+        identifiers: {name: talos-gaming}
+        attrs:
+          attributes: {description: "Gaming / remote-desktop (guacamole, windows-vnc, kubevirt VM UI)."}
       - model: authentik_core.group
         id: talos-private-group
-        identifiers:
-          name: talos-private
+        identifiers: {name: talos-private}
         attrs:
-          attributes:
-            description: "Members may access all talos-private services (kubeview, headlamp, guacamole, immich, stash, whisparr, zipline, hot-ones, whoami)."
+          attributes: {description: "Private media/arr apps (immich, stash, whisparr, zipline, hot-ones)."}
 
-      # 2. Proxy Provider — forward_domain, scoped to priv.talos00 so the
-      #    ONE shared Traefik `authentik` middleware gates every *.priv.talos00
-      #    host with a single SSO cookie. external_host is the Authentik URL under the
-      #    cookie domain (unauthenticated users are redirected there).
+      # ---------- forward_domain provider for *.priv.talos00 ----------
       - model: authentik_providers_proxy.proxyprovider
         id: talos-private-provider
-        identifiers:
-          name: talos-private
+        identifiers: {name: talos-private}
         attrs:
           name: talos-private
           mode: forward_domain
@@ -66,39 +75,55 @@ data:
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-entitlements]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
-
-      # 3. Application bound to the proxy provider.
       - model: authentik_core.application
         id: talos-private-application
-        identifiers:
-          slug: talos-private
+        identifiers: {slug: talos-private}
         attrs:
           name: talos-private
           slug: talos-private
           provider: !KeyOf talos-private-provider
           meta_launch_url: https://auth.priv.talos00
-          meta_description: "Private LAN services behind Authentik forward-auth (talos-private group)"
-          meta_publisher: "Catalyst Homelab"
-          open_in_new_tab: false
-          policy_engine_mode: any
+          policy_engine_mode: all
 
-      # 4. Gate the application on the talos-private group — only members pass forward-auth.
-      - model: authentik_policies.policybinding
-        id: talos-private-group-binding
-        identifiers:
-          target: !KeyOf talos-private-application
-          group: !KeyOf talos-private-group
-          order: 0
+      # ---------- Per-host → group expression policy ----------
+      - model: authentik_policies_expression.expressionpolicy
+        id: talos-host-group-policy
+        identifiers: {name: talos-per-host-group-gate}
         attrs:
-          enabled: true
-          negate: false
-          timeout: 30
+          name: talos-per-host-group-gate
+          expression: |
+            # cluster-admin reaches everything.
+            groups = [g.name for g in request.user.ak_groups.all()]
+            if "cluster-admin" in groups:
+                return True
+            # Requested app host (the proxied service), from the forwarded request.
+            host = ""
+            try:
+                host = (request.context.get("http_request").headers.get("X-Forwarded-Host") or "").lower()
+            except Exception:
+                host = ""
+            # host prefix → required group
+            HOST_GROUP = {
+                "kubeview": "talos-admin",
+                "headlamp": "talos-admin",
+                "guacamole": "talos-gaming",
+                "windows-vnc": "talos-gaming",
+            }
+            required = "talos-private"  # default: media/arr apps
+            for prefix, grp in HOST_GROUP.items():
+                if host.startswith(prefix + "."):
+                    required = grp
+                    break
+            return required in groups
+      - model: authentik_policies.policybinding
+        id: talos-host-group-binding
+        identifiers: {target: !KeyOf talos-private-application, policy: !KeyOf talos-host-group-policy, order: 0}
+        attrs: {enabled: true, negate: false, timeout: 30}
 
-      # 5. Embedded outpost — enforce ONLY the talos-private provider (kelsboi retired).
+      # ---------- Embedded outpost ----------
       - model: authentik_outposts.outpost
         id: embedded-outpost
-        identifiers:
-          managed: goauthentik.io/outposts/embedded
+        identifiers: {managed: goauthentik.io/outposts/embedded}
         attrs:
           providers:
             - !KeyOf talos-private-provider
