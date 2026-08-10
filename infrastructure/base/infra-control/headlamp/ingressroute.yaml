@@ -1,6 +1,7 @@
 ---
-# SEV-2 (TALOS-xgrl.7): was plain-HTTP `web` with no auth. Now HTTPS + Authentik
-# forward-auth SSO + web→HTTPS redirect. Paired with the bounded `view` role.
+# Headlamp — SSO-protected via Authentik forward-auth on headlamp.priv.talos00
+# (TALOS-xgrl.7/.13). Access requires talos-private group membership. Paired with the
+# bounded `view` role (no cluster-admin/secrets). HTTPS only + web→HTTPS redirect.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -14,18 +15,17 @@ metadata:
     gethomepage.dev/group: "Home & Tools"
     gethomepage.dev/weight: "10"
     gethomepage.dev/icon: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/kubernetes-dashboard.png"
-    gethomepage.dev/href: "https://headlamp.talos00"
+    gethomepage.dev/href: "https://headlamp.priv.talos00"
     gethomepage.dev/siteMonitor: "http://headlamp.infra-control.svc.cluster.local:80"
 spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`headlamp.talos00`)
+    - match: Host(`headlamp.priv.talos00`)
       kind: Rule
-      # NOTE: Authentik forward-auth intended, but talos-private forward_domain proxy isn't
-      # live yet (404s the route). Until then: TLS + the bounded `view` role (no cluster-admin,
-      # no secrets) is the SEV-2 fix. Re-add the authentik middleware once talos-private is
-      # active. (TALOS-xgrl.7)
+      middlewares:
+        - name: authentik
+          namespace: authentik
       services:
         - name: headlamp
           port: 80
@@ -40,7 +40,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`headlamp.talos00`)
+    - match: Host(`headlamp.priv.talos00`)
       kind: Rule
       middlewares:
         - name: redirect-https

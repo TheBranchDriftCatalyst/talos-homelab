@@ -1,7 +1,7 @@
 ---
-# SEV-1 fix (TALOS-xgrl.1): KubeView has NO built-in auth and proxies a cluster-read
-# ServiceAccount. Was on plain-HTTP `web` with no middleware = anyone on the LAN browsed
-# the whole cluster. Now: HTTPS + Authentik forward-auth (SSO), with web→HTTPS redirect.
+# KubeView — SSO-protected via Authentik forward-auth on kubeview.priv.talos00
+# (TALOS-xgrl.1/.13). Access requires membership in the talos-private group. Paired
+# with the scoped read-only RBAC (no secrets). HTTPS only + web→HTTPS redirect.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -11,19 +11,16 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`kubeview.talos00`)
+    - match: Host(`kubeview.priv.talos00`)
       kind: Rule
-      # NOTE: Authentik forward-auth intended here, but the talos-private forward_domain
-      # proxy provider isn't live yet (manual Authentik steps pending — see
-      # authentik/talos-private-blueprint.yaml), and enabling it 404s the route. Until then:
-      # TLS + the SCOPED read-only RBAC (no secrets) is the SEV-1 fix. Re-add the authentik
-      # middleware once talos-private is active. (TALOS-xgrl.1)
+      middlewares:
+        - name: authentik
+          namespace: authentik
       services:
         - name: kubeview
           port: 80
   tls: {}
 ---
-# HTTP → HTTPS redirect
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -33,7 +30,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`kubeview.talos00`)
+    - match: Host(`kubeview.priv.talos00`)
       kind: Rule
       middlewares:
         - name: redirect-https
