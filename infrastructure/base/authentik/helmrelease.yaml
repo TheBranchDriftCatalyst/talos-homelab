@@ -58,6 +58,26 @@ spec:
         # the default 6379; the operator's svc is authentik-cache:6379.
         host: authentik-cache
 
+    # Blueprint delivery via the chart-native mechanism (TALOS-xgrl.16).
+    # The chart mounts each listed ConfigMap (all its keys) under
+    # /blueprints/mounted/cm-<name>/ on the WORKER pod — the worker is the
+    # component that imports/reconciles blueprints, so server mounting is not
+    # needed (and the chart intentionally does NOT mount them on the server).
+    # Authentik scans /blueprints/ recursively and applies every blueprint
+    # found. There is NO label auto-discovery; ConfigMaps must be listed here
+    # explicitly AND still exist as resources in kustomization.yaml.
+    blueprints:
+      configMaps:
+        - authentik-litellm-blueprint
+        - authentik-boomtime-blueprint
+        - authentik-grafana-blueprint
+        - authentik-zot-blueprint
+        - authentik-forgejo-blueprint
+        - authentik-minio-blueprint
+        - authentik-linkwarden-blueprint
+        - authentik-talos-private-blueprint
+        - authentik-catalyst-brand-blueprint
+
     server:
       replicas: 1
       resources:
@@ -66,123 +86,27 @@ spec:
           memory: 512Mi
       ingress:
         enabled: false  # We'll use Traefik IngressRoute
-      # Mount custom CSS and blueprints.
-      #
-      # Brands split across two repos:
-      #   - catalyst-* ConfigMaps owned by this repo (talos-homelab / Flux).
-      #   - kelsboi-*  ConfigMaps owned by talos-private (ArgoCD-synced); we
-      #     reference them with optional: true so the pod still starts if
-      #     Argo hasn't created them yet.
+      # Mount custom CSS + catalyst brand SVG assets. Blueprints are NO LONGER
+      # mounted here — they are delivered via the chart-native
+      # `blueprints.configMaps` value above (TALOS-xgrl.16). Only non-blueprint
+      # assets (custom CSS, brand SVGs served from /web/dist) remain manual.
       volumes:
         - name: custom-css
           configMap:
             name: authentik-custom-css
-        - name: litellm-blueprint
-          configMap:
-            name: authentik-litellm-blueprint
-        - name: boomtime-blueprint
-          configMap:
-            name: authentik-boomtime-blueprint
-        - name: grafana-blueprint
-          configMap:
-            name: authentik-grafana-blueprint
-        - name: zot-blueprint
-          configMap:
-            name: authentik-zot-blueprint
-        - name: forgejo-blueprint
-          configMap:
-            name: authentik-forgejo-blueprint
-        - name: minio-blueprint
-          configMap:
-            name: authentik-minio-blueprint
-        - name: linkwarden-blueprint
-          configMap:
-            name: authentik-linkwarden-blueprint
-        - name: talos-private-blueprint
-          configMap:
-            name: authentik-talos-private-blueprint
         - name: catalyst-brand-assets
           configMap:
             name: authentik-catalyst-brand-assets
-        - name: catalyst-brand-blueprint
-          configMap:
-            name: authentik-catalyst-brand-blueprint
-        - name: kelsboi-brand-assets
-          configMap:
-            name: authentik-kelsboi-brand-assets
-            optional: true
-        - name: kelsboi-brand-blueprint
-          configMap:
-            name: authentik-kelsboi-brand-blueprint
-            optional: true
-        # talos-private brand (kelsboi -> talos-private migration, TALOS-h4j).
-        # ConfigMaps owned by the talos-private repo (ArgoCD-synced); optional:true
-        # so the pod still starts if Argo hasn't created them yet — same pattern as
-        # the kelsboi brand above.
-        - name: talos-private-brand-assets
-          configMap:
-            name: authentik-talos-private-brand-assets
-            optional: true
-        - name: talos-private-brand-blueprint
-          configMap:
-            name: authentik-talos-private-brand-blueprint
-            optional: true
       volumeMounts:
         - name: custom-css
           mountPath: /web/dist/custom.css
           subPath: custom.css
-        - name: litellm-blueprint
-          mountPath: /blueprints/custom/litellm-role-mapping.yaml
-          subPath: litellm-role-mapping.yaml
-        - name: boomtime-blueprint
-          mountPath: /blueprints/custom/boomtime-oidc.yaml
-          subPath: boomtime-oidc.yaml
-        - name: grafana-blueprint
-          mountPath: /blueprints/custom/grafana-oidc.yaml
-          subPath: grafana-oidc.yaml
-        - name: zot-blueprint
-          mountPath: /blueprints/custom/zot-oidc.yaml
-          subPath: zot-oidc.yaml
-        - name: forgejo-blueprint
-          mountPath: /blueprints/custom/forgejo-oidc.yaml
-          subPath: forgejo-oidc.yaml
-        - name: minio-blueprint
-          mountPath: /blueprints/custom/minio-oidc.yaml
-          subPath: minio-oidc.yaml
-        - name: linkwarden-blueprint
-          mountPath: /blueprints/custom/linkwarden-oidc.yaml
-          subPath: linkwarden-oidc.yaml
-        - name: talos-private-blueprint
-          mountPath: /blueprints/custom/talos-private.yaml
-          subPath: talos-private.yaml
         - name: catalyst-brand-assets
           mountPath: /web/dist/catalyst-brand-logo.svg
           subPath: catalyst-brand-logo.svg
         - name: catalyst-brand-assets
           mountPath: /web/dist/catalyst-brand-favicon.svg
           subPath: catalyst-brand-favicon.svg
-        - name: catalyst-brand-blueprint
-          mountPath: /blueprints/custom/catalyst-brand.yaml
-          subPath: catalyst-brand.yaml
-        - name: kelsboi-brand-assets
-          mountPath: /web/dist/kelsboi-brand-logo.svg
-          subPath: kelsboi-brand-logo.svg
-        - name: kelsboi-brand-assets
-          mountPath: /web/dist/kelsboi-brand-favicon.svg
-          subPath: kelsboi-brand-favicon.svg
-        - name: kelsboi-brand-blueprint
-          mountPath: /blueprints/custom/kelsboi-brand.yaml
-          subPath: kelsboi-brand.yaml
-        # talos-private brand assets + blueprint (TALOS-h4j)
-        - name: talos-private-brand-assets
-          mountPath: /web/dist/talos-private-brand-logo.svg
-          subPath: talos-private-brand-logo.svg
-        - name: talos-private-brand-assets
-          mountPath: /web/dist/talos-private-brand-favicon.svg
-          subPath: talos-private-brand-favicon.svg
-        - name: talos-private-brand-blueprint
-          mountPath: /blueprints/custom/talos-private-brand.yaml
-          subPath: talos-private-brand.yaml
 
     worker:
       replicas: 1
@@ -276,78 +200,12 @@ spec:
               name: authentik-linkwarden-oidc
               key: client-secret
               optional: true
-      # Worker needs blueprints for processing
-      volumes:
-        - name: litellm-blueprint
-          configMap:
-            name: authentik-litellm-blueprint
-        - name: boomtime-blueprint
-          configMap:
-            name: authentik-boomtime-blueprint
-        - name: grafana-blueprint
-          configMap:
-            name: authentik-grafana-blueprint
-        - name: zot-blueprint
-          configMap:
-            name: authentik-zot-blueprint
-        - name: forgejo-blueprint
-          configMap:
-            name: authentik-forgejo-blueprint
-        - name: minio-blueprint
-          configMap:
-            name: authentik-minio-blueprint
-        - name: linkwarden-blueprint
-          configMap:
-            name: authentik-linkwarden-blueprint
-        - name: talos-private-blueprint
-          configMap:
-            name: authentik-talos-private-blueprint
-        - name: catalyst-brand-blueprint
-          configMap:
-            name: authentik-catalyst-brand-blueprint
-        - name: kelsboi-brand-blueprint
-          configMap:
-            name: authentik-kelsboi-brand-blueprint
-            optional: true
-        # talos-private brand blueprint — worker reconciles it (TALOS-h4j)
-        - name: talos-private-brand-blueprint
-          configMap:
-            name: authentik-talos-private-brand-blueprint
-            optional: true
-      volumeMounts:
-        - name: litellm-blueprint
-          mountPath: /blueprints/custom/litellm-role-mapping.yaml
-          subPath: litellm-role-mapping.yaml
-        - name: boomtime-blueprint
-          mountPath: /blueprints/custom/boomtime-oidc.yaml
-          subPath: boomtime-oidc.yaml
-        - name: grafana-blueprint
-          mountPath: /blueprints/custom/grafana-oidc.yaml
-          subPath: grafana-oidc.yaml
-        - name: zot-blueprint
-          mountPath: /blueprints/custom/zot-oidc.yaml
-          subPath: zot-oidc.yaml
-        - name: forgejo-blueprint
-          mountPath: /blueprints/custom/forgejo-oidc.yaml
-          subPath: forgejo-oidc.yaml
-        - name: minio-blueprint
-          mountPath: /blueprints/custom/minio-oidc.yaml
-          subPath: minio-oidc.yaml
-        - name: linkwarden-blueprint
-          mountPath: /blueprints/custom/linkwarden-oidc.yaml
-          subPath: linkwarden-oidc.yaml
-        - name: talos-private-blueprint
-          mountPath: /blueprints/custom/talos-private.yaml
-          subPath: talos-private.yaml
-        - name: catalyst-brand-blueprint
-          mountPath: /blueprints/custom/catalyst-brand.yaml
-          subPath: catalyst-brand.yaml
-        - name: kelsboi-brand-blueprint
-          mountPath: /blueprints/custom/kelsboi-brand.yaml
-          subPath: kelsboi-brand.yaml
-        - name: talos-private-brand-blueprint
-          mountPath: /blueprints/custom/talos-private-brand.yaml
-          subPath: talos-private-brand.yaml
+      # Blueprints are delivered to the worker via the chart-native
+      # `blueprints.configMaps` value above (TALOS-xgrl.16) — the chart mounts
+      # them on the worker (the blueprint reconciler). No manual volumes/
+      # volumeMounts needed here. The worker still consumes the
+      # *_OIDC_CLIENT_SECRET env vars above (the !Env sources the blueprints
+      # reference at reconcile time).
 
     # Embedded PostgreSQL — RETIRED (TALOS-fijt). Disabled in favor of the
     # CloudNativePG cluster `authentik-postgres` (see postgres.yaml). Setting
