@@ -67,6 +67,9 @@ data:
           - api_url: "$DISCORD_WEBHOOK_URL/slack"
             channel: "#alerts"
             send_resolved: true
+            # Discord's /slack rejects Slack's named colors (danger/good) with 400
+            # {"attachments":["0"]} — it requires HEX. (TALOS-xgrl.3)
+            color: '{{ if eq .Status "firing" }}#E01E5A{{ else }}#2EB67D{{ end }}'
             title: '{{ if eq .Status "firing" }}🔥 FIRING{{ else }}✅ RESOLVED{{ end }} · {{ .CommonLabels.alertname }} ({{ .Alerts | len }})'
             text: >-
               {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* — {{ .Annotations.summary }}{{ if .Annotations.description }}
@@ -78,6 +81,7 @@ data:
           - api_url: "$DISCORD_WEBHOOK_URL/slack"
             channel: "#alerts"
             send_resolved: true
+            color: '{{ if eq .Status "firing" }}#E01E5A{{ else }}#2EB67D{{ end }}'
             title: '{{ if eq .Status "firing" }}🚨 CRITICAL{{ else }}✅ RESOLVED{{ end }} · {{ .CommonLabels.alertname }} ({{ .Alerts | len }})'
             text: >-
               {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* — {{ .Annotations.summary }}{{ if .Annotations.description }}
