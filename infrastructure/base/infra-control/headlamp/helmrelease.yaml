@@ -8,10 +8,13 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: headlamp
+# SEV-2 (TALOS-xgrl.7): was cluster-admin. Bound to the built-in read-only `view`
+# role (excludes secrets + RBAC). Headlamp is now behind Authentik SSO + TLS. If
+# interactive edits are needed, bump to `edit` (still excludes secrets/cluster-admin).
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: cluster-admin
+  name: view
 subjects:
   - kind: ServiceAccount
     name: headlamp
@@ -37,7 +40,7 @@ spec:
       serviceAccountName: headlamp
       containers:
         - name: headlamp
-          image: ghcr.io/headlamp-k8s/headlamp:latest
+          image: ghcr.io/headlamp-k8s/headlamp:v0.44.0 # pinned (was :latest) — TALOS-xgrl.7
           ports:
             - containerPort: 4466
               name: http
