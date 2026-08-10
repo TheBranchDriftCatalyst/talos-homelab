@@ -1,0 +1,110 @@
+---
+# Derives the MECHANICAL gethomepage annotations from the IngressRoute spec itself, so new
+# routes only need the genuinely-unique ones (enabled/name/group/icon/description/widget.*).
+# Companion to homepage-instance-assignment.yaml (TALOS-vo0i / TALOS-kjcn).
+#
+#   gethomepage.dev/siteMonitor  <- http://<routes[0].services[0].name>.<ns>.svc.cluster.local:<port>
+#   gethomepage.dev/href         <- http://<host from Host(`...`) in routes[0].match>
+#
+# ADD-IF-ABSENT ONLY (`+(...)` strategic-merge anchors): any hand-set value ALWAYS wins.
+# This is deliberate — hand-set values encode things the spec can't know: health-check paths
+# (minio `/minio/health/live`, alloy `/-/ready`), portless URLs (argocd-server, hubble-ui),
+# https:// hrefs (argocd, headlamp, guacamole), external hosts (forge/registry.knowledgedump.space),
+# and non-first-service/port divergences (maintainerr :80 vs svc :6246, pulsarr :80 vs :3003).
+# Never convert this policy to overwrite.
+#
+# Why patchStrategicMerge (not patchesJson6902 like the sibling policy): Kyverno forbids
+# variables only in JSON6902 *paths*; here the KEYS are static and only the VALUES are
+# variables, which strategic merge supports fine.
+#
+# Guard rails (preconditions) — a rule SKIPS rather than derive something wrong when:
+#   - siteMonitor: routes[0].services[0] is missing, is a TraefikService (no <name>.<ns>.svc
+#     DNS), or its port is a NAME (e.g. `http`) instead of a number.
+#   - href: routes[0].match has no Host(`...`) clause (Path-only/CIDR matches).
+# Multi-`Host()` matches use the FIRST host (non-greedy regex). href scheme is hard-coded
+# http:// — every LAN *.talos00 host serves web, and websecure-only routes all hand-set href
+# today; if that changes, gate on spec.entryPoints instead.
+#
+# RBAC: reuses the aggregated ClusterRole kyverno:background:homepage-instance (defined in
+# homepage-instance-assignment.yaml) — it already grants the background controller
+# update/patch on traefik.io/ingressroutes. Do not delete that ClusterRole while this
+# policy exists.
+#
+# Applies at admission (async, via background controller — same mutateExisting pattern as
+# the sibling policy) AND retroactively to all existing IngressRoutes on policy create/update.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: homepage-annotation-derivation
+  annotations:
+    policies.kyverno.io/title: Homepage annotation derivation
+    policies.kyverno.io/category: Homepage
+    policies.kyverno.io/subject: IngressRoute
+    policies.kyverno.io/description: >-
+      Derives gethomepage.dev/siteMonitor (in-cluster service URL) and gethomepage.dev/href
+      (LAN host URL) from the IngressRoute spec for every homepage-enabled route that does
+      not already set them. Add-if-absent only — hand-set values always win. Applies
+      retroactively to existing IngressRoutes via mutateExisting.
+spec:
+  admission: true
+  background: true
+  rules:
+    # --- siteMonitor: http://<svc>.<ns>.svc.cluster.local:<port> ------------------------
+    - name: derive-site-monitor
+      match:
+        any:
+          - resources: { kinds: [IngressRoute] }
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+          # First service of the first route must exist and be a plain Service (a
+          # TraefikService has no <name>.<ns>.svc.cluster.local DNS record).
+          - key: '{{ request.object.spec.routes[0].services[0].name || '''' }}'
+            operator: NotEquals
+            value: ""
+          - key: '{{ request.object.spec.routes[0].services[0].kind || ''Service'' }}'
+            operator: Equals
+            value: Service
+          # Port must be numeric — a named port (e.g. `http`) would derive a bogus URL.
+          - key: '{{ regex_match(''^[0-9]+$'', to_string(request.object.spec.routes[0].services[0].port || ''absent'')) }}'
+            operator: Equals
+            value: true
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              +(gethomepage.dev/siteMonitor): 'http://{{ request.object.spec.routes[0].services[0].name }}.{{ request.object.metadata.namespace }}.svc.cluster.local:{{ request.object.spec.routes[0].services[0].port }}'
+    # --- href: http://<host> from the Host(`...`) clause of routes[0].match -------------
+    - name: derive-href
+      match:
+        any:
+          - resources: { kinds: [IngressRoute] }
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+          # Only derive when there is an actual Host(`...`) clause to extract from.
+          - key: '{{ regex_match(''Host\(`[^`]+`\)'', request.object.spec.routes[0].match || '''') }}'
+            operator: Equals
+            value: true
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchStrategicMerge:
+          metadata:
+            annotations:
+              # Non-greedy `.*?` -> first Host() clause wins on multi-host matches.
+              +(gethomepage.dev/href): 'http://{{ regex_replace_all(''^.*?Host\(`([^`]+)`\).*$'', request.object.spec.routes[0].match, ''${1}'') }}'
