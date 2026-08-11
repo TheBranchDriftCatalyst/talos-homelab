@@ -7,6 +7,12 @@ metadata:
 spec:
   certificateRotateStrategy: {}
   configuration:
+    # Pin the VM rollout strategy explicitly to Stage BEFORE any KubeVirt upgrade:
+    # v1.6.0 changes the DEFAULT from Stage → LiveUpdate. Stage = VM config changes
+    # apply on next restart (safe/predictable); LiveUpdate = hot-apply (needs the
+    # VMLiveUpdateFeatures gate + more moving parts). Explicit here so the 1.4→1.9
+    # upgrade doesn't silently flip behavior. (TALOS-zadf.31)
+    vmRolloutStrategy: Stage
     developerConfiguration:
       featureGates: []
   # 2026-05-30: removed the customizeComponents.patches that forced all
