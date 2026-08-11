@@ -221,7 +221,15 @@ spec:
     secretNames:
       - securexng-ca
 ---
-# IngressRoute with mTLS - requires client certificate
+# IngressRoute — HTTPS + Authentik forward-auth SSO on securexng.talos00 (TALOS-xgrl.18).
+# Gated by the `authentik` forward-auth middleware (talos-apps OR cluster-admin). TLS: default
+# TLSStore serves the *.talos00 wildcard via SNI (tls: {}), matching the cluster SSO pattern.
+#
+# NOTE: this REPLACES the previous mTLS client-cert gate (tls.options: mtls-strict). SSO via
+# Authentik is now the access control. The `mtls-strict` TLSOption + `securexng-ca` secret
+# above are left in place but are now UNREFERENCED — the operator may remove them if the
+# client-cert flow is no longer wanted, or re-add `options: {name: mtls-strict}` for
+# defence-in-depth (mTLS AND SSO) if desired.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -231,23 +239,22 @@ metadata:
     app.kubernetes.io/name: securexng
     app.kubernetes.io/component: ingress
   annotations:
-    description: "VPN-protected SearXNG with mTLS client authentication"
+    description: "VPN-protected SearXNG behind Authentik forward-auth SSO (talos-apps)"
 spec:
   entryPoints:
     - websecure
   routes:
     - match: Host(`securexng.talos00`)
       kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
       services:
         - name: securexng
           port: 8080
-  tls:
-    # Use mTLS options for external access
-    options:
-      name: mtls-strict
-      namespace: vpn-gateway
+  tls: {}
 ---
-# HTTP endpoint for testing (can remove in production)
+# HTTP→HTTPS redirect for securexng.talos00.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -257,13 +264,16 @@ metadata:
     app.kubernetes.io/name: securexng
     app.kubernetes.io/component: ingress
   annotations:
-    description: "VPN-protected SearXNG - HTTP access for testing"
+    description: "VPN-protected SearXNG - HTTP→HTTPS redirect"
 spec:
   entryPoints:
     - web
   routes:
     - match: Host(`securexng.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: securexng
           port: 8080
