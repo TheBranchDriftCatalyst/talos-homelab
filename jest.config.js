@@ -16,5 +16,7 @@ module.exports = {
     "<rootDir>/infrastructure/base/pihole/tests",
     "<rootDir>/infrastructure/base/vpn-gateway/tests",
     "<rootDir>/applications/crossplane-demo/tests",
+    "<rootDir>/infrastructure/base/flux-notifications/tests", // discord-webhook integration
+    "<rootDir>/infrastructure/base/mail/tests", // mail-relay integration (scaffold until Stalwart lands)
   ],
 };
