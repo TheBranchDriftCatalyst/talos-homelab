@@ -187,6 +187,18 @@ spec:
     minio: false
     console: false
 
+  # Declaratively-managed buckets (operator creates on reconcile; survives a
+  # tenant rebuild). catalyst-bgs holds the Authentik rotating login-background
+  # images bg1..bg6 (TALOS-4o0k). NOTE: the Tenant CRD only creates the bucket
+  # — it does NOT manage the anonymous/public-download POLICY nor the image
+  # OBJECTS themselves (both are data; the MinIO operator has no policy CRD). A
+  # from-scratch rebuild must re-run `mc anonymous set download local/catalyst-bgs`
+  # and re-upload the 6 images. The other buckets (mimir/tempo/loki/dagster/
+  # cnpg-backups) are still created imperatively by the minio-create-buckets Job
+  # above; catalyst-bgs is declared here as the go-forward pattern.
+  buckets:
+    - name: catalyst-bgs
+
   # Features
   features:
     bucketDNS: false
