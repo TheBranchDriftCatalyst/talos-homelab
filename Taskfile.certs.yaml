@@ -25,7 +25,8 @@ tasks:
       - |
         if [ "$(uname)" != "Darwin" ]; then
           echo "❌ macOS only (uses the 'security' keychain tool)."
-          echo "   Linux: task certs:export-ca && sudo cp {{.CA_FILE}} /usr/local/share/ca-certificates/homelab-ca.crt && sudo update-ca-certificates"
+          echo "   Linux: task certs:export-ca, then sudo cp {{.CA_FILE}} to"
+          echo "          /usr/local/share/ca-certificates/ and run update-ca-certificates"
           exit 1
         fi
         command -v kubectl >/dev/null 2>&1 || { echo "❌ kubectl not found"; exit 1; }
@@ -36,14 +37,16 @@ tasks:
         echo "→ homelab CA SHA-1: $FPR"
         # Idempotent: skip (no sudo) if a cert with this exact fingerprint is already trusted.
         # Comparing by fingerprint also means a rotated/renewed CA is re-added automatically.
-        if security find-certificate -a -Z /Library/Keychains/System.keychain 2>/dev/null | grep -qi "SHA-1 hash: $FPR"; then
+        if security find-certificate -a -Z /Library/Keychains/System.keychain 2>/dev/null \
+             | grep -qi "SHA-1 hash: $FPR"; then
           echo "✅ already trusted — nothing to do."
           exit 0
         fi
         echo "→ adding to the System keychain as a trusted root (sudo / Touch ID) …"
         sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "{{.CA_FILE}}"
         echo "✅ homelab CA trusted. Fully quit + reopen Chrome/Safari → *.talos00 / *.priv.talos00 get the padlock."
-        echo "   Firefox uses its own store — import {{.CA_FILE}} via Settings → Privacy & Security → Certificates → Import."
+        echo "   Firefox uses its own store — import {{.CA_FILE}}"
+        echo "   (Settings → Privacy & Security → Certificates → Import)."
 
   untrust-cert:
     desc: Remove the homelab CA from the macOS keychain (reverse of trust-cert)
@@ -76,7 +79,8 @@ tasks:
     desc: Show every Certificate sorted by expiry (spot soon-to-expire)
     cmds:
       - |
-        kubectl get certificate -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[?(@.type=="Ready")].status,EXPIRES:.status.notAfter,RENEW:.status.renewalTime' --sort-by=.status.notAfter
+        C='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[0].status,EXPIRES:.status.notAfter'
+        kubectl get certificate -A -o custom-columns="$C" --sort-by=.status.notAfter
 
   status:
     desc: Detailed status of a Certificate (use -- NAME=priv-talos00-wildcard NS=traefik)
