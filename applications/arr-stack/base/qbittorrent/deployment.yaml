@@ -56,8 +56,11 @@ spec:
         # `qbittorrent-webui` (see webui-credentials.yaml) BEFORE qBittorrent
         # starts. qBittorrent rewrites qBittorrent.conf on every shutdown (and
         # once dropped the password entirely — 2026-05-31), so this RE-ASSERTS
-        # the GitOps-owned username + PBKDF2 hash on EVERY pod start.
-        # Idempotent: only the two WebUI auth keys are touched, everything
+        # the GitOps-owned username + PBKDF2 hash on EVERY pod start. It ALSO
+        # asserts the WebUI subnet-whitelist keys so requests from the traefik
+        # pod subnet (10.244.0.0/16) BYPASS qBittorrent's own login — Authentik
+        # forward-auth is the single sign-on, no second qBt login. (TALOS-xgrl.14)
+        # Idempotent: only the four WebUI keys we own are touched, everything
         # else in the conf is preserved byte-for-byte; a missing conf (true
         # first run) gets a minimal [Preferences] section.
         - name: seed-webui-auth
@@ -94,6 +97,11 @@ spec:
               CONF = CONF_DIR + "/qBittorrent.conf"
               USER_KEY = "WebUI\\Username"
               PASS_KEY = "WebUI\\Password_PBKDF2"
+              # Bypass qBt's own login for the traefik pod subnet so the
+              # Authentik forward-auth session is the ONLY login (no double
+              # login). Traefik reaches qBt from a pod IP in 10.244.0.0/16.
+              WL_EN_KEY = "WebUI\\AuthSubnetWhitelistEnabled"
+              WL_KEY = "WebUI\\AuthSubnetWhitelist"
 
               user = os.environ["QBIT_WEBUI_USER"]
               password = os.environ["QBIT_WEBUI_PASS"]
@@ -116,15 +124,22 @@ spec:
                   with open(CONF, "r", encoding="utf-8", errors="replace") as f:
                       lines = f.read().splitlines()
 
-              # Drop every existing occurrence of the two keys we own (any
+              # Drop every existing occurrence of the keys we own (any
               # section, any mid-state); keep all other lines untouched.
               def ours(line):
                   s = line.lstrip()
                   return (s.startswith(USER_KEY + "=")
-                          or s.startswith(PASS_KEY + "="))
+                          or s.startswith(PASS_KEY + "=")
+                          or s.startswith(WL_EN_KEY + "=")
+                          or s.startswith(WL_KEY + "="))
               lines = [l for l in lines if not ours(l)]
 
-              new = [USER_KEY + "=" + user, PASS_KEY + '="' + value + '"']
+              new = [
+                  USER_KEY + "=" + user,
+                  PASS_KEY + '="' + value + '"',
+                  WL_EN_KEY + "=true",
+                  WL_KEY + "=10.244.0.0/16",
+              ]
               out, inserted = [], False
               for l in lines:
                   out.append(l)

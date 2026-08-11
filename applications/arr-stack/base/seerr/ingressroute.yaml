@@ -1,4 +1,11 @@
 ---
+# Seerr — HTTPS + Authentik forward-auth SSO on seerr.talos00 (TALOS-xgrl.14).
+# High-priority /api route (no auth mw) keeps the api-key API + webhooks reachable
+# (the *arr apps and notification agents call /api/v1); default route gated by
+# `authentik`. NOTE: Seerr keeps its OWN Plex-based login for per-user request
+# identity — it CANNOT be cleanly bypassed. Users therefore see the SSO gate, then
+# Seerr's Plex sign-in. This is expected (documented in the runbook).
+# TLS: default TLSStore serves the *.talos00 wildcard via SNI.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -13,7 +20,7 @@ metadata:
     gethomepage.dev/group: "Media"
     gethomepage.dev/weight: "21"
     gethomepage.dev/icon: "overseerr.png"
-    gethomepage.dev/href: "http://seerr.talos00"
+    gethomepage.dev/href: "https://seerr.talos00"
     gethomepage.dev/siteMonitor: "http://seerr.media.svc.cluster.local:5055"
     # widget.type stays "overseerr" — seerr's API is compatible and
     # homepage doesn't ship a dedicated seerr widget yet.
@@ -22,10 +29,39 @@ metadata:
     gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_OVERSEERR_KEY}}"
 spec:
   entryPoints:
+    - websecure
+  routes:
+    - match: Host(`seerr.talos00`) && PathPrefix(`/api`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: seerr
+          port: 5055
+    - match: Host(`seerr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: seerr
+          port: 5055
+  tls: {}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: seerr-http
+  labels:
+    app: seerr
+spec:
+  entryPoints:
     - web
   routes:
-    - match: Host(`seerr.${CLUSTER_DOMAIN}`)
+    - match: Host(`seerr.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: seerr
           port: 5055

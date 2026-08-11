@@ -1,4 +1,11 @@
 ---
+# Tautulli — HTTPS + Authentik forward-auth SSO on tautulli.talos00 (TALOS-xgrl.14).
+# High-priority /api route (no auth mw) keeps the api-key API (/api/v2) reachable for
+# the homepage widget; default route gated by `authentik`. NOTE: Tautulli keeps its
+# OWN web login by default. Optional one-time step to avoid a double login: Settings →
+# Web Interface → disable "Enable HTTP authentication" (safe once forward-auth gates
+# the host). Left ON by default here — flagged in the runbook.
+# TLS: default TLSStore serves the *.talos00 wildcard via SNI.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -13,17 +20,46 @@ metadata:
     gethomepage.dev/group: "Media"
     gethomepage.dev/weight: "30"
     gethomepage.dev/icon: "tautulli.png"
-    gethomepage.dev/href: "http://tautulli.talos00"
+    gethomepage.dev/href: "https://tautulli.talos00"
     gethomepage.dev/siteMonitor: "http://tautulli.media.svc.cluster.local:8181"
     gethomepage.dev/widget.type: "tautulli"
     gethomepage.dev/widget.url: "http://tautulli.media.svc.cluster.local:8181"
     gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_TAUTULLI_KEY}}"
 spec:
   entryPoints:
+    - websecure
+  routes:
+    - match: Host(`tautulli.talos00`) && PathPrefix(`/api`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: tautulli
+          port: 8181
+    - match: Host(`tautulli.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: tautulli
+          port: 8181
+  tls: {}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: tautulli-http
+  labels:
+    app: tautulli
+spec:
+  entryPoints:
     - web
   routes:
-    - match: Host(`tautulli.${CLUSTER_DOMAIN}`)
+    - match: Host(`tautulli.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: tautulli
           port: 8181

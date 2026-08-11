@@ -64,6 +64,16 @@ spec:
           envFrom:
             - configMapRef:
                 name: arr-common-env
+          # Trust the Authentik forward-auth reverse proxy → NO in-app login
+          # (no double login). External auth + DisabledForLocalAddresses also
+          # lets internal callers (homepage widget, /api clients via the
+          # api-bypass route) through without a Sonarr session. The api-key is
+          # still required for /api regardless. (TALOS-xgrl.14)
+          env:
+            - name: SONARR__AUTH__METHOD
+              value: External
+            - name: SONARR__AUTH__REQUIRED
+              value: DisabledForLocalAddresses
           ports:
             - name: http
               containerPort: 8989

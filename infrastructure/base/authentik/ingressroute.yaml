@@ -96,11 +96,12 @@ spec:
         - name: authentik-server
           port: 80
 ---
-# forward_single outpost routing (TALOS-xgrl.13): every *.priv.talos00 forward-auth app's
+# forward_single outpost routing (TALOS-xgrl.13): every *.talos00 forward-auth app's
 # /outpost.goauthentik.io/* path must reach the embedded outpost (authentik-server), not the
-# app. ONE regexp route covers ALL priv apps (present and future) — no per-app edit here when
-# a new .priv service is added. priority 20 beats the apps' Host() routes for this path only.
-# NO auth middleware — the outpost serves it directly. (TALOS-xgrl.14 made this DRY.)
+# app. ONE regexp route covers ALL forward-auth apps (present and future) — no per-app edit here
+# when a new service is added. The regexp matches BOTH bare <app>.talos00 (arr-stack, TALOS-xgrl.14)
+# AND <x>.priv.talos00 (the `.` in the char class covers the extra label). priority 20 beats the
+# apps' Host() routes for this path only. NO auth middleware — the outpost serves it directly.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -110,7 +111,7 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: HostRegexp(`^[a-z0-9-]+\.priv\.talos00$`) && PathPrefix(`/outpost.goauthentik.io/`)
+    - match: HostRegexp(`^[a-z0-9.-]+\.talos00$`) && PathPrefix(`/outpost.goauthentik.io/`)
       kind: Rule
       priority: 20
       services:
