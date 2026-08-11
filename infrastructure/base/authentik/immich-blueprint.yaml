@@ -70,7 +70,11 @@ data:
           name: immich
           client_type: confidential
           client_id: immich
-          client_secret: !Env IMMICH_OIDC_CLIENT_SECRET
+          # Default "" so the provider applies cleanly BEFORE the 1Password secret is
+          # provisioned (env unset → !Env would be null → serializer rejects). Created with
+          # an empty secret (harmless — nothing points at it yet); operator provisions the
+          # 1Password immich.oidc-client-secret then restarts the worker to load the real value.
+          client_secret: !Env [IMMICH_OIDC_CLIENT_SECRET, ""]
           authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
