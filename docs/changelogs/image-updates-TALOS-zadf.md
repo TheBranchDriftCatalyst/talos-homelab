@@ -87,3 +87,26 @@ _(none applied yet — awaiting operator direction on strategy + local-path-prov
 
 ### dbgate 5.5.6 → 7.2.4 + namespace move (commit bd56285) ✅
 - Promoted scratch → **databases** ns (`infrastructure/base/databases/dbgate/`, alongside CNPG/MongoDB/MinIO operators) + major image bump. New pod ready ("DbGate API listening on port 3000"); old scratch copy pruned. Fresh NFS data volume (saved connections not carried; re-add). Removed the dbgate healthCheck from scratch.yaml.
+
+## Session 2026-08-11 — deferred-majors triage (research-workflow driven)
+
+A `zadf-image-research` workflow (36 read-only agents) verified real-latest + breaking changes + risk verdict per bump. **14 closed** this pass; ~20 elevated to the operator (see epic TALOS-zadf ELEVATE QUEUE comment).
+
+### Applied + verified ✅
+| image | change | ticket | verify |
+| --- | --- | --- | --- |
+| prometheus-node-exporter chart | 4.43.1 → 4.56.1 (v1.8.2→v1.12.1) | zadf.21 | DS rolled v1.12.1, 5/5 |
+| prometheus-blackbox-exporter chart | 9.8.0 → 11.17.2 (v0.26.0→v0.28.0) | zadf.58 | pod Running v0.28.0 |
+| curlimages/curl (tdarr sidecar) | 8.5.0 → 8.21.0 | zadf.38 | ks Ready 756a1a9 |
+| kube-rbac-proxy (intel-gpu HR) | v0.18.0 → v0.22.1 | zadf.47 | ks Ready 756a1a9 |
+| alpine/k8s (crowdsec registrar) | 1.31.7 → **1.34.1** (capped at cluster k8s 1.34.10, NOT reported 1.36.2) | zadf.35 | ks Ready |
+
+Commits: 756a1a9 (4 auto-safe), 6a6eb48 (blackbox chart major).
+
+### Closed as no-op / superseded (no change) ✅
+- **Cilium trio** .14/.49/.50 — chart already 1.20.0 (p2g3 campaign); live agents v1.20.0. cert-manager-package **.51** — subsumed by trust-manager chart (already 0.24.0).
+- Chart-transitive (no standalone pin): busybox **.17**, nginx-unprivileged **.27**, rollout-operator **.41**. alpine/k8s sibling **.36** — capped at 1.34.x (1.36.2 rejected, +2 minor skew). redis **.13** — dev-only (immich-video-faces repo), not GitOps here.
+- Postgres **.4/.8/.11** — ⚠ BLOCKED-open under CNPG epic hx77; linkwarden/authentik/zipline already on CNPG (verified healthy). Auto-close when hx77 lands. No raw postgres tag to bump.
+
+### Elevated to operator (bundles A–D) — see epic comment
+KubeVirt+CDI (.23/.24/.29/.30/.31/.53-.56, vmRolloutStrategy pin needed), Observability majors (alloy/loki/k8s-sidecar/kube-state-metrics .16/.39/.9/.61), Intel-GPU+NFD (.25/.42/.18), .64 verify-latest cluster (cert-manager v1.16→v1.21, grafana 12→13, ~17 :latest pins) + isolated sidecars .28/.48.
