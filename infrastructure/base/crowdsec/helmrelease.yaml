@@ -33,6 +33,41 @@ spec:
     # ---- custom whitelist parser (mounted into the agent) — never ban internal/LAN/Cloudflare ----
     config:
       parsers:
+        # ---- Cowrie SSH/Telnet honeypot parser (agent side) — rec #3, the honeypot→CTI move ----
+        # No crowdsecurity/cowrie hub item exists (TALOS-e9h), so parse Cowrie's JSON here. The
+        # logship sidecar tails cowrie.json to stdout; the k8s acquisition tags it program: cowrie
+        # (helmrelease agent.acquisition below). cri-logs (s00) strips the CRI prefix into
+        # evt.Parsed.message (the JSON); this parser extracts source_ip + eventid so the
+        # honeypot/cowrie-activity scenario can fire and SHARE the signal to CAPI/community CTI.
+        # Sample event: {"eventid":"cowrie.session.connect","src_ip":"x.x.x.x","src_port":..,
+        #   "dst_port":2222,"session":"..","timestamp":"2026-..Z","message":".."}
+        s01-parse:
+          cowrie-logs.yaml: |
+            onsuccess: next_stage
+            # Only Cowrie stdout JSON (program set by the k8s acquisition; guard on a leading '{').
+            filter: "evt.Parsed.program == 'cowrie' && evt.Parsed.message startsWith '{'"
+            name: homelab/cowrie-logs
+            description: "Parse Cowrie SSH/Telnet honeypot JSON events → source_ip for CrowdSec"
+            # Belt-and-suspenders: drop pod-CIDR sources (kubelet tcpSocket liveness probe on :2222
+            # shows as cowrie.session.connect from 10.244.x — NOT an attacker). RFC1918 is already
+            # covered by homelab/whitelist (s02-enrich, 10.0.0.0/8), but whitelisting at parse time
+            # avoids even bucketing probe noise. Public attackers (post :22 exposure) are non-RFC1918
+            # → pass through → alert + CTI share. (coordinator item 2)
+            whitelist:
+              reason: "internal pod/probe traffic to the honeypot — not an attacker"
+              cidr:
+                - "10.244.0.0/16" # Cilium pod CIDR (kubelet probes, in-cluster health checks)
+            statics:
+              - meta: service
+                value: ssh
+              - meta: source_ip
+                expression: "JsonExtract(evt.Parsed.message, 'src_ip')"
+              - meta: cowrie_eventid
+                expression: "JsonExtract(evt.Parsed.message, 'eventid')"
+              - meta: log_type
+                expression: "'cowrie_' + JsonExtract(evt.Parsed.message, 'eventid')"
+              - target: evt.StrTime
+                expression: "JsonExtract(evt.Parsed.message, 'timestamp')"
         s02-enrich:
           homelab-whitelist.yaml: |
             name: homelab/whitelist
@@ -41,11 +76,17 @@ spec:
               reason: "trusted internal + LAN + CDN"
               ip:
                 - "127.0.0.1"
+                - "::1" # IPv6 loopback
               cidr:
                 # RFC1918 — pods/services (Cilium, 10.96.0.0/12 svc) + LAN
                 - "10.0.0.0/8"
                 - "172.16.0.0/12"
                 - "192.168.0.0/16"
+                # IPv6 internal — Cilium dual-stack pod/service ULA + link-local. WITHOUT these,
+                # k8s-audit scenarios ban internal IPv6 (observed: alerts #24/#25 banned
+                # fdad:3925:98eb:... via crowdsecurity/k8s-audit-api-server-bruteforce). (rec #1)
+                - "fd00::/8" # Unique Local Addresses (Cilium pod/service CIDR)
+                - "fe80::/10" # link-local
                 # Cloudflare edge (safety net; real client IP already resolves past CF via forwardedHeaders)
                 - "173.245.48.0/20"
                 - "103.21.244.0/22"
@@ -86,6 +127,32 @@ spec:
             type: scan
             service: http
             behavior: "http:scan"
+        # ---- Cowrie honeypot → HIGH-CONFIDENCE CTI signal (rec #3 / coordinator item 2) ----
+        # ANY interaction with the SSH/Telnet honeypot is malicious — there is no legitimate reason
+        # to touch the trap. Trigger (bans on first event) so a single connect flags the IP.
+        # remediation: true → the default_ip_remediation profile issues a ban that the TRAEFIK (and
+        # future Cloudflare) bouncer enforces for all OTHER services; the honeypot itself is reached
+        # via hostPort 2222/2223 (bypasses Traefik) so the ban never stops honeypot engagement — the
+        # attacker keeps interacting while being blocked everywhere else. share_custom: true (console.yaml
+        # below) forwards this custom-scenario alert to CAPI → contributes to the community blocklist/CTI.
+        # NOT excluded in simulation.yaml → it is a REAL, shareable, enforced signal (unlike the tarpit).
+        cowrie-activity.yaml: |
+          type: trigger
+          name: homelab/cowrie-activity
+          description: "IP interacted with the Cowrie SSH/Telnet honeypot — confirmed malicious"
+          filter: "evt.Meta.log_type startsWith 'cowrie_'"
+          groupby: "evt.Meta.source_ip"
+          blackhole: 1m
+          labels:
+            remediation: true
+            type: scan
+            service: ssh
+            behavior: "ssh:bruteforce"
+            classification:
+              - "attack.T1110" # MITRE ATT&CK: Brute Force
+            confidence: 3 # honeypot interaction = maximum confidence for CTI weighting
+            spoofable: 0 # TCP session established → source IP not spoofable
+            label: "SSH/Telnet honeypot interaction"
       # DETECT-ONLY for the tarpit: exclude it from enforcement so it ALERTS but never bans yet.
       # Delete this exclusion (and flip nothing else) to turn tarpit hits into real bans.
       simulation.yaml: |
@@ -127,6 +194,66 @@ spec:
           sslmode: require # CNPG serves TLS; encrypt without client-cert verification
           use_wal: true # sqlite-only knob; ignored for pgx (harmless) — silences the WAL warning
 
+      # ---- Console sharing options (LAPI-only, rec #5) — enable CONTEXT forwarding ----
+      # Overrides the chart-default console.yaml (was share_context: false). Forwarding context
+      # (crowdsecurity/bf_base + http_base contexts, already installed) gives the app.crowdsec.net
+      # Console per-alert CTI enrichment (AS, reputation, background-noise scoring). share_custom
+      # stays true so custom scenarios (cowrie/tarpit) reach CAPI; manual decisions stay private.
+      console.yaml: |
+        share_manual_decisions: false
+        share_custom: true
+        share_tainted: true
+        share_context: true
+
+      # ---- Decision profiles (LAPI-only, rec #7) — ESCALATING ban TTL + Discord notify ----
+      # Overrides the chart-default profiles.yaml. duration_expr makes repeat offenders sticky:
+      # 4h on the 1st decision, 8h on the 2nd, 12h on the 3rd, ... = (count+1)*4h. The `discord_default`
+      # notifier (config.notifications below) posts every ban to Discord (rec #6). on_success: break
+      # keeps one decision per alert. Cowrie/http/appsec bans all flow through default_ip_remediation.
+      profiles.yaml: |
+        name: default_ip_remediation
+        filters:
+          - Alert.Remediation == true && Alert.GetScope() == "Ip"
+        decisions:
+          - type: ban
+            duration: 4h
+        duration_expr: Sprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)
+        notifications:
+          - discord_default
+        on_success: break
+        ---
+        name: default_range_remediation
+        filters:
+          - Alert.Remediation == true && Alert.GetScope() == "Range"
+        decisions:
+          - type: ban
+            duration: 4h
+        duration_expr: Sprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)
+        notifications:
+          - discord_default
+        on_success: break
+
+      # ---- Notification plugins (LAPI-only, rec #6) — Discord via the built-in http plugin ----
+      # The engine image already ships notification-http at /usr/local/lib/crowdsec/plugins/. This
+      # config renders a Discord-compatible JSON body ({"content": ...}) and POSTs it to the webhook.
+      # The URL comes from ${DISCORD_WEBHOOK_URL} (injected into the LAPI pod from the crowdsec-discord
+      # secret — externalsecret.yaml). group_wait/group_threshold batch bursts so we don't get rate
+      # limited by Discord. Referenced by name `discord_default` in profiles.yaml above.
+      notifications:
+        discord.yaml: |
+          type: http
+          name: discord_default
+          log_level: info
+          format: |
+            {"content": "🛡️ **CrowdSec ban** ({{len .}} alert{{if gt (len .) 1}}s{{end}}):\n{{range . -}}{{$a := .}}{{range .Decisions -}}• `{{.Value}}` — {{$a.Scenario}} → {{.Type}} {{.Duration}}{{if $a.Source}} ({{$a.Source.Cn}}/{{$a.Source.AsName}}){{end}}\n{{end}}{{end}}"}
+          url: ${DISCORD_WEBHOOK_URL}
+          method: POST
+          headers:
+            Content-Type: application/json
+          # Batch bursts: collect up to group_threshold alerts or group_wait, whichever first.
+          group_wait: 15s
+          group_threshold: 10
+
     # ---- LAPI: Local API + decisions DB + Console enrollment + bouncer registration ----
     lapi:
       env:
@@ -150,6 +277,15 @@ spec:
           value: "talos-homelab"
         - name: ENROLL_TAGS
           value: "k8s talos traefik"
+        # Discord webhook for ban notifications (rec #6). ${DISCORD_WEBHOOK_URL} is referenced by
+        # config.notifications.discord.yaml above. optional:true → LAPI boots even before the
+        # crowdsec-discord ExternalSecret lands (externalsecret.yaml); notifier no-ops until present.
+        - name: DISCORD_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: crowdsec-discord
+              key: DISCORD_WEBHOOK_URL
+              optional: true
         # ---- Datastore: CloudNativePG Postgres (postgres.yaml, TALOS-pbn) ----
         # Replaces SQLite-on-local-path. The crowdsec entrypoint templates config.yaml's
         # db_config from these DB_* env vars. LAPI is now stateless → survives any reschedule
