@@ -1,0 +1,200 @@
+---
+# Authentik Blueprint: sister-repo apps — per-app forward_single SSO (TALOS-xgrl.14).
+#
+# These 8 apps live in SISTER repos (ArgoCD-deployed), but their Authentik
+# forward-auth wiring is owned HERE (Flux). Each becomes its OWN Application
+# (forward_single) → its own launcher tile:
+#
+#   talos-apps group  : Lobe Chat, SillyTavern, SearXNG, Catalyst UI, Dungeon Library
+#   talos-admin group : Dagster, Neo4j Browser, Media Explorer
+#
+# Access = the app's own group OR cluster-admin (two PolicyBindings,
+# policy_engine_mode: any). Both groups are defined in talos-private-blueprint.yaml
+# (cluster-admin/talos-admin/talos-apps live there) → referenced via !Find here,
+# matching the linkwarden/boomtime/litellm blueprints.
+#
+# forward_single apps route /outpost.goauthentik.io/* to authentik-server via the
+# shared HostRegexp outpost route in authentik/ingressroute.yaml (covers bare
+# *.talos00) — no per-app route needed. Each provider is ALSO unioned into the
+# embedded outpost, whose provider list is authoritative (REPLACE-not-merge) in
+# talos-private-blueprint.yaml → the 8 !Find entries must be added THERE.
+#
+# Mounted via chart-native blueprints.configMaps (helmrelease.yaml) as
+# /blueprints/mounted/cm-authentik-sister-apps-blueprint/sister-apps.yaml on the
+# worker. The operator must be a member of talos-apps/talos-admin (or cluster-admin,
+# which is OR'd in) to reach these tiles.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-sister-apps-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  sister-apps.yaml: |
+    version: 1
+    metadata:
+      name: sister-repo apps forward_single SSO
+      labels:
+        blueprints.goauthentik.io/description: "per-app forward_single applications for ArgoCD-deployed sister-repo apps (talos-apps + talos-admin)"
+    entries:
+      # ========== Lobe Chat (talos-apps) ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-lobe-chat
+        identifiers: {name: lobe-chat}
+        attrs:
+          name: lobe-chat
+          mode: forward_single
+          external_host: https://lobechat.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-lobe-chat, identifiers: {slug: lobe-chat}, attrs: {name: Lobe Chat, slug: lobe-chat, group: talos-apps, provider: !KeyOf p-lobe-chat, meta_launch_url: https://lobechat.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/lobe-chat.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-lobe-chat-own, identifiers: {target: !KeyOf a-lobe-chat, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-lobe-chat-ca, identifiers: {target: !KeyOf a-lobe-chat, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== SillyTavern (talos-apps) ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-sillytavern
+        identifiers: {name: sillytavern}
+        attrs:
+          name: sillytavern
+          mode: forward_single
+          external_host: https://sillytavern.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-sillytavern, identifiers: {slug: sillytavern}, attrs: {name: SillyTavern, slug: sillytavern, group: talos-apps, provider: !KeyOf p-sillytavern, meta_launch_url: https://sillytavern.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/sillytavern.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-sillytavern-own, identifiers: {target: !KeyOf a-sillytavern, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-sillytavern-ca, identifiers: {target: !KeyOf a-sillytavern, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== SearXNG (talos-apps) ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-searxng
+        identifiers: {name: searxng}
+        attrs:
+          name: searxng
+          mode: forward_single
+          external_host: https://searxng.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-searxng, identifiers: {slug: searxng}, attrs: {name: SearXNG, slug: searxng, group: talos-apps, provider: !KeyOf p-searxng, meta_launch_url: https://searxng.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/searxng.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-searxng-own, identifiers: {target: !KeyOf a-searxng, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-searxng-ca, identifiers: {target: !KeyOf a-searxng, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== Catalyst UI (talos-apps) ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-catalyst-ui
+        identifiers: {name: catalyst-ui}
+        attrs:
+          name: catalyst-ui
+          mode: forward_single
+          external_host: https://catalyst.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-catalyst-ui, identifiers: {slug: catalyst-ui}, attrs: {name: Catalyst UI, slug: catalyst-ui, group: talos-apps, provider: !KeyOf p-catalyst-ui, meta_launch_url: https://catalyst.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/storybook.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-catalyst-ui-own, identifiers: {target: !KeyOf a-catalyst-ui, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-catalyst-ui-ca, identifiers: {target: !KeyOf a-catalyst-ui, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== Dungeon Library (talos-apps) ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-dungeon-library
+        identifiers: {name: dungeon-library}
+        attrs:
+          name: dungeon-library
+          mode: forward_single
+          external_host: https://dungeon-library.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-dungeon-library, identifiers: {slug: dungeon-library}, attrs: {name: Dungeon Library, slug: dungeon-library, group: talos-apps, provider: !KeyOf p-dungeon-library, meta_launch_url: https://dungeon-library.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/bookstack.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-dungeon-library-own, identifiers: {target: !KeyOf a-dungeon-library, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-dungeon-library-ca, identifiers: {target: !KeyOf a-dungeon-library, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== Dagster (talos-admin) ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-dagster
+        identifiers: {name: dagster}
+        attrs:
+          name: dagster
+          mode: forward_single
+          external_host: https://dagster.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-dagster, identifiers: {slug: dagster}, attrs: {name: Dagster, slug: dagster, group: talos-admin, provider: !KeyOf p-dagster, meta_launch_url: https://dagster.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/dagster.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-dagster-own, identifiers: {target: !KeyOf a-dagster, group: !Find [authentik_core.group, [name, talos-admin]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-dagster-ca, identifiers: {target: !KeyOf a-dagster, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== Neo4j Browser (talos-admin) ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-neo4j-browser
+        identifiers: {name: neo4j-browser}
+        attrs:
+          name: neo4j-browser
+          mode: forward_single
+          external_host: https://neo4j.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-neo4j-browser, identifiers: {slug: neo4j-browser}, attrs: {name: Neo4j Browser, slug: neo4j-browser, group: talos-admin, provider: !KeyOf p-neo4j-browser, meta_launch_url: https://neo4j.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/neo4j.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-neo4j-browser-own, identifiers: {target: !KeyOf a-neo4j-browser, group: !Find [authentik_core.group, [name, talos-admin]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-neo4j-browser-ca, identifiers: {target: !KeyOf a-neo4j-browser, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== Media Explorer (talos-admin) ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-media-explorer
+        identifiers: {name: media-explorer}
+        attrs:
+          name: media-explorer
+          mode: forward_single
+          external_host: https://media-explorer.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-media-explorer, identifiers: {slug: media-explorer}, attrs: {name: Media Explorer, slug: media-explorer, group: talos-admin, provider: !KeyOf p-media-explorer, meta_launch_url: https://media-explorer.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/mediafire.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-media-explorer-own, identifiers: {target: !KeyOf a-media-explorer, group: !Find [authentik_core.group, [name, talos-admin]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-media-explorer-ca, identifiers: {target: !KeyOf a-media-explorer, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
