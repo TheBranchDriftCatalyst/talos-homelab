@@ -1,5 +1,6 @@
 ---
-# Local access (HTTP)
+# HTTPS + Authentik forward-auth SSO (TALOS-xgrl.14). Gated on the talos-home (or cluster-admin)
+# group. TLS: default TLSStore serves the *.talos00 wildcard via SNI.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -12,14 +13,39 @@ metadata:
     gethomepage.dev/description: "Self-hosted utility toolbox"
     gethomepage.dev/group: "Home & Tools"
     gethomepage.dev/icon: "omni-tools.png"
-    gethomepage.dev/href: "http://omnitools.talos00"
+    gethomepage.dev/href: "https://omnitools.talos00"
     gethomepage.dev/siteMonitor: "http://omnitools.home-automation.svc.cluster.local:80"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`omnitools.talos00`)
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: omnitools
+          namespace: home-automation
+          port: 80
+  tls: {}
+---
+# HTTP→HTTPS redirect for omnitools.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: omnitools-http
+  labels:
+    app: omnitools
 spec:
   entryPoints:
     - web
   routes:
     - kind: Rule
       match: Host(`omnitools.talos00`)
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: omnitools
           namespace: home-automation

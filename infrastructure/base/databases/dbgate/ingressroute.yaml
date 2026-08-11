@@ -11,14 +11,39 @@ metadata:
     gethomepage.dev/description: "Web database manager"
     gethomepage.dev/group: "Databases"
     gethomepage.dev/icon: "dbgate.png"
-    gethomepage.dev/href: "http://dbgate.talos00"
+    gethomepage.dev/href: "https://dbgate.talos00"
     gethomepage.dev/siteMonitor: "http://dbgate.databases.svc.cluster.local:3000"
+spec:
+  # HTTPS + Authentik forward-auth SSO (TALOS-xgrl.14). talos-admin / cluster-admin gated.
+  # TLS: default TLSStore serves the *.talos00 wildcard via SNI.
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`dbgate.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: dbgate
+          port: 3000
+  tls: {}
+---
+# HTTP→HTTPS redirect for dbgate.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: dbgate-http
+  namespace: databases
 spec:
   entryPoints:
     - web
   routes:
     - match: Host(`dbgate.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: dbgate
           port: 3000

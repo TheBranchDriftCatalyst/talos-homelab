@@ -89,7 +89,11 @@ spec:
   ports:
     - {name: http, port: 3000, targetPort: http}
 ---
-# LAN-only ingress: http://crowdsec.talos00 (requires the *.talos00 /etc/hosts entry).
+# LAN-only + Authentik forward-auth SSO: https://crowdsec.talos00 (TALOS-xgrl.14).
+# lan-only restricts to the LAN; the `authentik` forward-auth middleware then gates on the
+# talos-admin (or cluster-admin) group. TLS: default TLSStore serves the *.talos00 wildcard
+# via SNI. DOUBLE-LOGIN: crowdsec-web-ui has its OWN LAPI machine console login — SSO gates
+# the page, but the web-ui still presents its own login (inherent, no declarative suppression).
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -100,6 +104,29 @@ metadata:
     gethomepage.dev/name: "CrowdSec"
     gethomepage.dev/description: "IPS decisions, alerts + metrics (local, pre-Console)"
     gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/href: "https://crowdsec.talos00"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`crowdsec.talos00`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: crowdsec-web-ui
+          port: 3000
+  tls: {}
+---
+# HTTP→HTTPS redirect for crowdsec.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: crowdsec-web-ui-http
+  namespace: crowdsec
 spec:
   entryPoints:
     - web
@@ -107,7 +134,7 @@ spec:
     - match: Host(`crowdsec.talos00`)
       kind: Rule
       middlewares:
-        - name: lan-only
+        - name: redirect-https
           namespace: traefik
       services:
         - name: crowdsec-web-ui

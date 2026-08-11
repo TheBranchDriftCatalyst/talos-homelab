@@ -1,5 +1,11 @@
 ---
-# booksonic gethomepage identity + final Host/service route.
+# booksonic — HTTPS + Authentik forward-auth SSO on booksonic.talos00 (TALOS-xgrl.14).
+# High-priority /rest route (Subsonic mobile API) has NO auth middleware so Subsonic
+# clients (DSub, play:Sub, Substreamer) keep working via app auth; the default route
+# is gated by the `authentik` forward-auth middleware. Booksonic keeps its own Subsonic
+# user login (no External-auth env) → inherent double-login on the web UI, acceptable.
+# TLS: default TLSStore serves the *.talos00 wildcard via SNI. See booksonic-http for
+# the web→https redirect.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -10,12 +16,24 @@ metadata:
     gethomepage.dev/group: "Audiobooks"
     gethomepage.dev/weight: "12"
     gethomepage.dev/icon: "booksonic.png"
-    gethomepage.dev/href: "http://booksonic.${CLUSTER_DOMAIN}"
+    gethomepage.dev/href: "https://booksonic.${CLUSTER_DOMAIN}"
     gethomepage.dev/siteMonitor: "http://booksonic.media-experimental.svc.cluster.local:4040"
 spec:
+  entryPoints:
+    - websecure
   routes:
-    - match: Host(`booksonic.${CLUSTER_DOMAIN}`)
+    - match: Host(`booksonic.${CLUSTER_DOMAIN}`) && PathPrefix(`/rest`)
       kind: Rule
+      priority: 100
       services:
         - name: booksonic
           port: 4040
+    - match: Host(`booksonic.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: booksonic
+          port: 4040
+  tls: {}

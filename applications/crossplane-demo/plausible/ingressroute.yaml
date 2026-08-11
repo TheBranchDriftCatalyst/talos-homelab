@@ -1,9 +1,10 @@
 ---
-# Internal LAN-only ingress for the Plausible DASHBOARD (TALOS-4gg).
-# Reach the dashboard at http://plausible.talos00 (requires the *.talos00
-# /etc/hosts entry). The `lan-only` middleware (ns traefik) restricts access to
-# the LAN, mirroring applications/zipline/ingressroute.yaml. The admin UI never
-# faces the internet — only the tracking surface below is public.
+# Internal LAN-only + Authentik SSO ingress for the Plausible DASHBOARD (TALOS-4gg / TALOS-xgrl.14).
+# Reach the dashboard at https://plausible.talos00 (requires the *.talos00 /etc/hosts entry).
+# `lan-only` (ns traefik) restricts to the LAN; the `authentik` forward-auth middleware then gates
+# on talos-admin / cluster-admin. TLS: default TLSStore serves the *.talos00 wildcard via SNI.
+# ONLY this dashboard route is gated — the public tracking routes below stay anonymous. The admin
+# UI never faces the internet — only the tracking surface below is public.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -18,8 +19,33 @@ metadata:
     gethomepage.dev/description: "Privacy-friendly web analytics"
     gethomepage.dev/group: "Analytics"
     gethomepage.dev/icon: "plausible-analytics.png"
-    gethomepage.dev/href: "http://plausible.talos00"
+    gethomepage.dev/href: "https://plausible.talos00"
     gethomepage.dev/siteMonitor: "http://plausible.crossplane-demo.svc.cluster.local:8000"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`plausible.talos00`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: plausible
+          port: 8000
+  tls: {}
+---
+# HTTP→HTTPS redirect for the plausible.talos00 dashboard host.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: plausible-http
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/part-of: plausible
 spec:
   entryPoints:
     - web
@@ -27,7 +53,7 @@ spec:
     - match: Host(`plausible.talos00`)
       kind: Rule
       middlewares:
-        - name: lan-only
+        - name: redirect-https
           namespace: traefik
       services:
         - name: plausible

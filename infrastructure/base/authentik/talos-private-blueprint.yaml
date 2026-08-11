@@ -37,6 +37,9 @@ data:
       - {model: authentik_core.group, id: g-talos-gaming, identifiers: {name: talos-gaming}, attrs: {attributes: {description: "Gaming / remote-desktop."}}}
       - {model: authentik_core.group, id: g-talos-private, identifiers: {name: talos-private}, attrs: {attributes: {description: "Private media/arr apps."}}}
       - {model: authentik_core.group, id: g-talos-apps, identifiers: {name: talos-apps}, attrs: {attributes: {description: "General self-hosted apps."}}}
+      # talos-media is declared in arr-stack-blueprint.yaml (owns it; its apps bind via !KeyOf).
+      # media-experimental apps here reference it via !Find. talos-home is NEW (declared here). TALOS-xgrl.14
+      - {model: authentik_core.group, id: g-talos-home, identifiers: {name: talos-home}, attrs: {attributes: {description: "Home automation / tools."}}}
 
       # ========== KubeView — talos-admin ==========
       - model: authentik_providers_proxy.proxyprovider
@@ -94,7 +97,7 @@ data:
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
-      - {model: authentik_core.application, id: a-guacamole, identifiers: {slug: guacamole}, attrs: {name: Guacamole, slug: guacamole, group: talos-gaming, provider: !KeyOf p-guacamole, meta_launch_url: https://guacamole.priv.talos00, policy_engine_mode: any}}
+      - {model: authentik_core.application, id: a-guacamole, identifiers: {slug: guacamole}, attrs: {name: Guacamole, slug: guacamole, group: talos-gaming, provider: !KeyOf p-guacamole, meta_launch_url: https://guacamole.priv.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/apache-guacamole.png, policy_engine_mode: any}}
       - {model: authentik_policies.policybinding, id: b-guacamole-own, identifiers: {target: !KeyOf a-guacamole, group: !KeyOf g-talos-gaming, order: 0}, attrs: {enabled: true}}
       - {model: authentik_policies.policybinding, id: b-guacamole-ca, identifiers: {target: !KeyOf a-guacamole, group: !KeyOf g-cluster-admin, order: 1}, attrs: {enabled: true}}
 
@@ -114,7 +117,7 @@ data:
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
-      - {model: authentik_core.application, id: a-windows-vnc, identifiers: {slug: windows-vnc}, attrs: {name: Windows VNC, slug: windows-vnc, group: talos-gaming, provider: !KeyOf p-windows-vnc, meta_launch_url: https://windows-vnc.priv.talos00, policy_engine_mode: any}}
+      - {model: authentik_core.application, id: a-windows-vnc, identifiers: {slug: windows-vnc}, attrs: {name: Windows VNC, slug: windows-vnc, group: talos-gaming, provider: !KeyOf p-windows-vnc, meta_launch_url: https://windows-vnc.priv.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/microsoft-windows.png, policy_engine_mode: any}}
       - {model: authentik_policies.policybinding, id: b-windows-vnc-own, identifiers: {target: !KeyOf a-windows-vnc, group: !KeyOf g-talos-gaming, order: 0}, attrs: {enabled: true}}
       - {model: authentik_policies.policybinding, id: b-windows-vnc-ca, identifiers: {target: !KeyOf a-windows-vnc, group: !KeyOf g-cluster-admin, order: 1}, attrs: {enabled: true}}
 
@@ -134,7 +137,7 @@ data:
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
             - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
-      - {model: authentik_core.application, id: a-zipline, identifiers: {slug: zipline}, attrs: {name: Zipline, slug: zipline, group: talos-private, provider: !KeyOf p-zipline, meta_launch_url: https://zipline.priv.talos00, policy_engine_mode: any}}
+      - {model: authentik_core.application, id: a-zipline, identifiers: {slug: zipline}, attrs: {name: Zipline, slug: zipline, group: talos-private, provider: !KeyOf p-zipline, meta_launch_url: https://zipline.priv.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/zipline.png, policy_engine_mode: any}}
       - {model: authentik_policies.policybinding, id: b-zipline-own, identifiers: {target: !KeyOf a-zipline, group: !KeyOf g-talos-private, order: 0}, attrs: {enabled: true}}
       - {model: authentik_policies.policybinding, id: b-zipline-ca, identifiers: {target: !KeyOf a-zipline, group: !KeyOf g-cluster-admin, order: 1}, attrs: {enabled: true}}
 
@@ -177,3 +180,24 @@ data:
             - !Find [authentik_providers_proxy.proxyprovider, [name, pulsarr]]
             - !Find [authentik_providers_proxy.proxyprovider, [name, posterr]]
             - !Find [authentik_providers_proxy.proxyprovider, [name, posterizarr]]
+            # Wave 1 — infra-admin + home (TALOS-xgrl.14/.18)
+            - !Find [authentik_providers_proxy.proxyprovider, [name, crowdsec]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, goldilocks]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, kube-ops-view]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, hubble]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, dbgate]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, plausible]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, omnitools]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, frigate]]
+            # Wave 1 — media-experimental (TALOS-xgrl.14/.18)
+            - !Find [authentik_providers_proxy.proxyprovider, [name, booksonic]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, storyteller]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, libation]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, mylar3]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, bindery]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, chaptarr]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, librarr]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, livrarr]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, tdarr]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, metube]]
+            - !Find [authentik_providers_proxy.proxyprovider, [name, tubesync]]

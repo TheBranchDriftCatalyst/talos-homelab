@@ -1,5 +1,10 @@
 ---
-# libation gethomepage identity + final Host/service route.
+# libation — HTTPS + Authentik forward-auth SSO on libation.talos00 (TALOS-xgrl.14).
+# Single gated route (no API exclusion): Libation is a noVNC-wrapped desktop GUI with
+# NO login of its own → Authentik SSO is the ONLY gate, so no double-login. The
+# forward-auth middleware authenticates the initial HTTP handshake and then passes the
+# WebSocket upgrade straight through, so the noVNC console works after login.
+# TLS: default TLSStore serves the *.talos00 wildcard via SNI.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -10,12 +15,18 @@ metadata:
     gethomepage.dev/group: "Audiobooks"
     gethomepage.dev/weight: "14"
     gethomepage.dev/icon: "audible.png"
-    gethomepage.dev/href: "http://libation.${CLUSTER_DOMAIN}"
+    gethomepage.dev/href: "https://libation.${CLUSTER_DOMAIN}"
     gethomepage.dev/siteMonitor: "http://libation.media-experimental.svc.cluster.local:6080"
 spec:
+  entryPoints:
+    - websecure
   routes:
     - match: Host(`libation.${CLUSTER_DOMAIN}`)
       kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
       services:
         - name: libation
           port: 6080
+  tls: {}

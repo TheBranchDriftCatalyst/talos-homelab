@@ -11,14 +11,39 @@ metadata:
     gethomepage.dev/group: "Home & Tools"
     gethomepage.dev/weight: "12"
     gethomepage.dev/icon: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/kubernetes.png"
-    gethomepage.dev/href: "http://kube-ops-view.talos00"
+    gethomepage.dev/href: "https://kube-ops-view.talos00"
     gethomepage.dev/siteMonitor: "http://kube-ops-view.infra-control.svc.cluster.local:80"
+spec:
+  # HTTPS + Authentik forward-auth SSO (TALOS-xgrl.14). talos-admin / cluster-admin gated.
+  # TLS: default TLSStore serves the *.talos00 wildcard via SNI.
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`kube-ops-view.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: kube-ops-view
+          port: 80
+  tls: {}
+---
+# HTTP→HTTPS redirect for kube-ops-view.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kube-ops-view-http
+  namespace: infra-control
 spec:
   entryPoints:
     - web
   routes:
     - match: Host(`kube-ops-view.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: kube-ops-view
           port: 80

@@ -1,4 +1,9 @@
 ---
+# Tdarr — HTTPS + Authentik forward-auth SSO on tdarr.talos00 (TALOS-xgrl.14).
+# Single gated route: Tdarr's web UI has NO login of its own → Authentik SSO is the
+# ONLY gate, so no double-login. External transcode nodes talk to the server on :8266
+# (tdarr-external NodePort 30266) which is OFF this HTTP route, so gating :8265 does not
+# affect them. TLS: default TLSStore serves the *.talos00 wildcard via SNI.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -13,16 +18,39 @@ metadata:
     gethomepage.dev/group: "Media"
     gethomepage.dev/weight: "50"
     gethomepage.dev/icon: "tdarr.png"
-    gethomepage.dev/href: "http://tdarr.talos00"
+    gethomepage.dev/href: "https://tdarr.talos00"
     gethomepage.dev/siteMonitor: "http://tdarr-server.tdarr.svc.cluster.local:8265"
     gethomepage.dev/widget.type: "tdarr"
     gethomepage.dev/widget.url: "http://tdarr-server.tdarr.svc.cluster.local:8265"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`tdarr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: tdarr-server
+          port: 8265
+  tls: {}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: tdarr-http
+  labels:
+    app: tdarr-server
 spec:
   entryPoints:
     - web
   routes:
     - match: Host(`tdarr.talos00`)
       kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: tdarr-server
           port: 8265
