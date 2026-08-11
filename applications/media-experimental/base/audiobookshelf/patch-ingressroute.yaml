@@ -1,5 +1,11 @@
 ---
-# audiobookshelf gethomepage identity + final Host/service route.
+# audiobookshelf — HTTPS on audiobookshelf.talos00 for NATIVE OIDC (TALOS-xgrl.18).
+# NO authentik forward-auth middleware: Audiobookshelf does its own OIDC (server-side
+# discovery/token) so the mobile app + API keep working; access is gated at the IdP
+# (talos-media / cluster-admin PolicyBindings). Switched web→websecure so the OAuth
+# redirect_uri https://audiobookshelf.talos00/auth/openid/callback is served over TLS.
+# TLS: default TLSStore serves the *.talos00 wildcard via SNI. See ingressroute-http
+# for the web→https redirect.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -10,15 +16,18 @@ metadata:
     gethomepage.dev/group: "Audiobooks"
     gethomepage.dev/weight: "10"
     gethomepage.dev/icon: "audiobookshelf.png"
-    gethomepage.dev/href: "http://audiobookshelf.${CLUSTER_DOMAIN}"
+    gethomepage.dev/href: "https://audiobookshelf.${CLUSTER_DOMAIN}"
     gethomepage.dev/siteMonitor: "http://audiobookshelf.media-experimental.svc.cluster.local:80"
     gethomepage.dev/widget.type: "audiobookshelf"
     gethomepage.dev/widget.url: "http://audiobookshelf.media-experimental.svc.cluster.local:80"
     gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_AUDIOBOOKSHELF_KEY}}"
 spec:
+  entryPoints:
+    - websecure
   routes:
     - match: Host(`audiobookshelf.${CLUSTER_DOMAIN}`)
       kind: Rule
       services:
         - name: audiobookshelf
           port: 80
+  tls: {}

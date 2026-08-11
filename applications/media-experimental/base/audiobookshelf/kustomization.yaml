@@ -7,6 +7,7 @@ kind: Kustomization
 resources:
   - ../_instance
   - pvc-metadata.yaml
+  - ingressroute-http.yaml  # web→https redirect (native OIDC route is on websecure)
 
 labels:
   # App identity — stamped into metadata + selectors + pod template.
@@ -21,7 +22,7 @@ patches:
   - path: patch-deployment.yaml
     target: {kind: Deployment}
   - path: patch-ingressroute.yaml
-    target: {kind: IngressRoute}
+    target: {kind: IngressRoute, name: app-template}  # scope: NOT the -http redirect route
   # Rename template placeholders + set ports.
   - target: {kind: Deployment, name: app-template}
     patch: |-
