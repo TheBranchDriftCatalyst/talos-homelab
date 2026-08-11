@@ -1,0 +1,29 @@
+# Ad-hoc CANARY pod for the NFS-lifecycle DR test — NOT deployed by Flux (applied/deleted by
+# the test only). A throwaway busybox that mounts the canary PVC at /data so the test can write
+# a sentinel file (phase 1) and later assert the recreated same-name PVC is empty (phase 2).
+# Zero blast radius: it only ever touches /data on the nfs-dr-canary PVC.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfs-dr-canary
+  namespace: nfs-dr-canary
+  labels:
+    app: nfs-dr-canary
+    storage.io/component: dr-canary
+spec:
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 3
+  containers:
+    - name: probe
+      image: busybox:1.36
+      command: ["/bin/sh", "-c", "sleep 100000"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      resources:
+        requests: {cpu: 10m, memory: 16Mi}
+        limits: {memory: 32Mi}
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: nfs-dr-canary-pvc
