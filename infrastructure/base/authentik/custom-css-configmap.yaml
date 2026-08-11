@@ -1,7 +1,37 @@
 ---
 # yamllint disable rule:line-length
-# Catalyst Theme Custom CSS for Authentik
-# Based on catalyst-ui cyberpunk/synthwave theme
+# ============================================================================
+# CATALYST — Authentik full custom theme  (cyberpunk-corporate reskin)
+# ============================================================================
+# Goal: a visitor should NEVER guess this is Authentik. This sheet re-skins
+# every Authentik-rendered surface (login flow, MFA/enrollment/recovery/consent
+# wizards, application launcher, user-settings, error pages, admin chrome) into
+# a cohesive bespoke "Catalyst" product: neon magenta / cyan / indigo on deep
+# dark, tasteful glow (not garish), glassmorphism cards, gradient-glow borders.
+#
+# HOW IT LOADS (important):
+#   Mounted as ConfigMap authentik-custom-css and served by authentik as its
+#   global custom CSS. Authentik's UI is a set of Lit web components with
+#   Shadow DOM; authentik copies this sheet INTO each shadow root, which is why
+#   plain PatternFly selectors (.pf-c-login__main, .pf-c-card, ...) reach inside
+#   and work. For elements NOT in the light DOM, use ::part() (authentik exposes
+#   a few, e.g. ak-flow-executor::part(locale-select),
+#   ak-library::part(card-header-icon)).
+#   Refs: https://docs.goauthentik.io/brands/custom-css/
+#         https://docs.goauthentik.io/brands/    (branding_* fields)
+#         https://github.com/goauthentik/authentik/discussions/4831 (community CSS)
+#
+# CSP / SELF-CONTAINED: strict CSP — NO external fetches. We DO NOT @import
+#   Google Fonts (the previous sheet did; it is blocked under CSP anyway).
+#   Typography uses a system font stack that prefers Orbitron/Rajdhani IF the
+#   viewer has them locally, then falls back gracefully. The flow background is
+#   drawn with pure CSS gradients (no image, no data URI needed). To ship a true
+#   custom webfont CSP-safely you must embed a base64 woff2 @font-face here
+#   (~40-80 KB); left out on purpose to keep the ConfigMap lean — operator call.
+#
+# MAINTENANCE: colors live in the :root token block; surfaces below only
+#   reference tokens. Change the palette once, everything follows.
+# ============================================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,201 +39,385 @@ metadata:
   namespace: authentik
 data:
   custom.css: |
-    /* Catalyst Theme - Cyberpunk/Synthwave for Authentik */
-
-    /* Import Catalyst fonts */
-    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700&family=Rajdhani:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap');
-
+    /* =====================================================================
+       0. DESIGN TOKENS — the single source of truth for the palette
+       ===================================================================== */
     :root {
-      /* Catalyst Dark Theme Colors */
-      --ak-accent: #00fcd6 !important;
-      --ak-dark-background: #0a0a0f !important;
-      --ak-dark-background-light: #16161d !important;
-      --ak-dark-background-light-ish: #1e1e24 !important;
+      /* Core Catalyst palette (cyberpunk corporate) */
+      --cat-bg:          #08080c;  /* deep near-black page base            */
+      --cat-bg-2:        #0d0d16;  /* secondary dark (chrome)              */
+      --cat-surface:     #14141f;  /* card / panel                         */
+      --cat-surface-2:   #1b1b2b;  /* raised surface, inputs               */
+      --cat-border:      #2a2140;  /* indigo-tinted hairline               */
+      --cat-border-2:    #3a2f57;  /* stronger border                      */
+      --cat-text:        #e9e7f3;  /* primary text                         */
+      --cat-muted:       #a6a2bf;  /* secondary text                       */
+      --cat-magenta:     #ff2e97;  /* primary neon (Catalyst signature)    */
+      --cat-pink:        #ff6ec7;
+      --cat-purple:      #b14bff;  /* mid gradient                         */
+      --cat-indigo:      #7c4dff;
+      --cat-cyan:        #00e5ff;  /* secondary neon                       */
+      --cat-teal:        #21e6c1;  /* success                              */
+      --cat-danger:      #ff2975;
+      /* Signature gradient — used on borders, wordmark accents, buttons */
+      --cat-grad: linear-gradient(135deg, #ff2e97 0%, #b14bff 50%, #00e5ff 100%);
+      --cat-grad-soft: linear-gradient(135deg, rgba(255,46,151,.9), rgba(0,229,255,.9));
+      --cat-glow-magenta: 0 0 24px rgba(255,46,151,.35);
+      --cat-glow-cyan:    0 0 24px rgba(0,229,255,.30);
 
-      /* Extended Catalyst palette */
-      --catalyst-primary: #00fcd6;
-      --catalyst-secondary: #c026d3;
-      --catalyst-background: #0a0a0f;
-      --catalyst-card: #16161d;
-      --catalyst-text: #e4e4e7;
-      --catalyst-muted: #a1a1aa;
-      --catalyst-border: #27272a;
-      --catalyst-destructive: #ff2975;
-      --catalyst-neon-pink: #ff6ec7;
-      --catalyst-neon-purple: #c026d3;
-      --catalyst-neon-blue: #00d4ff;
+      /* Typography (CSP-safe: no external fonts; prefer-if-present stacks) */
+      --cat-font-display: 'Orbitron','Rajdhani',ui-sans-serif,system-ui,'Segoe UI',Roboto,sans-serif;
+      --cat-font-body:    'Rajdhani',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
+      --cat-font-mono:    ui-monospace,'JetBrains Mono','Cascadia Code','SF Mono','Space Mono',Menlo,monospace;
+
+      /* ---- Re-map authentik / PatternFly design tokens to Catalyst ---- */
+      --ak-accent: var(--cat-magenta) !important;
+      --ak-dark-background:          var(--cat-bg) !important;
+      --ak-dark-background-light:    var(--cat-surface) !important;
+      --ak-dark-background-lighter:  var(--cat-surface-2) !important;
+      --ak-global--Color--100:            var(--cat-text) !important;
+      --ak-global--BackgroundColor--100:  var(--cat-bg) !important;
+      /* Kill the stock login background image + its darkening filter */
+      --ak-flow-background: none !important;
+
+      /* PatternFly globals (primary accent, links, focus) */
+      --pf-global--primary-color--100: var(--cat-magenta) !important;
+      --pf-global--primary-color--200: var(--cat-purple) !important;
+      --pf-global--primary-color--300: var(--cat-magenta) !important;
+      --pf-global--primary-color--400: var(--cat-cyan) !important;
+      --pf-global--link--Color:        var(--cat-cyan) !important;
+      --pf-global--link--Color--hover: var(--cat-pink) !important;
+      --pf-global--danger-color--100:  var(--cat-danger) !important;
+      --pf-global--success-color--100: var(--cat-teal) !important;
+      --pf-global--BorderColor--100:   var(--cat-border) !important;
+      --pf-global--BackgroundColor--100:      var(--cat-surface) !important;
+      --pf-global--BackgroundColor--dark-100: var(--cat-bg) !important;
+      --pf-global--BackgroundColor--dark-200: var(--cat-bg-2) !important;
     }
 
-    /* Background */
-    body, .pf-c-page, .pf-c-background-image {
-      background: var(--catalyst-background) !important;
+    /* =====================================================================
+       1. PAGE + FLOW BACKGROUND  (surface: every flow + the launcher shell)
+          Controls: body / .pf-c-page / .pf-c-background-image
+          The stock authentik flow_background.jpg is removed at the brand
+          level (branding_default_flow_background = transparent pixel); here we
+          paint the real Catalyst backdrop: layered radial neon glows + a faint
+          cyber grid, masked to a vignette.
+       ===================================================================== */
+    body,
+    .pf-c-page,
+    .pf-c-login {
+      background: var(--cat-bg) !important;
+      color: var(--cat-text) !important;
+      font-family: var(--cat-font-body) !important;
     }
 
-    /* Cards and surfaces */
-    .pf-c-card, .pf-c-login__main, .ak-stage {
-      background: var(--catalyst-card) !important;
-      border: 1px solid var(--catalyst-border) !important;
-      border-radius: 8px !important;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4),
-                  0 0 20px rgba(0, 252, 214, 0.1) !important;
+    .pf-c-background-image {
+      /* neutralise authentik's blur/darken filter over the (now empty) image */
+      --pf-c-background-image--Filter: none !important;
+      --pf-c-background-image--BackgroundColor: var(--cat-bg) !important;
+      background-color: var(--cat-bg) !important;
+      background-image:
+        radial-gradient(1200px 620px at 12% -12%, rgba(255,46,151,.20), transparent 60%),
+        radial-gradient(1050px 720px at 104% 112%, rgba(0,229,255,.16), transparent 55%),
+        radial-gradient(760px 520px at 50% 46%, rgba(124,77,255,.12), transparent 62%),
+        linear-gradient(180deg, var(--cat-bg), var(--cat-bg)) !important;
+      background-repeat: no-repeat !important;
+      background-size: cover, cover, cover, cover !important;
+    }
+    /* faint animated-free cyber grid, vignetted so edges fade out */
+    .pf-c-background-image::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(124,77,255,.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(124,77,255,.06) 1px, transparent 1px);
+      background-size: 46px 46px;
+      -webkit-mask-image: radial-gradient(circle at 50% 42%, #000 28%, transparent 76%);
+              mask-image: radial-gradient(circle at 50% 42%, #000 28%, transparent 76%);
     }
 
-    /* Typography - Headings */
+    /* =====================================================================
+       2. LOGIN / FLOW CARD  (surface: login, MFA, enrollment, recovery,
+          consent — they all render inside .pf-c-login__main / .ak-stage)
+          Glassmorphism panel + animated gradient-glow border ring.
+       ===================================================================== */
+    .pf-c-login__main,
+    .ak-stage {
+      background: linear-gradient(180deg, rgba(20,20,31,.94), rgba(13,13,22,.94)) !important;
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+              backdrop-filter: blur(18px) saturate(140%);
+      border: 1px solid var(--cat-border) !important;
+      border-radius: 16px !important;
+      box-shadow:
+        0 0 0 1px rgba(255,46,151,.18),
+        0 24px 70px rgba(0,0,0,.62),
+        0 0 46px rgba(124,77,255,.16) !important;
+      position: relative;
+      overflow: visible;
+    }
+    /* gradient border ring drawn via mask trick (self-contained, no image) */
+    .pf-c-login__main::before {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: 17px;
+      padding: 1px;
+      background: var(--cat-grad);
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+              mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      opacity: .65;
+      pointer-events: none;
+    }
+    /* card header band (holds the Catalyst logo) */
+    .pf-c-login__main-header,
+    .pf-c-login__header {
+      background: transparent !important;
+    }
+    /* Catalyst logo sizing on the card + masthead (.pf-c-brand = brand slot) */
+    .pf-c-brand,
+    .pf-c-login__main-header img,
+    img.pf-c-brand {
+      max-height: 92px !important;
+      height: auto !important;
+      filter: drop-shadow(0 0 14px rgba(255,46,151,.35));
+    }
+
+    /* =====================================================================
+       3. TYPOGRAPHY
+       ===================================================================== */
     h1, h2, h3, h4, h5, h6,
     .pf-c-title,
-    .pf-c-login__main-header-title {
-      font-family: 'Orbitron', sans-serif !important;
+    .pf-c-login__main-header-title,
+    .pf-c-login__main-header .pf-c-title {
+      font-family: var(--cat-font-display) !important;
       font-weight: 700 !important;
-      letter-spacing: 0.05em !important;
-      text-transform: uppercase !important;
-      color: var(--catalyst-primary) !important;
-      text-shadow: 0 0 10px rgba(0, 252, 214, 0.3) !important;
+      letter-spacing: 0.045em !important;
+      color: var(--cat-text) !important;
+      text-shadow: 0 0 14px rgba(255,46,151,.25);
     }
-
-    /* Typography - Body */
-    body, p, span, div, label,
-    .pf-c-form__label-text {
-      font-family: 'Rajdhani', sans-serif !important;
-      color: var(--catalyst-text) !important;
+    /* the flow's primary heading gets the neon-gradient text treatment */
+    .pf-c-login__main-header-title,
+    .ak-stage h1 {
+      background: var(--cat-grad);
+      -webkit-background-clip: text;
+              background-clip: text;
+      -webkit-text-fill-color: transparent;
+      color: transparent !important;
+      text-transform: uppercase;
     }
-
-    /* Typography - Code */
-    code, pre, .pf-c-code-block {
-      font-family: 'Space Mono', monospace !important;
+    p, span, div, label, li,
+    .pf-c-form__label-text,
+    .pf-c-login__main-footer-links,
+    .pf-c-content {
+      font-family: var(--cat-font-body) !important;
+      color: var(--cat-text);
     }
+    small, .pf-c-form__helper-text, .pf-u-color-200 { color: var(--cat-muted) !important; }
+    code, pre, .pf-c-code-block, kbd { font-family: var(--cat-font-mono) !important; }
 
-    /* Primary buttons */
+    /* =====================================================================
+       4. BUTTONS
+       ===================================================================== */
     .pf-c-button.pf-m-primary,
     .pf-c-button--primary {
-      background: linear-gradient(135deg, var(--catalyst-primary), var(--catalyst-neon-blue)) !important;
+      background: var(--cat-grad) !important;
       border: none !important;
-      color: var(--catalyst-background) !important;
-      font-family: 'Orbitron', sans-serif !important;
-      font-weight: 600 !important;
+      color: #0a0a0f !important;
+      font-family: var(--cat-font-display) !important;
+      font-weight: 700 !important;
       text-transform: uppercase !important;
-      letter-spacing: 0.1em !important;
-      transition: all 0.3s ease !important;
-      box-shadow: 0 0 15px rgba(0, 252, 214, 0.3) !important;
+      letter-spacing: 0.09em !important;
+      border-radius: 9px !important;
+      box-shadow: var(--cat-glow-magenta) !important;
+      transition: transform .18s ease, box-shadow .18s ease, filter .18s ease !important;
     }
-
     .pf-c-button.pf-m-primary:hover,
     .pf-c-button--primary:hover {
-      box-shadow: 0 0 25px rgba(0, 252, 214, 0.5),
-                  0 0 50px rgba(0, 252, 214, 0.2) !important;
+      filter: brightness(1.08);
+      box-shadow: 0 0 30px rgba(255,46,151,.55), 0 0 60px rgba(0,229,255,.18) !important;
       transform: translateY(-2px) !important;
     }
-
-    /* Secondary buttons */
     .pf-c-button.pf-m-secondary {
       background: transparent !important;
-      border: 2px solid var(--catalyst-secondary) !important;
-      color: var(--catalyst-secondary) !important;
-      font-family: 'Orbitron', sans-serif !important;
-      transition: all 0.3s ease !important;
+      border: 1.5px solid var(--cat-cyan) !important;
+      color: var(--cat-cyan) !important;
+      font-family: var(--cat-font-display) !important;
+      letter-spacing: 0.06em !important;
+      border-radius: 9px !important;
+      transition: all .2s ease !important;
     }
-
     .pf-c-button.pf-m-secondary:hover {
-      background: var(--catalyst-secondary) !important;
-      color: white !important;
-      box-shadow: 0 0 20px rgba(192, 38, 211, 0.4) !important;
+      background: rgba(0,229,255,.12) !important;
+      box-shadow: var(--cat-glow-cyan) !important;
     }
+    .pf-c-button.pf-m-link { color: var(--cat-cyan) !important; }
+    .pf-c-button.pf-m-link:hover { color: var(--cat-pink) !important; }
 
-    /* Form inputs */
+    /* =====================================================================
+       5. FORM CONTROLS  (identification, password, recovery, enrollment)
+       ===================================================================== */
     .pf-c-form-control,
     .pf-c-text-input-group__text-input,
-    input[type="text"],
-    input[type="password"],
-    input[type="email"] {
-      background: var(--catalyst-card) !important;
-      border: 1px solid var(--catalyst-border) !important;
-      color: var(--catalyst-text) !important;
-      font-family: 'Rajdhani', sans-serif !important;
-      border-radius: 4px !important;
-      transition: all 0.2s ease !important;
+    input[type="text"], input[type="password"],
+    input[type="email"], input[type="number"], select, textarea {
+      background: var(--cat-surface-2) !important;
+      border: 1px solid var(--cat-border) !important;
+      color: var(--cat-text) !important;
+      font-family: var(--cat-font-body) !important;
+      border-radius: 8px !important;
+      transition: border-color .18s ease, box-shadow .18s ease !important;
     }
-
-    .pf-c-form-control:focus,
-    input:focus {
-      border-color: var(--catalyst-primary) !important;
-      box-shadow: 0 0 0 3px rgba(0, 252, 214, 0.2) !important;
+    .pf-c-form-control:focus, input:focus, select:focus, textarea:focus {
+      border-color: var(--cat-magenta) !important;
+      box-shadow: 0 0 0 3px rgba(255,46,151,.22) !important;
       outline: none !important;
     }
-
-    /* Links */
-    a, .pf-c-button.pf-m-link {
-      color: var(--catalyst-primary) !important;
-      transition: all 0.2s ease !important;
+    .pf-c-form-control::placeholder { color: var(--cat-muted) !important; }
+    *:focus-visible { outline: 2px solid var(--cat-cyan) !important; outline-offset: 2px !important; }
+    /* checkbox / radio / toggle accents */
+    .pf-c-check__input, .pf-c-radio__input, input[type="checkbox"], input[type="radio"] {
+      accent-color: var(--cat-magenta) !important;
     }
 
-    a:hover {
-      color: var(--catalyst-neon-blue) !important;
-      text-shadow: 0 0 8px rgba(0, 252, 214, 0.4) !important;
+    /* links */
+    a { color: var(--cat-cyan) !important; transition: color .18s ease, text-shadow .18s ease !important; }
+    a:hover { color: var(--cat-pink) !important; text-shadow: 0 0 10px rgba(255,110,199,.5) !important; }
+
+    /* =====================================================================
+       6. ALERTS / MESSAGES  (errors on denied/invalid, success on recovery)
+       ===================================================================== */
+    .pf-c-alert.pf-m-danger,
+    .pf-c-alert.pf-m-warning {
+      background: rgba(255,41,117,.10) !important;
+      border: 1px solid var(--cat-danger) !important;
+      border-radius: 10px !important;
+      color: var(--cat-text) !important;
+    }
+    .pf-c-alert.pf-m-success,
+    .pf-c-alert.pf-m-info {
+      background: rgba(0,229,255,.09) !important;
+      border: 1px solid var(--cat-cyan) !important;
+      border-radius: 10px !important;
+      color: var(--cat-text) !important;
     }
 
-    /* Alerts and notifications */
-    .pf-c-alert.pf-m-danger {
-      background: rgba(255, 41, 117, 0.1) !important;
-      border-color: var(--catalyst-destructive) !important;
+    /* =====================================================================
+       7. DE-BRAND  (remove every "this is Authentik" cue)
+       ---------------------------------------------------------------------
+       - .pf-c-login__footer holds the flow footer band incl. any
+         "Powered by authentik" / version link → hidden.
+       - We keep the locale selector visible (accessibility). To hide it too,
+         uncomment the ::part rule below.
+       NOTE: The flow title text ("Welcome to authentik!", stage titles) is
+       DATA, not CSS — set per-flow/stage in the flow's Title field, or via the
+       brand branding_title. Flag: the default-authentication-flow title still
+       needs a one-time edit in the flow object to fully de-brand the wording.
+       ===================================================================== */
+    .pf-c-login__footer,
+    .pf-c-login__main-footer-band {
+      display: none !important;
     }
-
-    .pf-c-alert.pf-m-success {
-      background: rgba(0, 252, 214, 0.1) !important;
-      border-color: var(--catalyst-primary) !important;
+    /* kept separate: :has() must not invalidate the footer-hide rule above on
+       engines without :has support. Hides any stray goauthentik footer link. */
+    .pf-c-login__main-footer-links-item:has(a[href*="goauthentik"]) {
+      display: none !important;
     }
+    /* ak-flow-executor::part(locale-select) { display: none !important; } */
 
-    /* Navigation and sidebar */
-    .pf-c-nav__link,
-    .pf-c-page__sidebar {
-      background: var(--catalyst-background) !important;
+    /* =====================================================================
+       8. APPLICATION LAUNCHER  (surface: ak-library / My applications)
+          Branded tiles with hover glow + group headers.
+       ===================================================================== */
+    .pf-c-card {
+      background: rgba(20,20,31,.72) !important;
+      -webkit-backdrop-filter: blur(14px);
+              backdrop-filter: blur(14px);
+      border: 1px solid var(--cat-border) !important;
+      border-radius: 14px !important;
+      transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease !important;
     }
-
-    .pf-c-nav__link.pf-m-current,
-    .pf-c-nav__link:hover {
-      background: var(--catalyst-card) !important;
-      color: var(--catalyst-primary) !important;
-      border-left: 3px solid var(--catalyst-primary) !important;
+    .pf-c-card:hover {
+      border-color: var(--cat-magenta) !important;
+      box-shadow: 0 0 26px rgba(255,46,151,.30), 0 10px 34px rgba(0,0,0,.5) !important;
+      transform: translateY(-4px) !important;
     }
+    /* app icon inside each launcher tile (exposed part) */
+    ak-library::part(card-header-icon) {
+      border-radius: 10px;
+      filter: drop-shadow(0 0 8px rgba(0,229,255,.25));
+    }
+    /* group headers in the launcher */
+    ak-library .pf-c-content h1,
+    ak-library .pf-c-content h2,
+    .pf-c-expandable-section__toggle-text,
+    .pf-c-expandable-section__toggle {
+      font-family: var(--cat-font-display) !important;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--cat-cyan) !important;
+    }
+    .pf-c-expandable-section, ak-expand { background: transparent !important; }
 
-    /* Header */
+    /* =====================================================================
+       9. ADMIN / USER INTERFACE CHROME  (masthead, sidebar, page header,
+          user-settings pages) — carry the Catalyst brand across the app.
+       ===================================================================== */
     .pf-c-page__header,
     .pf-c-masthead {
-      background: var(--catalyst-card) !important;
-      border-bottom: 1px solid var(--catalyst-border) !important;
+      background: linear-gradient(90deg, var(--cat-bg-2), var(--cat-surface)) !important;
+      border-bottom: 1px solid var(--cat-border) !important;
+      box-shadow: 0 1px 0 rgba(255,46,151,.18);
     }
-
-    /* Checkbox and radio customization */
-    .pf-c-check__input:checked,
-    .pf-c-radio__input:checked {
-      accent-color: var(--catalyst-primary) !important;
+    .pf-c-page__sidebar,
+    .pf-c-nav {
+      background: var(--cat-bg-2) !important;
+      border-right: 1px solid var(--cat-border) !important;
     }
-
-    /* Flow executor specific */
-    .ak-flow-executor {
-      background: var(--catalyst-background) !important;
+    .pf-c-nav__link { color: var(--cat-muted) !important; border-radius: 8px; }
+    .pf-c-nav__link:hover {
+      color: var(--cat-text) !important;
+      background: rgba(124,77,255,.12) !important;
     }
-
-    /* Glow effect on focus for form elements */
-    *:focus-visible {
-      outline: 2px solid var(--catalyst-primary) !important;
-      outline-offset: 2px !important;
+    .pf-c-nav__link.pf-m-current,
+    .pf-c-nav__item.pf-m-current > .pf-c-nav__link {
+      color: var(--cat-magenta) !important;
+      background: rgba(255,46,151,.10) !important;
+      border-left: 3px solid var(--cat-magenta) !important;
     }
+    /* generic content surfaces (tables, panels, tabs) on admin/user pages */
+    .pf-c-page__main-section,
+    .pf-c-tabs__link { color: var(--cat-text); }
+    .pf-c-tabs__link.pf-m-current { color: var(--cat-cyan) !important; }
+    .ak-flow-executor { background: transparent !important; }
 
-    /* Scrollbar styling */
-    ::-webkit-scrollbar {
-      width: 8px;
-      height: 8px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: var(--catalyst-background);
-    }
-
+    /* =====================================================================
+       10. SCROLLBARS
+       ===================================================================== */
+    ::-webkit-scrollbar { width: 9px; height: 9px; }
+    ::-webkit-scrollbar-track { background: var(--cat-bg); }
     ::-webkit-scrollbar-thumb {
-      background: var(--catalyst-border);
-      border-radius: 4px;
+      background: linear-gradient(var(--cat-purple), var(--cat-magenta));
+      border-radius: 6px;
     }
+    ::-webkit-scrollbar-thumb:hover { background: var(--cat-magenta); }
+    * { scrollbar-color: var(--cat-purple) var(--cat-bg); scrollbar-width: thin; }
 
-    ::-webkit-scrollbar-thumb:hover {
-      background: var(--catalyst-muted);
+    /* =====================================================================
+       11. LIGHT THEME  — Catalyst is dark-first by design. When a viewer's
+           authentik theme is light we intentionally KEEP the dark Catalyst
+           surfaces (forced above) so the product identity stays consistent and
+           never falls back to authentik's stock light UI. This block only
+           re-asserts text contrast for any stray light-theme container.
+       ===================================================================== */
+    @media (prefers-color-scheme: light) {
+      body, .pf-c-page, .pf-c-login,
+      .pf-c-page__main-section, .pf-c-content {
+        background-color: var(--cat-bg) !important;
+        color: var(--cat-text) !important;
+      }
     }
+    /* End Catalyst theme */
