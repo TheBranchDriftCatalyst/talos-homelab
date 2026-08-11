@@ -42,6 +42,13 @@ tasks:
           echo "✅ already trusted — nothing to do."
           exit 0
         fi
+        if [ ! -t 0 ]; then
+          echo "⚠ sudo needs an interactive terminal (password / Touch ID)."
+          echo "  Run 'task trust-cert' in Terminal.app/iTerm — or, since the CA is already at"
+          echo "  {{.CA_FILE}}, run this one line there:"
+          echo "  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain {{.CA_FILE}}"
+          exit 1
+        fi
         echo "→ adding to the System keychain as a trusted root (sudo / Touch ID) …"
         sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "{{.CA_FILE}}"
         echo "✅ homelab CA trusted. Fully quit + reopen Chrome/Safari → *.talos00 / *.priv.talos00 get the padlock."
