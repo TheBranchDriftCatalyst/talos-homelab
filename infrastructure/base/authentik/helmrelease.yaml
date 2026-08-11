@@ -75,6 +75,7 @@ spec:
         - authentik-forgejo-blueprint
         - authentik-minio-blueprint
         - authentik-linkwarden-blueprint
+        - authentik-immich-blueprint
         - authentik-talos-private-blueprint
         - authentik-catalyst-brand-blueprint
         # Owned by the talos-private repo (ArgoCD creates the CM in ns authentik); mounted
@@ -201,6 +202,16 @@ spec:
           valueFrom:
             secretKeyRef:
               name: authentik-linkwarden-oidc
+              key: client-secret
+              optional: true
+        # !Env source for immich-blueprint.yaml (native OIDC, TALOS-xgrl.14). optional:true —
+        # worker starts even before authentik-immich-oidc exists (before the 1Password
+        # immich.oidc-client-secret field is provisioned), so this blueprint can never
+        # CrashLoop the worker. Restart authentik-worker after the 1Password field lands.
+        - name: IMMICH_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: authentik-immich-oidc
               key: client-secret
               optional: true
       # Blueprints are delivered to the worker via the chart-native
