@@ -49,20 +49,91 @@ data:
           branding_title: "Catalyst"
           branding_logo: /static/dist/catalyst-brand-logo.svg
           branding_favicon: /static/dist/catalyst-brand-favicon.svg
-          # DE-BRAND: replace Authentik's stock flow background image
-          # (/static/dist/assets/images/flow_background.jpg) at the source with a
-          # transparent 1x1 pixel. The real Catalyst backdrop (radial neon glow +
-          # cyber grid) is painted in custom.css on .pf-c-background-image, so the
-          # flow executor never references an Authentik-shipped asset.
-          # NOTE: branding_default_flow_background validates as a FILENAME, not a data URI
-          # (a data URI fails the whole brand blueprint). Left unset — the stock flow background
-          # is hidden/overpainted by the Catalyst backdrop in custom.css. (TALOS-4o0k)
-          # Per-brand CSS overlay is unset — the global custom.css ConfigMap
-          # (authentik-custom-css) paints the full Catalyst cyberpunk theme across
-          # all brands. Uncomment branding_custom_css to add catalyst-only
-          # overrides on top of the global sheet.
-          # branding_custom_css: |
-          #   :root { --ak-accent: #ff2e97 !important; }
+          # NOTE: branding_default_flow_background is NOT set here — it validates as a
+          # FILENAME (a data URI or full URL fails the whole brand blueprint). The stock
+          # flow background is instead overpainted by custom.css (.pf-c-background-image),
+          # and the rotating Catalyst backgrounds are wired via the --ak-flow-background
+          # CSS var / .pf-c-background-image in custom.css. (TALOS-4o0k)
+          # ---------------------------------------------------------------
+          # branding_custom_css: SHADOW-DOM overrides.
+          # The globally-mounted /web/dist/custom.css (authentik-custom-css
+          # ConfigMap) only reaches the LIGHT DOM (page background, .pf-c-login
+          # wrapper, brand logo) — which is why the card/background/logo themed
+          # correctly. The primary button and the "Powered by authentik" footer
+          # live INSIDE the flow stage's web-component shadow roots, which that
+          # sheet cannot reach. Authentik ADOPTS this per-brand custom CSS into
+          # each component's shadow root, so the selectors below DO reach them.
+          # CSS custom properties also inherit across the shadow boundary.
+          # Refs: docs.goauthentik.io/brands/custom-css ; gh issue #20275.
+          # ---------------------------------------------------------------
+          branding_custom_css: |
+            /* Recolor the primary "Log in" button. Custom properties pierce the
+               shadow boundary; we set PF4 + PF5 (+ PF6 best-effort) names so the
+               button turns Catalyst-magenta regardless of the PatternFly version
+               authentik ships. These are the SOLID fallback. */
+            :root {
+              --pf-global--primary-color--100: #ff2e97;
+              --pf-global--primary-color--200: #b14bff;
+              --pf-global--active-color--100: #ff2e97;
+              --pf-global--link--Color: #00e5ff;
+              --pf-global--link--Color--hover: #ff6ec7;
+              --pf-c-button--m-primary--BackgroundColor: #ff2e97;
+              --pf-c-button--m-primary--hover--BackgroundColor: #ff5cae;
+              --pf-c-button--m-primary--active--BackgroundColor: #e01f82;
+              --pf-c-button--m-primary--focus--BackgroundColor: #ff5cae;
+              --pf-c-button--m-primary--Color: #0a0a0f;
+              --pf-v5-global--primary-color--100: #ff2e97;
+              --pf-v5-global--link--Color: #00e5ff;
+              --pf-v5-c-button--m-primary--BackgroundColor: #ff2e97;
+              --pf-v5-c-button--m-primary--hover--BackgroundColor: #ff5cae;
+              --pf-v5-c-button--m-primary--active--BackgroundColor: #e01f82;
+              --pf-v5-c-button--m-primary--focus--BackgroundColor: #ff5cae;
+              --pf-v5-c-button--m-primary--Color: #0a0a0f;
+              --pf-v6-c-button--m-primary--BackgroundColor: #ff2e97;
+              --pf-v6-c-button--m-primary--Color: #0a0a0f;
+            }
+            /* Gradient fill via direct selector (proven to reach the login
+               button when set in brand custom CSS). Vars above are the fallback. */
+            .pf-c-button.pf-m-primary,
+            .pf-v5-c-button.pf-m-primary,
+            button[type="submit"].pf-m-primary {
+              background: linear-gradient(135deg,#ff2e97 0%,#b14bff 50%,#00e5ff 100%) !important;
+              border: none !important;
+              color: #0a0a0f !important;
+              border-radius: 9px !important;
+              font-weight: 700 !important;
+              letter-spacing: .08em !important;
+              text-transform: uppercase !important;
+              box-shadow: 0 0 18px rgba(255,46,151,.4) !important;
+            }
+            .pf-c-button.pf-m-primary:hover,
+            .pf-v5-c-button.pf-m-primary:hover,
+            button[type="submit"].pf-m-primary:hover {
+              filter: brightness(1.08);
+              box-shadow: 0 0 28px rgba(255,46,151,.6) !important;
+            }
+            /* DE-BRAND: hide the "Powered by authentik" footer band + version.
+               ui_footer_links is empty for this brand, so hiding the whole
+               footer is safe. */
+            .pf-c-login__main-footer-band,
+            .pf-c-login__footer {
+              display: none !important;
+            }
+            /* kept separate so an engine without :has() can't drop the rule above */
+            .pf-c-login__main-footer-links-item:has(a[href*="goauthentik"]) {
+              display: none !important;
+            }
+            a[href*="goauthentik.io"] { display: none !important; }
+            /* Give the (now "Welcome to Catalyst") stage heading the neon
+               gradient-text treatment inside the shadow root too. */
+            .pf-c-login__main-header-title,
+            .pf-c-title.pf-m-3xl,
+            .ak-stage h1 {
+              background: linear-gradient(135deg,#ff2e97,#00e5ff);
+              -webkit-background-clip: text; background-clip: text;
+              -webkit-text-fill-color: transparent; color: transparent !important;
+              text-transform: uppercase; letter-spacing: .04em;
+            }
 
           # Leaving flow_* unset → falls through to the globally-default flows.
           # flow_authentication: !Find [authentik_flows.flow, [slug, default-authentication-flow]]
