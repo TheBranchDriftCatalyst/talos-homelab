@@ -110,3 +110,28 @@ Commits: 756a1a9 (4 auto-safe), 6a6eb48 (blackbox chart major).
 
 ### Elevated to operator (bundles A–D) — see epic comment
 KubeVirt+CDI (.23/.24/.29/.30/.31/.53-.56, vmRolloutStrategy pin needed), Observability majors (alloy/loki/k8s-sidecar/kube-state-metrics .16/.39/.9/.61), Intel-GPU+NFD (.25/.42/.18), .64 verify-latest cluster (cert-manager v1.16→v1.21, grafana 12→13, ~17 :latest pins) + isolated sidecars .28/.48.
+
+## Session 2026-08-11 (cont.) — "full bore" bundle execution
+
+Operator approved all 4 elevate bundles. Executed in risk order (monitoring first, VMs last):
+
+### Applied + verified ✅
+| change | ticket | verify |
+| --- | --- | --- |
+| Intel device-plugins-operator chart 0.30→0.36 | zadf.42 | HR Ready, controller 1/1 |
+| intel-gpu-initcontainer 0.30.0→0.36.0 (skew-fix) | zadf.25 | daemonset 3/3, initImg 0.36.0 |
+| node-feature-discovery chart 0.18→0.19 | zadf.18 | HR 0.19.0, 6/6, **i915 still advertised** (talos02-gpu/talos06 =10) |
+| kube-state-metrics chart 5.27→8.3 (v2.14→v2.19.1) | zadf.61 | deploy 1/1, gotk/rbac values carried |
+| **Alloy chart 0.10→1.11 (v1.5→v1.18.1)** — alloy + alloy-node | zadf.16 | deploy 2/2 + DS 5/5, **metrics→Mimir (up=239)**, WAL bounds intact, loki.write errors transient-only |
+| KubeVirt `vmRolloutStrategy: Stage` pin (pre-upgrade prep) | zadf.31 | live CR Deployed, server-dry-run clean |
+
+Commits: 61f6006 (Bundle C), 85cd4f2 (KSM), e9e981e (Alloy), ca6212d (vmRolloutStrategy).
+
+### Deferred / scoped as focused projects (NOT rushed on live infra)
+- **Loki zadf.39/.9/.28** — NOT a bump: chart-SOURCE migration (grafana.github.io loki went GEL-only at 7.0; OSS → grafana-community chart 6.23→18.7.6, 12 chart-majors, stateful S3 log store). Dedicated pass needed.
+- **KubeVirt zadf.23/.24/.29/.30/.31 + CDI .53-.56 → TALOS-3xfp** — 5-minor staged operator-manifest upgrade (0 VMs, prep done); CDI is live-only (GitOps gap) → onboard then upgrade.
+- **zadf.64 split** → cert-manager v1.16→v1.21 (TALOS-s1b8), grafana 12→13 (TALOS-e33u), velero 11.2→12.1 (TALOS-l3xh), gluetun verify-first (TALOS-2v46, deliberate DNS pin), digest-pin ~17 :latest (TALOS-btv3). guacamole already latest.
+- Postgres zadf.4/.8/.11 — blocked under CNPG hx77 (already migrated, verified healthy).
+
+### Metrics-surface audit
+Filed **TALOS-a9jf** (epic + 5 children) per operator request — dashboards/scrape/rules to adopt new surfaces from KSM/node-exporter/alloy/loki/KubeVirt bumps.
