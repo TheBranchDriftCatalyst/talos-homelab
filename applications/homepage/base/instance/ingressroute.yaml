@@ -1,8 +1,18 @@
 ---
-# Placeholder Host + service name — every overlay REPLACES spec.routes via
-# patch-host.yaml (Host <domain>.homepage.${CLUSTER_DOMAIN} + the
+# Homepage instance — HTTPS + Authentik forward-auth SSO (TALOS-xgrl.18).
+#
+# gethomepage.dev dashboards ship with NO built-in auth, so forward-auth is a
+# clean single sign-on (no double-login). Every overlay REPLACES spec.routes in
+# BOTH IngressRoutes below via patch-host.yaml (per-instance Host + the
 # nameSuffix-ed Service name; kustomize cannot rewrite service refs inside
-# Traefik CRDs, so the patch carries the final name).
+# Traefik CRDs, so the patch carries the final name + the middlewares, since a
+# strategic-merge on spec.routes replaces the list wholesale).
+#
+# TLS: the default TLSStore serves the *.homepage.${CLUSTER_DOMAIN} wildcard
+# (traefik/homepage-talos00-wildcard-tls) via SNI. The bare *.talos00 wildcard
+# does NOT cover 2-label <board>.homepage.talos00, hence the dedicated cert.
+# master (homepage.talos00, single label) is covered by *.talos00 but shares
+# this route shape for uniformity — the new wildcard also lists homepage.talos00.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -11,10 +21,35 @@ metadata:
     app: homepage
 spec:
   entryPoints:
+    - websecure
+  routes:
+    - match: Host(`homepage.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: homepage
+          port: 3000
+  tls: {}
+---
+# HTTP→HTTPS redirect (web entrypoint). Overlay patch replaces spec.routes with
+# the per-instance Host + nameSuffix-ed Service.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: homepage-http
+  labels:
+    app: homepage
+spec:
+  entryPoints:
     - web
   routes:
     - match: Host(`homepage.${CLUSTER_DOMAIN}`)
       kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: homepage
           port: 3000
