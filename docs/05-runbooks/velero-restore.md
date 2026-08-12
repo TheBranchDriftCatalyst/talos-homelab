@@ -16,30 +16,29 @@ kubectl exec -n backup deploy/velero -- \
   /velero backup describe critical-data-daily-<TIMESTAMP> --details
 
 # 3. Scale down the consumer (critical — Velero won't overwrite live PVCs)
-kubectl scale -n authentik statefulset/authentik-postgresql --replicas=0
-kubectl wait -n authentik --for=delete pod/authentik-postgresql-0 --timeout=60s
+kubectl scale -n <namespace> <workload> --replicas=0
 
 # 4. Delete the empty/corrupt PVC so the restore can recreate it
-kubectl delete pvc -n authentik data-authentik-postgresql-0
+kubectl delete pvc -n <namespace> <pvc-name>
 
 # 5. Restore JUST that PVC + its PV
 kubectl exec -n backup deploy/velero -- \
-  /velero restore create restore-authentik-$(date +%s) \
+  /velero restore create restore-<name>-$(date +%s) \
     --from-backup critical-data-daily-<TIMESTAMP> \
-    --include-namespaces authentik \
+    --include-namespaces <namespace> \
     --include-resources persistentvolumeclaims,persistentvolumes \
     --restore-volumes=true
 
-# 6. Watch progress
-kubectl exec -n backup deploy/velero -- /velero restore describe restore-authentik-<TS>
-
-# 7. Scale Postgres back up
-kubectl scale -n authentik statefulset/authentik-postgresql --replicas=1
-
-# 8. Verify Postgres comes up healthy and authentik can log in
-kubectl logs -n authentik authentik-postgresql-0
-kubectl get pod -n authentik
+# 6. Watch progress, then scale the workload back up and verify
+kubectl exec -n backup deploy/velero -- /velero restore describe restore-<name>-<TS>
 ```
+
+> **PostgreSQL is NOT restored via Velero.** Every CNPG cluster (authentik,
+> forgejo, crowdsec, boomtime, homeassistant, linkwarden, plausible, zipline,
+> guacamole) backs itself up to MinIO (`cnpg-backups` bucket) via
+> barmanObjectStore WAL archiving + a daily `ScheduledBackup`, and its
+> pods/PVCs carry `velero.io/exclude-from-backup=true` (via each Cluster's
+> `inheritedMetadata`). See the CNPG scenario below.
 
 ## What Velero Actually Backs Up
 
@@ -48,56 +47,50 @@ Three schedules write to MinIO bucket `velero` (s3 endpoint
 
 | Schedule | When | Scope | Retention | Volumes |
 | --- | --- | --- | --- | --- |
-| `daily-all` | 02:00 daily | media, scratch, home-automation, catalyst-llm, registry, vpn-gateway, authentik | 30d | Opt-in via `backup.velero.io/backup-volumes` annotation |
-| `critical-data-daily` | 02:30 daily | authentik, monitoring (loki excluded) | 30d | **All PVCs** (`defaultVolumesToFsBackup: true`) |
+| `daily-all` | 02:00 daily | media, media-private, scratch, home-automation, catalyst-llm, registry, vpn-gateway, authentik | 30d | Opt-in via `backup.velero.io/backup-volumes` annotation |
+| `critical-data-daily` | 02:30 daily | authentik, monitoring, cilium-spire, dungeon-library (loki + CNPG excluded) | 30d | **All PVCs** (`defaultVolumesToFsBackup: true`) |
 | `weekly-full` | 03:00 Sunday | All namespaces (sans kube-system, kube-public, kube-node-lease, flux-system, minio) | 90d | Opt-in via annotation |
-
-For Authentik recovery, **always use `critical-data-daily-*`** — it's the only
-schedule that captures the postgres data volume without per-pod annotations.
 
 Loki's PVC is labeled `velero.io/exclude-from-backup=true` (applied by the
 `velero-loki-exclude-labeler` Job in the backup namespace) — Loki logs live in
-S3, not on the PVC, so the PVC is just churny chunk cache.
+S3, not on the PVC, so the PVC is just churny chunk cache. CNPG postgres
+pods/PVCs carry the same label via each Cluster's `inheritedMetadata` — their
+backups are CNPG's job, not Velero's (see below).
 
 ## Restore Scenarios
 
-### Authentik PostgreSQL (UPS-2026-05-09 redux)
+### CNPG PostgreSQL clusters (authentik, forgejo, crowdsec, …)
 
-The actual scenario from the original outage. Authentik refuses to start
-because the database is empty/corrupt.
+**Not a Velero restore.** CNPG clusters recover from their own barman backups
+in MinIO (`cnpg-backups` bucket, per-cluster prefix) with point-in-time
+recovery. The pattern: create a NEW Cluster that bootstraps from the object
+store, then repoint the app (or rename back). Sketch for authentik:
 
-```bash
-LATEST=$(kubectl exec -n backup deploy/velero -- /velero backup get \
-  -o name | grep critical-data-daily | head -1)
-echo "Restoring from $LATEST"
-
-# Stop authentik components so they don't fight the restore
-kubectl scale -n authentik deploy/authentik-server --replicas=0
-kubectl scale -n authentik deploy/authentik-worker --replicas=0
-kubectl scale -n authentik statefulset/authentik-postgresql --replicas=0
-kubectl wait -n authentik --for=delete pod/authentik-postgresql-0 --timeout=120s
-
-# Drop the broken PVC
-kubectl delete pvc -n authentik data-authentik-postgresql-0
-
-# Restore PVC + PV from backup. Velero fs-backup (Kopia) restores into a
-# fresh PVC of the same name, which the StatefulSet will then re-mount.
-kubectl exec -n backup deploy/velero -- /velero restore create \
-  --from-backup ${LATEST#backup/} \
-  --include-namespaces authentik \
-  --include-resources persistentvolumeclaims,persistentvolumes,pods \
-  --restore-volumes=true \
-  --wait
-
-# Bring everything back
-kubectl scale -n authentik statefulset/authentik-postgresql --replicas=1
-kubectl wait -n authentik pod/authentik-postgresql-0 --for=condition=ready --timeout=300s
-kubectl scale -n authentik deploy/authentik-server --replicas=1
-kubectl scale -n authentik deploy/authentik-worker --replicas=1
+```yaml
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: authentik-postgres # same name = same -rw service, app untouched
+  namespace: authentik
+spec:
+  # ... same storage/secret spec as infrastructure/base/authentik/postgres.yaml
+  bootstrap:
+    recovery:
+      source: origin
+      # optional PITR: recoveryTarget: { targetTime: "2026-08-12 08:00:00+00" }
+  externalClusters:
+    - name: origin
+      barmanObjectStore:
+        destinationPath: s3://cnpg-backups/authentik-postgres
+        endpointURL: http://minio-hl.minio.svc:9000
+        s3Credentials: # same cnpg-minio-backup secret
+          accessKeyId: { name: cnpg-minio-backup, key: ACCESS_KEY_ID }
+          secretAccessKey: { name: cnpg-minio-backup, key: ACCESS_SECRET_KEY }
 ```
 
-After ~5 min, log in to https://authentik.talos00 with your previous admin
-credentials. All users, applications, providers, and groups should be intact.
+Verify backups exist first: `kubectl get backups.postgresql.cnpg.io -n <ns>`
+(a `ScheduledBackup` per cluster runs daily; WAL archiving is continuous).
+Full docs: https://cloudnative-pg.io/docs/devel/recovery/
 
 ### Grafana Dashboards / Datasources
 
@@ -164,7 +157,7 @@ kubectl logs -n <namespace> <pod>
   newly-created PVC. If the PVC already exists (even empty), Velero will skip
   volume restore. Always `kubectl delete pvc` first.
 - **StatefulSet ordinal pinning.** Restore the PVC with the same name
-  (`data-authentik-postgresql-0`) so the StatefulSet re-binds it.
+  (e.g. `postgres-storage-postgres-0`) so the StatefulSet re-binds it.
 - **Postgres requires consistent state.** The fs-backup is taken while
   Postgres is running — Kopia copies the on-disk files at one instant. Postgres
   recovery on startup will replay WAL and may complain about a "crashed"
