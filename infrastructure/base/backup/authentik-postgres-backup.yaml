@@ -64,6 +64,26 @@ spec:
             runAsUser: 65534
             seccompProfile:
               type: RuntimeDefault
+          initContainers:
+            # postgres:17-bookworm ships no curl/wget, so stage the mc
+            # binary from the official image instead of downloading it.
+            - name: fetch-mc
+              image: quay.io/minio/mc:latest
+              command: ["cp", "/usr/bin/mc", "/tmp/mc"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  memory: 64Mi
           containers:
             - name: dump-and-upload
               # Official postgres image (Debian-based, has bash + curl + gzip).
@@ -92,11 +112,7 @@ spec:
                   SIZE=$(du -h "$DUMP_FILE" | cut -f1)
                   echo "[*] Dump complete: $SIZE"
 
-                  echo "[*] Installing mc..."
-                  curl -fsSL --max-time 30 \
-                    https://dl.min.io/client/mc/release/linux-amd64/mc \
-                    -o /tmp/mc && chmod +x /tmp/mc
-
+                  # mc binary staged into /tmp by the fetch-mc initContainer
                   echo "[*] Uploading to s3://${S3_BUCKET}/${S3_KEY}..."
                   /tmp/mc alias set backup "$S3_ENDPOINT" \
                     "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null
