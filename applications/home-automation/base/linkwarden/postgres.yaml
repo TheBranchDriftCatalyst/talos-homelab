@@ -65,22 +65,12 @@ spec:
     requests:
       cpu: 50m
       memory: 256Mi
-  # Object-store backups (TALOS-xgrl.4): bookmarks are NOT disposable → PITR. Scoped
-  # cnpg-backup MinIO user via the cnpg-minio-backup secret (reflected from
-  # minio/cnpg-backup into home-automation). Base backups driven by scheduledbackup.yaml.
-  backup:
-    retentionPolicy: "30d"
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/linkwarden-postgres
-      endpointURL: http://minio-hl.minio.svc:9000
-      s3Credentials:
-        accessKeyId:
-          name: cnpg-minio-backup
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: cnpg-minio-backup
-          key: ACCESS_SECRET_KEY
-      wal:
-        compression: gzip
-      data:
-        compression: gzip
+  # Object-store backups (TALOS-xgrl.4): bookmarks are NOT disposable → PITR.
+  # Config lives in the ObjectStore CR (objectstore.yaml) — migrated off the
+  # in-tree barmanObjectStore (removed in CNPG 1.30) to the barman-cloud CNPG-I
+  # plugin. Same bucket/prefix/creds; base backups: scheduledbackup.yaml.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: linkwarden-postgres

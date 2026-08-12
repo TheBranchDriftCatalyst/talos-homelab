@@ -25,26 +25,15 @@ spec:
     storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
   monitoring:
     enablePodMonitor: false  # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
-  # Object-store backups → MinIO (TALOS-a1hk). CNPG 1.24.1 in-tree barman API
-  # (NOT the plugin). Continuous WAL archiving + base backups land in the shared
-  # `cnpg-backups` bucket under a per-cluster prefix. Creds reuse the MinIO root
-  # key via the cnpg-minio-backup Secret (see backup-credentials.yaml).
-  backup:
-    retentionPolicy: "30d"          # prune backups + WALs older than 30 days
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/forgejo-postgres
-      endpointURL: http://minio-hl.minio.svc:9000
-      s3Credentials:
-        accessKeyId:
-          name: cnpg-minio-backup
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: cnpg-minio-backup
-          key: ACCESS_SECRET_KEY
-      wal:
-        compression: gzip
-      data:
-        compression: gzip
+  # Object-store backups → MinIO (TALOS-a1hk). Config lives in the ObjectStore
+  # CR (objectstore.yaml) — migrated off the in-tree barmanObjectStore (removed
+  # in CNPG 1.30) to the barman-cloud CNPG-I plugin. Same bucket/prefix/creds;
+  # base backups: scheduledbackup.yaml.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: forgejo-postgres
   bootstrap:
     initdb:
       database: forgejo
