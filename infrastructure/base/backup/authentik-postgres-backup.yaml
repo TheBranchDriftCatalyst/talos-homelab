@@ -64,30 +64,14 @@ spec:
             runAsUser: 65534
             seccompProfile:
               type: RuntimeDefault
+          # Two-stage pod: postgres image dumps, mc image uploads. The mc
+          # image's /usr/bin/mc is mode --x for non-root (executable but not
+          # readable/copyable), and postgres:17-bookworm ships no curl/wget
+          # to download it — so the upload runs IN the mc image instead of
+          # staging the binary into the postgres container.
           initContainers:
-            # postgres:17-bookworm ships no curl/wget, so stage the mc
-            # binary from the official image instead of downloading it.
-            - name: fetch-mc
-              image: quay.io/minio/mc:latest
-              command: ["cp", "/usr/bin/mc", "/tmp/mc"]
-              volumeMounts:
-                - name: tmp
-                  mountPath: /tmp
-              securityContext:
-                allowPrivilegeEscalation: false
-                readOnlyRootFilesystem: true
-                capabilities:
-                  drop: ["ALL"]
-              resources:
-                requests:
-                  cpu: 10m
-                  memory: 16Mi
-                limits:
-                  memory: 64Mi
-          containers:
-            - name: dump-and-upload
-              # Official postgres image (Debian-based, has bash + curl + gzip).
-              # Client major must be >= server major (CNPG runs PostgreSQL 17).
+            # Client major must be >= server major (CNPG runs PostgreSQL 17).
+            - name: dump
               image: postgres:17-bookworm
               command:
                 - /bin/bash
@@ -97,7 +81,6 @@ spec:
 
                   TIMESTAMP=$(date +%Y%m%d-%H%M%S)
                   DUMP_FILE="/tmp/authentik-${TIMESTAMP}.sql.gz"
-                  S3_KEY="${S3_PREFIX}/authentik-${TIMESTAMP}.sql.gz"
 
                   echo "[*] pg_dump $PGHOST:$PGPORT/$PGDATABASE as $PGUSER..."
                   PGPASSWORD="$PGPASSWORD" pg_dump \
@@ -111,38 +94,69 @@ spec:
 
                   SIZE=$(du -h "$DUMP_FILE" | cut -f1)
                   echo "[*] Dump complete: $SIZE"
-
-                  # mc binary staged into /tmp by the fetch-mc initContainer
-                  echo "[*] Uploading to s3://${S3_BUCKET}/${S3_KEY}..."
-                  /tmp/mc alias set backup "$S3_ENDPOINT" \
-                    "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null
-                  /tmp/mc cp "$DUMP_FILE" "backup/${S3_BUCKET}/${S3_KEY}"
-
-                  echo "[*] Pruning to last $RETENTION_COUNT dumps..."
-                  S3_DIR="backup/${S3_BUCKET}/${S3_PREFIX}/"
-                  total=$(/tmp/mc ls "$S3_DIR" | wc -l | tr -d ' ')
-                  to_delete=$((total - RETENTION_COUNT))
-                  if [ "$to_delete" -gt 0 ]; then
-                    # No awk in this image — take the filename (last field of `mc ls`)
-                    # via POSIX parameter expansion; fail-fast on a real rm error.
-                    /tmp/mc ls "$S3_DIR" | head -n "$to_delete" \
-                      | while read -r line; do
-                      f=${line##* }
-                      [ -n "$f" ] || continue
-                      echo "    rm $f"
-                      /tmp/mc rm "${S3_DIR}${f}" || exit 1
-                    done
-                  else
-                    echo "    nothing to prune (have $total, keep $RETENTION_COUNT)"
-                  fi
-
-                  echo "[*] Done. Total dumps in s3://${S3_BUCKET}/${S3_PREFIX}/: $(/tmp/mc ls "$S3_DIR" | wc -l | tr -d ' ')"
               env:
                 - name: PGPASSWORD
                   valueFrom:
                     secretKeyRef:
                       name: authentik-postgres-backup-creds
                       key: PGPASSWORD
+              envFrom:
+                - configMapRef:
+                    name: authentik-postgres-backup-config
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  memory: 512Mi
+          containers:
+            - name: upload
+              image: quay.io/minio/mc:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  # mc writes its config under $HOME; point it at the emptyDir
+                  # since the root fs is read-only.
+                  export HOME=/tmp
+
+                  DUMP_FILE=$(ls /tmp/authentik-*.sql.gz)
+                  S3_KEY="${S3_PREFIX}/${DUMP_FILE##*/}"
+
+                  echo "[*] Uploading to s3://${S3_BUCKET}/${S3_KEY}..."
+                  mc alias set backup "$S3_ENDPOINT" \
+                    "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null
+                  mc cp "$DUMP_FILE" "backup/${S3_BUCKET}/${S3_KEY}"
+
+                  echo "[*] Pruning to last $RETENTION_COUNT dumps..."
+                  S3_DIR="backup/${S3_BUCKET}/${S3_PREFIX}/"
+                  total=$(mc ls "$S3_DIR" | wc -l | tr -d ' ')
+                  to_delete=$((total - RETENTION_COUNT))
+                  if [ "$to_delete" -gt 0 ]; then
+                    # No awk in this image — take the filename (last field of `mc ls`)
+                    # via POSIX parameter expansion; fail-fast on a real rm error.
+                    mc ls "$S3_DIR" | head -n "$to_delete" \
+                      | while read -r line; do
+                      f=${line##* }
+                      [ -n "$f" ] || continue
+                      echo "    rm $f"
+                      mc rm "${S3_DIR}${f}" || exit 1
+                    done
+                  else
+                    echo "    nothing to prune (have $total, keep $RETENTION_COUNT)"
+                  fi
+
+                  echo "[*] Done. Total dumps in s3://${S3_BUCKET}/${S3_PREFIX}/: $(mc ls "$S3_DIR" | wc -l | tr -d ' ')"
+              env:
                 - name: AWS_ACCESS_KEY_ID
                   valueFrom:
                     secretKeyRef:
@@ -166,10 +180,10 @@ spec:
                   drop: ["ALL"]
               resources:
                 requests:
-                  cpu: 100m
-                  memory: 128Mi
+                  cpu: 50m
+                  memory: 64Mi
                 limits:
-                  memory: 512Mi
+                  memory: 256Mi
           volumes:
             - name: tmp
               emptyDir:
