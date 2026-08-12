@@ -1,7 +1,8 @@
 ---
 # Alertmanager config template for the Mimir Alertmanager 'anonymous'
-# tenant. Pushed by the alertmanager-config-pusher CronJob after
-# substituting ${DISCORD_WEBHOOK_URL} from the discord-webhook Secret.
+# tenant. Pushed by the alertmanager-config-pusher CronJob. Discord is the
+# only alerting target; the webhook URL lives in the alertmanager-discord
+# bridge (discord-bridge.yaml), so nothing is substituted into this template.
 #
 # Two routes:
 #   1. Watchdog → dedicated receiver for future external observer wiring
@@ -60,14 +61,10 @@ data:
           continue: false
 
     receivers:
-      # Discord via the NATIVE-webhook bridge (alertmanager-discord Deployment,
-      # see discord-bridge.yaml). Alertmanager posts its native webhook JSON to
-      # the in-cluster bridge, which translates it into a real Discord embed.
-      # This replaces the old slack_configs -> Discord /slack shim, which 400'd
-      # on Slack attachment/color fields and dropped 5/5 notifications. The
-      # bridge holds the Discord webhook URL itself (from the discord-webhook
-      # Secret), so no $DISCORD_WEBHOOK_URL substitution is needed here anymore.
-      # (TALOS-2pz)
+      # Discord via the in-cluster alertmanager-discord bridge (discord-bridge.yaml):
+      # Alertmanager posts its native webhook JSON to the bridge, which sends a
+      # Discord message. The bridge holds the webhook URL (discord-webhook Secret).
+      # Discord is the only target — there is no slack path. (TALOS-2pz)
       - name: discord-default
         webhook_configs:
           - url: "http://alertmanager-discord.monitoring.svc.cluster.local:9094/"

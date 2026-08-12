@@ -1,89 +1,140 @@
 ---
-# alertmanager-discord — native Discord bridge for Mimir Alertmanager.
+# Alertmanager → Discord bridge (native, content-based)
 #
-# WHY THIS EXISTS (TALOS-2pz / audit P0):
-#   The tenant config used to post to Discord's Slack-compat shim
-#   ($WEBHOOK/slack) via slack_configs. Discord's /slack route is brittle:
-#   it 400s on Slack attachment fields (named colors, and intermittently on
-#   hex colors / long attachment bodies), so 5/5 notifications were failing
-#   ("clientError") and every firing alert was silently dropped.
+# Alertmanager's webhook_configs POST their own JSON schema, which Discord does
+# not understand. This tiny stdlib-only translator receives that webhook and
+# POSTs a plain Discord `content` message (the most robust Discord format —
+# verified 204, no embed-validation pitfalls). It REPLACES both:
+#   - the old slack_configs → Discord `/slack` shim (400'd on attachments), and
+#   - the rogerrum/alertmanager-discord embed bridge (emitted invalid embeds:
+#     `{"embeds": ["0"]}` + rate-limited itself).
+# Discord is the only alerting target — there is no slack path anymore.
 #
-# THE FIX:
-#   This tiny Go bridge accepts Alertmanager's NATIVE webhook JSON (what
-#   webhook_configs posts) and translates it into a Discord *native* webhook
-#   embed — the endpoint Discord actually documents and keeps stable. The
-#   tenant config now uses webhook_configs -> this bridge instead of
-#   slack_configs -> Discord's shim. No more attachment/color 400s.
-#
-# Image is pulled from ghcr.io (NOT docker.io) on purpose — keeps the alert
-# path off the Docker Hub rate-limit budget (see TALOS-kmjc.8).
-#
-# The Discord webhook URL is read once at startup from the SAME
-# `discord-webhook` Secret (key `address`, the RAW webhook with no /slack
-# suffix) that ESO/reflector already provisions in this namespace.
+# Reads the raw Discord webhook URL from the `discord-webhook` Secret (key
+# `address`). No pip deps (Python stdlib only), so no registry/rate-limit risk.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-discord-bridge
+  namespace: monitoring
+data:
+  bridge.py: |
+    import http.server, json, os, urllib.request
+    WEBHOOK = os.environ["DISCORD_WEBHOOK"].strip()
+
+    def post_discord(content):
+        body = json.dumps({"content": content[:1900]}).encode()
+        req = urllib.request.Request(
+            WEBHOOK, data=body, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            # health/readiness probe
+            self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            try:
+                data = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                data = {}
+            alerts = data.get("alerts", []) or [{}]
+            status = (data.get("status") or "firing").lower()
+            emoji = "\U0001F534" if status == "firing" else "✅"  # red / check
+            for a in alerts:
+                lbl = a.get("labels", {}) or {}
+                ann = a.get("annotations", {}) or {}
+                name = lbl.get("alertname", "alert")
+                sev = lbl.get("severity", "")
+                ns = lbl.get("namespace", "")
+                msg = ann.get("summary") or ann.get("description") or name
+                line = "{} **[{}] {}**\n{}".format(emoji, status.upper(), name, msg)
+                meta = []
+                if sev:
+                    meta.append("severity: `{}`".format(sev))
+                if ns:
+                    meta.append("ns: `{}`".format(ns))
+                if meta:
+                    line += "\n" + " · ".join(meta)
+                try:
+                    post_discord(line)
+                except Exception as e:
+                    print("discord post failed:", e, flush=True)
+            self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+
+        def log_message(self, *a):  # quiet
+            return
+
+    print("alertmanager-discord bridge listening on :9094", flush=True)
+    http.server.HTTPServer(("0.0.0.0", 9094), Handler).serve_forever()
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: alertmanager-discord
   namespace: monitoring
   labels:
-    app.kubernetes.io/name: alertmanager-discord
-    app.kubernetes.io/component: alertmanager-config
+    app: alertmanager-discord
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: alertmanager-discord
+      app: alertmanager-discord
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: alertmanager-discord
+        app: alertmanager-discord
     spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
-        runAsGroup: 65534
-        fsGroup: 65534
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: bridge
-          image: ghcr.io/rogerrum/alertmanager-discord:1.0.7
+          image: python:3.12-alpine
+          command: ["python", "/app/bridge.py"]
           env:
-            # RAW Discord webhook (no /slack). Same Secret the old pusher used.
+            # NOTE: the discord-webhook Secret currently points at the "The Lair"
+            # Discord server's #talos00 channel. It needs to be MOVED to the
+            # catalyst-dev Discord channel — update the source ExternalSecret /
+            # 1Password item (discord-webhook, key `address`) with the new
+            # channel's webhook URL, then reconcile. (TODO: migrate channel)
             - name: DISCORD_WEBHOOK
               valueFrom:
                 secretKeyRef:
                   name: discord-webhook
                   key: address
-            # Listen on all interfaces so the in-cluster Service can reach it
-            # (image default is 127.0.0.1:9094 which is pod-local only).
-            - name: LISTEN_ADDRESS
-              value: "0.0.0.0:9094"
-            - name: DISCORD_USERNAME
-              value: "Alertmanager"
           ports:
-            - name: http
-              containerPort: 9094
+            - containerPort: 9094
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9094
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
           resources:
             requests:
               cpu: 10m
               memory: 32Mi
             limits:
               memory: 64Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities:
-              drop: ['ALL']
-          readinessProbe:
-            tcpSocket: { port: http }
-            initialDelaySeconds: 3
-            periodSeconds: 10
-          livenessProbe:
-            tcpSocket: { port: http }
-            initialDelaySeconds: 5
-            periodSeconds: 30
+      volumes:
+        - name: script
+          configMap:
+            name: alertmanager-discord-bridge
 ---
 apiVersion: v1
 kind: Service
@@ -91,12 +142,11 @@ metadata:
   name: alertmanager-discord
   namespace: monitoring
   labels:
-    app.kubernetes.io/name: alertmanager-discord
-    app.kubernetes.io/component: alertmanager-config
+    app: alertmanager-discord
 spec:
   selector:
-    app.kubernetes.io/name: alertmanager-discord
+    app: alertmanager-discord
   ports:
     - name: http
       port: 9094
-      targetPort: http
+      targetPort: 9094
