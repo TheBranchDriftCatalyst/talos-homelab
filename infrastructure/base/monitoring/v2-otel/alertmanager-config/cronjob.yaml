@@ -54,11 +54,18 @@ spec:
                 limits:
                   memory: 64Mi
               env:
-                - name: DISCORD_WEBHOOK_URL
+                # External dead-man's-switch heartbeat URL (healthchecks.io /
+                # uptime-kuma ping). OPTIONAL: the Secret may not exist yet, so
+                # the ref is optional and the script defaults it to an inert
+                # placeholder — the rendered config stays valid either way.
+                # Discord no longer needs a secret here: the alertmanager-discord
+                # bridge (discord-bridge.yaml) owns the webhook now. (TALOS-2pz)
+                - name: HEARTBEAT_URL
                   valueFrom:
                     secretKeyRef:
-                      name: discord-webhook
-                      key: address
+                      name: alertmanager-heartbeat
+                      key: url
+                      optional: true
                 - name: MIMIR_AM_URL
                   value: "http://mimir-alertmanager.monitoring.svc:8080/api/v1/alerts"
                 - name: TENANT
@@ -73,8 +80,14 @@ spec:
                 - |
                   set -eu
                   apk add --no-cache curl gettext >/dev/null
+                  # Inert RFC-2606 .invalid default keeps the rendered config
+                  # VALID (Alertmanager loads it; webhook delivery no-ops) until
+                  # the alertmanager-heartbeat Secret supplies a real ping URL.
+                  : "${HEARTBEAT_URL:=https://heartbeat.invalid/configure-me}"
+                  export HEARTBEAT_URL
                   echo "== $(date -u) rendering alertmanager config =="
-                  envsubst < /etc/template/alertmanager.tmpl.yaml > /tmp/rendered.yaml
+                  # Only substitute $HEARTBEAT_URL — never touch other $tokens.
+                  envsubst '$HEARTBEAT_URL' < /etc/template/alertmanager.tmpl.yaml > /tmp/rendered.yaml
                   # Wrap the alertmanager_config yaml in Mimir's expected
                   # envelope: { alertmanager_config: "...", template_files: {} }
                   {

@@ -28,8 +28,18 @@ spec:
       retries: 3
   values:
     # Single replica per controller — homelab, not HA-critical.
+    # EXCEPTION: the admission controller is the ONE fail-closed webhook
+    # (kyverno-resource-validating-webhook-cfg, failurePolicy=Fail, matching
+    # pods/deployments/etc). At replicas=1 a single eviction / node drain /
+    # rollout leaves ZERO admission pods and blocks ALL matching create/update
+    # cluster-wide until it recovers. Run 2 replicas + a PodDisruptionBudget
+    # (minAvailable:1) so a voluntary disruption can never take the last one
+    # down. (TALOS-kmjc.7)
     admissionController:
-      replicas: 1
+      replicas: 2
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1
       resources:
         requests: {cpu: 100m, memory: 128Mi}
         limits: {memory: 384Mi}

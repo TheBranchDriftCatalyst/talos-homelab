@@ -35,12 +35,15 @@ data:
       group_interval: 5m
       repeat_interval: 4h
       routes:
-        # Watchdog — dead-man's switch. Routed to a NULL receiver by
-        # default; wire this to healthchecks.io / cronitor when you set
-        # up the external observer (see external-observer TODO).
+        # Watchdog — dead-man's switch. Routed to an EXTERNAL heartbeat
+        # (healthchecks.io / uptime-kuma ping URL) via webhook_configs, so
+        # the absence of pings is detectable OUT OF BAND — if the whole
+        # observability stack (Alloy->Mimir->Alertmanager) is dead, no ping
+        # arrives and the external monitor pages you. See $HEARTBEAT_URL
+        # wiring in cronjob.yaml. (TALOS-2pz)
         - matchers:
             - alertname="PipelineHeartbeat"
-          receiver: watchdog-null
+          receiver: watchdog-heartbeat
           # Fast heartbeat cadence; external observer sees a steady stream.
           group_wait: 10s
           group_interval: 1m
@@ -57,42 +60,34 @@ data:
           continue: false
 
     receivers:
-      # Discord via its Slack-COMPATIBLE endpoint ($WEBHOOK/slack). Alertmanager's
-      # webhook_configs posts AM's native JSON which Discord 400s (clientError) — the
-      # audit found 5/5 notifications failing. slack_configs posts Slack-format
-      # attachments which Discord's /slack route accepts. `channel` is required by
-      # Alertmanager but ignored by Discord. (TALOS-xgrl.3)
+      # Discord via the NATIVE-webhook bridge (alertmanager-discord Deployment,
+      # see discord-bridge.yaml). Alertmanager posts its native webhook JSON to
+      # the in-cluster bridge, which translates it into a real Discord embed.
+      # This replaces the old slack_configs -> Discord /slack shim, which 400'd
+      # on Slack attachment/color fields and dropped 5/5 notifications. The
+      # bridge holds the Discord webhook URL itself (from the discord-webhook
+      # Secret), so no $DISCORD_WEBHOOK_URL substitution is needed here anymore.
+      # (TALOS-2pz)
       - name: discord-default
-        slack_configs:
-          - api_url: "$DISCORD_WEBHOOK_URL/slack"
-            channel: "#alerts"
+        webhook_configs:
+          - url: "http://alertmanager-discord.monitoring.svc.cluster.local:9094/"
             send_resolved: true
-            # Discord's /slack rejects Slack's named colors (danger/good) with 400
-            # {"attachments":["0"]} — it requires HEX. (TALOS-xgrl.3)
-            color: '{{ if eq .Status "firing" }}#E01E5A{{ else }}#2EB67D{{ end }}'
-            title: '{{ if eq .Status "firing" }}🔥 FIRING{{ else }}✅ RESOLVED{{ end }} · {{ .CommonLabels.alertname }} ({{ .Alerts | len }})'
-            text: >-
-              {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* — {{ .Annotations.summary }}{{ if .Annotations.description }}
-              {{ .Annotations.description }}{{ end }}
-              {{ end }}
 
       - name: discord-critical
-        slack_configs:
-          - api_url: "$DISCORD_WEBHOOK_URL/slack"
-            channel: "#alerts"
+        webhook_configs:
+          - url: "http://alertmanager-discord.monitoring.svc.cluster.local:9094/"
             send_resolved: true
-            color: '{{ if eq .Status "firing" }}#E01E5A{{ else }}#2EB67D{{ end }}'
-            title: '{{ if eq .Status "firing" }}🚨 CRITICAL{{ else }}✅ RESOLVED{{ end }} · {{ .CommonLabels.alertname }} ({{ .Alerts | len }})'
-            text: >-
-              {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* — {{ .Annotations.summary }}{{ if .Annotations.description }}
-              {{ .Annotations.description }}{{ end }}
-              {{ end }}
 
-      # Watchdog receiver — currently a no-op. Replace with a
-      # webhook_configs pointing to healthchecks.io / cronitor / etc.
-      # when you set up external observation. See kustomization.yaml
-      # TODO for the exact snippet.
-      - name: watchdog-null
+      # Watchdog receiver — external dead-man's-switch heartbeat. $HEARTBEAT_URL
+      # is substituted from the `alertmanager-heartbeat` Secret (key `url`) by
+      # the pusher CronJob; until that Secret exists it defaults to an inert
+      # RFC-2606 .invalid placeholder so the config stays VALID (Alertmanager
+      # loads it; delivery simply no-ops). Set the Secret to a healthchecks.io /
+      # uptime-kuma ping URL to arm external detection. (TALOS-2pz)
+      - name: watchdog-heartbeat
+        webhook_configs:
+          - url: "$HEARTBEAT_URL"
+            send_resolved: false
 
     # Inhibit rules — a critical alert on a component silences the
     # matching warning-severity alert on the same component so pages

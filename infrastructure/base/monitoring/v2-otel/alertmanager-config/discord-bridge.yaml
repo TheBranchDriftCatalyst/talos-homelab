@@ -1,0 +1,102 @@
+---
+# alertmanager-discord — native Discord bridge for Mimir Alertmanager.
+#
+# WHY THIS EXISTS (TALOS-2pz / audit P0):
+#   The tenant config used to post to Discord's Slack-compat shim
+#   ($WEBHOOK/slack) via slack_configs. Discord's /slack route is brittle:
+#   it 400s on Slack attachment fields (named colors, and intermittently on
+#   hex colors / long attachment bodies), so 5/5 notifications were failing
+#   ("clientError") and every firing alert was silently dropped.
+#
+# THE FIX:
+#   This tiny Go bridge accepts Alertmanager's NATIVE webhook JSON (what
+#   webhook_configs posts) and translates it into a Discord *native* webhook
+#   embed — the endpoint Discord actually documents and keeps stable. The
+#   tenant config now uses webhook_configs -> this bridge instead of
+#   slack_configs -> Discord's shim. No more attachment/color 400s.
+#
+# Image is pulled from ghcr.io (NOT docker.io) on purpose — keeps the alert
+# path off the Docker Hub rate-limit budget (see TALOS-kmjc.8).
+#
+# The Discord webhook URL is read once at startup from the SAME
+# `discord-webhook` Secret (key `address`, the RAW webhook with no /slack
+# suffix) that ESO/reflector already provisions in this namespace.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager-discord
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alertmanager-discord
+    app.kubernetes.io/component: alertmanager-config
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager-discord
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: alertmanager-discord
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: bridge
+          image: ghcr.io/rogerrum/alertmanager-discord:1.0.7
+          env:
+            # RAW Discord webhook (no /slack). Same Secret the old pusher used.
+            - name: DISCORD_WEBHOOK
+              valueFrom:
+                secretKeyRef:
+                  name: discord-webhook
+                  key: address
+            # Listen on all interfaces so the in-cluster Service can reach it
+            # (image default is 127.0.0.1:9094 which is pod-local only).
+            - name: LISTEN_ADDRESS
+              value: "0.0.0.0:9094"
+            - name: DISCORD_USERNAME
+              value: "Alertmanager"
+          ports:
+            - name: http
+              containerPort: 9094
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          readinessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-discord
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alertmanager-discord
+    app.kubernetes.io/component: alertmanager-config
+spec:
+  selector:
+    app.kubernetes.io/name: alertmanager-discord
+  ports:
+    - name: http
+      port: 9094
+      targetPort: http
