@@ -63,8 +63,11 @@ backups are CNPG's job, not Velero's (see below).
 
 **Not a Velero restore.** CNPG clusters recover from their own barman backups
 in MinIO (`cnpg-backups` bucket, per-cluster prefix) with point-in-time
-recovery. The pattern: create a NEW Cluster that bootstraps from the object
-store, then repoint the app (or rename back). Sketch for authentik:
+recovery, via the barman-cloud CNPG-I plugin (the in-tree barmanObjectStore
+API was removed in CNPG 1.30 — every cluster has an ObjectStore CR named
+after it, e.g. `infrastructure/base/authentik/objectstore.yaml`). The
+pattern: create a NEW Cluster that bootstraps from the object store, then
+repoint the app (or rename back). Sketch for authentik:
 
 ```yaml
 apiVersion: postgresql.cnpg.io/v1
@@ -73,19 +76,20 @@ metadata:
   name: authentik-postgres # same name = same -rw service, app untouched
   namespace: authentik
 spec:
-  # ... same storage/secret spec as infrastructure/base/authentik/postgres.yaml
+  # ... same storage/secret/plugins spec as infrastructure/base/authentik/postgres.yaml
   bootstrap:
     recovery:
       source: origin
       # optional PITR: recoveryTarget: { targetTime: "2026-08-12 08:00:00+00" }
   externalClusters:
     - name: origin
-      barmanObjectStore:
-        destinationPath: s3://cnpg-backups/authentik-postgres
-        endpointURL: http://minio-hl.minio.svc:9000
-        s3Credentials: # same cnpg-minio-backup secret
-          accessKeyId: { name: cnpg-minio-backup, key: ACCESS_KEY_ID }
-          secretAccessKey: { name: cnpg-minio-backup, key: ACCESS_SECRET_KEY }
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          # the existing ObjectStore CR in this namespace
+          barmanObjectName: authentik-postgres
+          # prefix inside the store = the ORIGINAL cluster's name
+          serverName: authentik-postgres
 ```
 
 Verify backups exist first: `kubectl get backups.postgresql.cnpg.io -n <ns>`
