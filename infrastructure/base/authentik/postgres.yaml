@@ -31,6 +31,13 @@ metadata:
   name: authentik-postgres
   namespace: authentik
 spec:
+  # Keep Velero/Kopia off CNPG-managed pods & PVCs — CNPG owns its own backups
+  # (barmanObjectStore WAL archiving + daily ScheduledBackup to MinIO). Without
+  # this, critical-data-daily (defaultVolumesToFsBackup: true, includes
+  # authentik) redundantly fs-backed-up every replica's pgdata.
+  inheritedMetadata:
+    labels:
+      velero.io/exclude-from-backup: "true"
   instances: 3 # HA: streaming-replicated across nodes; survives a node loss (TALOS-hx77)
   imagePullPolicy: IfNotPresent
   storage:
