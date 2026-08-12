@@ -44,24 +44,15 @@ spec:
   # Object-store backups → MinIO (TALOS-xgrl). The DB schema self-rebuilds, but
   # upload METADATA (URLs, ownership, expiry) does not — losing it orphans the
   # files on zipline-uploads. WAL archiving + daily base backups
-  # (scheduledbackup.yaml) make single-instance PVC loss a restore. Same stanza
-  # as forgejo/linkwarden; creds via the reflected cnpg-minio-backup Secret.
-  backup:
-    retentionPolicy: "30d" # prune backups + WALs older than 30 days
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/zipline-postgres
-      endpointURL: http://minio-hl.minio.svc:9000
-      s3Credentials:
-        accessKeyId:
-          name: cnpg-minio-backup
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: cnpg-minio-backup
-          key: ACCESS_SECRET_KEY
-      wal:
-        compression: gzip
-      data:
-        compression: gzip
+  # (scheduledbackup.yaml) make single-instance PVC loss a restore.
+  # Backup config lives in the ObjectStore CR (objectstore.yaml) — the in-tree
+  # barmanObjectStore stanza is removed in CNPG 1.30; this cluster uses the
+  # barman-cloud CNPG-I plugin instead.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: zipline-postgres
   bootstrap:
     initdb:
       database: zipline

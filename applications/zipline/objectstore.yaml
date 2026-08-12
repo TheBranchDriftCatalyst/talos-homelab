@@ -1,0 +1,27 @@
+---
+# Barman Cloud plugin ObjectStore for zipline-postgres — the former
+# Cluster.spec.backup.barmanObjectStore stanza, moved verbatim into the
+# plugin's CRD (in-tree barman is removed in CNPG 1.30). Same bucket, same
+# prefix, same creds — WAL history and existing base backups carry over.
+# retentionPolicy moves here too (was Cluster.spec.backup.retentionPolicy).
+# (No metadata.namespace — the kustomization stamps media-private.)
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: zipline-postgres
+spec:
+  retentionPolicy: "30d" # prune backups + WALs older than 30 days
+  configuration:
+    destinationPath: s3://cnpg-backups/zipline-postgres
+    endpointURL: http://minio-hl.minio.svc:9000
+    s3Credentials:
+      accessKeyId:
+        name: cnpg-minio-backup
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: cnpg-minio-backup
+        key: ACCESS_SECRET_KEY
+    wal:
+      compression: gzip
+    data:
+      compression: gzip
