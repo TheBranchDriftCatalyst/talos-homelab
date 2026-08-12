@@ -35,6 +35,25 @@ spec:
     remediation:
       retries: 3
 
+  # The chart doesn't expose arbitrary SC annotations — patch it in. Marks
+  # fatboy-nfs-appdata as KubeVirt/CDI's default virtualization StorageClass
+  # (RWX-capable NFS beats the degraded local-path k8s default for VM disks;
+  # clears CDIDefaultStorageClassDegraded). SMP, not JSON add — see
+  # helm-postrenderer gotcha (silent abort on missing parent path).
+  postRenderers:
+    - kustomize:
+        patches:
+          - patch: |
+              apiVersion: storage.k8s.io/v1
+              kind: StorageClass
+              metadata:
+                name: fatboy-nfs-appdata
+                annotations:
+                  storageclass.kubevirt.io/is-default-virt-class: "true"
+            target:
+              kind: StorageClass
+              name: fatboy-nfs-appdata
+
   values:
     nfs:
       server: ${SYNOLOGY_IP}
