@@ -68,7 +68,7 @@ spec:
         # ----------------------------------------------------------------
         - alert: VeleroScheduleNotRunning
           expr: |
-            time() - velero_backup_last_successful_timestamp{schedule!=""} > 172800
+            time() - velero_backup_last_successful_timestamp{schedule!="", schedule!~".*weekly.*"} > 172800
           for: 10m
           labels:
             severity: warning
@@ -79,6 +79,23 @@ spec:
               Last successful backup for schedule {{ $labels.schedule }}
               was {{ $value | humanizeDuration }} ago.  Daily schedules
               should run every 24h, so 48h+ silence means the scheduler is
+              stuck or the schedule has been disabled.
+
+        # Weekly schedules get a 2x-interval window of their own — the 48h
+        # rule above fired every Tue-Sat on a perfectly healthy weekly backup.
+        - alert: VeleroWeeklyScheduleNotRunning
+          expr: |
+            time() - velero_backup_last_successful_timestamp{schedule=~".*weekly.*"} > 1209600
+          for: 10m
+          labels:
+            severity: warning
+            component: velero
+          annotations:
+            summary: "Velero weekly schedule {{ $labels.schedule }} has not run in >14d"
+            description: >-
+              Last successful backup for schedule {{ $labels.schedule }}
+              was {{ $value | humanizeDuration }} ago.  Weekly schedules
+              should run every 7d, so 14d+ silence means the scheduler is
               stuck or the schedule has been disabled.
 
         # ----------------------------------------------------------------

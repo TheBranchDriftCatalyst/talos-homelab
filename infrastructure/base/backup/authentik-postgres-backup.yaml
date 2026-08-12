@@ -25,7 +25,10 @@ metadata:
   name: authentik-postgres-backup-config
   namespace: backup
 data:
-  PGHOST: "authentik-postgresql.authentik.svc.cluster.local"
+  # CNPG cluster primary (bundled-subchart authentik-postgresql retired 2026-08;
+  # see infrastructure/base/authentik/postgres.yaml). Same `authentik` role +
+  # 1Password password as before — only the host moved.
+  PGHOST: "authentik-postgres-rw.authentik.svc.cluster.local"
   PGPORT: "5432"
   PGUSER: "authentik"
   PGDATABASE: "authentik"
@@ -64,8 +67,8 @@ spec:
           containers:
             - name: dump-and-upload
               # Official postgres image (Debian-based, has bash + curl + gzip).
-              # Match authentik-postgresql chart version (PostgreSQL 16).
-              image: postgres:16.4-bookworm
+              # Client major must be >= server major (CNPG runs PostgreSQL 17).
+              image: postgres:17-bookworm
               command:
                 - /bin/bash
                 - -c
