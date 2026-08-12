@@ -45,26 +45,15 @@ spec:
     storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
   monitoring:
     enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
-  # Object-store backups → MinIO (TALOS-a1hk). CNPG in-tree barman API.
-  # Continuous WAL archiving + base backups land in the shared `cnpg-backups`
-  # bucket under a per-cluster prefix. Creds reuse the MinIO root key via the
-  # cnpg-minio-backup Secret (see other clusters' backup-credentials.yaml).
-  backup:
-    retentionPolicy: "30d"
-    barmanObjectStore:
-      destinationPath: s3://cnpg-backups/authentik-postgres
-      endpointURL: http://minio-hl.minio.svc:9000
-      s3Credentials:
-        accessKeyId:
-          name: cnpg-minio-backup
-          key: ACCESS_KEY_ID
-        secretAccessKey:
-          name: cnpg-minio-backup
-          key: ACCESS_SECRET_KEY
-      wal:
-        compression: gzip
-      data:
-        compression: gzip
+  # Object-store backups → MinIO (TALOS-a1hk). Config lives in the ObjectStore
+  # CR (objectstore.yaml) — migrated off the in-tree barmanObjectStore (removed
+  # in CNPG 1.30) to the barman-cloud CNPG-I plugin. Same bucket/prefix/creds;
+  # base backups: the ScheduledBackup below.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: authentik-postgres
   bootstrap:
     initdb:
       database: authentik
@@ -137,5 +126,9 @@ spec:
   schedule: "0 15 2 * * *"
   immediate: true # take one right away so backups exist before the first tick
   backupOwnerReference: self
+  # barman-cloud CNPG-I plugin (see objectstore.yaml) — in-tree method removed in CNPG 1.30
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
   cluster:
     name: authentik-postgres
