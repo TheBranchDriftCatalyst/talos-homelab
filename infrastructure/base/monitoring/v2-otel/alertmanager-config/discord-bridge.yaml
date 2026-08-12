@@ -24,8 +24,11 @@ data:
 
     def post_discord(content):
         body = json.dumps({"content": content[:1900]}).encode()
-        req = urllib.request.Request(
-            WEBHOOK, data=body, headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(WEBHOOK, data=body, headers={
+            "Content-Type": "application/json",
+            # Discord/Cloudflare 403s the default 'Python-urllib' UA — must set one.
+            "User-Agent": "Catalyst-Alertmanager-Discord/1.0",
+        })
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status
 
