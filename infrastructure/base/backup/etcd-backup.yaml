@@ -118,10 +118,15 @@ spec:
                   total=$(mc ls "${S3_DIR}" | wc -l)
                   to_delete=$((total - RETENTION_COUNT))
                   if [ "${to_delete}" -gt 0 ]; then
-                    mc ls "${S3_DIR}" | head -n "${to_delete}" | awk '{print $NF}' | \
-                      while read -r f; do
+                    # NB: the minio/mc image has NO awk — extract the filename (last
+                    # field of `mc ls`) via POSIX parameter expansion instead, and
+                    # fail-fast on a real rm error so a broken prune can't stay green.
+                    mc ls "${S3_DIR}" | head -n "${to_delete}" | \
+                      while read -r line; do
+                        f=${line##* }
+                        [ -n "${f}" ] || continue
                         echo "    rm ${f}"
-                        mc rm "${S3_DIR}${f}"
+                        mc rm "${S3_DIR}${f}" || exit 1
                       done
                   else
                     echo "    nothing to prune (have ${total}, keep ${RETENTION_COUNT})"

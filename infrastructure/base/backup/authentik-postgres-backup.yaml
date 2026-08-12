@@ -104,10 +104,14 @@ spec:
                   total=$(/tmp/mc ls "$S3_DIR" | wc -l | tr -d ' ')
                   to_delete=$((total - RETENTION_COUNT))
                   if [ "$to_delete" -gt 0 ]; then
+                    # No awk in this image — take the filename (last field of `mc ls`)
+                    # via POSIX parameter expansion; fail-fast on a real rm error.
                     /tmp/mc ls "$S3_DIR" | head -n "$to_delete" \
-                      | awk '{print $NF}' | while read -r f; do
+                      | while read -r line; do
+                      f=${line##* }
+                      [ -n "$f" ] || continue
                       echo "    rm $f"
-                      /tmp/mc rm "${S3_DIR}${f}"
+                      /tmp/mc rm "${S3_DIR}${f}" || exit 1
                     done
                   else
                     echo "    nothing to prune (have $total, keep $RETENTION_COUNT)"
