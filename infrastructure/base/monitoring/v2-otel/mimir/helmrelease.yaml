@@ -84,7 +84,11 @@ spec:
           # ingest_storage is off; without it the ingester has no ingest path
           push_grpc_method_enabled: true
           ring:
-            replication_factor: 1
+            # RF=3 across 3 ingesters (2026-08-13, post-kafka-migration HA):
+            # ring tolerates one unhealthy member — the recurring memberlist
+            # ring-wedge class stops taking queries down. RF=2 would be worse
+            # than 1 (quorum=2 of 2). ~3x ingester memory, accepted.
+            replication_factor: 3
             # Ride out slow gossip propagation during transfer bursts instead
             # of flapping unhealthy at the 1m default (see memberlist note above)
             heartbeat_timeout: 3m
@@ -153,9 +157,10 @@ spec:
           storage_prefix: ruler
           # OTLP ingestion is enabled by default in Mimir 2.9+
           # Access via /otlp/v1/metrics endpoint
-    # Component sizing for homelab (minimal)
+    # Component sizing for homelab (minimal; ingester+stateless HA'd 2026-08-13
+    # after the ring-wedge incident — see structuredConfig ingester.ring note)
     ingester:
-      replicas: 1
+      replicas: 3
       resources:
         requests:
           cpu: 100m
@@ -167,19 +172,19 @@ spec:
       zoneAwareReplication:
         enabled: false
     distributor:
-      replicas: 1
+      replicas: 2
       resources:
         requests:
           cpu: 50m
           memory: 256Mi
     querier:
-      replicas: 1
+      replicas: 2
       resources:
         requests:
           cpu: 50m
           memory: 256Mi
     query_frontend:
-      replicas: 1
+      replicas: 2
       resources:
         requests:
           cpu: 50m
