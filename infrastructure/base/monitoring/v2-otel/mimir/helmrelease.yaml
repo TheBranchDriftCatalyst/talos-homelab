@@ -42,6 +42,16 @@ spec:
       structuredConfig:
         # Multi-tenancy disabled for simplicity
         multitenancy_enabled: false
+        # Memberlist self-healing (2026-08-13 ring-wedge incident): cross-node
+        # gossip dials sporadically time out during heavy-transfer windows
+        # (nightly backup burst saturating the LAN), and with single-replica
+        # ingester/distributor rings one unlucky burst left the ingester stuck
+        # non-ACTIVE for hours ("too many unhealthy instances in the ring")
+        # until a pod bounce re-registered it. rejoin_interval re-merges gossip
+        # islands automatically; the raised ingester heartbeat timeout rides
+        # out slow propagation instead of flapping unhealthy at the 1m default.
+        memberlist:
+          rejoin_interval: 1m
         # Limits
         limits:
           # Increase default limits for homelab use
@@ -65,6 +75,9 @@ spec:
         ingester:
           ring:
             replication_factor: 1
+            # Ride out slow gossip propagation during transfer bursts instead
+            # of flapping unhealthy at the 1m default (see memberlist note above)
+            heartbeat_timeout: 3m
             kvstore:
               store: memberlist
         # Store gateway
