@@ -33,15 +33,22 @@ spec:
       extraEnvFrom:
         - secretRef:
             name: mimir-s3-scoped # scoped `mimir` user (bucket-only), not root — TALOS-xgrl.12
-    # NOTE (audit SEV-2): chart 6.x defaults kafka.enabled=true (experimental Kafka ingest-storage,
-    # a single-broker SPOF). Disabling it live crashes the ingester on the kafka→classic transition
-    # (StatefulSet ingester 'Failed'), so we KEEP kafka enabled for now — the disable needs a
-    # careful offline/scaled migration, tracked separately. Do NOT set kafka.enabled=false here.
+    # Classic (non-Kafka) architecture — TALOS-iuig migration 2026-08-13.
+    # Chart 6.x defaults to the experimental Kafka ingest-storage (a single-broker
+    # SPOF the chart itself calls demo-only). Going classic requires ALL THREE of:
+    # ingest_storage.enabled=false + kafka.enabled=false + ingester
+    # push_grpc_method_enabled=true — flipping only kafka.enabled leaves the
+    # ingester with NO ingest path at all (the 2026-08 SEV-2 crashloop).
+    kafka:
+      enabled: false
     # Single-zone deployment for homelab
     mimir:
       structuredConfig:
         # Multi-tenancy disabled for simplicity
         multitenancy_enabled: false
+        # Classic ingest path (TALOS-iuig) — see kafka note above
+        ingest_storage:
+          enabled: false
         # Memberlist self-healing (2026-08-13 ring-wedge incident): cross-node
         # gossip dials sporadically time out during heavy-transfer windows
         # (nightly backup burst saturating the LAN), and with single-replica
@@ -73,6 +80,9 @@ spec:
               store: memberlist
         # Ingester
         ingester:
+          # Classic distributor→ingester gRPC push (TALOS-iuig) — required when
+          # ingest_storage is off; without it the ingester has no ingest path
+          push_grpc_method_enabled: true
           ring:
             replication_factor: 1
             # Ride out slow gossip propagation during transfer bursts instead
