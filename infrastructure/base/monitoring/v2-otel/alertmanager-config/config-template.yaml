@@ -51,6 +51,19 @@ data:
           repeat_interval: 1m
           continue: false
 
+        # CDIDefaultStorageClassDegraded — STRUCTURAL, muted 2026-08-13.
+        # CDI marks any StorageProfile without smart-clone as degraded, and
+        # smart-clone requires a CSI driver: nfs-subdir + local-path can never
+        # satisfy it. The actionable part (profiles complete, RWX virt-default
+        # class = fatboy-nfs-appdata) is done; this residual warning would fire
+        # forever. Un-mute when CSI storage lands (TALOS-1ujn NVMe/CSI).
+        # The rule itself is cdi-operator-generated so it can't be tuned in git.
+        - matchers:
+            - alertname="CDIDefaultStorageClassDegraded"
+          receiver: muted
+          repeat_interval: 168h
+          continue: false
+
         # Critical alerts get their own group so pages aren't merged
         # with warnings on the same 5m group_interval window.
         - matchers:
@@ -85,6 +98,10 @@ data:
         webhook_configs:
           - url: "$HEARTBEAT_URL"
             send_resolved: false
+
+      # Sink for structurally-unfixable alerts we deliberately keep evaluating
+      # (visible in the ALERTS metric / Grafana) but don't want in Discord.
+      - name: muted
 
     # Inhibit rules — a critical alert on a component silences the
     # matching warning-severity alert on the same component so pages
