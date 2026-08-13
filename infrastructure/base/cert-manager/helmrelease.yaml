@@ -20,7 +20,13 @@ spec:
   chart:
     spec:
       chart: cert-manager
-      version: 'v1.16.2'
+      # v1.21.1 direct (TALOS-xsx, operator-approved off-policy jump): v1.16
+      # capped at k8s 1.32 and this cluster is on 1.34 — already out of range.
+      # CRD diff v1.16.2→v1.21.1 is 100% additive. NEVER v1.21.0 (ACME solver
+      # Secret validation wedges 10h on missing ExternalSecret races) or
+      # v1.19.0 (spurious cert re-issuance). v1.18+ GA defaults now in effect:
+      # privateKey.rotationPolicy=Always, revisionHistoryLimit=1.
+      version: 'v1.21.1'
       sourceRef:
         kind: HelmRepository
         name: jetstack
@@ -36,7 +42,11 @@ spec:
       retries: 3
   values:
     # Install CRDs
-    installCRDs: true
+    # installCRDs deprecated upstream — new crds block (keep=true guards CRDs
+    # against release deletion)
+    crds:
+      enabled: true
+      keep: true
 
     # Replicas for HA (1 for homelab)
     replicaCount: 1
