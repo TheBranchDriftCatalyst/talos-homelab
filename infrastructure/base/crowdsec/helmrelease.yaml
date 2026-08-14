@@ -396,6 +396,30 @@ spec:
             - crowdsecurity/vpatch-*
           outofband_rules:
             - crowdsecurity/crs
+          # ---- boomtime telemetry exclusion (2026-08-14) ----
+          # Coding-telemetry ingest bodies inherently contain file paths, shell
+          # commands, and code fragments — CRS 932260 (unix-shell RCE) fired on
+          # a legit heartbeats.bulk payload and the appsec-outofband scenario
+          # escalated it to a BAN of the operator's home IP, despite this config
+          # being detect-only inline. These routes are auth-gated ingest; their
+          # payloads will trip injection rules forever, so scope them out rather
+          # than whack-a-mole individual CRS IDs.
+          pre_eval:
+            # Skip body scanning entirely on the code-carrying routes (also
+            # skips inband vpatch BODY checks there — accepted: vpatch CVE
+            # signatures are overwhelmingly path/query based, and these routes
+            # are API-key-gated).
+            - filter: req.URL.Path startsWith "/api/v1/users/current/heartbeats" || req.URL.Path startsWith "/api/v1/users/current/import" || req.URL.Path startsWith "/api/v1/users/current/db/import"
+              apply:
+                - DisableBodyInspection()
+          on_match:
+            # Belt for anything that still matches (headers/query): never let an
+            # out-of-band CRS hit on these routes become an event that feeds the
+            # ban scenario, and drop the alert noise.
+            - filter: IsOutBand && (req.URL.Path startsWith "/api/v1/users/current/heartbeats" || req.URL.Path startsWith "/api/v1/users/current/import" || req.URL.Path startsWith "/api/v1/users/current/db/import")
+              apply:
+                - CancelAlert()
+                - CancelEvent()
       env:
         - name: COLLECTIONS
           value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-crs"
