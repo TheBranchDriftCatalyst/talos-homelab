@@ -49,6 +49,18 @@ Audit numbers were two months stale at execution start — every "latest" re-ver
 - Capped at 2.6.0 (k8s-1.34 tested ceiling; 2.7+ waits for k8s 1.35/1.36).
 - Verified: onepassword ClusterSecretStore Ready, 123/123 ExternalSecrets Ready on v1 API.
 
+### ⚠️ Post-migration incident: ESO generator rotation (resolved same day)
+- The v1 rewrite re-reconciled every ExternalSecret; Password-GENERATOR-backed ones regenerated
+  despite refreshInterval:0 → all six scoped MinIO users' secrets rotated while MinIO kept old
+  passwords. Loki ingestion + Mimir bucket reads + Tempo broke (SignatureDoesNotMatch); Velero/CNPG
+  were one restart from failing; immich OIDC client secret also rotated.
+- Fix: one-off MinIO password-reset job (mc admin user add = upsert) + restart of all S3 consumers +
+  immich; provisioner CronJobs' `|| true` removed so hourly runs self-heal drift (commit bfd2195).
+- Also: flux kustomize-controller needed a restart (stale REST-mapper cached v1beta1 → phantom
+  NotFound health checks dammed ~22 kustomizations).
+- Verified: 0 signature errors, failing dashboard query returns data, CNPG + Velero backup paths
+  green, flux 0 not-ready.
+
 ### Deferred campaigns (ticketed, sequenced)
 - Kubernetes: TALOS-c0g (Talos v1.13.2→v1.13.8, HARD prereq — v1.13.2 scheduler CrashLoop bug
   siderolabs/talos#13350) → TALOS-haq (k8s 1.35.7) → TALOS-0it (1.36.3). talosctl rejects minor-skips.
