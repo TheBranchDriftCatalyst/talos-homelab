@@ -60,7 +60,7 @@ spec:
                     mc mb --ignore-existing "m/$3"
                     printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}' "$3" "$3" >/tmp/p.json
                     mc admin policy create m "$4" /tmp/p.json 2>/dev/null || mc admin policy add m "$4" /tmp/p.json 2>/dev/null || true
-                    mc admin user add m "$1" "$2" 2>/dev/null || true
+                    mc admin user add m "$1" "$2" # UPSERT — resets password to current secret every run (2026-08-13 incident: ESO generator re-ran on the v1 API migration, rotated all scoped secrets; the old `|| true` swallowed the drift for hours)
                     mc admin policy attach m "$4" --user "$1" 2>/dev/null || mc admin policy set m "$4" user="$1" 2>/dev/null || true
                     echo "OK: user=$1 bucket=$3 policy=$4"
                   }

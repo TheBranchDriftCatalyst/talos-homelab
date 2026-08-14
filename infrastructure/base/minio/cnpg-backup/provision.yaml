@@ -63,7 +63,7 @@ spec:
                   mc admin policy create m cnpg-backup-rw /tmp/policy.json 2>/dev/null \
                     || mc admin policy add m cnpg-backup-rw /tmp/policy.json 2>/dev/null || true
                   # user (idempotent — secret is stable; add is a no-op if it already matches)
-                  mc admin user add m "$BACKUP_KEY" "$BACKUP_SECRET" 2>/dev/null || true
+                  mc admin user add m "$BACKUP_KEY" "$BACKUP_SECRET" # UPSERT — resets password to current secret every run (2026-08-13 incident: ESO generator re-ran on the v1 API migration, rotated all scoped secrets; the old `|| true` swallowed the drift for hours)
                   # attach (new mc) / set (old mc)
                   mc admin policy attach m cnpg-backup-rw --user "$BACKUP_KEY" 2>/dev/null \
                     || mc admin policy set m cnpg-backup-rw user="$BACKUP_KEY" 2>/dev/null || true
