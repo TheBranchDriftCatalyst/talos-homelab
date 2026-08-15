@@ -1,0 +1,75 @@
+---
+# ClickStack / HyperDX (TALOS-cjny) — dedicated log-analytics UI + OTel
+# collector. chart 1.1.1 / app 2.8.0 (latest 2026-08).
+#
+# Deviations from chart defaults, all deliberate:
+#  - clickhouse.enabled=false  -> we use the Altinity-operator CHI
+#    (clickhouse.yaml) instead of the chart's unmanaged StatefulSet. Keeps
+#    ClickHouse under the same operator/CRD pattern as plausible.
+#  - mongodb.image bumped 5.0.32 -> 8.3.8. Mongo holds HyperDX APP STATE only
+#    (users/dashboards/saved searches) — no log data — so it is rebuildable
+#    if the major jump misbehaves; revert to mongo:5.0.32-focal if HyperDX
+#    fails to connect (documented on TALOS-cjny).
+#  - usageStatsEnabled=false (homelab, no phone-home).
+#  - chart ingress left off: exposure is our Traefik IngressRoute
+#    (ingressroute.yaml -> hyperdx.talos00).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: clickstack
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: clickstack
+      version: '1.1.1'
+      sourceRef:
+        kind: HelmRepository
+        name: hyperdx
+        namespace: monitoring
+      interval: 12h
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: 3
+    cleanupOnFail: true
+  values:
+    global:
+      storageClassName: local-path
+
+    # Bundled ClickHouse OFF — the Altinity CHI is the store.
+    clickhouse:
+      enabled: false
+
+    # App state only (dashboards/users/saved searches), not logs.
+    mongodb:
+      enabled: true
+      image: "mongo:8.3.8"
+
+    # Collector writes OTLP -> ClickHouse over the native protocol.
+    otel:
+      clickhouseEndpoint: "tcp://clickhouse-hyperdx-logs.monitoring.svc:9000"
+
+    hyperdx:
+      appUrl: "http://hyperdx.talos00"
+      # Override the chart's default (which appends :3000) — Traefik serves
+      # this on :80, so the browser-facing URL carries no port.
+      frontendUrl: "http://hyperdx.talos00"
+      usageStatsEnabled: false
+      # Point the UI at the operator-managed CHI (default user, no password —
+      # ClusterIP-only, same posture as the plausible CHI).
+      defaultConnections: |
+        [
+          {
+            "name": "ClickHouse (hyperdx-logs)",
+            "host": "http://clickhouse-hyperdx-logs.monitoring.svc:8123",
+            "port": 8123,
+            "username": "default",
+            "password": ""
+          }
+        ]
