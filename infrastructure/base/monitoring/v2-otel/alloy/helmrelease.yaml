@@ -62,11 +62,7 @@ spec:
 
             output {
               metrics = [otelcol.exporter.otlphttp.mimir.input]
-              // DUAL-WRITE (TALOS-cjny): Loki (ops tail) + ClickStack (analytics)
-              logs    = [
-                otelcol.exporter.loki.default.input,
-                otelcol.exporter.otlphttp.clickstack.input,
-              ]
+              logs    = [otelcol.exporter.loki.default.input]
               traces  = [otelcol.exporter.otlp.tempo.input]
             }
           }
@@ -83,44 +79,6 @@ spec:
           loki.write "default" {
             endpoint {
               url = "http://loki.monitoring.svc:3100/loki/api/v1/push"
-            }
-          }
-
-          // ============================================
-          // Logs -> ClickStack/HyperDX (dual-write, TALOS-cjny)
-          // ============================================
-          // Loki remains the ops tail; ClickHouse is the analytics store.
-          // The pod-log firehose arrives as LOKI entries, so it needs the
-          // loki->OTLP conversion first; OTLP-native logs skip straight to
-          // the exporter from otelcol.processor.batch.default.
-          otelcol.receiver.loki "clickstack" {
-            output {
-              logs = [otelcol.processor.batch.clickstack.input]
-            }
-          }
-
-          // Separate batcher: ClickHouse strongly prefers fewer, larger
-          // inserts, and this keeps ClickStack batching independent of the
-          // Loki/Mimir/Tempo path.
-          otelcol.processor.batch "clickstack" {
-            timeout = "10s"
-            // send_batch_max_size MUST be >= send_batch_size (Alloy rejects the
-            // config outright otherwise and refuses to start — this crashlooped
-            // the collector on 2026-08-15 when only send_batch_size was raised).
-            send_batch_size = 4096
-            send_batch_max_size = 8192
-
-            output {
-              logs = [otelcol.exporter.otlphttp.clickstack.input]
-            }
-          }
-
-          otelcol.exporter.otlphttp "clickstack" {
-            client {
-              endpoint = "http://clickstack-otel-collector.monitoring.svc:4318"
-              tls {
-                insecure = true
-              }
             }
           }
 
@@ -240,12 +198,7 @@ spec:
 
           loki.source.kubernetes "pods" {
             targets    = discovery.relabel.pod_logs.output
-            // DUAL-WRITE (TALOS-cjny): same stream to Loki AND, via the
-            // loki->OTLP converter, to ClickStack/HyperDX.
-            forward_to = [
-              loki.write.default.receiver,
-              otelcol.receiver.loki.clickstack.receiver,
-            ]
+            forward_to = [loki.write.default.receiver]
           }
 
           // ============================================
