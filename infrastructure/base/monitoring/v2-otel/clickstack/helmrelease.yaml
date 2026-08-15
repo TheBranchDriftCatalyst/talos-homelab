@@ -49,8 +49,21 @@ spec:
       storageClassName: local-path
 
     # Bundled ClickHouse OFF — the Altinity CHI is the store.
+    #
+    # config.users still matters with enabled:false — the chart templates the
+    # COLLECTOR's CLICKHOUSE_USER/PASSWORD and the app's connection from these
+    # keys. Chart defaults invent users (otelcollector/app) that only its own
+    # bundled StatefulSet would create; against our CHI they'd fail auth and
+    # the collector never becomes ready (observed 2026-08-15). Point them at
+    # `default` with an empty password, matching the plausible CHI precedent
+    # (ClusterIP-only, no ingress on 8123/9000) — no invented secrets in git.
     clickhouse:
       enabled: false
+      config:
+        users:
+          otelUserName: "default"
+          otelUserPassword: ""
+          appUserPassword: ""
 
     # App state only (dashboards/users/saved searches), not logs.
     mongodb:
