@@ -91,6 +91,76 @@ spec:
       # this on :80, so the browser-facing URL carries no port.
       frontendUrl: "http://hyperdx.talos00"
       usageStatsEnabled: false
+      # PRE-PROVISIONED SOURCES (TALOS-cjny) — so the UI needs no click-ops.
+      # HyperDX auto-provisions these when a team has NO sources yet, which
+      # means changes here only apply to a FRESH team: to re-apply, drop the
+      # sources from Mongo and restart the app (documented on the ticket).
+      #
+      # Derived from the chart defaults with two deliberate changes:
+      #  1. the log source's trace/span id expressions read the JSON BODY, not
+      #     the native OTLP columns — our pod logs are stdout-scraped via
+      #     loki.source.kubernetes, which cannot populate TraceId/SpanId, while
+      #     boomtime stamps trace_id/span_id into its slog JSON (TALOS-kvg1).
+      #     This is what makes the log -> trace pivot actually work.
+      #  2. the metric + session sources are dropped: Mimir owns metrics and
+      #     nothing writes hyperdx_sessions, so they'd be dead entries.
+      # Log<->trace correlation (traceSourceId/logSourceId) is already wired.
+      defaultSources: |
+        [
+          {
+            "from": {
+              "databaseName": "default",
+              "tableName": "otel_logs"
+            },
+            "kind": "log",
+            "timestampValueExpression": "TimestampTime",
+            "name": "Logs",
+            "displayedTimestampValueExpression": "Timestamp",
+            "implicitColumnExpression": "Body",
+            "serviceNameExpression": "ServiceName",
+            "bodyExpression": "Body",
+            "eventAttributesExpression": "LogAttributes",
+            "resourceAttributesExpression": "ResourceAttributes",
+            "defaultTableSelectExpression": "Timestamp,ServiceName,SeverityText,Body",
+            "severityTextExpression": "SeverityText",
+            "traceIdExpression": "JSONExtractString(Body, 'trace_id')",
+            "spanIdExpression": "JSONExtractString(Body, 'span_id')",
+            "connection": "Local ClickHouse",
+            "traceSourceId": "Traces",
+            "sessionSourceId": "Sessions",
+            "metricSourceId": "Metrics"
+          },
+          {
+            "from": {
+              "databaseName": "default",
+              "tableName": "otel_traces"
+            },
+            "kind": "trace",
+            "timestampValueExpression": "Timestamp",
+            "name": "Traces",
+            "displayedTimestampValueExpression": "Timestamp",
+            "implicitColumnExpression": "SpanName",
+            "serviceNameExpression": "ServiceName",
+            "bodyExpression": "SpanName",
+            "eventAttributesExpression": "SpanAttributes",
+            "resourceAttributesExpression": "ResourceAttributes",
+            "defaultTableSelectExpression": "Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName",
+            "traceIdExpression": "TraceId",
+            "spanIdExpression": "SpanId",
+            "durationExpression": "Duration",
+            "durationPrecision": 9,
+            "parentSpanIdExpression": "ParentSpanId",
+            "spanNameExpression": "SpanName",
+            "spanKindExpression": "SpanKind",
+            "statusCodeExpression": "StatusCode",
+            "statusMessageExpression": "StatusMessage",
+            "connection": "Local ClickHouse",
+            "logSourceId": "Logs",
+            "sessionSourceId": "Sessions",
+            "metricSourceId": "Metrics"
+          }
+        ]
+
       # Point the UI at the operator-managed CHI (default user, no password —
       # ClusterIP-only, same posture as the plausible CHI).
       defaultConnections: |
