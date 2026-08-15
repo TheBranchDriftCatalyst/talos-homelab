@@ -104,7 +104,11 @@ spec:
           // Loki/Mimir/Tempo path.
           otelcol.processor.batch "clickstack" {
             timeout = "10s"
+            // send_batch_max_size MUST be >= send_batch_size (Alloy rejects the
+            // config outright otherwise and refuses to start — this crashlooped
+            // the collector on 2026-08-15 when only send_batch_size was raised).
             send_batch_size = 4096
+            send_batch_max_size = 8192
 
             output {
               logs = [otelcol.exporter.otlphttp.clickstack.input]
