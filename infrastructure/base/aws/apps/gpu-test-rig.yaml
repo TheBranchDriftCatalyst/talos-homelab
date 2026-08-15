@@ -1,0 +1,22 @@
+---
+# ██ POC-DEMO ██ The model-testing rig (TALOS-455u): spot g5.xlarge + 200GB
+# ephemeral cache seeded from the catalyst-tbdc-models S3 library. THE FILE IS
+# THE ON-SWITCH: commit → GPU + cache provision + models warm; delete → all of
+# it evaporates, library untouched. Swap spec.models between sessions to test
+# different sets — cache reseeds on next boot.
+apiVersion: aws.catalyst.io/v1alpha1
+kind: XGPUInstance
+metadata:
+  name: gpu-test-rig
+  labels: {catalyst.io/stage: poc-demo}
+spec:
+  instanceName: gpu-test-rig
+  instanceType: g5.xlarge
+  models: "llama-3.1-8b-instruct"   # space-separated prefixes in the library bucket
+  modelsBucket: catalyst-tbdc-models
+  cacheVolumeGb: 200
+  servePort: "8000"
+  region: us-west-2
+  availabilityZone: us-west-2a      # HUMAN: must match the subnet below
+  vpcId: vpc-REPLACE-ME
+  subnetId: subnet-REPLACE-ME
