@@ -27,6 +27,14 @@ spec:
   values:
     # Alloy configuration
     alloy:
+      # HyperDX/ClickStack ingestion key (TALOS-4clh) — ESO-managed secret,
+      # read in the config below via sys.env(). Never inlined in git.
+      extraEnv:
+        - name: HYPERDX_INGESTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hyperdx-ingestion
+              key: ingestion_api_key
       # Resources - Alloy does heavy Prometheus scraping + OTEL collection
       resources:
         requests:
@@ -62,8 +70,17 @@ spec:
 
             output {
               metrics = [otelcol.exporter.otlphttp.mimir.input]
-              logs    = [otelcol.exporter.loki.default.input]
-              traces  = [otelcol.exporter.otlp.tempo.input]
+              // DUAL-WRITE (TALOS-cjny/xam9): Loki+Tempo keep their pipelines
+              // unchanged; ClickStack gets a copy for SQL analytics and
+              // log<->trace correlation (otel_logs carries TraceId/SpanId).
+              logs    = [
+                otelcol.exporter.loki.default.input,
+                otelcol.exporter.otlphttp.clickstack.input,
+              ]
+              traces  = [
+                otelcol.exporter.otlp.tempo.input,
+                otelcol.exporter.otlphttp.clickstack.input,
+              ]
             }
           }
 
@@ -79,6 +96,45 @@ spec:
           loki.write "default" {
             endpoint {
               url = "http://loki.monitoring.svc:3100/loki/api/v1/push"
+            }
+          }
+
+          // ============================================
+          // ClickStack / HyperDX (dual-write) — TALOS-cjny / TALOS-xam9
+          // ============================================
+          // Pod logs arrive as LOKI entries, so they need conversion to OTLP
+          // first; OTLP-native logs/traces go straight to the exporter from
+          // otelcol.processor.batch.default.
+          otelcol.receiver.loki "clickstack" {
+            output {
+              logs = [otelcol.processor.batch.clickstack.input]
+            }
+          }
+
+          otelcol.processor.batch "clickstack" {
+            timeout = "10s"
+            // send_batch_max_size MUST be >= send_batch_size. Alloy rejects the
+            // ENTIRE config otherwise and refuses to start — that crashlooped
+            // the collector on 2026-08-15 when only send_batch_size was set.
+            send_batch_size     = 4096
+            send_batch_max_size = 8192
+
+            output {
+              logs = [otelcol.exporter.otlphttp.clickstack.input]
+            }
+          }
+
+          otelcol.exporter.otlphttp "clickstack" {
+            client {
+              endpoint = "http://clickstack-otel-collector.monitoring.svc:4318"
+              tls {
+                insecure = true
+              }
+              // ClickStack secures OTLP ingest with the team's ingestion key
+              // (minted by our own HyperDX, stored in our own MongoDB).
+              headers = {
+                "authorization" = sys.env("HYPERDX_INGESTION_KEY"),
+              }
             }
           }
 
@@ -198,7 +254,12 @@ spec:
 
           loki.source.kubernetes "pods" {
             targets    = discovery.relabel.pod_logs.output
-            forward_to = [loki.write.default.receiver]
+            // DUAL-WRITE: same stream to Loki AND (via the loki->OTLP
+            // converter) to ClickStack.
+            forward_to = [
+              loki.write.default.receiver,
+              otelcol.receiver.loki.clickstack.receiver,
+            ]
           }
 
           // ============================================
