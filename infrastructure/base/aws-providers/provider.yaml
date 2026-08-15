@@ -17,24 +17,13 @@ metadata:
 spec:
   package: xpkg.upbound.io/crossplane-contrib/function-patch-and-transform:v0.10.9
 ---
-# ECS Fargate chain (TALOS-hk7i / XFargateApp): task orchestration, execution
-# role, logs, and SG networking. Same family/version as s3.
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata: {name: provider-aws-ecs}
-spec: {package: xpkg.upbound.io/upbound/provider-aws-ecs:v2.7.0}
----
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata: {name: provider-aws-iam}
-spec: {package: xpkg.upbound.io/upbound/provider-aws-iam:v2.7.0}
----
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata: {name: provider-aws-cloudwatchlogs}
-spec: {package: xpkg.upbound.io/upbound/provider-aws-cloudwatchlogs:v2.7.0}
----
-apiVersion: pkg.crossplane.io/v1
-kind: Provider
-metadata: {name: provider-aws-ec2}
-spec: {package: xpkg.upbound.io/upbound/provider-aws-ec2:v2.7.0}
+
+# NOTE 2026-08-15 INCIDENT: the ecs/iam/cloudwatchlogs/ec2 providers were
+# REMOVED after they destabilised the cluster. Six upjet providers register
+# well over a thousand CRDs between them (ec2 alone ~250); crossplane core was
+# OOMKilled and the apiserver saturated on their list/watch traffic — with the
+# control-plane taint temporarily off, they had also scheduled onto talos00,
+# taking the API server down. They provide ZERO value until the TALOS-3g8f
+# credentials gate is satisfied, so they are re-added only alongside real
+# creds, one at a time, with crossplane core resourced for the CRD load first.
+# The XFargateApp/XInstance/XGPUInstance XRDs + examples remain in git.
