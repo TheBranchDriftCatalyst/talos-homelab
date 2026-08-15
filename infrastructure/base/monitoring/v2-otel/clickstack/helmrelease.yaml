@@ -75,6 +75,17 @@ spec:
       clickhouseEndpoint: "tcp://clickhouse-hyperdx-logs.monitoring.svc:9000"
 
     hyperdx:
+      # The app container runs THREE node processes (API :8000, Next.js UI
+      # :3000, alert-task). The chart ships no limits; under node memory
+      # pressure the container was OOMKilled (exit 137) and came back with the
+      # UI process missing while readiness — which only probes the API port —
+      # still reported 1/1. Explicit headroom keeps the UI alive. (2026-08-15)
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          memory: 2Gi
       appUrl: "http://hyperdx.talos00"
       # Override the chart's default (which appends :3000) — Traefik serves
       # this on :80, so the browser-facing URL carries no port.
