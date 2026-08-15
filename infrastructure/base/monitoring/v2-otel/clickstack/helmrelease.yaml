@@ -20,6 +20,11 @@ metadata:
   namespace: monitoring
 spec:
   interval: 30m
+  # 20m: the stack has a slow, interdependent startup — mongo init, then the
+  # app, then the otel-collector's OpAMP handshake back to the app. The 5m
+  # default expired mid-boot and each retry TERMINATED pods that were seconds
+  # from ready (observed 2026-08-15), looking like a crashloop that wasn't.
+  timeout: 20m
   chart:
     spec:
       chart: clickstack
@@ -32,7 +37,8 @@ spec:
   install:
     crds: CreateReplace
     remediation:
-      retries: 3
+      retries: 2
+      remediateLastFailure: false # don't tear down a stack that's still converging
   upgrade:
     crds: CreateReplace
     remediation:
