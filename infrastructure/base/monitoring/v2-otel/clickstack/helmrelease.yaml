@@ -97,11 +97,15 @@ spec:
       # sources from Mongo and restart the app (documented on the ticket).
       #
       # Derived from the chart defaults with two deliberate changes:
-      #  1. the log source's trace/span id expressions read the JSON BODY, not
-      #     the native OTLP columns — our pod logs are stdout-scraped via
-      #     loki.source.kubernetes, which cannot populate TraceId/SpanId, while
-      #     boomtime stamps trace_id/span_id into its slog JSON (TALOS-kvg1).
-      #     This is what makes the log -> trace pivot actually work.
+      #  1. trace/span ids and service name are read from LogAttributes, not
+      #     the native OTLP columns. Pod logs are stdout-scraped via
+      #     loki.source.kubernetes, which leaves ServiceName/TraceId EMPTY —
+      #     but Alloy parses the JSON body into LogAttributes, so the fields
+      #     are there as indexed map keys (cheaper than JSONExtract on Body).
+      #     serviceNameExpression falls back app -> app.kubernetes.io/name ->
+      #     container so EVERY pod gets a usable service, not just ones that
+      #     emit OTLP natively (verified: kometa/traefik/mimir/alloy/... all
+      #     resolve). trace_id/span_id come from boomtime's slog (TALOS-kvg1).
       #  2. the metric + session sources are dropped: Mimir owns metrics and
       #     nothing writes hyperdx_sessions, so they'd be dead entries.
       # Log<->trace correlation (traceSourceId/logSourceId) is already wired.
@@ -117,14 +121,14 @@ spec:
             "name": "Logs",
             "displayedTimestampValueExpression": "Timestamp",
             "implicitColumnExpression": "Body",
-            "serviceNameExpression": "ServiceName",
+            "serviceNameExpression": "coalesce(nullIf(ServiceName, ''), nullIf(LogAttributes['app'], ''), nullIf(LogAttributes['app_kubernetes_io_name'], ''), nullIf(LogAttributes['container'], ''), 'unknown')",
             "bodyExpression": "Body",
             "eventAttributesExpression": "LogAttributes",
             "resourceAttributesExpression": "ResourceAttributes",
             "defaultTableSelectExpression": "Timestamp,ServiceName,SeverityText,Body",
             "severityTextExpression": "SeverityText",
-            "traceIdExpression": "JSONExtractString(Body, 'trace_id')",
-            "spanIdExpression": "JSONExtractString(Body, 'span_id')",
+            "traceIdExpression": "LogAttributes['trace_id']",
+            "spanIdExpression": "LogAttributes['span_id']",
             "connection": "Local ClickHouse",
             "traceSourceId": "Traces",
             "sessionSourceId": "Sessions",
