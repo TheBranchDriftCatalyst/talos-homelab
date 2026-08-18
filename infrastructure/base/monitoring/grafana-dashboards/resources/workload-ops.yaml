@@ -1,0 +1,69 @@
+---
+# Workload Ops — Namespace & App Drill-down
+#
+# Answers the per-APP question that the existing cluster dashboards do not:
+# "how is manyfold actually running right now?" catalyst-k8s-dashboard covers
+# cluster/node capacity and what's broken globally; this one scopes to a single
+# namespace + workload and shows CPU, throttling, memory headroom, restarts,
+# failure reasons and network for exactly those pods.
+#
+# FILTERS
+#   $namespace — label_values(kube_pod_info, namespace), multi + All
+#   $workload  — every workload in the namespace, multi + All. Built by
+#                label_replace over kube_pod_owner:
+#                  Deployment pods -> owner is a ReplicaSet "<workload>-<hash>"
+#                                     (hash never contains a dash)
+#                  everything else -> owner_name IS the workload
+#                                     (StatefulSet / DaemonSet / CNPG Cluster / Job)
+#                Panels re-select pods with the same owner_kind split. PromQL
+#                regexes are fully anchored, so workload "manyfold" selects ONLY
+#                the manyfold Deployment pod — NOT manyfold-postgres-* or
+#                manyfold-cache-*. Verified live at authoring time.
+#
+# JOIN NOTE: cAdvisor container_* metrics carry no workload label, so each panel
+# joins pod->workload via kube_pod_owner. Vector math uses
+# `* on(namespace,pod) group_left() ...`; set operations (and/or) use the SAME
+# join WITHOUT group_left(), which is a PromQL parse error on set ops. Both
+# forms are present — do not "simplify" one into the other.
+#
+# GROUNDING SUMMARY (queried via mimir-query-frontend, X-Scope-OrgID: anonymous;
+# every panel executed against openscad/manyfold, media-private/whisparr and
+# monitoring/* — 0 broken targets):
+#   LIVE:
+#     container_cpu_usage_seconds_total            1033 series
+#     container_memory_working_set_bytes           1033
+#     container_cpu_cfs_throttled_periods_total     114  (only containers WITH a cpu limit)
+#     container_cpu_cfs_periods_total               114
+#     container_oom_events_total                   1044  (real OOM kills)
+#     container_network_receive/transmit_bytes_total ~3.2k
+#     kube_pod_owner                                328  labels: owner_kind, owner_name
+#     kube_pod_info                                 328  labels: node
+#     kube_pod_status_phase                        1640
+#     kube_pod_status_ready                         984
+#     kube_pod_container_status_restarts_total      368
+#     kube_pod_container_resource_requests          619
+#     kube_pod_container_resource_limits            240  (only 240 — most workloads set no limits)
+#     kube_pod_container_status_last_terminated_reason 114
+#   SPARSE (panel present, often empty — this is CORRECT, not a bug):
+#     kube_pod_container_status_waiting_reason        1  (empty unless something is crash-looping)
+#     the cpu/memory LIMIT + throttling panels are empty for any workload with no
+#     limit set (e.g. manyfold) — nothing to throttle against. The panel
+#     descriptions say so explicitly so an empty graph is not misread as "broken".
+#   ABSENT (deliberately no panel):
+#     container_fs_usage_bytes — only 64 series, does not cover most containers.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: workload-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: cluster
+spec:
+  folderRef: ops-cluster
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-workload-ops
+    key: workload-ops.json

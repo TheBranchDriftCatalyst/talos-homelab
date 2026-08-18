@@ -1,0 +1,1283 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Per-workload Kubernetes drill-down: pick a namespace and an app, see how it is actually running. Complements 'Catalyst K8s - Full System Ops' (cluster/node capacity) by answering the app-level question instead: is it throttled, is it near its memory limit, why did it restart. Every metric was grounded against Mimir at authoring time.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Overview \u2014 is this workload healthy right now?",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 2,
+      "title": "Pods Running",
+      "type": "stat",
+      "description": "Pods of the selected workload(s) in phase=Running.",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}) and on(namespace,pod) group by (namespace,pod) (kube_pod_status_phase{namespace=~\"$namespace\",phase=\"Running\"} == 1)) or vector(0)",
+          "legendFormat": "running",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 3,
+      "title": "Pods NOT Running",
+      "type": "stat",
+      "description": "Pending/Failed/Unknown. Non-zero here is the first thing to chase.",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}) and on(namespace,pod) group by (namespace,pod) (kube_pod_status_phase{namespace=~\"$namespace\",phase!=\"Running\",phase!=\"Succeeded\"} == 1)) or vector(0)",
+          "legendFormat": "not running",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 4,
+      "title": "Containers Not Ready",
+      "type": "stat",
+      "description": "Pod exists but fails its readiness probe, so it receives NO Service traffic. This is what '0/1 Ready' looks like \u2014 the pod is up but effectively out of rotation.",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(kube_pod_status_ready{namespace=~\"$namespace\",condition=\"true\"} == 0 and on(namespace,pod) group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) or vector(0)",
+          "legendFormat": "not ready",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 5,
+      "title": "Restarts (1h)",
+      "type": "stat",
+      "description": "Container restarts in the last hour across the selection.",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[1h]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) or vector(0)",
+          "legendFormat": "restarts",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 6,
+      "title": "Peak CPU Throttling",
+      "type": "stat",
+      "description": "Share of CFS periods where the container hit its CPU limit and was hard-stalled for the rest of that 100ms window. ONLY containers WITH a cpu limit emit this, so a workload with no limit correctly reads 0. Sustained >25% means the limit is the bottleneck, not the code.",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "max(100 * sum by (namespace,pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=~\"$namespace\"}[5m]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) / sum by (namespace,pod) (rate(container_cpu_cfs_periods_total{namespace=~\"$namespace\"}[5m]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))) or vector(0)",
+          "legendFormat": "throttled %",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 25
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 7,
+      "title": "Peak Memory vs Limit",
+      "type": "stat",
+      "description": "Working set as a share of the memory LIMIT. Memory is incompressible: crossing 100% is an OOMKill, not a slowdown. Reads 0 when no memory limit is set.",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "max(100 * sum by (namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container!=\"\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) / sum by (namespace,pod) (kube_pod_container_resource_limits{namespace=~\"$namespace\",resource=\"memory\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))) or vector(0)",
+          "legendFormat": "% of limit",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 8,
+      "title": "OOM Kills (24h)",
+      "type": "stat",
+      "description": "Real OOM kill events from cAdvisor. Distinguishes a genuine memory kill from a liveness-probe restart \u2014 the two are indistinguishable in restart counts alone.",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(container_oom_events_total{namespace=~\"$namespace\"}[24h]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) or vector(0)",
+          "legendFormat": "oom kills",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 9,
+      "title": "Pods Ready",
+      "type": "stat",
+      "description": "Pods passing readiness \u2014 i.e. actually serving traffic.",
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(kube_pod_status_ready{namespace=~\"$namespace\",condition=\"true\"} == 1 and on(namespace,pod) group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) or vector(0)",
+          "legendFormat": "ready",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {},
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 10,
+      "panels": [],
+      "title": "CPU",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 11,
+      "title": "CPU usage per pod (cores)",
+      "type": "timeseries",
+      "description": "CPU burn per pod, with the aggregate request/limit for context. Usage riding the limit line while throttling climbs means the limit is the constraint.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container!=\"\"}[$__rate_interval]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "{{pod}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(kube_pod_container_resource_requests{namespace=~\"$namespace\",resource=\"cpu\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "total request",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(kube_pod_container_resource_limits{namespace=~\"$namespace\",resource=\"cpu\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "total limit",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 12,
+      "title": "CPU throttling % per pod",
+      "type": "timeseries",
+      "description": "THE panel for 'it is slow but the CPU graph looks fine'. A throttled container is stalled outright for the rest of each 100ms period, so latency and probe timeouts spike while AVERAGE cpu stays low. No series = no CPU limit set, nothing to throttle against.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "100 * sum by (pod) (rate(container_cpu_cfs_throttled_periods_total{namespace=~\"$namespace\"}[$__rate_interval]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) / sum by (pod) (rate(container_cpu_cfs_periods_total{namespace=~\"$namespace\"}[$__rate_interval]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "{{pod}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percent",
+          "max": 100,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 13,
+      "panels": [],
+      "title": "Memory",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 14,
+      "title": "Memory working set per pod",
+      "type": "timeseries",
+      "description": "Working set is what the kernel counts against the limit (RSS + active page cache). This is the number that triggers an OOMKill \u2014 not RSS.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container!=\"\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "{{pod}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(kube_pod_container_resource_requests{namespace=~\"$namespace\",resource=\"memory\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "total request",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(kube_pod_container_resource_limits{namespace=~\"$namespace\",resource=\"memory\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "total limit",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 15,
+      "title": "Memory % of limit per pod",
+      "type": "timeseries",
+      "description": "Headroom before an OOMKill. NO SERIES here means no memory limit is set \u2014 unbounded, so the pod can pressure the NODE into evictions instead of being killed itself.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "100 * sum by (pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container!=\"\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) / sum by (pod) (kube_pod_container_resource_limits{namespace=~\"$namespace\",resource=\"memory\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "{{pod}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percent",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 16,
+      "panels": [],
+      "title": "Restarts & failure modes",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 17,
+      "title": "Restarts over time",
+      "type": "timeseries",
+      "description": "Restart events over time. Correlate spikes against the throttling and memory panels above to tell a probe-kill apart from an OOMKill.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[$__rate_interval]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "{{pod}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 18,
+      "title": "Last termination reason",
+      "type": "table",
+      "description": "Why each container died last time: OOMKilled vs Error vs Completed. 'Completed' (exit 0) on a long-running service usually means it was SIGTERMed by a failing liveness probe \u2014 NOT a memory problem.",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod, container, reason) (kube_pod_container_status_last_terminated_reason{namespace=~\"$namespace\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) > 0",
+          "legendFormat": "",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 19,
+      "title": "Containers waiting (CrashLoopBackOff etc.)",
+      "type": "table",
+      "description": "Containers stuck in a waiting state and why \u2014 CrashLoopBackOff, ImagePullBackOff, CreateContainerConfigError.",
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 24
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod, container, reason) (kube_pod_container_status_waiting_reason{namespace=~\"$namespace\"} * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"})) > 0",
+          "legendFormat": "",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "id": 20,
+      "panels": [],
+      "title": "Network",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 21,
+      "title": "Network receive per pod",
+      "type": "timeseries",
+      "description": "Ingress throughput per pod.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod) (rate(container_network_receive_bytes_total{namespace=~\"$namespace\"}[$__rate_interval]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "{{pod}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 22,
+      "title": "Network transmit per pod",
+      "type": "timeseries",
+      "description": "Egress throughput per pod.",
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (pod) (rate(container_network_transmit_bytes_total{namespace=~\"$namespace\"}[$__rate_interval]) * on(namespace,pod) group_left() group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "{{pod}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "id": 23,
+      "panels": [],
+      "title": "Inventory",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 24,
+      "title": "Pods in selection",
+      "type": "table",
+      "description": "Every pod the current namespace/workload filter resolves to, and the node it runs on. Use this to confirm the filter selects what you expect.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 40
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "group by (namespace, pod, node) (kube_pod_info{namespace=~\"$namespace\"} and on(namespace,pod) group by (namespace,pod) (kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\",owner_name=~\"$workload-[^-]+\"} or kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\",owner_name=~\"$workload\"}))",
+          "legendFormat": "",
+          "range": false,
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "preload": false,
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": [
+    "kubernetes",
+    "workloads",
+    "ops"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "openscad",
+          "value": "openscad"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "mimir"
+        },
+        "definition": "label_values(kube_pod_info, namespace)",
+        "includeAll": true,
+        "multi": true,
+        "name": "namespace",
+        "label": "Namespace",
+        "options": [],
+        "query": {
+          "query": "label_values(kube_pod_info, namespace)",
+          "refId": "ns"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "mimir"
+        },
+        "definition": "label_values(label_replace(kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\"},\"workload\",\"$1\",\"owner_name\",\"(.+)-[^-]+$\") or label_replace(kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\"},\"workload\",\"$1\",\"owner_name\",\"(.+)\"), workload)",
+        "includeAll": true,
+        "multi": true,
+        "name": "workload",
+        "label": "App / Workload",
+        "options": [],
+        "query": {
+          "query": "label_values(label_replace(kube_pod_owner{namespace=~\"$namespace\",owner_kind=\"ReplicaSet\"},\"workload\",\"$1\",\"owner_name\",\"(.+)-[^-]+$\") or label_replace(kube_pod_owner{namespace=~\"$namespace\",owner_kind!=\"ReplicaSet\"},\"workload\",\"$1\",\"owner_name\",\"(.+)\"), workload)",
+          "refId": "wl"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Workload Ops - Namespace & App Drill-down",
+  "uid": "workload-ops",
+  "version": 1,
+  "weekStart": ""
+}
