@@ -158,6 +158,11 @@ in Ops/Network.
 
 ### GitOps & ArgoCD (2 dashboards)
 
+Retired: `flux-control-plane` (Grafana.com 19761). That ID currently resolves
+to the unrelated "Ping Exporter" dashboard, not a Flux control-plane dashboard.
+Flux telemetry remains covered by the custom Flux Ops dashboard and the valid
+Flux2 import.
+
 | Dashboard            | File                   | Grafana.com ID | Description                                   |
 | -------------------- | ---------------------- | -------------- | --------------------------------------------- |
 | argocd-notifications | argocd-dashboards.yaml | 19975          | ArgoCD notification delivery status           |
