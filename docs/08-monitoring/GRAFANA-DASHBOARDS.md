@@ -2,6 +2,10 @@
 
 Complete reference for all Grafana dashboards available in the homelab cluster.
 
+The live CRD/query verification checklist and current remediation queue are in
+[GRAFANA-DASHBOARD-QUERY-AUDIT.md](GRAFANA-DASHBOARD-QUERY-AUDIT.md). Regenerate
+that audit with `scripts/audit-grafana-dashboards.py`.
+
 ## Quick Import
 
 ```bash
