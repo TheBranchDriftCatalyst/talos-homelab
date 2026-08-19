@@ -122,16 +122,17 @@ kubectl describe grafanadashboard -n monitoring cilium-agent
 
 ## Dashboard Inventory
 
-### Cilium CNI & Hubble (2 dashboards)
+### Cilium CNI & Hubble (1 dashboard)
 
-| Dashboard           | File                   | Grafana.com ID | Description                              |
-| ------------------- | ---------------------- | -------------- | ---------------------------------------- |
-| cilium-operator     | cilium-dashboards.yaml | 16612          | Cilium operator, CRD management, IPAM    |
-| cilium-hubble-flows | cilium-dashboards.yaml | 23862          | Detailed flow analysis, L3/L4/L7 traffic |
+| Dashboard       | File                   | Grafana.com ID | Description                           |
+| --------------- | ---------------------- | -------------- | ------------------------------------- |
+| cilium-operator | cilium-dashboards.yaml | 16612          | Cilium operator, CRD management, IPAM |
 
-Retired (Legacy cleanup): cilium-agent (16611), cilium-hubble (16613), and
-cilium-policy-verdicts (18015) — replaced by the custom "Network Ops — Cilium &
-Hubble" dashboard (`json/network-ops.json`) and cilium-bpf-pressure in Ops/Network.
+Retired (Legacy cleanup): cilium-agent (16611), cilium-hubble (16613),
+cilium-policy-verdicts (18015), and cilium-hubble-flows (23862). The 23862 import
+requires a `hubble-observer` log container that is not part of this deployment.
+They are replaced by the custom "Network Ops — Cilium & Hubble" dashboard
+(`json/network-ops.json`) and cilium-bpf-pressure in Ops/Network.
 
 ### Kubernetes Core
 

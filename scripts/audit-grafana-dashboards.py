@@ -196,6 +196,15 @@ def substitute(query: str, values: dict[str, str], language: str) -> str:
         result = re.sub(rf"\$\{{{re.escape(name)}:[^}}]+\}}", value, result)
     result = re.sub(r'\[\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?\]', '[5m]', result)
     wildcard = ".+" if language == "logql" else ".*"
+    # Variables are frequently embedded inside a larger label regex, for
+    # example pod=~"($cluster)-[0-9]+$". Resolve unknown variables inside
+    # quoted matchers as wildcards before the generic scalar fallback below.
+    def matcher_variables(match: re.Match[str]) -> str:
+        prefix, body = match.groups()
+        body = re.sub(r'\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?', wildcard, body)
+        return f'{prefix}{body}"'
+
+    result = re.sub(r'([=!~]+\s*")([^"]*)"', matcher_variables, result)
     result = re.sub(r'=~\s*"\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?"', f'=~"{wildcard}"', result)
     result = re.sub(r'!~\s*"\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?"', '!~"a^"', result)
     result = re.sub(r'=\s*"\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?"', f'=~"{wildcard}"', result)
