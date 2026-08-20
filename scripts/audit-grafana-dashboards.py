@@ -140,6 +140,7 @@ def extract_queries(dashboard: dict[str, Any], uid: str) -> list[dict[str, Any]]
                 "panel_type": panel.get("type", ""), "ref_id": target.get("refId", ""),
                 "datasource_uid": ds_uid, "datasource_type": ds_type,
                 "language": query_language(ds_uid, ds_type, target), "query": raw.strip(), "hidden": hidden,
+                "instant": bool(target.get("instant", False)),
                 "variable_values": values,
             })
     for index, query in enumerate(queries, start=1):
@@ -248,7 +249,14 @@ def validate_one(item: dict[str, Any]) -> dict[str, Any]:
         if raw.startswith(("label_names(", "metrics(")) or (raw.startswith("label_values(") and prometheus_variable(raw) is None):
             result.update(status="REVIEW", reason="Grafana variable helper requires UI evaluation", evaluated_query=expression)
             return result
-        url = f"{MIMIR_URL}/api/v1/query?query={urllib.parse.quote(expression, safe='')}"
+        encoded = urllib.parse.quote(expression, safe="")
+        if item.get("source") == "panel" and not item.get("instant", False):
+            now_s = int(dt.datetime.now().timestamp())
+            start_s = now_s - 6 * 60 * 60
+            url = (f"{MIMIR_URL}/api/v1/query_range?query={encoded}"
+                   f"&start={start_s}&end={now_s}&step=300")
+        else:
+            url = f"{MIMIR_URL}/api/v1/query?query={encoded}"
     elif language == "logql":
         if raw.startswith(("label_values(", "label_names(", "query_result(")):
             result.update(status="REVIEW", reason="Loki variable helper requires Grafana UI evaluation", evaluated_query=raw)
