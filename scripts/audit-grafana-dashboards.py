@@ -63,6 +63,8 @@ def variable_values(dashboard: dict[str, Any]) -> dict[str, str]:
         current = variable.get("current", {}).get("value")
         if isinstance(current, list):
             current = next((str(value) for value in current if value not in ("$__all", "All")), None)
+        if current in ("$__all", "All") and variable.get("allValue") not in (None, ""):
+            current = variable["allValue"]
         if current in (None, "", "$__all", "All"):
             options = variable.get("options", []) or []
             current = next((str(option.get("value")) for option in options
@@ -182,6 +184,7 @@ def inventory(output: Path) -> None:
 
 VARIABLE_DEFAULTS = {
     "__interval": "5m", "__rate_interval": "5m", "__range": "6h", "__range_s": "21600",
+    "__auto_interval_bucket": "5m",
     "__interval_ms": "300000", "__from": str(int((dt.datetime.now().timestamp() - 21600) * 1000)),
     "__to": str(int(dt.datetime.now().timestamp() * 1000)), "__timezone": "UTC",
 }
