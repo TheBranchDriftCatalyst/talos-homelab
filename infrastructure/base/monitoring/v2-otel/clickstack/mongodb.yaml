@@ -121,14 +121,20 @@ spec:
             - name: metrics
               image: percona/mongodb_exporter:0.53.0
               args:
-                # NOT --collect-all: it panics inside the exporter's own HTTP
-                # handler (exporter.go:364) on every scrape against MongoDB 8.0.4,
-                # serving zero bytes. The default collector set plus the explicit
-                # ones below are stable and cover what the dashboard needs.
+                # --collect-all is REQUIRED for an ops dashboard: without it the
+                # exporter emits only ~23 dbstats series (storage/object counts)
+                # and none of the things you actually operate on — connections,
+                # opcounters, replication lag, WiredTiger cache, query latency.
+                #
+                # It DID panic (exporter.go:364, zero bytes served) before the
+                # hyperdx user was granted clusterMonitor on admin: a collector
+                # hitting "(Unauthorized) not authorized on admin" appears to nil-
+                # deref rather than degrade. With the grant in place it collects
+                # cleanly. If this ever panics again, check the role FIRST — the
+                # symptom presents as a container that is 3/3 Ready and healthy
+                # while serving nothing.
+                - "--collect-all"
                 - "--compatible-mode"          # emit mongodb_* names dashboards expect
-                - "--collector.diagnosticdata"
-                - "--collector.replicasetstatus"
-                - "--collector.dbstats"
                 - "--discovering-mode"
                 - "--web.listen-address=:9216"
               env:
