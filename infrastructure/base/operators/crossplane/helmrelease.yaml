@@ -44,23 +44,41 @@ spec:
     # Single core replica for homelab
     replicas: 1
 
-    # Small resources for the core Crossplane controller
+    # Sized for upjet provider CRD load, NOT for "a small homelab controller".
+    #
+    # Measured 2026-08-20 with ONLY provider-aws-s3 installed: crossplane-core was
+    # using 467Mi against a 512Mi limit -- 91% -- which is why it had accumulated 88
+    # OOMKill restarts. The single provider-aws-s3 pod alone uses 544Mi, i.e. more
+    # than core's entire old limit.
+    #
+    # Crossplane core's memory scales with the number of CRDs it watches. The cluster
+    # has 364 CRDs today; re-adding provider-aws-ec2 adds roughly 250 more (a ~69%
+    # jump in one step), which is exactly what OOMKilled it and saturated the
+    # apiserver on 2026-08-15 (see the incident note in aws-providers/provider.yaml).
+    #
+    # 4Gi is deliberate headroom, not a guess at the steady state -- an OOMKilled
+    # crossplane mid-reconcile is far more expensive than reserved-but-unused RAM.
+    # There is room: crossplane runs on talos06 (63GiB allocatable, 30% used), and it
+    # is NOT pinned to talos00, so this costs the control plane nothing.
     resourcesCrossplane:
       requests:
         cpu: 100m
-        memory: 256Mi
+        memory: 1Gi
       limits:
-        cpu: 500m
-        memory: 512Mi
+        cpu: "2"
+        memory: 4Gi
 
     # rbac-manager keeps provider ClusterRoles aggregated
     rbacManager:
       replicas: 1
 
+    # rbac-manager aggregates a ClusterRole per provider CRD, so its footprint also
+    # grows with the CRD count. It had 15 restarts alongside core's 88; modest bump so
+    # it is not the next thing to fall over when ec2 lands.
     resourcesRBACManager:
       requests:
         cpu: 50m
-        memory: 128Mi
-      limits:
-        cpu: 100m
         memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
