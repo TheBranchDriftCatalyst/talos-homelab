@@ -87,6 +87,14 @@ spec:
   statefulSet:
     spec:
       template:
+        metadata:
+          labels:
+            # House label for metrics auto-discovery. The MongoDB operator sets
+            # only app=<name>-svc, which is per-resource and useless as a
+            # cross-cluster selector — unlike CNPG's cnpg.io/podRole=instance.
+            # The global PodMonitor in monitoring/mongodb-monitoring selects THIS,
+            # so any future MongoDBCommunity gets scraped by adding one label.
+            catalyst.io/mongodb: instance
         spec:
           # Belt-and-braces against the exact bug this replaces: never schedule
           # onto a control-plane node, so the PVC can never pin there again.
@@ -98,6 +106,39 @@ spec:
                       - key: node-role.kubernetes.io/control-plane
                         operator: DoesNotExist
           containers:
+            # Prometheus exporter. The MongoDB operator ships NO metrics of its
+            # own (verified: mongodb_up absent from Mimir entirely), so without
+            # this there is nothing to graph. Runs as a sidecar rather than a
+            # separate Deployment so it shares the pod's network namespace and
+            # can reach mongod on localhost — no extra Service, no credentials
+            # crossing the pod boundary.
+            - name: metrics
+              image: percona/mongodb_exporter:0.53.0
+              args:
+                - "--collect-all"
+                - "--compatible-mode"          # emit mongodb_* names dashboards expect
+                - "--web.listen-address=:9216"
+              env:
+                - name: MONGODB_URI
+                  valueFrom:
+                    secretKeyRef:
+                      name: clickstack-mongodb-password
+                      key: CLICKSTACK_MONGO_URI
+              ports:
+                - name: metrics
+                  containerPort: 9216
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
             - name: mongod
               resources:
                 requests:
