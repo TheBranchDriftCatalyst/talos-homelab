@@ -115,8 +115,15 @@ spec:
             - name: metrics
               image: percona/mongodb_exporter:0.53.0
               args:
-                - "--collect-all"
+                # NOT --collect-all: it panics inside the exporter's own HTTP
+                # handler (exporter.go:364) on every scrape against MongoDB 8.0.4,
+                # serving zero bytes. The default collector set plus the explicit
+                # ones below are stable and cover what the dashboard needs.
                 - "--compatible-mode"          # emit mongodb_* names dashboards expect
+                - "--collector.diagnosticdata"
+                - "--collector.replicasetstatus"
+                - "--collector.dbstats"
+                - "--discovering-mode"
                 - "--web.listen-address=:9216"
               env:
                 - name: MONGODB_URI
