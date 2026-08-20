@@ -10,6 +10,15 @@ spec:
   interval: 30m
   timeout: 10m
   path: ./infrastructure/base/monitoring/v2-otel
+  # Injects ${CLICKSTACK_MONGO_URI} into the clickstack HelmRelease so the
+  # generated Mongo credential never lands in git. The secret is created by the
+  # monitoring-v2-operators layer (a dependsOn of this one), which must run first
+  # because postBuild substitution happens BEFORE apply.
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: clickstack-mongodb-password
+        optional: false
   prune: true
   sourceRef:
     kind: GitRepository

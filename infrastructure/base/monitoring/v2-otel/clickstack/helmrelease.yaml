@@ -65,16 +65,27 @@ spec:
           otelUserPassword: ""
           appUserPassword: ""
 
-    # App state only (dashboards/users/saved searches), not logs.
+    # Bundled mongo DISABLED — replaced by the operator-managed MongoDBCommunity
+    # in mongodb.yaml (app state only: sources/dashboards/users, not logs).
+    #
+    # The chart ships a plain Deployment on a local-path PVC. That PVC bound to
+    # talos00 while it was schedulable; once the control-plane taint was restored
+    # the pod could never be rescheduled there, so the first eviction left it
+    # permanently Pending (the 2026-08-20 control-plane reboot surfaced it).
+    # The CR pins away from control-plane nodes so it cannot recur, and adds
+    # SCRAM auth — the bundled one ran with NO AUTHENTICATION AT ALL.
     mongodb:
-      enabled: true
-      image: "mongo:8.3.8"
+      enabled: false
 
     # Collector writes OTLP -> ClickHouse over the native protocol.
     otel:
       clickhouseEndpoint: "tcp://clickhouse-hyperdx-logs.monitoring.svc:9000"
 
     hyperdx:
+      # Substituted by Flux postBuild from secret clickstack-mongodb-password
+      # (see clusters/catalyst-cluster/monitoring.yaml) so the generated
+      # credential never lands in git.
+      mongoUri: "${CLICKSTACK_MONGO_URI}"
       # The app container runs THREE node processes (API :8000, Next.js UI
       # :3000, alert-task). The chart ships no limits; under node memory
       # pressure the container was OOMKilled (exit 137) and came back with the

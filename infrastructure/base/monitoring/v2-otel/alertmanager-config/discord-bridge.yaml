@@ -61,10 +61,29 @@ data:
                     meta.append("ns: `{}`".format(ns))
                 if meta:
                     line += "\n" + " · ".join(meta)
+                # Send + emit a structured OUTBOX event (TALOS-dve2). Any outgoing-
+                # message sender should log this same schema so the whole cluster
+                # outbox is one queryable Loki stream:
+                #   {event="outgoing_message"} | json  in Grafana / Loki.
+                delivery, http_code, err = "sent", None, None
                 try:
-                    post_discord(line)
+                    http_code = post_discord(line)
                 except Exception as e:
-                    print("discord post failed:", e, flush=True)
+                    delivery, err = "failed", str(e)
+                print(json.dumps({
+                    "event": "outgoing_message",
+                    "channel": "discord",
+                    "target": "the-lair/#talos00",
+                    "kind": "alert",
+                    "alertname": name,
+                    "severity": sev,
+                    "namespace": ns,
+                    "alert_status": status,
+                    "delivery": delivery,
+                    "http": http_code,
+                    "error": err,
+                    "body": line,
+                }), flush=True)
             self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
 
         def log_message(self, *a):  # quiet

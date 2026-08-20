@@ -66,6 +66,20 @@ spec:
     podTemplates:
       - name: clickhouse
         spec:
+          # Never schedule onto a control-plane node. local-path uses
+          # WaitForFirstConsumer, so the PV binds to wherever the pod first lands —
+          # this CHI's 50Gi volume had bound to talos00 while it was schedulable,
+          # and once the control-plane taint was restored the pod could never be
+          # rescheduled there. The 2026-08-20 reboot turned that latent bug into a
+          # permanently Pending pod. Pinning away from control-plane nodes means
+          # the volume can only ever bind to a worker.
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: node-role.kubernetes.io/control-plane
+                        operator: DoesNotExist
           securityContext:
             runAsUser: 101
             runAsGroup: 101
