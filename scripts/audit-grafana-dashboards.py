@@ -200,11 +200,18 @@ def substitute(query: str, values: dict[str, str], language: str) -> str:
     # example pod=~"($cluster)-[0-9]+$". Resolve unknown variables inside
     # quoted matchers as wildcards before the generic scalar fallback below.
     def matcher_variables(match: re.Match[str]) -> str:
-        prefix, body = match.groups()
+        operator, body = match.groups()
+        had_variable = bool(re.search(r'\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?', body))
         body = re.sub(r'\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?', wildcard, body)
-        return f'{prefix}{body}"'
+        # An unresolved exact-match variable represents "all" during the
+        # backend audit. A literal equality such as cluster=".*" matches
+        # nothing, so promote it to a regex matcher. Grafana performs the same
+        # effective expansion when an All-valued query variable is selected.
+        if had_variable and operator == "=":
+            operator = "=~"
+        return f'{operator}"{body}"'
 
-    result = re.sub(r'([=!~]+\s*")([^"]*)"', matcher_variables, result)
+    result = re.sub(r'([=!~]+)\s*"([^"]*)"', matcher_variables, result)
     result = re.sub(r'=~\s*"\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?"', f'=~"{wildcard}"', result)
     result = re.sub(r'!~\s*"\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?"', '!~"a^"', result)
     result = re.sub(r'=\s*"\$\{?[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}?"', f'=~"{wildcard}"', result)

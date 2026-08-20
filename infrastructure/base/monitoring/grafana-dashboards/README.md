@@ -160,8 +160,14 @@ in Ops/Network.
 
 Retired: `flux-control-plane` (Grafana.com 19761). That ID currently resolves
 to the unrelated "Ping Exporter" dashboard, not a Flux control-plane dashboard.
-Flux telemetry remains covered by the custom Flux Ops dashboard and the valid
-Flux2 import.
+Flux telemetry remains covered by the custom Flux Ops dashboard.
+
+Retired after live query validation: `flux-cluster-stats` (Grafana.com 16714)
+expects the obsolete `kind` label, while current kube-state-metrics telemetry
+uses `customresource_kind`. The custom Flux Ops dashboard is the supported Flux
+view. `argocd-overview` (Grafana.com 14584) is also retired because its fixed
+scrape-job names no longer match the deployed ArgoCD services; Argo Ops plus the
+Application and Operational dashboards provide the current coverage.
 
 | Dashboard            | File                   | Grafana.com ID | Description                                   |
 | -------------------- | ---------------------- | -------------- | --------------------------------------------- |
