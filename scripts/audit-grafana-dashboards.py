@@ -388,7 +388,10 @@ def render(inventory_path: Path, output: Path, screenshot_dir: Path, base_url: s
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        launch_options: dict[str, Any] = {"headless": True}
+        if executable := os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE"):
+            launch_options["executable_path"] = executable
+        browser = playwright.chromium.launch(**launch_options)
         context = browser.new_context(ignore_https_errors=True, viewport={"width": 1920, "height": 1080})
         for dashboard in payload["dashboards"]:
             page = context.new_page()
