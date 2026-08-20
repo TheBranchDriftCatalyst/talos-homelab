@@ -1,0 +1,48 @@
+---
+# SELECTORLESS Service for the ephemeral AWS GPU box.
+#
+# There is no pod behind this — the backend is a vLLM process on an EC2 instance reached
+# over a tunnel. gpu-broker writes the EndpointSlice from the XGPUInstance's status once
+# the box is up, and empties it when the box is reaped. Same shape as the working
+# mac-sdlc-node/ollama-mac Service, which fronts the Mac at 192.168.1.33 the same way.
+#
+# Empty endpoints is the NORMAL resting state (GPU scaled to zero). The gateway's
+# readiness probe fails while it is empty, which is exactly what keeps the KEDA
+# interceptor holding requests instead of releasing them into the void.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-backend
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-backend
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP
+---
+# Seed an EMPTY EndpointSlice so the Service exists in a well-defined "no backend" state
+# rather than a missing-object state. gpu-broker owns the contents from here on; Flux
+# owns only this empty shell.
+#
+# NOTE: the broker is the single writer of .endpoints. Do not add addresses here — a
+# committed address would be reasserted by Flux every reconcile and fight the broker
+# (the same class of conflict that keeps the XRs themselves out of git).
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: gpu-backend-static
+  namespace: gpu-inference
+  labels:
+    kubernetes.io/service-name: gpu-backend
+    app.kubernetes.io/part-of: gpu-inference
+addressType: IPv4
+ports:
+  - name: http
+    port: 8000
+    protocol: TCP
+endpoints: []

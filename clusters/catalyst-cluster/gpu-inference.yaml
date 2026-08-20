@@ -1,0 +1,27 @@
+---
+# Ephemeral GPU inference demand plane (TALOS-t3ic).
+#
+# dependsOn operators: needs KEDA core + the HTTP add-on CRDs (HTTPScaledObject) to exist
+# before this applies, otherwise the HTTPScaledObject fails to reconcile.
+#
+# Deliberately does NOT depend on the `aws` Kustomization: everything here is inert
+# without the AWS chain (gateway 0 replicas, broker 0 replicas, reapers exit clean when
+# the XR CRDs are absent), so it can be deployed and TESTED against a stub backend long
+# before EPIC A opens the credentials gate.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: gpu-inference
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  path: ./infrastructure/base/gpu-inference
+  prune: true
+  wait: false
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  dependsOn:
+    - name: operators

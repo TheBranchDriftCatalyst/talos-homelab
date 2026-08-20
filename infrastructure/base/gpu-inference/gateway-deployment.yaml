@@ -1,0 +1,88 @@
+---
+# ollama-gateway — the object KEDA scales 0<->1, and therefore the DEMAND SIGNAL that
+# gpu-broker watches to decide whether an AWS GPU box should exist.
+#
+# It is a thin nginx reverse proxy, not the model server. The model runs on EC2. This pod
+# exists so that (a) KEDA has a scalable Kubernetes object to attach to, and (b) its
+# readiness can represent "is the GPU actually serving".
+#
+# THE CRITICAL DETAIL — readinessProbe hits /ready, which nginx proxies to the GPU
+# backend's /health. So this pod stays NotReady for the entire 2-5 min cold start, and the
+# KEDA interceptor keeps holding buffered requests until a real backend answers. If
+# readiness were a self-check, the interceptor would release requests the instant this pod
+# started and every caller would get a 502.
+#
+# failureThreshold is large on purpose: at periodSeconds 5 it tolerates ~10 min of cold
+# start before giving up, matching the 600s used everywhere else in the chain.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama-gateway
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: ollama-gateway
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  # KEDA owns this value at runtime (HTTPScaledObject, min 0). The 0 here is just the cold
+  # resting state so a fresh apply does not provision a GPU box on its own.
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ollama-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama-gateway
+        app.kubernetes.io/part-of: gpu-inference
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.29-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 5
+            successThreshold: 1
+            # ~10 min of tolerated cold start (120 * 5s), consistent with the 600s budget.
+            failureThreshold: 120
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: nginx-conf
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: ollama-gateway-nginx
+        - name: tmp
+          emptyDir: {}
