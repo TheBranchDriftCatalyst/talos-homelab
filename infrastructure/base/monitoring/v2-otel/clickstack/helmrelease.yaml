@@ -44,6 +44,20 @@ spec:
     remediation:
       retries: 3
     cleanupOnFail: true
+  # Injects the ESO-generated Mongo URI as a Helm value.
+  #
+  # valuesFrom, NOT Kustomization postBuild: postBuild runs envsubst over EVERY
+  # manifest in the Kustomization path, so enabling it here broke the unrelated
+  # mimir HelmRelease, whose config legitimately contains a runtime ${AWS_ACCESS_KEY_ID}
+  # literal that Flux then tried to resolve and failed on in strict mode.
+  # valuesFrom is scoped to THIS release and reads the Secret from the
+  # HelmRelease's own namespace, so no cross-namespace mirroring is needed either.
+  valuesFrom:
+    - kind: Secret
+      name: clickstack-mongodb-password
+      valuesKey: CLICKSTACK_MONGO_URI
+      targetPath: hyperdx.mongoUri
+
   values:
     global:
       storageClassName: local-path
@@ -82,10 +96,8 @@ spec:
       clickhouseEndpoint: "tcp://clickhouse-hyperdx-logs.monitoring.svc:9000"
 
     hyperdx:
-      # Substituted by Flux postBuild from secret clickstack-mongodb-password
-      # (see clusters/catalyst-cluster/monitoring.yaml) so the generated
-      # credential never lands in git.
-      mongoUri: "${CLICKSTACK_MONGO_URI}"
+      # mongoUri is injected from a Secret via spec.valuesFrom below —
+      # deliberately NOT set here, so the credential never lands in git.
       # The app container runs THREE node processes (API :8000, Next.js UI
       # :3000, alert-task). The chart ships no limits; under node memory
       # pressure the container was OOMKilled (exit 137) and came back with the
