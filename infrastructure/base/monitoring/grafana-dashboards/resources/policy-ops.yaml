@@ -1,0 +1,52 @@
+---
+# Security Ops — Policy Ops dashboard
+#
+# Single window into the cluster's ENFORCEMENT/POLICY layers, fused:
+#   - Cilium NetworkPolicy (Hubble verdicts + drops, endpoint enforcement state)
+#   - CrowdSec IPS/AppSec (active decisions, LAPI, AppSec, scenario overflows)
+#   - Admission control (Kyverno — installed, metrics not yet scraped)
+#   - TLS/certificate policy (cert-manager readiness, Traefik cert expiry)
+#
+# Complements network-ops (traffic), crowdsec-ops (IPS detail) and the security
+# overview. Every panel was grounded against Mimir at authoring time.
+#
+# GROUNDING SUMMARY (queried via mimir-query-frontend, X-Scope-OrgID: anonymous):
+#   LIVE:
+#     hubble_policy_verdicts_total   labels: action(forwarded|dropped), direction,
+#                                            source_namespace, destination_namespace, match
+#     hubble_drop_total              reason includes "Policy denied" AND "POLICY_DENIED"
+#     cilium_policy_change_total     outcome(success|failure)
+#     cilium_policy_endpoint_enforcement_status  enforcement(none|ingress|egress|both|audit-*)
+#                                    ~35 endpoints enforced vs ~1767 allow-all
+#     cilium_policy                  ~13 rules loaded / agent
+#     cs_active_decisions            action|origin|reason  (~15000 CAPI bans)
+#     cs_lapi_route_requests_total / cs_lapi_bouncer_requests_total
+#     certmanager_certificate_ready_status  condition(True|False|Unknown)
+#     traefik_tls_certs_not_after    (nearest expiry ~59d)
+#   EMPTY at authoring (guarded with `or vector(0)`, noted in panel descriptions):
+#     cs_appsec_reqs_total / cs_appsec_block_total  — crowdsec-appsec pod CrashLoopBackOff
+#     cs_bucket_overflowed_total                    — crowdsec-agent pods CrashLoopBackOff
+#     cilium_policy_regeneration_time_stats_*       — not emitted by this Cilium build
+#   ABSENT (no panel — controller present, metrics unscraped):
+#     kyverno_admission_requests_total / kyverno_policy_results_total
+#       Kyverno IS installed but no ServiceMonitor/PodMonitor scrapes :8000 yet.
+#
+# POSTURE: mostly allow-all. Only 6 CiliumNetworkPolicies exist, in 2 namespaces
+# (honeypot, iocaine); 0 CiliumClusterwideNetworkPolicies. The Overview + a scope
+# text panel flag this explicitly (default-deny vs allow-all endpoint counts).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: policy-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: security
+spec:
+  folderRef: ops-security
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-policy-ops
+    key: policy-ops.json

@@ -8,7 +8,6 @@ Grafana dashboards are managed as **GrafanaDashboard CRDs** via the grafana-oper
 
 - **Deployment:** `kubectl apply -k infrastructure/base/monitoring/grafana-dashboards/`
 - **Access:** http://grafana.talos00
-- **Sync:** `./scripts/grafana-sync.sh pull` (UI→code) or `push` (code→cluster)
 - **Tilt:** Buttons in `3-infra-observe` group for pull/push/list
 
 ## Development Workflow (Bidirectional Sync)
@@ -26,7 +25,6 @@ grafana-dashboards/
 ├── resources/               # GrafanaDashboard CRs (reference ConfigMaps)
 ├── external/                # Community dashboards (Grafana.com IDs)
 ├── scripts/
-│   ├── grafana-sync.sh      # Bidirectional sync script
 │   └── extract-dashboards.py
 └── kustomization.yaml       # ConfigMapGenerator for JSON files
 ```
@@ -36,7 +34,6 @@ grafana-dashboards/
 ```bash
 # 1. Make changes in Grafana UI at http://grafana.talos00
 # 2. Export changes to JSON files
-./scripts/grafana-sync.sh pull
 
 # 3. Commit to git
 git add json/ && git commit -m "Update dashboard from UI"
@@ -48,7 +45,6 @@ git push  # Flux applies automatically
 ```bash
 # 1. Edit json/tdarr-transcoding.json in VSCode/vim
 # 2. Apply to cluster
-./scripts/grafana-sync.sh push
 
 # Or just commit - Flux applies automatically
 git add json/ && git commit -m "Update dashboard"
@@ -58,11 +54,6 @@ git push
 ### Sync Commands
 
 ```bash
-./scripts/grafana-sync.sh pull                    # Export ALL dashboards from Grafana
-./scripts/grafana-sync.sh pull --dashboard <uid>  # Export specific dashboard
-./scripts/grafana-sync.sh push                    # Apply JSON files to cluster
-./scripts/grafana-sync.sh list                    # List all dashboards in Grafana
-./scripts/grafana-sync.sh status                  # Show local vs cluster status
 ```
 
 ### Tilt Integration
@@ -214,7 +205,6 @@ The easiest way to create custom dashboards with full visual editing:
 #    - Save the dashboard (give it a meaningful UID)
 
 # 2. Export to JSON file
-./scripts/grafana-sync.sh pull --dashboard <dashboard-uid>
 
 # 3. Create GrafanaDashboard CR in resources/
 cat > resources/my-dashboard.yaml <<EOF
@@ -297,7 +287,6 @@ When generating dashboards from code (Grafonnet, grafanalib, etc.):
 #      - resources/my-dashboard.yaml
 
 # 4. Apply
-./scripts/grafana-sync.sh push
 ```
 
 ### Dashboard Organization Best Practices
