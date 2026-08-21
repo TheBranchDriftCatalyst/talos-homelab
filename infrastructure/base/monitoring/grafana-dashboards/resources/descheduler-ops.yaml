@@ -1,0 +1,52 @@
+---
+# Descheduler / Node Balance
+#
+# Monitors the hourly pod-count rebalancer added 2026-08-21 (TALOS-wnsq) and the
+# maxPods ceiling raise that preceded it (TALOS-d5b5).
+#
+# WHY THIS EXISTS: talos02-gpu sat at 109/110 pods while using 37% of its memory.
+# A node at maxPods REJECTS new pods, and Velero's per-volume backup helpers were
+# among the rejected — 22 of 67 PodVolumeBackups Cancelled per night, the parent
+# backup timing out after ~4h, daily backups PartiallyFailed three days running.
+# The alert that fired was VeleroScheduleNotRunning, which points at the wrong
+# layer entirely. Node pod-capacity had no visibility at all; this dashboard is
+# that missing view.
+#
+# GROUNDING (queried via mimir-query-frontend, X-Scope-OrgID: anonymous, at
+# authoring time — 0 broken targets):
+#   kube_pod_info                          354 series, label: node
+#   kube_node_status_capacity{resource="pods"}  51 series -> 200 after TALOS-d5b5
+#   kube_job_status_succeeded / _failed    71 / 83 series
+#   kube_cronjob_status_last_schedule_time 19 series
+#   kube_pod_owner{owner_kind="DaemonSet"} used for the immovable-pods panel
+#   kube_pod_status_phase{phase="Pending"} EMPTY — and empty is the CORRECT
+#     state; that panel is the regression alarm, not a broken query.
+#
+# DELIBERATELY NOT USED: descheduler_* metrics. The descheduler runs as a
+# CronJob, so its process lives for seconds and Prometheus can never catch a
+# scrape window. Its own metrics are therefore unusable here regardless of
+# whether a ServiceMonitor exists. Everything is derived from kube-state-metrics
+# instead, which observes the RESULT rather than the actor.
+#
+# READING IT: zero evictions is the expected steady state. With maxPods now 200
+# the busiest node sits at ~54%, below the 65% action threshold, so the
+# descheduler correctly does nothing. It is a safety net against recurrence, not
+# a continuous shuffler. The Spread stat will never reach zero — talos00 is a
+# tainted control-plane and ~39 of 109 pods on the busiest node are structurally
+# immovable (13 DaemonSet, 23 nodeSelector-pinned, 3 local-path PVC).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: descheduler-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: cluster
+spec:
+  folderRef: ops-cluster
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-descheduler-ops
+    key: descheduler-ops.json

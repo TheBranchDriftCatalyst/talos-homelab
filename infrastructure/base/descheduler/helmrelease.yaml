@@ -310,6 +310,33 @@ spec:
                 evictableNamespaces:
                   exclude:
                     - kube-system
+                    # KEDA — CONFLICTS WITH THIS BALANCER. Verified 2026-08-21:
+                    # keda-add-ons-http-interceptor runs ONE replica behind a PDB
+                    # of maxUnavailable:1, i.e. disruptionsAllowed=1. A PDB is the
+                    # descheduler's main safety net, but THAT PDB PERMITS TAKING
+                    # THE INTERCEPTOR TO ZERO — maxUnavailable:1 on a 1-replica
+                    # Deployment authorises a full outage rather than preventing
+                    # one. So the usual protection does not apply here.
+                    #
+                    # Why that specifically matters: the interceptor BUFFERS
+                    # in-flight HTTP requests while a scale-from-zero target wakes
+                    # up. gpu-inference/ollama-gateway is minReplicas:0 with a
+                    # 1800s cooldown and a cold start measured in MINUTES, so at
+                    # any moment the interceptor may be holding connections that
+                    # exist nowhere else. Evicting it does not reschedule those
+                    # requests, it DROPS them, and the client sees a hang then a
+                    # failure with nothing in any log explaining why.
+                    #
+                    # minPodAge:10m does not save us: it stops us fighting KEDA's
+                    # scale-up churn, but a long-lived interceptor is well past
+                    # 10m and fully evictable.
+                    #
+                    # The alternative fix is changing that PDB to minAvailable:1.
+                    # Not done here: the PDB ships from the KEDA http-add-on chart,
+                    # so overriding it is a chart-values change that belongs with
+                    # KEDA, and excluding the namespace is both narrower and
+                    # honest about WHY. Tracked separately.
+                    - keda
 
           plugins:
             balance:
