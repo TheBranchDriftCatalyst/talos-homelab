@@ -77,6 +77,27 @@ spec:
               ip:
                 - "127.0.0.1"
                 - "::1" # IPv6 loopback
+                # ---- OPERATOR HOME IP (TALOS-crowdsec-selfban) ----
+                # 2026-08-20: this address was BANNED for 32h by
+                # LePresidente/http-generic-403-bf, locking the operator out of
+                # Authentik SSO (auth.knowledgedump.space returned 403 for every
+                # path). The scenario is self-reinforcing: a few 403s from a
+                # misbehaving SSO flow look like a brute-force, the ban makes
+                # EVERYTHING return 403, which looks like more brute-force.
+                #
+                # Why the existing entries did not cover it: traffic arriving via
+                # Cloudflare has its real client IP restored by forwardedHeaders
+                # (see the CF-edge CIDRs below), so CrowdSec sees this address and
+                # not a Cloudflare edge IP. Beware the near-miss: 108.162.192.0/18
+                # below is CLOUDFLARE and does NOT contain 108.64.x.x.
+                #
+                # FRAGILE: ATT residential = DYNAMIC. When this address rotates the
+                # whitelist silently stops protecting the operator and the lockout
+                # recurs with no obvious cause. If you are locked out of SSO again,
+                # CHECK THIS VALUE FIRST:
+                #   curl -s https://api.ipify.org
+                #   kubectl exec -n crowdsec <agent> -- cscli decisions list --ip <you>
+                - "108.64.138.156"
               cidr:
                 # RFC1918 — pods/services (Cilium, 10.96.0.0/12 svc) + LAN
                 - "10.0.0.0/8"
