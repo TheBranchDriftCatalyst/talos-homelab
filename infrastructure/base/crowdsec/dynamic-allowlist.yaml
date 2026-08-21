@@ -1,0 +1,150 @@
+---
+# Dynamic operator-IP allowlist (TALOS-y260 follow-up).
+#
+# THE PROBLEM: the operator's home IP is a DYNAMIC ATT residential address. It is
+# pinned in the static homelab/whitelist parser, but when it rotates that entry
+# silently stops protecting and the operator gets banned out of SSO again with no
+# obvious cause — exactly the 32h lockout of 2026-08-20.
+#
+# WHY NOT JUST EDIT THE PARSER: the parser lives in the CrowdSec HelmRelease
+# values, i.e. in git. Anything that rewrites it at runtime is immediately
+# reverted by Flux. That is the same drift-correction trap documented for the
+# Crossplane XRs.
+#
+# THE MECHANISM: CrowdSec 1.7.8 supports CENTRALIZED ALLOWLISTS (`cscli
+# allowlists`), stored in the LAPI database rather than in a config file. Nothing
+# in git to fight, and entries propagate to every agent and bouncer on their own.
+#
+# SELF-CLEANING BY DESIGN: each run adds the CURRENT public IP with a 3h
+# expiration while running hourly. The live IP is therefore always covered, and
+# an address that rotates away expires on its own within 3h — no reconciliation,
+# no stale-entry cleanup, no list that grows forever.
+#
+# NOTE: this ADDs to, rather than replaces, the static whitelist entry. Keep both:
+# the static one survives a total CrowdSec DB loss, this one survives IP rotation.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crowdsec-allowlist-refresher
+  namespace: crowdsec
+---
+# Needs pods/exec because cscli talks to the LAPI over the agent's local
+# credentials — running it inside an existing agent pod avoids minting and
+# rotating a separate LAPI machine account just for this.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crowdsec-allowlist-refresher
+  namespace: crowdsec
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crowdsec-allowlist-refresher
+  namespace: crowdsec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crowdsec-allowlist-refresher
+subjects:
+  - kind: ServiceAccount
+    name: crowdsec-allowlist-refresher
+    namespace: crowdsec
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crowdsec-allowlist-refresher
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/component: allowlist-refresher
+    app.kubernetes.io/part-of: crowdsec
+spec:
+  schedule: "*/30 * * * *"   # twice the 3h expiry margin — tolerates a few failed runs
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: crowdsec-allowlist-refresher
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: refresher
+              image: alpine/k8s:1.34.9
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  ALLOWLIST=homelab-operator
+
+                  # Resolve the current public IP. Two independent providers so a
+                  # single one being down does not silently stop refreshing (which
+                  # would expire the entry and re-create the lockout).
+                  IP=$(wget -qO- --timeout=10 https://api.ipify.org 2>/dev/null || true)
+                  if [ -z "${IP}" ]; then
+                    IP=$(wget -qO- --timeout=10 https://ifconfig.me/ip 2>/dev/null || true)
+                  fi
+                  case "${IP}" in
+                    *.*.*.*) : ;;
+                    *) echo "could not determine public IP (got '${IP}') - refusing to touch the allowlist"; exit 1 ;;
+                  esac
+                  echo "current public IP: ${IP}"
+
+                  # MUST target the LAPI pod, not an agent. cscli allowlists is a
+                  # LAPI-side command: on an agent it fails with "local API is
+                  # disabled -- this command must be run on the local API machine".
+                  # Selector + container name verified live: k8s-app=crowdsec,
+                  # type=lapi, container crowdsec-lapi.
+                  LAPI=$(kubectl get pods -n crowdsec -l k8s-app=crowdsec,type=lapi \
+                          --field-selector status.phase=Running \
+                          -o jsonpath='{.items[0].metadata.name}')
+                  if [ -z "${LAPI}" ]; then
+                    echo "no running crowdsec LAPI pod found"; exit 1
+                  fi
+                  echo "using lapi pod ${LAPI}"
+
+                  # create is idempotent-ish: it errors if the allowlist already
+                  # exists, which is the normal steady state, so tolerate that
+                  # specific case only.
+                  kubectl exec -n crowdsec "${LAPI}" -c crowdsec-lapi -- \
+                    cscli allowlists create "${ALLOWLIST}" \
+                      -d "operator home IP, refreshed automatically (dynamic residential address)" \
+                    2>/dev/null || echo "allowlist ${ALLOWLIST} already exists (expected)"
+
+                  # 3h expiry against a 30m schedule: the live IP is always
+                  # covered, and a rotated-away address falls off by itself.
+                  kubectl exec -n crowdsec "${LAPI}" -c crowdsec-lapi -- \
+                    cscli allowlists add "${ALLOWLIST}" "${IP}" -e 3h \
+                      -d "auto-refreshed operator IP"
+
+                  echo "--- allowlist contents ---"
+                  kubectl exec -n crowdsec "${LAPI}" -c crowdsec-lapi -- \
+                    cscli allowlists inspect "${ALLOWLIST}"
