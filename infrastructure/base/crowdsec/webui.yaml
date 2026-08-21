@@ -53,16 +53,13 @@ spec:
                 secretKeyRef: {name: crowdsec-web-ui-creds, key: password}
             # Prometheus :6060 endpoints (level: full) for the Metrics tab. Split across the 3
             # chart components — 0=LAPI/remediation, 1=agent/log-processor+parser+whitelist, 2=AppSec.
-            # Entry 0 MUST carry its own _URL. It previously relied on the legacy
-            # singular CONFIG_INSTANCE_METRICS_URL below, which does NOT populate the
-            # indexed INSTANCES_0_METRICS_n array — so entry 0 was {ID, NAME, no URL}.
-            # A malformed first entry took the WHOLE metrics list down, which is why
-            # the UI reported "No AppSec engine / parser source / scenario / parser
-            # timing metrics were exposed by CrowdSec" even though every one of those
-            # families was being served: verified 106 agent-side cs_(parser|bucket|
-            # appsec|node) lines through crowdsec-agent-service, and all 44 cs_*
-            # families present in Mimir.
-            - {name: CONFIG_INSTANCE_METRICS_URL, value: "http://crowdsec-service.crowdsec.svc.cluster.local:6060/metrics"}
+            # CONFIG_INSTANCE_METRICS_URL (legacy singular) and
+            # CONFIG_INSTANCES_0_METRICS_0_URL are THE SAME SETTING — the app refuses
+            # to start if both are set:
+            #   "both CONFIG_INSTANCE_METRICS_URL and CONFIG_INSTANCES_0_METRICS_0_URL
+            #    target the same setting. Set only one."
+            # Using the indexed form so all three entries (lapi / log-processor /
+            # appsec) are declared consistently.
             - {name: CONFIG_INSTANCES_0_METRICS_0_URL, value: "http://crowdsec-service.crowdsec.svc.cluster.local:6060/metrics"}
             - {name: CONFIG_INSTANCES_0_METRICS_0_ID, value: "lapi"}
             - {name: CONFIG_INSTANCES_0_METRICS_0_NAME, value: "LAPI"}
