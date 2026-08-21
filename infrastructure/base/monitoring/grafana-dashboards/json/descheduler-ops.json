@@ -691,6 +691,228 @@
         },
         "overrides": []
       }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 15,
+      "panels": [],
+      "title": "Run output (read straight from the descheduler's own logs via Loki)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "id": 16,
+      "type": "timeseries",
+      "title": "Pods evicted per run",
+      "description": "Parsed from the descheduler's own summary line, which it prints at the end of every run:\n  \"Number of evictions/requests\" totalEvicted=N evictionRequests=N\n\nNo pushgateway and no extra CronJob: Alloy already ships every pod's stdout to Loki, so the run output is in Loki the moment the job exits. Piggybacking on that stream means there is nothing extra to keep alive, and it cannot silently stop working while the descheduler itself keeps running.\n\nZero is the expected value. maxNoOfPodsToEvictTotal is 3, so this series is hard-capped at 3 per run by design.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "A",
+          "expr": "sum(max_over_time({namespace=\"descheduler\"} |= \"Number of evictions/requests\" | regexp \"totalEvicted=(?P<evicted>[0-9]+)\" | unwrap evicted [$__auto]))",
+          "legendFormat": "pods evicted"
+        }
+      ],
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "sum"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "id": 17,
+      "type": "logs",
+      "title": "Node classification + eviction decisions",
+      "description": "The lines that explain WHY a run did or did not act:\n  \"Node has been classified\" category=underutilized|overutilized node=...\n  \"Number of underutilized nodes\" / \"Number of overutilized nodes\"\n  \"All nodes are under target utilization, nothing to do here\"\n  \"Total number of evictions/requests\"\n\nThis is the panel to read when the balance graphs look skewed but nothing moved \u2014 it states the classification the descheduler actually made, rather than leaving you to infer it from pod counts.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "A",
+          "expr": "{namespace=\"descheduler\"} |~ \"has been classified|Number of (under|over)utilized|nothing to do here|Total number of evictions|evicted\""
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "id": 18,
+      "type": "timeseries",
+      "title": "Nodes classified under/over utilized",
+      "description": "How many nodes each run put in each bucket. 'overutilized' rising above zero is the leading indicator that a rebalance is about to happen \u2014 and the only condition under which this descheduler ever evicts anything.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "A",
+          "expr": "sum(max_over_time({namespace=\"descheduler\"} |= \"Number of underutilized nodes\" | regexp \"totalNumber=(?P<n>[0-9]+)\" | unwrap n [$__auto]))",
+          "legendFormat": "underutilized"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "B",
+          "expr": "sum(max_over_time({namespace=\"descheduler\"} |= \"Number of overutilized nodes\" | regexp \"totalNumber=(?P<n>[0-9]+)\" | unwrap n [$__auto]))",
+          "legendFormat": "overutilized"
+        }
+      ],
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stepAfter": true
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "id": 19,
+      "type": "logs",
+      "title": "Errors and skipped evictions",
+      "description": "Anything that went wrong, plus evictions the guards BLOCKED. A pod refused because of a PodDisruptionBudget, a local-path PVC protection, or nodeFit failing to find a home appears here \u2014 that is the descheduler working correctly, not an error. Persistent genuine errors (RBAC, API changes) mean it is failing CLOSED: no evictions happen and nothing else complains, which is exactly the kind of silent degradation this panel exists to surface.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "A",
+          "expr": "{namespace=\"descheduler\"} |~ \"(?i)\\\\berror\\\\b|failed|cannot|denied|violat|skipping|not evict\""
+        }
+      ],
+      "options": {
+        "dedupStrategy": "exact",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
     }
   ],
   "refresh": "1m",

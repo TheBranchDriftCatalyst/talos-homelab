@@ -22,11 +22,22 @@
 #   kube_pod_status_phase{phase="Pending"} EMPTY — and empty is the CORRECT
 #     state; that panel is the regression alarm, not a broken query.
 #
-# DELIBERATELY NOT USED: descheduler_* metrics. The descheduler runs as a
-# CronJob, so its process lives for seconds and Prometheus can never catch a
-# scrape window. Its own metrics are therefore unusable here regardless of
-# whether a ServiceMonitor exists. Everything is derived from kube-state-metrics
-# instead, which observes the RESULT rather than the actor.
+# DELIBERATELY NOT USED: descheduler_* Prometheus metrics, and NOT pushgateway.
+# The descheduler runs as a CronJob whose process lives for seconds, so Prometheus
+# can never catch a scrape window — its own metrics are unusable regardless of any
+# ServiceMonitor. The textbook answer for that is prometheus-pushgateway (which is
+# deployed here, and has had ZERO pushes in 103 days), but it is unnecessary:
+#
+# Alloy already ships every pod's stdout to Loki, so the descheduler's run output
+# lands in Loki the instant the Job exits. The Loki panels parse its OWN summary
+# lines — 'Number of evictions/requests totalEvicted=N', the node classifications,
+# and 'All nodes are under target utilization, nothing to do here'. Piggybacking on
+# the existing log stream means there is no extra component to keep alive and no
+# push step that can silently stop working while the descheduler keeps running.
+#
+# The kube-state-metrics panels stay as the numeric/long-retention view: they
+# observe the RESULT (pods per node, job success) rather than the actor, and are
+# not subject to log retention.
 #
 # READING IT: zero evictions is the expected steady state. With maxPods now 200
 # the busiest node sits at ~54%, below the 65% action threshold, so the
