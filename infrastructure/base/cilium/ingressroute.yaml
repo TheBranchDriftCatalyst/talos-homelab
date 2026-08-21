@@ -17,6 +17,13 @@ metadata:
     gethomepage.dev/weight: "20"
     gethomepage.dev/icon: "https://raw.githubusercontent.com/cilium/hubble/main/Documentation/images/hubble_logo.png"
     gethomepage.dev/siteMonitor: "http://hubble-ui.kube-system.svc.cluster.local"
+    # KEPT DELIBERATELY (TALOS-a38d.1): everywhere else this repo lets
+    # homepage-annotation-derivation derive href, but Kyverno CANNOT mutate anything in
+    # kube-system — the resource webhook namespaceSelector excludes it (and kyverno,
+    # kube-public, kube-node-lease), matching the resourceFilters entry [*/*,kube-system,*].
+    # Strip this and the Hubble tile silently loses its link. Same reason spec.tls below
+    # is written out by hand.
+    gethomepage.dev/href: "https://hubble.talos00"
 spec:
   # HTTPS + Authentik forward-auth SSO (TALOS-xgrl.14). talos-admin / cluster-admin gated.
   # TLS: default TLSStore serves the *.talos00 wildcard via SNI.
@@ -31,6 +38,9 @@ spec:
       services:
         - name: hubble-ui
           port: 80
+  # KEPT DELIBERATELY (TALOS-a38d.3): ingressroute-tls-default cannot reach kube-system
+  # (see the href note above), so this websecure route must declare its own tls or Traefik
+  # serves it as cleartext on :443.
   tls: {}
 ---
 # HTTP→HTTPS redirect for hubble.talos00.
