@@ -225,11 +225,30 @@ spec:
           # NOTE crowdsecurity/plex ships NO scenario — only plex-allowlist, a
           # parser that PREVENTS bans. Nothing to simulate, safe as-is.
           - firix/authentik-bf
-          - LePresidente/gitea-bf
           - LePresidente/jellyfin-bf
           - LePresidente/grafana-bf
           - crowdsecurity/impossible-travel
           - crowdsecurity/impossible-travel-user
+          # wave 2 — app brute-force scenarios, same detect-only rule
+          - schiz0phr3ne/sonarr-bf
+          - schiz0phr3ne/radarr-bf
+          - schiz0phr3ne/prowlarr-bf
+          - crowdsecurity/sabnzbd-bf
+          - gilbsgilbs/qbittorrent-bf
+          - plague-doctor/audiobookshelf-bf
+          - crowdsecurity/home-assistant-bf
+          - timokoessler/mongodb-bf
+          # http-dos: rate-based, and the single most likely thing to catch our
+          # own tooling (dashboards polling, scrapers, kubectl loops). Simulated
+          # until proven otherwise.
+          - crowdsecurity/http-dos-bypass-cache
+          - crowdsecurity/http-dos-random-uri
+          - crowdsecurity/http-dos-switching-ua
+          - crowdsecurity/http-dos-invalid-http-versions
+          # NOTE: gauth-fr/immich and LearningSpot/litellm ship NO scenarios
+          # (parsers only) — nothing to simulate. crowdsecurity/http-cve is
+          # CVE-exploit detection with effectively zero false-positive risk, so it
+          # is left ENFORCING deliberately.
 
       # ---- LAPI general config (config.yaml.local, mounted ONLY into the LAPI pod) ----
       # The crowdsec v1.7.8 entrypoint (docker_start.sh) does NOT template db_config from the
@@ -430,13 +449,17 @@ spec:
         - namespace: authentik
           podName: "authentik-server-*"
           program: authentik
-        # Forgejo is a GITEA FORK and the hub only ships a gitea parser, which
-        # filters on program == 'gitea'. Labelling these logs 'forgejo' would
-        # parse nothing. Log-format compatibility is assumed, NOT verified —
-        # that is exactly why this ships in simulation mode.
-        - namespace: forgejo
-          podName: "forgejo-*"
-          program: gitea
+        # FORGEJO: DELIBERATELY ABSENT. Verified 2026-08-21 by triggering a real
+        # failed login — Forgejo emits
+        #   "router: completed GET /api/v1/user for <ip>:<port>, 401 Unauthorized"
+        # but LePresidente/gitea-logs requires
+        #   "Failed authentication attempt for <user> from <ip>:<port>"
+        # Those do not match, so the gitea parser would never fire. Wiring it up
+        # anyway would have looked like coverage while providing none. A custom
+        # parser against Forgejo's router lines is the fix (same approach as
+        # homelab/cowrie-logs). Tracked separately.
+        # NOTE the old glob also matched forgejo-postgres-* (CNPG), pulling
+        # database logs in as unparsed noise.
         - namespace: media
           podName: "jellyfin-*"
           program: jellyfin
@@ -448,6 +471,42 @@ spec:
         - namespace: monitoring
           podName: "grafana-deployment-*"
           program: grafana
+        # ---- WAVE 2 (TALOS-y260): the rest of the exposed stack ----
+        # program values copied EXACTLY from each hub parser's filter. The *arr
+        # apps are CAPITALISED in their filters ('Sonarr'/'Radarr'/'Prowlarr') —
+        # lowercase here would silently parse nothing.
+        - namespace: media
+          podName: "sonarr-*"
+          program: Sonarr
+        - namespace: media
+          podName: "radarr-*"
+          program: Radarr
+        - namespace: media
+          podName: "prowlarr-*"
+          program: Prowlarr
+        - namespace: media
+          podName: "sabnzbd-*"
+          program: sabnzbd
+        - namespace: media
+          podName: "qbittorrent-*"
+          program: qbittorrent
+        - namespace: media-experimental
+          podName: "audiobookshelf-*"
+          program: audiobookshelf
+        # immich-* would also catch immich-machine-learning / -postgres; the
+        # server pod is the one that authenticates.
+        - namespace: media-private
+          podName: "immich-5*"
+          program: immich
+        - namespace: home-automation
+          podName: "homeassistant-*"
+          program: home-assistant
+        - namespace: catalyst-llm
+          podName: "litellm-*"
+          program: litellm
+        - namespace: monitoring
+          podName: "clickstack-mongodb-*"
+          program: mongodb
       # k8s API-server audit log (Metadata policy already enabled on Talos). File source — the agent
       # already host-mounts /var/log, so no extra mount. Only talos00 (single control-plane) has the
       # file; on worker nodes it's absent and harmlessly skipped. crowdsecurity/k8s-audit detects
@@ -462,7 +521,7 @@ spec:
         # (crowdsecurity/whitelists is NOT a collection; RFC1918/CF whitelisting is the custom
         #  homelab/whitelist parser above. whitelist-good-actors = community known-good bots.)
         - name: COLLECTIONS
-          value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/whitelist-good-actors crowdsecurity/k8s-audit firix/authentik LePresidente/gitea LePresidente/jellyfin crowdsecurity/plex LePresidente/grafana crowdsecurity/sshd-impossible-travel crowdsecurity/appsec-generic-rules"
+          value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/whitelist-good-actors crowdsecurity/k8s-audit firix/authentik LePresidente/jellyfin crowdsecurity/plex LePresidente/grafana crowdsecurity/sshd-impossible-travel crowdsecurity/appsec-generic-rules schiz0phr3ne/sonarr schiz0phr3ne/radarr schiz0phr3ne/prowlarr crowdsecurity/sabnzbd gilbsgilbs/qbittorrent plague-doctor/audiobookshelf gauth-fr/immich crowdsecurity/home-assistant LearningSpot/litellm timokoessler/mongodb crowdsecurity/http-cve crowdsecurity/http-dos crowdsecurity/pgsql"
       # Traefik is a DaemonSet on every node incl control-plane — the agent must be too.
       tolerations:
         - key: node-role.kubernetes.io/control-plane
