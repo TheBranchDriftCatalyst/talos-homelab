@@ -1,0 +1,65 @@
+---
+# Inject the Authentik hostAlias into any pod that does SERVER-SIDE OIDC.
+#
+# THE PROBLEM THIS REPLACES: auth.knowledgedump.space is Cloudflare-proxied.
+# Browser logins through the proxy are fine, but a pod's own OIDC calls
+# (discovery / token / JWKS) egress via the home IP into Cloudflare, whose bot
+# protection blocks them — correctly, since those calls genuinely ARE automated
+# traffic. The symptom is an SSO login that dies mid-flow with
+#   "Failed to open tcp connection to auth.knowledgedump.space:443 (execution expired)"
+#
+# The fix has always been a hostAlias pinning auth.knowledgedump.space to the
+# in-cluster Traefik Service, so those calls never leave the cluster. That was
+# hand-copied into boomtime (gaka-93f.11.2) and later, after the same outage
+# recurred, into manyfold. Every NEW app doing server-side OIDC hits the same
+# wall and only discovers it in production.
+#
+# This turns that recurring outage into a label:
+#     catalyst.io/oidc: "true"
+#
+# ALSO CENTRALISES THE IP. The alias hardcodes Traefik's ClusterIP, which would
+# break everywhere at once if svc/traefik were ever recreated. Better one place
+# than N. Re-check with:
+#     kubectl get svc traefik -n traefik -o jsonpath=\'{.spec.clusterIP}\'
+#
+# SCOPING: deliberately opt-IN per pod. A cluster-wide mutation that rewrote
+# every pod spec would be a much larger blast radius for no benefit — only a
+# handful of apps ever do server-side OIDC.
+#
+# NOTE hostAliases are ADDITIVE here: the patch appends, so a pod that already
+# declares its own aliases keeps them.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: oidc-hostalias
+  labels:
+    app.kubernetes.io/part-of: kyverno
+  annotations:
+    policies.kyverno.io/title: Authentik OIDC hostAlias
+    policies.kyverno.io/category: Networking
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Pods labelled catalyst.io/oidc=true get a hostAlias pinning
+      auth.knowledgedump.space to the in-cluster Traefik ClusterIP, so
+      server-side OIDC calls never traverse Cloudflare.
+spec:
+  # Mutation only — never block a pod because of this.
+  failurePolicy: Ignore
+  background: false
+  rules:
+    - name: add-authentik-hostalias
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              selector:
+                matchLabels:
+                  catalyst.io/oidc: "true"
+      mutate:
+        patchStrategicMerge:
+          spec:
+            hostAliases:
+              - ip: "10.103.83.240" # svc/traefik ClusterIP — see note above
+                hostnames:
+                  - auth.knowledgedump.space
