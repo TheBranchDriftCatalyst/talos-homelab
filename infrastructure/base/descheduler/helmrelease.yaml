@@ -5,8 +5,9 @@
 # WHY THIS EXISTS — THIS IS A DATA-PROTECTION FIX, NOT TIDINESS.
 # ============================================================================
 #
-# talos02-gpu sat at 109/110 pods — 99% of the kubelet maxPods ceiling — while using only
-# ~37% of its memory. Once a node reaches maxPods the kubelet REJECTS every new pod:
+# talos02-gpu sat at 109/110 pods — 99% of the then-current kubelet maxPods ceiling —
+# while using only ~37% of its memory. Once a node reaches maxPods the kubelet REJECTS
+# every new pod:
 #
 #   "Pod was rejected: Node didn't have enough resource: pods, requested: 1, used: 110,
 #    capacity: 110"
@@ -30,10 +31,18 @@
 # pods (33/313) declare no requests at all, which makes that scoring blinder still.
 # Nothing in stock Kubernetes ever moves a pod after placement — hence the descheduler.
 #
-# NOTE ON THE ALTERNATIVE FIX: raising kubelet maxPods above 110 would also stop the
-# rejections, but that lives in Talos machine config under configs/ which is GITIGNORED
-# in this repo — applying it would be live-only drift with no GitOps record. Tracked
-# separately; this component is the in-repo, reconcilable half of the fix.
+# THIS IS ONE HALF OF A TWO-PART FIX. The other half, TALOS-d5b5, raised the kubelet
+# maxPods ceiling from the Kubernetes default of 110 to 200 on every node (patch at
+# docs/05-runbooks/talos-kubelet-maxpods-patch.yaml, applied by
+# scripts/bootstrap-talos-patches.sh; it landed live at 2026-08-21T23:08:15Z). That
+# stops the immediate rejections and buys headroom, but it does not move a single pod —
+# the 110-vs-40 skew that produced the incident is still there, and a raised ceiling
+# without rebalancing only postpones the next occurrence. Conversely, rebalancing
+# without the ceiling leaves a node permanently pinned at its limit. Both are needed.
+#
+# The ceiling is 200 rather than higher because Cilium runs ipam:kubernetes and each
+# node's pod IPs come from a /24 (254 usable); see TALOS-d5b5 for that reasoning. All
+# `pods` percentages below are therefore fractions of 200, not 110.
 #
 # ============================================================================
 # WHY A CRONJOB, NOT THE CONTINUOUS DEPLOYMENT
@@ -225,53 +234,65 @@ spec:
                 # Semantics that drive these numbers:
                 #   underutilized = BELOW every threshold        (all of cpu AND mem AND pods)
                 #   overutilized  = ABOVE any targetThreshold    (cpu OR mem OR pods)
-                # Percentages are of ALLOCATABLE, computed from pod REQUESTS (pods =
-                # count / 110).
+                # Percentages are of ALLOCATABLE, computed from pod REQUESTS. For `pods`
+                # that is count / 200 — the post-TALOS-d5b5 ceiling, NOT 110.
                 #
-                # Measured distribution on 2026-08-21 (talos00 excluded above):
+                # Measured 2026-08-21T23:13Z, straight out of this plugin's own
+                # classification log (talos00 excluded by the nodeSelector above):
                 #   node          cpu%  mem%  pods
-                #   talos01        19    67    40/110 = 36%
-                #   talos02-gpu    69    45   109/110 = 99%   <- the problem
-                #   talos03        13    64    53/110 = 48%
-                #   talos06        74    53    94/110 = 85%   <- next in line
+                #   talos01        20    68    40/200 = 20%
+                #   talos02-gpu    70    46   110/200 = 55%   <- was 109/110 pre-d5b5
+                #   talos03        14    64    53/200 = 27%
+                #   talos06        74    53    93/200 = 47%
                 #
-                # `pods` is the whole point — it is the BINDING constraint. cpu and
-                # memory are included anyway, and NOT left to default, because an
-                # unspecified resource defaults to 100% on both sides and would let the
-                # balancer shove pods onto a node that is fine on count but tight on
-                # memory.
+                # All three dimensions are set explicitly. An unspecified resource
+                # defaults to 100% on BOTH sides, which would silently remove it from
+                # the decision — and with the ceiling now at 200, memory is the
+                # dimension most likely to bind first on the small nodes.
                 thresholds:
-                  # cpu 30: comfortably above talos01 (19) and talos03 (13), far below
-                  # talos02-gpu (69) and talos06 (74) — cpu never falsely marks a
+                  # cpu 30: comfortably above talos01 (20) and talos03 (14), far below
+                  # talos02-gpu (70) and talos06 (74) — cpu never falsely marks a
                   # receiver as busy.
                   cpu: 30
-                  # memory 75: THE GUARD FOR talos03. talos03 has only 14Gi allocatable
-                  # and is already at 64%; talos01 is at 67%. Once a receiver crosses
-                  # 75% memory it stops counting as underutilized, and if BOTH cross it
-                  # there are zero receivers and the strategy aborts on its own. That is
-                  # a self-limiting brake: rebalancing stops before it can turn a
-                  # pod-count problem into a memory problem. 75 rather than 70 because
-                  # at 70 talos01 (67) is one small pod from disabling the whole
-                  # component — 75 keeps ~1.8Gi of working room on talos01, ~1.1Gi on
-                  # talos03.
+                  # memory 75: THE GUARD FOR talos03 AND talos01. talos03 has only 14Gi
+                  # allocatable and is at 64%; talos01 has 22Gi and is at 68%. Once a
+                  # receiver crosses 75% memory it stops counting as underutilized, and
+                  # if BOTH cross it there are zero receivers and the strategy aborts on
+                  # its own. That is a self-limiting brake: rebalancing stops before it
+                  # can turn a pod-count problem into a memory problem. 75 rather than
+                  # 70 because at 70 talos01 (68) is one small pod away from disabling
+                  # the whole component — 75 keeps roughly 1.5Gi of working room on
+                  # talos01 and 1.6Gi on talos03.
                   memory: 75
-                  # pods 55 (= 60 pods): above talos03's 48% so both light nodes qualify
-                  # as receivers, below talos06's 85% so it is never mistaken for one.
-                  pods: 55
+                  # pods 40 (= 80 pods of 200): a receiver must have real room, not just
+                  # be lighter than the source. Qualifies talos01 (20) and talos03 (27);
+                  # correctly excludes talos06 (47), which is the second-heaviest node
+                  # and has no business being a destination.
+                  pods: 40
                 targetThresholds:
                   # cpu 80 / memory 80: set ABOVE every current value on purpose. We do
-                  # not want cpu or memory to be what triggers eviction today — pod count
-                  # is the actual failure. They act as a relief valve: if a node ever
-                  # does cross 80% requested memory it becomes an eviction SOURCE, so
-                  # the same mechanism drains a genuine memory hotspot.
+                  # not want cpu or memory to trigger eviction today. They are a relief
+                  # valve: if a node crosses 80% requested memory it becomes an eviction
+                  # SOURCE, so the same mechanism drains a genuine memory hotspot. With
+                  # maxPods at 200 this is now the likelier trigger of the two — the
+                  # small nodes will run out of memory long before they run out of pod
+                  # slots, which is exactly what TALOS-d5b5 predicted for talos03.
                   cpu: 80
                   memory: 80
-                  # pods 75 (= 83 pods) is the number that matters. It makes
-                  # talos02-gpu (99%) and talos06 (85%) sources, and leaves ~27 pods of
-                  # headroom below the 110 ceiling — enough that a Velero backup wave
-                  # (67 PodVolumeBackups, one helper pod each) can always be admitted.
-                  # That headroom IS the fix.
-                  pods: 75
+                  # pods 65 (= 130 pods of 200). Chosen for the headroom it leaves, not
+                  # for the pods it moves: a node is drained before it can climb past
+                  # 130, keeping ~70 free slots. That covers a Velero backup wave (67
+                  # PodVolumeBackups, one helper pod each) landing entirely on one node,
+                  # which is the failure this component exists to prevent. It also stays
+                  # well clear of the ~240 practical limit imposed by Cilium's per-node
+                  # /24 pod CIDR (see TALOS-d5b5): pod slots must never outrun pod IPs.
+                  #
+                  # NOTE: at 65% nothing is overutilized today (talos02-gpu is at 55%),
+                  # so this run evicts NOTHING. That is the correct outcome — raising
+                  # maxPods removed the emergency, and these thresholds are deliberately
+                  # NOT set low enough to manufacture movement just to prove the
+                  # component works. It is here to catch the next pile-up early.
+                  pods: 65
 
                 # Conservative on purpose for the first deployment: at most 2 evictions
                 # per node per run (capped to 3 cluster-wide by maxNoOfPodsToEvictTotal
