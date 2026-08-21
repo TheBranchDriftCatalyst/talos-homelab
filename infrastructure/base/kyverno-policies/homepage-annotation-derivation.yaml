@@ -129,10 +129,13 @@ spec:
     # and the `+()` anchor leaves it alone. (TALOS-a38d.2)
     #
     # Reads the siteMonitor ANNOTATION rather than re-deriving it from the spec, so a hand-set
-    # siteMonitor (health-check paths, portless URLs) propagates to the widget too. Consequence:
-    # a brand-new route that relies on derive-site-monitor above will not have siteMonitor on the
-    # object yet during its own admission, so widget.url lands on the next reconcile of this
-    # policy (mutateExistingOnPolicyUpdate) — eventually consistent, never wrong.
+    # siteMonitor (health-check paths, portless URLs) propagates to the widget too. This rule
+    # therefore CHAINS off derive-site-monitor: on a brand-new route the object has no siteMonitor
+    # when it is admitted, and derive-site-monitor's own patch is what re-triggers this rule.
+    # Verified live (TALOS-a38d probe, 2026-08-21): a fresh IngressRoute carrying only
+    # enabled+widget.type got siteMonitor AND the matching widget.url within one poll interval,
+    # so the chain closes on its own. Worst case it lands on the next mutateExistingOnPolicyUpdate
+    # pass — eventually consistent, never wrong.
     - name: derive-widget-url
       match:
         any:
