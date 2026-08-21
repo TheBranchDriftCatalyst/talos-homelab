@@ -180,6 +180,37 @@ spec:
         simulation: false
         exclusions:
           - homelab/iocaine-tarpit
+          # LePresidente/http-generic-403-bf -> DETECT-ONLY (TALOS-y260).
+          #
+          # Kept for the signal, demoted from enforcing because the evidence is
+          # one-sided. Measured 2026-08-21 across all 35 alerts in the LAPI:
+          #
+          #   6 alerts  http-generic-403-bf   1 distinct IP   <- the OPERATOR, every time
+          #   5 alerts  http-technology-probing   5 distinct IPs
+          #   5 alerts  http-probing              5 distinct IPs
+          #   4 alerts  http-crawl-non_statics    4 distinct IPs
+          #   3 alerts  http-admin-interface-probing / wordpress-scan / bad-user-agent
+          #
+          # Every other scenario shows a spread of distinct attacker IPs. This one
+          # has caught ZERO real attackers here and banned the operator SIX times
+          # in four hours, including a 32h SSO lockout.
+          #
+          # It is also self-reinforcing: it bans on repeated 403s, and once banned
+          # the bouncer returns 403 for everything, which is itself a stream of
+          # 403s. The ban manufactures its own confirming evidence.
+          #
+          # Worse, the trigger was our own outage: the first bans (20:13, 20:16)
+          # land minutes after the talos00 control-plane shutdown at 20:07, when
+          # ingress was partially down and the operator was reloading. So planned
+          # maintenance locked the operator out of SSO.
+          #
+          # Redundancy argument for keeping enforcement OFF: a genuine 403
+          # brute-forcer would almost certainly also trip http-probing or
+          # http-admin-interface-probing, both of which ARE enforcing and both of
+          # which demonstrably catch real IPs.
+          #
+          # Revisit if it ever alerts on an IP that is not ours.
+          - LePresidente/http-generic-403-bf
 
       # ---- LAPI general config (config.yaml.local, mounted ONLY into the LAPI pod) ----
       # The crowdsec v1.7.8 entrypoint (docker_start.sh) does NOT template db_config from the
