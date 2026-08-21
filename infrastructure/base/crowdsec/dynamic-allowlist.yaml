@@ -148,3 +148,87 @@ spec:
                   echo "--- allowlist contents ---"
                   kubectl exec -n crowdsec "${LAPI}" -c crowdsec-lapi -- \
                     cscli allowlists inspect "${ALLOWLIST}"
+---
+# Prune stale bouncer registrations.
+#
+# WHY THEY ACCUMULATE — this is CrowdSec working as designed, not a misconfig:
+# "When a bouncer connects from a new IP using an existing key, LAPI
+#  automatically creates a new bouncer entry suffixed with @<ip> to track
+#  per-instance metrics."
+# Traefik is a 5-pod DaemonSet sharing ONE API key, and every pod restart yields
+# a new pod IP -> a brand-new bouncer identity that is never cleaned up.
+# Observed 2026-08-21: 16 registrations for 5 live pods, the oldest 12 days
+# stale. You could read the cluster's restart history off the list.
+#
+# NOT FIXABLE WITH A STABLE NAME: the Traefik bouncer plugin (v1.7.1) exposes no
+# bouncer-name option — the @<ip> suffix is assigned LAPI-side. Pruning is the
+# native answer (cscli bouncers prune).
+#
+# WHY IT MATTERS BEYOND A CLUTTERED DROPDOWN: every stale entry keeps a VALID
+# API KEY that can still authenticate to the LAPI. Unbounded growth of live
+# credentials is the real problem.
+#
+# 24h, NOT the 1h default: a Traefik pod that is briefly down (node reboot,
+# DaemonSet roll) must not have its registration culled out from under it. 24h
+# is comfortably longer than any rollout here while still bounding growth.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crowdsec-bouncer-pruner
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/component: bouncer-pruner
+    app.kubernetes.io/part-of: crowdsec
+spec:
+  schedule: "37 4 * * *"   # daily, off-peak, offset from the other crowdsec jobs
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: crowdsec-allowlist-refresher
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: pruner
+              image: alpine/k8s:1.34.9
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  # Must run against the LAPI pod: prune needs direct DB access
+                  # and is "intended to be run on Local API/master".
+                  LAPI=$(kubectl get pods -n crowdsec -l k8s-app=crowdsec,type=lapi \
+                          --field-selector status.phase=Running \
+                          -o jsonpath='{.items[0].metadata.name}')
+                  if [ -z "${LAPI}" ]; then
+                    echo "no running crowdsec LAPI pod found"; exit 1
+                  fi
+                  echo "before:"
+                  kubectl exec -n crowdsec "${LAPI}" -c crowdsec-lapi -- \
+                    cscli bouncers list
+                  kubectl exec -n crowdsec "${LAPI}" -c crowdsec-lapi -- \
+                    cscli bouncers prune -d 24h --force
+                  echo "after:"
+                  kubectl exec -n crowdsec "${LAPI}" -c crowdsec-lapi -- \
+                    cscli bouncers list
