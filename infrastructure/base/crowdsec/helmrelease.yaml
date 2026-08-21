@@ -211,6 +211,25 @@ spec:
           #
           # Revisit if it ever alerts on an IP that is not ours.
           - LePresidente/http-generic-403-bf
+          # ---- NEW APP-LEVEL SCENARIOS: DETECT-ONLY ON ARRIVAL ----
+          # These are fed by app logs CrowdSec has never parsed before, so their
+          # false-positive behaviour here is unknown. After http-generic-403-bf
+          # banned the operator six times in four hours (32h SSO lockout), nothing
+          # new gets to ban until we have watched what it actually catches.
+          #
+          # PROMOTION CRITERIA: remove a line once it has alerted on at least one
+          # IP that is not ours and has produced no operator false positives.
+          # Check with:
+          #   cscli alerts list --scenario <name>
+          #
+          # NOTE crowdsecurity/plex ships NO scenario — only plex-allowlist, a
+          # parser that PREVENTS bans. Nothing to simulate, safe as-is.
+          - firix/authentik-bf
+          - LePresidente/gitea-bf
+          - LePresidente/jellyfin-bf
+          - LePresidente/grafana-bf
+          - crowdsecurity/impossible-travel
+          - crowdsecurity/impossible-travel-user
 
       # ---- LAPI general config (config.yaml.local, mounted ONLY into the LAPI pod) ----
       # The crowdsec v1.7.8 entrypoint (docker_start.sh) does NOT template db_config from the
@@ -395,6 +414,40 @@ spec:
         - namespace: honeypot
           podName: "cowrie-*"
           program: cowrie
+        # ---- APP-LEVEL ACQUISITION (TALOS-y260 follow-up) ----
+        # Until now CrowdSec only saw Traefik's edge logs, so anything that got
+        # PAST the reverse proxy and brute-forced an app directly was invisible.
+        # These feed the per-app hub collections added to COLLECTIONS below.
+        #
+        # The `program` value is NOT cosmetic — each hub parser filters on it
+        # exactly, so a mismatch means the parser silently never fires:
+        #   firix/authentik-logs      Lower(program) in ['authentik','authentik-server']
+        #   LePresidente/gitea-logs   program == 'gitea'
+        #   LePresidente/jellyfin-logs program == 'jellyfin'
+        #   LePresidente/grafana-logs program == 'grafana'
+        #
+        # Authentik: the identity provider, so brute-force here matters most of all.
+        - namespace: authentik
+          podName: "authentik-server-*"
+          program: authentik
+        # Forgejo is a GITEA FORK and the hub only ships a gitea parser, which
+        # filters on program == 'gitea'. Labelling these logs 'forgejo' would
+        # parse nothing. Log-format compatibility is assumed, NOT verified —
+        # that is exactly why this ships in simulation mode.
+        - namespace: forgejo
+          podName: "forgejo-*"
+          program: gitea
+        - namespace: media
+          podName: "jellyfin-*"
+          program: jellyfin
+        - namespace: media
+          podName: "plex-*"
+          program: plex
+        # grafana-deployment-* — NOT grafana-operator-*, which is the operator and
+        # emits no auth logs.
+        - namespace: monitoring
+          podName: "grafana-deployment-*"
+          program: grafana
       # k8s API-server audit log (Metadata policy already enabled on Talos). File source — the agent
       # already host-mounts /var/log, so no extra mount. Only talos00 (single control-plane) has the
       # file; on worker nodes it's absent and harmlessly skipped. crowdsecurity/k8s-audit detects
@@ -409,7 +462,7 @@ spec:
         # (crowdsecurity/whitelists is NOT a collection; RFC1918/CF whitelisting is the custom
         #  homelab/whitelist parser above. whitelist-good-actors = community known-good bots.)
         - name: COLLECTIONS
-          value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/whitelist-good-actors crowdsecurity/k8s-audit"
+          value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/whitelist-good-actors crowdsecurity/k8s-audit firix/authentik LePresidente/gitea LePresidente/jellyfin crowdsecurity/plex LePresidente/grafana crowdsecurity/sshd-impossible-travel crowdsecurity/appsec-generic-rules"
       # Traefik is a DaemonSet on every node incl control-plane — the agent must be too.
       tolerations:
         - key: node-role.kubernetes.io/control-plane
