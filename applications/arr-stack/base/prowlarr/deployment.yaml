@@ -28,25 +28,26 @@ spec:
         supplementalGroups:
           - 100   # Synology 'users' group
           - 1000  # abc user group
-      initContainers:
-        # Migrate SQLite DB from NFS to local storage
-        - name: migrate-db
-          image: busybox:latest
-          command: ['/bin/sh', '/scripts/migrate-arr.sh']
-          env:
-            - name: APP_NAME
-              value: prowlarr
-            - name: DB_LOCAL_PATH
-              value: /db-local
-            - name: CONFIG_PATH
-              value: /config
-          volumeMounts:
-            - name: config
-              mountPath: /config
-            - name: db-local
-              mountPath: /db-local
-            - name: migration-scripts
-              mountPath: /scripts
+      # NO migrate-db initContainer -- removed with the Postgres cutover
+      # (TALOS-93cz). shared/db-migration-configmap.yaml stays; sonarr, radarr,
+      # plex and jellyfin still use it.
+      #
+      # It did two things: copy the SQLite DB from NFS to the local-path PV
+      # once, and symlink /config/prowlarr.db at that copy. Postgres is
+      # authoritative now, so the copy is pointless -- but the SYMLINK is the
+      # reason this container cannot simply be left in place.
+      #
+      # Repointing DB_LOCAL_PATH at /db-local-old instead of deleting the
+      # container would have made migrate-arr.sh rewrite that symlink to
+      # /db-local-old/prowlarr.db -- a path that IS mounted -- handing the app
+      # back a live read/write route to the stale database at exactly the path
+      # it looks for one. That is the divergence the remount exists to prevent,
+      # so the container goes and nothing recreates the symlink.
+      #
+      # The three orphaned /config/prowlarr.db* symlinks were renamed to
+      # *.sqlite-era so nothing dangles where the app would look. Reverting this
+      # commit restores them: migrate-arr.sh finds no symlink, finds
+      # /db-local/prowlarr.db present, and recreates all three.
       containers:
         - name: prowlarr
           image: lscr.io/linuxserver/prowlarr:latest
@@ -98,8 +99,17 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
+            # The pre-Postgres SQLite PV, kept BOUND and mounted on purpose so
+            # nothing can garbage-collect it and rollback stays one revert away
+            # (TALOS-6ck8 removes it once radarr and sonarr are proven too).
+            # Deliberately NOT at /db-local: moving the path makes it
+            # structurally impossible for Prowlarr to reach the stale database,
+            # and readOnly means it cannot be written even if something did.
+            # The volume keeps the name db-local so the Velero
+            # backup-volumes annotation above still matches it.
             - name: db-local
-              mountPath: /db-local
+              mountPath: /db-local-old
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /ping
@@ -127,7 +137,3 @@ spec:
         - name: db-local
           persistentVolumeClaim:
             claimName: prowlarr-db-local
-        - name: migration-scripts
-          configMap:
-            name: sqlite-db-migration
-            defaultMode: 0755
