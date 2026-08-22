@@ -2,11 +2,22 @@
 # Linting rules for Markdown files
 # Docs: https://github.com/DavidAnson/markdownlint-cli2
 
-# Note: globs intentionally omitted — lefthook passes staged files explicitly.
-# For standalone use: npx markdownlint-cli2 '**/*.md'
+# globs are deliberately NOT set here. markdownlint-cli2 does NOT let explicit CLI file
+# arguments override a config `globs` list — setting it made `markdownlint-cli2 README.md`
+# lint the entire tree, which would turn lefthook's staged-file hook into a full-repo scan
+# on every commit. The standalone glob lives in the package.json scripts instead, so the
+# two invocation paths stay independent:
+#   lefthook          -> npx markdownlint-cli2 {staged_files}   (explicit files)
+#   yarn lint:markdown -> markdownlint-cli2 '**/*.md'           (glob in the script)
+# Previously neither carried a glob, so every argument-less run reported
+# "Linting: 0 file(s) / Summary: 0 error(s)" and exited 0 — a green lint that had never
+# checked a single Markdown file.
 
 # Glob patterns for files to ignore
 ignores:
+  # Agent worktrees: 661 vendored .md files that are not ours to lint.
+  - '.claude'
+  - '**/.claude'
   - 'node_modules'
   - '**/node_modules'
   - '.git'
