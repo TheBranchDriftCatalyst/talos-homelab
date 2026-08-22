@@ -40,9 +40,23 @@ Reading the wrong file succeeds silently. Prowlarr's numbers:
 | `/config/prowlarr.db` | symlink -> `/db-local/prowlarr.db` | |
 | `/config/prowlarr.db.nfs-backup` (**stale trap**) | 176 128 B | 2025-12-20 |
 
-Prove it before you load anything — the sizes differ by 46x and the mtimes by
-eight months, so `stat` plus `sha256sum` settles it in one command. Then
-sanity-check the row counts against what the app's own API reports.
+And Radarr's, where the gap is wider still:
+
+| file | size | mtime |
+| --- | ---: | --- |
+| `/db-local/radarr.db` (**authoritative**) | 267 309 056 B | 2026-08-22 |
+| `/config/radarr.db` | symlink -> `/db-local/radarr.db` | |
+| `/config/radarr.db.nfs-backup` (**stale trap**) | 671 744 B | 2025-12-20 |
+
+Prove it before you load anything — the sizes differ by 46x for Prowlarr and
+398x for Radarr, the mtimes by eight months, so `stat` plus `sha256sum` settles
+it in one command. Then sanity-check the row counts against what the app's own
+API reports. Loading the trap file would have cost 5 393 movies and imported 0.
+
+Check the app version at the same time; Postgres needs Radarr/Sonarr
+>= v4.1.0.6133. `GET /api/v3/system/status` reports `version` and, once the
+cutover lands, `databaseType` — which is how you confirm the switch actually
+flipped rather than assuming it from the env var being present.
 
 ## Helper pod
 
@@ -136,8 +150,33 @@ What that returned for Prowlarr:
 Four of the wiki's seven tables do not exist in Prowlarr at all — it is an
 indexer manager, not a library app. And `AppSyncProfiles`, which the wiki does
 not mention, seeds the "Standard" profile at `Id=1` and **does** collide.
-Radarr and Sonarr will have the four library tables and will not have
-`AppSyncProfiles`; re-derive the list from `pg_stat_user_tables` for each.
+
+And what it returned for Radarr (TALOS-l4uo), which is a library app and so has
+the four Prowlarr lacked:
+
+| table | wiki list | exists in Radarr | seeded rows |
+| --- | --- | --- | ---: |
+| `QualityProfiles` | yes | yes | 6 |
+| `QualityDefinitions` | yes | yes | 30 |
+| `DelayProfiles` | yes | yes | 1 |
+| `Metadata` | yes | yes | 5 |
+| `Config` | yes | yes | 0 (delete is a no-op) |
+| `VersionInfo` | yes | yes | 138 |
+| `ScheduledTasks` | yes | yes | 11 |
+| `NamingConfig` | **no** | yes | 1 |
+| `Commands` | **no** | yes | 2 |
+| `AppSyncProfiles` | **no** | **no** | — |
+
+**Two tables outside the wiki's list seed rows in Radarr and both collide.**
+`NamingConfig` holds the single naming-format row at `Id=1`, and `Commands` gets
+two rows from the startup tasks the app fires the moment it comes up — the fresh
+schema is only "empty" until the app touches it. Neither is in the wiki, neither
+was in Prowlarr's list, and Prowlarr's `AppSyncProfiles` does not exist here.
+
+So the delete list is different for every app, and the union of the previous two
+is still not the right answer for the next one. **Re-derive it. Every time.**
+`Commands` in particular grows while the app is running, so derive it in the same
+suspended window in which you delete — not before you scale to 0.
 
 ## Step 4 — pgloader
 
@@ -194,7 +233,8 @@ SELECT sequencename, last_value FROM pg_sequences WHERE schemaname='public';
 ```
 
 Radarr and Sonarr are 267 MB and 549 MB against Prowlarr's 8 MB, so budget
-minutes rather than the half-second this took.
+minutes rather than the half-second this took. In the event Radarr's 496 288
+rows loaded in 10.2 s, so Sonarr should be comfortable too.
 
 The type-cast `WARNING`s (`bigserial` vs `integer`, `bigint` vs `boolean`) are
 expected and benign: SQLite has no native boolean and pgloader describes its own
@@ -217,7 +257,21 @@ inferred type before deferring to the existing column.
    credentials are encrypted with keys stored in `Config`
    (`rijndaelpassphrase`, `hmacpassphrase`, and the salts). If those rows
    migrated correctly the tests pass; if they did not, every indexer fails to
-   authenticate.
+   authenticate. `POST /api/v3/downloadclient/testall` proves the same thing
+   about the other set of stored credentials. Both only test *enabled*
+   providers, so a `1/1` pass on an app with two download clients is not a
+   partial failure — check `enable` before reading the ratio as a problem.
+4. **Content digests, not just counts.** Equal row counts do not prove equal
+   rows. Select the salient columns from both sides, sort, and hash:
+
+   ```sh
+   sqlite3 -separator '|' radarr.db 'SELECT "Id","Path","QualityProfileId","Monitored" FROM "Movies";' | sort | shasum -a 256
+   psql -F'|' -At -c 'SELECT "Id","Path","QualityProfileId","Monitored"::int FROM "Movies";' | sort | shasum -a 256
+   ```
+
+   Cast Postgres booleans back to `int` — SQLite stores them as `0`/`1` and
+   `psql` renders them `t`/`f`, so an uncast comparison fails on formatting and
+   tells you nothing. Radarr matched on all eight tables checked this way.
 
 Confirm the app is on Postgres and not still on SQLite:
 
@@ -232,6 +286,29 @@ Then bring it back:
 ```sh
 kubectl -n media scale deploy prowlarr --replicas=1
 flux resume kustomization arr-stack
+```
+
+If another agent or person is working in the same `arr-stack` Kustomization,
+tell them about the suspend window. While it is suspended their
+`flux reconcile kustomization arr-stack` reports success and applies nothing,
+which reads exactly like a change that did not take.
+
+### What Radarr came out at
+
+267 MB, 41 tables, **496 288 rows, 0 errors, 10.2 s** — the prefetch and batch
+flags are doing real work at this size. Every table matched exactly; the numbers
+worth naming are `Movies` 5 393, `MovieMetadata` 6 533, `MovieFiles` 5 015,
+`History` 4 722, `Credits` 272 664, `MovieTranslations` 152 582,
+`QualityProfiles` 6.
+
+`Reset Sequences 0 40` leaves every sequence with `last_value = max(Id)` and
+`is_called = true`, which is correct — the next `nextval()` returns `max(Id)+1`.
+Do not read `last_value = max(Id)` as an off-by-one; the failure to look for is
+`is_called = false`, and `pg_sequences` does not expose that column. Read it off
+the sequence relation itself:
+
+```sql
+SELECT last_value, is_called FROM "Movies_Id_seq";
 ```
 
 ## Storage choice — reclaim policies are not uniform
