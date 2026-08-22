@@ -20,43 +20,34 @@ spec:
         app: radarr
         app.kubernetes.io/name: radarr
       annotations:
-        # Velero backup: only back up config and db-local, exclude media/downloads
-        backup.velero.io/backup-volumes: "config,db-local"
+        # Velero backup: config only. db-local dropped with the SQLite volume
+        # (TALOS-l4uo) -- the database lives in arr-postgres now, and CNPG owns
+        # its own backups (barman WAL + ScheduledBackup), not Velero.
+        backup.velero.io/backup-volumes: "config"
     spec:
-      # Pin to talos03 for local SQLite DB storage
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values:
-                      - talos03
+      # NO nodeAffinity. This block pinned radarr to talos03 for the local-path
+      # SQLite PV, which is gone (TALOS-l4uo). It was a SECOND, independent pin
+      # on top of the PV's own nodeAffinity -- dropping the volume alone would
+      # have left radarr stuck on talos03 and made the un-node-binding silently
+      # fail. Prowlarr never had one, so this is a radarr/sonarr-specific step.
+      # Every remaining volume is NFS (fatboy-nfs-appdata, synology-nfs) and
+      # none of those PVs carry nodeAffinity.
       securityContext:
         fsGroup: 1000
         supplementalGroups:
           - 100   # Synology 'users' group
           - 1000  # abc user group
-      initContainers:
-        # Migrate SQLite DB from NFS to local storage
-        - name: migrate-db
-          image: busybox:latest
-          command: ['/bin/sh', '/scripts/migrate-arr.sh']
-          env:
-            - name: APP_NAME
-              value: radarr
-            - name: DB_LOCAL_PATH
-              value: /db-local
-            - name: CONFIG_PATH
-              value: /config
-          volumeMounts:
-            - name: config
-              mountPath: /config
-            - name: db-local
-              mountPath: /db-local
-            - name: migration-scripts
-              mountPath: /scripts
+      # NO migrate-db initContainer -- retired with the Postgres cutover
+      # (TALOS-l4uo). shared/db-migration-configmap.yaml stays; sonarr, plex and
+      # jellyfin still use it.
+      #
+      # migrate-arr.sh did two things: copy the SQLite DB from NFS to a
+      # local-path PV once, and symlink /config/radarr.db at that copy. Postgres
+      # is authoritative now, so the copy is pointless -- and leaving the
+      # container in place would have it recreate a symlink pointing at a path
+      # that is no longer mounted. The three /config/radarr.db* symlinks it had
+      # created were renamed to *.sqlite-era so nothing dangles where the app
+      # would look for a database; radarr.db.nfs-backup is left alone.
       containers:
         - name: radarr
           image: lscr.io/linuxserver/radarr:latest
@@ -79,11 +70,12 @@ spec:
             # unchanged. Setting RADARR__POSTGRES__HOST is the single switch
             # that flips ConnectionStringFactory from SQLite to Postgres.
             #
-            # ROLLBACK: delete this env block and radarr is back on the SQLite
-            # file at /db-local/radarr.db, which this migration only ever read.
-            # The db-local PVC and the migrate-db initContainer above stay in
-            # place precisely to keep that path open, until the migration is
-            # validated and TALOS-6ck8 drops the mount.
+            # These are now the ONLY source of truth for radarr's data. The
+            # SQLite PVC and its PV have been deleted after the user validated
+            # the migration, so removing this block no longer rolls back -- it
+            # would start radarr on a fresh empty database. Recovery is the cold
+            # copy at /config/pg-migration-backup/ on the NFS config volume, or
+            # a CNPG restore of arr-postgres.
             - name: RADARR__POSTGRES__HOST
               value: arr-postgres-rw # CNPG read-write service, same namespace
             - name: RADARR__POSTGRES__PORT
@@ -108,10 +100,14 @@ spec:
               containerPort: 7878
               protocol: TCP
           volumeMounts:
+            # config (NFS) is the only non-media volume left. Dropping the
+            # local-path SQLite PVC is what actually un-node-binds radarr: that
+            # PV carried nodeAffinity to talos03, so while it was mounted the
+            # pod could not schedule anywhere else. This is the point of the
+            # whole exercise (EPIC 0 -> EPIC 1), and talos03 is one of the nodes
+            # slated for the control-plane reset.
             - name: config
               mountPath: /config
-            - name: db-local
-              mountPath: /db-local
             # Synology media
             - name: synology-movies
               mountPath: /data/synology/movies
@@ -144,18 +140,11 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: radarr-config
-        - name: db-local
-          persistentVolumeClaim:
-            claimName: radarr-db-local
-        - name: migration-scripts
-          configMap:
-            name: sqlite-db-migration
-            defaultMode: 0755
         # Synology Movies library
         - name: synology-movies
           persistentVolumeClaim:
             claimName: synology-movies
-        # Local downloads (talos03)
+        # Downloads (Synology NFS -- not node-local, despite the PVC names)
         - name: downloads-complete
           persistentVolumeClaim:
             claimName: synology-downloads-complete

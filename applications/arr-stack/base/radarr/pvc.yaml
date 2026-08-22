@@ -13,18 +13,13 @@ spec:
   resources:
     requests:
       storage: 5Gi
----
-# SQLite DB PVC - Local storage (SQLite doesn't like NFS)
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: radarr-db-local
-  labels:
-    app: radarr
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: local-path
-  resources:
-    requests:
-      storage: 2Gi
+
+# NO radarr-db-local PVC. The local-path SQLite volume was deleted with the
+# Postgres cutover (TALOS-l4uo), after the user validated the migration. Its PV
+# carried nodeAffinity to talos03 and was the reason radarr could not schedule
+# anywhere else -- talos03 being one of the nodes slated for the control-plane
+# reset (EPIC 0 -> EPIC 1). It has to stay out of this file: leaving it here
+# would have Flux recreate the claim and re-pin the app.
+#
+# radarr-config above is on fatboy-nfs-appdata, which has no nodeAffinity, as
+# are the synology-nfs media/downloads PVCs. radarr is now free to move.
