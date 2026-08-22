@@ -413,14 +413,54 @@ reason for the choice; node-independence and the "never `instances: 1` on
 > Check `kubectl -n media get deploy <app> -o yaml | grep db-local` returns
 > nothing before you run any of this.
 
+### There are TWO pins, and dropping the volume only removes one
+
+**Radarr and Sonarr also carry a hard `nodeAffinity` on the Deployment itself**,
+independent of any volume. Prowlarr never had one, so this step does not exist
+in its history and is easy to miss:
+
+```yaml
+      # Pin to talos03 for local SQLite DB storage      <- radarr's wording
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos03]
+```
+
+Delete the volume and leave this, and the pod stays welded to the node while
+every other signal says the migration succeeded. It is a silent failure: the
+app is healthy, the SQLite PVC is gone, and the objective is still not met.
+
+**Sonarr's copy of this block is commented `# Pin to talos03 for local downloads
+storage`, which is simply wrong** — `synology-downloads-complete` and
+`-incomplete` are `synology-nfs`, network storage with no `nodeAffinity` on the
+PV. Do not read that comment as a reason to keep the pin. Verify the claim
+instead of trusting the comment; radarr's said "for local SQLite DB storage" and
+was equally obsolete.
+
+### Proving it
+
 Removing the mount is not the proof; scheduling somewhere else is. The static
 check first — no PV backing the pod should carry `nodeAffinity`, and there
-should be no `nodeSelector` or `affinity`:
+should be no `nodeSelector` or `affinity`. Check **every** volume, not just
+`<app>-config`, and look at the volume *source*, since an app-specific PVC name
+says nothing about whether the storage is node-local:
 
 ```sh
-kubectl -n media get pvc <app>-config -o jsonpath='{.spec.volumeName}'
-kubectl get pv <that-pv> -o jsonpath='{.spec.nodeAffinity}'   # must be empty
+for c in $(kubectl -n media get pod <pod> -o jsonpath='{range .spec.volumes[*]}{.persistentVolumeClaim.claimName}{"\n"}{end}'); do
+  v=$(kubectl -n media get pvc "$c" -o jsonpath='{.spec.volumeName}')
+  echo "$c -> $(kubectl get pv "$v" -o jsonpath='{.spec.nodeAffinity}')"   # must be empty
+done
+kubectl -n media get deploy <app> -o jsonpath='{.spec.template.spec.affinity}'      # must be empty
 ```
+
+Radarr's four survivors are all `nfs` volume sources pointing at 192.168.1.x
+with no `nodeAffinity` — `radarr-config` on `fatboy-nfs-appdata`, the movies and
+downloads claims on `synology-nfs`.
 
 Then make it move. Cordon the node it was pinned to, delete the pod, and watch
 where it lands — uncordon immediately after:
@@ -434,6 +474,22 @@ kubectl uncordon talos02-gpu
 
 Prowlarr moved from talos02-gpu to talos06 and served its full indexer list from
 there. Before this work it could only ever run on talos02-gpu.
+
+**If someone else is mid-migration on the node you would cordon, do not cordon
+it.** A colleague who scales their app to 0 and back while the node is
+unschedulable gets a Pending pod and a false failure. Force the move with a
+temporary `NotIn` affinity on your own Deployment instead — it proves the same
+thing, touches only your app, and is one `kubectl patch --type=json -p
+'[{"op":"remove","path":"/spec/template/spec/affinity"}]'` to undo:
+
+```sh
+kubectl -n media patch deploy <app> --type=strategic -p '{"spec":{"template":{"spec":{"affinity":{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"kubernetes.io/hostname","operator":"NotIn","values":["talos03"]}]}]}}}}}}}'
+```
+
+That is how radarr was proven: it moved talos03 -> talos02-gpu, served the full
+5 393-movie library and 5 163 readable movie directories over NFS from there,
+and the patch was removed immediately after. Sonarr was mid-migration on talos03
+at the time, so cordoning it was not an option.
 
 **Expect this to move the Postgres primary too.** CNPG will not leave a primary
 on an unschedulable node: cordoning talos02-gpu produced
