@@ -42,7 +42,23 @@ spec:
   imagePullPolicy: IfNotPresent
   storage:
     size: 8Gi # matches the retired bundled PVC data-authentik-postgresql-0 (8Gi)
-    storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
+    # local-path = the node's NVMe (Talos EPHEMERAL mounts at /var, which is where
+    # local-path provisions from). Moved off NFS 2026-08-21 (TALOS-1ujn, TALOS-bna2).
+    #
+    # CHOSEN ON MEASUREMENT, not intuition. authentik commits 20 tx/s — 4x any other
+    # cluster in the fleet, because every SSO check writes a session — and each commit
+    # costs a WAL fsync. On NFS that fsync is a network round trip. Its READ path did
+    # not need this (cnpg_pg_stat_database_blks_read is 0.00/s; the working set lives
+    # entirely in shared buffers) — the win here is write latency, not reads.
+    #
+    # SAFE ONLY BECAUSE instances IS 3. local-path is WaitForFirstConsumer, so each PV
+    # pins to the node that first used it. Three instances + CNPG's default pod
+    # anti-affinity means three copies on three different nodes, so losing a node
+    # loses one pinned volume and CNPG promotes a survivor automatically. NEVER reduce
+    # this cluster to instances:1 while on local-path — that combination is strictly
+    # worse than NFS, because a node loss then strands the only copy with no recovery
+    # path short of a barman restore.
+    storageClass: local-path
   monitoring:
     enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
   # Object-store backups → MinIO (TALOS-a1hk). Config lives in the ObjectStore

@@ -21,7 +21,15 @@ spec:
     labels:
       # CNPG owns its own backups (barman WAL + ScheduledBackup) — keep Velero off its pods/PVCs
       velero.io/exclude-from-backup: "true"
-  instances: 3 # HA: streaming-replicated across nodes; survives a node loss (TALOS-hx77)
+  # Scaled 3 -> 1 (2026-08-21). Measured, not guessed: cnpg_pg_stat_database_blks_read
+  # is 0.00/s here — the working set is entirely in shared buffers, so the two extra
+  # replicas were paying 3x WAL and 3x pods for a read path that never touches disk.
+  # plausible: a DEMO stack in crossplane-demo; 3 instances for a demo is pure
+  # pod cost.
+  # SAFE AT 1 ONLY BECAUSE STORAGE STAYS ON NFS (fatboy-nfs-appdata), which is
+  # node-independent: a node loss reschedules the pod and it re-attaches. NEVER set
+  # instances:1 on local-path — that PV pins to a node and a node loss strands the DB.
+  instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16.4
 
   bootstrap:
