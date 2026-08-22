@@ -4,24 +4,63 @@
 
 Production-ready Kubernetes cluster on Talos Linux with dual GitOps (Flux + ArgoCD).
 
-- **Control Plane:** 192.168.1.54 (talos00)
+- **Control Plane:** 192.168.1.54 (talos00) — 5 nodes: talos00, talos01, talos02-gpu, talos03, talos06
 - **Dashboard:** http://grafana.talos00, http://argocd.talos00
-- **Quick Start:** `task kubeconfig-merge && kubectl get nodes`
-- **Architecture:** [TRAEFIK.md](TRAEFIK.md) | [Dual GitOps](docs/02-architecture/gitops-responsibilities.md)
+- **Quick Start:** `task kubeconfig && KUBECONFIG=./.output/kubeconfig kubectl get nodes`
+- **Architecture:** [TRAEFIK.md](TRAEFIK.md) | [Dual GitOps](docs/02-architecture/dual-gitops.md)
+- **All docs:** [docs/INDEX.md](docs/INDEX.md)
+
+> ⚠️ `task kubeconfig-merge` is currently broken — it calls `./scripts/kubeconfig-merge.sh`, which
+> no longer exists (the script moved to `scripts/developer/`, and that copy sources a `lib/common.sh`
+> that is not there either). Use `task kubeconfig` + `KUBECONFIG` until it is repaired.
 
 ## GitOps Architecture
 
 This cluster uses a **dual GitOps pattern** with two distinct deployment workflows:
 
-1. **Infrastructure GitOps** (this repo) - Manual, controlled platform deployments
-   - Manages: ArgoCD, Traefik, Registry, Monitoring, Observability
-   - Method: Scripts + kubectl apply
+1. **Infrastructure GitOps** (this repo, FluxCD) - Platform services reconciled from Git
+   - Manages: Cilium, Traefik, storage, cert-manager, Authentik, CrowdSec, Kyverno, monitoring,
+     external-secrets, and ArgoCD itself
+   - Method: ~60 Flux `Kustomization`s under `clusters/catalyst-cluster/`, pointing at
+     `infrastructure/base/*` and `applications/*`
+   - Status: `task flux-status` (or `flux get kustomizations -A`)
 
-2. **Application GitOps** (app repos) - Automated, continuous deployments
-   - Manages: Application workloads (e.g., catalyst-ui)
-   - Method: ArgoCD watches and auto-syncs
+2. **Application GitOps** (app repos, ArgoCD) - Automated, continuous deployments
+   - Manages: Application workloads — currently `catalyst-ui`, `catalyst-llm`, `catalyst-data`,
+     `boomtime`, `dungeon-library`, `kasa-exporter`, `openscad`, `arr-stack-private`
+   - Method: ArgoCD watches each app repo and auto-syncs
 
-**Full details**: See [docs/02-architecture/gitops-responsibilities.md](docs/02-architecture/gitops-responsibilities.md)
+> Note: the manual "scripts + kubectl apply" model this section used to describe is retired.
+> Direct `kubectl apply` against infrastructure is reverted on the next Flux reconcile.
+
+**Full details**: See [docs/02-architecture/dual-gitops.md](docs/02-architecture/dual-gitops.md)
+(authoritative). [gitops-responsibilities.md](docs/02-architecture/gitops-responsibilities.md) covers
+the same ground but is stale — it still says Flux is "NOT YET DEPLOYED".
+
+## Documentation
+
+Full navigation: **[docs/INDEX.md](docs/INDEX.md)**.
+
+| Section                                                            | Contents                                                                  |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| [01-getting-started](docs/01-getting-started/README.md)            | Onboarding, cluster facts, fresh-cluster setup                            |
+| [02-architecture](docs/02-architecture/README.md)                  | GitOps model, networking, DNS HA, service mesh, auth, ADRs                |
+| [03-operations](docs/03-operations/README.md)                      | Provisioning, node shutdown, etcd backup/restore, dev tooling             |
+| [04-deployment](docs/04-deployment/README.md)                      | Flux and ArgoCD bootstrap + deployment workflows                          |
+| [05-projects](docs/05-projects/README.md)                          | Per-project design docs (OTEL migration, hybrid LLM, optimization)        |
+| [05-runbooks](docs/05-runbooks/README.md)                          | Recovery/migration procedures + Talos machine-config patches              |
+| [06-project-management](docs/06-project-management/README.md)      | Roadmaps and idea backlogs (work itself lives in beads)                   |
+| [06-troubleshooting](docs/06-troubleshooting/README.md)            | Post-mortems and hardware/kernel workarounds                              |
+| [07-reference](docs/07-reference/README.md)                        | CRD catalog, Taskfile reference, cloud GPU sizing                         |
+| [08-monitoring](docs/08-monitoring/README.md)                      | Grafana dashboard index and query audit                                   |
+| [patterns](docs/patterns/README.md)                                | Reusable cluster patterns                                                 |
+| [investigations](docs/investigations/README.md) · [changelogs](docs/changelogs/README.md) · [retros](docs/retros/README.md) · [_archive](docs/_archive/README.md) | Audits, update campaigns, retrospectives, history |
+
+Root-level docs: [QUICKSTART.md](QUICKSTART.md) · [CONTRIBUTING.md](CONTRIBUTING.md) ·
+[TRAEFIK.md](TRAEFIK.md) · [OBSERVABILITY.md](OBSERVABILITY.md) · [SECURITY_ops.md](SECURITY_ops.md) ·
+[CLAUDE.md](CLAUDE.md) · [AGENTS.md](AGENTS.md) · [SKILLZ.md](SKILLZ.md) ·
+[IMPLEMENTATION-TRACKER.md](IMPLEMENTATION-TRACKER.md) (frozen 2025-12-12) ·
+[DAH_REPORT.md](DAH_REPORT.md) (2026-03-14 analysis)
 
 ## Quick Start
 
@@ -53,8 +92,12 @@ brew install go-task/tap/go-task kubectx k9s helm
 1. **Generate Configuration** (if not already done):
 
    ```bash
-   talosctl gen config catalyst-cluster https://$TALOS_NODE:6443 --output-dir . --force
+   task talos:gen-config   # writes controlplane.yaml / worker.yaml / talosconfig into ./configs/
    ```
+
+   > ⚠️ The machine configs actually in use live in `configs/nodes/` (`controlplane.yaml`,
+   > `worker-base.yaml`, per-node worker files) — that is what `task talos:apply-config` reads.
+   > `task talos:gen-config` and `scripts/provision.sh` still use the flat `configs/` layout.
 
 2. **Provision the Cluster**:
 
@@ -72,109 +115,145 @@ brew install go-task/tap/go-task kubectx k9s helm
 
 ### Cluster Configuration
 
-- **Control Plane Scheduling**: Configured with `allowSchedulingOnControlPlanes: true` to allow workloads on control plane nodes
-- **Multi-Node Support**: Control plane (talos00) + worker nodes (talos01, etc.)
-- **No Control Plane Taints**: Control-plane taint is removed automatically during provisioning
+- **Control Plane Scheduling**: `allowSchedulingOnControlPlanes: true` is still set in the machine config
+- **Multi-Node**: 5 nodes — talos00 (control plane, 192.168.1.54), talos01 (192.168.1.177),
+  talos02-gpu (192.168.1.144, Intel Arc), talos03 (192.168.1.30), talos06 (192.168.1.19)
+- **Control Plane Is Tainted**: despite `allowSchedulingOnControlPlanes`, the machine config sets
+  `machine.nodeTaints: node-role.kubernetes.io/control-plane: NoSchedule` so talos00 runs only core
+  infrastructure; general workloads land on the workers
+- **maxPods**: raised from the Talos default 110 to 200 per node (kubelet patch, see
+  `scripts/bootstrap-talos-patches.sh`)
 
 ### Included Services
 
 - **Talos Dashboard**: Built-in node monitoring
-- **Kubernetes Dashboard**: Web UI for cluster management (auto-deployed via extraManifests)
+- **Kubernetes Dashboard**: Web UI for cluster management (auto-deployed via extraManifests). Not
+  Flux-managed and effectively unmaintained — the maintained cluster UI is Headlamp at
+  <https://headlamp.priv.talos00>
 - **CoreDNS**: DNS resolution (2 replicas)
-- **Flannel**: CNI networking
+- **Cilium**: CNI networking (v1.20.0) — eBPF, `kubeProxyReplacement: true` (no kube-proxy
+  DaemonSet), VXLAN tunnel routing, Kubernetes IPAM, plus LB-IPAM + L2 announcements that hand
+  Traefik its LAN VIP
 - **etcd**: Distributed key-value store for cluster state
 
 ### Observability Stack
 
-- **Prometheus**: Metrics collection and alerting (30-day retention, 50Gi storage)
-- **Grafana**: Metrics visualization and dashboards
-- **Alertmanager**: Alert routing and management
-- **Graylog**: Centralized log management platform
-- **MongoDB**: Database backend for Graylog (20Gi storage)
-- **OpenSearch**: Log storage and indexing (30Gi storage)
-- **Fluent Bit**: Log collection from all containers
-- **Exportarr**: Prometheus exporters for \*arr applications
+Everything below lives in the `monitoring` namespace, under `infrastructure/base/monitoring/`.
+
+- **Mimir**: metrics TSDB and long-term store (1-year retention, MinIO S3 backend)
+- **Loki**: log storage (30-day retention, MinIO S3 backend)
+- **Tempo**: distributed tracing backend
+- **Grafana**: visualization, deployed by grafana-operator; dashboards are JSON files plus
+  `GrafanaDashboard` CRs
+- **Grafana Alloy**: metrics/logs/OTLP collection (`alloy` deployment + `alloy-node` DaemonSet) —
+  this replaced Fluent Bit
+- **ClickStack / HyperDX**: ClickHouse-backed session/log exploration (http://hyperdx.talos00)
+- **Mimir Alertmanager**: alert routing, with a Discord bridge (`alertmanager-discord`)
+- **Exporters**: node-exporter, kube-state-metrics, blackbox-exporter, pushgateway, plus
+  per-workload exporters (kasa, tdarr, nfs-storage, redis, version-checker)
+
+> Removed: the previous Prometheus / Alertmanager (kube-prometheus-stack) and the
+> Graylog + OpenSearch + MongoDB + Fluent Bit logging stack are gone. The `observability`
+> namespace still exists but is empty, and `infrastructure/base/observability/` no longer exists.
+> Metrics moved to Mimir, logs to Loki/ClickStack. Exportarr is also no longer deployed (its
+> manifests remain at `applications/arr-stack/base/exportarr/` but are not in any kustomization).
 
 ### Automatic Dashboard Deployment
 
 The Kubernetes Dashboard is automatically deployed during cluster bootstrap via:
 
-- `extraManifests` (controlplane.yaml:510-511) - Downloads dashboard YAML
-- `inlineManifests` (controlplane.yaml:514-534) - Creates admin-user ServiceAccount
+- `extraManifests` (configs/nodes/controlplane.yaml:514-515) - Downloads dashboard YAML
+- `inlineManifests` (configs/nodes/controlplane.yaml:517-537) - Creates admin-user ServiceAccount
 
 ## Deployment
 
 ### Complete Stack Deployment
 
-Deploy the entire homelab stack from scratch:
+Infrastructure is deployed by **Flux**, not by a script. Commit to `main`, then let Flux reconcile
+(or force it):
 
 ```bash
-# Deploy everything (infrastructure + monitoring + observability)
-./scripts/deploy-stack.sh
+# See what Flux is doing
+task flux-status
 
-# Or with options
-DEPLOY_MONITORING=true DEPLOY_OBSERVABILITY=true ./scripts/deploy-stack.sh
+# Force a re-reconcile, fetching the new commit first
+flux reconcile source git flux-system
+flux reconcile kustomization <name> --with-source
 ```
 
-### Deploy Observability Stack Only
+> Removed / relocated: `./scripts/deploy-stack.sh` moved to
+> `infrastructure/_scripts/deploy-stack.sh` and is legacy — it predates Flux and is not part of the
+> normal workflow. `./scripts/deploy-observability.sh` no longer exists anywhere in the repo.
+> `task infra:deploy-stack` and `task infra:deploy-observability` still point at the old
+> `./scripts/` paths and are therefore broken.
 
-```bash
-# Deploy monitoring and logging stack
-./scripts/deploy-observability.sh
-```
-
-This will install:
-
-- Prometheus + Grafana + Alertmanager (kube-prometheus-stack)
-- MongoDB + OpenSearch + Graylog (logging stack)
-- Fluent Bit (log collection)
-
-Access URLs after deployment:
+### Observability Access URLs
 
 - Grafana: http://grafana.talos00 (admin / see `kubectl get secret -n monitoring grafana-admin-credentials -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d`)
-- Prometheus: http://prometheus.talos00 (via Mimir at http://mimir.talos00)
-- Alertmanager: http://alertmanager.talos00 (via Grafana alerting)
-- Graylog: http://graylog.talos00 (admin / admin)
+- Mimir (metrics): http://mimir.talos00
+- Loki (logs): http://loki.talos00
+- Tempo (traces): http://tempo.talos00
+- HyperDX / ClickStack: http://hyperdx.talos00
+- OTLP ingest (Alloy): http://otel.talos00
+
+> `prometheus.talos00`, `alertmanager.talos00` and `graylog.talos00` no longer route — those
+> components were removed. Alerting is viewed through Grafana; the Alertmanager itself is
+> `mimir-alertmanager` and is configured by the `alertmanager-config-pusher` CronJob.
 
 ### Deploy Applications (arr stack)
 
-```bash
-# Deploy media applications
-kubectl apply -k applications/arr-stack/overlays/dev
-```
+The arr stack is a Flux `Kustomization` (`clusters/catalyst-cluster/arr-stack.yaml`) pointing at
+`applications/arr-stack/overlays/themepark`, deployed into the `media` namespace. There is no
+`overlays/dev` — the only overlays are `gpu` and `themepark`. Push to `main` and Flux applies it.
 
-This includes:
+Currently included:
 
 - Prowlarr (indexer manager)
 - Sonarr (TV shows)
 - Radarr (movies)
-- Readarr (books)
-- Overseerr (request management)
+- Seerr (request management — replaced Overseerr)
+- SABnzbd + qBittorrent (downloaders)
 - Plex (media server)
 - Jellyfin (media server)
-- Homepage (dashboard)
-- Exportarr (Prometheus metrics for \*arr apps)
+- Tautulli, Kometa, Posterr, Posterizarr, Maintainerr, Pulsarr
+
+> Readarr and Exportarr manifests still exist under `applications/arr-stack/base/` but are commented
+> out of / absent from the kustomization and are not running. Homepage moved out to
+> `applications/homepage/` (namespace `homepage`); Tdarr moved to `applications/tdarr/`.
 
 ## Common Tasks
 
 This repository uses a modular Taskfile structure organized by domain. Tasks are grouped into:
 
 - `talos:*` - Talos Linux operations (config, bootstrap, health, services)
-- `k8s:*` - Kubernetes operations (kubeconfig, pods, dashboard, audit)
+- `k8s:*` - Kubernetes operations (kubeconfig, pods, dashboard, audit, flux status)
 - `dev:*` - Development tools (linting, formatting, hooks, validation)
-- `infra:*` - Infrastructure deployment (monitoring, observability, apps)
+- `infra:*` - Infrastructure deployment (legacy pre-Flux scripts; several are broken, see above)
+- `security:*` - Security scanning
+- `certs:*` - Homelab CA / certificate trust
 
 **Quick reference:**
 
 ```bash
 task                # Show available domains and commands
 task --list         # List all available tasks
-task --list-all     # Show all tasks with descriptions
+task --list-all     # Include tasks that have no description
 ```
 
 For complete documentation of all available tasks, see [docs/07-reference/taskfile-organization.md](docs/07-reference/taskfile-organization.md).
 
+> **Known-broken tasks** (they invoke scripts that no longer exist at the referenced path):
+> `kubeconfig-merge` / `k8s:kubeconfig-merge`, `k8s:kubeconfig-unmerge`, `k8s:dashboard-token`
+> (use `./scripts/kube-dashboard-token.sh` instead), `infra:setup`, `infra:deploy-stack`,
+> `infra:deploy-observability`, `infra:deploy-tdarr`, `infra:bootstrap-flux`,
+> `infra:dashboard-arr-stack` (and its `dashboard-arr` shortcut), `talos:provision-local`,
+> `dev:eso-debug`.
+
 ### Cluster Management
+
+Only a handful of tasks have unprefixed root shortcuts (`health`, `dashboard`, `kubeconfig`,
+`kubeconfig-merge`, `get-nodes`, `get-pods`, `provision`, `audit`, `flux-*`, `clean`, `clean-all`).
+Everything else needs its domain prefix.
 
 ```bash
 # Check cluster health
@@ -184,13 +263,13 @@ task health
 task dashboard
 
 # Get cluster version
-task version
+task talos:version
 
 # List all services
-task services
+task talos:services
 
 # View service logs (example: kubelet)
-task service-logs -- SERVICE=kubelet
+task talos:service-logs SERVICE=kubelet
 ```
 
 ### Kubeconfig Management
@@ -201,7 +280,7 @@ This allows you to use `kubectl`, `kubectx`, and `k9s` without specifying `--kub
 
 ```bash
 # Merge kubeconfig to your default config
-task kubeconfig-merge
+task kubeconfig-merge   # ⚠️ BROKEN: calls ./scripts/kubeconfig-merge.sh, which does not exist
 
 # Now use kubectl without flags
 kubectl get nodes
@@ -209,9 +288,9 @@ kubectl top nodes
 kubectl get pods -A
 
 # Switch contexts with kubectx
-kubectx                    # List all contexts
-kubectx catalyst-cluster   # Switch to this cluster
-kubectx -                  # Switch to previous context
+kubectx                          # List all contexts
+kubectx admin@catalyst-cluster   # Switch to this cluster (context name, not cluster name)
+kubectx -                        # Switch to previous context
 
 # Switch namespaces with kubens
 kubens                     # List namespaces
@@ -221,6 +300,9 @@ kubens -                   # Switch to previous namespace
 # Launch k9s TUI
 k9s
 ```
+
+> Until `task kubeconfig-merge` is fixed, use Option 2 (or merge by hand with
+> `KUBECONFIG=~/.kube/config:./.output/kubeconfig kubectl config view --flatten`).
 
 **Option 2: Use local kubeconfig (Manual)**
 
@@ -262,32 +344,41 @@ See [QUICKSTART.md](QUICKSTART.md#access-kubernetes-dashboard) for complete dash
 
 ```bash
 # View kernel logs
-task dmesg
+task talos:dmesg
 
 # Follow service logs
-task logs-follow -- SERVICE=kubelet
+task talos:logs-follow SERVICE=kubelet
 
 # List containers
-task containers
+task talos:containers
 
 # Check etcd status
-task etcd-status
+task talos:etcd-status
 
 # View etcd members
-task etcd-members
+task talos:etcd-members
 ```
 
 ### Node Operations
 
 ```bash
 # Reboot node
-task reboot
+task talos:reboot
 
-# Shutdown node
-task shutdown
+# Shutdown a single node
+task talos:shutdown
 
-# Upgrade Talos (specify version)
-task upgrade -- VERSION=v1.11.2
+# Gracefully shut down the whole cluster (workers in parallel, control plane last)
+task talos:shutdown-cluster
+
+# Upgrade one node (go-task variable syntax, not `-- VERSION=`)
+task talos:upgrade VERSION=v1.13.2
+
+# Upgrade every node, walking intermediate minors (preferred)
+task talos:upgrade-cluster -- v1.13.2
+
+# Upgrade Kubernetes components cluster-wide (no node reboots)
+task talos:upgrade-k8s -- 1.34.10
 ```
 
 ## File Structure
@@ -295,26 +386,35 @@ task upgrade -- VERSION=v1.11.2
 ```
 .
 ├── configs/                         # Talos configuration files (gitignored - sensitive)
-│   ├── controlplane.yaml           # Control plane configuration
-│   ├── worker.yaml                 # Worker node configuration template
+│   ├── nodes/                      # Machine configs actually in use
+│   │   ├── controlplane.yaml       # Control plane configuration
+│   │   ├── worker-base.yaml        # Worker node configuration template
+│   │   └── talos0X/                # Per-node overrides
 │   └── talosconfig                 # Talos CLI configuration
-├── infrastructure/base/             # Kubernetes infrastructure manifests
+├── clusters/catalyst-cluster/       # Flux entrypoint - one Kustomization per stack
+├── infrastructure/base/             # Kubernetes infrastructure manifests (~45 components)
+│   ├── cilium/                     # CNI (eBPF, kube-proxy replacement, LB-IPAM)
 │   ├── argocd/                     # ArgoCD GitOps controller
 │   ├── traefik/                    # Traefik ingress controller
-│   ├── monitoring/                 # Prometheus, Grafana, Alertmanager
-│   ├── observability/              # OpenSearch, Graylog, Fluent Bit
-│   ├── registry/                   # Nexus container registry
-│   ├── storage/                    # Storage classes and PVCs
+│   ├── authentik/                  # SSO / forward-auth
+│   ├── crowdsec/                   # IPS + AppSec
+│   ├── kyverno/, kyverno-policies/ # Policy engine + derived-config ClusterPolicies
+│   ├── monitoring/                 # Mimir, Loki, Tempo, Grafana, Alloy, ClickStack
+│   ├── registry/                   # Zot container registry
+│   ├── storage/                    # StorageClasses: local-path (default, node NVMe),
+│   │                               #   fatboy-nfs-appdata (192.168.1.36:/volume1/appdata),
+│   │                               #   synology-nfs. TrueNAS is decommissioned.
 │   └── namespaces/                 # Namespace definitions
-├── applications/                    # Application workloads
-│   └── arr-stack/                  # Media management applications
+├── applications/                    # Application workloads (Flux-managed)
+│   ├── arr-stack/                  # Media management applications
+│   ├── homepage/                   # Homepage dashboards (moved out of arr-stack)
+│   └── tdarr/, metube/, gaming/    # ...and others
 ├── scripts/                         # Automation scripts
 │   ├── provision.sh                # Complete cluster provisioning
-│   ├── deploy-stack.sh             # Deploy complete infrastructure stack
-│   ├── deploy-observability.sh     # Deploy monitoring and logging
 │   ├── cluster-audit.sh            # Generate Markdown audit report
-│   ├── dashboard-token.sh          # Retrieve dashboard access token
-│   └── kubeconfig-merge.sh         # Merge kubeconfig to ~/.kube/config
+│   ├── kube-dashboard-token.sh     # Retrieve dashboard/Headlamp/ArgoCD tokens
+│   ├── bootstrap-talos-patches.sh  # Apply Talos machine-config patches (maxPods, etc.)
+│   └── developer/                  # kubeconfig-merge / unmerge / update-hosts (see caveats above)
 ├── .output/                         # Generated files (gitignored)
 │   ├── kubeconfig                  # Kubernetes cluster access config
 │   ├── dashboard-token.txt         # Latest dashboard token
@@ -326,14 +426,19 @@ task upgrade -- VERSION=v1.11.2
 │   ├── 03-operations/              # Operational procedures
 │   ├── 04-deployment/              # Deployment guides
 │   ├── 05-projects/                # Project-specific documentation
+│   ├── 05-runbooks/                # Runbooks (bootstrap, recovery, Talos patches)
 │   ├── 06-project-management/      # Planning and progress tracking
-│   └── 07-reference/               # Reference documentation
+│   ├── 06-troubleshooting/         # Troubleshooting guides
+│   ├── 07-reference/               # Reference documentation
+│   └── 08-monitoring/              # Monitoring/alerting reference
 ├── .gitignore                      # Git ignore patterns
 ├── Taskfile.yaml                   # Root task orchestrator
 ├── Taskfile.talos.yaml             # Talos-specific tasks
 ├── Taskfile.k8s.yaml               # Kubernetes-specific tasks
 ├── Taskfile.dev.yaml               # Development tooling tasks
 ├── Taskfile.infra.yaml             # Infrastructure deployment tasks
+├── Taskfile.security.yaml          # Security scanning tasks
+├── Taskfile.certs.yaml             # Homelab CA / certificate tasks
 ├── README.md                       # This file
 ├── QUICKSTART.md                   # Quick reference guide
 ├── TRAEFIK.md                      # Traefik ingress documentation
@@ -345,10 +450,13 @@ task upgrade -- VERSION=v1.11.2
 
 ### Multi-Node Considerations
 
-1. **Nodes**: Control plane (talos00 @ 192.168.1.54) + Worker (talos01 @ 192.168.1.177)
-2. **Control Plane Scheduling**: Enabled to allow workloads on control plane
-3. **Workload Distribution**: Pods can schedule on any node without taints
-4. **Backup Important**: Etcd runs on control plane - backup regularly
+1. **Nodes**: Control plane talos00 @ 192.168.1.54; workers talos01 @ 192.168.1.177,
+   talos02-gpu @ 192.168.1.144 (Intel Arc), talos03 @ 192.168.1.30, talos06 @ 192.168.1.19
+2. **Control Plane Scheduling**: `allowSchedulingOnControlPlanes: true`, but talos00 carries an
+   explicit `node-role.kubernetes.io/control-plane:NoSchedule` taint from the machine config
+3. **Workload Distribution**: general workloads run on the four workers; only core infrastructure
+   (with a matching toleration) runs on talos00
+4. **Backup Important**: Etcd runs on the single control plane - backup regularly
 
 ### Security
 
@@ -362,18 +470,29 @@ task upgrade -- VERSION=v1.11.2
 - Kubernetes API: `https://192.168.1.54:6443`
 - Pod Network: `10.244.0.0/16`
 - Service Network: `10.96.0.0/12`
+- Ingress VIP: `192.168.1.251` — Traefik `LoadBalancer`, assigned by Cilium LB-IPAM + L2
+  announcements. `*.talos00` names resolve to `192.168.1.54` via Pi-hole; both addresses serve
+  the same Traefik routes.
 
 ## Configuration Reference
 
 ### Key Configuration Settings
 
-**configs/controlplane.yaml:551** - Allow scheduling on control plane:
+**configs/nodes/controlplane.yaml:596** - Allow scheduling on control plane:
 
 ```yaml
 allowSchedulingOnControlPlanes: true
 ```
 
-**configs/controlplane.yaml:510-534** - Auto-deploy Dashboard:
+**configs/nodes/controlplane.yaml:233-234** - ...but talos00 is still tainted, so only workloads
+with a matching toleration land there:
+
+```yaml
+nodeTaints:
+  node-role.kubernetes.io/control-plane: 'NoSchedule'
+```
+
+**configs/nodes/controlplane.yaml:514-537** - Auto-deploy Dashboard:
 
 ```yaml
 extraManifests:
@@ -417,7 +536,9 @@ talosctl --talosconfig ./configs/talosconfig --nodes $TALOS_NODE bootstrap
 # Check node taints
 kubectl --kubeconfig ./.output/kubeconfig describe node | grep -A 5 "Taints:"
 
-# Remove control-plane taint (if needed)
+# Remove control-plane taint — single-node bootstrap only. On the current 5-node cluster the taint
+# is INTENTIONAL and declared in configs/nodes/controlplane.yaml; removing it here is transient
+# (Talos re-applies nodeTaints) and undoes the "core infra only on talos00" split.
 kubectl --kubeconfig ./.output/kubeconfig taint nodes <node-name> node-role.kubernetes.io/control-plane:NoSchedule-
 
 # View all resources
@@ -431,9 +552,12 @@ For Kubernetes documentation: https://kubernetes.io/docs/
 
 ## Version Info
 
-- Talos: v1.11.1
-- Kubernetes: v1.34.0
-- Dashboard: v2.7.0
+Verified against the live cluster:
+
+- Talos: v1.13.2
+- Kubernetes: v1.34.10 (kubelet + control plane)
+- Cilium: v1.20.0
+- Kubernetes Dashboard: v2.7.0 (pinned by `extraManifests`)
 
 ## Related Issues
 

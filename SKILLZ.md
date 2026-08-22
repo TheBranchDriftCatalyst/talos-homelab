@@ -9,7 +9,7 @@ Curated list of agent skills from [skills.sh](https://skills.sh) relevant to thi
 
 | Skill | Verdict | Notes |
 |---|---|---|
-| `github/awesome-copilot@multi-stage-dockerfile` | ✅ **KEEP** | 46 lines, principle-driven, modern. Caught real issue (root user) in carrierarr. |
+| `github/awesome-copilot@multi-stage-dockerfile` | ✅ **KEEP** | 46 lines, principle-driven, modern. Caught real issue (root user) in `tools/carrierarr/Dockerfile`. (The `infrastructure/base/carrierarr/` manifests have since been removed; the Dockerfiles remain.) |
 | `jeffallan/claude-skills@kubernetes-specialist` | 🟡 **SCOPE-DOWN** | Textbook checklist. Invoke explicitly on net-new manifests. |
 | `wshobson/agents@gitops-workflow` | 🟡 **SCOPE-DOWN** | Doesn't grok dual-controller. Replace with official `fluxcd/agent-skills@*`. |
 | `wshobson/agents@grafana-dashboards` | 🟡 **SCOPE-DOWN** | RED/USE methodology good; emits raw JSON not grafana-operator CRDs. |
@@ -19,7 +19,12 @@ Curated list of agent skills from [skills.sh](https://skills.sh) relevant to thi
 | `sickn33/antigravity-awesome-skills@docker-expert` | ❌ **UNINSTALLED** | 418 lines bloat; multi-stage-dockerfile covers same ground in 46. |
 | `affaan-m/everything-claude-code@docker-patterns` | ❌ **UNINSTALLED** | Docker Compose focused. We're K8s-only. |
 
-**Untested (no `.tf` files in repo):** 5 terraform skills remain installed but unverified.
+**Untested (dropped from the epic as out-of-scope):**
+
+- 5 terraform skills remain installed but unverified — this repo still has **zero `.tf` files**. Cloud IaC here is Crossplane (`infrastructure/base/aws/` XRDs + Compositions), not Terraform.
+- `manutej/luxor-claude-marketplace@docker-compose-orchestration` is also still installed and unverified — there are no `docker-compose.yml`/`compose.yml` files in the repo (K8s-only).
+
+**Re-verified 2026-08-22** against `~/.claude/skills/`: all four ❌ skills are gone; the ✅ KEEP skill, the four 🟡 SCOPE-DOWN skills, and all 5 terraform skills are still installed globally. No catalog skill is installed project-local (`.claude/skills/` holds only this repo's own `image-update-*` skills).
 
 **Key learning:** install count is a poor proxy for quality. `docker-expert` at **16.1K installs** (highest of the lot) was the worst Docker skill. `multi-stage-dockerfile` at 14K was the only KEEP.
 
@@ -39,7 +44,7 @@ Browse the full catalog at <https://skills.sh>.
 
 ## Top Picks (start here)
 
-If you only install 5, these match the stack most directly:
+If you only install 5, these match the stack most directly. **None of them are installed yet** (checked 2026-08-22) — the bulk install that got smoke-tested above was a different, lower-quality batch:
 
 - `grafana/skills@dashboarding` — official Grafana, dashboards-as-code
 - `grafana/skills@promql` — official Grafana, PromQL authoring
@@ -53,7 +58,7 @@ If you only install 5, these match the stack most directly:
 
 | Skill | Installs | Notes |
 |---|---:|---|
-| `jeffallan/claude-skills@kubernetes-specialist` | 9.5K | Generalist K8s expert |
+| `jeffallan/claude-skills@kubernetes-specialist` | 9.5K | Generalist K8s expert — 🟡 scope-down, see verdicts |
 | `yaklang/hack-skills@kubernetes-pentesting` | 588 | Security/pentesting |
 | `aj-geddes/useful-ai-prompts@kubernetes-deployment` | 540 | Deployment patterns |
 | `mindrally/skills@kubernetes` | 483 | General K8s |
@@ -64,7 +69,9 @@ If you only install 5, these match the stack most directly:
 |---|---:|---|
 | `martinholovsky/claude-skills-generator@talos-os-expert` | 163 | Only Talos-specific match in catalog |
 
-## Cilium (CNI / ClusterMesh / Hubble)
+## Cilium (CNI / Hubble / LB-IPAM)
+
+> Cilium is the CNI (ipam `kubernetes`, tunnel routing) with Hubble enabled and LB-IPAM/L2 announcements serving the Traefik VIP `192.168.1.251`. **ClusterMesh is not deployed** — no `clustermesh-apiserver` in the cluster.
 
 | Skill | Installs | Notes |
 |---|---:|---|
@@ -74,7 +81,7 @@ If you only install 5, these match the stack most directly:
 
 | Skill | Installs | Notes |
 |---|---:|---|
-| `wshobson/agents@gitops-workflow` | 7K | Generic GitOps workflow patterns |
+| `wshobson/agents@gitops-workflow` | 7K | Generic GitOps workflow patterns — 🟡 scope-down, see verdicts |
 | `personamanagmentlayer/pcl@argocd-expert` | 337 | ArgoCD focus |
 | `fluxcd/agent-skills@gitops-cluster-debug` | 238 | **Official Flux** — debug cluster reconciliation |
 | `fluxcd/agent-skills@gitops-knowledge` | 234 | **Official Flux** — concepts/best practices |
@@ -84,7 +91,7 @@ If you only install 5, these match the stack most directly:
 
 | Skill | Installs | Notes |
 |---|---:|---|
-| `wshobson/agents@helm-chart-scaffolding` | 7.1K | Scaffold new charts |
+| `wshobson/agents@helm-chart-scaffolding` | 7.1K | Scaffold new charts — 🟡 scope-down; this repo authors **no** charts (zero `Chart.yaml`), only HelmReleases |
 | `dohooo/helmor@helmor-cli` | 434 | Helm CLI workflows |
 | `alirezarezvani/claude-skills@helm-chart-builder` | 308 | Chart authoring |
 | `sickn33/antigravity-awesome-skills@helm-chart-scaffolding` | 220 | Alt scaffolding pack |
@@ -103,6 +110,8 @@ If you only install 5, these match the stack most directly:
 
 ## Ansible
 
+> ⚠️ **Not applicable to this repo.** These surfaced because `catalyst_repo.yaml` lists `ansible` in `tech_stack`, but talos-homelab contains no playbooks, roles, or `ansible.cfg` — Talos is configured via `talosctl` machine config, not Ansible. The workspace's actual Ansible lives in the sibling `catalyst/@machines` repo. Install these there, not here.
+
 | Skill | Installs | Notes |
 |---|---:|---|
 | `aj-geddes/useful-ai-prompts@ansible-automation` | 931 | Automation patterns |
@@ -116,18 +125,20 @@ If you only install 5, these match the stack most directly:
 
 | Skill | Installs | Notes |
 |---|---:|---|
-| `sickn33/antigravity-awesome-skills@docker-expert` | 16.1K | Generalist Docker expert |
-| `github/awesome-copilot@multi-stage-dockerfile` | 14K | **Official GitHub** — multi-stage builds |
-| `affaan-m/everything-claude-code@docker-patterns` | 5.3K | Docker patterns |
-| `manutej/luxor-claude-marketplace@docker-compose-orchestration` | 1.5K | Compose-specific |
+| `sickn33/antigravity-awesome-skills@docker-expert` | 16.1K | Generalist Docker expert — ❌ uninstalled, see verdicts |
+| `github/awesome-copilot@multi-stage-dockerfile` | 14K | **Official GitHub** — multi-stage builds. ✅ **KEEP** — the one that stuck |
+| `affaan-m/everything-claude-code@docker-patterns` | 5.3K | Docker patterns — ❌ uninstalled (Compose-focused) |
+| `manutej/luxor-claude-marketplace@docker-compose-orchestration` | 1.5K | Compose-specific — still installed but unused; no compose files in repo |
 | `ailabs-393/ai-labs-claude-skills@docker-containerization` | 717 | General |
 | `bobmatnyc/claude-mpm-skills@docker` | 714 | General |
 
 ## Prometheus
 
+> ⚠️ There is **no Prometheus server** in this cluster. Metrics are scraped by Grafana Alloy and stored in **Mimir** (`infrastructure/base/monitoring/v2-otel/`). What survives from the Prometheus ecosystem is the CRD surface (`PrometheusRule`, `ServiceMonitor`/`PodMonitor`) plus `node-exporter`, `blackbox-exporter` and `pushgateway`. Skills that emit `prometheus.yml` are actively wrong here.
+
 | Skill | Installs | Notes |
 |---|---:|---|
-| `wshobson/agents@prometheus-configuration` | 6.8K | Config/setup |
+| `wshobson/agents@prometheus-configuration` | 6.8K | Config/setup — ❌ uninstalled, see verdicts |
 | `aj-geddes/useful-ai-prompts@prometheus-monitoring` | 354 | Monitoring patterns |
 | `personamanagmentlayer/pcl@prometheus-expert` | 132 | Generalist |
 
@@ -135,7 +146,7 @@ If you only install 5, these match the stack most directly:
 
 | Skill | Installs | Notes |
 |---|---:|---|
-| `wshobson/agents@grafana-dashboards` | 7.9K | Dashboard patterns |
+| `wshobson/agents@grafana-dashboards` | 7.9K | Dashboard patterns — 🟡 scope-down; dashboards here are JSON + a `GrafanaDashboard` CR wrapper (grafana-operator) |
 | `grafana/skills@dashboarding` | 525 | **Official Grafana** — dashboards-as-code |
 | `grafana/skills@promql` | 482 | **Official Grafana** — PromQL |
 | `grafana/skills@grafana-oss` | 477 | **Official Grafana** — OSS Grafana ops |
@@ -170,7 +181,7 @@ If you only install 5, these match the stack most directly:
 | Skill | Installs | Notes |
 |---|---:|---|
 | `supercent-io/skills-template@monitoring-observability` | 11K | Generic monitoring template |
-| `wshobson/agents@service-mesh-observability` | 6.3K | Service mesh — relevant w/ Cilium |
+| `wshobson/agents@service-mesh-observability` | 6.3K | ❌ uninstalled — 95% Istio, and we run **no service mesh**: Cilium + Hubble (`hubble-relay`/`hubble-ui` in `kube-system`) |
 
 ## Tilt
 
@@ -191,14 +202,16 @@ If you only install 5, these match the stack most directly:
 |---|---:|---|
 | `vm0-ai/vm0-skills@minio` | 158 | MinIO ops |
 
-## Networking / VPN (Nebula adjacent)
+## Networking / VPN
 
-> No Nebula-specific skill exists. Tailscale/WireGuard skills below are close analogues if exploring alternatives.
+> **Nebula is not deployed.** `infrastructure/base/nebula/` and `infrastructure/base/hybrid-llm/nebula/` exist as manifests, but neither is referenced by any Flux Kustomization (the hybrid-llm entry is explicitly commented out) and there is no `nebula` namespace in the cluster. Treat it as a parked design, not live infrastructure.
+>
+> What *is* live is the `vpn-gateway` namespace: gluetun (`qmcgaw/gluetun`) fronting egress for securexng / secure-chrome, i.e. **WireGuard**-style tunnels. The WireGuard skill below is therefore the closer match; no Nebula-specific skill exists.
 
 | Skill | Installs | Notes |
 |---|---:|---|
-| `affaan-m/everything-claude-code@homelab-wireguard-vpn` | 554 | WireGuard mesh patterns |
-| `el-feo/ai-context@tailscale` | 211 | Tailscale (different from Nebula but conceptually similar) |
+| `affaan-m/everything-claude-code@homelab-wireguard-vpn` | 554 | WireGuard mesh patterns — closest match for the gluetun egress setup |
+| `el-feo/ai-context@tailscale` | 211 | Tailscale (conceptually similar mesh VPN; not used here) |
 
 ## Homelab-themed packs
 
@@ -209,13 +222,13 @@ If you only install 5, these match the stack most directly:
 | `affaan-m/everything-claude-code@homelab-network-setup` | 667 | Network topology |
 | `affaan-m/everything-claude-code@homelab-network-readiness` | 637 | Pre-flight checks |
 | `affaan-m/everything-claude-code@homelab-vlan-segmentation` | 546 | VLAN patterns |
-| `affaan-m/everything-claude-code@homelab-pihole-dns` | 542 | Pi-hole DNS (you use external-dns + Cloudflare, so reference only) |
+| `affaan-m/everything-claude-code@homelab-pihole-dns` | 542 | Pi-hole DNS — **directly relevant now**: Pi-hole runs in-cluster as a 5-replica HA StatefulSet (`infrastructure/base/pihole/`, VIP service + `nebula-sync` replication). Also see `docs/02-architecture/pihole-ha-pattern.md`. external-dns + Cloudflare handle public records; Pi-hole handles LAN DNS |
 
 ---
 
 ## Gaps — no skills found (≥100 installs)
 
-These technologies are part of the stack but have **no matching skills** in the catalog at the threshold:
+These technologies are part of the stack but had **no matching skills** in the catalog at the threshold *when the scan was run*:
 
 - **Traefik** (top match: 73 installs — below threshold)
 - **cert-manager** (top: 36)
@@ -223,11 +236,13 @@ These technologies are part of the stack but have **no matching skills** in the 
 - **External Secrets Operator** — none
 - **External DNS** — none
 - **KubeVirt** — none
-- **Nebula (mesh VPN)** — none (closest: WireGuard/Tailscale)
+- **Nebula (mesh VPN)** — none (closest: WireGuard/Tailscale). *Note: Nebula is manifests-only and undeployed; see the Networking / VPN section.*
 - **Kustomize** (top: 67 — below threshold)
 - **Lefthook** — none
 
 If you want skills for these, you could create your own with `npx skills init <name>` and publish back.
+
+**Not covered by the original scan at all** — these became load-bearing after the catalog was generated, and `/scan-skills` has not been re-run against them: **Kyverno** (10 ClusterPolicies, now deriving homepage annotations, IngressRoute TLS, CNPG labels, HelmRelease retries), **CrowdSec** (IPS + AppSec), **Crossplane** (`XBucket`/`XInstance`/`XGPUInstance`/`XFargateApp` XRDs — this repo's actual cloud IaC), **CloudNativePG** (11 Postgres clusters), and **Reflector** (cross-namespace secret mirroring).
 
 ---
 
@@ -257,6 +272,9 @@ npx skills add martinholovsky/claude-skills-generator@cilium-expert -g -y
 ```
 
 **IaC (Terraform/Ansible/Helm):**
+
+> ⚠️ Listed for completeness only — **do not install these for this repo**. There are no `.tf` files, no Ansible, and no authored Helm charts here (see the section notes above). The terraform and helm skills are already installed globally and have never had a valid target.
+
 ```bash
 npx skills add hashicorp/agent-skills@terraform-test -g -y
 npx skills add hashicorp/agent-skills@terraform-stacks -g -y
@@ -264,3 +282,9 @@ npx skills add aj-geddes/useful-ai-prompts@ansible-automation -g -y
 npx skills add wshobson/agents@helm-chart-scaffolding -g -y
 npx skills add akin-ozer/cc-devops-skills@helm-validator -g -y
 ```
+
+---
+
+## Related Issues
+
+- `TALOS-d4m` — [EPIC] Smoke-test newly installed skills against talos-homelab (closed 2026-06-02); produced the verdict table above.

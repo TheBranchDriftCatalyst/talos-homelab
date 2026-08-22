@@ -1,5 +1,7 @@
 # Patterns
 
+> Parent: [docs/INDEX.md](../INDEX.md)
+
 Reusable architecture patterns used across this cluster. Each doc is a self-contained
 "why + how + gotchas" reference so the pattern can be re-applied consistently.
 

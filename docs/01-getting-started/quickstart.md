@@ -3,12 +3,18 @@
 ## TL;DR
 
 ```bash
-# Install tools, provision cluster, access services
+# Install tools, generate configs, provision cluster, access services
 brew install talosctl kubectl go-task/tap/go-task
 export TALOS_NODE=192.168.1.54
+task talos:gen-config   # required first - provision.sh does NOT generate configs
 task talos:provision
-task k8s:dashboard-token && task k8s:dashboard-proxy
+./scripts/kube-dashboard-token.sh && task k8s:dashboard-proxy
 ```
+
+> This quickstart covers **bringing a node up**. For the full cluster rebuild
+> path (Talos -> kubelet patches -> Flux -> 1Password Connect), follow
+> [docs/05-runbooks/cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md),
+> which is the authoritative recovery runbook.
 
 ## Prerequisites
 
@@ -44,6 +50,15 @@ echo 'export TALOS_NODE=192.168.1.54' >> ~/.zshrc
 
 ## Fresh Cluster Setup
 
+### Step 0: Generate machine configs (required)
+
+`provision.sh` does **not** generate configs - it aborts if
+`configs/controlplane.yaml` is missing. Generate them first:
+
+```bash
+task talos:gen-config
+```
+
 ### Option 1: Using the provision script
 
 ```bash
@@ -56,20 +71,32 @@ echo 'export TALOS_NODE=192.168.1.54' >> ~/.zshrc
 task talos:provision
 ```
 
-That's it! The script will:
+The script will:
 
-- Generate Talos configs
-- Apply configuration to the node
-- Bootstrap the cluster
-- Download kubeconfig
-- Remove control-plane taint
-- Auto-deploy Kubernetes Dashboard
+- Check the node is reachable at `$TALOS_NODE`
+- Apply `configs/controlplane.yaml` (insecure mode, first boot) and wait ~90s for reboot
+- Point `configs/talosconfig` at the node
+- Bootstrap etcd
+- Download kubeconfig to `.output/kubeconfig`
+- Remove the control-plane taint (single-node bring-up; see note below)
+- Run a health check and list Talos services
+- Merge kubeconfig into `~/.kube/config` (set `AUTO_MERGE_KUBECONFIG=false` to skip)
+
+> **Note on the taint**: the taint removal targets the *first* node and exists so
+> a brand-new single-node cluster can schedule workloads. The current 5-node
+> cluster deliberately keeps `node-role.kubernetes.io/control-plane:NoSchedule`
+> on talos00 - workloads run on talos01/02/03/06.
+
+> **The node will stay `NotReady` until a CNI is installed.** The machine config
+> sets `cluster.network.cni.name: none`; Cilium is delivered by Flux
+> (`infrastructure/base/cilium/`). Bootstrap Flux next - see
+> [docs/04-deployment/flux-setup.md](../04-deployment/flux-setup.md).
 
 ## Access Kubernetes Dashboard
 
 ```bash
 # Terminal 1: Get the token
-task k8s:dashboard-token
+./scripts/kube-dashboard-token.sh
 
 # Terminal 2: Start the proxy
 task k8s:dashboard-proxy
@@ -77,6 +104,10 @@ task k8s:dashboard-proxy
 # Browser: Open this URL
 http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
 ```
+
+> **Broken task**: `task k8s:dashboard-token` invokes `./scripts/dashboard-token.sh`,
+> which does not exist in the repo. The working script is
+> `scripts/kube-dashboard-token.sh` (it also prints tokens for the other cluster UIs).
 
 ## Common Commands
 
@@ -99,22 +130,29 @@ task talos:service-logs -- SERVICE=kubelet
 
 ## What's Deployed
 
-After provisioning, your cluster will have:
+Straight out of `provision.sh` you get Talos + a bootstrapped control plane +
+CoreDNS. Everything else (CNI, ingress, monitoring, dashboards) arrives via Flux.
 
-- **Talos v1.11.1** - Immutable Linux OS
-- **Kubernetes v1.34.0** - Container orchestration
-- **Flannel** - CNI networking
+Current cluster (verify with `kubectl get nodes -o wide`):
+
+- **Talos v1.13.2** - Immutable Linux OS
+- **Kubernetes v1.34.10** - Container orchestration
+- **Cilium v1.20.0** - CNI networking (Helm chart via Flux; Talos ships `cni: none`)
 - **CoreDNS** - DNS resolution
-- **Kubernetes Dashboard** - Web UI
-- **Multi-node** - Control plane (talos00) + workers (talos01, etc.)
+- **Kubernetes Dashboard** - Web UI (deployed separately, *not* by `provision.sh`)
+- **5 nodes** - talos00 (control plane, tainted `NoSchedule`) + workers talos01,
+  talos02-gpu, talos03, talos06
 
 ## Project Structure
 
 ```
-configs/        # Talos configs (gitignored - sensitive)
-kubernetes/     # K8s manifests
-scripts/        # Helper scripts
-.output/        # Generated files (gitignored)
+configs/          # Talos machine configs (sensitive files gitignored)
+infrastructure/   # Platform manifests (Flux-managed)
+applications/     # Application manifests
+clusters/         # Flux cluster entrypoints (catalyst-cluster/)
+bootstrap/        # Flux bootstrap
+scripts/          # Helper scripts
+.output/          # Generated files (gitignored)
 ```
 
 ## Quick Test
@@ -150,7 +188,7 @@ Deploy a test application to verify everything works:
 - Ensure `kubectl proxy` is running: `task k8s:dashboard-proxy`
 - Verify the proxy is listening on localhost:8001
 - URL must be `localhost:8001`, NOT the node IP
-- Get fresh token: `task k8s:dashboard-token`
+- Get fresh token: `./scripts/kube-dashboard-token.sh` (the `task k8s:dashboard-token` shortcut is currently broken)
 
 ### Can't connect to Talos API?
 
@@ -179,7 +217,9 @@ ping $TALOS_NODE
 **Solutions**:
 
 ```bash
-# Check node taints (should show <none> for control plane scheduling)
+# Check node taints. Expected today: talos00 carries
+# node-role.kubernetes.io/control-plane:NoSchedule, workers show <none>.
+# A Pending pod on a 5-node cluster is normally resources/nodeSelector, not the taint.
 kubectl --kubeconfig ./.output/kubeconfig get nodes -o custom-columns=NAME:.metadata.name,TAINTS:.spec.taints
 
 # Check node status
@@ -208,12 +248,14 @@ task talos:provision
 
 After your cluster is running:
 
-1. **Deploy Infrastructure**: See [docs/04-deployment/flux-setup.md](../04-deployment/flux-setup.md)
-2. **Configure GitOps**: See [docs/02-architecture/gitops-responsibilities.md](../02-architecture/gitops-responsibilities.md)
-3. **Add Monitoring**: Run `task infra:deploy-stack`
-4. **Explore Docs**: See [README.md](../../README.md) for complete documentation
+1. **Full rebuild path**: See [docs/05-runbooks/cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md) (authoritative)
+2. **Deploy Infrastructure**: See [docs/04-deployment/flux-setup.md](../04-deployment/flux-setup.md)
+3. **Configure GitOps**: See [docs/02-architecture/gitops-responsibilities.md](../02-architecture/gitops-responsibilities.md)
+4. **Add Monitoring**: Run `task infra:deploy-stack`
+5. **Explore Docs**: See [docs/INDEX.md](../INDEX.md) and [README.md](../../README.md)
 
 ## Related Issues
 
-- CILIUM-7i0: Fix docs/01-getting-started/quickstart.md commands (this document)
-- See [docs/06-project-management/implementation-tracker.md](../06-project-management/implementation-tracker.md) for more
+<!-- Beads tracking for this doc -->
+
+- CILIUM-7i0 (closed/pruned): original pass to fix this document's commands

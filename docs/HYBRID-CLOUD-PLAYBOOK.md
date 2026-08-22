@@ -2,6 +2,11 @@
 
 This document describes the complete setup for running a hybrid cloud architecture connecting homelab Kubernetes to AWS EC2 instances via Nebula mesh networking.
 
+> **Related:** [clusters/aws-k3s/README.md](../clusters/aws-k3s/README.md) (AWS side + live status —
+> the link is currently dormant) · [05-projects/hybrid-llm-cluster/](05-projects/hybrid-llm-cluster/README.md)
+> (design docs) · [infrastructure/base/hybrid-llm/nebula/README.md](../infrastructure/base/hybrid-llm/nebula/README.md)
+> (Nebula manifests, unwired) · [tools/carrierarr/README.md](../tools/carrierarr/README.md)
+
 ## Architecture Overview
 
 ### High-Level Topology

@@ -9,9 +9,13 @@ This repository uses a modular Taskfile structure with domain-specific task file
 ├── Taskfile.yaml          # Root orchestrator with common shortcuts
 ├── Taskfile.talos.yaml    # Talos Linux operations
 ├── Taskfile.k8s.yaml      # Kubernetes operations
-├── Taskfile.dev.yaml      # Development tools (linting, formatting, hooks)
-└── Taskfile.infra.yaml    # Infrastructure deployment
+├── Taskfile.dev.yaml      # Development tools (linting, formatting, hooks, Tilt)
+├── Taskfile.infra.yaml    # Infrastructure deployment
+├── Taskfile.security.yaml # CrowdSec decisions/bans + honeypot visibility
+└── Taskfile.certs.yaml    # cert-manager PKI + local CA trust
 ```
+
+All six domain files are wired up via `includes:` in the root `Taskfile.yaml`.
 
 ## Task Domains
 
@@ -19,8 +23,14 @@ This repository uses a modular Taskfile structure with domain-specific task file
 
 The root Taskfile provides:
 
-- Default help output showing all available domains
-- Common shortcuts for frequently used tasks
+- Default help output showing the task domains (`task` with no arguments)
+- Dependency bootstrap (`deps:install`, plus internal `_check-homebrew` / `_install-*` helpers)
+- Common shortcuts for frequently used tasks: `health`, `dashboard`, `kubeconfig`,
+  `kubeconfig-merge`, `trust-cert`, `trust-ca`, `get-pods`, `get-nodes`, `provision`, `lint`,
+  `format`, `validate`, `ci`, `deploy-stack`, `audit`, `dashboard-arr`, `flux-suspend`,
+  `flux-resume`, `flux-status`, `setup-1password`
+- Script discovery: `scripts` (list) and `scripts:run` (interactive, requires fzf)
+- `tdarr` - Tdarr worker cache dashboard
 - Cleanup tasks (`clean`, `clean-all`)
 
 **Example commands:**
@@ -29,7 +39,8 @@ The root Taskfile provides:
 task                    # Show help
 task health            # Check cluster health
 task get-pods          # Get all pods
-task setup             # Install development tools
+task deps:install      # Install all dependencies (Homebrew, Yarn, Tilt, git hooks)
+task setup             # Alias for deps:install
 ```
 
 ### Talos Domain (`task talos:<command>`)
@@ -41,20 +52,30 @@ Talos Linux operations for cluster management.
 - `gen-config` - Generate fresh Talos configuration files
 - `apply-config` - Apply configuration to Talos node
 - `bootstrap` - Bootstrap etcd on control plane
+- `patches` - Apply required kubelet machine-config patches (iSCSI + local-path) to all nodes
+- `patches-check` - Dry-run the kubelet machine-config patch bootstrap
 - `provision` - Complete provisioning workflow
+- `provision-local` - Create local Docker-based Talos cluster for testing
+- `destroy-local` - Destroy local Docker-based Talos cluster
 - `health` - Check cluster health
 - `version` - Get Talos version
 - `dashboard` - Open Talos dashboard
 - `services` - List all Talos services
 - `service-logs` - Get logs for a specific service
+- `logs-follow` - Follow logs for a service
 - `dmesg` - View kernel logs
 - `shell` - Get interactive shell (limited)
 - `containers` - List running containers
 - `reboot` - Reboot the node
-- `shutdown` - Shutdown the node
+- `shutdown` - Shutdown a single node (defaults to `TALOS_NODE`)
+- `shutdown-cluster` - Gracefully shut down the entire cluster (workers first, control plane last)
 - `reset` - Reset node (DESTRUCTIVE)
-- `upgrade` - Upgrade Talos version
+- `upgrade` - Upgrade Talos on a single node
+- `upgrade-cluster` - Upgrade all Talos nodes, walking through intermediate minors
+- `upgrade-cluster-legacy` - Legacy bash upgrade script (fallback)
+- `upgrade-k8s` - Upgrade Kubernetes components cluster-wide (no node reboots)
 - `config-merge` - Merge talosconfig to default location
+- `config-info` - Show current Talos config info
 - `ping` - Ping the node
 - `check-api` - Check if Talos API is responding
 - `etcd-members` - List etcd members
@@ -64,9 +85,14 @@ Talos Linux operations for cluster management.
 
 ```bash
 task talos:health
-task talos:service-logs -- SERVICE=kubelet
-task talos:upgrade -- VERSION=v1.11.2
+task talos:service-logs SERVICE=kubelet
+task talos:upgrade VERSION=v1.13.2
+task talos:upgrade-cluster -- v1.13.2      # this one reads CLI_ARGS, so it needs --
 ```
+
+> Note: `talos:upgrade` reads a `VERSION` task variable, so it is passed **without** `--`.
+> `talos:upgrade-cluster`, `talos:upgrade-k8s` and `talos:shutdown-cluster` read `CLI_ARGS`
+> and therefore **do** need `--`. See [Tips](#tips).
 
 ### Kubernetes Domain (`task k8s:<command>`)
 
@@ -76,7 +102,8 @@ Kubernetes cluster operations and troubleshooting.
 
 - `kubeconfig` - Download kubeconfig from Talos
 - `kubeconfig-merge` - Merge kubeconfig to ~/.kube/config
-- `kubeconfig-unmerge` - Remove homelab context
+- `kubeconfig-unmerge` - Remove the `catalyst-cluster` context from ~/.kube/config
+- `kubeconfig-export` - Print the `export KUBECONFIG=...` line for the current shell
 - `get-nodes` - Get Kubernetes nodes
 - `get-pods` - Get all pods in all namespaces
 - `get-all` - Get all resources
@@ -88,38 +115,48 @@ Kubernetes cluster operations and troubleshooting.
 - `describe-pod` - Describe a specific pod
 - `logs` - Get logs from a pod
 - `logs-follow` - Follow logs from a pod
+- `flux-suspend` - Suspend all Flux reconciliation (enables manual control)
+- `flux-resume` - Resume all Flux reconciliation (re-enables GitOps)
+- `flux-status` - Show Flux reconciliation status
 
 **Example commands:**
 
 ```bash
 task k8s:kubeconfig-merge
 task k8s:get-pods
-task k8s:logs -- POD=prometheus-0 NAMESPACE=monitoring
+task k8s:logs POD=prometheus-0 NAMESPACE=monitoring
 ```
 
 ### Development Domain (`task dev:<command>`)
 
-Development tools for code quality, linting, formatting, and validation.
+Development tools for code quality, linting, formatting, validation and local Tilt development.
+
+Note the sub-task names use **colons**, not hyphens (`dev:lint:yaml`, not `dev:lint-yaml`).
 
 **Tasks:**
 
-- `setup` - Install all development tools (Homebrew + Yarn + hooks)
-- `install-brew-deps` - Install Homebrew dependencies
-- `install-yarn-deps` - Install Yarn dependencies
-- `hooks-install` - Install git hooks with lefthook
-- `hooks-uninstall` - Uninstall git hooks
-- `hooks-run` - Manually run git hooks
-- `lint` - Run all linters (YAML, shell, markdown, secrets)
-- `lint-yaml` - Lint YAML files with yamllint
-- `lint-shell` - Lint shell scripts with shellcheck
-- `lint-secrets` - Scan for secrets with gitleaks
-- `lint-secrets-report` - Scan and generate report
-- `format` - Format all code (shell, markdown, prettier)
+- `setup` - Install development tools (Homebrew + Yarn)
+- `deps:brew` - Install Homebrew dependencies from `Brewfile`
+- `deps:yarn` - Install Yarn dependencies (markdownlint, prettier)
+- `hooks:install` - Install git hooks with lefthook
+- `hooks:uninstall` - Uninstall git hooks
+- `hooks:run` - Manually run git hooks
+- `lint` - Run all linters (YAML, shell, `yarn lint` for markdown/prettier, secrets)
+- `lint:yaml` - Lint YAML files with yamllint
+- `lint:shell` - Lint shell scripts with shellcheck
+- `lint:secrets` - Scan for secrets with gitleaks
+- `lint:secrets:report` - Scan and generate report
+- `format` - Format all code (shell via shfmt, then `yarn format` for markdown/prettier)
 - `format-shell` - Format shell scripts with shfmt
 - `validate` - Validate all infrastructure manifests
-- `validate-kustomize` - Validate kustomizations
-- `validate-k8s` - Validate K8s manifests with dry-run
-- `ci` - Run full CI pipeline locally
+- `validate:kustomize` - Validate kustomizations build
+- `validate:k8s` - Validate K8s manifests with kubectl dry-run
+- `local-up` / `local-down` - Local Talos cluster + Tilt for ESO development
+- `tilt-up` / `tilt-down` / `tilt-ci` / `tilt-logs` - Tilt lifecycle
+- `install-tilt` - Install Tilt (macOS via Homebrew)
+- `eso-debug` - Debug External Secrets Operator and 1Password integration
+- `trust-ca` / `trust-ca:check` - Add / check the homelab-ca root cert in the macOS keychain
+- `ci` - Run full CI pipeline locally (lint + validate)
 
 **Example commands:**
 
@@ -136,34 +173,76 @@ Infrastructure deployment and application management.
 
 **Tasks:**
 
-- `setup` - Install core infrastructure
-- `deploy-stack` - Deploy complete stack (monitoring + observability)
+- `setup` - Install core infrastructure (Traefik, metrics-server, test services)
+- `deploy-stack` - Deploy complete observability and monitoring stack
 - `deploy-observability` - Deploy observability stack
+- `deploy-infra-testing` - Deploy infrastructure testing UI tools (Headlamp, Kubeview, etc.)
 - `deploy-arr-stack` - Deploy ARR media stack
 - `deploy-tdarr` - Deploy Tdarr transcoding
 - `bootstrap-argocd` - Bootstrap ArgoCD
 - `argocd-apps` - Apply ArgoCD applications
 - `bootstrap-flux` - Bootstrap FluxCD
-- `flux-reconcile` - Force Flux reconciliation
+- `flux-reconcile` - Force Flux reconciliation (`flux reconcile kustomization flux-system --with-source`)
 - `flux-status` - Check Flux status
 - `deploy-eso` - Deploy External Secrets Operator
-- `setup-1password` - Setup 1Password Connect secrets
-- `deploy-registry` - Deploy Docker registry
-- `registry-port-forward` - Port-forward to registry
-- `build-catalyst-ui` - Build and deploy catalyst-ui
+- `setup-1password` - Bootstrap 1Password Connect secrets (idempotent)
+- `setup-1password-force` - Re-bootstrap 1Password Connect secrets (recreates)
+- `deploy-registry` - Deploy the in-cluster registry
+- `registry-port-forward` - Port-forward to the registry (localhost:5000)
 - `apply-namespaces` - Apply all namespaces
 - `apply-storage` - Apply storage classes
+- `dashboard-arr-stack` - ARR stack dashboard with real-time status
+- `infra-testing-status` / `infra-testing-logs` / `infra-testing-delete` - Manage infra-testing tools
 - `deploy-all` - Deploy complete infrastructure
 - `redeploy` - Force redeployment (DESTRUCTIVE)
+
+> Removed: `infra:build-catalyst-ui` no longer exists. catalyst-ui is deployed by ArgoCD from its
+> own repo (see the dual-GitOps docs), not by a task in this repo.
 
 **Example commands:**
 
 ```bash
-task infra:deploy-stack
-task infra:bootstrap-flux
 task infra:deploy-eso
-task infra:registry-port-forward
+task infra:apply-namespaces
+task infra:flux-status
 ```
+
+### Security Domain (`task security:<command>`)
+
+CrowdSec decisions/bans and Cowrie honeypot visibility — wraps `cscli` inside the CrowdSec LAPI pod
+(`deploy/crowdsec-lapi` in the `crowdsec` namespace) so you never have to `kubectl exec` by hand.
+Run `task security:` (or `task --list`) for the current task list.
+
+### Certificates Domain (`task certs:<command>`)
+
+cert-manager PKI operations and local CA trust (`trust-cert`, `untrust-cert`, `export-ca`, `list`,
+`check-expiry`, `status`, `renew`, `issuers`). Run `task certs:` (or `task --list`) for details.
+
+## Known-Broken Tasks
+
+Verified 2026-08-22. These tasks are still defined but their backing script or manifest path no
+longer exists (mostly fallout from the `scripts/` reorganization into subdirectories and from
+retired stacks). Fix the Taskfile paths before relying on them.
+
+| Task                                                       | References                                                                                    | Reality                                                 |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `k8s:kubeconfig-merge`                                     | `./scripts/kubeconfig-merge.sh`                                                               | moved to `scripts/developer/kubeconfig-merge.sh`        |
+| `k8s:kubeconfig-unmerge`                                   | `./scripts/kubeconfig-unmerge.sh`                                                             | moved to `scripts/developer/kubeconfig-unmerge.sh`      |
+| `k8s:dashboard-token`                                      | `./scripts/dashboard-token.sh`                                                                | script is `scripts/kube-dashboard-token.sh`             |
+| `dev:eso-debug`                                            | `./scripts/onepassword-debug.sh`                                                              | moved to `scripts/external-secrets/`                    |
+| `dev:local-up`, `talos:provision-local`                    | `./scripts/provision-local.sh`                                                                | disabled as `scripts/__provision-local.sh`              |
+| `infra:setup`                                              | `./scripts/setup-infrastructure.sh`                                                           | missing                                                 |
+| `infra:deploy-stack`                                       | `./scripts/deploy-stack.sh`                                                                   | moved to `infrastructure/_scripts/deploy-stack.sh`      |
+| `infra:deploy-observability`                               | `./scripts/deploy-observability.sh`                                                           | missing                                                 |
+| `infra:deploy-tdarr`                                       | `./scripts/deploy-tdarr.sh`                                                                   | disabled as `scripts/__deploy-tdarr.sh`                 |
+| `infra:bootstrap-flux`                                     | `./scripts/bootstrap-flux.sh`                                                                 | missing                                                 |
+| `infra:deploy-arr-stack`                                   | `applications/arr-stack/overlays/dev/`                                                        | overlays are `gpu` and `themepark`                      |
+| `infra:dashboard-arr-stack`                                | `./scripts/dashboards/arr-stack.sh`                                                           | script is `applications/arr-stack/scripts/dashboard.sh` |
+| `infra:registry-port-forward`                              | `svc/docker-registry` in `registry`                                                           | the service is `zot`                                    |
+| `infra:deploy-infra-testing`, `infra:infra-testing-delete` | `infrastructure/base/infra-testing/`                                                          | directory missing                                       |
+| `infra:redeploy`                                           | `infrastructure/base/monitoring/kube-prometheus-stack/`, `infrastructure/base/observability/`  | both directories missing                                |
+
+Because `infra:deploy-all` and `infra:redeploy` call the tasks above, they are broken too.
 
 ## Common Workflows
 
@@ -171,7 +250,7 @@ task infra:registry-port-forward
 
 ```bash
 task talos:gen-config
-task talos:apply-config -- INSECURE=true
+task talos:apply-config INSECURE=true
 task talos:bootstrap
 task k8s:kubeconfig
 task k8s:kubeconfig-merge
@@ -180,18 +259,22 @@ task talos:health
 
 ### Deploy Infrastructure
 
+Day-to-day infrastructure is reconciled by Flux, not by these tasks — see
+[docs/02-architecture/dual-gitops.md](../02-architecture/dual-gitops.md). The bootstrap-oriented
+tasks below are only for a fresh cluster, and several are currently broken (see
+[Known-Broken Tasks](#known-broken-tasks)).
+
 ```bash
 task infra:apply-namespaces
-task infra:deploy-stack
-task infra:bootstrap-flux
 task infra:deploy-eso
+task infra:flux-status
 ```
 
 ### Development Setup
 
 ```bash
 task dev:setup
-task dev:hooks-install
+task dev:hooks:install
 task dev:lint
 task dev:validate
 ```
@@ -210,22 +293,39 @@ task k8s:audit                # Generate audit report
 1. **List all available tasks:**
 
    ```bash
-   task --list                # Short list
-   task --list-all            # With descriptions
+   task --list                # Tasks that have a description
+   task --list-all            # Every task, including undescribed ones
    ```
 
 2. **Get help for a specific task:**
 
    ```bash
-   task <domain>:<task> --help
+   task --summary <domain>:<task>
    ```
+
+   (`task <task> --help` prints go-task's global usage, not the task's summary.)
 
 3. **Pass variables to tasks:**
 
+   Task variables are set as bare `KEY=value` arguments — **not** after `--`. Anything after `--`
+   becomes `CLI_ARGS`, so `task talos:upgrade -- VERSION=v1.13.2` silently uses the default version.
+
    ```bash
-   task talos:upgrade -- VERSION=v1.11.2
-   task k8s:logs -- POD=name NAMESPACE=default
+   task talos:upgrade VERSION=v1.13.2
+   task talos:service-logs SERVICE=kubelet
+   task k8s:logs POD=name NAMESPACE=default
    ```
+
+   Only tasks that explicitly template `{{.CLI_ARGS}}` take `--`: `talos:upgrade-cluster`,
+   `talos:upgrade-cluster-legacy`, `talos:upgrade-k8s`, `talos:shutdown-cluster`, `scripts`,
+   and `tdarr`.
+
+   ```bash
+   task talos:upgrade-k8s -- 1.34.10
+   ```
+
+   Several Taskfile `desc:` strings still say "use -- VAR=value"; those descriptions are wrong for
+   variable-style tasks.
 
 4. **Use shortcuts for common tasks:**
    Root Taskfile provides shortcuts like `task health`, `task get-pods`, etc.
@@ -238,15 +338,35 @@ task k8s:audit                # Generate audit report
 
 ## Variables
 
-Common variables available across all Taskfiles:
+Variables are declared per Taskfile, not globally:
 
-- `TALOS_NODE` - Node IP address (default: `192.168.1.54`)
-- `TALOSCONFIG` - Talos config path (default: `./configs/talosconfig`)
-- `KUBECONFIG` - Kubernetes config path (default: `./.output/kubeconfig`)
+| Taskfile                 | Variables                                                                                                                                                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Taskfile.yaml` (root)   | `TALOS_NODE` (default `192.168.1.54`), `TALOSCONFIG` (`./configs/talosconfig`), `KUBECONFIG` (`./.output/kubeconfig`)                                                                                                       |
+| `Taskfile.talos.yaml`    | the above, plus `CLUSTER_NAME` (`catalyst-cluster`), `CLUSTER_ENDPOINT` (`https://{{.TALOS_NODE}}:6443`), `CONTROLPLANE_CONFIG` (`./configs/nodes/controlplane.yaml`), `WORKER_CONFIG` (`./configs/nodes/worker-base.yaml`) |
+| `Taskfile.k8s.yaml`      | `TALOS_NODE`, `TALOSCONFIG`, `KUBECONFIG`                                                                                                                                                                                  |
+| `Taskfile.infra.yaml`    | `KUBECONFIG`                                                                                                                                                                                                               |
+| `Taskfile.security.yaml` | `KUBECONFIG`, `NS` (`crowdsec`), `LAPI` (`deploy/crowdsec-lapi`)                                                                                                                                                           |
+| `Taskfile.certs.yaml`    | `CA_SECRET` (`homelab-ca-secret`), `CA_NS` (`cert-manager`), `CA_FILE` (`$HOME/homelab-ca.crt`)                                                                                                                             |
+| `Taskfile.dev.yaml`      | none                                                                                                                                                                                                                       |
 
-Override variables with environment variables:
+`TALOS_NODE` is the control-plane node (`talos00`). Tasks that target it explicitly hit only that
+node; the cluster also runs `talos01`, `talos02-gpu`, `talos03` and `talos06`.
+
+Note that tasks using `--kubeconfig {{.KUBECONFIG}}` read `./.output/kubeconfig`, which only exists
+after `task k8s:kubeconfig`. A merged `~/.kube/config` (via `task kubeconfig-merge`) is not used by
+those tasks.
+
+Override variables with environment variables — the `{{.VAR | default ... }}` pattern picks up the
+process environment:
 
 ```bash
-export TALOS_NODE=192.168.1.55
+export TALOS_NODE=192.168.1.177
 task talos:health
 ```
+
+---
+
+## Related Issues
+
+<!-- Beads tracking for this doc -->

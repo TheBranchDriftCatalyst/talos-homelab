@@ -6,7 +6,7 @@ This document describes the storage mount structure for the homelab cluster.
 
 The cluster uses two NAS devices for storage:
 
-- **TrueNAS** (192.168.1.200) - Primary media storage with large capacity
+- **TrueNAS** (192.168.1.200) - Primary media storage with large capacity (deprecated truenas offline, now using Synology for app configs, everything migrated to Synology... for now)
 - **Synology** (192.168.1.234) - Secondary storage and app configurations
 
 All NFS variables are substituted via Flux postBuild from `cluster-settings.yaml`.

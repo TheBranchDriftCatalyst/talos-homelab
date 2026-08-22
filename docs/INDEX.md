@@ -1,361 +1,149 @@
 # Documentation Index
 
-**📚 Complete Navigation Guide for Talos Kubernetes Cluster**
+Entry point for all documentation in this repo. Every section below has a `README.md` that
+summarizes its children — drill down from here.
 
-This index uses **progressive summarization** - start with Level 1 for overviews, progress to deeper levels as needed.
-
----
-
-## 🎯 Quick Navigation
-
-| I want to...                  | Go to                                              |
-| ----------------------------- | -------------------------------------------------- |
-| Get started quickly           | [Getting Started](#-level-1-getting-started)       |
-| Understand the architecture   | [Architecture](#-level-2-architecture)             |
-| Provision/operate the cluster | [Operations](#-level-3-operations)                 |
-| Deploy applications           | [Deployment](#-level-3-deployment)                 |
-| Work on specific projects     | [Projects](#-level-4-projects)                     |
-| Track implementation progress | [Project Management](#-level-4-project-management) |
-| Find technical references     | [Reference](#-level-5-reference)                   |
+> **Grounding pass 2026-08-22:** 62 docs were individually verified against the repo and the
+> live cluster. Docs known to be stale are labelled inline below rather than deleted.
 
 ---
 
-## Documentation Levels
+## Start Here (repo root)
 
-```
-Level 1: Entry Points     → Quick overview, essential commands
-Level 2: Architecture     → Understanding system design
-Level 3: Operations       → Running and deploying
-Level 4: Projects         → Specific implementations
-Level 5: Reference        → Deep technical details
-```
-
----
-
-## 📖 Level 1: Getting Started
-
-**Target Audience:** New users, quick reference
-
-### Root Level
-
-| Document                          | Description                              | Length    |
-| --------------------------------- | ---------------------------------------- | --------- |
-| [README.md](../README.md)         | Main repository overview and quick start | Overview  |
-| [QUICKSTART.md](../QUICKSTART.md) | Essential commands reference             | Quick Ref |
-
-### Getting Started Guide
-
-| Document                                                 | Description                    | Length    |
-| -------------------------------------------------------- | ------------------------------ | --------- |
-| [Getting Started Overview](01-getting-started/README.md) | Complete onboarding guide      | Guide     |
-| [Quick Start](01-getting-started/quickstart.md)          | Fast-track setup               | Quick     |
-| [Local Testing](01-getting-started/local-testing.md)     | Docker Desktop dev environment | Guide     |
-| [Glossary](01-getting-started/glossary.md)               | Terms and concepts             | Reference |
-
-**Start here if:** You're new to the cluster or need quick command reference.
+| Document                                                  | What it is                                                                     |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| [README.md](../README.md)                                 | Repo overview, cluster facts, task shortcuts, file layout                       |
+| [QUICKSTART.md](../QUICKSTART.md)                         | Essential commands (provision, health, kubeconfig, service URLs)                |
+| [CONTRIBUTING.md](../CONTRIBUTING.md)                     | Dev setup, lefthook hooks, lint/format/validate task names                      |
+| [CLAUDE.md](../CLAUDE.md)                                 | Agent guidance: beads workflow, GitOps rules, session protocol                  |
+| [AGENTS.md](../AGENTS.md)                                 | Agent-facing repo conventions                                                   |
+| [TRAEFIK.md](../TRAEFIK.md)                               | Ingress: Traefik DaemonSet, entrypoints, TLS, IngressRoutes, LB VIP             |
+| [OBSERVABILITY.md](../OBSERVABILITY.md)                   | **Authoritative** monitoring stack — Alloy / Mimir / Loki / Tempo / ClickStack  |
+| [SECURITY_ops.md](../SECURITY_ops.md)                     | CrowdSec + bouncer, honeypot, iocaine, allowlists, ban escalation               |
+| [SKILLZ.md](../SKILLZ.md)                                 | Catalog of agent skills and which ones apply to this repo                       |
+| [IMPLEMENTATION-TRACKER.md](../IMPLEMENTATION-TRACKER.md) | **Frozen 2025-12-12 snapshot** — historical record, not current state           |
+| [DAH_REPORT.md](../DAH_REPORT.md)                         | 2026-03-14 three-perspective system analysis (findings marked resolved/changed) |
+| [beads-index.md](../beads-index.md)                       | Beads issue-tracker index                                                       |
 
 ---
 
-## 🏗️ Level 2: Architecture
+## Sections
 
-**Target Audience:** Developers, operators understanding the system
-
-| Document                                                                  | Description                               | Length   | Priority |
-| ------------------------------------------------------------------------- | ----------------------------------------- | -------- | -------- |
-| [Architecture Overview](02-architecture/README.md)                        | System design summary                     | Overview | ⭐       |
-| [Infrastructure Diagrams](02-architecture/infrastructure-diagrams.md)     | **NEW** - Mermaid diagrams of full system | Deep     | ⭐⭐⭐   |
-| [Dual GitOps Pattern](02-architecture/dual-gitops.md)                     | **CRITICAL** - Core architecture          | Deep     | ⭐⭐⭐   |
-| [GitOps Responsibilities](02-architecture/gitops-responsibilities.md)     | Component breakdown                       | Mid      | ⭐⭐     |
-| [Networking & Ingress](02-architecture/networking.md)                     | Traefik, IngressRoutes                    | Deep     | ⭐⭐     |
-| [Observability Architecture](02-architecture/observability.md)            | Monitoring & logging design               | Deep     | ⭐⭐     |
-| [Service Mesh Strategy](02-architecture/service-mesh.md)                  | Cilium mTLS, eBPF service mesh            | Deep     | ⭐       |
-| [Auth Implementation Guide](02-architecture/auth-implementation-guide.md) | LDAP, Authelia, Authentik planning        | Deep     | ⭐       |
-
-**Read these if:** You need to understand how the system works before making changes.
-
-**Key Concepts Covered:**
-
-- Infrastructure GitOps vs Application GitOps
-- Traefik ingress controller
-- Prometheus + Grafana + OpenSearch stack
-- Storage architecture
-- Nebula VPN + Liqo multi-cluster federation
-- Service mesh with Cilium (eBPF)
+| Section                                                  | Contents                                                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [01-getting-started](01-getting-started/README.md)       | Onboarding, cluster facts, fresh-cluster setup, daily commands            |
+| [02-architecture](02-architecture/README.md)             | GitOps model, networking, DNS HA, service mesh, auth, ADRs, plans         |
+| [03-operations](03-operations/README.md)                 | Provisioning, node shutdown, etcd backup/restore, dev tooling             |
+| [04-deployment](04-deployment/README.md)                 | Flux and ArgoCD bootstrap + deployment workflows                          |
+| [05-projects](05-projects/README.md)                     | Per-project design docs (OTEL migration, hybrid LLM, optimization, specs) |
+| [05-runbooks](05-runbooks/README.md)                     | Step-by-step recovery/migration procedures + Talos machine-config patches  |
+| [06-project-management](06-project-management/README.md) | Roadmaps and idea backlogs (work itself is tracked in beads)              |
+| [06-troubleshooting](06-troubleshooting/README.md)       | Post-mortems and hardware/kernel workarounds                              |
+| [07-reference](07-reference/README.md)                   | CRD catalog, Taskfile reference, cloud GPU sizing                         |
+| [08-monitoring](08-monitoring/README.md)                 | Grafana dashboard index and the generated query audit                     |
+| [patterns](patterns/README.md)                           | Reusable cluster patterns (why + how + gotchas)                           |
+| [investigations](investigations/README.md)               | Dated deep audits and observability investigations                        |
+| [changelogs](changelogs/README.md)                       | Image/chart update campaigns and their breaking changes                   |
+| [retros](retros/README.md)                               | Incident retrospectives                                                   |
+| [_archive](_archive/README.md)                           | Completed migrations, kept for history only                               |
 
 ---
 
-## ⚙️ Level 3: Operations
+## Reports & Standalone Analyses
 
-**Target Audience:** Cluster operators, DevOps engineers
-
-| Document                                                            | Description                    | Length    | Use Case       |
-| ------------------------------------------------------------------- | ------------------------------ | --------- | -------------- |
-| [Operations Overview](03-operations/README.md)                      | Day-to-day operations guide    | Overview  | Daily ops      |
-| [Cluster Provisioning](03-operations/provisioning.md)               | Complete cluster setup         | Deep      | Initial setup  |
-| [Talos Configuration](03-operations/talos-configuration.md)         | Talos config management        | Deep      | Config changes |
-| [Kubernetes Operations](03-operations/kubernetes-operations.md)     | K8s operational tasks          | Mid       | Daily ops      |
-| [Monitoring Operations](03-operations/monitoring-operations.md)     | Observability management       | Mid       | Ops            |
-| [Node Shutdown Procedure](03-operations/node-shutdown-procedure.md) | Safe shutdown/restart          | Mid       | Maintenance    |
-| [Local Development ESO](03-operations/local-development-eso.md)     | External Secrets dev workflow  | Mid       | Development    |
-| [Development Tools](03-operations/development-tools.md)             | Git hooks, linters, formatters | Mid       | Dev setup      |
-| [Troubleshooting Guide](03-operations/troubleshooting.md)           | Common issues & solutions      | Reference | When stuck     |
-
-**Use these for:** Provisioning new clusters, managing existing clusters, troubleshooting.
-
-**Operational Tasks Covered:**
-
-- Fresh cluster provisioning
-- Talos configuration changes
-- Monitoring stack management
-- Common troubleshooting scenarios
+| Document                                             | What it is                                                    |
+| ---------------------------------------------------- | ------------------------------------------------------------- |
+| [executive-summary.md](executive-summary.md)         | Whole-system summary of what the homelab does                 |
+| [followup-exec-summary.md](followup-exec-summary.md) | Gap analysis + roadmap recommendations derived from the above |
+| [HYBRID-CLOUD-PLAYBOOK.md](HYBRID-CLOUD-PLAYBOOK.md) | Nebula + AWS k3s + Carrierarr hybrid-cloud setup              |
 
 ---
 
-## 🚀 Level 3: Deployment
+## Component Documentation (outside `docs/`)
 
-**Target Audience:** Application developers, DevOps engineers
+Docs that live next to the manifests they describe.
 
-| Document                                                     | Description                     | Length   | Use Case       |
-| ------------------------------------------------------------ | ------------------------------- | -------- | -------------- |
-| [Deployment Overview](04-deployment/README.md)               | Deployment patterns             | Overview | Planning       |
-| [Infrastructure Deployment](04-deployment/infrastructure.md) | Platform deployment             | Mid      | Infra changes  |
-| [Application Deployment](04-deployment/applications.md)      | App deployment patterns         | Mid      | App deployment |
-| [ArgoCD Setup](04-deployment/argocd-setup.md)                | ArgoCD bootstrap & config       | Mid      | GitOps setup   |
-| [Flux Setup](04-deployment/flux-setup.md)                    | FluxCD bootstrap & config       | Mid      | GitOps alt     |
-| [Catalyst UI Example](04-deployment/catalyst-ui-example.md)  | Complete deployment walkthrough | Deep     | Learning       |
+### Infrastructure
 
-**Use these for:** Deploying infrastructure changes, setting up GitOps, deploying applications.
+| Path                                                                                                                         | Covers                                                            |
+| ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| [infrastructure/base/argocd/README.md](../infrastructure/base/argocd/README.md)                                              | ArgoCD access, apps, image-updater, ESO credentials               |
+| [infrastructure/base/argocd/STATUS.md](../infrastructure/base/argocd/STATUS.md)                                              | ArgoCD rollout status notes                                       |
+| [infrastructure/base/external-secrets/README.md](../infrastructure/base/external-secrets/README.md)                          | ESO + 1Password Connect                                           |
+| [infrastructure/base/aws/README.md](../infrastructure/base/aws/README.md)                                                    | Crossplane AWS providers and XR compositions                      |
+| [infrastructure/base/databases/README.md](../infrastructure/base/databases/README.md)                                        | CNPG clusters and shared DB services                              |
+| [infrastructure/base/analytics/README.md](../infrastructure/base/analytics/README.md)                                        | Analytics stack                                                   |
+| [infrastructure/base/external-dns/README.md](../infrastructure/base/external-dns/README.md)                                  | external-dns wiring                                               |
+| [infrastructure/base/flux-notifications/README.md](../infrastructure/base/flux-notifications/README.md)                      | Flux alerting to Discord                                          |
+| [infrastructure/base/gpu-inference/README.md](../infrastructure/base/gpu-inference/README.md)                                | In-cluster GPU inference                                          |
+| [infrastructure/base/intel-gpu/README.md](../infrastructure/base/intel-gpu/README.md)                                        | Intel Arc device plugin (talos02-gpu)                             |
+| [infrastructure/base/infra-control/README.md](../infrastructure/base/infra-control/README.md)                                | Infra control tooling                                             |
+| [infrastructure/base/monitoring/grafana-dashboards/README.md](../infrastructure/base/monitoring/grafana-dashboards/README.md) | Dashboard JSON + `GrafanaDashboard` CR workflow                   |
+| [infrastructure/base/storage/STRUCTURE.md](../infrastructure/base/storage/STRUCTURE.md)                                      | Storage layout — **stale** (still TrueNAS-centric)                |
+| [infrastructure/base/traefik/STATUS.md](../infrastructure/base/traefik/STATUS.md)                                            | Traefik status notes — **stale**, see [TRAEFIK.md](../TRAEFIK.md) |
+| [infrastructure/base/vpn-gateway/README.md](../infrastructure/base/vpn-gateway/README.md)                                    | VPN egress gateway                                                |
+| [infrastructure/base/shared/gluetun-sidecar/README.md](../infrastructure/base/shared/gluetun-sidecar/README.md)              | Reusable gluetun sidecar                                          |
+| [infrastructure/base/hybrid-llm/nebula/README.md](../infrastructure/base/hybrid-llm/nebula/README.md)                        | Nebula mesh — manifests only, **not deployed**                    |
+| [infrastructure/base/hybrid-llm/ollama/README.md](../infrastructure/base/hybrid-llm/ollama/README.md)                        | Ollama serving                                                    |
 
-**Deployment Methods:**
+### Applications
 
-- Manual kubectl apply (infrastructure)
-- ArgoCD automated sync (applications)
-- FluxCD automated sync (alternative)
+| Path                                                                                                                                     | Covers                                                       |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [applications/arr-stack/README.md](../applications/arr-stack/README.md)                                                                  | Media automation stack (Flux-owned, Authentik SSO)           |
+| [applications/arr-stack/overlays/themepark/README.md](../applications/arr-stack/overlays/themepark/README.md)                            | theme.park overlay — the overlay Flux actually deploys       |
+| [applications/crossplane-demo/README.md](../applications/crossplane-demo/README.md)                                                      | Crossplane demo namespace (smoke tests parked at 0 replicas) |
+| [applications/crossplane-demo/flex/README.md](../applications/crossplane-demo/flex/README.md)                                            | Flex composition demo                                        |
+| [applications/the-corpus/README.md](../applications/the-corpus/README.md)                                                                | Data/ETL monorepo — **undeployed**, no Flux wiring           |
+| [applications/the-corpus/corpus-core/README.md](../applications/the-corpus/corpus-core/README.md)                                        | Core domain package                                          |
+| [applications/the-corpus/pipelines/README.md](../applications/the-corpus/pipelines/README.md)                                            | Ingest pipelines                                             |
+| [applications/the-corpus/memex/README.md](../applications/the-corpus/memex/README.md)                                                    | memex subsystem                                              |
+| [applications/poisonarr/docs/REACT_PATTERN.md](../applications/poisonarr/docs/REACT_PATTERN.md)                                          | ReAct browser-agent pattern — app is **undeployed**          |
+| [applications/gaming/base/kubevirt/README.md](../applications/gaming/base/kubevirt/README.md)                                            | KubeVirt gaming VM                                           |
+| [applications/home-automation/base/linkwarden/MIGRATION-RUNBOOK.md](../applications/home-automation/base/linkwarden/MIGRATION-RUNBOOK.md) | Linkwarden migration                                         |
 
----
+### Clusters & Tools
 
-## 🔬 Level 4: Projects
-
-**Target Audience:** Project developers, feature implementers
-
-### Projects Overview
-
-| Document                                 | Description              |
-| ---------------------------------------- | ------------------------ |
-| [Projects README](05-projects/README.md) | Overview of all projects |
-
-### Catalyst DNS Sync
-
-| Document                                                    | Description           | Length    | Purpose        |
-| ----------------------------------------------------------- | --------------------- | --------- | -------------- |
-| [Project README](05-projects/catalyst-dns-sync/README.md)   | Quick reference       | Quick     | Daily use      |
-| [Full Proposal](05-projects/catalyst-dns-sync/proposal.md)  | Complete design       | Very Deep | Architecture   |
-| [MVP Specification](05-projects/catalyst-dns-sync/mvp.md)   | Phase 1 & 2 checklist | Deep      | Implementation |
-| [OP Features](05-projects/catalyst-dns-sync/op-features.md) | Future wishlist       | Mid       | Planning       |
-
-### Catalyst UI
-
-| Document                                                        | Description    | Length | Purpose    |
-| --------------------------------------------------------------- | -------------- | ------ | ---------- |
-| [Deployment Guide](05-projects/catalyst-ui/deployment-guide.md) | Complete setup | Deep   | Deployment |
-
-### Hybrid LLM Cluster
-
-| Document                                                                           | Description                   | Length | Purpose      |
-| ---------------------------------------------------------------------------------- | ----------------------------- | ------ | ------------ |
-| [Discovery](05-projects/hybrid-llm-cluster/DISCOVERY.md)                           | Project discovery & research  | Mid    | Planning     |
-| [Project Structure](05-projects/hybrid-llm-cluster/PROJECT-STRUCTURE.md)           | Repository & component layout | Mid    | Architecture |
-| [GitOps Patterns](05-projects/hybrid-llm-cluster/GITOPS-PATTERNS.md)               | Multi-cluster GitOps approach | Mid    | Architecture |
-| [Storage Strategy](05-projects/hybrid-llm-cluster/STORAGE-STRATEGY.md)             | S3 + local storage design     | Mid    | Architecture |
-| [AWS EC2 Instance Types](05-projects/hybrid-llm-cluster/AWS-EC2-INSTANCE-TYPES.md) | GPU instance research         | Mid    | Reference    |
-| [Next Steps](05-projects/hybrid-llm-cluster/NEXT-STEPS.md)                         | Implementation roadmap        | Quick  | Planning     |
-
-**Use these for:** Working on specific features, understanding project scope.
+| Path                                                                               | Covers                                                       |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| [clusters/aws-k3s/README.md](../clusters/aws-k3s/README.md)                        | AWS k3s + Cilium ClusterMesh — **dormant** (apiserver at 0/0) |
+| [clusters/aws-k3s/ami/README.md](../clusters/aws-k3s/ami/README.md)                | AMI build for the k3s node                                   |
+| [tools/carrierarr/README.md](../tools/carrierarr/README.md)                        | Carrierarr provisioning tool                                 |
+| [tools/carrierarr/PROVISIONING-NOTES.md](../tools/carrierarr/PROVISIONING-NOTES.md) | Provisioning notes                                           |
+| [tools/carrierarr/QA-CHECKLIST.md](../tools/carrierarr/QA-CHECKLIST.md)             | QA checklist                                                 |
 
 ---
 
-## 📊 Level 4: Project Management
+## Known Overlaps & Contradictions
 
-**Target Audience:** Project managers, team leads, stakeholders
+Flagged for a human to resolve — do not assume one silently wins.
 
-| Document                                                                  | Description               | Length   | Update Frequency |
-| ------------------------------------------------------------------------- | ------------------------- | -------- | ---------------- |
-| [PM Overview](06-project-management/README.md)                            | Project tracking intro    | Overview | As needed        |
-| [Implementation Tracker](06-project-management/implementation-tracker.md) | 7-phase progress tracker  | Deep     | Weekly           |
-| [Progress Summary](06-project-management/progress-summary.md)             | Session-by-session log    | Deep     | Per session      |
-| [Enhancement Roadmap](06-project-management/enhancement-roadmap.md)       | MCP server & Tilt roadmap | Mid      | As needed        |
-
-### Migration Assessments
-
-| Document                                     | Description                 | Length | Status  |
-| -------------------------------------------- | --------------------------- | ------ | ------- |
-| [Flux Migration](_archive/flux-migration.md) | FluxCD deployment readiness | Deep   | Pending |
-
-**Use these for:** Tracking project progress, planning, decision logging.
-
----
-
-## 📚 Level 5: Reference
-
-**Target Audience:** Advanced users, system architects
-
-| Document                                                          | Description               | Length    | Use Case    |
-| ----------------------------------------------------------------- | ------------------------- | --------- | ----------- |
-| [Reference Overview](07-reference/README.md)                      | Technical reference index | Overview  | Navigation  |
-| [Taskfile Organization](07-reference/taskfile-organization.md)    | Task automation structure | Mid       | Tooling     |
-| [Talos Config Spec](07-reference/talos-config-spec.md)            | Machine config deep dive  | Deep      | Config      |
-| [Kustomize Patterns](07-reference/kustomize-patterns.md)          | Kustomize examples        | Mid       | Templates   |
-| [API References](07-reference/api-references.md)                  | API documentation         | Reference | Integration |
-| [Reorganization Summary](07-reference/REORGANIZATION-COMPLETE.md) | Doc restructure details   | Deep      | Historical  |
-
-### Helm Values
-
-- [ArgoCD Values](07-reference/helm-values/argocd-values.yaml)
-- [Traefik Values](07-reference/helm-values/traefik-values.yaml)
-- [Prometheus Stack Values](07-reference/helm-values/kube-prometheus-stack-values.yaml)
-
-**Use these for:** Deep technical implementation, troubleshooting, customization.
+- **Monitoring**: [OBSERVABILITY.md](../OBSERVABILITY.md) (grounded, LGTM stack) vs
+  [02-architecture/observability.md](02-architecture/observability.md) (retired v1 stack:
+  Prometheus / OpenSearch / Graylog). Treat the root doc as authoritative; the architecture doc is
+  history and is an archive candidate.
+- **GitOps ownership**: [02-architecture/dual-gitops.md](02-architecture/dual-gitops.md) (grounded)
+  vs [02-architecture/gitops-responsibilities.md](02-architecture/gitops-responsibilities.md)
+  (still asserts Flux is "NOT YET DEPLOYED"). `dual-gitops.md` is authoritative.
+- **Quickstarts**: root [QUICKSTART.md](../QUICKSTART.md) and
+  [01-getting-started/quickstart.md](01-getting-started/quickstart.md) are both grounded and
+  overlap in scope. Merge candidate.
+- **Status reports**: [DAH_REPORT.md](../DAH_REPORT.md),
+  [executive-summary.md](executive-summary.md) and
+  [followup-exec-summary.md](followup-exec-summary.md) overlap heavily.
+- **Trackers**: [IMPLEMENTATION-TRACKER.md](../IMPLEMENTATION-TRACKER.md) (frozen) vs
+  [06-project-management/](06-project-management/README.md) roadmaps vs beads. Beads is the live
+  source of truth.
+- **Traefik / storage component docs**: `infrastructure/base/traefik/STATUS.md` and
+  `infrastructure/base/storage/STRUCTURE.md` were both confirmed materially drifted but were out of
+  scope for the grounding pass.
 
 ---
 
-## 🤖 Meta Documentation
+## Conventions
 
-| Document                  | Description                 | Audience                      |
-| ------------------------- | --------------------------- | ----------------------------- |
-| [CLAUDE.md](../CLAUDE.md) | Guidance for Claude Code AI | AI assistants, advanced users |
-
-This file serves as the comprehensive guide for Claude Code instances working in the repository.
-
----
-
-## 🗺️ Document Relationships
-
-```
-README.md (Entry)
-    ├──> QUICKSTART.md (Commands)
-    ├──> 02-architecture/dual-gitops.md (Core concept)
-    ├──> 03-operations/provisioning.md (Setup)
-    └──> 04-deployment/ (Deployment)
-
-dual-gitops.md (Architecture)
-    ├──> gitops-responsibilities.md (Details)
-    ├──> 04-deployment/argocd-setup.md (Implementation)
-    └──> 04-deployment/flux-setup.md (Alternative)
-
-provisioning.md (Operations)
-    ├──> talos-configuration.md (Config details)
-    ├──> 01-getting-started/local-testing.md (Dev setup)
-    └──> troubleshooting.md (Issues)
-
-Projects
-    ├──> catalyst-dns-sync/ (DNS automation)
-    └──> catalyst-ui/ (UI deployment example)
-```
-
----
-
-## 📝 Documentation Standards
-
-### File Naming
-
-- Use lowercase with hyphens: `dual-gitops.md`
-- READMEs for directory overviews
-- Descriptive names: `flux-migration.md` not `migration.md`
-
-### Document Structure
-
-Each document should include:
-
-1. **Title** - Clear, descriptive
-2. **Overview** - 2-3 sentence summary
-3. **Table of Contents** - For docs > 100 lines
-4. **See Also** - Related documents
-5. **Last Updated** - Date stamp
-
-### Cross-Linking
-
-- Use relative paths: `[GitOps](../02-architecture/dual-gitops.md)`
-- Add "See Also" sections
-- Link to related topics
-
-### Progressive Detail
-
-- **Level 1-2**: Overview, "what" and "why"
-- **Level 3**: Practical "how"
-- **Level 4**: Specific implementations
-- **Level 5**: Deep technical "internals"
-
----
-
-## 🔄 Maintenance
-
-### When Adding New Documentation
-
-1. Place in appropriate level directory
-2. Update this INDEX.md
-3. Update CLAUDE.md table of contents
-4. Add cross-references in related docs
-5. Follow naming conventions
-
-### When Updating Documentation
-
-1. Update "Last Modified" date
-2. Check cross-references are still valid
-3. Update INDEX.md if scope changes
-4. Note changes in Progress Summary
-
-### Regular Reviews
-
-- **Monthly**: Check for outdated information
-- **Quarterly**: Validate all cross-links
-- **Major Changes**: Update INDEX.md structure
-
----
-
-## 🎓 Recommended Reading Paths
-
-### Path 1: New User Onboarding
-
-1. README.md
-2. QUICKSTART.md
-3. 02-architecture/dual-gitops.md
-4. 03-operations/provisioning.md
-5. 01-getting-started/local-testing.md
-
-### Path 2: Application Developer
-
-1. QUICKSTART.md
-2. 02-architecture/dual-gitops.md
-3. 04-deployment/applications.md
-4. 04-deployment/ArgoCD-setup.md
-5. 05-projects/catalyst-ui/deployment-guide.md
-
-### Path 3: Cluster Operator
-
-1. README.md
-2. 02-architecture/ (all files)
-3. 03-operations/provisioning.md
-4. 03-operations/Kubernetes-operations.md
-5. 03-operations/troubleshooting.md
-
-### Path 4: Project Contributor
-
-1. 05-projects/catalyst-dns-sync/README.md
-2. 05-projects/catalyst-dns-sync/mvp.md
-3. 02-architecture/dual-gitops.md
-4. 04-deployment/applications.md
-
----
-
-## 📞 Getting Help
-
-- **Stuck?** → [Troubleshooting Guide](03-operations/troubleshooting.md)
-- **New to Talos?** → [Getting Started](01-getting-started/README.md)
-- **Architecture questions?** → [Dual GitOps](02-architecture/dual-gitops.md)
-- **Deployment issues?** → [Deployment Guides](04-deployment/README.md)
-
----
-
-**Last Updated:** 2025-11-30
-**Maintained By:** Infrastructure Team
-**Document Version:** 2.0.0
+- Section directories carry a `README.md` that lists and one-line-summarizes their children.
+- Docs use progressive summarization: TL;DR → Quick Reference → Deep Dive.
+- Docs end with a `## Related Issues` footer for beads tracking.
+- Component docs live next to their manifests; cluster-wide docs live under `docs/`.
+- Work tracking lives in **beads** (`bd ready`), not markdown TODO lists.
