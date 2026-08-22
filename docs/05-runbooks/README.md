@@ -43,6 +43,17 @@ Apply them all, idempotently, across every node:
 - **Reset wipes EPHEMERAL (`/var`), which is where local-path provisions.** Every local-path PV on a
   reset node is destroyed. `local-path` is `WaitForFirstConsumer`, so those PVs are pinned to the node
   and cannot migrate themselves.
+- **Un-bind storage before you reset, rather than evacuating it during a window.** The \*arr apps
+  (Sonarr/Radarr/Prowlarr) support PostgreSQL as a drop-in for SQLite via env vars, so they can stop
+  being node-bound entirely. Jellyfin and Plex are SQLite-only and cannot. See
+  [promote-workers-to-controlplane.md §0](promote-workers-to-controlplane.md#0-un-bind-what-can-be-un-bound-prerequisite--before-you-schedule-anything).
+- **⚠️ The arr-stack SQLite migration is one-way and does not self-heal.** `migrate-arr.sh` keys its
+  idempotency check on a symlink that lives on the surviving NFS volume, so after the local PV is
+  destroyed the check still passes and the app starts on an **empty** database — it does not restore
+  from `.nfs-backup`. Those `.nfs-backup` files are frozen at first-migration time (Dec 2025) and are
+  not backups.
+- **SQLite must not live on NFS** — that is why the local-path binding exists at all. Several
+  `media-experimental` config volumes hold SQLite, so "just move it to NFS" is not a general answer.
 - **⚠️ Velero does not back up local-path PVs.** They are `hostPath` volumes, and Velero's
   file-system backup skips `hostPath` by design — even when the volume is explicitly named in
   `backup.velero.io/backup-volumes`. It logs a warning per volume but the backup still reports

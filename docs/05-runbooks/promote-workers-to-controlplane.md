@@ -22,12 +22,18 @@
   in-place, and Talos does not document or test non-reset paths.
 - **Reset wipes `/var` → all local-path PVs on that node die.** `local-path` is
   `WaitForFirstConsumer`, so those PVs are pinned to the node and cannot migrate themselves.
+- **The fix is to stop having node-bound storage on nodes you plan to reset** — not to evacuate it at
+  2am. [§0](#0-un-bind-what-can-be-un-bound-prerequisite--before-you-schedule-anything) sorts each
+  node's volumes into un-bindable vs genuinely stuck. **`radarr`/`sonarr`/`prowlarr` can move to
+  CNPG Postgres and stop being node-bound at all** — that is a week of project work to do *before*
+  the window, not during it. Jellyfin and Plex are SQLite-only and cannot.
 - **Velero does NOT protect them.** Every local-path PV is a `hostPath` volume, and Velero's
   file-system backup skips `hostPath` by design — even when you explicitly name the volume in the
   opt-in annotation. The backup still reports `Completed`, so the gap only shows up in the backup
   log. Velero's own log line is quoted in [§3](#3-the-velero-gotcha-read-this-before-you-trust-any-backup).
-- **Recommended order: `talos01` first, then `talos03`.** Argued from the inventory in
-  [§6](#6-node-ordering-argued-from-the-inventory), not from PV count alone.
+- **Recommended order: `talos01` first, then `talos03`** — argued in
+  [§6](#6-node-ordering-argued-from-the-inventory) from *how much un-binding work each node needs*,
+  not from PV count. talos01 needs none; talos03 is gated on the \*arr → CNPG project.
 - **The one genuinely fragile window** is between node 2 becoming an etcd *voter* and node 3
   becoming a voter: 2 voters, quorum 2, **tolerates zero failures**. etcd learner mode protects the
   join itself, but not this gap. **Do both nodes in one sitting. Do not stop in between.**
@@ -69,6 +75,8 @@ export TALOSCONFIG="$PWD/configs/talosconfig"
 
 **Go / no-go gate before each node** — all must be true:
 
+- [ ] **§0 class (b) un-binding work is complete and soaked** for *both* target nodes — not just this
+      one. Promoting node 1 with node 2 still blocked parks you at 2 voters (§6).
 - [ ] `talosctl -n 192.168.1.54 etcd members` shows every existing member healthy, `LEARNER false`
 - [ ] No pods in a non-Running/non-Succeeded phase cluster-wide
 - [ ] The node's local-path PV inventory has been re-run **today** and every entry is classified
@@ -79,6 +87,123 @@ export TALOSCONFIG="$PWD/configs/talosconfig"
 ---
 
 ## Deep Dive
+
+### 0. Un-bind what can be un-bound (PREREQUISITE — before you schedule anything)
+
+The right fix is not "evacuate the PVs, then reset". It is **stop having node-bound storage on nodes
+you intend to reset.** Backup-and-restore is the fallback for what genuinely cannot move, not the
+plan.
+
+Sort the target node's local-path PVs into four classes. Only class (d) belongs in the maintenance
+window; classes (b) and (c) are **project work to complete first**.
+
+#### (a) ALREADY REPLICATED — no work
+
+Data exists in ≥ 2 more places; the reset costs a rebuild, not a restore.
+
+- **CNPG members of 3-instance clusters** — `authentik-postgres-*`, `boomtime-postgres-*`,
+  `forgejo-postgres-*`, `crowdsec-postgres-*`. Delete PVC + pod after the reset; CNPG re-clones by
+  streaming. Fail over first if the node holds the primary (§5a).
+- **`monitoring/storage-mimir-ingester-*`** — `replication_factor: 3` across exactly 3 ingesters, so
+  every series is on all three.
+
+```bash
+# confirm a cluster is really 3-instance before trusting this
+kubectl get clusters.postgresql.cnpg.io -A \
+  -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name,INSTANCES:.spec.instances,READY:.status.readyInstances
+```
+
+#### (b) CAN BE UN-BOUND FIRST — the \*arr apps to CNPG
+
+**`radarr`, `sonarr` and `prowlarr` do not need local storage at all.** All \*arr apps support
+PostgreSQL as a drop-in replacement for SQLite, configured entirely through **environment variables**
+— no `config.xml` edit. Moving them to a CNPG cluster removes the node-binding *and* gives them
+backup coverage they do not have today (CNPG → MinIO, which actually works, unlike Velero on
+hostPath).
+
+Installed versions are all comfortably past the requirement (Radarr needs ≥ v4.1.0.6133):
+
+| App | Installed | Postgres-capable | Currently pinned to |
+| --- | --- | --- | --- |
+| radarr | `6.0.4.10291-ls289` | yes | **talos03** |
+| sonarr | `4.0.16.2944-ls300` | yes | **talos03** |
+| prowlarr | `2.3.0.5236-ls133` | yes | talos02-gpu |
+
+Each app needs **two** databases (main + logs) owned by the same Postgres user. Migration from an
+existing SQLite DB is via `pgloader`. Configuration is by env var, e.g.:
+
+```yaml
+# illustrative — see the servarr wiki links in References for the authoritative variable list
+- { name: PROWLARR__POSTGRES__HOST,     value: arr-postgres-rw.media.svc }
+- { name: PROWLARR__POSTGRES__PORT,     value: "5432" }
+- { name: PROWLARR__POSTGRES__USER,     valueFrom: { secretKeyRef: { name: arr-postgres-app, key: username } } }
+- { name: PROWLARR__POSTGRES__PASSWORD, valueFrom: { secretKeyRef: { name: arr-postgres-app, key: password } } }
+- { name: PROWLARR__POSTGRES__MAINDB,   value: prowlarr-main }
+- { name: PROWLARR__POSTGRES__LOGDB,    value: prowlarr-log }
+```
+
+Doing this also lets you **delete the `nodeAffinity` pins** on radarr and sonarr, which are otherwise
+a live trap (§7).
+
+> **Treat this as a prerequisite project, not a maintenance-window step.** Realistically: a CNPG
+> cluster plus 6 databases, a `pgloader` run per app against a 267 MB / 548 MB / 8 MB SQLite file,
+> env-var plumbing through the Flux kustomization, and a soak period to confirm nothing regressed.
+> Budget roughly **a day for the first app and half a day for each of the others, plus a few days of
+> soak** — call it a week of elapsed time. Attempting it at 2am alongside a control-plane promotion
+> is how you end up with neither.
+
+#### (c) MOVABLE TO NFS — smaller than it looks
+
+> **⚠️ This class is mostly empty here, contrary to the obvious guess.** The 13
+> `media-experimental/*-config` volumes on talos03 look like plain config directories. **They are
+> not — they hold SQLite**, which is exactly what NFS must not host. Verified:
+>
+> | App | Found on its config volume |
+> | --- | --- |
+> | komga | `database.sqlite`, `database.sqlite-wal`, `database.sqlite-shm`, `tasks.sqlite` |
+> | audiobookshelf | `absdatabase.sqlite` |
+> | mylar3 | `mylar.db`, `.mylar_maintenance.db` |
+>
+> Moving these to NFS reintroduces precisely the SQLite-over-NFS locking problem that
+> `shared/db-migration-configmap.yaml` was written to escape. **Do not do it.**
+
+So audit per app rather than assuming — I confirmed 3 of 13 are SQLite-backed and could not exec into
+2 more (`kavita`, `storyteller`); the rest are unverified:
+
+```bash
+# run across every candidate before declaring anything NFS-safe
+for app in audiobookshelf bindery booksonic chaptarr kavita komga libation \
+           librarr livrarr mylar3 storyteller; do
+  echo "--- $app ---"
+  kubectl exec -n media-experimental deploy/$app -- sh -c \
+    'find /config -maxdepth 3 \( -name "*.db" -o -name "*.sqlite*" \) 2>/dev/null | head -4' \
+    2>/dev/null || echo "  (could not exec — check by hand)"
+done
+```
+
+A volume qualifies for class (c) only if that command returns **nothing**. Anything else is class (d)
+or needs its own Postgres migration.
+
+#### (d) GENUINELY STUCK — backup/restore, or accept the loss
+
+State this per item, and decide *which* before the window opens:
+
+| Item | Node | Verdict |
+| --- | --- | --- |
+| `media/jellyfin-db-local`, `media/plex-db-local` | talos02-gpu | **Accept-the-loss or hand-copy.** Jellyfin and Plex are **SQLite-only — no PostgreSQL support exists**, so class (b) is not available to them. They stay pinned. Jellyfin additionally has **no `.nfs-backup` at all** — its `/config/data/data` is a symlink to `/db-local` with no fallback beside it (§5, Catch 1). |
+| `cilium-spire/spire-data` | talos03 | **Backup/restore**, low blast radius — no policy uses mutual auth (§5). |
+| `monitoring/storage-mimir-{alertmanager,compactor,store-gateway}-0` | talos01 | **Accept the loss.** All three are S3-authoritative; local state is cache/scratch. |
+| `forgejo/forgejo-data` | talos01 | **Hand-copy.** No automated backup exists. ~156 KB today (§5). |
+| `pihole/etc-pihole-pihole-*` | all | **Accept the loss** — nebula-sync re-seeds standbys within 300s. |
+
+#### What this means for scheduling
+
+`talos01` needs **zero** class (b) or (c) work. `talos03` needs the \*arr → CNPG project first.
+
+> **🔴 Do not promote talos01 and then wait a week for the talos03 prerequisite.** That parks you at
+> **2 voters — quorum 2, tolerating zero failures — for the whole week**, which is strictly worse
+> than the single control plane you have now. Finish the class (b) work **first**, then promote both
+> nodes in one sitting.
 
 ### 1. Why this requires a full reset
 
@@ -388,11 +513,46 @@ force clean re-attestation.
 
 **`media/radarr-db-local` + `media/sonarr-db-local` — two catches.**
 
-*Catch 1 — the data.* These hold the authoritative SQLite databases (`radarr.db` was 267MB at time
-of writing) — library, history, quality profiles, indexers. The `config` PVC is separate and on NFS.
+*Catch 1 — the data, and what the init container actually does.* These hold the authoritative SQLite
+databases (`radarr.db` 267 MB, `sonarr.db` 548 MB) — library, history, quality profiles, indexers.
+The `config` PVC is separate and on NFS.
 
-The good news: Radarr and Sonarr write their own weekly backup zips into the **NFS** config volume,
-which *is* Velero-covered:
+`applications/arr-stack/base/shared/db-migration-configmap.yaml` (`migrate-arr.sh`) runs as an init
+container and performs a **one-way** migration: on first run it copies the SQLite DB from NFS to the
+local PV, renames the NFS original to `<app>.db.nfs-backup`, and replaces `/config/<app>.db` with a
+**symlink** into `/db-local`.
+
+> **⚠️ It does NOT re-migrate after the local PV is destroyed, and the app does NOT roll back to its
+> first-migration state.** This is worth being precise about, because the difference is the whole
+> library.
+>
+> The script's first check is `symlink_ok "$DB_FILE" "$DB_LOCAL_PATH/$APP_NAME.db"`, implemented as
+> `[ -L "$1" ] && [ "$(readlink "$1")" = "$2" ]`. **`readlink` reports the target string whether or
+> not the target exists.** The symlink lives on the surviving NFS `config` volume, so after a reset
+> it is still there and still points at `/db-local/<app>.db`. The check passes, the script prints
+> "Symlinks already configured correctly, nothing to do" and **exits 0** — the `.nfs-backup` is never
+> consulted. The app then opens a dangling symlink and **SQLite creates a brand-new empty database.**
+>
+> Net effect: **the app comes back as a fresh install with an empty library**, not as a stale one.
+> The `.nfs-backup` file survives on NFS and is recoverable *by hand*, but nothing automatic uses it.
+>
+> Verified live — note how stale those fallbacks are:
+>
+> | App | `.nfs-backup` (Dec 20 2025) | live `/db-local` (today) |
+> | --- | --- | --- |
+> | radarr | 671 KB | 267 MB |
+> | sonarr | 475 MB | 548 MB |
+> | prowlarr | 176 KB | 8.1 MB |
+>
+> Radarr's and Prowlarr's fallbacks are effectively empty databases. Sonarr's is substantial but
+> eight months stale. **Do not treat `.nfs-backup` as a backup.**
+>
+> The same reasoning applies to the Plex/Jellyfin variant (`migrate.sh`): `$DB_SOURCE_PATH` is itself
+> a symlink after first run, so `[ -d ]` follows it and `[ ! -L ]` is false — it takes the "app will
+> create fresh ones" branch and never restores.
+
+The actual recovery path is different and better: Radarr and Sonarr write their own weekly backup
+zips into the **NFS** config volume, which *is* Velero-covered:
 
 ```bash
 kubectl exec -n media deploy/radarr -c radarr -- ls -la /config/Backups/scheduled
@@ -432,16 +592,29 @@ you do not, let them rebuild and save yourself two hours.
 
 **Recommendation: `talos01` first, then `talos03`.**
 
-**Why `talos01` first** — it is not just that it has the fewest PVs (8), it is that its *classification
-profile* is by far the best. Four of its eight are Mimir components whose authoritative data is in
-S3/MinIO (`blocks_storage`, `alertmanager_storage`, `ruler_storage` are all `backend: s3`), two are
-CNPG members of 3-instance clusters that rebuild by streaming, and one is a pihole standby that
-`nebula-sync` re-seeds in five minutes. That leaves **exactly one** item needing manual work.
+**Rank by un-binding effort, not by PV count.** A node with 16 volumes that are all class (a)/(c) is
+cheaper than one with 8 that are all class (d). Scoring the two candidates by §0 class:
+
+| Node | (a) replicated | (b) needs un-binding project | (c) NFS-movable | (d) stuck | Prerequisite work |
+| --- | --- | --- | --- | --- | --- |
+| **talos01** | 3 | **0** | 0 | 5 (4 accept-loss + 1 hand-copy ~156 KB) | **none** |
+| **talos03** | 0 | **2** (radarr, sonarr → CNPG) | 0 confirmed — 3 of 13 proven SQLite, 10 unaudited | 1 spire + 1 pihole + up to 13 media-experimental | **~1 week** |
+
+**Why `talos01` first** — it needs **zero** class (b) or (c) work. Four of its eight PVs are Mimir
+components whose authoritative data is in S3/MinIO (`blocks_storage`, `alertmanager_storage`,
+`ruler_storage` all `backend: s3`), two are CNPG members of 3-instance clusters that rebuild by
+streaming, one is a pihole standby that `nebula-sync` re-seeds in five minutes. That leaves exactly
+one item needing manual work, and it is currently ~156 KB.
 
 It also has the fewest relocatable pods (27), making the drain cheapest, and at 22Gi allocatable it
 has real headroom for etcd + apiserver + controller-manager + scheduler. Doing the low-risk node
 first also means you validate the whole procedure — config generation, reset, learner promotion,
 patch re-application — *before* you enter the fragile 2-voter window.
+
+**Why `talos03` second — and why it is gated.** Its two \*arr SQLite databases are class (b): they
+*can* stop being node-bound, but only via the CNPG project in §0, which is a week of elapsed work.
+Its 13 media-experimental configs are **not** the easy NFS wins they appear to be — at least three
+are SQLite-backed and the rest are unaudited. Until that audit is done, treat them as class (d).
 
 **Why `talos03` second, and why not the alternatives:**
 
@@ -455,24 +628,31 @@ patch re-application — *before* you enter the fragile 2-voter window.
   volumes, and the gaming disks. That is a far deeper pool of genuinely irreplaceable singleton state
   than talos03's, and much of it has no NFS fallback and no rescan path. It is also one of only two
   61Gi nodes, so it needs to stay available to absorb workload during the migration.
-- **`talos03` — chosen by elimination, with a caveat stated honestly.** Its 15 unprotected local
-  volumes are, item for item, the *least* valuable in the cluster: 13 experimental reader-app configs
-  rebuildable by rescan, and two \*arr SQLite DBs with a working (if stale) backup path on NFS.
+- **`talos03` — chosen by elimination, and it is the only candidate whose blockers are *fixable*.**
+  Its two \*arr databases are the one class (b) case in the cluster: they can be un-bound outright.
+  talos06's neo4j / knowledge-graph / registry / Loki state has no comparable drop-in path.
 
-**The caveat you must weigh before accepting talos03:** at **14Gi allocatable it is the
-smallest-memory node in the cluster**, and `docs/05-runbooks/talos-kubelet-maxpods-patch.yaml`
-records it as already memory-bound at ~74%. Adding a control plane to the most memory-constrained
-node is the weakest part of this recommendation. Two things make it tolerable: control-plane
-components are a few Gi, and resetting talos03 relocates its 13 media-experimental pods elsewhere
-(their PVs are destroyed, so they re-provision wherever they land), which *reduces* talos03's
-post-promotion memory pressure.
+**Two caveats to weigh before accepting talos03:**
 
-If that trade reads badly to you, the honest alternative is **promote `talos01` only, stop at 2 CPs
-and accept zero fault tolerance temporarily, and defer the third CP** until either `talos06`'s
-singletons are migrated to NFS/object storage or a sixth node is added. That is a legitimate outcome
-— but understand that **2 voters is strictly worse than 1** for availability (quorum 2 of 2), so
-"stop at two" is a decision to be *less* available until you finish. Do not drift into it by
-accident.
+1. **Memory.** At **14Gi allocatable it is the smallest-memory node**, and
+   `docs/05-runbooks/talos-kubelet-maxpods-patch.yaml` records it as already memory-bound at ~74%.
+   Adding a control plane to the most memory-constrained node is the weakest part of this
+   recommendation. Two things make it tolerable: control-plane components are a few Gi, and moving
+   radarr/sonarr to CNPG (§0b) plus relocating the media-experimental pods *reduces* talos03's
+   post-promotion load rather than adding to it.
+2. **It is gated.** Do not start talos03 until the §0 class (b) work is done and soaked.
+
+**Sequencing, which matters more than the ordering itself:**
+
+> **🔴 Complete the §0 class (b) work BEFORE the maintenance window, then promote both nodes in one
+> sitting.** The tempting shortcut — promote talos01 now, do the \*arr → CNPG project over the
+> following week, then promote talos03 — **parks the cluster at 2 voters for that entire week**.
+> Quorum 2 of 2 tolerates zero failures, which is strictly *worse* than the single control plane you
+> have today. A week of that is a much larger risk than the promotion itself.
+
+If the \*arr → CNPG project is not something you want to take on right now, the honest alternative is
+to **defer the whole promotion** — stay at 1 CP until the prerequisite is done. Staying at one is
+safer than stopping at two. Do not drift into a 2-voter state by accident.
 
 ### 7. Taints and pod capacity — decide this before you start
 
@@ -737,6 +917,15 @@ one failure — the actual goal.
 - **TALOS-d5b5** — `maxPods` 110 → 200. Re-applied by Step 9 after every reset.
 - **Follow-up worth filing:** `forgejo/forgejo-data` has no backup coverage of any kind (§5). This is
   a standing gap independent of this runbook.
+- **Follow-up worth filing — the prerequisite project:** migrate `radarr`, `sonarr` and `prowlarr`
+  from local-path SQLite to a CNPG PostgreSQL cluster (§0b). Removes their node-binding, drops the
+  `nodeAffinity` pins, and gives them real backup coverage. **Blocks the talos03 promotion.**
+- **Follow-up worth filing:** audit the remaining 10 `media-experimental/*-config` volumes for SQLite
+  (§0c). Three are confirmed SQLite-backed and therefore not NFS-safe; the rest are unknown.
+- **Follow-up worth filing:** `migrate-arr.sh` / `migrate.sh` do not detect a destroyed local PV —
+  the surviving symlink on NFS makes the idempotency check pass, so the app silently starts on an
+  empty database instead of restoring from `.nfs-backup` (§5). A liveness check comparing symlink
+  target existence would turn a silent data loss into a loud failure.
 - **Follow-up worth filing:** Velero file-system backup skips all `local-path` (hostPath) PVs,
   including volumes explicitly named in `backup.velero.io/backup-volumes` (§3). It logs a warning per
   volume, but the backup still reports `Completed`, so the gap is invisible unless someone reads the
@@ -748,6 +937,9 @@ one failure — the actual goal.
 - [Talos — control plane](https://www.talos.dev/v1.13/talos-guides/configuration/control-plane/)
 - [Talos — etcd maintenance](https://www.talos.dev/v1.13/talos-guides/configuration/etcd-maintenance/)
 - [Talos — resetting a machine](https://www.talos.dev/v1.13/talos-guides/resetting-a-machine/)
+- [Sonarr — PostgreSQL setup](https://wiki.servarr.com/sonarr/postgres-setup) — env-var config, main + logs DB, pgloader migration
+- [Radarr — PostgreSQL setup](https://wiki.servarr.com/radarr/postgres-setup) — requires ≥ v4.1.0.6133
+- `applications/arr-stack/base/shared/db-migration-configmap.yaml` — the one-way SQLite→local migration analysed in §5
 - `docs/03-operations/etcd-backup-restore.md` — snapshot/restore procedure
 - `docs/05-runbooks/velero-restore.md` — Velero restore mechanics
 - `scripts/bootstrap-talos-patches.sh` — the three kubelet patches
