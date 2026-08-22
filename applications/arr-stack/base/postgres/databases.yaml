@@ -1,0 +1,43 @@
+---
+# Tenant databases on the shared arr-postgres cluster (TALOS-93cz).
+#
+# Declared as CNPG `Database` CRs rather than an init Job running psql — the
+# operator reconciles CREATE DATABASE for us and keeps declaring it true. Radarr
+# and Sonarr join by appending two more of these blocks, nothing else.
+#
+# NAMING is not ours to choose: Servarr hardcodes the defaults `<app>-main` and
+# `<app>-log` (Prowlarr ConfigFileProvider.PostgresMainDb / PostgresLogDb). We set
+# them explicitly in the Deployment env anyway, but keeping the documented names
+# means the wiki's instructions apply verbatim.
+#
+# databaseReclaimPolicy: retain — deleting the CR must never drop a database that
+# holds the app's entire state. Dropping is a deliberate, manual act.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: prowlarr-main
+  labels:
+    app.kubernetes.io/name: prowlarr
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  cluster:
+    name: arr-postgres
+  name: prowlarr-main
+  owner: arrstack
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: prowlarr-log
+  labels:
+    app.kubernetes.io/name: prowlarr
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  cluster:
+    name: arr-postgres
+  name: prowlarr-log
+  owner: arrstack
+  ensure: present
+  databaseReclaimPolicy: retain

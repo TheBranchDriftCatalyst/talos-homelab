@@ -1,0 +1,19 @@
+---
+# Daily base backup for arr-postgres → cnpg-backups (TALOS-93cz).
+# 03:05 — after linkwarden (02:45), staggered off the other clusters.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: arr-postgres-daily
+  labels:
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  schedule: "0 5 3 * * *" # 6-field: sec min hour dom mon dow
+  immediate: true
+  backupOwnerReference: self
+  # barman-cloud CNPG-I plugin (see objectstore.yaml) — in-tree method removed in CNPG 1.30
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: arr-postgres
