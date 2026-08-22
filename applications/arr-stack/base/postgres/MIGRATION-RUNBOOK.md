@@ -534,10 +534,38 @@ app is healthy, the SQLite PVC is gone, and the objective is still not met.
 
 **Sonarr's copy of this block is commented `# Pin to talos03 for local downloads
 storage`, which is simply wrong** — `synology-downloads-complete` and
-`-incomplete` are `synology-nfs`, network storage with no `nodeAffinity` on the
-PV. Do not read that comment as a reason to keep the pin. Verify the claim
-instead of trusting the comment; radarr's said "for local SQLite DB storage" and
-was equally obsolete.
+`-incomplete` are `synology-nfs`, exported from the Synology at
+`192.168.1.36:/volume1/downloads/{complete,incomplete}` with no `nodeAffinity`
+on either PV. Nothing about the downloads is local to talos03. Do not read that
+comment as a reason to keep the pin; radarr's said "for local SQLite DB storage"
+and was equally obsolete.
+
+The comment is really making a *co-location* argument — that the app has to sit
+where its downloads land, for hardlinks and atomic moves at import. That is a
+real concern in general, and the storage class alone does not settle it, so
+check the claim the comment is actually making rather than only the one it
+writes down. **The running cluster already disproves it**: Sonarr's only enabled
+download client, SABnzbd, has no affinity at all and was running on
+**talos02-gpu** — a different node from Sonarr — mounting the *same*
+`synology-downloads-complete` and `-incomplete` claims. qbittorrent was on
+talos06 doing likewise. Cross-node import has been working in production this
+whole time, so co-location was never what the pin was buying. Sonarr's one
+`RemotePathMappings` row (`sabnzbd:/downloads/complete/` ->
+`/data/downloads/complete/`) is a path translation between two containers'
+mount points, not a node constraint.
+
+So the check is: enumerate every volume, and *also* find where the download
+clients run and what they mount. If the client is already elsewhere on the same
+shared export, there is no co-location requirement left to defend:
+
+```sh
+kubectl -n media get pods -l app=sabnzbd -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName
+kubectl -n media get deploy sabnzbd -o jsonpath='{.spec.template.spec.affinity}'   # empty
+```
+
+Sonarr had nothing else node-specific either — no `nodeSelector`, `tolerations`,
+`hostNetwork`, `runtimeClassName`, `topologySpreadConstraints` or device mounts.
+Check those too before concluding the affinity block is the only pin left.
 
 ### Proving it
 
