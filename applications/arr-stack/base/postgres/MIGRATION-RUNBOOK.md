@@ -405,6 +405,14 @@ reason for the choice; node-independence and the "never `instances: 1` on
 
 ## Proving the app is actually un-node-bound
 
+> **ONLY AFTER THE UNBIND.** This test is meaningless — worse, actively
+> misleading — while the app still mounts its `<app>-db-local` PVC. That PV has
+> `nodeAffinity`, so cordoning its node leaves the pod **Pending**, which reads
+> exactly like a failed migration and is not one. An app sitting in the
+> validated-but-not-yet-unbound state is *supposed* to still be node-bound.
+> Check `kubectl -n media get deploy <app> -o yaml | grep db-local` returns
+> nothing before you run any of this.
+
 Removing the mount is not the proof; scheduling somewhere else is. The static
 check first — no PV backing the pod should carry `nodeAffinity`, and there
 should be no `nodeSelector` or `affinity`:
@@ -426,6 +434,25 @@ kubectl uncordon talos02-gpu
 
 Prowlarr moved from talos02-gpu to talos06 and served its full indexer list from
 there. Before this work it could only ever run on talos02-gpu.
+
+**Expect this to move the Postgres primary too.** CNPG will not leave a primary
+on an unschedulable node: cordoning talos02-gpu produced
+`SwitchingOver: Current primary is running on unschedulable node talos02-gpu,
+switching over from arr-postgres-1 to arr-postgres-2`. A clean switchover, not a
+failover, and the cluster stayed healthy — but in-flight connections drop for a
+moment, and every app on the shared cluster feels it, not just the one being
+tested. Do not run this during someone else's load.
+
+Which is the reason never to hardcode an instance name. **Resolve the primary
+every time**, in scripts and in ad-hoc `psql` alike:
+
+```sh
+PRIMARY=$(kubectl -n media get cluster arr-postgres -o jsonpath='{.status.currentPrimary}')
+kubectl -n media exec "$PRIMARY" -c postgres -- psql -d <app>-main -c '...'
+```
+
+A hardcoded `arr-postgres-1` works right up until it doesn't, and it fails
+mid-migration with a connection error that looks like a data problem.
 
 ## Rollback
 
