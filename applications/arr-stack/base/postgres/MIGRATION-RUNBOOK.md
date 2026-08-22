@@ -226,11 +226,28 @@ Two details worth keeping:
 - The `Id` columns are `serial`, not identity. A data-only load inserts explicit
   `Id`s without advancing the sequence, which would make the app's next INSERT
   fail on a duplicate key. **pgloader handles this** — look for
-  `Reset Sequences  0  19` in its summary and verify:
+  `Reset Sequences  0  19` in its summary and verify.
+
+  Do not verify with `pg_sequences`: it has no `is_called` column, and
+  `is_called` is the whole question. `last_value = max(Id)` with
+  `is_called = true` is the CORRECT state — the next `nextval()` returns
+  `max(Id) + 1`, so the equality is not an off-by-one. The failure mode is
+  `is_called = false`, where `nextval()` hands back `last_value` itself and
+  collides with the row already holding it. Read it off the sequence relations,
+  all of them at once:
 
 ```sql
-SELECT sequencename, last_value FROM pg_sequences WHERE schemaname='public';
+SELECT string_agg(
+         format('SELECT %L AS seq, last_value, is_called FROM %I', relname, relname),
+         ' UNION ALL ')
+FROM pg_class WHERE relkind = 'S' AND relnamespace = 'public'::regnamespace;
+-- then run what that prints
 ```
+
+  All 19 of Prowlarr's and all 40 of Radarr's came back `is_called = t` with
+  `last_value = max(Id)`. Prowlarr's `History` and `Commands` sequences have
+  since advanced past their post-load values under live use with no duplicate-key
+  errors, which is the empirical version of the same check.
 
 Radarr and Sonarr are 267 MB and 549 MB against Prowlarr's 8 MB, so budget
 minutes rather than the half-second this took. In the event Radarr's 496 288
