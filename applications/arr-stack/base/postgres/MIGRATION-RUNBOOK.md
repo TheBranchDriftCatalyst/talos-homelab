@@ -1,9 +1,10 @@
 # SQLite -> CNPG Postgres migration for the \*arr apps
 
-Proven end-to-end on **Prowlarr** (TALOS-93cz, 2026-08-22). Radarr (TALOS-l4uo)
-and Sonarr (TALOS-eaa4) follow the same steps against the same `arr-postgres`
-cluster. Read the whole thing before starting the next one — the deviations from
-the Servarr wiki are the parts that matter.
+Proven end-to-end on **Prowlarr** (TALOS-93cz), **Radarr** (TALOS-l4uo) and
+**Sonarr** (TALOS-eaa4), all on 2026-08-22, against the same `arr-postgres`
+cluster. The steps are the same for all three; the *delete list* was different
+for all three. Read the whole thing before starting another one — the deviations
+from the Servarr wiki are the parts that matter.
 
 ## TL;DR
 
@@ -48,10 +49,22 @@ And Radarr's, where the gap is wider still:
 | `/config/radarr.db` | symlink -> `/db-local/radarr.db` | |
 | `/config/radarr.db.nfs-backup` (**stale trap**) | 671 744 B | 2025-12-20 |
 
-Prove it before you load anything — the sizes differ by 46x for Prowlarr and
-398x for Radarr, the mtimes by eight months, so `stat` plus `sha256sum` settles
-it in one command. Then sanity-check the row counts against what the app's own
-API reports. Loading the trap file would have cost 5 393 movies and imported 0.
+And Sonarr's, which is the dangerous one:
+
+| file | size | mtime |
+| --- | ---: | --- |
+| `/db-local/sonarr.db` (**authoritative**) | 548 564 992 B | 2026-08-22 |
+| `/config/sonarr.db` | symlink -> `/db-local/sonarr.db` | |
+| `/config/sonarr.db.nfs-backup` (**stale trap**) | 475 467 776 B | 2025-12-20 |
+
+Prove it before you load anything. `stat` plus `sha256sum` settles it in one
+command — but **read the mtime, not the size.** The size ratio was 46x for
+Prowlarr and 398x for Radarr, either of which screams at you. Sonarr's trap file
+is 87% the size of the live one, which screams nothing at all: it is a real
+Sonarr database with a real library in it, eight months stale. A gap you can
+eyeball is luck, not a check. The mtime gap is eight months in all three cases.
+Then sanity-check the row counts against what the app's own API reports. Loading
+the trap file would have cost 5 393 movies on Radarr and imported 0.
 
 Check the app version at the same time; Postgres needs Radarr/Sonarr
 >= v4.1.0.6133. `GET /api/v3/system/status` reports `version` and, once the
@@ -173,6 +186,32 @@ two rows from the startup tasks the app fires the moment it comes up — the fre
 schema is only "empty" until the app touches it. Neither is in the wiki, neither
 was in Prowlarr's list, and Prowlarr's `AppSyncProfiles` does not exist here.
 
+And Sonarr (TALOS-eaa4), which is a library app like Radarr and has the same 38
+tables — and still needs a *different* list:
+
+| table | wiki list | exists in Sonarr | seeded rows |
+| --- | --- | --- | ---: |
+| `QualityProfiles` | yes | yes | 6 |
+| `QualityDefinitions` | yes | yes | 22 |
+| `DelayProfiles` | yes | yes | 1 |
+| `Metadata` | yes | yes | 5 |
+| `Config` | yes | yes | **1 — a real collision, not a no-op** |
+| `VersionInfo` | yes | yes | 211 |
+| `ScheduledTasks` | yes | yes | 11 |
+| `Commands` | **no** | yes | 2 |
+| `NamingConfig` | **no** | yes | **0 — do not delete, unlike Radarr** |
+| `AppSyncProfiles` | **no** | **no** | — |
+
+Eight statements, and **the two differences from Radarr both run the opposite
+way**, which is exactly why the union of the previous lists is not the answer:
+
+- `Config` seeds one row in Sonarr (`Id=1`, `Key=enablecompleteddownloadhandling`)
+  and genuinely collides. In Prowlarr and Radarr the same `DELETE` was a
+  documented no-op. Carrying "it's a no-op" forward would have left a live
+  primary-key collision in the load.
+- `NamingConfig` seeds one row in Radarr and **zero** in Sonarr, so here the
+  delete is the no-op. Two library apps, same table, opposite behaviour.
+
 So the delete list is different for every app, and the union of the previous two
 is still not the right answer for the next one. **Re-derive it. Every time.**
 `Commands` in particular grows while the app is running, so derive it in the same
@@ -217,8 +256,20 @@ spec:
         - {name: work, emptyDir: {}}
 ```
 
-Two details worth keeping:
+Three details worth keeping:
 
+- **The Job copies only `<app>.db`, and deliberately leaves `-wal` behind — so
+  check that the `-wal` is empty of anything that matters.** A clean shutdown is
+  supposed to checkpoint and remove it, but Sonarr's pod left a 123 KB
+  `sonarr.db-wal` on the volume after scaling to 0. Residue like that is
+  normally already-checkpointed, but "normally" is not verification, and a bare
+  `cp` of the main file would silently drop anything that was not. Prove it
+  costs one command: copy the main file somewhere scratch, count every table
+  against the WAL-inclusive counts, and diff. For Sonarr they were identical, so
+  the runbook's `cp` was safe. If they had differed, the fix is to load from the
+  `sqlite3 .backup` copy instead — it is a single self-contained file with no
+  WAL by construction — not to checkpoint the authoritative file, which is
+  supposed to stay read-only until the human validates.
 - It copies to an `emptyDir` and mounts the PV `readOnly`, so pgloader never
   holds a writable handle on the authoritative file. Opening a SQLite DB
   read-write can create `-shm`/`-wal` siblings; the rollback copy stays pristine
@@ -245,9 +296,29 @@ FROM pg_class WHERE relkind = 'S' AND relnamespace = 'public'::regnamespace;
 ```
 
   All 19 of Prowlarr's and all 40 of Radarr's came back `is_called = t` with
-  `last_value = max(Id)`. Prowlarr's `History` and `Commands` sequences have
-  since advanced past their post-load values under live use with no duplicate-key
-  errors, which is the empirical version of the same check.
+  `last_value = max(Id)`, as did all 37 of Sonarr's. Prowlarr's `History` and
+  `Commands` sequences have since advanced past their post-load values under live
+  use with no duplicate-key errors, which is the empirical version of the same
+  check.
+
+  **Do not check sequences by guessing the name `<Table>_Id_seq`.** Sonarr has 38
+  tables and 37 sequences, and the arithmetic lies about which table is missing
+  one. Three tables do not own a sequence *called after themselves*:
+
+  | table | its actual sequence |
+  | --- | --- |
+  | `Blocklist` | `Blacklist_Id_seq` — renamed table, sequence kept the old name |
+  | `ReleaseProfiles` | `Restrictions_Id_seq` — same |
+  | `VersionInfo` | none; it is keyed on `Version`, not an `Id` |
+
+  Only `VersionInfo` is genuinely sequence-less. A name-pattern check reports
+  three gaps and two of them are phantoms — while a real gap on `Blocklist`
+  (93 rows, `max(Id)` 870) would be a duplicate-key error on the next blocklist
+  write. pgloader resolves the owning sequence properly rather than guessing, and
+  set `Blacklist_Id_seq` to `last_value = 870, is_called = t`. Ask Postgres which
+  sequence owns the column — read `column_default` from
+  `information_schema.columns`, or use `pg_get_serial_sequence` — and enumerate
+  from `pg_class WHERE relkind = 'S'`, never from the table names.
 
 Radarr and Sonarr are 267 MB and 549 MB against Prowlarr's 8 MB, so budget
 minutes rather than the half-second this took. In the event Radarr's 496 288
@@ -327,6 +398,32 @@ the sequence relation itself:
 ```sql
 SELECT last_value, is_called FROM "Movies_Id_seq";
 ```
+
+### What Sonarr came out at
+
+549 MB, 38 tables, **166 321 rows, 0 errors, 12.3 s, 516.2 MB** — larger file
+than Radarr, a third of the rows. Sonarr's bulk is in wide rows, not many rows:
+`EpisodeFiles` is 25 191 rows and 452 MB of that 516 MB, all of it `MediaInfo`
+blobs. Do not use row count as a proxy for how long a load will take.
+
+Every one of the 38 tables matched exactly. The numbers worth naming are
+`Series` 845, `Episodes` 55 398, `EpisodeFiles` 25 191, `History` 36 780,
+`SceneMappings` 15 630, `MetadataFiles` 15 122, `DownloadHistory` 11 879,
+`Commands` 3 628, `QualityProfiles` 7, `Indexers` 1, `DownloadClients` 1,
+`RootFolders` 1. `Reset Sequences 0 37`, all `is_called = t`.
+
+Content digests matched on `Series`, `Episodes`, `EpisodeFiles`, `History`,
+`QualityProfiles`, `Indexers`, `DownloadClients` and `RootFolders`. Keep
+timestamp columns *out* of the digest — SQLite stores them as text and Postgres
+renders them its own way, so a `Date` or `Added` column fails the comparison on
+formatting and tells you nothing, the same trap as uncast booleans.
+
+`Commands` is a live counter, and that is useful: it read 3 628 in SQLite,
+loaded 3 628, then fell to 3 616 within a minute of the app coming up as Sonarr
+trimmed old rows, and climbed again from there. **A `Commands` count that moves
+after cutover is the cheapest proof that writes are landing in Postgres** — pair
+it with the SQLite file's mtime staying frozen, which is the proof they are not
+landing in the old database.
 
 ## Storage choice — reclaim policies are not uniform
 
