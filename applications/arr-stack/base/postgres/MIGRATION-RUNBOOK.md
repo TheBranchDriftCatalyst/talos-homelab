@@ -15,9 +15,12 @@ the Servarr wiki are the parts that matter.
 5. Delete the seeded rows that collide on primary key.
 6. Run pgloader with `--with "quote identifiers"`.
 7. Compare row counts per table, then scale up and resume Flux.
+8. **Get the migration validated by a human**, then unbind: remove the volume,
+   the volumeMount and the `<app>-db-local` PVC, and delete the PV.
 
-Rollback at any point is deleting the env block. The SQLite file is only ever
-read.
+Until step 8 the rollback is deleting the env block and the SQLite file is only
+ever read. Step 8 is the one that cannot be undone, and it is also the only step
+that actually un-node-binds the app.
 
 ---
 
@@ -108,6 +111,15 @@ blind.** Query what the fresh schema actually seeded:
 SELECT relname, n_live_tup FROM pg_stat_user_tables WHERE n_live_tup > 0;
 ```
 
+`n_live_tup` is a planner **estimate**, fine for "which tables did the app
+seed", never for verification. Everywhere a number has to be trusted, use exact
+counts — build the query rather than typing twenty of them:
+
+```sql
+SELECT string_agg(format('SELECT %L AS t, COUNT(*) AS n FROM %I', tablename, tablename), ' UNION ALL ')
+FROM pg_tables WHERE schemaname = 'public';
+```
+
 What that returned for Prowlarr:
 
 | table | wiki list | exists in Prowlarr | seeded rows |
@@ -192,7 +204,12 @@ inferred type before deferring to the existing column.
 
 `pgloader exited 0` is not verification. Three checks:
 
-1. **Row counts per table**, SQLite vs Postgres, against the frozen source file.
+1. **Exact row counts per table** (`COUNT(*)`, not `n_live_tup`), SQLite vs
+   Postgres, against the frozen source file. Read a number that looks
+   engineered rather than measured — Prowlarr's Postgres `History` landed on
+   16384, exactly 2^14 — and chase it to the source before accepting it. That
+   one was a coincidence plus five rows of live use since cutover, but a
+   power-of-two row count is precisely what a silent truncation looks like.
 2. **The app's own API**, which proves it is reading what was loaded —
    `/api/v1/indexer`, `/api/v1/applications`, `/api/v1/history?pageSize=1`
    (`totalRecords`).
@@ -247,49 +264,94 @@ reason for the choice; node-independence and the "never `instances: 1` on
   operational value, and replaying them would push churn into a WAL stream that
   is archived to MinIO and shared with Radarr and Sonarr. The app repopulates it.
 
-- **The old PVC stays BOUND and mounted, but at `/db-local-old` and
-  `readOnly`.** Keeping it bound and in use means nothing can garbage-collect
-  it and rollback is one revert away. Moving it off `/db-local` is what makes
-  the stale database unreachable: the app on Postgres never constructs a SQLite
-  path, but that is a guarantee from reading `ConnectionStringFactory`, not a
-  structural one. A different path plus `readOnly` makes divergence impossible
-  instead of merely unlikely.
+- **The old PVC was kept BOUND and mounted at `/db-local-old`, `readOnly`, until
+  a human validated the migration — then unbound entirely.** Two stages on
+  purpose. While it was mounted, rollback was one revert away and nothing could
+  garbage-collect it; moving it off `/db-local` and making it `readOnly` meant
+  the app could not reach the stale database even by accident. Do not skip
+  straight to the unbind.
 
-- **The `migrate-db` initContainer was removed, and this is the part that needs
+- **The `migrate-db` initContainer was removed at the remount, and this needed
   care.** `migrate-arr.sh` does not only copy — it also symlinks
   `/config/<app>.db` at `DB_LOCAL_PATH`. Keeping the container and repointing
   `DB_LOCAL_PATH` to `/db-local-old` would have had it rewrite that symlink to a
   path that *is* mounted, handing the app back a live read/write route to the
   stale database under exactly the name it looks for. Deleting the container is
-  what stops the symlink being recreated.
+  what stops the symlink being recreated. Nothing else consumed it: no backup
+  CronJob reads prowlarr's `*.db`, and the Velero annotation was narrowed to
+  `config`.
 
 - **The three orphaned `/config/<app>.db*` symlinks were renamed to
-  `*.sqlite-era`.** With `/db-local` no longer mounted they dangled, and a
-  dangling symlink where a database is expected boots fine and fails strangely
-  later. Renaming self-heals on revert: with the initContainer back,
-  `migrate-arr.sh` finds no symlink, finds `/db-local/<app>.db` present, and
-  recreates all three.
+  `*.sqlite-era`,** so nothing dangles where the app would look for a database.
+  They are left in place as a record; `<app>.db.nfs-backup`, the `.replaced-*`
+  files and the SQLite-era `logs.db` are untouched too.
+
+- **Deleting the PVC is a git operation, deleting the PV is not.** Removing the
+  PVC from `pvc.yaml` is what deletes it — the arr-stack Kustomization runs
+  `prune: true`. The PV (`rec-media-<app>-db-local`) is hand-written in
+  `recovery/pv-recovery-2026-05-09.yaml`, which no Kustomization applies, so it
+  has to go by hand after the PVC is pruned and it goes `Released`.
+
+- **The host directory is NOT reclaimed, and that is correct.** `Retain` means
+  the kubelet leaves the data alone, and because these PVs were hand-written
+  rather than provisioned, `local-path-provisioner` has no claim on them either.
+  After deleting the PV, `prowlarr.db` was still on talos02-gpu at
+  `/var/lib/rancher/local-path-provisioner/pvc-…_media_prowlarr-db-local`,
+  unreferenced by any Kubernetes object. Verify with
+  `talosctl -n <node-ip> list -l <path>` and either clean it deliberately or
+  leave it as a last cold copy — but know which you chose.
+
+- **The `-log` database was created but its data was not migrated.** Servarr
+  calls log migration optional. The logs are rolling debug output with no
+  operational value, and replaying them would push churn into a WAL stream that
+  is archived to MinIO and shared with Radarr and Sonarr. The app repopulates it.
 
 - `shared/db-migration-configmap.yaml` is untouched — Sonarr, Radarr, Plex and
-  Jellyfin still use it. So are `<app>.db.nfs-backup` and any `.replaced-*`
-  files.
+  Jellyfin still use it.
 
-- The volume keeps the name `db-local` so the Deployment's
-  `backup.velero.io/backup-volumes: "config,db-local"` annotation still matches.
+## Proving the app is actually un-node-bound
 
-**The app is still node-bound.** The local-path PV carries `nodeAffinity`, so
-while that volume is mounted the pod cannot schedule anywhere else. Moving the
-data was necessary but not sufficient; TALOS-6ck8 removes the mount once all
-three apps are proven, and EPIC 1 stays blocked until then.
+Removing the mount is not the proof; scheduling somewhere else is. The static
+check first — no PV backing the pod should carry `nodeAffinity`, and there
+should be no `nodeSelector` or `affinity`:
+
+```sh
+kubectl -n media get pvc <app>-config -o jsonpath='{.spec.volumeName}'
+kubectl get pv <that-pv> -o jsonpath='{.spec.nodeAffinity}'   # must be empty
+```
+
+Then make it move. Cordon the node it was pinned to, delete the pod, and watch
+where it lands — uncordon immediately after:
+
+```sh
+kubectl cordon talos02-gpu
+kubectl -n media delete pod -l app=<app>
+kubectl -n media get pods -l app=<app> -o wide   # expect a different node
+kubectl uncordon talos02-gpu
+```
+
+Prowlarr moved from talos02-gpu to talos06 and served its full indexer list from
+there. Before this work it could only ever run on talos02-gpu.
 
 ## Rollback
 
-`git revert` the cutover commits. That restores the `/db-local` mount, brings
-the initContainer back — which recreates the `/config/<app>.db` symlinks by
-itself — and drops the `<APP>__POSTGRES__*` env, so the app reopens the SQLite
-file this procedure only ever read. Verify with `sha256sum` against the value
-recorded at cutover; for Prowlarr that is
-`17784f0d98a7f35148bd89e1c34eb6a4e4bb802aab792d84d7f2c031f78f6be7`.
-
-Data written to Postgres after cutover does not come back. The SQLite file is a
+**Before the unbind**, rollback is cheap: `git revert` the cutover commits. That
+restores the `/db-local` mount, brings the initContainer back — which recreates
+the `/config/<app>.db` symlinks by itself — and drops the `<APP>__POSTGRES__*`
+env, so the app reopens the SQLite file the procedure only ever read. Verify
+with `sha256sum` against the value recorded at cutover; for Prowlarr that was
+`17784f0d98a7f35148bd89e1c34eb6a4e4bb802aab792d84d7f2c031f78f6be7`. Data written
+to Postgres after cutover does not come back — the SQLite file is a
 point-in-time rollback, not a live mirror.
+
+**After the unbind, that door is closed.** The PVC and PV are gone and reverting
+the commit gives the app an empty database. Recovery is one of:
+
+1. the cold `sqlite3 .backup` copies under `/config/pg-migration-backup/` on the
+   NFS config PVC — for Prowlarr, `prowlarr-20260822T155746Z-final.db`, the
+   exact 8 142 848-byte file pgloader read;
+2. the host directory left behind on the old node, if it has not been cleaned;
+3. a CNPG point-in-time restore of `arr-postgres` from the barman objectstore in
+   MinIO — the right answer for anything written after cutover.
+
+Take the unbind step only once a human has confirmed the data is correct.
