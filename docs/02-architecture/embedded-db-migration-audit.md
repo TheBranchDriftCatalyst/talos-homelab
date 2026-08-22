@@ -21,6 +21,10 @@ nodes we actually want to reset (`talos01`, `talos03`) is cheaper to solve some 
   would *not even remove the PVC*, and the feature is deprecated in the Cilium version we run.
 - The one genuinely clean Postgres candidate found (**Open WebUI**) is on `talos06`, which is
   not a promotion target. Deferred.
+- The clearest *operator* wins are four **hand-rolled Postgres** deployments already running
+  `pgvector` on `local-path` outside CNPG — but all four are on talos06, so none is urgent.
+- Two talos03 pins turn out to be already resolved or nearly so: **radarr is on CNPG already**
+  and no longer mounts its PVC, and sonarr's migration is running right now.
 
 **Recommendation on `media-experimental`: do not migrate, and do not move to NFS.** Back the
 12 config dirs up to MinIO/NFS, reset the node, restore. Details in [§4](#4-media-experimental--the-answer-is-tar-not-postgres-and-not-nfs).
@@ -86,11 +90,14 @@ Value = (un-pins a node we actually want to reset) × (low migration risk).
 | 3 | `cilium-spire/spire-data` | **talos03** | SQLite datastore **and** CA `keys.json` on one PVC | **Disable Cilium mutual auth** (deprecated, unused), or just let the PVC die | Trivial | Low — verified 0 policies use it |
 | 4 | `boomtime/boomtime-postgres-1` | **talos01** | CNPG **primary** | Switchover, then delete PVC+pod | Low | Low — but *must* switchover before reset |
 | 5 | 4 × Mimir PVs | **talos01** | S3-backed caches / WAL | Delete + let rebuild from MinIO | Trivial | Low — ≤1 head-compaction window of metrics |
-| 6 | `media/radarr`, `media/sonarr` db-local | **talos03** | SQLite → CNPG | Already tracked, in flight | — | — |
+| 6 | `media/radarr-db-local` | **talos03** | Orphan — radarr already on CNPG, PVC unmounted | **Delete the PVC.** Pin already resolved | Trivial | Very low |
+| 7 | `media/sonarr-db-local` | **talos03** | SQLite → CNPG | Already tracked, migration running now | — | — |
 | — | *Everything below is on a node we do not intend to promote — defer* | | | | | |
-| 7 | `catalyst-llm/open-webui` | talos06 | `webui.db` + `chroma.sqlite3` | **Genuine Postgres candidate** (see [§5](#5-real-postgres-candidates-that-are-not-on-a-target-node)) | Medium | Medium |
-| 8 | `crowdsec` LAPI | talos06 | SQLite → Postgres supported | Defer — CNPG already exists for crowdsec | Medium | Medium (re-enroll bouncers) |
-| 9 | `registry/zot` | talos06 | BoltDB `meta.db` + local OCI blobs | Wrong lever — see [§6](#6-leave-these-alone) | — | — |
+| 8 | `catalyst-llm/open-webui` | talos06 | `webui.db` + `chroma.sqlite3` | **Genuine Postgres candidate** (see [§5](#5-real-postgres-candidates-that-are-not-on-a-target-node)) | Medium | Medium |
+| 9 | 4 × hand-rolled Postgres | talos06 | Already Postgres, just not under the operator | Move to CNPG — lowest-risk class here (same engine), but no urgency | Low | Low |
+| 10 | `crowdsec` LAPI | talos06 | SQLite → Postgres supported | Defer — CNPG already exists for crowdsec | Medium | Medium (re-enroll bouncers) |
+| 11 | `catalyst-data` (4 PVCs, 45Gi) | talos06 | Namespace scaled to 0/0 | Nothing to migrate — confirm intent, then delete | Trivial | Low |
+| 12 | `registry/zot` | talos06 | BoltDB `meta.db` + local OCI blobs | Wrong lever — see [§6](#6-leave-these-alone) | — | — |
 
 ---
 
@@ -284,6 +291,62 @@ the only GPU node and promoting it is likely wrong regardless. **Recommend defer
   migrated and must be re-registered, which will break bouncers mid-flight if unplanned.
   ([docs](https://docs.crowdsec.net/docs/local_api/database/))
 
+### Hand-rolled Postgres that should be CNPG (all talos06)
+
+These are not embedded-DB migrations at all — they are already PostgreSQL, just running as
+plain Deployments/StatefulSets on `local-path` instead of under the operator. Moving them to
+CNPG is the lowest-risk class of change in this document (same engine, `pg_dump`/restore or a
+CNPG bootstrap), and it would buy backups and replication. None of them is on a target node, so
+none is urgent — but they are the clearest "should eventually be CNPG" list in the cluster.
+
+| Workload | Namespace | Image | PVC |
+| --- | --- | --- | --- |
+| `litellm-postgresql` | `catalyst-llm` | `pgvector/pgvector:pg16` (Deployment) | `litellm-postgresql` 100Gi |
+| `postgres-0` | `dungeon-library` | `pgvector/pgvector:pg16` (StatefulSet) | `postgres-storage-postgres-0` 5Gi |
+| `postgres-knowledge` | `catalyst-data` | `pgvector/pgvector:pg16` (Deployment) | `postgres-knowledge` 10Gi |
+| `dagster-postgres` | `catalyst-data` | (Deployment) | `dagster-postgres` 5Gi |
+
+Note all four use `pgvector` — any CNPG move must keep the `vector` extension available.
+
+### Sister-repo apps deployed via ArgoCD
+
+Eight ArgoCD Applications, checked against their source repos where available locally:
+
+| Application | Source | Storage findings |
+| --- | --- | --- |
+| `catalyst-llm` | `catalyst-llm.git` `k8s/talos00` | `catalyst-llm-config` + `catalyst-llm-data` **already on `fatboy-nfs-appdata`**. Remaining local-path: `open-webui-data`, `lobe-chat-data`, `litellm-postgresql` — all talos06 |
+| `catalyst-data` | `catalyst-data.git` `k8s` | `postgres-knowledge` and `neo4j` are hand-rolled Deployments on `local-path` (`pgvector/pgvector:pg16`, `neo4j:5-community`). **Entire namespace is scaled to 0/0** — see below |
+| `boomtime` | `boomtime.git` `k8s/overlays/talos00-knowledgedump` | Already CNPG (`boomtime-postgres` ×3, `books-postgres`). Only `persistence-boomtime-rabbit-server-0` (1Gi, talos06) is local-path — RabbitMQ, not a database |
+| `openscad` | `openscad.git` `k8s/overlays/talos00` | Already CNPG (`manyfold-postgres` on NFS); library PV is a separate 1Ti volume. **No action** |
+| `dungeon-library` | `dungeon-library.git` `k8s` | Hand-rolled Postgres StatefulSet — see table above |
+| `arr-stack-private` | `talos-private.git` | Private repo, not inspected — see [§9](#9-coverage--what-was-and-was-not-verified) |
+| `catalyst-ui` | `catalyst-ui.git` `k8s` | No persistent storage. **No action** |
+| `kasa-exporter` | `kasa-exporter.git` `k8s` | Repo not present locally; no local-path PVC in the cluster for it. **No action** |
+
+### Dormant workloads still holding PVCs
+
+`catalyst-data` has every Deployment scaled to **0/0** (`dagster-daemon`, `dagster-webserver`,
+`dagster-postgres`, `congress-data`, `catalyst-data-homepage`) yet still holds four bound
+local-path PVCs on talos06 totalling **45Gi** (`dagster-postgres` 5Gi, `model-cache` 20Gi,
+`neo4j-data` 10Gi, `postgres-knowledge` 10Gi). There is nothing to migrate here — if the
+namespace is genuinely retired, these are free deletions. **Confirm intent before deleting;**
+this audit did not establish whether the scale-down is deliberate or an outage.
+
+There are also several `Available`/`Released` PVs (`default/litellm-postgresql`,
+`default/postgres-knowledge`, `default/pterodactyl-*`, `media/prowlarr-db-local`) — leftovers
+from completed migrations and earlier experiments, safe to reap.
+
+### gaming/opensim — MySQL, not Postgres
+
+`gaming/opensim` holds real SQLite (`OpenSim.db`, `auth.db`, `griduser.db`,
+`userprofiles.db`) on `opensim-data` (20Gi, talos06). OpenSimulator **does** support an external
+database, but the supported external engine is **MySQL/MariaDB, not PostgreSQL** —
+`[DatabaseService] StorageProvider = "OpenSim.Data.MySQL.dll"` plus a `ConnectionString`, set in
+`StandaloneCommon.ini` / `GridCommon.ini`
+([OpenSimulator Database Settings](http://opensimulator.org/wiki/Database_Settings)). So it is
+**not** a CNPG candidate; it would require introducing a MySQL operator. On a non-target node,
+that is not worth it. Leave alone.
+
 ---
 
 ## 6. Leave these alone
@@ -301,6 +364,12 @@ A short list with reasons, so this does not get re-audited.
 | **`registry/zot`** | BoltDB `meta.db` regenerates from the OCI blobs on disk, so the metadata store is the wrong lever. What pins the node is `storage.rootDirectory`. If zot ever matters, point `rootDirectory` at MinIO — that is an object-storage change, not a DB migration. zot supports only DynamoDB/Redis as remote cache, **never Postgres** |
 | **`crowdsec-web-ui`** | Third-party dashboard (`better-sqlite3` only, no connection-string config). Mostly a re-syncable LAPI mirror; cheapest option is to treat it as expendable and re-enroll passkeys/TOTP |
 | **All `media` / `media-private` configs** | **Already on NFS** — see [§7](#7-already-un-pinned--no-action-needed) |
+| **`gaming/opensim`** | Supports external **MySQL**, not Postgres — would need a MySQL operator, and it is on talos06. Not a CNPG candidate |
+| **`gaming` Windows/VM volumes** | `windows-gameserver-disk` (150Gi), `windows-iso`, `virtio-drivers` — VM disks and ISOs, not databases. Nothing to migrate |
+| **`crossplane-demo` (4 PVs)** | Demo namespace — ClickHouse, RabbitMQ and a demo Postgres. Disposable by definition; delete rather than migrate |
+| **`boomtime` / `crossplane-demo` RabbitMQ** | Message broker state, not a database. Queues rebuild; no external-DB concept applies |
+| **`monitoring/loki-0`, `tempo`, ClickHouse/HyperDX** | Object-storage-backed or log/trace stores with their own retention. Not embedded-DB migration candidates |
+| **`catalyst-llm` config/data** | Already on `fatboy-nfs-appdata` |
 
 ---
 
@@ -354,6 +423,66 @@ keeps SQLite/LevelDB locking intact while still being detachable and re-attachab
 node. This cluster has NFS and local-path but no block CSI. Adding one would retire this entire
 category of problem permanently — worth considering as its own piece of work rather than
 continuing to solve it one app at a time.
+
+---
+
+## 9. Coverage — what was and was not verified
+
+### Method
+
+Started from `kubectl get pv` filtered to `storageClassName=local-path`, mapped every PV to its
+`claimRef` and its `nodeAffinity` node, then mapped each PVC to the pod that mounts it. That
+enumerates the pin set exhaustively — a workload with no local-path PVC cannot pin a node, so
+namespaces with no local-path claim were correctly out of scope. Each candidate was then probed
+in-pod (`du`, `find` for `*.db` / `*.sqlite*` / HSQLDB / LevelDB) to establish what is *actually*
+on the volume rather than what the chart implies. Upstream DB support was researched separately
+and is cited inline.
+
+### Verified against the live cluster (high confidence)
+
+- The complete local-path PV → node → PVC → pod map, all 5 nodes.
+- On-disk contents of 10 of 11 `media-experimental` apps, plus radarr, forgejo, pihole, spire,
+  frigate, scrypted, crowdsec-web-ui, open-webui, opensim.
+- Mimir's storage backends (`backend: s3` → MinIO) read from the live `mimir-config` ConfigMap.
+- SPIRE's `database_type = "sqlite3"` **and** `KeyManager "disk"` `keys_path` on the same PVC,
+  read from the live `spire-server` ConfigMap.
+- Cilium image `v1.20.0`; 6 CiliumNetworkPolicies, 0 CiliumClusterwideNetworkPolicies, **0**
+  referencing `authentication`.
+- radarr/sonarr/prowlarr `*__POSTGRES__*` env; which pods still mount a `db-local` PVC.
+- The CNPG (12) and MongoDBCommunity (2) inventories, and current CNPG primaries.
+
+### Evidenced upstream claims (docs URL / env vars / source cited inline)
+
+Every "supports external Postgres" verdict in §4, §5 and §6 carries a citation. The ones acted
+on in the priority list are: audiobookshelf, komga, kavita, storyteller, mylar3, chaptarr,
+booksonic-air, libation, librarr, livrarr, bindery, open-webui, crowdsec, frigate, scrypted,
+zot, SPIRE, opensim.
+
+### NOT verified — do not act on these as fact
+
+- **`bindery-config` on-disk contents.** The image is distroless with no shell, and confirming
+  it would have required creating a debug pod, which this read-only audit did not do. Upstream
+  evidence (`modernc.org/sqlite` as the only DB driver; README: *"no external database"*) says
+  SQLite, so it is treated as NFS-unsafe. Confidence: high on upstream, unverified on disk.
+- **`arr-stack-private`** (`talos-private.git`) was not inspected — private repo. Its workloads
+  live in `media-private`, whose PVCs are all already on NFS, so it is unlikely to hold a pin,
+  but that is an inference rather than a check.
+- **`openscad` and `kasa-exporter` repos** are not checked out locally; assessed from cluster
+  state only.
+- **Whether `catalyst-data`'s 0/0 scale-down is deliberate.** Affects whether 45Gi of PVCs are
+  free deletions or an outage waiting to be noticed.
+- **`media-experimental` restore has never been exercised.** The backup half is trivial and the
+  tooling exists; the restore half is untested.
+- **Exact sizes for `radarr-db-local` / `sonarr-db-local`** were not captured (the mount was
+  gone from radarr's current pod). Not decision-relevant — both are already tracked.
+
+### Explicitly out of scope
+
+Namespaces with no local-path PVC cannot pin a node and were not probed for embedded stores:
+`argo`, `argocd`, `backup`, `cert-manager`, `external-dns`, `external-secrets`, `flux-system`,
+`keda`, `kyverno`, `kubevirt`, `traefik`, `minio`, `observability`, `tdarr`, `homepage`,
+`immich`, `mail`, `honeypot`, `iocaine`, `infra-control`, and the operator namespaces. If one of
+these later grows a local-path PVC, re-check it.
 
 ---
 
