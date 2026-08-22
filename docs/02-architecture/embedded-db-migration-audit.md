@@ -3,6 +3,7 @@
 > Parent: [docs/02-architecture/README.md](README.md)
 > Audited 2026-08-22 against the live cluster. Read-only audit — nothing was migrated.
 > Driver: [TALOS-k62s](../05-runbooks/promote-workers-to-controlplane.md) (EPIC 0 — un-node-bind PVCs before any control-plane reset).
+> Coverage and confidence: see [§9](#9-coverage--what-was-and-was-not-verified).
 
 ## TL;DR
 
@@ -23,6 +24,15 @@ nodes we actually want to reset (`talos01`, `talos03`) is cheaper to solve some 
 
 **Recommendation on `media-experimental`: do not migrate, and do not move to NFS.** Back the
 12 config dirs up to MinIO/NFS, reset the node, restore. Details in [§4](#4-media-experimental--the-answer-is-tar-not-postgres-and-not-nfs).
+
+> **The NFS question is settled by this cluster's own history, not by theory.** The arr stack
+> already ran its SQLite on NFS, hit locking problems, and was migrated *off* NFS onto
+> `local-path` in December 2025. The migration tooling is still in the repo
+> (`applications/arr-stack/base/shared/db-migration-configmap.yaml`, header comment: *"Used by
+> media apps to avoid NFS locking issues with SQLite"*) and the artifacts are still on disk
+> (`/config/radarr.db.nfs-backup`, dated 2025-12-20). Moving 9 SQLite-holding
+> `media-experimental` configs onto NFS would re-run an experiment this cluster has already
+> failed. See [§4](#4-media-experimental--the-answer-is-tar-not-postgres-and-not-nfs).
 
 ---
 
@@ -54,8 +64,8 @@ blocks, alertmanager and ruler storage. These four PVs are caches and WAL, not d
 
 | PVC | Size (real) | Embedded store | Class | Action |
 | --- | --- | --- | --- | --- |
-| `media/radarr-db-local` | — | SQLite | **(b)** | Already tracked — [TALOS-l4uo], in flight |
-| `media/sonarr-db-local` | — | SQLite | **(b)** | Already tracked — [TALOS-eaa4], queued |
+| `media/radarr-db-local` | — | SQLite (no longer used) | **(b)** | **Already free.** radarr now runs on `arr-postgres-rw` and no pod mounts this PVC. Delete it — see [§2](#radarr-is-already-done-the-pvc-is-just-left-over) |
+| `media/sonarr-db-local` | — | SQLite | **(b)** | [TALOS-eaa4] — migration actively running (`sonarr-sqlite-to-pg` job present) |
 | `cilium-spire/spire-data-spire-server-0` | 1Gi | SQLite **+ `keys.json`** | **(b)** | **Not a CNPG job** — see [§3](#3-spire--not-a-cnpg-candidate-a-delete-candidate) |
 | 12 × `media-experimental/*-config` | 60Gi req / **~67 MB used** | mostly SQLite | **(b)** | **Backup/restore, not migration** — see [§4](#4-media-experimental--the-answer-is-tar-not-postgres-and-not-nfs) |
 | `pihole/etc-pihole-pihole-4` | 2Gi / 30 MB | SQLite | **(a)** | Disposable — nebula-sync |
@@ -104,6 +114,21 @@ separate `db-local` local-path PVC — `docs/03-operations/provisioning.md` reco
 ("SQLite databases CANNOT use NFS due to locking issues"). Applying that same pattern to
 `media-experimental` would still leave a local-path DB PVC behind, so it does **not** un-pin
 talos03. That is why the answer for those 12 is backup/restore instead.
+
+### radarr is already done; the PVC is just left over
+Verified live: radarr's Deployment carries `RADARR__POSTGRES__HOST=arr-postgres-rw` (plus
+`MAINDB=radarr-main`, `LOGDB=radarr-log`), its old SQLite symlinks in `/config` have been
+renamed to `*.sqlite-era`, and **no pod in the `media` namespace mounts `radarr-db-local`**
+(only jellyfin, plex and sonarr still mount a `db-local`). So one of talos03's pins is already
+resolved and merely needs the PVC deleted. Sonarr's migration is mid-flight — a
+`sonarr-sqlite-to-pg` job pod and a `sonarr-sqlite-tools` pod are both present and still
+holding `sonarr-db-local`.
+
+One nuance worth recording: radarr's `/config/logs.db` (36 MB) is still a **real file on NFS**,
+not a symlink. The back-out moved only the main DB to local-path. That has evidently been
+tolerated because `logs.db` is low-write and disposable — but it means "the arr stack keeps no
+SQLite on NFS" is not quite true, and nobody should cite it as precedent for moving a
+*primary* database there.
 
 ---
 
@@ -172,18 +197,50 @@ Only 3 of 11 support it, and only Libation has a first-party migration tool. Cru
 **migrating 3 of 12 PVCs does not un-pin talos03** — the node stays pinned until all 12 are
 gone. Partial migration buys nothing here, so the only approaches that work are uniform ones.
 
-### Why not NFS either
+### Why not NFS either — the direct answer to "can these just move to `fatboy-nfs-appdata`?"
 
-This is the part worth being explicit about, because "just put them on NFS" was the hoped-for
-answer. 9 of the 12 volumes hold live SQLite. Upstream is unusually direct about this:
+**No. Per app, NFS is unsafe for 9 of the 12 and safe for 2 (1 unverified).**
 
-- Komga docs: *"SQLite should not be used on network filesystems like CIFS or NFS. Always use a
-  local filesystem."*
-- Audiobookshelf's maintainer says the same about NAS/NFS storage.
+| PVC | Holds a `*.db` / SQLite file? | NFS safe? |
+| --- | --- | --- |
+| `audiobookshelf-config` | yes — `absdatabase.sqlite` | **No** |
+| `audiobookshelf-metadata` | no — 8 KB, no DB | **Yes** |
+| `komga-config` | yes — `database.sqlite` + `tasks.sqlite` + WAL/SHM | **No** |
+| `kavita-config` | yes — `kavita.db`, `cache.db` + WAL/SHM | **No** |
+| `storyteller-config` | yes — `storyteller.db` | **No** |
+| `mylar3-config` | yes — `mylar.db` | **No** |
+| `chaptarr-config` | yes — `chaptarr.db`, `cache.db`, `logs.db`, `staging.db` | **No** |
+| `booksonic-config` | yes — HSQLDB (`airsonic.script`) + Lucene index + `.lck` lockfile | **No** |
+| `librarr-config` | yes — `librarr.db` | **No** |
+| `livrarr-config` | yes — `livrarr.db` | **No** |
+| `bindery-config` | *unverified on-disk* (distroless, no shell) — upstream is SQLite-only | **Assume no** |
+| `libation-config` | no — 8 KB of JSON only | **Yes** |
 
-The runbook already flagged this risk after auditing 3 of 13; this audit completed the remaining
-apps and **confirms the concern applies to 9 of 12**, not 3. So NFS is only safe for
-`libation-config` (8 KB of JSON) and `audiobookshelf-metadata` (8 KB, no DB).
+Three independent lines of evidence, strongest first:
+
+1. **This cluster already ran this experiment and reverted it.**
+   `applications/arr-stack/base/shared/db-migration-configmap.yaml` exists specifically to move
+   arr SQLite databases *off* NFS onto local-path — its header reads *"Used by media apps to
+   avoid NFS locking issues with SQLite"*. `migrate-arr.sh` copies `<app>.db`, `-shm` and `-wal`
+   to `/db-local`, renames the originals to `.nfs-backup`, and symlinks them back. Verified on
+   disk: `/config/radarr.db.nfs-backup`, 671 KB, dated **2025-12-20**. This is not a
+   hypothetical risk — it is a regression this cluster has already paid for once.
+2. **Upstream says no.** Komga's docs: *"SQLite should not be used on network filesystems like
+   CIFS or NFS. Always use a local filesystem."* Audiobookshelf's maintainer says the same about
+   NAS/NFS. Open WebUI's docs go further and name Kubernetes network-backed PVCs explicitly as
+   unsupported.
+3. **The runbook's partial audit was directionally right but understated.** It had confirmed 3
+   of 13; completing the remaining apps raises that to **9 of 12**.
+
+So the storageClass change is not available as a shortcut here. It *is* available for
+`libation-config` and `audiobookshelf-metadata`, but moving 2 of 12 does not un-pin the node.
+
+### The backup tooling for the recommended path already exists
+
+The same ConfigMap ships a `backup.sh` that copies `*.db`, `*.db-shm` and `*.db-wal` from a
+local-path mount to an NFS backup directory with 5-day retention. That is exactly the mechanism
+this audit recommends for the 12 `media-experimental` configs — it needs pointing at new paths,
+not writing from scratch.
 
 ### What to do instead
 
