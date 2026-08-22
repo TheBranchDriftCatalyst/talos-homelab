@@ -28,6 +28,7 @@ This section documents the architectural patterns, design decisions, and infrast
 | [CONTROL-PLANE-MIGRATION.md](CONTROL-PLANE-MIGRATION.md)         | **PLANNING** - Moving the control plane to a new node                                                | Replacing or relocating `talos00`                       |
 | [crossplane-platformapp-plan.md](crossplane-platformapp-plan.md) | **PLAN** - `PlatformApp` Crossplane v2 API to collapse the per-app resource graph                    | Adding many similar services, or evaluating Crossplane  |
 | [dry-ssot-cleanup-inventory.md](dry-ssot-cleanup-inventory.md)   | Inventory of hand-written config that Kyverno / reflector / cluster-settings should derive (TALOS-vo0i) | Before hand-writing boilerplate that a policy can derive |
+| [embedded-db-migration-audit.md](embedded-db-migration-audit.md) | **AUDIT** - Which workloads' embedded SQLite/HSQLDB/LevelDB stores are worth moving to CNPG or the Mongo operator, to un-pin `local-path` PVCs before a node reset. Conclusion: almost none — see the leave-alone list first (TALOS-k62s) | Before proposing any embedded-DB → Postgres migration, or planning a node reset |
 | [vpn-egress-rotation-designs.md](vpn-egress-rotation-designs.md) | **SPIKE** - Inline gluetun sidecar vs. pre-warmed egress gateway pool                                 | Changing VPN egress or rotation behaviour               |
 
 ### Stale / superseded
