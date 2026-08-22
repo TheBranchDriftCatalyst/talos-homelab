@@ -40,7 +40,14 @@ spec:
     size: 20Gi # SQLite sources today: prowlarr 8 MB + radarr 267 MB + sonarr 549 MB.
                # Postgres inflates 2-4x and all three land here — 20Gi is sized for
                # the finished migration, not just prowlarr.
-    storageClass: fatboy-nfs-appdata # node-independent; NVMe block later (TALOS-1ujn)
+    # fatboy-nfs-appdata, and RECLAIM POLICY is a reason, not just node-independence.
+    # The class carries reclaimPolicy: Retain, and all three of this cluster's PVs
+    # were verified Retain after provisioning. `local-path` is the cluster DEFAULT
+    # class and its policy is Delete — the SQLite PVs this migration replaces are
+    # Retain only because each was hand-written that way after the 2026-05-09 UPS
+    # incident. A new PV there would inherit Delete, i.e. LESS protection than what
+    # it replaced, quietly. NVMe block later (TALOS-1ujn) — check its policy then.
+    storageClass: fatboy-nfs-appdata
   monitoring:
     enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
   bootstrap:

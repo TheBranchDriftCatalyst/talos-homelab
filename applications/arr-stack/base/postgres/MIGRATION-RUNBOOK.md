@@ -217,22 +217,79 @@ kubectl -n media scale deploy prowlarr --replicas=1
 flux resume kustomization arr-stack
 ```
 
+## Storage choice — reclaim policies are not uniform
+
+Worth knowing before picking a storage class for the CNPG cluster:
+
+| StorageClass | reclaimPolicy | binding | default |
+| --- | --- | --- | --- |
+| `local-path` | **Delete** | WaitForFirstConsumer | **yes** |
+| `fatboy-nfs-appdata` | Retain | Immediate | no |
+| `synology-nfs` | Retain | Immediate | no |
+
+The existing `rec-media-<app>-db-local` PVs are `Retain`, but that is
+hand-written on each PV, not inherited — someone protected them deliberately
+after the 2026-05-09 UPS incident (see their `recovery.catalyst/incident`
+label). **A new PV provisioned on `local-path` gets the class default, which is
+`Delete`.** Putting the Postgres cluster there would have created volumes with
+*less* protection than the SQLite PVs it was replacing, on the cluster's default
+class, quietly.
+
+`arr-postgres` is on `fatboy-nfs-appdata`, which carries `Retain`, and all three
+of its PVs were verified `Retain` after provisioning. That was the primary
+reason for the choice; node-independence and the "never `instances: 1` on
+`local-path`" rule point the same way.
+
 ## Decisions taken for Prowlarr
 
 - **The `-log` database was created but its data was not migrated.** Servarr
   calls log migration optional. The logs are rolling debug output with no
   operational value, and replaying them would push churn into a WAL stream that
   is archived to MinIO and shared with Radarr and Sonarr. The app repopulates it.
-- **`db-local` stays mounted.** It is the rollback and it is deliberately still
-  there. Note the consequence: the local-path PV still carries `nodeAffinity`,
-  so **the app is not actually un-node-bound until that volume and the
-  `migrate-db` initContainer are removed from the Deployment.** That cleanup is
-  TALOS-6ck8, after all three apps are migrated and proven.
+
+- **The old PVC stays BOUND and mounted, but at `/db-local-old` and
+  `readOnly`.** Keeping it bound and in use means nothing can garbage-collect
+  it and rollback is one revert away. Moving it off `/db-local` is what makes
+  the stale database unreachable: the app on Postgres never constructs a SQLite
+  path, but that is a guarantee from reading `ConnectionStringFactory`, not a
+  structural one. A different path plus `readOnly` makes divergence impossible
+  instead of merely unlikely.
+
+- **The `migrate-db` initContainer was removed, and this is the part that needs
+  care.** `migrate-arr.sh` does not only copy — it also symlinks
+  `/config/<app>.db` at `DB_LOCAL_PATH`. Keeping the container and repointing
+  `DB_LOCAL_PATH` to `/db-local-old` would have had it rewrite that symlink to a
+  path that *is* mounted, handing the app back a live read/write route to the
+  stale database under exactly the name it looks for. Deleting the container is
+  what stops the symlink being recreated.
+
+- **The three orphaned `/config/<app>.db*` symlinks were renamed to
+  `*.sqlite-era`.** With `/db-local` no longer mounted they dangled, and a
+  dangling symlink where a database is expected boots fine and fails strangely
+  later. Renaming self-heals on revert: with the initContainer back,
+  `migrate-arr.sh` finds no symlink, finds `/db-local/<app>.db` present, and
+  recreates all three.
+
+- `shared/db-migration-configmap.yaml` is untouched — Sonarr, Radarr, Plex and
+  Jellyfin still use it. So are `<app>.db.nfs-backup` and any `.replaced-*`
+  files.
+
+- The volume keeps the name `db-local` so the Deployment's
+  `backup.velero.io/backup-volumes: "config,db-local"` annotation still matches.
+
+**The app is still node-bound.** The local-path PV carries `nodeAffinity`, so
+while that volume is mounted the pod cannot schedule anywhere else. Moving the
+data was necessary but not sufficient; TALOS-6ck8 removes the mount once all
+three apps are proven, and EPIC 1 stays blocked until then.
 
 ## Rollback
 
-Delete the `<APP>__POSTGRES__*` env block and reconcile. The app reopens
-`/db-local/<app>.db`, which this procedure only ever read — verify with
-`sha256sum` against the value recorded at cutover. Data written to Postgres
-after cutover does not come back; the SQLite file is a point-in-time rollback,
-not a live mirror.
+`git revert` the cutover commits. That restores the `/db-local` mount, brings
+the initContainer back — which recreates the `/config/<app>.db` symlinks by
+itself — and drops the `<APP>__POSTGRES__*` env, so the app reopens the SQLite
+file this procedure only ever read. Verify with `sha256sum` against the value
+recorded at cutover; for Prowlarr that is
+`17784f0d98a7f35148bd89e1c34eb6a4e4bb802aab792d84d7f2c031f78f6be7`.
+
+Data written to Postgres after cutover does not come back. The SQLite file is a
+point-in-time rollback, not a live mirror.
