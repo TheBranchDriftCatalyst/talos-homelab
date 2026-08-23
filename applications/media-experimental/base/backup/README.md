@@ -16,6 +16,10 @@ archive set. So the answer is `tar`, not twelve Postgres migrations and not NFS.
 
 All three CronJobs ship **suspended**. They are manual procedures, not schedules.
 
+**Both halves have been run end to end against the live cluster (2026-08-23):
+backup `status=OK` 12/12, restore into throwaway PVCs `12 passed, 0 failed`.**
+Verbatim output in [Proof](#proof--this-path-has-been-exercised-not-just-designed).
+
 ## Why not NFS, and why not Postgres
 
 Settled by the audit; do not re-litigate.
@@ -79,6 +83,122 @@ Three independent layers, because an untested restore is not a backup:
 
 Only a fully clean backup run is written to `BACKUP_ROOT/LATEST`, so a partial
 run can never become what a restore silently picks up.
+
+## Proof — this path has been exercised, not just designed
+
+**Run on 2026-08-23 against the live cluster.** Both halves executed; the output
+below is verbatim, not the expected output.
+
+### Backup
+
+`config-backup`, run `20260823T010514Z`, `VERIFY=full` (each archive is
+re-extracted and re-checksummed before the app is scaled back up):
+
+```
+status=OK
+```
+
+12 of 12 volumes, 161 files, 62,998,382 bytes, 18.5 MB of archives, 76 seconds
+wall clock for the whole stack.
+
+### Restore
+
+`config-restore-verify` restored all 12 archives into **fresh throwaway PVCs** —
+generic ephemeral volumes named `<pod>-<volume>`, created empty when the pod
+starts and deleted with it. No live config PVC was written to at any point.
+
+```
+=== restore from run 20260823T010514Z (/backup/20260823T010514Z) ===
+=== FORCE=false QUIESCE=false ===
+--- audiobookshelf-config (deployment audiobookshelf)
+  owner/mode OK: 18 paths match capture -- uid:gid 0:0=18
+  PASS: 16 files, 446217 bytes, all sha256 verified
+--- audiobookshelf-metadata (deployment audiobookshelf)
+  owner/mode OK: 12 paths match capture -- uid:gid 0:0=12
+  PASS: 2 files, 13557 bytes, all sha256 verified
+--- bindery-config (deployment bindery)
+  owner/mode OK: 2 paths match capture -- uid:gid 0:0=1 1000:1000=1
+  PASS: 1 files, 614400 bytes, all sha256 verified
+--- booksonic-config (deployment booksonic)
+  owner/mode OK: 34 paths match capture -- uid:gid 0:0=3 1000:1000=31
+  PASS: 22 files, 473195 bytes, all sha256 verified
+--- chaptarr-config (deployment chaptarr)
+  owner/mode OK: 16 paths match capture -- uid:gid 1000:1000=16
+  PASS: 11 files, 5566119 bytes, all sha256 verified
+--- kavita-config (deployment kavita)
+  owner/mode OK: 64 paths match capture -- uid:gid 0:0=64
+  PASS: 49 files, 46940774 bytes, all sha256 verified
+--- komga-config (deployment komga)
+  owner/mode OK: 17 paths match capture -- uid:gid 0:0=17
+  PASS: 14 files, 653091 bytes, all sha256 verified
+--- libation-config (deployment libation)
+  owner/mode OK: 3 paths match capture -- uid:gid 0:0=3
+  PASS: 2 files, 750 bytes, all sha256 verified
+--- librarr-config (deployment librarr)
+  owner/mode OK: 3 paths match capture -- uid:gid 0:0=1 1000:1000=2
+  PASS: 2 files, 182495 bytes, all sha256 verified
+--- livrarr-config (deployment livrarr)
+  owner/mode OK: 28 paths match capture -- uid:gid 1000:1000=28
+  PASS: 26 files, 1874048 bytes, all sha256 verified
+--- mylar3-config (deployment mylar3)
+  owner/mode OK: 23 paths match capture -- uid:gid 1000:1000=23
+  PASS: 12 files, 557018 bytes, all sha256 verified
+--- storyteller-config (deployment storyteller)
+  owner/mode OK: 9 paths match capture -- uid:gid 1000:1000=9
+  PASS: 4 files, 5676718 bytes, all sha256 verified
+
+=== restore summary: 12 passed, 0 failed (run 20260823T010514Z) ===
+```
+
+Every file's sha256 matched, every file count matched, and every path's
+uid/gid/mode matched capture time.
+
+### Read the uid:gid histogram correctly
+
+**Not every volume should come back as 1000:1000.** kavita, komga,
+audiobookshelf and libation are root-owned *at the source* — those containers run
+as root — and this was confirmed straight from the live pods, independently of the
+archive:
+
+```
+kavita           66 0:0
+komga            21 0:0
+audiobookshelf   18 0:0
+storyteller       9 1000:1000
+mylar3           23 1000:1000
+chaptarr         20 1000:1000
+```
+
+(Live counts run slightly ahead of the snapshot because logs and WAL files were
+written after 01:05. That is drift in the source, not a restore discrepancy.)
+
+So the correct property is **restore reproduces captured ownership exactly**, over
+a source that is a genuine mix. The volumes that carry 1000:1000 —
+`chaptarr` 16/16, `livrarr` 28/28, `mylar3` 23/23, `storyteller` 9/9,
+`booksonic` 31/34, `librarr` 2/3, `bindery` 1/2 — are what proves the `CAP_CHOWN`
+fix holds. Before it, those all landed as `0:0`, and the apps run as PUID/PGID
+1000. A blanket "everything must be 1000:1000" assertion would be wrong here and
+would fail on four healthy volumes.
+
+### bindery-config is covered
+
+The embedded-DB audit recorded `bindery-config` as **unverified on disk** because
+the image is distroless and could not be `exec`-ed into. That caveat does not
+apply to this tooling: both jobs mount the PVC directly and never enter the app
+container. bindery is in the backup (one 600 KB `bindery.db`, SQLite confirmed)
+and in the restore above, PASS with checksum and ownership verified. It is fully
+covered.
+
+### What is deliberately not proven
+
+Restoring into the **real** config PVCs. That step writes live app data and only
+happens during the node reset itself (`TALOS-3gte`). It runs the same `restore.sh`
+as the verification above — that shared code path is the point — with `QUIESCE=true`
+and real PVCs instead of ephemeral ones.
+
+The scratch PVCs and Jobs from this run were deleted afterwards, so the durable
+evidence is this section rather than cluster state (Job history is TTL'd after
+24 h regardless). Re-run it any time with the two commands in the [TL;DR](#tldr).
 
 ## Layout on the backup volume
 
