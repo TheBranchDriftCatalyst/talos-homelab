@@ -273,7 +273,30 @@ will be walking to it.
 
 ### 2. The local-path problem
 
-`talosctl reset` wipes the EPHEMERAL partition. Talos mounts EPHEMERAL at `/var`.
+> ### 🔴 `talosctl reset` DEFAULTS TO WIPING THE BOOT DISK — this cost us talos01
+>
+> `--wipe-mode` defaults to **`all`**. That erases the system disk *including the Talos
+> install*, so the node does not return to maintenance mode — it comes up to a bare cursor
+> with no bootable device and needs recovery media and physical access.
+>
+> **Confirmed 2026-08-23:** talos01 was reset with `--reboot --graceful=true`, took the
+> default `--wipe-mode all`, and never came back. Recovery required writing a factory ISO to
+> USB and walking to the machine.
+>
+> **For a role change, wipe only what you need to:**
+>
+> ```sh
+> talosctl reset --nodes <ip> --system-labels-to-wipe EPHEMERAL,STATE --reboot
+> ```
+>
+> `EPHEMERAL` clears the data, `STATE` clears the config so the node boots into maintenance
+> mode ready for a new machine type — and the **boot partition survives**, so the node returns
+> on its own. No USB, no physical access.
+>
+> Keep recovery media staged anyway (`.output/isos/`), but with the correct flags it should be
+> insurance rather than the plan.
+
+`talosctl reset --system-labels-to-wipe EPHEMERAL,STATE` wipes the EPHEMERAL partition. Talos mounts EPHEMERAL at `/var`.
 `local-path-provisioner` provisions under `/var/lib/rancher/local-path-provisioner` (this is exactly
 why `docs/05-runbooks/talos-kubelet-localpath-patch.yaml` exists). Therefore:
 
