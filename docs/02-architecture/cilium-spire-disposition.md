@@ -18,6 +18,10 @@
 > `cilium-spire` at all.
 >
 > **Rollback is `git revert 9ce8e807` plus `flux reconcile kustomization cilium --with-source`.**
+>
+> **New to this feature?** [§0](#0-what-this-feature-actually-was) explains what Cilium mutual
+> authentication actually did, why it was *not* "mTLS between pods", and what upstream replaced
+> it with. The disposal evidence starts at §1.
 
 ## TL;DR
 
@@ -43,6 +47,218 @@ Every part of the case was verified against the live cluster, not taken on trust
 
 > **This is a recommendation, not an action.** It touches cluster-wide workload identity and is
 > the user's call. Nothing in this investigation modified the cluster.
+
+---
+
+## 0. What this feature actually was
+
+> Added 2026-08-22 after the disposal, because "we turned off mTLS" is a scarier sentence than
+> what actually happened. This section explains the feature itself. The evidence for the
+> decision starts at [§1](#1-is-mutual-authentication-enabled-and-is-anything-using-it).
+
+### The one-sentence version
+
+Cilium mutual authentication let a network policy say *"only accept this connection if the peer
+can cryptographically prove which workload it is."* It proved identity. **It never encrypted a
+single byte of pod traffic.**
+
+### Correcting the framing: it was not "mTLS between pods"
+
+The natural reading of "mutual TLS between pods" is the Istio/Linkerd one: a sidecar or proxy
+terminates the connection, does a TLS handshake, and the application's bytes travel *inside*
+that TLS session. That is not what Cilium did, and the difference is the whole reason removing
+it cost us nothing.
+
+In Cilium, the TLS handshake happened **out-of-band, between the two nodes' `cilium-agent`
+processes** — not between the pods, and not on the connection itself. The upstream docs say so
+directly:
+
+> "Cilium's mTLS-based Mutual Authentication support brings the mutual authentication handshake
+> out-of-band for regular connections."
+> — [docs.cilium.io, mutual authentication](https://docs.cilium.io/en/stable/network/servicemesh/mutual-authentication/mutual-authentication/)
+
+The design CFP is blunter still:
+
+> "we're not initially going to be using the TLS keypairs for actual encryption, just for mutual
+> authentication."
+>
+> "After the TLS handshake is complete, the session is torn down, as all the relevant
+> information has been \[acquired]."
+> — [CFP-22215](https://github.com/cilium/design-cfps/blob/main/cilium/CFP-22215-mutual-auth-for-service-mesh.md)
+
+The handshake ran, the two agents learned each other's verified identity, **the TLS session was
+then thrown away**, and the pods' actual packets went over the ordinary datapath exactly as they
+always had — in our case cleartext VXLAN. The TLS was a doorman checking ID at the entrance, not
+an armoured tunnel.
+
+Upstream is explicit that confidentiality is a *separate* product decision:
+
+> "For Cilium to meet most of the common requirements for service-to-service authentication and
+> encryption, users must enable encryption."
+
+...pointing at WireGuard or IPsec transparent encryption, which are unrelated features with
+their own switches. **We do not have either enabled** — see [below](#what-we-would-do-if-we-did-want-pod-to-pod-mtls).
+
+### How it worked mechanically
+
+1. A policy rule marked a connection as requiring authentication.
+2. The **first packet of a new flow was dropped** — not queued, not held. The datapath emitted a
+   drop event with reason "authentication required".
+3. That drop woke the control plane, which performed the mTLS handshake between the two agents
+   over **port 4250** (`authentication.mutual.port`).
+4. On success an entry was written to a per-node BPF **auth map** recording *(local identity,
+   remote identity, remote node ID, auth type, expiry)*, capped at ~512k relations per node.
+5. The client's normal **TCP retransmit** then sailed through. The cost of authentication was one
+   lost packet and one retry, amortised over the lifetime of the auth entry.
+6. Entries expired at "the shortest lifetime of the two certificates involved" and were swept by
+   a garbage collector every 5 minutes (`authentication.gcInterval`).
+
+Worth noticing: because enforcement was a **drop**, a broken SPIRE could only ever *deny* traffic
+that a policy had opted in. It could never silently *allow* traffic. With zero policies opted in
+(§1), the entire machine was spinning with no input.
+
+### Where SPIRE fitted, and why CiliumIdentity was not enough
+
+SPIFFE is a specification for workload identity; SPIRE is its reference implementation. Cilium
+did not write its own PKI — it shipped SPIRE and drove it.
+
+Cilium already has `CiliumIdentity`: a small integer derived from a pod's labels, used for every
+policy decision in the cluster. But a CiliumIdentity is an **assertion by the control plane, with
+no key material behind it**. It is perfectly good for deciding policy inside a cluster that
+already trusts its own agents; it is not something a peer can *verify cryptographically*.
+
+SPIRE supplied the missing half — attestation and X.509 keypairs — by minting one SPIFFE ID per
+Cilium identity:
+
+```
+spiffe://spiffe.cilium/identity/17947     <- one per CiliumIdentity, numeric ID preserved
+spiffe://spiffe.cilium/cilium-agent
+spiffe://spiffe.cilium/cilium-operator
+```
+
+The mapping was 1:1 with CiliumIdentity, which is exactly why the datastore was reconstructible
+rather than precious ([§4](#4-if-it-stays-what-does-losing-the-pv-cost)). The division of labour:
+
+| Component | Job |
+|---|---|
+| `spire-server` (1, StatefulSet + PV) | Root of trust / CA for the `spiffe.cilium` trust domain; held the registration entries |
+| `spire-agent` (5, one per node) | Attested itself to the server, then attested local workloads and served the Delegated Identity API |
+| `cilium-operator` | The registrar — created a SPIRE entry whenever it created a CiliumIdentity |
+| `cilium-agent` | Fetched keypairs on behalf of workloads; performed the handshake on port 4250 |
+
+So `cilium-operator` re-registering **258 identities in its first minute** on startup (§4) is not
+a curiosity — that is the system's normal, designed behaviour. The SPIRE datastore was a
+projection of state that lives in Kubernetes.
+
+### What a policy would have had to say
+
+None of the above did anything until a policy opted in. The syntax is an `authentication` block
+on an individual ingress or egress rule:
+
+```yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+spec:
+  endpointSelector:
+    matchLabels: {app: client}
+  egress:
+    - toEndpoints:
+        - matchLabels: {app: server}
+      authentication:
+        mode: required      # enum: disabled | required | test-always-fail
+```
+
+`mode` is a required field within the block, and the block itself is entirely optional — omit it
+and the rule behaves like any other L3/L4 rule. **Zero of our 6 CiliumNetworkPolicies contained
+it, and we have 0 CiliumClusterwideNetworkPolicies** (verified again 2026-08-22, post-removal:
+`kubectl get cnp,ccnp -A -o json | grep -c '"authentication"'` returns `0`).
+
+What it would have bought us, had we used it: defence against a **spoofed or compromised
+workload** — a pod that acquires the right labels (and therefore the right CiliumIdentity)
+without being the real workload, or an attacker splicing traffic into the overlay from a node
+that should not be able to. Label-based identity trusts whoever can set labels; SPIFFE identity
+requires a key. That is a genuine threat model — it is just not one we were defending, since no
+policy asked for it.
+
+### Deprecated in favour of what?
+
+There *is* a named successor, though with heavy caveats. Cilium's own 1.20 upgrade guide, under
+Action Required:
+
+> "Mutual Authentication (Beta) support is now deprecated and will be removed in a future version."
+>
+> "Consider using **Ztunnel Transparent Encryption (Beta)** instead, and please provide feedback
+> on whether this alternative feature addresses your use cases."
+> — [docs.cilium.io upgrade guide](https://docs.cilium.io/en/stable/operations/upgrade/)
+
+The reasoning is in [cilium#47132](https://github.com/cilium/cilium/issues/47132), opened by
+maintainer Nick Young on 2026-07-13 (formalised by
+[PR #47162](https://github.com/cilium/cilium/pull/47162), merged 2026-07-16). In his words:
+
+> "It's been in Beta since then, with an outstanding improvement issue, that hasn't seen any
+> movement from the community, while Cilium committers have had other priorities. That includes
+> the new zTunnel support... Given the lack of progress on Mutual Auth, and the presence and at
+> least equal stability of the new feature, as of Cilium v1.20, Cilium committers are marking the
+> Mutual Auth feature as deprecated, and will remove the feature in a later version, most likely
+> v1.21."
+>
+> "...this decision is not up for debate without clear proof of ongoing commitment to maintaining
+> this code (which requires _deep_ hooks inside Cilium), and addressing the _significant_ problems
+> with the current implementation."
+
+So: **abandoned for lack of maintainers, not superseded by something better.** Three honest
+qualifications on the "replacement":
+
+1. **It is not a like-for-like swap.** The deprecated feature was authentication-only. ztunnel is
+   an *encryption* feature that happens to include mTLS — a Rust per-node L4 proxy borrowed from
+   Istio's ambient mesh, speaking HBONE. It solves a superset of the problem by a completely
+   different mechanism.
+2. **The successor is also Beta,** and upstream published **no migration path**. "Consider using"
+   and "please provide feedback on whether this alternative addresses your use cases" is a request
+   for validation, not a migration guide.
+3. **ztunnel's identity story is currently weaker than the thing it replaces.** SPIRE integration
+   for ztunnel is still open work ([cilium#41900](https://github.com/cilium/cilium/issues/41900));
+   1.20 ships it with certificates from Kubernetes secrets and a custom CA key.
+
+### What we would do if we *did* want pod-to-pod mTLS
+
+**First, the thing this section exists to make unmissable: this cluster has no transparent
+encryption at all, and never did.** Verified live:
+
+```
+routing-mode = tunnel        tunnel-protocol = vxlan
+enable-ipsec, enable-wireguard, encryption-type = <all unset>
+```
+
+`values.yaml` carries a commented-out WireGuard block with the reason: *"WireGuard + VXLAN causes
+100% cross-node packet loss."* So cross-node pod traffic is **cleartext VXLAN over the LAN**
+(all 5 nodes sit on `192.168.1.0/24`; Nebula is only in play for a ClusterMesh that is configured
+for but not currently deployed).
+
+That was equally true on 2026-08-21, while SPIRE was running. **Removing mutual authentication
+did not weaken confidentiality by one bit, because it never provided any.** If anything the
+removal is a net gain in honesty: a running `cilium-spire` namespace invites the reading "we have
+mTLS, so pod traffic is protected," and that reading was never true here.
+
+If we ever want the real thing, in rough order of cost:
+
+| Option | What it gets | Real cost here |
+|---|---|---|
+| **WireGuard transparent encryption** | Confidentiality on the wire, node-to-node. The *actual* answer to "is our traffic protected". No identity story. | Blocked by the documented VXLAN interaction. Needs the native-routing experiment `values.yaml` already flags as "next". This is the highest value-per-effort option and the one to revisit. |
+| **IPsec transparent encryption** | Same, different mechanism; usually happier with tunnel mode than WireGuard. | Key management, and Cilium keeps shifting its IPsec recommendations. Worth a spike if WireGuard stays blocked. |
+| **ztunnel (Beta)** | Encryption *and* mTLS identity — the upstream-named successor. | Beta on Beta. **Blocks ClusterMesh** ("Cluster Mesh is not currently supported when ztunnel is enabled. Attempting to enable both will result in a validation error"), breaks L4 network policy except against HBONE port 15008, TCP-only, namespace-level enrollment only, requires iptables, and both ends of every flow must be enrolled. Given our 6 CNPs and a latent ClusterMesh intent, this is not a 2026 move. |
+| **Istio ambient / Linkerd** | Mature, full mTLS with workload identity, independent of Cilium's roadmap. | A second control plane to own. Serious operational weight for a 5-node homelab, and it duplicates policy enforcement we already do in Cilium. |
+| **App-layer TLS** | Ends the debate for the connections that actually matter. | Per-app work. For a handful of sensitive paths this is often cheaper than any of the above. |
+
+Note the symmetry that makes the ClusterMesh objection less damning than it looks: the deprecated
+feature could not do ClusterMesh either — *"There is no current option to build a single trust
+domain across multiple clusters for combining Cluster Mesh and Service Mesh."* Neither the old
+feature nor its successor works across a mesh. We gave up nothing on that axis.
+
+**Recommendation if the topic is reopened: pursue WireGuard, not identity.** The unencrypted
+overlay is a real (if low, on a trusted LAN) exposure that we can name precisely; workload
+identity spoofing is a threat we have no policies written to care about. Fix the one we actually
+have.
 
 ---
 
