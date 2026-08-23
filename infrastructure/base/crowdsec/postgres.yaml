@@ -20,6 +20,13 @@ kind: Cluster
 metadata:
   name: crowdsec-postgres
   namespace: crowdsec
+  annotations:
+    # Do NOT let Flux delete this object when its manifest leaves git. It is being converted
+    # to a CatalystCNPGAppDB composite (TALOS-npt4); the manifests are removed in the
+    # following commit and the composite adopts the live objects. Without this annotation,
+    # removing the manifest would prune the Cluster and CNPG would delete its PVCs — i.e.
+    # destroy the database.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # No reflector annotations here: the reflect-cnpg-app-secrets ClusterPolicy stamps the four
   # emberstack/reflector annotations onto EVERY CNPG <cluster>-app secret cluster-wide, so the
