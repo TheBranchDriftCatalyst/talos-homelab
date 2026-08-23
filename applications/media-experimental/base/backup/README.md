@@ -6,9 +6,9 @@
 
 ## TL;DR
 
-Twelve `local-path` config volumes pin this stack to one node. They hold **~67 MB
-of real data across 60 Gi of claims**, so the answer is `tar`, not twelve Postgres
-migrations and not NFS.
+Twelve `local-path` config volumes pin this stack to one node. Measured: **161
+files, 63 MB of real data across 60 Gi of claims**, compressing to an 18.5 MB
+archive set. So the answer is `tar`, not twelve Postgres migrations and not NFS.
 
 - **Back up:** `kubectl -n media-experimental create job --from=cronjob/config-backup config-backup-$(date +%s)`
 - **Prove it restores:** `kubectl -n media-experimental create job --from=cronjob/config-restore-verify config-restore-verify-$(date +%s)`
@@ -85,7 +85,7 @@ run can never become what a restore silently picks up.
 ```
 /backup/
   LATEST                       # run id of the newest CLEAN run
-  20260823T004500Z/
+  20260823T010514Z/
     MANIFEST.txt               # header + TSV: pvc, deployment, files, bytes, archive_bytes, archive_sha256
     komga-config.tar.gz
     komga-config.sha256        # sha256 of every file, relative paths
@@ -170,23 +170,92 @@ The volumes are only half the pin. Both halves have to move together.
    flux reconcile kustomization media-experimental --with-source
    ```
 
-## Measured sizes (2026-08-22, live)
+## Measured sizes (2026-08-23, captured by the backup job itself)
 
-| Volume | Deployment | Real size | Embedded store |
-| --- | --- | --- | --- |
-| `kavita-config` | kavita | 46.6 MB | `kavita.db` + `cache.db` + WAL/SHM |
-| `chaptarr-config` | chaptarr | 13.0 MB | `chaptarr.db` (+cache/logs/staging) + WAL/SHM |
-| `storyteller-config` | storyteller | 5.5 MB | `storyteller.db` + WAL |
-| `livrarr-config` | livrarr | 1.0 MB | `livrarr.db` (+ pre-migrate copies) |
-| `komga-config` | komga | 764 KB | `database.sqlite` + `tasks.sqlite` + WAL/SHM |
-| `booksonic-config` | booksonic | 576 KB | HSQLDB `airsonic.script` + Lucene index |
-| `mylar3-config` | mylar3 | 568 KB | `mylar.db` |
-| `audiobookshelf-config` | audiobookshelf | 456 KB | `absdatabase.sqlite` |
-| `librarr-config` | librarr | 180 KB | `librarr.db` |
-| `bindery-config` | bindery | 128 KB | SQLite (upstream is SQLite-only) |
-| `libation-config` | libation | 8 KB | none — JSON config only |
-| `audiobookshelf-metadata` | audiobookshelf | 8 KB | none |
-| **Total** | | **~68 MB** | across 60 Gi of provisioned claims |
+Bytes are the sum of regular-file sizes on the volume; archive is the gzipped tar.
+
+| Volume | Deployment | Files | Bytes | Archive | Embedded store |
+| --- | --- | ---: | ---: | ---: | --- |
+| `kavita-config` | kavita | 49 | 46,940,774 | 17.0 MB | `kavita.db` + `cache.db` + WAL/SHM |
+| `storyteller-config` | storyteller | 4 | 5,676,718 | 1.15 MB | `storyteller.db` + WAL |
+| `chaptarr-config` | chaptarr | 11 | 5,566,119 | 845 KB | `chaptarr.db` (+cache/logs/staging) + WAL/SHM |
+| `livrarr-config` | livrarr | 26 | 1,874,048 | 82 KB | `livrarr.db` + WAL/SHM (+ pre-migrate copies) |
+| `komga-config` | komga | 14 | 653,091 | 27 KB | `database.sqlite` + `tasks.sqlite` + WAL/SHM |
+| `bindery-config` | bindery | 1 | 614,400 | 25 KB | `bindery.db` — **SQLite, now confirmed on disk** |
+| `mylar3-config` | mylar3 | 12 | 557,018 | 47 KB | `mylar.db` + `.mylar_maintenance.db` |
+| `booksonic-config` | booksonic | 22 | 473,195 | 233 KB | HSQLDB `airsonic.script` + Lucene index + `.lck` |
+| `audiobookshelf-config` | audiobookshelf | 16 | 446,217 | 20 KB | `absdatabase.sqlite` |
+| `librarr-config` | librarr | 2 | 182,495 | 6 KB | `librarr.db` |
+| `audiobookshelf-metadata` | audiobookshelf | 2 | 13,557 | 2 KB | none — two daily log files |
+| `libation-config` | libation | 2 | 750 | 0.6 KB | none — `Settings.json` + `AccountsSettings.json` |
+| **Total** | | **161** | **62,998,382** (60 MiB) | **18.5 MB** | across 60 Gi of provisioned claims |
+
+`bindery-config` was recorded as *unverified* by the audit because the image is
+distroless with no shell. Mounting the PVC from this job settles it: one 600 KB
+`bindery.db`, SQLite, as upstream implied. It stays on `local-path`.
+
+A whole-stack backup takes about **76 seconds**, of which each app is down for a
+few seconds.
+
+## The other half of the pin — nodeAffinity audit
+
+Checked against the running cluster, not against the comments.
+
+**There is exactly one `nodeAffinity` block in this stack, not one per app.** It
+lives in [`../_instance/deployment.yaml`](../_instance/deployment.yaml) and all 11
+Deployments inherit it; every live Deployment carries a byte-identical copy. No
+app dir adds, overrides or removes it. (`bookorbit` is the exception — it
+deliberately does not inherit `_instance` at all, and has no pin.)
+
+Verified live for all 11: no `nodeSelector`, no tolerations, no `hostPath`, no
+`hostNetwork`/`hostPID`, no device resources. The config PVC is the only thing
+tying any of them to a node.
+
+| App | Store on its local-path config volume | Other pin? | Co-location claim? | Verdict |
+| --- | --- | --- | --- | --- |
+| kavita | `kavita.db`, `cache.db` + WAL/SHM | none | none | Justified — by the PVC alone |
+| komga | `database.sqlite`, `tasks.sqlite` + WAL/SHM | none | none | Justified — by the PVC alone |
+| libation | **none** — 750 bytes of JSON | none | none | **Not justified by data.** See below |
+| librarr | `librarr.db` | none | `QB_URL` → qbittorrent Service DNS | Justified — by the PVC alone |
+| livrarr | `livrarr.db` + WAL/SHM | none | none | Justified — by the PVC alone |
+| mylar3 | `mylar.db`, `.mylar_maintenance.db` | none | none | Justified — by the PVC alone |
+| storyteller | `storyteller.db` + WAL | none | none | Justified — by the PVC alone |
+
+`librarr` is the only workload in the stack that references another app, and the
+reference is a ClusterIP Service name (`qbittorrent.media.svc.cluster.local`) —
+qbittorrent itself runs on **talos06**, and sabnzbd on **talos02-gpu**. So the
+sonarr-style "must sit next to its download client" justification would be false
+here too. It is not claimed anywhere, but it is now checked.
+
+### What was actually wrong with it
+
+The affinity is not bogus — but it was **hard-coded to `talos03`**, which makes it
+an *independent* pin that outlives the volume. That is precisely the sonarr
+failure: the PVC was removed and the pod stayed welded to the node while every
+check reported green. Worse for a restore: fresh `local-path` PVCs are
+`WaitForFirstConsumer`, so after a reset the node is chosen by whichever pod binds
+first, and a stale hostname here would send the apps somewhere the data is not.
+
+It is now `${MEDIA_EXPERIMENTAL_NODE}` from `cluster-settings` (default `talos03`,
+so nothing rolled), read by both the Deployments and the restore Job.
+
+### Two volumes could leave local-path — and it is not worth doing
+
+`libation-config` (750 bytes of JSON; Libation's actual `LibationContext.db` is
+written to `/root/Libation/` **outside any volume**, which is a real data-loss bug
+tracked separately) and `audiobookshelf-metadata` (two daily log files) hold no
+database and would be safe on `fatboy-nfs-appdata`.
+
+Moving them is still the wrong call: the node stays pinned until **all 12** are
+gone, `audiobookshelf-config` next door is SQLite so that app cannot move anyway,
+and peeling one app out of the shared `_instance` skeleton to drop its affinity is
+the awkward surgery `bookorbit`'s comments already describe. 2 of 12 buys nothing.
+Recorded here so it is not rediscovered.
+
+### Known side effect of quiescing
+
+`livrarr` writes a `livrarr.db.pre-migrate-<timestamp>` copy on every start, so
+each backup run leaves one more of them on that volume. Harmless, but it grows.
 
 ---
 

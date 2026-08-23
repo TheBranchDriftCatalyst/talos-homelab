@@ -30,6 +30,12 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      # Manually created Jobs (kubectl create job --from=cronjob/...) are NOT
+      # covered by successfulJobsHistoryLimit, so without a TTL they and their
+      # pods live forever -- and for the verify job that means its generic
+      # ephemeral PVCs are never collected either, since they are owned by the
+      # pod. One day is long enough to read the logs.
+      ttlSecondsAfterFinished: 86400
       backoffLimit: 1          # a rerun re-quiesces every app; do not thrash the stack
       template:
         spec:
