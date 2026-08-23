@@ -40,6 +40,26 @@ spec:
     # Single core replica for homelab
     replicas: 1
 
+    # Do NOT seed the chart's default "activate everything" MRAP.
+    #
+    # The chart normally runs `core init --activation '*'`, which creates a MRAP
+    # named `default` that promotes every ManagedResourceDefinition a provider
+    # ships into a real CRD. With the upjet AWS family that is >1000 CRDs at
+    # ~3MiB of apiserver memory each — the direct cause of the 2026-08-15
+    # apiserver saturation and crossplane OOMKills.
+    #
+    # Emptying this renders the init container as plain `core init` (verified via
+    # `helm template`), so activation comes solely from the reviewable allowlist
+    # in infrastructure/base/aws-providers/activation-policy.yaml. MRAPs are
+    # additive, so leaving the catch-all here would silently override it.
+    #
+    # NOTE: `core init` only CREATES the default MRAP when absent; it never
+    # rewrites an existing one. The pre-existing `default` MRAP was therefore
+    # deleted once by hand when this landed. If crossplane is ever reinstalled
+    # from scratch this value keeps it from coming back.
+    provider:
+      defaultActivations: []
+
     # Sized for upjet provider CRD load, NOT for "a small homelab controller".
     #
     # Measured 2026-08-20 with ONLY provider-aws-s3 installed: crossplane-core was
