@@ -83,6 +83,13 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: guacamole-postgres
+  annotations:
+    # Do NOT let Flux delete this database when its manifest leaves git. It is being
+    # converted to a CatalystCNPGAppDB composite (TALOS-npt4); the manifest is removed
+    # from this repo in the following commit and the composite adopts the live object.
+    # Without this annotation, removing the manifest would prune the Cluster and CNPG
+    # would delete its PVCs — i.e. destroy the database.
+    kustomize.toolkit.fluxcd.io/prune: disabled
   labels:
     app.kubernetes.io/name: guacamole-postgres
     app.kubernetes.io/part-of: gaming
