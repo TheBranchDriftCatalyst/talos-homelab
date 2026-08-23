@@ -11,14 +11,51 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
-  wait: true
-  timeout: 15m
+  # wait: false is DELIBERATE -- do not "fix" this back to true.
+  #
+  # With wait: true, kustomize-controller ignores spec.healthChecks entirely and instead
+  # waits for EVERY applied object to reach kstatus Current. This stack contains
+  # VirtualMachine/windows-gameserver, which is intentionally runStrategy: Halted (it is
+  # started on demand, not on a schedule). A Halted VM reports Ready=False /
+  # reason=VMINotExists forever, which kstatus reads as InProgress, so the reconcile could
+  # only ever end one way:
+  #
+  #   health check failed after 15m0s: timeout waiting for:
+  #   [VirtualMachine/gaming/windows-gameserver status: 'InProgress']
+  #
+  # That burned the full timeout on every attempt and left the Kustomization permanently
+  # Ready=Unknown "Reconciliation in progress", pinned to a stale revision -- which delayed
+  # every subsequent commit to applications/gaming/ by a 15m failure cycle. It is NOT the
+  # opensim Deployment that was failing; opensim has been 1/1 throughout. The declared
+  # healthChecks below were simply never being evaluated.
+  #
+  # Job/guacamole-dbinit is a second reason not to wait here: it sets
+  # ttlSecondsAfterFinished, so it self-deletes and Flux recreates it on the next
+  # reconcile, meaning a freshly-created (InProgress) Job is routinely present.
+  #
+  # wait: false restores the explicit healthChecks list, which is the signal we actually
+  # want: the long-running Deployments must be Available. Nothing dependsOn this
+  # Kustomization, so its readiness gates no other reconcile.
+  wait: false
+  # Enough for image pulls on the Deployments below; no longer sized for VM boot.
+  timeout: 5m
   dependsOn:
     # KubeVirt CRDs must be installed before VirtualMachine dry-run on bootstrap.
     - name: kubevirt
-  # Gaming servers take longer to start (Wine, game downloads)
   healthChecks:
     - apiVersion: apps/v1
       kind: Deployment
       name: opensim
+      namespace: gaming
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: guacamole
+      namespace: gaming
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: guacd
+      namespace: gaming
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: windows-novnc
       namespace: gaming
