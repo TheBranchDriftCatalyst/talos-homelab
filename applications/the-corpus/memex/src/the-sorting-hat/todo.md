@@ -1,3 +1,4 @@
+# the-sorting-hat - notes
 
 You want a *governance pipeline* that starts permissive (“untrained network”) and graduates into a **trust-weighted, domain-admin model** as evidence accumulates. That’s doable, but you need to design it so you don’t just re-create mod capture, brigading, or “handler” dynamics.
 
@@ -222,27 +223,27 @@ Countermeasures:
 
 1. **Term limits + renewal**
 
-* admins expire unless re-certified (by metrics + diverse endorsement)
+   * admins expire unless re-certified (by metrics + diverse endorsement)
 
 2. **Split powers**
 
-* editorial vs enforcement vs policy changes are separate roles
+   * editorial vs enforcement vs policy changes are separate roles
 
 3. **Randomized audits**
 
-* periodic review of admin decisions by “auditor pool”
+   * periodic review of admin decisions by “auditor pool”
 
 4. **Transparency**
 
-* public dashboards:
+   * public dashboards:
 
-  * admin actions per week
-  * appeal overturn rates
-  * cluster bias indicators
+     * admin actions per week
+     * appeal overturn rates
+     * cluster bias indicators
 
 5. **Cross-domain constraints**
 
-* no one can be admin of too many domains (prevents empire-building)
+   * no one can be admin of too many domains (prevents empire-building)
 
 ---
 
@@ -290,7 +291,6 @@ If you want, I can turn this into:
 * a **Postgres schema** + policy-as-code DSL,
 * and a **Dagster asset graph** that computes the reputation vectors and cluster diversity signals from your claim/meme graph.
 
-
 1. They **externalize norms** (people see what behaviors map to what roles)
 2. They **defuse moral panic** by making enforcement *diegetic* and legible instead of sanctimonious
 
@@ -300,7 +300,7 @@ Think: **grim, funny, ritualized accountability** instead of vibes-based moderat
 
 ---
 
-# THE SETTING (DIEGETIC FRAME)
+## THE SETTING (DIEGETIC FRAME)
 
 The platform is framed as a **Contested Knowledge Imperium**.
 
@@ -315,7 +315,7 @@ Roles are **earned, assigned, revoked, and visible**.
 
 ---
 
-# TWO AXES: ROLE vs MEMETIC STATUS
+## TWO AXES: ROLE vs MEMETIC STATUS
 
 Important distinction:
 
@@ -327,11 +327,11 @@ That tension is intentional.
 
 ---
 
-# ROLE TIERS (CAPABILITIES)
+## ROLE TIERS (CAPABILITIES)
 
-## 🜏 THE LEDGER (GOVERNANCE / OVERSIGHT)
+### 🜏 THE LEDGER (GOVERNANCE / OVERSIGHT)
 
-### **Auditor**
+#### **Auditor**
 
 > *“Trust nothing. Verify everything.”*
 
@@ -358,7 +358,7 @@ Often labeled **“Cold Cognitor”** or **“Mechanist”**
 
 ---
 
-### **High Auditor**
+#### **High Auditor**
 
 > *“Even the judges are judged.”*
 
@@ -376,9 +376,9 @@ Often labeled **“Cold Cognitor”** or **“Mechanist”**
 
 ---
 
-## ⚔ THE INQUISITION (ANTI-ABUSE / ANTI-BLOC)
+### ⚔ THE INQUISITION (ANTI-ABUSE / ANTI-BLOC)
 
-### **Heretic Hunter**
+#### **Heretic Hunter**
 
 > *“Patterns don’t lie. People do.”*
 
@@ -407,7 +407,7 @@ Often labeled **“Cold Cognitor”** or **“Mechanist”**
 
 ---
 
-### **Witchfinder**
+#### **Witchfinder**
 
 > *“Follow the money. Follow the handlers.”*
 
@@ -426,9 +426,9 @@ A rarer, more surgical role.
 
 ---
 
-## 📜 THE SCRIBE ORDERS (EPISTEMIC HYGIENE)
+### 📜 THE SCRIBE ORDERS (EPISTEMIC HYGIENE)
 
-### **Lexicant**
+#### **Lexicant**
 
 > *“Name the thing correctly.”*
 
@@ -450,7 +450,7 @@ A rarer, more surgical role.
 
 ---
 
-### **Chronicler**
+#### **Chronicler**
 
 > *“Events remembered are power preserved.”*
 
@@ -466,9 +466,9 @@ A rarer, more surgical role.
 
 ---
 
-## 🧠 THE STRATEGIUM (META / SYSTEMS)
+### 🧠 THE STRATEGIUM (META / SYSTEMS)
 
-### **Cartographer**
+#### **Cartographer**
 
 > *“All wars are won on maps.”*
 
@@ -485,7 +485,7 @@ A rarer, more surgical role.
 
 ---
 
-### **Balancer**
+#### **Balancer**
 
 > *“No side may dominate the board.”*
 
@@ -499,23 +499,23 @@ This is the **Singapore lever** in diegetic form.
 
 ---
 
-## 👥 THE RANK AND FILE (EVERYONE)
+### 👥 THE RANK AND FILE (EVERYONE)
 
-### **Free Citizen**
+#### **Free Citizen**
 
 Default state. No shame. No halo.
 
-### **Initiate**
+#### **Initiate**
 
 New entrant. Rate-limited. Protected from dogpiles.
 
-### **Veteran**
+#### **Veteran**
 
 Sustained participation without strikes.
 
 ---
 
-# MEMETIC STATUS LABELS (BEHAVIORAL, NOT PUNITIVE)
+## MEMETIC STATUS LABELS (BEHAVIORAL, NOT PUNITIVE)
 
 These are **model-inferred**, probabilistic, visible with confidence bands.
 
@@ -529,56 +529,56 @@ They *do* affect:
 
 ---
 
-## ⚠ DANGEROUS BUT NOT EVIL
+### ⚠ DANGEROUS BUT NOT EVIL
 
-### **Zealot**
+#### **Zealot**
 
 * high certainty
 * low update rate
 * moralized language
 
-### **Partisan Engine**
+#### **Partisan Engine**
 
 * content strongly correlated with one cluster
 * little cross-cutting engagement
 
-### **Narrative Carrier**
+#### **Narrative Carrier**
 
 * spreads memes early
 * little original synthesis
 
 ---
 
-## ☠ HIGH RISK
+### ☠ HIGH RISK
 
-### **Bloc Enforcer**
+#### **Bloc Enforcer**
 
 * punishes dissenters
 * dogpile adjacency
 * conformity pressure
 
-### **Meme Smuggler**
+#### **Meme Smuggler**
 
 * reframes same claim across domains
 * avoids explicit assertion
 * high laundering score
 
-### **Handler-Adjacent**
+#### **Handler-Adjacent**
 
 * consistent alignment with external amplification
 * abnormal coordination patterns
 
 ---
 
-## 🧊 STABILIZERS (GOOD BUT WEIRD)
+### 🧊 STABILIZERS (GOOD BUT WEIRD)
 
-### **Cold Cognitor**
+#### **Cold Cognitor**
 
 * low emotional valence
 * high precision
 * low popularity
 
-### **Bridgewalker**
+#### **Bridgewalker**
 
 * moves between clusters
 * high exposure risk
@@ -586,9 +586,9 @@ They *do* affect:
 
 ---
 
-# GAMIFICATION MECHANICS (THE FUN PART)
+## GAMIFICATION MECHANICS (THE FUN PART)
 
-## 🎖 SIGILS & MARKS
+### 🎖 SIGILS & MARKS
 
 * **Sigil of Calibration** (rare, respected)
 * **Mark of the Watchful Eye** (Auditors)
@@ -598,9 +598,9 @@ Visible on profile, *expire unless maintained*.
 
 ---
 
-## ⚖ TRIALS & RITES
+### ⚖ TRIALS & RITES
 
-### **Trial of Claims**
+#### **Trial of Claims**
 
 A contested claim enters ritual review:
 
@@ -609,14 +609,14 @@ A contested claim enters ritual review:
 * Auditor certifies
 * Outcome logged forever
 
-### **Rite of Correction**
+#### **Rite of Correction**
 
 User publicly revises a claim.
 This **restores reputation faster** than silent deletion.
 
 ---
 
-## 🔥 SANCTIONS (NOT BANS)
+### 🔥 SANCTIONS (NOT BANS)
 
 * **Quarantine** (temporary visibility throttle)
 * **Oath of Silence** (cooldown from high-impact posting)
@@ -629,7 +629,7 @@ Permanent bans are rare and require:
 
 ---
 
-# WHY THIS WORKS (SYSTEMS LOGIC)
+## WHY THIS WORKS (SYSTEMS LOGIC)
 
 1. **Roleplay lowers defensiveness**
    People accept constraints better when framed as *world rules*.
@@ -648,7 +648,7 @@ Permanent bans are rare and require:
 
 ---
 
-# WHAT I’D BUILD FIRST (MVP GAMIFICATION)
+## WHAT I’D BUILD FIRST (MVP GAMIFICATION)
 
 1. **Memetic status labels (read-only)**
 2. **Lexicant + Chronicler roles** (low power, high value)

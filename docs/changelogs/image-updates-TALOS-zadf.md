@@ -75,7 +75,7 @@ Order: low-blast-radius first (P3 → P2 → P1), majors elevated to operator, k
 | soupbowl/opensimulator | 0.9.3.0→**0.9.3** | version-checker **mis-parse (downgrade)** | SKIP — current is newer |
 | rancher/local-path-provisioner | v0.0.28→v0.0.37 | in-repo, **storage provisioner** | ⏸ ELEVATED — see decision |
 
-## Changes
+## Changes — deferred batch
 _(none applied yet — awaiting operator direction on strategy + local-path-provisioner)_
 
 ### argocd-image-updater + python tool images (commit d129421) ✅

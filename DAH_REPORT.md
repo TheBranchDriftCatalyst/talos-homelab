@@ -367,7 +367,7 @@ Cross-namespace secret mirroring is handled by **emberstack reflector**
 4. Complete cluster-settings ConfigMap with all node IPs — open (still only 2 of 5 nodes)
 5. ~~Add PSA labels to namespaces~~ — ✅ done
 
-**Medium-term (1-2 days each):**
+   **Medium-term (1-2 days each):**
 
 6. Implement namespace-level CiliumNetworkPolicies (extend the honeypot/iocaine pattern) — open
 7. Set up GitHub Actions CI (yamllint, shellcheck, kustomize build, gitleaks) — open
@@ -375,7 +375,7 @@ Cross-namespace secret mirroring is handled by **emberstack reflector**
 9. ~~Deploy Kyverno for policy enforcement~~ — ✅ done, and already used for derivation as well as enforcement
 10. ~~Bake `mc` into etcd-backup image~~ — ✅ done (pinned `minio/mc` container, no runtime download)
 
-**Strategic (1+ weeks):**
+    **Strategic (1+ weeks):**
 
 11. Add second (and third) control plane node for HA — open, epic TALOS-arx
 12. Enforce Cilium mTLS on sensitive services — open (capability enabled, no policy opts in)

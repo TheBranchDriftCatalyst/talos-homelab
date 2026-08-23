@@ -48,8 +48,8 @@ and the linkwarden/zipline exemplars are captured in the exploration notes; repr
    Flux-applied file. The XR's Flux Kustomization uses `wait: false`.
 2. **Kyverno-disjoint fields (SSA correctness):** the emitted `IngressRoute` manifest **sets** the unique
    homepage annotations (`enabled/name/group/icon/description/widget.*`) and **OMITS** the three Kyverno-
-   derived keys (`gethomepage.dev/instance`, `siteMonitor`, `href` — from `homepage-instance-assignment`
-   + `homepage-annotation-derivation`). Under SSA, disjoint field managers ⇒ Kyverno's add-if-absent
+   derived keys (`gethomepage.dev/instance`, `siteMonitor`, `href` — from
+   `homepage-instance-assignment` + `homepage-annotation-derivation`). Under SSA, disjoint field managers ⇒ Kyverno's add-if-absent
    mutations are never reverted.
 3. **`${CLUSTER_DOMAIN}` doesn't reach composed manifests** (they bypass Flux postBuild) — the XR carries
    `clusterDomain` (it *is* a git manifest, so it's substituted), later a Crossplane `EnvironmentConfig`.

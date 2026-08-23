@@ -87,6 +87,8 @@ The script will:
 > cluster deliberately keeps `node-role.kubernetes.io/control-plane:NoSchedule`
 > on talos00 - workloads run on talos01/02/03/06.
 
+<!-- -->
+
 > **The node will stay `NotReady` until a CNI is installed.** The machine config
 > sets `cluster.network.cni.name: none`; Cilium is delivered by Flux
 > (`infrastructure/base/cilium/`). Bootstrap Flux next - see

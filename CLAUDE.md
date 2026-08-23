@@ -644,7 +644,6 @@ When adding applications:
 
 - CILIUM-h2b - Initial restructure with beads workflow section
 
-
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
 ## Beads Issue Tracker
 

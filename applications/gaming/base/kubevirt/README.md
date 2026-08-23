@@ -57,11 +57,13 @@ When you see "This PC can't run Windows 11":
 
 1. Press **Shift + F10** to open Command Prompt
 2. Run these commands:
-```cmd
-reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1
-reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1
-reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1
-```
+
+   ```cmd
+   reg add HKLM\SYSTEM\Setup\LabConfig /v BypassTPMCheck /t REG_DWORD /d 1
+   reg add HKLM\SYSTEM\Setup\LabConfig /v BypassSecureBootCheck /t REG_DWORD /d 1
+   reg add HKLM\SYSTEM\Setup\LabConfig /v BypassRAMCheck /t REG_DWORD /d 1
+   ```
+
 3. Close Command Prompt and click the back arrow, then proceed
 
 ### Load VirtIO Storage Driver

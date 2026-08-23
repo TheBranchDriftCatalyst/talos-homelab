@@ -114,14 +114,14 @@ THOUGHT: What you're doing and why
 7. Set done=True only after visiting pages and extracting real information
 8. If stuck, try alternative selectors or navigate elsewhere
 
-## WRONG (do NOT do this):
+## WRONG (do NOT do this)
 ```python
 from playwright.async_api import async_playwright  # WRONG!
 async with async_playwright() as p:  # WRONG!
     browser = await p.chromium.launch()  # WRONG!
 ```
 
-## CORRECT (do this):
+## CORRECT (do this)
 ```python
 # Just use the `page` object directly
 await page.goto("https://example.com")

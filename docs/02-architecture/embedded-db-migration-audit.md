@@ -283,8 +283,8 @@ Listed for completeness. All are on `talos06` or `talos02-gpu`; per TALOS-k62s, 
 the only GPU node and promoting it is likely wrong regardless. **Recommend deferring all of these.**
 
 - **`catalyst-llm/open-webui`** — the cleanest technical candidate in the cluster. Supports
-  `DATABASE_URL=postgresql://…`, and the Chroma vector store can move too via `VECTOR_DB=pgvector`
-  + `PGVECTOR_DB_URL`. Note it takes **three** changes to actually un-pin: app DB, vector DB, *and*
+  `DATABASE_URL=postgresql://…`, and the Chroma vector store can move too via
+  `VECTOR_DB=pgvector` + `PGVECTOR_DB_URL`. Note it takes **three** changes to actually un-pin: app DB, vector DB, *and*
   `STORAGE_PROVIDER=s3` for `uploads/` — doing only the first leaves the volume in place. No
   official SQLite→Postgres migration; vectors are re-indexable, uploads are not.
   ([docs](https://docs.openwebui.com/reference/env-configuration/))

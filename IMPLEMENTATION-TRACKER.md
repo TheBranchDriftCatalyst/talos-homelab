@@ -9,6 +9,8 @@
 > phases (Nov-Dec 2025). It is NOT a description of the current cluster.
 > Ongoing work is tracked in **beads** - see [beads-index.md](beads-index.md) or run `bd ready`.
 
+<!-- -->
+
 > **⚠️ Superseded since this snapshot** (verified against the live cluster 2026-08-22).
 > The largest deltas — individual sections carry more specific notes:
 >
@@ -48,8 +50,8 @@
 | Phase 6: Arr Stack + Media Servers | ✅ COMPLETE    | 100%     |
 | Phase 7: Finalize & Document       | 🚧 IN PROGRESS | 70%      |
 
-**Overall Progress**: 96% (24/25 major tasks) — _as of the 2025-12-12 snapshot; the phase
-plan below concluded and all later work moved to beads._
+**Overall Progress**: 96% (24/25 major tasks) — *as of the 2025-12-12 snapshot; the phase
+plan below concluded and all later work moved to beads.*
 
 ---
 
@@ -57,21 +59,21 @@ plan below concluded and all later work moved to beads._
 
 ### Core Infrastructure (DEPLOYED)
 
-- **OS**: Talos Linux v1.11.1 — _now v1.13.2_
-- **Kubernetes**: v1.34.0 — _now v1.34.10_
-- **GitOps (Infra)**: FluxCD v2.7.3 ✅ — _controllers now helm v1.6.3 / kustomize v1.9.4 /
-  notification v1.9.3 / source v1.9.4_
-- **GitOps (Apps)**: ArgoCD v2.x ✅ — _now v3.5.1 (argo-cd chart 10.4.0)_
-- **Ingress**: Traefik v3.5.3 ✅ — _now v3.7.11 (chart 41.3.0), DaemonSet + LB VIP
-  192.168.1.251_
+- **OS**: Talos Linux v1.11.1 — *now v1.13.2*
+- **Kubernetes**: v1.34.0 — *now v1.34.10*
+- **GitOps (Infra)**: FluxCD v2.7.3 ✅ — *controllers now helm v1.6.3 / kustomize v1.9.4 /
+  notification v1.9.3 / source v1.9.4*
+- **GitOps (Apps)**: ArgoCD v2.x ✅ — *now v3.5.1 (argo-cd chart 10.4.0)*
+- **Ingress**: Traefik v3.5.3 ✅ — *now v3.7.11 (chart 41.3.0), DaemonSet + LB VIP
+  192.168.1.251*
 - **Monitoring**: kube-prometheus-stack v65.8.1 ✅ — **REMOVED**; replaced by Mimir + Loki +
   Tempo + Alloy + ClickStack/HyperDX + Grafana Operator
 - **Observability**: OpenSearch + Graylog + Fluent Bit ✅ — **REMOVED**; the `observability`
   namespace is now empty
-- **Storage**: local-path (default) + NFS StorageClass ✅ — _the generic `nfs` class is gone;
-  now `local-path` (default), `fatboy-nfs-appdata`, `synology-nfs`_
-- **Secrets**: External Secrets Operator v0.11.0 + 1Password Connect ✅ — _ESO chart now
-  2.6.0; the `onepassword` ClusterSecretStore is still the backend_
+- **Storage**: local-path (default) + NFS StorageClass ✅ — *the generic `nfs` class is gone;
+  now `local-path` (default), `fatboy-nfs-appdata`, `synology-nfs`*
+- **Secrets**: External Secrets Operator v0.11.0 + 1Password Connect ✅ — *ESO chart now
+  2.6.0; the `onepassword` ClusterSecretStore is still the backend*
 
 ### Media Applications (DEPLOYED in media-dev)
 
@@ -84,10 +86,10 @@ plan below concluded and all later work moved to beads._
 - **TV Automation**: Sonarr ✅
 - **Movie Automation**: Radarr ✅
 - **Media Servers**: Plex ✅ + Jellyfin ✅
-- **Request Management**: Overseerr ✅ — _now Seerr (seerr.talos00)_
-- **Transcoding**: Tdarr ✅ — _now its own `tdarr` namespace_
-- **Dashboard**: Homepage ✅ — _now its own `homepage` namespace_
-- **Database**: PostgreSQL ✅ — _now CloudNativePG_
+- **Request Management**: Overseerr ✅ — *now Seerr (seerr.talos00)*
+- **Transcoding**: Tdarr ✅ — *now its own `tdarr` namespace*
+- **Dashboard**: Homepage ✅ — *now its own `homepage` namespace*
+- **Database**: PostgreSQL ✅ — *now CloudNativePG*
 
 ### Infrastructure Testing Tools (DEPLOYED)
 
@@ -103,8 +105,8 @@ plan below concluded and all later work moved to beads._
 ### Development Tools
 
 - **Tilt**: Configured (Tiltfile exists) - Not yet integrated into workflow
-- **Taskfile**: 90+ tasks across 4 domains (Talos, k8s, dev, infra) — _now ~147 tasks across
-  6 domains: talos, k8s, dev, infra, security, certs_
+- **Taskfile**: 90+ tasks across 4 domains (Talos, k8s, dev, infra) — *now ~147 tasks across
+  6 domains: talos, k8s, dev, infra, security, certs*
 
 ### Environments
 
@@ -233,7 +235,7 @@ commit at snapshot time and has advanced many times since)
 
 - **Namespace**: `argocd`
 - **URL**: argocd.talos00
-- **Status**: Running (7 pods) — _now ArgoCD v3.5.1 (chart 10.4.0), managing 8 Applications_
+- **Status**: Running (7 pods) — *now ArgoCD v3.5.1 (chart 10.4.0), managing 8 Applications*
 
 ---
 
@@ -522,9 +524,9 @@ Future structure will have:
 ### External Secrets Operator
 
 - **Namespace**: external-secrets
-- **Version**: 0.11.0 — _now chart 2.6.0_
-- **Backend**: 1Password Connect — _still the `onepassword` ClusterSecretStore_
-- **Status**: Running (3 pods + 1Password Connect) — _still 3 ESO pods + onepassword-connect_
+- **Version**: 0.11.0 — *now chart 2.6.0*
+- **Backend**: 1Password Connect — *still the `onepassword` ClusterSecretStore*
+- **Status**: Running (3 pods + 1Password Connect) — *still 3 ESO pods + onepassword-connect*
 - **Purpose**: Secure secret management from 1Password
 
 ### Infrastructure Testing (infra-testing namespace)
@@ -545,7 +547,7 @@ Future structure will have:
 
 - **Namespace**: registry
 - **URL**: registry.talos00
-- **Status**: Running — _the backing workload is now **zot**, not Nexus/`registry:2`_
+- **Status**: Running — *the backing workload is now **zot**, not Nexus/`registry:2`*
 - **Purpose**: Local Docker registry for custom images
 
 ### Bastion
@@ -573,7 +575,7 @@ media-prod, monitoring, observability, registry, traefik
 
 ### Pod Status (All namespaces)
 
-- **Total Running Pods**: 50+ — _now ~305 Running of ~335 total pods_
+- **Total Running Pods**: 50+ — *now ~305 Running of ~335 total pods*
 - **Failed/Pending**: None
 - **Cluster Health**: Healthy
 
@@ -655,25 +657,25 @@ deleted outright.
 
 ### Resolved Issues
 
-1. ✅ **Storage Class**: Using `local-path` as default, `nfs` available — _the `nfs` class was
-   replaced by `fatboy-nfs-appdata` / `synology-nfs`_
+1. ✅ **Storage Class**: Using `local-path` as default, `nfs` available — *the `nfs` class was
+   replaced by `fatboy-nfs-appdata` / `synology-nfs`*
 2. ✅ **Control Plane Scheduling**: Working (allows workloads on control plane) —
    **NO LONGER TRUE**: `talos00` now carries the
    `node-role.kubernetes.io/control-plane` taint and four dedicated workers exist
-3. ✅ **Graylog Deployment**: Fixed with Recreate strategy — _moot, Graylog removed_
-4. ✅ **Prometheus Storage**: Configured with proper retention — _moot, Prometheus replaced
-   by Mimir_
-5. ✅ **Fluent Bit**: Running but may have collection issues (1 pod) — _moot, Fluent Bit
-   replaced by Alloy_
+3. ✅ **Graylog Deployment**: Fixed with Recreate strategy — *moot, Graylog removed*
+4. ✅ **Prometheus Storage**: Configured with proper retention — *moot, Prometheus replaced
+   by Mimir*
+5. ✅ **Fluent Bit**: Running but may have collection issues (1 pod) — *moot, Fluent Bit
+   replaced by Alloy*
 
 ### Current Blockers
 
-None - all core infrastructure operational _(as of the 2025-12-12 snapshot)_
+None - all core infrastructure operational *(as of the 2025-12-12 snapshot)*
 
 ### Known Risks
 
-1. **Backup Important**: Etcd runs on control plane, need good backups — _Velero now covers
-   cluster state and CNPG owns Postgres backups_
+1. **Backup Important**: Etcd runs on control plane, need good backups — *Velero now covers
+   cluster state and CNPG owns Postgres backups*
 2. **Resource Usage**: Monitor with Grafana/Goldilocks
 3. **SQLite on NFS**: Apps using local-path for configs (correct approach)
 
