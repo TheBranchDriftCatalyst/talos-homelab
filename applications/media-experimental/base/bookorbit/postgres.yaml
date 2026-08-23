@@ -35,21 +35,34 @@
 # vector.so. Enabling the gate means a Talos machine-config change plus rolling
 # reboots of all five nodes, which is not a thing an app deploy gets to do.
 #
-# IT IS ALSO UNNECESSARY. pgvector is ALREADY BUNDLED in the `-system-` flavour of
-# the stock operand image. Verified on the live arr-postgres cluster, which runs
-# this exact tag:
+# IT IS ALSO UNNECESSARY. pgvector is ALREADY BUNDLED in the stock operand image.
+# First verified on the live arr-postgres cluster (which runs 18.4-system-trixie),
+# then re-verified directly against the `-standard-trixie` tag pinned below — the
+# same vector.so, byte-identical at 202664 bytes with the same Aug 2 build stamp:
 #   pg_available_extensions -> vector 0.8.6 (also pg_trgm 1.6, unaccent 1.1,
 #                              uuid-ossp 1.1)
 #   /usr/lib/postgresql/18/lib/vector.so                (202664 bytes)
 #   /usr/share/postgresql/18/extension/vector.control
 # So all four extensions this app needs are present with zero extra machinery.
 #
-# The pin is EXPLICIT rather than inherited because the flavour is the whole point
-# and the fleet is not consistent about it: arr-postgres runs 18.4-system-trixie
-# while openscad/manyfold-postgres runs plain 18.4. An unpinned cluster could land
-# on a flavour without pgvector and fail the baseline migration. PG 18 also matters
-# independently — BookOrbit documents "PostgreSQL 16 or newer" and upstream tests
-# on 18.
+# WHICH FLAVOUR, AND WHY NOT THE OTHER THREE. The tag suffix is not cosmetic —
+# the four PG18 flavours differ in ways that matter here (probed directly rather
+# than inferred; `-standard-` and `-minimal-` checked against the live registry):
+#   -standard-trixie  Debian 13. HAS pgvector. No bundled barman binaries. <- pinned
+#   -minimal-trixie   Debian 13. NO pgvector. Would fail the baseline migration.
+#   -system-trixie    = standard + bundled Barman Cloud binaries. DEPRECATED
+#                     upstream; slated for removal once in-core Barman Cloud is
+#                     phased out. This cluster already runs the barman-cloud CNPG-I
+#                     plugin (plugin-barman-cloud in ns databases), so the bundled
+#                     binaries are dead weight and the deprecation is pure downside.
+#   18.4 (unsuffixed) NOT a safe default: it is a legacy system-flavour tag still
+#                     on Debian 11 bullseye. (openscad/manyfold-postgres is sitting
+#                     on it — someone else's cluster, but worth knowing.)
+#
+# The pin is EXPLICIT rather than inherited because an unpinned cluster follows the
+# operator default, and `-minimal-` has no pgvector at all — that lands as a failed
+# baseline migration, not a graceful degradation. PG 18 also matters independently:
+# BookOrbit documents "PostgreSQL 16 or newer" and upstream tests on 18.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -60,7 +73,7 @@ metadata:
 spec:
   # velero.io/exclude-from-backup is stamped by the global Kyverno policy
   # (TALOS-7jxm) — CNPG owns its own backups, Velero stays off its pods/PVCs.
-  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-standard-trixie
   imagePullPolicy: IfNotPresent
   # INSTANCES: 1. This is a single-user experimental bake-off app, matching the
   # linkwarden/zipline rationale rather than arr-postgres's 3. One instance on NFS
