@@ -159,8 +159,10 @@ present + future CNPG cluster is covered with no extra config.
   `cnpg.io/cluster: <cluster>` label to that secret's manifest so it flows through **both** policies
   uniformly (mirror + dbgate-connection injection). Also add any keys the connection policy expects
   (a user-provided basic-auth secret has only `username`/`password`; add a `dbname` key so the
-  `DATABASE_<id>` `secretKeyRef` resolves). Example: `homeassistant-postgres-app` in
-  [`applications/home-automation/base/homeassistant/postgres.yaml`](../../applications/home-automation/base/homeassistant/postgres.yaml).
+  `DATABASE_<id>` `secretKeyRef` resolves). `homeassistant-postgres-app` was the example here
+  until it stopped pinning its password; it now lets CNPG generate the secret
+  ([`postgres-appdb.yaml`](../../applications/home-automation/base/homeassistant/postgres-appdb.yaml)),
+  which gets the `cnpg.io/cluster` label automatically, so no manifest in this repo hits this case.
 - **Aggregate N→1 with a single writer, never per-source mutation.** See §4: concurrent Kyverno
   mutations of one shared consumer lose writes (no retry) and don't survive a recreate. The
   CronJob/initContainer rebuilds the *complete* set atomically into one `envFrom` Secret.
