@@ -1,61 +1,46 @@
 ---
-# CloudNativePG database for Forgejo (TALOS-6nf). CNPG creates:
-#   - a 'forgejo' database owned by user 'forgejo'
-#   - Secret 'forgejo-postgres-app' (username/password/dbname/host/port/uri)
-#   - Service 'forgejo-postgres-rw' (read-write endpoint)
-# The Forgejo Deployment reads DB creds from that generated secret — no manual
-# password, no 1Password field. Auto-discovered by the cluster-wide
-# cnpg-clusters PodMonitor + shows up in the CloudNativePG Databases dashboard.
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
+# Forgejo's database, as a CatalystCNPGAppDB (TALOS-6nf).
+#
+# Replaces a hand-written Cluster plus a separate ObjectStore and ScheduledBackup (101 lines
+# across three files). The composite renders all three, plus the ExternalSecret that
+# materialises the MinIO backup credentials in this namespace — previously that depended on
+# the forgejo namespace being present on a central reflector allowlist, and a missing entry
+# there does not fail at apply time, it fails at 02:00 with 'secrets cnpg-minio-backup not
+# found'.
+#
+# This is the forge's only durable state: every repository, user, access token, OAuth
+# application and package-registry record lives here. Git object storage is separate, but a
+# lost database means none of it is reachable.
+#
+# CNPG still creates what it always did: a 'forgejo' database owned by 'forgejo', Secret
+# 'forgejo-postgres-app' (username/password/dbname/host/port/uri) that the Forgejo Deployment
+# reads its credentials from, and Service 'forgejo-postgres-rw'. The reflect-cnpg-app-secrets
+# Kyverno policy mirrors that app secret into the databases namespace for dbgate.
+apiVersion: db.catalyst.io/v1alpha1
+kind: CatalystCNPGAppDB
 metadata:
   name: forgejo-postgres
   namespace: forgejo
-  annotations:
-    # Do NOT let Flux delete this object when its manifest leaves git. It is being converted
-    # to a CatalystCNPGAppDB composite (TALOS-npt4); the manifests are removed in the
-    # following commit and the composite adopts the live objects. Without this annotation,
-    # removing the manifest would prune the Cluster and CNPG would delete its PVCs — i.e.
-    # destroy the forge's database.
-    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
-  # (secret reflection to `databases` for dbgate now handled globally by the
-  # reflect-cnpg-app-secrets Kyverno policy — no per-cluster inheritedMetadata needed. TALOS-7jxm)
-  inheritedMetadata:
-    labels:
-      # CNPG owns its own backups (barman WAL + ScheduledBackup) — keep Velero off its pods/PVCs
-      velero.io/exclude-from-backup: "true"
-  instances: 3 # HA: streaming-replicated across nodes; survives a node loss (TALOS-hx77)
-  imagePullPolicy: IfNotPresent
-  storage:
-    size: 10Gi
-    # local-path = node NVMe. Every Postgres commit is a WAL fsync, and on NFS that is
-    # a network round trip to the Synology. Durability here comes from streaming
-    # replication plus barman backups, not from the filesystem — which is CNPG's own
-    # guidance.
-    #
-    # Safe at instances: 3 and ONLY at 3. local-path is WaitForFirstConsumer so each PV
-    # pins to the node that first mounts it; a single instance would be stranded by a
-    # node loss. Three instances with CNPG's default anti-affinity means three copies on
-    # three nodes and a lost node becomes a promotion. Never drop to 1 while on
-    # local-path — move back to NFS first if it ever must run single. (TALOS-npt4)
-    storageClass: local-path
-  monitoring:
-    enablePodMonitor: false  # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
-  # Object-store backups → MinIO (TALOS-a1hk). Config lives in the ObjectStore
-  # CR (objectstore.yaml) — migrated off the in-tree barmanObjectStore (removed
-  # in CNPG 1.30) to the barman-cloud CNPG-I plugin. Same bucket/prefix/creds;
-  # base backups: scheduledbackup.yaml.
-  plugins:
-    - name: barman-cloud.cloudnative-pg.io
-      isWALArchiver: true
-      parameters:
-        barmanObjectName: forgejo-postgres
-  bootstrap:
-    initdb:
-      database: forgejo
-      owner: forgejo
+  database: forgejo
+  owner: forgejo
+  # Three replicas, and three is the floor while this is on local-path: local-path is
+  # WaitForFirstConsumer, so each PV pins to the node that first mounted it and a single
+  # instance would be stranded by a node loss. Three copies on three nodes makes a lost node
+  # a promotion instead of an outage. (TALOS-npt4 / TALOS-hx77)
+  instances: 3
+  storageSize: 10Gi
+  # The node's NVMe. Every Postgres commit is a WAL fsync, and on NFS that is a network round
+  # trip to the Synology; durability here comes from streaming replication plus barman
+  # backups, not from the filesystem underneath.
+  storageClass: local-path
+  # Pinned rather than inherited so an operator upgrade cannot walk this cluster onto a new
+  # Postgres major on its own — that is a decision, not a default.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.0
+  # 02:00 daily, unchanged — forgejo is the first slot in the deliberately staggered fleet
+  # (authentik 02:15, crowdsec 02:30, linkwarden 02:45, ... guacamole 04:15) so fourteen
+  # databases do not all hit MinIO in the same minute. 6-field cron: sec min hour dom mon dow.
+  backupSchedule: "0 0 2 * * *"
   resources:
-    requests:
-      cpu: 50m
-      memory: 256Mi
+    requestsCpu: 50m
+    requestsMemory: 256Mi
