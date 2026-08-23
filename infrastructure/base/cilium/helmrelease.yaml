@@ -85,135 +85,21 @@ spec:
   test:
     enable: false
 
-  # The Cilium chart creates the cilium-spire namespace WITHOUT
-  # pod-security.kubernetes.io labels. The cluster's baseline PSA enforce
-  # then blocks SPIRE pods (hostNetwork, hostPID, hostPath are required for
-  # SPIRE agent's UDS). 2026-05-30: first Flux adoption of Cilium tripped
-  # this — SPIRE pods 0/desired for 15 min, helm timed out waiting.
+  # postRenderers: REMOVED 2026-08-22 (TALOS-1d4o).
   #
-  # Strategic-merge patch below adds the PSA labels to the chart-rendered
-  # namespace. (Prior JSON patch with `op: add` failed silently for weeks:
-  # the rendered ns has no `metadata.labels` at all, so `add` at
-  # `/metadata/labels/<key>` fails with "doc is missing path" and helm-
-  # controller aborts the entire postRender. The standalone
-  # spire-namespace.yaml in kustomization.yaml has been quietly doing all
-  # the work; SMP restores the belt-and-suspenders intent.)
-  postRenderers:
-    - kustomize:
-        patches:
-          - target:
-              kind: Namespace
-              name: cilium-spire
-            patch: |
-              apiVersion: v1
-              kind: Namespace
-              metadata:
-                name: cilium-spire
-                labels:
-                  pod-security.kubernetes.io/enforce: privileged
-                  pod-security.kubernetes.io/warn: privileged
-          # Raise spire-agent's projected SA token TTL from Cilium's hardcoded
-          # 600s → 3600s. The 10-min TTL is too short for kubelet's TokenManager
-          # to reliably refresh once a pod enters CrashLoopBackOff: the refresh
-          # bookkeeping wedges and every subsequent container-restart reads an
-          # already-expired token from tmpfs → apiserver rejects via TokenReview
-          # → the pod loops forever. Observed on talos01 (2500+ restarts) while
-          # the same DaemonSet on the other 4 nodes stayed healthy.
-          # The `op: test` guard fails loudly if a Cilium chart bump reorders
-          # the volumes array.
-          - target:
-              kind: DaemonSet
-              name: spire-agent
-              namespace: cilium-spire
-            patch: |
-              - op: test
-                path: /spec/template/spec/volumes/3/projected/sources/0/serviceAccountToken/audience
-                value: spire-server
-              - op: replace
-                path: /spec/template/spec/volumes/3/projected/sources/0/serviceAccountToken/expirationSeconds
-                value: 3600
-          # DURABLE FIX for the recurring spire-agent CrashLoop (TALOS-spire-keymgr).
-          # Root cause (Fable-5 analysis + spiffe/spire#4341): agent uses KeyManager
-          # "memory" → keys aren't persisted → it MUST re-attest via k8s_psat on every
-          # container restart, reading the projected SA token; and it EXITS (no retry)
-          # on attestation failure. So a single crash that outlasts one token lifetime
-          # → CrashLoopBackOff → kubelet stops refreshing the token for a dying pod →
-          # every restart reads an expired token → self-perpetuating wedge. The 3600s
-          # TTL above only lowers the odds; it cannot break the loop.
-          # FIX: KeyManager "disk" on an emptyDir data_dir. emptyDir survives CONTAINER
-          # restarts (the crashloop case; cleared only on pod delete), so the agent
-          # renews its SVID via the server instead of re-attesting — it never touches
-          # the projected token during a loop. Cold starts (pod reschedule) still
-          # re-attest once with the fresh 3600s token. Matches the server (KeyManager
-          # "disk" on a PVC), which is why the server never wedges. Fully reversible.
-          # (a) rewrite agent.conf: data_dir under the new volume + KeyManager disk.
-          #     Byte-identical to the chart-rendered conf except those two lines.
-          - target:
-              kind: ConfigMap
-              name: spire-agent
-              namespace: cilium-spire
-            patch: |
-              apiVersion: v1
-              kind: ConfigMap
-              metadata:
-                name: spire-agent
-                namespace: cilium-spire
-              data:
-                agent.conf: |
-                  agent {
-                    data_dir = "/run/spire/data"
-                    log_level = "ERROR"
-                    server_address = "spire-server"
-                    server_port = "8081"
-                    socket_path = "/run/spire/sockets/agent/agent.sock"
-                    admin_socket_path = "/run/spire/sockets/admin.sock"
-                    trust_bundle_path = "/run/spire/bundle/bundle.crt"
-                    trust_domain = "spiffe.cilium"
-                    authorized_delegates = [
-                      "spiffe://spiffe.cilium/cilium-agent",
-                    ]
-                  }
-
-                  plugins {
-                    NodeAttestor "k8s_psat" {
-                      plugin_data {
-                        cluster = "talos-home"
-                      }
-                    }
-
-                    KeyManager "disk" {
-                      plugin_data {
-                        directory = "/run/spire/data"
-                      }
-                    }
-
-                    WorkloadAttestor "k8s" {
-                      plugin_data {
-                        skip_kubelet_verification = true
-                      }
-                    }
-                  }
-
-                  health_checks {
-                    listener_enabled = true
-                    bind_address = "0.0.0.0"
-                    bind_port = "4251"
-                    live_path = "/live"
-                    ready_path = "/ready"
-                  }
-          # (b) give data_dir an emptyDir that survives container restarts.
-          - target:
-              kind: DaemonSet
-              name: spire-agent
-              namespace: cilium-spire
-            patch: |
-              - op: add
-                path: /spec/template/spec/volumes/-
-                value:
-                  name: spire-agent-data
-                  emptyDir: {}
-              - op: add
-                path: /spec/template/spec/containers/0/volumeMounts/-
-                value:
-                  mountPath: /run/spire/data
-                  name: spire-agent-data
+  # All four patches targeted cilium-spire resources — the Namespace PSA labels, the
+  # spire-agent SA-token TTL 600s→3600s override, and the KeyManager-disk ConfigMap +
+  # emptyDir pair. With authentication.mutual.spire disabled in values.yaml, the chart
+  # no longer renders any of those resources.
+  #
+  # Removing them is MANDATORY, not tidy-up. The TTL patch carried an `op: test` guard
+  # against /spec/template/spec/volumes/3/... on a DaemonSet that no longer exists;
+  # a JSON-patch target that renders to nothing aborts the ENTIRE postRender, and per
+  # this repo's own history that abort is SILENT (helm-controller logs it and moves on
+  # with the un-rendered release). Leaving them would have quietly broken every future
+  # Cilium reconcile. See docs/02-architecture/cilium-spire-disposition.md §3.
+  #
+  # Nothing else in this release used a postRenderer, so the key is gone entirely.
+  # If SPIRE is ever re-enabled, restore this block from git history alongside the
+  # two values.yaml booleans — the TTL and KeyManager patches are load-bearing
+  # workarounds for the crashloop wedge, not decoration.

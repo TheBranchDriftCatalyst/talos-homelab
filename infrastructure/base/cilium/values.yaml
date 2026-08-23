@@ -174,35 +174,41 @@ resources:
     memory: 256Mi
 
 # =============================================================================
-# SPIRE-based Mutual TLS Authentication
+# SPIRE-based Mutual TLS Authentication — REMOVED 2026-08-22 (TALOS-1d4o)
 # =============================================================================
 # Reference: https://docs.cilium.io/en/stable/network/servicemesh/mutual-authentication/mutual-authentication/
+# Full investigation + evidence: docs/02-architecture/cilium-spire-disposition.md
 #
-# Uses SPIRE for workload identity - WireGuard encryption is optional
-# SPIRE provides mutual authentication between services via mTLS
+# Disabled after a read-only audit against the live cluster established, independently:
+#   - NOTHING USED IT. 6 CiliumNetworkPolicies, 0 CiliumClusterwideNetworkPolicies, and zero
+#     references to `authentication` in any of them. Mutual auth is enforced PER-POLICY via
+#     `authentication.mode: required`; with no policy setting it, SPIRE was deciding no traffic.
+#     Nothing fails closed when it goes.
+#   - IT IS DEPRECATED IN THE VERSION WE RUN. Verbatim from the v1.20.0 chart values, directly
+#     above the `mutual:` key: "Deprecated as of Cilium v1.20, this feature will be removed in
+#     Cilium v1.21." (cilium#47132). Beta since 2023, never promoted, limited security support,
+#     superseded upstream by zTunnel. There is no version where we get more life out of it.
+#   - ITS STATE IS DERIVED, NOT PRECIOUS. The SPIRE datastore is a projection of CiliumIdentity;
+#     cilium-operator re-registered 258 identities in its first minute on last startup.
+#   - IT COST US REAL TOIL. spire-agent's projected SA token wedges into a self-perpetuating
+#     expired-token CrashLoopBackOff on kubelet restart. The "durable fix" (KeyManager disk on
+#     emptyDir, 2026-08-09) was live for 12 days and the wedge recurred anyway on 2026-08-21,
+#     because agents re-attest ~every 30 min indefinitely — the token is on the hot path
+#     continuously, not just at cold start. Every node upgrade re-triggered this.
+#
+# Removing this also cleared the 1Ti-claim spire-server PVC pinning talos03 (TALOS-3gte).
+#
+# ROLLBACK: flip both booleans back to true and `flux reconcile kustomization cilium
+# --with-source`. The chart re-renders all 16 SPIRE resources. Identities re-register
+# automatically (~1 min), so a revert costs nothing but a brief re-attestation cycle.
+# NOTE: both flags must move together — the chart rejects `mutual.spire.enabled: true`
+# with `authentication.enabled: false`.
 
 authentication:
-  # cilium 1.19 chart validation REQUIRES authentication.enabled=true whenever mutual.spire.enabled
-  # is true (previously implicit → the 1.19 upgrade fails validation without it). Enables the
-  # mutual-auth CAPABILITY only; actual mTLS stays opt-in per CiliumNetworkPolicy. (TALOS-p2g3.3)
-  enabled: true
+  enabled: false
   mutual:
     spire:
-      enabled: true
-      install:
-        enabled: true
-        namespace: cilium-spire
-        server:
-          # Run SPIRE server as root to fix socket permission issues
-          # SPIRE 1.10+ defaults to UID 1000 which can't write to hostPath
-          securityContext:
-            runAsUser: 0
-            runAsGroup: 0
-          dataStorage:
-            enabled: true
-            storageClass: local-path
-            accessMode: ReadWriteOnce
-            size: 1Gi
+      enabled: false
 
 # =============================================================================
 # Egress Gateway for VPN Traffic Steering (DISABLED)
