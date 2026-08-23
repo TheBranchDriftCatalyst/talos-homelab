@@ -115,6 +115,66 @@ spec:
                 toFieldPath: status.readyInstances
                 policy: {fromFieldPath: Optional}
 
+          # ---- 1b. the backup credentials, in THIS namespace --------------------------
+          # Materialises minio/cnpg-minio-backup locally by reading it at source through
+          # the cnpg-backup-source ClusterSecretStore (see backup-secret-store.yaml).
+          #
+          # This replaces the emberstack/reflector allowlist for THIS secret. That
+          # allowlist was a central list naming every namespace running a database, and
+          # forgetting to edit it fails LATE and quietly: the composite reconciles green,
+          # the Cluster comes up healthy, and only the first backup fails with
+          #   while getting secret cnpg-minio-backup: secrets "cnpg-minio-backup" not found
+          # — exactly what the throwaway POC in cnpg-poc did. Worse, editing that list
+          # re-syncs the source ExternalSecret, which RE-RUNS its Password generator and
+          # mints a new credential fleet-wide. Adding one namespace should not be able to
+          # rotate every database's backup credentials.
+          #
+          # NOT a per-namespace Password generator: the value is generated once and then
+          # asserted onto a real MinIO user by the hourly provisioning CronJob. Generating
+          # per namespace would mint a different password everywhere and every backup would
+          # fail with SignatureDoesNotMatch. There is exactly one correct value; this reads
+          # THAT one.
+          - name: backup-credentials
+            base:
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: external-secrets.io/v1
+                    kind: ExternalSecret
+                    metadata: {}
+                    spec:
+                      refreshInterval: 1h
+                      secretStoreRef:
+                        name: cnpg-backup-source
+                        kind: ClusterSecretStore
+                      target:
+                        name: cnpg-minio-backup
+                        creationPolicy: Owner
+                      data:
+                        - secretKey: ACCESS_KEY_ID
+                          remoteRef:
+                            key: cnpg-minio-backup
+                            property: ACCESS_KEY_ID
+                        - secretKey: ACCESS_SECRET_KEY
+                          remoteRef:
+                            key: cnpg-minio-backup
+                            property: ACCESS_SECRET_KEY
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-backup-credentials"}
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-backup-credentials"}
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+
           # ---- 2. where the backups go ----------------------------------------------
           - name: objectstore
             base:
