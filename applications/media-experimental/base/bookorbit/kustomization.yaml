@@ -1,0 +1,40 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# bookorbit — the FIRST media-experimental app that is not node-pinned.
+#
+# NOTE THE ABSENCE OF `../_instance`. Every sibling in this namespace builds from
+# that skeleton, and the skeleton carries both halves of the talos03 pin (a
+# local-path config PVC plus a matching requiredDuringScheduling nodeAffinity).
+# BookOrbit keeps all of its state in PostgreSQL, so it needs neither, and
+# inheriting the skeleton only to patch the pin back out would be fragile and
+# would silently re-pin on any future skeleton edit. Full manifests are written
+# here instead — the deviation is the feature. See deployment.yaml's header and
+# epic TALOS-3hl8.
+#
+# The parent kustomization still applies its namespace, its shared labels
+# (part-of / experimental), and its two Deployment patches (revisionHistoryLimit,
+# enableServiceLinks: false) to everything here.
+
+resources:
+  # --- data layer -----------------------------------------------------------
+  - postgres.yaml        # CNPG Cluster (pgvector via the -system- operand image)
+  - database.yaml        # Database CR — declares the four required extensions
+  - objectstore.yaml     # barman-cloud target for WAL + base backups
+  - scheduledbackup.yaml # nightly base backup
+  # --- app ------------------------------------------------------------------
+  - externalsecret.yaml  # JWT_SECRET + SETUP_BOOTSTRAP_TOKEN (ESO generator)
+  - pvc-data.yaml        # /data on node-independent NFS (NOT local-path)
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml       # websecure (TLS via default TLSStore)
+  - ingressroute-http.yaml  # web→https redirect
+
+labels:
+  # Written as a plain transformer WITHOUT includeSelectors: the Deployment and
+  # Service already carry matching `app: bookorbit` selectors written by hand, and
+  # includeSelectors would also try to stamp selectors onto the CNPG Cluster and
+  # Database CRs, which have none.
+  - pairs:
+      app.kubernetes.io/component: ebook-reader
+      category: ebook-reader

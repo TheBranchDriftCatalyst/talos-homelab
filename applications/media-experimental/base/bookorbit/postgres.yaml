@@ -1,0 +1,104 @@
+---
+# CloudNativePG Postgres for BookOrbit (epic TALOS-3hl8 — de-pinning media-experimental).
+#
+# WHY THIS EXISTS AT ALL: every other app in media-experimental keeps its state in
+# a SQLite file on a `local-path` PVC, which pins the pod to talos03 forever. That
+# pin is what blocks resetting talos03 to promote it to a control plane. BookOrbit
+# is the FIRST app in this namespace that never needs that trade — it speaks
+# external PostgreSQL natively, so its state lives here and nothing about it is
+# node-bound. There is deliberately no local-path PVC and no nodeAffinity anywhere
+# in this app's manifests.
+#
+# ============================================================================
+# IMAGE PIN — THE `-system-` SUFFIX IS LOAD-BEARING. DO NOT DROP IT.
+# ============================================================================
+# BookOrbit requires FOUR Postgres extensions, verified in its source:
+#   uuid-ossp, pg_trgm, unaccent  — ordinary contrib
+#   vector (pgvector)             — NOT contrib
+# The pgvector requirement is real and not an artifact of upstream's compose file
+# choosing a pgvector base image. Evidence in the app repo:
+#   server/src/db/migrations/0000_baseline.sql:386   "embedding" vector(256)
+#   server/src/db/migrations/0000_baseline.sql:1131  CREATE INDEX ... USING hnsw
+#                                                    ("embedding" vector_cosine_ops)
+#   server/src/scripts/postgres-extensions.ts        CREATE EXTENSION ... "vector"
+# That runs in the BASELINE migration, before the app will serve anything, so
+# without pgvector BookOrbit does not start degraded — it does not start.
+#
+# THE OBVIOUS ROUTE IS A TRAP. CNPG 1.30 exposes spec.postgresql.extensions
+# (ImageVolume-mounted extension images, e.g. ghcr.io/cloudnative-pg/pgvector).
+# It CANNOT WORK ON THIS CLUSTER TODAY: the Kubernetes `ImageVolume` feature gate
+# is not enabled (kube-apiserver has no --feature-gates flag; kubelet /configz
+# lists only LocalStorageCapacityIsolationFSQuotaMonitoring). Verified empirically
+# 2026-08-22 with a probe Pod — the API server SILENTLY STRIPPED both the image
+# volume and its volumeMount from the persisted spec. No error, no event. A CNPG
+# cluster configured that way would reconcile "successfully" and still have no
+# vector.so. Enabling the gate means a Talos machine-config change plus rolling
+# reboots of all five nodes, which is not a thing an app deploy gets to do.
+#
+# IT IS ALSO UNNECESSARY. pgvector is ALREADY BUNDLED in the `-system-` flavour of
+# the stock operand image. Verified on the live arr-postgres cluster, which runs
+# this exact tag:
+#   pg_available_extensions -> vector 0.8.6 (also pg_trgm 1.6, unaccent 1.1,
+#                              uuid-ossp 1.1)
+#   /usr/lib/postgresql/18/lib/vector.so                (202664 bytes)
+#   /usr/share/postgresql/18/extension/vector.control
+# So all four extensions this app needs are present with zero extra machinery.
+#
+# The pin is EXPLICIT rather than inherited because the flavour is the whole point
+# and the fleet is not consistent about it: arr-postgres runs 18.4-system-trixie
+# while openscad/manyfold-postgres runs plain 18.4. An unpinned cluster could land
+# on a flavour without pgvector and fail the baseline migration. PG 18 also matters
+# independently — BookOrbit documents "PostgreSQL 16 or newer" and upstream tests
+# on 18.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: bookorbit-postgres
+  labels:
+    app.kubernetes.io/name: bookorbit-postgres
+    app.kubernetes.io/part-of: media-experimental
+spec:
+  # velero.io/exclude-from-backup is stamped by the global Kyverno policy
+  # (TALOS-7jxm) — CNPG owns its own backups, Velero stays off its pods/PVCs.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+  imagePullPolicy: IfNotPresent
+  # INSTANCES: 1. This is a single-user experimental bake-off app, matching the
+  # linkwarden/zipline rationale rather than arr-postgres's 3. One instance on NFS
+  # is still fully node-independent — the PVC follows the pod to any node, which is
+  # the property this whole exercise exists to preserve.
+  instances: 1
+  storage:
+    size: 10Gi
+    # fatboy-nfs-appdata, NOT local-path. Two reasons, both load-bearing:
+    #   1. NODE-INDEPENDENCE. local-path PVs carry a nodeAffinity to the node that
+    #      provisioned them. That is precisely the pin this app must not have.
+    #   2. RECLAIM POLICY. This class is Retain; local-path is the cluster DEFAULT
+    #      class and its policy is Delete.
+    storageClass: fatboy-nfs-appdata
+  monitoring:
+    enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
+  bootstrap:
+    initdb:
+      database: bookorbit
+      owner: bookorbit
+      # No `secret:` → CNPG generates bookorbit-postgres-app (username/password/
+      # dbname/host/port/uri). The Deployment reads the whole connection string
+      # from its `uri` key, so no password is ever rendered into git and no
+      # 1Password item is needed for the DB.
+      #
+      # Extensions are NOT created here. postInitApplicationSQL runs once at
+      # bootstrap and is never reconciled again; the Database CR in database.yaml
+      # declares them instead and keeps declaring them true.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  # Object-store backups → MinIO (objectstore.yaml). NOT disposable: this database
+  # holds users, per-user reading progress synced from Kobo/KOReader devices, and
+  # the OIDC provider configuration. Losing it loses reading state that exists
+  # nowhere else — the ebook files on NFS do not carry it.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: bookorbit-postgres

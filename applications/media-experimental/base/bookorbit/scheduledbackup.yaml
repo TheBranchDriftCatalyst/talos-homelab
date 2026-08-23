@@ -1,0 +1,20 @@
+---
+# Daily base backup for bookorbit-postgres → cnpg-backups (epic TALOS-3hl8).
+# 03:10 — offset from the other clusters' slots so the nightly window staggers.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: bookorbit-postgres-daily
+  labels:
+    app.kubernetes.io/name: bookorbit
+    app.kubernetes.io/part-of: media-experimental
+spec:
+  schedule: "0 10 3 * * *" # 03:10 daily (6-field: sec min hour dom mon dow)
+  immediate: true
+  backupOwnerReference: self
+  # barman-cloud CNPG-I plugin (see objectstore.yaml) — in-tree method removed in CNPG 1.30
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: bookorbit-postgres
