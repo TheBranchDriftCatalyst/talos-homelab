@@ -1,0 +1,62 @@
+---
+# ClusterProviderConfig for the NAMESPACED provider-kubernetes API group.
+#
+# provider-kubernetes v1.x serves two API groups at once, and they do NOT share provider
+# configuration:
+#   kubernetes.crossplane.io/v1alpha2    cluster-scoped Object   -> ProviderConfig
+#   kubernetes.m.crossplane.io/v1alpha1  namespaced Object       -> ClusterProviderConfig
+# A ProviderConfig named `default` already existed for the old group, which makes this easy
+# to miss: composed Objects fail at reconcile with
+#   connect failed: cannot get provider config:
+#   ClusterProviderConfig.kubernetes.m.crossplane.io "default" not found
+# even though `kubectl get providerconfig` shows a perfectly good `default`.
+#
+# InjectedIdentity means the provider acts as its own ServiceAccount against the local
+# cluster, which is what we want — these are in-cluster CNPG resources, not a remote API.
+apiVersion: kubernetes.m.crossplane.io/v1alpha1
+kind: ClusterProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+# RBAC for that InjectedIdentity.
+#
+# Crossplane grants provider-kubernetes broad rights over core kinds, but NOT over
+# arbitrary third-party CRDs — so out of the box it cannot touch CNPG at all:
+#   kubectl auth can-i create clusters.postgresql.cnpg.io \
+#     --as=system:serviceaccount:crossplane-system:provider-kubernetes  ->  no
+# Without this the composition renders correctly and then every composed Object sits in
+# ReconcileError forever, which reads like a composition bug rather than a permissions one.
+#
+# Scoped to exactly the three kinds this composition manages. It deliberately does NOT
+# grant blanket access to either API group — provider-kubernetes can apply any manifest it
+# is handed, so a wide grant here is effectively a wide grant to anyone who can write a
+# Composition.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:provider-kubernetes:cnpg
+  labels:
+    app.kubernetes.io/part-of: crossplane
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, scheduledbackups]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [barmancloud.cnpg.io]
+    resources: [objectstores]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crossplane:provider-kubernetes:cnpg
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crossplane:provider-kubernetes:cnpg
+subjects:
+  - kind: ServiceAccount
+    name: provider-kubernetes
+    namespace: crossplane-system
