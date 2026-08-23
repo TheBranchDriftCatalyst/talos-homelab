@@ -75,14 +75,16 @@ data:
           cid="$id"
         fi
         CONNS="${CONNS:+$CONNS,}$cid"
+        # KEY=VALUE lines; base64-encoded into `data:` below. One line per key, values
+        # are always single-line, so a plain first-= split is safe on read-back.
         {
-          echo "  ENGINE_$cid: \"postgres@dbgate-plugin-postgres\""
-          echo "  SERVER_$cid: \"${name}-rw.${ns}.svc.cluster.local\""
-          echo "  PORT_$cid: \"5432\""
-          echo "  USER_$cid: \"$user\""
-          echo "  PASSWORD_$cid: \"$pass\""
-          echo "  DATABASE_$cid: \"$d\""
-          echo "  LABEL_$cid: \"$name/$d ($ns)\""
+          echo "ENGINE_$cid=postgres@dbgate-plugin-postgres"
+          echo "SERVER_$cid=${name}-rw.${ns}.svc.cluster.local"
+          echo "PORT_$cid=5432"
+          echo "USER_$cid=$user"
+          echo "PASSWORD_$cid=$pass"
+          echo "DATABASE_$cid=$d"
+          echo "LABEL_$cid=$name/$d ($ns)"
         } >> "$TMP/data"
       done < "$TMP/dbs"
     done < "$TMP/clusters"
@@ -93,6 +95,13 @@ data:
     fi
     HASH=$(md5sum < "$TMP/data" | cut -d' ' -f1)
     OLD=$(kubectl -n "$NS" get secret dbgate-cnpg-connections -o jsonpath='{.metadata.annotations.dbgate\.sync/hash}' 2>/dev/null || true)
+    # Emit `data:` with base64 values, NOT `stringData:`. kubectl apply can only prune a key
+    # it can see in the live object, and the API server rewrites stringData into data on
+    # write - so last-applied tracked stringData while the object held data, the two never
+    # correlated, and removed keys were never deleted. Stale ENGINE_/USER_/PASSWORD_ entries
+    # (including old passwords) accumulated forever. They were inert, since dbgate only loads
+    # ids listed in CONNECTIONS, but they were invisible cruft. Writing data: directly makes
+    # the three-way merge prune correctly.
     {
       echo "apiVersion: v1"
       echo "kind: Secret"
@@ -100,9 +109,14 @@ data:
       echo "  name: dbgate-cnpg-connections"
       echo "  namespace: $NS"
       echo "  annotations: { dbgate.sync/hash: \"$HASH\" }"
-      echo "stringData:"
-      echo "  CONNECTIONS: \"$CONNS\""
-      cat "$TMP/data"
+      echo "data:"
+      echo "  CONNECTIONS: $(printf '%s' "$CONNS" | base64 | tr -d '\n')"
+      while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        k=${line%%=*}
+        v=${line#*=}
+        echo "  $k: $(printf '%s' "$v" | base64 | tr -d '\n')"
+      done < "$TMP/data"
     } > "$TMP/secret.yaml"
     kubectl apply -f "$TMP/secret.yaml"
     echo "connections: [$CONNS]"
