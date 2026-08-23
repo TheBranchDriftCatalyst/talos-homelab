@@ -1,0 +1,59 @@
+# TRACKED COPY. configs/nodes/ is gitignored (machine configs carry certs and tokens),
+# so this patch lives here to stay in version control, alongside
+# talos-kubelet-maxpods-patch.yaml which exists for the same reason.
+# Apply to any control plane that SHOULD carry workloads.
+#
+#   talosctl patch mc --endpoints 192.168.1.54 --nodes <ip> \
+#     --patch @docs/05-runbooks/talos-schedulable-controlplane-patch.yaml
+#
+# WHY THIS EXISTS
+#
+# configs/nodes/controlplane.yaml sets, at line 233:
+#
+#     machine:
+#       nodeTaints:
+#         node-role.kubernetes.io/control-plane: "NoSchedule"
+#
+# That was written when talos00 was the ONLY control plane, and it is still correct
+# FOR TALOS00 — that node is severely RAM-limited and is meant to run the control
+# plane and little else. Do not remove it from the shared template.
+#
+# On 2026-08-23 talos01 and talos03 were promoted from workers to control planes,
+# and their configs were generated from that same shared template. They inherited
+# talos00's taint, which was never the intent: they were promoted precisely to add
+# capacity, and they are not RAM-constrained.
+#
+# THE TRAP THAT COST HOURS — cluster.allowSchedulingOnControlPlanes DOES NOT
+# OVERRIDE THIS. Talos's NodeTaintSpecController has two independent paths:
+#
+#     if IsControlPlane() && !ScheduleOnControlPlanes() {   // conditional
+#         createTaint(control-plane, NoSchedule)
+#     }
+#     for key, val := range Machine().NodeTaints() {        // UNCONDITIONAL
+#         createTaint(key, ...)
+#     }
+#
+# https://github.com/siderolabs/talos/blob/v1.13.9/internal/app/machined/pkg/controllers/k8s/node_taint_spec.go
+#
+# The second loop ignores the flag completely. So a cluster can have
+# allowSchedulingOnControlPlanes: true — as this one correctly does, on all three
+# nodes — and still be tainted, with the config appearing to contradict itself.
+# Everything about the symptom points at the flag, and the flag is not the knob.
+#
+# What that cost, for the record: `kubectl taint ... -` reverting within 25-75s and
+# being misread as a Talos defect; a full cluster reboot (the v1.13.9 upgrade) that
+# "should" have cleared it; toggling the flag false->true to force re-evaluation,
+# which was a no-op because that path was already correctly disabled; and a rejected
+# proposal to run a reconciler Deployment fighting Talos every 10 seconds. The
+# actual fix is deleting two lines of our own config.
+#
+# The removal is hot-reloadable — no reboot. Talos tracks the taints it owns in the
+# node annotation talos.dev/owned-taints and removes them itself once the spec is
+# gone, so no manual kubectl taint is needed afterwards.
+#
+# Verified 2026-08-23: applied to talos01 + talos03, taints gone and STILL GONE
+# across 7 polls over 3 minutes. talos00 deliberately left tainted.
+#
+# Related: TALOS-obvn.
+- op: remove
+  path: /machine/nodeTaints

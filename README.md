@@ -118,9 +118,18 @@ brew install go-task/tap/go-task kubectx k9s helm
 - **Control Plane Scheduling**: `allowSchedulingOnControlPlanes: true` is still set in the machine config
 - **Multi-Node**: 5 nodes — talos00 (control plane, 192.168.1.54), talos01 (192.168.1.177),
   talos02-gpu (192.168.1.144, Intel Arc), talos03 (192.168.1.30), talos06 (192.168.1.19)
-- **Control Plane Is Tainted**: despite `allowSchedulingOnControlPlanes`, the machine config sets
-  `machine.nodeTaints: node-role.kubernetes.io/control-plane: NoSchedule` so talos00 runs only core
-  infrastructure; general workloads land on the workers
+- **talos00 Is Tainted, The Other Control Planes Are Not**: despite
+  `allowSchedulingOnControlPlanes`, the machine config sets
+  `machine.nodeTaints: node-role.kubernetes.io/control-plane: NoSchedule`, so talos00 runs only core
+  infrastructure. That taint is deliberate for talos00 (RAM-limited) and applies to it alone.
+  talos01 and talos03 were promoted to control planes on 2026-08-23 to ADD capacity and had the
+  taint removed via `configs/nodes/schedulable-controlplane-patch.yaml`. Four of five nodes are
+  schedulable.
+  **`allowSchedulingOnControlPlanes` does not override `machine.nodeTaints`** — Talos applies
+  nodeTaints on an unconditional code path that never reads that flag, so the two can both be set
+  and appear to contradict each other. nodeTaints wins. If a control plane is unexpectedly
+  tainted, check `machine.nodeTaints` FIRST, not the cluster flag. See TALOS-obvn and the header of
+  `configs/nodes/schedulable-controlplane-patch.yaml`.
 - **maxPods**: raised from the Talos default 110 to 200 per node (kubelet patch, see
   `scripts/bootstrap-talos-patches.sh`)
 
