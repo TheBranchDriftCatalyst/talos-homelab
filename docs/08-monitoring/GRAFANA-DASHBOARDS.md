@@ -288,7 +288,7 @@ spec:
 
 - [Observability Stack](../OBSERVABILITY.md) - Full monitoring architecture
 - [Traefik Configuration](../TRAEFIK.md) - Ingress setup
-- [Deploy Stack Script](../scripts/deploy-stack.sh) - Infrastructure deployment
+- [Flux Kustomizations](../../clusters/catalyst-cluster/) - what actually deploys infrastructure
 
 ## External Resources
 

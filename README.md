@@ -183,9 +183,9 @@ flux reconcile kustomization <name> --with-source
 
 > Removed / relocated: `./scripts/deploy-stack.sh` moved to
 > `infrastructure/_scripts/deploy-stack.sh` and is legacy — it predates Flux and is not part of the
-> normal workflow. `./scripts/deploy-observability.sh` no longer exists anywhere in the repo.
-> `task infra:deploy-stack` and `task infra:deploy-observability` still point at the old
-> `./scripts/` paths and are therefore broken.
+> normal workflow. `./scripts/deploy-observability.sh` no longer exists anywhere in the repo. The
+> `infra:deploy-stack` and `infra:deploy-observability` tasks that pointed at them have been
+> removed — Flux is the deployment path.
 
 ### Observability Access URLs
 
@@ -242,12 +242,14 @@ task --list-all     # Include tasks that have no description
 
 For complete documentation of all available tasks, see [docs/07-reference/taskfile-organization.md](docs/07-reference/taskfile-organization.md).
 
-> **Known-broken tasks** (they invoke scripts that no longer exist at the referenced path):
-> `kubeconfig-merge` / `k8s:kubeconfig-merge`, `k8s:kubeconfig-unmerge`, `k8s:dashboard-token`
-> (use `./scripts/kube-dashboard-token.sh` instead), `infra:setup`, `infra:deploy-stack`,
-> `infra:deploy-observability`, `infra:deploy-tdarr`, `infra:bootstrap-flux`,
-> `infra:dashboard-arr-stack` (and its `dashboard-arr` shortcut), `talos:provision-local`,
-> `dev:eso-debug`.
+> Task/script paths were reconciled on 2026-08-22. Tasks whose scripts had simply moved were
+> repointed (`k8s:kubeconfig-merge`, `k8s:kubeconfig-unmerge`, `k8s:dashboard-token`,
+> `dev:eso-debug`, `infra:dashboard-arr-stack`); tasks whose work is now Flux's, or whose scripts
+> and manifests were deleted, were removed (`infra:setup`, `infra:deploy-stack`,
+> `infra:deploy-observability`, `infra:deploy-tdarr`, `infra:deploy-arr-stack`,
+> `infra:bootstrap-flux`, `infra:deploy-all`, `infra:redeploy`, the `infra:infra-testing-*`
+> family, `dev:local-up` / `dev:local-down`, `talos:provision-local` / `talos:destroy-local`).
+> See [docs/07-reference/taskfile-organization.md](docs/07-reference/taskfile-organization.md).
 
 ### Cluster Management
 

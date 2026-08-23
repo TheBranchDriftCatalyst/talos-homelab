@@ -135,13 +135,12 @@ kubectl set env deployment/exportarr-sonarr -n media-dev APIKEY="<actual-api-key
 
 ### Automated Deployment (Recommended)
 
-Deploy the complete observability stack:
+> **Superseded.** `./scripts/deploy-observability.sh` was deleted as obsolete in `e5eda33f` and the
+> `infra:deploy-observability` task that called it has been removed. The observability stack is
+> reconciled by Flux from `clusters/catalyst-cluster/`; force a sync with
+> `task infra:flux-reconcile`. The steps below describe what the retired script used to do.
 
-```bash
-./scripts/deploy-observability.sh
-```
-
-This script will:
+The script used to:
 
 1. Add all required Helm repositories
 2. Create namespaces

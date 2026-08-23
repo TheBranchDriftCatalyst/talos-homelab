@@ -211,10 +211,10 @@ find . -name "*.yaml" -type f -exec sed -i '' 's/\.lab/\.talos00/g' {} +
 ### Verification
 
 ```bash
-# Run deployment script
-./scripts/deploy-stack.sh
+# Infrastructure is reconciled by Flux, not by a deploy script
+task infra:flux-status
 
-# Or manual verification
+# Manual verification
 kubectl get namespaces | grep media
 kubectl get storageclass
 kubectl get pv

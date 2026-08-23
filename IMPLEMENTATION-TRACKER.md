@@ -494,9 +494,8 @@ task dev:lint            # Run all linters
 task certs:list          # Certificate operations
 ```
 
-> **Broken**: `task infra:deploy-stack` (and the `deploy-stack` shortcut) still shells out to
-> `./scripts/deploy-stack.sh`, which no longer exists. Infrastructure is reconciled by Flux;
-> there is no stack-deploy script anymore.
+> **Resolved 2026-08-22**: `task infra:deploy-stack` and its `deploy-stack` root shortcut have
+> been removed. Infrastructure is reconciled by Flux; there is no stack-deploy script anymore.
 
 ### Development Workflow Status
 
@@ -589,7 +588,7 @@ deleted outright.
 | -------------------------------------------------- | ------------------------------------- | ---------------------------------- |
 | ~~scripts/deploy-stack.sh~~                        | Main infrastructure deployment        | ❌ deleted (Flux reconciles now)   |
 | ~~scripts/deploy-observability.sh~~                | Observability stack deployment        | ❌ deleted (stack removed)         |
-| scripts/deploy-infra-testing.sh                    | UI tools deployment                   | ✅                                 |
+| scripts/deploy-infra-testing.sh                    | UI tools deployment                   | ⚠️ inert (its manifests were deleted) |
 | scripts/\_\_deploy-tdarr.sh                        | Tdarr transcoding deployment          | ⚠️ deprecated (`__` prefix)        |
 | scripts/provision.sh                               | Complete cluster provisioning         | ✅                                 |
 | scripts/bootstrap-argocd.sh                        | ArgoCD bootstrap                      | ✅                                 |

@@ -466,17 +466,16 @@ kubectl annotate grafanadashboard -n monitoring <dashboard-name> \
   grafana.integreatly.org/force-update="$(date +%s)"
 ```
 
-### Stack Deployment Script
+### Stack Deployment
 
-Dashboards are automatically deployed via:
+Dashboards are reconciled by Flux from `clusters/catalyst-cluster/monitoring.yaml`. Commit the
+dashboard change and let Flux apply it, or force a sync:
 
 ```bash
-./scripts/deploy-observability.sh
-# or
-./scripts/deploy-stack.sh
+task infra:flux-reconcile
 ```
 
-These scripts apply the kustomization and wait for dashboards to sync.
+The former `./scripts/deploy-observability.sh` and `./scripts/deploy-stack.sh` no longer exist.
 
 ## Related Documentation
 

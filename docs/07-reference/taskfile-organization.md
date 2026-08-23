@@ -27,7 +27,7 @@ The root Taskfile provides:
 - Dependency bootstrap (`deps:install`, plus internal `_check-homebrew` / `_install-*` helpers)
 - Common shortcuts for frequently used tasks: `health`, `dashboard`, `kubeconfig`,
   `kubeconfig-merge`, `trust-cert`, `trust-ca`, `get-pods`, `get-nodes`, `provision`, `lint`,
-  `format`, `validate`, `ci`, `deploy-stack`, `audit`, `dashboard-arr`, `flux-suspend`,
+  `format`, `validate`, `ci`, `audit`, `dashboard-arr`, `flux-suspend`,
   `flux-resume`, `flux-status`, `setup-1password`
 - Script discovery: `scripts` (list) and `scripts:run` (interactive, requires fzf)
 - `tdarr` - Tdarr worker cache dashboard
@@ -55,8 +55,6 @@ Talos Linux operations for cluster management.
 - `patches` - Apply required kubelet machine-config patches (iSCSI + local-path) to all nodes
 - `patches-check` - Dry-run the kubelet machine-config patch bootstrap
 - `provision` - Complete provisioning workflow
-- `provision-local` - Create local Docker-based Talos cluster for testing
-- `destroy-local` - Destroy local Docker-based Talos cluster
 - `health` - Check cluster health
 - `version` - Get Talos version
 - `dashboard` - Open Talos dashboard
@@ -151,8 +149,8 @@ Note the sub-task names use **colons**, not hyphens (`dev:lint:yaml`, not `dev:l
 - `validate` - Validate all infrastructure manifests
 - `validate:kustomize` - Validate kustomizations build
 - `validate:k8s` - Validate K8s manifests with kubectl dry-run
-- `local-up` / `local-down` - Local Talos cluster + Tilt for ESO development
-- `tilt-up` / `tilt-down` / `tilt-ci` / `tilt-logs` - Tilt lifecycle
+- `tilt-up` / `tilt-down` / `tilt-ci` / `tilt-logs` - Tilt lifecycle (observe-only dashboard
+  against the live cluster; it deploys nothing)
 - `install-tilt` - Install Tilt (macOS via Homebrew)
 - `eso-debug` - Debug External Secrets Operator and 1Password integration
 - `trust-ca` / `trust-ca:check` - Add / check the homelab-ca root cert in the macOS keychain
@@ -169,19 +167,18 @@ task dev:ci
 
 ### Infrastructure Domain (`task infra:<command>`)
 
-Infrastructure deployment and application management.
+Bootstrap, reconciliation control, and read-only infrastructure operations.
+
+Deployment itself does not happen here. Flux reconciles everything under `infrastructure/` and
+`applications/` from the Kustomizations in `clusters/catalyst-cluster/`, and ArgoCD reconciles
+application repos. To deploy, commit to git and let Flux reconcile; use `flux-reconcile` to force
+it. The old `deploy-*` tasks shelled out to scripts that `kubectl apply`-ed over Flux and were
+removed along with their deleted scripts and manifests.
 
 **Tasks:**
 
-- `setup` - Install core infrastructure (Traefik, metrics-server, test services)
-- `deploy-stack` - Deploy complete observability and monitoring stack
-- `deploy-observability` - Deploy observability stack
-- `deploy-infra-testing` - Deploy infrastructure testing UI tools (Headlamp, Kubeview, etc.)
-- `deploy-arr-stack` - Deploy ARR media stack
-- `deploy-tdarr` - Deploy Tdarr transcoding
 - `bootstrap-argocd` - Bootstrap ArgoCD
 - `argocd-apps` - Apply ArgoCD applications
-- `bootstrap-flux` - Bootstrap FluxCD
 - `flux-reconcile` - Force Flux reconciliation (`flux reconcile kustomization flux-system --with-source`)
 - `flux-status` - Check Flux status
 - `deploy-eso` - Deploy External Secrets Operator
@@ -192,9 +189,6 @@ Infrastructure deployment and application management.
 - `apply-namespaces` - Apply all namespaces
 - `apply-storage` - Apply storage classes
 - `dashboard-arr-stack` - ARR stack dashboard with real-time status
-- `infra-testing-status` / `infra-testing-logs` / `infra-testing-delete` - Manage infra-testing tools
-- `deploy-all` - Deploy complete infrastructure
-- `redeploy` - Force redeployment (DESTRUCTIVE)
 
 > Removed: `infra:build-catalyst-ui` no longer exists. catalyst-ui is deployed by ArgoCD from its
 > own repo (see the dual-GitOps docs), not by a task in this repo.
@@ -218,31 +212,41 @@ Run `task security:` (or `task --list`) for the current task list.
 cert-manager PKI operations and local CA trust (`trust-cert`, `untrust-cert`, `export-ca`, `list`,
 `check-expiry`, `status`, `renew`, `issuers`). Run `task certs:` (or `task --list`) for details.
 
-## Known-Broken Tasks
+## Task/Script Path Reconciliation
 
-Verified 2026-08-22. These tasks are still defined but their backing script or manifest path no
-longer exists (mostly fallout from the `scripts/` reorganization into subdirectories and from
-retired stacks). Fix the Taskfile paths before relying on them.
+Reconciled 2026-08-22. An audit found 12 tasks pointing at scripts that no longer existed at the
+referenced path, plus several pointing at deleted manifest directories or a renamed Service. Two
+different root causes, so two different fixes.
 
-| Task                                                       | References                                                                                    | Reality                                                 |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `k8s:kubeconfig-merge`                                     | `./scripts/kubeconfig-merge.sh`                                                               | moved to `scripts/developer/kubeconfig-merge.sh`        |
-| `k8s:kubeconfig-unmerge`                                   | `./scripts/kubeconfig-unmerge.sh`                                                             | moved to `scripts/developer/kubeconfig-unmerge.sh`      |
-| `k8s:dashboard-token`                                      | `./scripts/dashboard-token.sh`                                                                | script is `scripts/kube-dashboard-token.sh`             |
-| `dev:eso-debug`                                            | `./scripts/onepassword-debug.sh`                                                              | moved to `scripts/external-secrets/`                    |
-| `dev:local-up`, `talos:provision-local`                    | `./scripts/provision-local.sh`                                                                | disabled as `scripts/__provision-local.sh`              |
-| `infra:setup`                                              | `./scripts/setup-infrastructure.sh`                                                           | missing                                                 |
-| `infra:deploy-stack`                                       | `./scripts/deploy-stack.sh`                                                                   | moved to `infrastructure/_scripts/deploy-stack.sh`      |
-| `infra:deploy-observability`                               | `./scripts/deploy-observability.sh`                                                           | missing                                                 |
-| `infra:deploy-tdarr`                                       | `./scripts/deploy-tdarr.sh`                                                                   | disabled as `scripts/__deploy-tdarr.sh`                 |
-| `infra:bootstrap-flux`                                     | `./scripts/bootstrap-flux.sh`                                                                 | missing                                                 |
-| `infra:deploy-arr-stack`                                   | `applications/arr-stack/overlays/dev/`                                                        | overlays are `gpu` and `themepark`                      |
-| `infra:dashboard-arr-stack`                                | `./scripts/dashboards/arr-stack.sh`                                                           | script is `applications/arr-stack/scripts/dashboard.sh` |
-| `infra:registry-port-forward`                              | `svc/docker-registry` in `registry`                                                           | the service is `zot`                                    |
-| `infra:deploy-infra-testing`, `infra:infra-testing-delete` | `infrastructure/base/infra-testing/`                                                          | directory missing                                       |
-| `infra:redeploy`                                           | `infrastructure/base/monitoring/kube-prometheus-stack/`, `infrastructure/base/observability/`  | both directories missing                                |
+**Repointed** - the script still exists, the caller drifted when `scripts/` was reorganized into
+subdirectories:
 
-Because `infra:deploy-all` and `infra:redeploy` call the tasks above, they are broken too.
+| Task | Now runs |
+| ---- | -------- |
+| `k8s:kubeconfig-merge` | `scripts/developer/kubeconfig-merge.sh` |
+| `k8s:kubeconfig-unmerge` | `scripts/developer/kubeconfig-unmerge.sh` |
+| `k8s:dashboard-token` | `scripts/kube-dashboard-token.sh` |
+| `dev:eso-debug` | `scripts/external-secrets/onepassword-debug.sh` |
+| `infra:dashboard-arr-stack` | `applications/arr-stack/dashboard.sh` |
+| `infra:registry-port-forward` | `svc/zot` (the registry Service was renamed) |
+
+**Removed** - the work these tasks did is now Flux's, or the workflow was retired and its script
+and manifests deleted. Restoring them would have meant `kubectl apply`-ing over Flux, which is the
+anti-pattern this repo's `CLAUDE.md` warns about:
+
+| Task | Why removed |
+| ---- | ----------- |
+| `infra:setup` | `scripts/setup-infrastructure.sh` deleted; Traefik and metrics-server are Flux-managed |
+| `infra:deploy-stack`, root `deploy-stack` | script is legacy pre-Flux, parked at `infrastructure/_scripts/deploy-stack.sh` |
+| `infra:deploy-observability` | deleted as obsolete in `e5eda33f`; the OpenSearch/Graylog stack is gone |
+| `infra:deploy-tdarr` | disabled as `scripts/__deploy-tdarr.sh`; tdarr is Flux-managed via `clusters/catalyst-cluster/tdarr.yaml` |
+| `infra:deploy-arr-stack` | arr-stack is Flux-managed; the referenced `overlays/dev/` never existed |
+| `infra:bootstrap-flux` | no such script; Flux is bootstrapped with `flux bootstrap github` per `bootstrap/flux/README.md` |
+| `infra:deploy-infra-testing`, `infra:infra-testing-*` | `infrastructure/base/infra-testing/` was deleted |
+| `infra:deploy-all`, `infra:redeploy` | called the removed tasks and deleted manifest directories |
+| `dev:local-up`, `dev:local-down`, `talos:provision-local`, `talos:destroy-local` | the Docker-based local cluster was retired in `b2130815`; `scripts/provision-local.sh` is disabled as `scripts/__provision-local.sh` |
+
+`scripts/deploy-infra-testing.sh` is still on disk but inert - every path it applies was deleted.
 
 ## Common Workflows
 

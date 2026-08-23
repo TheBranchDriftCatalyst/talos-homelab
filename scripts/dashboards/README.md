@@ -1,12 +1,16 @@
 # Cluster Dashboards
 
-This directory contains dynamic dashboard scripts that display real-time cluster status in a user-friendly ASCII format.
+This directory documents the dynamic dashboard scripts that display real-time cluster status in a
+user-friendly ASCII format.
+
+> **Note**: this directory holds no scripts. The ARR stack dashboard lives with the application it
+> reports on, at `applications/arr-stack/dashboard.sh`. Paths below are given from the repo root.
 
 ## Available Dashboards
 
 ### ARR Stack Dashboard
 
-**Script**: `arr-stack.sh`
+**Script**: `applications/arr-stack/dashboard.sh`
 **Task**: `task dashboard-arr` or `task infra:dashboard-arr-stack`
 **Description**: Displays real-time status of all ARR stack services (Sonarr, Radarr, Prowlarr, Plex, Jellyfin, etc.)
 
@@ -23,16 +27,16 @@ This directory contains dynamic dashboard scripts that display real-time cluster
 
 ```bash
 # Run dashboard (default namespace: media-dev)
-./scripts/dashboards/arr-stack.sh
+./applications/arr-stack/dashboard.sh
 
 # Or via task
 task dashboard-arr
 
 # Use different namespace
-NAMESPACE=media-fatboy ./scripts/dashboards/arr-stack.sh
+NAMESPACE=media-fatboy ./applications/arr-stack/dashboard.sh
 
 # Use different domain
-DOMAIN=homelab.local NAMESPACE=media-dev ./scripts/dashboards/arr-stack.sh
+DOMAIN=homelab.local NAMESPACE=media-dev ./applications/arr-stack/dashboard.sh
 ```
 
 #### Environment Variables
@@ -113,7 +117,7 @@ DOMAIN=homelab.local NAMESPACE=media-dev ./scripts/dashboards/arr-stack.sh
   events  │ kubectl get events -n media-dev --sort-by='.lastTimestamp'
 
 ▸ GETTING STARTED
-  Deploy stack:     task infra:deploy-arr-stack
+  Deploy stack:     Flux reconciles arr-stack from clusters/catalyst-cluster/arr-stack.yaml
   Port forward:     kubectl port-forward -n media-dev svc/<service> <port>:<port>
   Access via web:   Add to /etc/hosts: <node-ip> <service>.talos00
 
@@ -164,8 +168,8 @@ task kubeconfig-merge
 **Error: "Namespace 'media-dev' not found"**
 
 ```bash
-# Deploy the arr-stack
-task infra:deploy-arr-stack
+# arr-stack is Flux-managed; force a reconcile if the namespace is missing
+task infra:flux-reconcile
 ```
 
 **Services show as "not-found"**

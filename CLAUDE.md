@@ -147,8 +147,7 @@ This repository uses a **modular Taskfile structure** organized by domain for be
    - Validation (kustomize, kubectl dry-run)
    - CI simulation
 
-4. **infra:** - Infrastructure and application deployment
-   - Stack deployment (monitoring, observability)
+4. **infra:** - Bootstrap, reconciliation control, read-only infra operations
    - GitOps controllers (ArgoCD, FluxCD)
    - External Secrets Operator, Registry
    - Application deployments
@@ -166,7 +165,7 @@ task --list
 task talos:health
 task k8s:get-pods
 task dev:lint
-task infra:deploy-stack
+task infra:flux-reconcile
 
 # Use shortcuts (common tasks)
 task health              # → talos:health
@@ -206,19 +205,22 @@ task dashboard-proxy    # Start proxy, access at localhost:8001
 
 ### Infrastructure Deployment
 
+Infrastructure is deployed by **committing to git**. Flux reconciles everything under
+`infrastructure/` and `applications/` from the Kustomizations in `clusters/catalyst-cluster/`.
+There is no deploy script -- `scripts/deploy-stack.sh` and `scripts/deploy-observability.sh` were
+removed, and the surviving `infrastructure/_scripts/deploy-stack.sh` is legacy pre-Flux and should
+not be run.
+
 ```bash
-# Deploy complete stack (monitoring + observability + infrastructure)
-./scripts/deploy-stack.sh
+# Deploy: commit the manifest change and push, then let Flux reconcile
+git add infrastructure/base/<component>/
 
-# Deploy specific stack components
-DEPLOY_MONITORING=true DEPLOY_OBSERVABILITY=false ./scripts/deploy-stack.sh
+# Force reconciliation instead of waiting for the interval
+task infra:flux-reconcile   # flux reconcile kustomization flux-system --with-source
+task infra:flux-status      # flux check
 
-# Deploy observability stack only
-./scripts/deploy-observability.sh
-
-# Bootstrap ArgoCD
+# Bootstrap ArgoCD (one-time)
 ./scripts/bootstrap-argocd.sh
-
 ```
 
 ### Cluster Provisioning (Fresh Setup)
@@ -301,7 +303,7 @@ talos-homelab/
 ### Key Files
 
 - `Taskfile.yaml` - Task automation (preferred over direct talosctl/kubectl)
-- `scripts/deploy-stack.sh` - Main infrastructure deployment script
+- `clusters/catalyst-cluster/` - Flux Kustomizations; this is what actually deploys infrastructure
 - `scripts/provision.sh` - Complete cluster provisioning
 - `configs/controlplane.yaml` - Talos control plane config (gitignored)
 - `infrastructure/base/argocd/applications/` - ArgoCD app definitions
@@ -396,9 +398,9 @@ Access: `http://<service>.talos00`
 
 1. Create manifests: `infrastructure/base/new-component/`
 2. Create kustomization.YAML
-3. Update deployment script or create new one
+3. Add a Flux Kustomization in `clusters/catalyst-cluster/` pointing at it
 4. Test: `kubectl apply -k infrastructure/base/new-component/ --dry-run=client`
-5. Deploy: `./scripts/deploy-stack.sh` or specific script
+5. Deploy: commit and push; force with `task infra:flux-reconcile`
 6. Verify: `kubectl get pods -n <namespace>`
 
 ### Adding a New Application (ArgoCD)
@@ -560,9 +562,9 @@ npm publish
 ### Environment Variables
 
 - `TALOS_NODE` - Node IP address (default: 192.168.1.54)
-- `DEPLOY_MONITORING` - Enable monitoring deployment
-- `DEPLOY_OBSERVABILITY` - Enable observability deployment
-- `DEPLOY_APPS` - Enable application deployment
+
+The `DEPLOY_MONITORING` / `DEPLOY_OBSERVABILITY` / `DEPLOY_APPS` variables are obsolete. They were
+read only by the removed `scripts/deploy-stack.sh`; nothing consumes them now.
 
 ## Quick Reference
 
@@ -575,8 +577,8 @@ task get-pods               # View all pods
 kubectl get all -A          # View all resources
 
 # Deploy changes
-./scripts/deploy-stack.sh   # Deploy infrastructure
-kubectl apply -k path/      # Apply specific component
+task infra:flux-reconcile     # Flux reconciles infrastructure from git; force it now
+task infra:flux-status        # Confirm the reconciliation succeeded
 
 # Access services
 task dashboard-token        # Get K8s Dashboard token

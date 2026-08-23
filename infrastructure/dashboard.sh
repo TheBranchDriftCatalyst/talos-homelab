@@ -534,7 +534,7 @@ main() {
 
   # Quick Commands
   print_section "QUICK COMMANDS"
-  echo -e "  ${CYAN}deploy${RESET}      │ ./scripts/deploy-stack.sh"
+  echo -e "  ${CYAN}deploy${RESET}      │ git push, then task infra:flux-reconcile"
   echo -e "  ${CYAN}tilt${RESET}        │ cd infrastructure && tilt up"
   echo -e "  ${CYAN}flux-status${RESET} │ flux get all"
   echo -e "  ${CYAN}pv-status${RESET}   │ kubectl get pv,pvc -A"

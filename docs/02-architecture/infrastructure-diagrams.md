@@ -307,17 +307,16 @@ flowchart TB
 sequenceDiagram
     participant Dev as Developer
     participant Git as talos-homelab
-    participant Script as deploy-stack.sh
+    participant Flux as Flux controllers
     participant K8s as Kubernetes API
 
     Dev->>Git: 1. Modify manifests
-    Dev->>Git: 2. git commit & push
-    Dev->>Script: 3. ./scripts/deploy-stack.sh
-    Script->>Script: 4. Check cluster health
-    Script->>K8s: 5. kubectl apply -k namespaces/
-    Script->>K8s: 6. kubectl apply -k infrastructure/
-    Script->>K8s: 7. Wait for pods ready
-    K8s-->>Dev: 8. Deployment complete
+    Dev->>Git: 2. git commit and push
+    Flux->>Git: 3. Poll GitRepository source
+    Flux->>Flux: 4. Build Kustomizations in clusters/catalyst-cluster/
+    Flux->>K8s: 5. Server-side apply
+    Flux->>K8s: 6. Health-check the applied resources
+    K8s-->>Dev: 7. Reconciliation complete (task infra:flux-status)
 ```
 
 ### Application Deployment Flow

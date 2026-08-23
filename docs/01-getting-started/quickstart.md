@@ -251,7 +251,8 @@ After your cluster is running:
 1. **Full rebuild path**: See [docs/05-runbooks/cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md) (authoritative)
 2. **Deploy Infrastructure**: See [docs/04-deployment/flux-setup.md](../04-deployment/flux-setup.md)
 3. **Configure GitOps**: See [docs/02-architecture/gitops-responsibilities.md](../02-architecture/gitops-responsibilities.md)
-4. **Add Monitoring**: Run `task infra:deploy-stack`
+4. **Add Monitoring**: the monitoring stack is Flux-managed — see
+   `clusters/catalyst-cluster/monitoring.yaml`; force a sync with `task infra:flux-reconcile`
 5. **Explore Docs**: See [docs/INDEX.md](../INDEX.md) and [README.md](../../README.md)
 
 ## Related Issues

@@ -70,8 +70,8 @@ flux reconcile kustomization <name> --with-source
 
 > `./scripts/deploy-stack.sh` no longer exists at that path. It was moved to
 > `infrastructure/_scripts/deploy-stack.sh` and is **legacy** — it predates Flux and is not part of
-> the reconciliation path. (`task infra:deploy-stack` still points at the old `./scripts/` path and
-> is therefore broken.)
+> the reconciliation path. The `infra:deploy-stack` task that invoked it has been removed, along
+> with the other `deploy-*` tasks that would have `kubectl apply`-ed over Flux.
 
 ### File Structure
 

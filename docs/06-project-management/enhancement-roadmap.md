@@ -287,9 +287,11 @@ Tilt powers microservice development and automates the steps from code change to
 
 ### Why Tilt for This Project?
 
-**Current State:**
+**Current State** (as written; superseded 2026-08-22):
 
-- Manual deployment scripts (`./scripts/deploy-stack.sh`)
+- Manual deployment scripts (`./scripts/deploy-stack.sh`) — no longer true. That script was moved
+  to `infrastructure/_scripts/` as legacy and the tasks invoking it were removed; Flux now
+  reconciles infrastructure as well as applications.
 - Flux handles GitOps for applications
 - No rapid inner dev loop for infrastructure testing
 

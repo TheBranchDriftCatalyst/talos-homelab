@@ -1,5 +1,16 @@
 # Local Development Guide - External Secrets Operator
 
+> **Retired — kept for reference only.** The Docker-based local Talos cluster this guide depends on
+> was removed on 2025-12-20 (commit `b2130815`). `scripts/provision-local.sh` is disabled as
+> `scripts/__provision-local.sh`, and the tasks that drove it — `dev:local-up`, `dev:local-down`,
+> `talos:provision-local`, `talos:destroy-local` — were removed on 2026-08-22 because they invoked
+> a script that no longer exists. **The `task` commands below will not work.**
+>
+> There is no supported local cluster workflow. Validate at the manifest level instead
+> (`task dev:validate`), and debug ESO against the live cluster with `task dev:eso-debug`. The root
+> `Tiltfile` is an observe-only ops dashboard pointed at the live `admin@catalyst-cluster` context —
+> it deploys nothing, and `task dev:tilt-up` still works in that read-only role.
+
 This guide shows how to develop and test External Secrets Operator (ESO) with 1Password Connect using a local Talos cluster and Tilt.
 
 ## Overview
