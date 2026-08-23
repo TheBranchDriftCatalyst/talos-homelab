@@ -26,6 +26,13 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: zipline-postgres
+  annotations:
+    # Do NOT let Flux delete this object when its manifest leaves git. This Postgres is
+    # being converted to a CatalystCNPGAppDB composite (TALOS-npt4); the manifests are
+    # removed from this repo in the following commit and the composite adopts the live
+    # objects. Without this annotation, removing them would prune the Cluster and CNPG
+    # would delete its PVCs — i.e. destroy the database.
+    kustomize.toolkit.fluxcd.io/prune: disabled
   labels:
     app.kubernetes.io/name: zipline-postgres
     app.kubernetes.io/part-of: media-private
