@@ -66,12 +66,14 @@ subjects:
 # AWS file, so the two stay independently reviewable. MRAPs are additive, so
 # several narrow policies compose exactly as intended.
 #
-# objects.kubernetes.crossplane.io is load-bearing, NOT demo scaffolding: the
-# CatalystCNPGAppDB Composition composes a kubernetes.crossplane.io/v1alpha2
-# Object, so deactivating this breaks every database that composite manages.
+# BOTH Object API groups are load-bearing, and they are not interchangeable:
+#   - kubernetes.crossplane.io      (cluster-scoped) — the crossplane-demo Object
+#   - kubernetes.m.crossplane.io    (namespaced)     — CatalystCNPGAppDB composes
+#     these, because Crossplane v2 requires a namespaced composite to compose
+#     namespaced resources (see infrastructure/base/catalyst-cnpg-appdb).
+# Dropping the namespaced one breaks every database that composite manages.
 #
-# The namespaced twin (kubernetes.m.crossplane.io) and ObservedObjectCollection
-# are deliberately omitted — nothing in this repo references them.
+# ObservedObjectCollection is omitted — nothing in this repo references it.
 apiVersion: apiextensions.crossplane.io/v1alpha1
 kind: ManagedResourceActivationPolicy
 metadata:
@@ -79,3 +81,4 @@ metadata:
 spec:
   activate:
     - objects.kubernetes.crossplane.io
+    - objects.kubernetes.m.crossplane.io
