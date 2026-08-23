@@ -8,6 +8,13 @@ kind: ScheduledBackup
 metadata:
   name: forgejo-postgres-daily
   namespace: forgejo
+  annotations:
+    # Do NOT let Flux delete this object when its manifest leaves git. It is being converted
+    # to a CatalystCNPGAppDB composite (TALOS-npt4); the manifests are removed in the
+    # following commit and the composite adopts the live objects. Without this annotation,
+    # removing the manifest would prune the Cluster and CNPG would delete its PVCs — i.e.
+    # destroy the forge's database.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # 02:00 every day. CNPG cron is 6-field (seconds first): sec min hour dom mon dow.
   schedule: "0 0 2 * * *"

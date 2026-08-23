@@ -8,6 +8,13 @@ kind: ObjectStore
 metadata:
   name: forgejo-postgres
   namespace: forgejo
+  annotations:
+    # Do NOT let Flux delete this object when its manifest leaves git. It is being converted
+    # to a CatalystCNPGAppDB composite (TALOS-npt4); the manifests are removed in the
+    # following commit and the composite adopts the live objects. Without this annotation,
+    # removing the manifest would prune the Cluster and CNPG would delete its PVCs — i.e.
+    # destroy the forge's database.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   retentionPolicy: "30d" # prune backups + WALs older than 30 days
   configuration:
