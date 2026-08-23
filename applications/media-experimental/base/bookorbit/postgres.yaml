@@ -81,6 +81,27 @@ spec:
     initdb:
       database: bookorbit
       owner: bookorbit
+      # COLLATION IS PINNED, AND IT MATTERS MORE HERE THAN FOR MOST APPS.
+      # CNPG's initdb defaults to the C locale — the whole existing fleet is C
+      # (verified on arr-postgres: every database reports datcollate=C). Under C,
+      # text sorts by byte value, so ORDER BY on a book list gives
+      #     Almond, Banana, apple, cherry
+      # rather than Almond, apple, Banana, cherry. Verified on this very cluster
+      # before it was pinned. For a library whose primary interactions ARE sorted
+      # title / author / series lists, and whose search runs through pg_trgm and
+      # unaccent, that is a user-visible defect rather than a nicety.
+      #
+      # THIS IS A ONE-SHOT SETTING. bootstrap.initdb runs exactly once; editing it
+      # on an existing cluster silently does nothing. Caught here while the
+      # database held zero rows (users=0, books=0, libraries=0), so the fix was a
+      # two-minute recreate. After a library is scanned in, the same fix costs a
+      # dump/restore cycle.
+      #
+      # en_US.utf8 verified present in the operand image (511 locales; ICU is also
+      # available with 871 collations if a locale-independent provider is ever
+      # wanted).
+      localeCollate: en_US.utf8
+      localeCType: en_US.utf8
       # No `secret:` → CNPG generates bookorbit-postgres-app (username/password/
       # dbname/host/port/uri). The Deployment reads the whole connection string
       # from its `uri` key, so no password is ever rendered into git and no
