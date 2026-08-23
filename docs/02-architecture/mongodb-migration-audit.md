@@ -36,7 +36,7 @@ leave-alone.
 > **running pod's injected `MONGO_URI` password is stale** — the ConfigMap has been re-rendered
 > with the current credential but `envFrom` freezes values at pod start and nothing restarted
 > the Deployment. That is why HyperDX has zero persisted state. Fix is a rollout restart, not a
-> migration. See [§5](#5-live-defect-clickstack-app-holds-a-stale-mongo_uri).
+> migration. Filed as [TALOS-j4jy]; detail in [§5](#5-live-defect-clickstack-app-holds-a-stale-mongo_uri).
 
 ---
 
@@ -446,4 +446,6 @@ dependency, re-check it.
 - [TALOS-3gte] — talos03 still has 14 node-bound PVs (independently confirmed here; no Mongo among them)
 - [TALOS-1d4o] — Decide SPIRE: keep and back up, or disable
 - [TALOS-uml1] — Back up + restore the 12 media-experimental configs
+- [TALOS-j4jy] — **filed by this audit** — clickstack-app stale `MONGO_URI`, continuous SCRAM auth failures ([§5](#5-live-defect-clickstack-app-holds-a-stale-mongo_uri))
+- [TALOS-r6ib] — **filed by this audit** — tdarr SQLite-on-NFS + a `talos06` `nodeSelector` no PV requires (blocks [TALOS-3hl8])
 - [embedded-db-migration-audit.md](embedded-db-migration-audit.md) — the Postgres/CNPG half of this survey
