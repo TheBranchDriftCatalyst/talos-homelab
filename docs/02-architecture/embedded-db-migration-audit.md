@@ -1,6 +1,8 @@
 # Embedded-DB Migration Audit
 
 > Parent: [docs/02-architecture/README.md](README.md)
+> Companion to [mongodb-migration-audit.md](mongodb-migration-audit.md) — that document is the
+> MongoDB half of the same survey. Read them as a pair.
 > Audited 2026-08-22 against the live cluster. Read-only audit — nothing was migrated.
 > Driver: [TALOS-k62s](../05-runbooks/promote-workers-to-controlplane.md) (EPIC 0 — un-node-bind PVCs before any control-plane reset).
 > Coverage and confidence: see [§9](#9-coverage--what-was-and-was-not-verified).
@@ -392,6 +394,8 @@ Worth recording, because it is easy to assume otherwise. These are already on
   homeassistant, linkwarden, manyfold, plausible, zipline, and `media/arr-postgres`
   (3 instances, now serving prowlarr).
 - **MongoDBCommunity (2):** `monitoring/clickstack-mongodb`, `scratch/scratch-mongodb`.
+  Surveyed in full by [mongodb-migration-audit.md](mongodb-migration-audit.md): neither is on a
+  promotion target, and no workload in the cluster is a MongoDB migration candidate.
 
 ---
 
@@ -467,6 +471,9 @@ zot, SPIRE, opensim.
 - **`arr-stack-private`** (`talos-private.git`) was not inspected — private repo. Its workloads
   live in `media-private`, whose PVCs are all already on NFS, so it is unlikely to hold a pin,
   but that is an inference rather than a check.
+  **Closed 2026-08-23:** the repo *is* checked out locally at `workspace/talos-private` and was
+  inspected for the [MongoDB audit](mongodb-migration-audit.md) — zero `local-path` claims (all
+  `fatboy-nfs-appdata` / `synology-nfs` / `tdarr-nfs`) and zero Mongo. The inference was correct.
 - **`openscad` and `kasa-exporter` repos** are not checked out locally; assessed from cluster
   state only.
 - **Whether `catalyst-data`'s 0/0 scale-down is deliberate.** Affects whether 45Gi of PVCs are
@@ -494,3 +501,4 @@ these later grows a local-path PVC, re-check it.
 - [TALOS-l4uo] — radarr → CNPG (in flight)
 - [TALOS-eaa4] — sonarr → CNPG (queued)
 - [TALOS-0wtt] — Litestream sidecar for jellyfin + plex
+- [mongodb-migration-audit.md](mongodb-migration-audit.md) — the MongoDB half of this survey
