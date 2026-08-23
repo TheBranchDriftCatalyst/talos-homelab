@@ -156,6 +156,14 @@ spec:
                         name: cnpg-backup-source
                         kind: ClusterSecretStore
                       target:
+                        # Per-composite name, NOT the shared `cnpg-minio-backup`.
+                        # creationPolicy Owner makes ESO stamp a controller
+                        # ownerReference on the target secret, so two composites in one
+                        # namespace pointing at the same name would each claim ownership
+                        # and fight over it. That is not hypothetical: home-automation
+                        # runs both homeassistant-postgres and linkwarden-postgres, and
+                        # it is the first namespace with two. Patched below to
+                        # <composite>-cnpg-backup.
                         name: cnpg-minio-backup
                         creationPolicy: Owner
                       data:
@@ -180,6 +188,11 @@ spec:
                     string: {type: Format, fmt: "%s-backup-credentials"}
               - fromFieldPath: metadata.namespace
                 toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.spec.target.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-cnpg-backup"}
 
           # ---- 2. where the backups go ----------------------------------------------
           - name: objectstore
@@ -204,10 +217,10 @@ spec:
                             # or this references a secret that never arrives and backups
                             # fail with a credentials error. That is exactly what happened
                             # to the gaming namespace.
-                            name: cnpg-minio-backup
+                            name: cnpg-minio-backup # patched to <composite>-cnpg-backup
                             key: ACCESS_KEY_ID
                           secretAccessKey:
-                            name: cnpg-minio-backup
+                            name: cnpg-minio-backup # patched to <composite>-cnpg-backup
                             key: ACCESS_SECRET_KEY
                         wal: {compression: gzip}
                         data: {compression: gzip}
@@ -223,6 +236,19 @@ spec:
                 toFieldPath: spec.forProvider.manifest.metadata.namespace
               - fromFieldPath: spec.retentionPolicy
                 toFieldPath: spec.forProvider.manifest.spec.retentionPolicy
+              # Must match the ExternalSecret target above, or the ObjectStore references
+              # credentials that never arrive and every backup fails with
+              # "while getting secret ...: not found".
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.spec.configuration.s3Credentials.accessKeyId.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-cnpg-backup"}
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.spec.configuration.s3Credentials.secretAccessKey.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-cnpg-backup"}
               # Per-cluster prefix under the shared bucket, derived from the XR name so it
               # cannot collide or be mistyped.
               - fromFieldPath: metadata.name
