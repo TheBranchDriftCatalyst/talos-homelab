@@ -151,6 +151,28 @@ spec:
           storage_prefix: ruler
           # OTLP ingestion is enabled by default in Mimir 2.9+
           # Access via /otlp/v1/metrics endpoint
+    # rollout-operator gates pod eviction in this namespace via a validating
+    # webhook. The chart default is failurePolicy: Fail, which means that if the
+    # operator is itself unavailable, NOTHING in the monitoring namespace can be
+    # evicted — cluster-wide, not just on the affected node.
+    #
+    # That is a deadlock, and it fired twice on 2026-08-23 during the Talos
+    # upgrade (TALOS-w5fq). The operator is a SINGLE replica with no node pinning,
+    # so draining whichever node it happens to occupy evicts the operator itself;
+    # its Service then has no endpoints, every subsequent eviction call fails with
+    #   dial tcp 10.103.87.139:443: connect: no route to host
+    # and the drain never completes. It blocked two upgrade attempts on talos06
+    # and had earlier stalled the talos01 drain, where it was misread as transient.
+    #
+    # Ignore is the correct trade here. What the webhook buys is ordered,
+    # zone-aware rollouts — worth having when it works, but this is a
+    # single-zone homelab, and losing that ordering during a drain is far cheaper
+    # than a monitoring namespace that cannot evict anything. The guarantee is
+    # nice-to-have; the deadlock is an outage.
+    rollout_operator:
+      webhooks:
+        failurePolicy: Ignore
+
     # Component sizing for homelab (minimal; ingester+stateless HA'd 2026-08-13
     # after the ring-wedge incident — see structuredConfig ingester.ring note)
     ingester:
