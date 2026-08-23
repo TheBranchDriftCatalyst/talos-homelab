@@ -7,6 +7,15 @@
 # an in-cluster operator, so its CRs are just Kubernetes objects. Object.spec.forProvider.
 # manifest carries them verbatim, which also means anything CNPG supports stays reachable
 # without this composition having to model it.
+#
+# NOTE THE API GROUP: kubernetes.m.crossplane.io/v1alpha1, NOT the older
+# kubernetes.crossplane.io/v1alpha2. Crossplane v2 requires that a NAMESPACED composite
+# compose only NAMESPACED resources, and the original Object kind is cluster-scoped. Using
+# it here fails at compose time, not at apply time, with:
+#   cannot compose resources: cannot apply cluster scoped composed resource "cluster"
+#   (a Object named poctest-cluster) for a namespaced composite resource
+# Both groups are served simultaneously by provider-kubernetes v1.x, so the wrong one
+# validates perfectly against the API server and only breaks when a real composite exists.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -30,7 +39,7 @@ spec:
           # ---- 1. the database ------------------------------------------------------
           - name: cluster
             base:
-              apiVersion: kubernetes.crossplane.io/v1alpha2
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
               kind: Object
               spec:
                 forProvider:
@@ -109,7 +118,7 @@ spec:
           # ---- 2. where the backups go ----------------------------------------------
           - name: objectstore
             base:
-              apiVersion: kubernetes.crossplane.io/v1alpha2
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
               kind: Object
               spec:
                 forProvider:
@@ -161,7 +170,7 @@ spec:
           # get WAL archiving and no base backup to recover from.
           - name: scheduledbackup
             base:
-              apiVersion: kubernetes.crossplane.io/v1alpha2
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
               kind: Object
               spec:
                 forProvider:
