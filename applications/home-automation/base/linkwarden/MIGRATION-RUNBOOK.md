@@ -56,14 +56,16 @@ Keep `./lw.dump` until the very end — it is the rollback artifact.
 
 ## Step B — Deploy the CNPG cluster (empty, fresh app secret)
 
-The cluster is defined in `postgres.yaml` and wired into `kustomization.yaml`.
+The cluster is defined in `postgres-appdb.yaml` (a `CatalystCNPGAppDB`, which renders the
+Cluster, its ObjectStore and its ScheduledBackup) and wired into `kustomization.yaml`.
+It was `postgres.yaml`, a hand-written Cluster, when this runbook was written.
 Let Flux reconcile, or force it:
 
 ```bash
 # via Flux
 flux reconcile kustomization <the-flux-kustomization-that-owns-home-automation> --with-source
 # (or, targeted apply of just the cluster if you want it up before the deployment change)
-# kubectl apply -f applications/home-automation/base/linkwarden/postgres.yaml
+# kubectl apply -f applications/home-automation/base/linkwarden/postgres-appdb.yaml
 
 # Wait for the cluster to be healthy (1/1)
 kubectl -n $NS wait --for=condition=Ready cluster/linkwarden-postgres --timeout=300s
