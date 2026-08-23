@@ -75,6 +75,58 @@ spec:
         supplementalGroups: [100, 1000]
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # Gate startup on the `vector` extension EXISTING. Without this, a fresh
+        # database loses a race and the symptom is genuinely misleading.
+        #
+        # OBSERVED ON FIRST DEPLOY (2026-08-22): the app came up before the CNPG
+        # Database CR had finished reconciling, its own startup
+        # `CREATE EXTENSION IF NOT EXISTS "vector"` ran as the unprivileged
+        # `bookorbit` role, and it exited 1 with
+        #     permission denied to create extension "vector"
+        #     hint: Must be superuser to create this extension.
+        # three times before the CR landed the extensions and it started cleanly.
+        # It self-heals, but it self-heals THROUGH CrashLoopBackOff, which reads as
+        # a broken deploy to the next person and can trip restart alerting. It
+        # recurs on every fresh bootstrap — a rebuilt namespace, a restore into an
+        # empty cluster.
+        #
+        # Waiting here turns that into an honest `Init:0/1` with a log line saying
+        # what it is waiting for. If the Database CR never reconciles, this blocks
+        # instead of crashlooping, which is the clearer failure of the two.
+        #
+        # Same image as the CNPG operand pinned in postgres.yaml — already present
+        # in-cluster, carries psql, and adds no new dependency to track.
+        - name: wait-for-extensions
+          image: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until psql "$DATABASE_URL" -tAc \
+                "SELECT 1 FROM pg_extension WHERE extname = 'vector'" | grep -q 1; do
+                echo "waiting for the vector extension (CNPG Database CR reconciles it)..."
+                sleep 2
+              done
+              echo "vector extension present - starting bookorbit"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bookorbit-postgres-app
+                  key: uri
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
       containers:
         - name: bookorbit
           # Pinned to a real release, NOT :latest. GHCR tags carry NO `v` prefix even
