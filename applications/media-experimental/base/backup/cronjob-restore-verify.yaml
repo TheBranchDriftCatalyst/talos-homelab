@@ -67,12 +67,17 @@ spec:
                 allowPrivilegeEscalation: false
                 seccompProfile: {type: RuntimeDefault}
                 capabilities:
-                  # DAC_OVERRIDE is required, not decoration. Dropping ALL takes it
-                  # away from uid 0 too, and these config dirs contain mode-0600 files
-                  # owned by other uids (bindery.db, chaptarr's asp/key-*.xml). Without
-                  # it tar gets "Permission denied" AS ROOT and silently short-archives.
+                  # These are required, not decoration -- dropping ALL takes them away
+                  # from uid 0 too.
+                  #   DAC_OVERRIDE  read/write the mode-0600 files owned by other uids
+                  #                 (bindery.db, chaptarr's asp/key-*.xml); without it
+                  #                 tar gets "Permission denied" AS ROOT
+                  #   CHOWN         restore each file's captured uid:gid. Without it the
+                  #                 whole tree lands as 0:0 and the apps' PUID/PGID 1000
+                  #                 processes inherit someone else's data
+                  #   FOWNER        restore modes on files we do not own
                   drop: [ALL]
-                  add: [DAC_OVERRIDE]
+                  add: [DAC_OVERRIDE, CHOWN, FOWNER]
               volumeMounts:
                 - {name: scripts, mountPath: /scripts, readOnly: true}
                 - {name: backup, mountPath: /backup, readOnly: true}
