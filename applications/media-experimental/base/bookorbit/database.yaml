@@ -11,11 +11,18 @@
 #     reconciled again. An extension dropped by hand, or a database restored from
 #     a backup taken before an extension was added, stays broken silently.
 #   * A psql Job is imperative glue for something the operator already models.
-#   * SUPERUSER. pgvector's vector.control carries no `trusted = true`, so
-#     `CREATE EXTENSION vector` REQUIRES superuser — the `bookorbit` app role
-#     cannot do it, and CNPG does not hand out superuser (enableSuperuserAccess
-#     defaults false). The operator reconciles this CR over its own superuser
-#     connection, which is the only clean way to get the extension created.
+#   * SUPERUSER — and note this applies to exactly ONE of the four. The mechanic
+#     is the extension's `trusted` flag, not extensions in general:
+#       pg_trgm 1.6  trusted=t  |  unaccent 1.1 trusted=t  |  uuid-ossp 1.1 trusted=t
+#       vector 0.8.6 trusted=f  <-- superuser required
+#     A trusted extension can be created by the database OWNER, so the `bookorbit`
+#     role could have installed the first three itself. pgvector's vector.control
+#     carries no `trusted = true`, so `CREATE EXTENSION vector` REQUIRES superuser,
+#     which the app role is not and which CNPG does not hand out
+#     (enableSuperuserAccess defaults false). The operator reconciles this CR over
+#     its OWN superuser connection, which is the only clean way to get it created.
+#     All four are declared here anyway — uniform, declarative, and it keeps the
+#     required set in one readable place rather than split by privilege trivia.
 #
 # BookOrbit ALSO runs `CREATE EXTENSION IF NOT EXISTS` for all four at every
 # startup (server/src/scripts/postgres-extensions.ts). That is not redundant with
