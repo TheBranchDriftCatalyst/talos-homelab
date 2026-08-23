@@ -1,0 +1,195 @@
+---
+# Composition for CatalystCNPGAppDB. Renders three objects through provider-kubernetes:
+# the CNPG Cluster, its barman ObjectStore, and the ScheduledBackup that actually asks for
+# backups. See xrd.yaml for why all three are non-negotiable.
+#
+# provider-kubernetes rather than a native CNPG provider because there isn't one — CNPG is
+# an in-cluster operator, so its CRs are just Kubernetes objects. Object.spec.forProvider.
+# manifest carries them verbatim, which also means anything CNPG supports stays reachable
+# without this composition having to model it.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: catalyst-cnpg-appdb
+  labels:
+    catalyst.io/provider: kubernetes
+spec:
+  compositeTypeRef:
+    apiVersion: db.catalyst.io/v1alpha1
+    kind: CatalystCNPGAppDB
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+
+          # ---- 1. the database ------------------------------------------------------
+          - name: cluster
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: postgresql.cnpg.io/v1
+                    kind: Cluster
+                    metadata: {}
+                    spec:
+                      # Velero must stay off CNPG pods and PVCs — CNPG owns its own
+                      # backups via barman WAL + ScheduledBackup, and a Velero snapshot of
+                      # a live PGDATA is worse than useless. This is the label half of the
+                      # handoff; the ObjectStore + ScheduledBackup below are the half that
+                      # guacamole was missing while still carrying this label.
+                      inheritedMetadata:
+                        labels:
+                          velero.io/exclude-from-backup: "true"
+                      monitoring:
+                        # Covered by the global cnpg-clusters PodMonitor (TALOS-7u3);
+                        # a per-cluster one would double-scrape.
+                        enablePodMonitor: false
+                      plugins:
+                        - name: barman-cloud.cloudnative-pg.io
+                          isWALArchiver: true
+                          parameters: {}
+                      storage: {}
+                      bootstrap:
+                        initdb: {}
+                      resources:
+                        requests: {}
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-cluster"}
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              # The plugin points at the ObjectStore rendered below. Same name as the XR,
+              # so the two cannot drift apart.
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.spec.plugins[0].parameters.barmanObjectName
+              - fromFieldPath: spec.instances
+                toFieldPath: spec.forProvider.manifest.spec.instances
+              - fromFieldPath: spec.storageSize
+                toFieldPath: spec.forProvider.manifest.spec.storage.size
+              - fromFieldPath: spec.storageClass
+                toFieldPath: spec.forProvider.manifest.spec.storage.storageClass
+              - fromFieldPath: spec.database
+                toFieldPath: spec.forProvider.manifest.spec.bootstrap.initdb.database
+              # Owner defaults to the database name when unset.
+              - fromFieldPath: spec.database
+                toFieldPath: spec.forProvider.manifest.spec.bootstrap.initdb.owner
+              - fromFieldPath: spec.owner
+                toFieldPath: spec.forProvider.manifest.spec.bootstrap.initdb.owner
+                policy: {fromFieldPath: Optional}
+              - fromFieldPath: spec.imageName
+                toFieldPath: spec.forProvider.manifest.spec.imageName
+                policy: {fromFieldPath: Optional}
+              - fromFieldPath: spec.parameters
+                toFieldPath: spec.forProvider.manifest.spec.postgresql.parameters
+                policy: {fromFieldPath: Optional}
+              - fromFieldPath: spec.resources.requestsCpu
+                toFieldPath: spec.forProvider.manifest.spec.resources.requests.cpu
+              - fromFieldPath: spec.resources.requestsMemory
+                toFieldPath: spec.forProvider.manifest.spec.resources.requests.memory
+              - fromFieldPath: spec.resources.limitsMemory
+                toFieldPath: spec.forProvider.manifest.spec.resources.limits.memory
+                policy: {fromFieldPath: Optional}
+              - type: ToCompositeFieldPath
+                fromFieldPath: spec.forProvider.manifest.status.readyInstances
+                toFieldPath: status.readyInstances
+                policy: {fromFieldPath: Optional}
+
+          # ---- 2. where the backups go ----------------------------------------------
+          - name: objectstore
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: barmancloud.cnpg.io/v1
+                    kind: ObjectStore
+                    metadata: {}
+                    spec:
+                      configuration:
+                        endpointURL: http://minio-hl.minio.svc:9000
+                        s3Credentials:
+                          accessKeyId:
+                            # Distributed to app namespaces by emberstack/reflector from
+                            # minio/cnpg-minio-backup. THE NAMESPACE MUST BE ON THAT
+                            # SECRET'S REFLECTOR ALLOWLIST in
+                            # infrastructure/base/minio/cnpg-backup/externalsecret.yaml,
+                            # or this references a secret that never arrives and backups
+                            # fail with a credentials error. That is exactly what happened
+                            # to the gaming namespace.
+                            name: cnpg-minio-backup
+                            key: ACCESS_KEY_ID
+                          secretAccessKey:
+                            name: cnpg-minio-backup
+                            key: ACCESS_SECRET_KEY
+                        wal: {compression: gzip}
+                        data: {compression: gzip}
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-objectstore"}
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - fromFieldPath: spec.retentionPolicy
+                toFieldPath: spec.forProvider.manifest.spec.retentionPolicy
+              # Per-cluster prefix under the shared bucket, derived from the XR name so it
+              # cannot collide or be mistyped.
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.spec.configuration.destinationPath
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "s3://cnpg-backups/%s"}
+
+          # ---- 3. something that actually asks for a backup -------------------------
+          # An ObjectStore alone backs up nothing — it only says WHERE. Without this you
+          # get WAL archiving and no base backup to recover from.
+          - name: scheduledbackup
+            base:
+              apiVersion: kubernetes.crossplane.io/v1alpha2
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: postgresql.cnpg.io/v1
+                    kind: ScheduledBackup
+                    metadata: {}
+                    spec:
+                      immediate: true # never wait a whole day for the first backup
+                      backupOwnerReference: self
+                      method: plugin # in-tree barman was removed in CNPG 1.30
+                      pluginConfiguration:
+                        name: barman-cloud.cloudnative-pg.io
+                      cluster: {}
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-scheduledbackup"}
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+                transforms:
+                  - type: string
+                    string: {type: Format, fmt: "%s-daily"}
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - fromFieldPath: spec.backupSchedule
+                toFieldPath: spec.forProvider.manifest.spec.schedule
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.spec.cluster.name

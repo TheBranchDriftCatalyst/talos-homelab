@@ -1,0 +1,20 @@
+---
+# The CatalystCNPGAppDB XRD + Composition. Separate from the `aws` Kustomization because
+# this composes IN-CLUSTER resources (CNPG Cluster / ObjectStore / ScheduledBackup) via
+# provider-kubernetes and has nothing to do with the AWS providers — which have their own
+# stability history and should not be able to block databases from reconciling.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: catalyst-cnpg-appdb, namespace: flux-system}
+spec:
+  interval: 30m
+  path: ./infrastructure/base/catalyst-cnpg-appdb
+  prune: true
+  sourceRef: {kind: GitRepository, name: flux-system}
+  # Depends on provider-kubernetes being installed, since every composed resource here is
+  # a kubernetes.crossplane.io Object. That provider is owned by the `crossplane-demo`
+  # Kustomization (verified via the provider's kustomize.toolkit.fluxcd.io/name label) —
+  # there is NO Kustomization called `crossplane`; core is installed by a HelmRelease of
+  # that name, which is not a valid dependsOn target and would block this forever.
+  dependsOn: [{name: crossplane-demo}]
+  timeout: 5m
