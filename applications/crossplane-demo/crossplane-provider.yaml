@@ -14,6 +14,26 @@ spec:
   serviceAccountTemplate:
     metadata:
       name: provider-kubernetes
+  # Resource requests for the same reason as the AWS providers' DeploymentRuntimeConfig
+  # (infrastructure/base/aws-providers/runtime-config.yaml): upjet/contrib provider pods
+  # declare nothing, so the scheduler sizes them at zero while they sit at 172Mi measured.
+  # Six such pods stacking unseen on talos03 helped exhaust its memory on 2026-08-23.
+  # This provider has its own runtime config for the SA name, so it does not inherit
+  # `default` and needs the values repeated here.
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 768Mi
 ---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
