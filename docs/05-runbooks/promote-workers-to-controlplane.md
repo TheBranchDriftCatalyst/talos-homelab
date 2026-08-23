@@ -102,8 +102,50 @@ window; classes (b) and (c) are **project work to complete first**.
 Data exists in ≥ 2 more places; the reset costs a rebuild, not a restore.
 
 - **CNPG members of 3-instance clusters** — `authentik-postgres-*`, `boomtime-postgres-*`,
-  `forgejo-postgres-*`, `crowdsec-postgres-*`. Delete PVC + pod after the reset; CNPG re-clones by
-  streaming. Fail over first if the node holds the primary (§5a).
+  `forgejo-postgres-*`, `crowdsec-postgres-*`. CNPG re-clones by streaming. Fail over first if the
+  node holds the primary (§5a). **But set the maintenance window first — see immediately below;
+  deleting the PVC by hand is the fallback, not the procedure.**
+
+> #### ⚠️ Set `nodeMaintenanceWindow` BEFORE resetting a node that holds CNPG replicas
+>
+> CNPG has a designed path for exactly this, and the default is wrong for a *reset*.
+>
+> `spec.nodeMaintenanceWindow.reusePVC` defaults to **on**, which per the CRD means *"reuse the
+> existing PVC (wait for the node to come up again)"*. That is correct for a reboot. It is wrong
+> for `talosctl reset`, which **wipes EPHEMERAL at `/var`** — the node returns, but the data
+> behind that PV is gone, so CNPG sits waiting for a volume that will never be valid again.
+>
+> Setting `reusePVC: false` makes CNPG *"recreate it elsewhere"* — it relocates the replica to a
+> different node with a fresh PVC and rebuilds it by physical streaming replication. The CRD is
+> explicit that this only applies **when `instances` > 1**, which is precisely why 3-instance
+> clusters are safe on `local-path` at all.
+>
+> **None of our clusters set this today** — `authentik-postgres`, `boomtime-postgres` and
+> `arr-postgres` all leave `nodeMaintenanceWindow` unset, so they default to waiting. Both
+> `authentik-postgres` and `boomtime-postgres` have a replica on **talos01**, the first promotion
+> target.
+>
+> Before resetting a node, for every 3-instance CNPG cluster with a replica on it:
+>
+> ```yaml
+> spec:
+>   nodeMaintenanceWindow:
+>     inProgress: true
+>     reusePVC: false      # recreate elsewhere via streaming replication
+> ```
+>
+> ```bash
+> # which clusters have a replica on the node you are about to reset?
+> kubectl get pods -A -l cnpg.io/podRole=instance -o wide \
+>   | awk -v n=talos01 '$8==n {print $1, $2}'
+> ```
+>
+> Revert `inProgress` to `false` once the node is back and the replica has re-cloned. Leaving a
+> cluster permanently in a maintenance window changes how CNPG reacts to *unplanned* failures.
+>
+> The hand-rolled alternative — delete the PVC and pod after the reset and let CNPG rebuild — does
+> work, and is what was used during the 2026-08-21 NFS→NVMe migrations. But that was a *storage
+> migration* on a live node, not a node being wiped. For a reset, use the operator's own path.
 - **`monitoring/storage-mimir-ingester-*`** — `replication_factor: 3` across exactly 3 ingesters, so
   every series is on all three.
 
