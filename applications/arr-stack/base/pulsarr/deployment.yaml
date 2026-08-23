@@ -25,7 +25,26 @@ spec:
       containers:
         - name: pulsarr
           image: lakker/pulsarr:latest
-          imagePullPolicy: IfNotPresent
+          # Always, NOT IfNotPresent — with a :latest tag those two are very
+          # different things. IfNotPresent means the running version depends on
+          # whichever :latest each NODE happens to have cached, so moving a pod
+          # between nodes silently changes the application version in EITHER
+          # direction.
+          #
+          # That is not hypothetical. On 2026-08-23 this app was moved by a node
+          # drain onto a node holding an older cached :latest, which DOWNGRADED it
+          # below its own database and it CrashLooped:
+          #   error: The migration directory is corrupt, the following files are
+          #   missing: 083_20260217_rename_tautulli_to_plex_mobile.ts,
+          #   084_20260224_add_lifetime_quota.ts, 085_20260306_rename_lifetime_t...
+          # knex found migrations recorded in the DB that did not exist in the
+          # image. A newer image had already applied them; the older one could not
+          # even start. The same drain upgraded sonarr 4.0.16 -> 4.0.19 by the same
+          # mechanism, in the opposite direction.
+          #
+          # :latest is a deliberate choice for the arr stack and stays. Always is
+          # what makes it MEAN latest instead of "whatever this node cached".
+          imagePullPolicy: Always
           env:
             - name: TZ
               value: 'America/Los_Angeles'
