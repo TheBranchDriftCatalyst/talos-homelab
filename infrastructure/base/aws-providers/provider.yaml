@@ -8,6 +8,27 @@ metadata:
 spec:
   package: xpkg.upbound.io/upbound/provider-aws-s3:v2.7.0
 ---
+# EC2 provider — composed by XInstance and XGPUInstance. Re-added 2026-08-23
+# after the 2026-08-15 removal (see the incident note at the bottom of this
+# file); this is the provider whose ~250 managed resources caused that outage.
+#
+# It is safe to install now because activation is gated: activation-policy.yaml
+# activates exactly five ec2 resources (Instance, SecurityGroup,
+# SecurityGroupRule, EBSVolume, VolumeAttachment) and the rest stay Inactive
+# ManagedResourceDefinitions, which create no CRD and start no controller. The
+# 2026-08-15 configuration would have registered all ~250 as CRDs.
+#
+# Pinned to v2.7.0 to match the installed provider-family-aws rather than
+# v2.7.1 (latest): a member on a newer patch pulls the shared family up with it,
+# which would drag provider-aws-s3 through an upgrade in the same change. Bump
+# family and members together, separately from this.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-ec2
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-ec2:v2.7.0
+---
 # Composition pipeline function — Crossplane 2.x Compositions are Pipeline-mode
 # only; patch-and-transform is the standard step function.
 apiVersion: pkg.crossplane.io/v1
