@@ -8,6 +8,9 @@ from the Servarr wiki are the parts that matter.
 
 ## TL;DR
 
+0. All three `*arr` apps are done. Plex and Jellyfin still hold `db-local` PVs
+   (both pinned to talos02-gpu) and still use `shared/db-migration-configmap.yaml`;
+   they are the remaining candidates if this is ever repeated.
 1. Add two `Database` CRs (`<app>-main`, `<app>-log`) to `databases.yaml`.
 2. Back up the SQLite file with `sqlite3 .backup` — **from the local-path PV**.
 3. Add `<APP>__POSTGRES__*` env to the Deployment and let it start once. This
@@ -554,18 +557,41 @@ whole time, so co-location was never what the pin was buying. Sonarr's one
 `/data/downloads/complete/`) is a path translation between two containers'
 mount points, not a node constraint.
 
-So the check is: enumerate every volume, and *also* find where the download
-clients run and what they mount. If the client is already elsewhere on the same
-shared export, there is no co-location requirement left to defend:
+#### Retiring a pin: the general procedure
 
-```sh
-kubectl -n media get pods -l app=sabnzbd -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName
-kubectl -n media get deploy sabnzbd -o jsonpath='{.spec.template.spec.affinity}'   # empty
-```
+A `nodeAffinity` block is a claim that something about this app needs *this
+node*. Retiring it means falsifying that claim, and the comment above it is
+evidence of intent, not of fact — all three of these were obsolete, and two were
+actively wrong about their own reason. Work the claim, not the wording:
 
-Sonarr had nothing else node-specific either — no `nodeSelector`, `tolerations`,
-`hostNetwork`, `runtimeClassName`, `topologySpreadConstraints` or device mounts.
-Check those too before concluding the affinity block is the only pin left.
+1. **Enumerate every volume and look at the PV's *source*, not the PVC's name.**
+   An app-specific claim name says nothing about whether the storage is
+   node-local. Anything backed by `nfs` with no `nodeAffinity` cannot pin
+   anything.
+2. **If the claim is co-location with another workload** — hardlinks and atomic
+   moves at import are the usual reason for an `*arr` app — then storage class
+   alone does not settle it, because the argument is about two pods sharing a
+   filesystem, not about where the bytes live. **Find the peer and see where it
+   already runs.** If it is on a different node against the same claims, the
+   requirement is already being violated in production and the pin is not
+   buying it:
+
+   ```sh
+   # the peer here is the app's own enabled download client -- check which ones
+   # are actually enabled, a disabled client proves nothing
+   kubectl -n media get pods -l app=<peer> -o custom-columns=POD:.metadata.name,NODE:.spec.nodeName
+   kubectl -n media get deploy <peer> -o jsonpath='{.spec.template.spec.volumes}'
+   kubectl -n media get deploy <peer> -o jsonpath='{.spec.template.spec.affinity}'
+   ```
+
+3. **Clear the rest of the scheduling surface** before calling the affinity the
+   last pin — `nodeSelector`, `tolerations`, `hostNetwork`, `hostPID`,
+   `runtimeClassName`, `priorityClassName`, `topologySpreadConstraints`, and any
+   `/dev/*` device mount. Sonarr had none of these. An app with a GPU or a
+   `hostPath` has a real reason and this whole procedure stops there.
+
+If 1-3 all come back clean the pin is decoration and can go. If any one of them
+finds a genuine requirement, stop and say so rather than removing it.
 
 ### Proving it
 
@@ -599,6 +625,41 @@ kubectl uncordon talos02-gpu
 
 Prowlarr moved from talos02-gpu to talos06 and served its full indexer list from
 there. Before this work it could only ever run on talos02-gpu.
+
+Sonarr needed no forcing at all: the `Recreate` rollout that dropped the volume
+put it straight on talos02-gpu. That is the proof, but take it further —
+"it moved once" and "it can go anywhere" are different claims. A `NotIn` listing
+**both** the old pin and wherever it just landed forces a third placement, and
+Sonarr went to talos06 and served 845 series from there. It settled back on
+talos02-gpu when the patch came off, with `affinity` empty and no drift from
+git.
+
+### Un-pinning an app on `:latest` will silently upgrade it
+
+Every one of these Deployments runs `image: <app>:latest` with
+`imagePullPolicy: IfNotPresent`, and the node it was welded to had been holding
+one specific `latest` since the image was first pulled there. **Rescheduling
+onto a node without that cached layer pulls a genuinely newer image.** Sonarr
+went 4.0.16.2944 -> 4.0.19.2979 on the move — an unplanned app upgrade arriving
+as a side effect of storage work, in the same window as a database migration,
+which is a bad place to be debugging.
+
+It was benign here, and that was checked rather than assumed: `VersionInfo`
+stayed at exactly 211 rows (max `Version` 217, so the loaded schema was already
+current and 4.0.19 had no migrations to apply), and `Series`, `Episodes`,
+`EpisodeFiles`, `History`, `QualityProfiles`, `Indexers`, `DownloadClients` and
+`RootFolders` all still read exactly their post-load values. **Do that check
+after the move, not just after the load** — and read `version` from
+`/api/v3/system/status` on both sides of the reschedule so you know whether you
+are even comparing the same app:
+
+```sh
+kubectl -n media get pod -l app=<app> -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
+```
+
+If the app had jumped a minor version, the new binary would have run
+FluentMigrator against the freshly loaded Postgres database on first start, and
+any problem would look like a migration fault rather than an image change.
 
 **If someone else is mid-migration on the node you would cordon, do not cordon
 it.** A colleague who scales their app to 0 and back while the node is
