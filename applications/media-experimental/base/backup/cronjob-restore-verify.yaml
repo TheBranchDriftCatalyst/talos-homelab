@@ -65,8 +65,14 @@ spec:
                 limits: {memory: 512Mi}
               securityContext:
                 allowPrivilegeEscalation: false
+                seccompProfile: {type: RuntimeDefault}
                 capabilities:
+                  # DAC_OVERRIDE is required, not decoration. Dropping ALL takes it
+                  # away from uid 0 too, and these config dirs contain mode-0600 files
+                  # owned by other uids (bindery.db, chaptarr's asp/key-*.xml). Without
+                  # it tar gets "Permission denied" AS ROOT and silently short-archives.
                   drop: [ALL]
+                  add: [DAC_OVERRIDE]
               volumeMounts:
                 - {name: scripts, mountPath: /scripts, readOnly: true}
                 - {name: backup, mountPath: /backup, readOnly: true}

@@ -78,6 +78,10 @@ data:
           echo "  TIMEOUT: $d pods still present after ${QUIESCE_TIMEOUT}s"
           return 1
         fi
+        # Re-assert every 5s. Flux owns spec.replicas and puts it back to 1 on its
+        # reconcile interval, which used to make this loop unwinnable -- it timed out
+        # on whichever app happened to be quiesced when Flux came round.
+        [ $((i % 5)) -eq 0 ] && kubectl -n "$NAMESPACE" scale deploy "$d" --replicas=0 >/dev/null 2>&1
         sleep 1
       done
       echo "  $d quiesced"
@@ -101,18 +105,26 @@ data:
     # Round-trips the archive we just wrote into a scratch dir and re-checks every
     # file against the checksum list. A backup that has not been read back is a guess.
     selfverify() {
-      pvc="$1"
+      pvc="$1"; expect="$2"
       [ "$VERIFY" = "none" ] && return 0
       if [ "$VERIFY" = "listing" ]; then
-        tar tzf "$DEST/$pvc.tar.gz" >/dev/null
+        tar tzf "$DEST/$pvc.tar.gz" >/dev/null || return 1
         return 0
       fi
       rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
-      tar xzf "$DEST/$pvc.tar.gz" --numeric-owner -C "$SCRATCH"
-      ( cd "$SCRATCH" && sha256sum -c "$DEST/$pvc.sha256" >/dev/null )
-      n_src="$(grep -c . "$DEST/$pvc.sha256" || true)"
+      tar xzf "$DEST/$pvc.tar.gz" --numeric-owner -C "$SCRATCH" || {
+        echo "  self-verify FAILED: archive would not extract"; return 1; }
+      if ! ( cd "$SCRATCH" && sha256sum -c "$DEST/$pvc.sha256" >/dev/null 2>&1 ); then
+        echo "  self-verify FAILED: checksum mismatch on re-read"; return 1
+      fi
+      # Count against what find saw on the SOURCE, not against the checksum list.
+      # Both of those come from the same read, so if the read was short they agree
+      # with each other and a truncated archive sails through.
       n_out="$(find "$SCRATCH" -type f | wc -l | tr -d ' ')"
-      [ "$n_src" = "$n_out" ] || { echo "  self-verify FAILED: $n_src checksummed vs $n_out extracted"; return 1; }
+      if [ "$n_out" != "$expect" ]; then
+        echo "  self-verify FAILED: source had $expect files, archive restored $n_out"
+        return 1
+      fi
       rm -rf "$SCRATCH"
       echo "  self-verify OK ($n_out files re-read from the archive)"
     }
@@ -127,17 +139,34 @@ data:
       files="$(find "$src" -type f | wc -l | tr -d ' ')"
       bytes="$(find "$src" -type f -print0 | xargs -0 -r stat -c %s | awk '{s+=$1} END {print s+0}')"
 
+      # EVERY step below is checked explicitly. `set -e` is inert inside a function
+      # invoked as an `if` condition, which is how a tar that printed
+      # "error exit delayed from previous errors" once still produced a manifest row.
+      #
       # -print0/-0 because config dirs contain filenames with spaces.
-      ( cd "$src" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum ) > "$DEST/$pvc.sha256"
+      if ! ( cd "$src" && find . -type f -print0 | LC_ALL=C sort -z |
+             xargs -0 -r sha256sum ) > "$DEST/$pvc.sha256"; then
+        echo "  ERROR: could not read every file in $src (checksum pass failed)"
+        return 1
+      fi
+      n_sum="$(grep -c . "$DEST/$pvc.sha256" 2>/dev/null || true)"
+      if [ "${n_sum:-0}" != "$files" ]; then
+        echo "  ERROR: checksummed ${n_sum:-0} of $files files -- refusing to record a short archive"
+        return 1
+      fi
       # Ownership and mode are not in the checksum list but do matter to these apps
       # (PUID/PGID 1000 images), so they are captured separately and diffed on restore.
-      ( cd "$src" && find . -print0 | LC_ALL=C sort -z | xargs -0 -r stat -c '%n %u %g %a %F' ) > "$DEST/$pvc.meta"
+      ( cd "$src" && find . -print0 | LC_ALL=C sort -z |
+        xargs -0 -r stat -c '%n %u %g %a %F' ) > "$DEST/$pvc.meta" || true
 
-      tar czf "$DEST/$pvc.tar.gz" --numeric-owner -C "$src" .
+      if ! tar czf "$DEST/$pvc.tar.gz" --numeric-owner -C "$src" .; then
+        echo "  ERROR: tar reported errors for $src"
+        return 1
+      fi
       asize="$(stat -c %s "$DEST/$pvc.tar.gz")"
       asha="$(sha256sum "$DEST/$pvc.tar.gz" | cut -d' ' -f1)"
       echo "  $files files, $bytes bytes -> $asize bytes compressed"
-      selfverify "$pvc" || return 1
+      selfverify "$pvc" "$files" || return 1
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$pvc" "$deploy" "$files" "$bytes" "$asize" "$asha" >> "$MANIFEST"
     }
 
@@ -196,7 +225,6 @@ data:
     cat "$MANIFEST"
     [ "$FAILED" = "0" ] || exit 1
     echo "=== backup $RUN_ID complete ==="
-
   restore.sh: |
     #!/bin/sh
     # Repopulate config volumes from an archive written by backup.sh, then prove it.
@@ -250,6 +278,8 @@ data:
       while [ "$(pods_for "$d")" != "0" ]; do
         i=$((i + 1))
         [ "$i" -gt "$QUIESCE_TIMEOUT" ] && { echo "  TIMEOUT waiting for $d"; return 1; }
+        # Re-assert: Flux owns spec.replicas and will put it back mid-wait.
+        [ $((i % 5)) -eq 0 ] && kubectl -n "$NAMESPACE" scale deploy "$d" --replicas=0 >/dev/null 2>&1
         sleep 1
       done
       echo "  $d quiesced"
