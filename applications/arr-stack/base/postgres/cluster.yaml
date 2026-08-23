@@ -40,14 +40,31 @@ spec:
     size: 20Gi # SQLite sources today: prowlarr 8 MB + radarr 267 MB + sonarr 549 MB.
                # Postgres inflates 2-4x and all three land here — 20Gi is sized for
                # the finished migration, not just prowlarr.
-    # fatboy-nfs-appdata, and RECLAIM POLICY is a reason, not just node-independence.
-    # The class carries reclaimPolicy: Retain, and all three of this cluster's PVs
-    # were verified Retain after provisioning. `local-path` is the cluster DEFAULT
-    # class and its policy is Delete — the SQLite PVs this migration replaces are
-    # Retain only because each was hand-written that way after the 2026-05-09 UPS
-    # incident. A new PV there would inherit Delete, i.e. LESS protection than what
-    # it replaced, quietly. NVMe block later (TALOS-1ujn) — check its policy then.
-    storageClass: fatboy-nfs-appdata
+    # local-path = the node's NVMe (Talos mounts EPHEMERAL at /var, which is where
+    # local-path provisions). Every Postgres commit is a WAL fsync; on NFS that fsync
+    # is a network round trip to the Synology. With instances:3 all three replicas
+    # were fsyncing to the SAME box — triple the write traffic, none of the speed,
+    # and no extra resilience, because one NAS failure takes all three at once.
+    #
+    # THIS REPLACES A RECLAIM-POLICY ARGUMENT THAT WAS RIGHT ABOUT THE WRONG THING.
+    # The previous comment kept this on NFS because that class carries
+    # reclaimPolicy: Retain while local-path inherits Delete, and reasoned that a new
+    # PV would therefore have LESS protection than the hand-written Retain SQLite PVs
+    # it replaced. That is sound for a SINGLE-COPY SQLite file. It is backwards for a
+    # replicated Postgres cluster:
+    #   - CNPG DELETES PVCs as part of NORMAL operation — rolling storage migration,
+    #     scale-down, failover recovery, instance replacement. Retain would strand an
+    #     orphaned Released PV on every rebuild and slowly fill the node.
+    #   - Durability here comes from 3 streaming replicas across 3 nodes plus barman
+    #     to object storage (objectstore.yaml + scheduledbackup.yaml), NOT from the
+    #     filesystem's reclaim policy.
+    # So Delete is the CORRECT policy for this volume, not a downgrade.
+    #
+    # Safe at instances:3 specifically: local-path is WaitForFirstConsumer so each PV
+    # pins to a node, but CNPG's default pod anti-affinity puts the three on three
+    # different nodes, and losing one is an automatic promotion plus a streaming
+    # rebuild. *** NEVER reduce this cluster to instances:1 while on local-path. ***
+    storageClass: local-path
   monitoring:
     enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
   bootstrap:
