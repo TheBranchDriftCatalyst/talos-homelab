@@ -50,3 +50,32 @@ subjects:
   - kind: ServiceAccount
     name: provider-kubernetes
     namespace: crossplane-system
+---
+# Activation allowlist for provider-kubernetes (TALOS-hk7i).
+#
+# provider-kubernetes advertises the SafeStart capability, so it ships its
+# resources as ManagedResourceDefinitions in state Inactive and something must
+# activate them or no CRD is ever created. The chart's catch-all MRAP used to do
+# that implicitly for everything; it has been removed in favour of explicit
+# allowlists (see infrastructure/base/aws-providers/activation-policy.yaml for
+# the full rationale — briefly: activating "*" registers ~250 CRDs per upjet AWS
+# provider at ~3MiB of apiserver memory each, which took the apiserver down on
+# 2026-08-15).
+#
+# This policy lives next to the Provider that ships the MRDs rather than in the
+# AWS file, so the two stay independently reviewable. MRAPs are additive, so
+# several narrow policies compose exactly as intended.
+#
+# objects.kubernetes.crossplane.io is load-bearing, NOT demo scaffolding: the
+# CatalystCNPGAppDB Composition composes a kubernetes.crossplane.io/v1alpha2
+# Object, so deactivating this breaks every database that composite manages.
+#
+# The namespaced twin (kubernetes.m.crossplane.io) and ObservedObjectCollection
+# are deliberately omitted — nothing in this repo references them.
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: provider-kubernetes-activations
+spec:
+  activate:
+    - objects.kubernetes.crossplane.io
