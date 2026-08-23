@@ -153,9 +153,20 @@ spec:
             runAsUser: 1000
             runAsGroup: 1000
           resources:
+            # Measured 24h peak 1,084Mi against an 8Gi request — roughly seven gigabytes
+            # reserved and never touched, on talos01: the node that sat at 97% of its memory
+            # requested and was next in line to wedge after talos03 actually did.
+            # kube-scheduler packs on REQUESTS, so an over-declared one starves a node just as
+            # effectively as an under-declared one lies about it.
+            # 
+            # 2Gi is a little under 2x observed peak. No memory LIMIT, deliberately: a browser
+            # genuinely does spike on a heavy page or a video, and an OOMKill mid-session is a
+            # worse outcome than briefly exceeding its share — burstable is right here. CPU
+            # dropped with it; 2500m reserved two and a half cores for something that idles.
+            # (TALOS-ri7d)
             requests:
-              cpu: 2500m
-              memory: 8Gi
+              cpu: 500m
+              memory: 2Gi
           volumeMounts:
             - name: shm
               mountPath: /dev/shm

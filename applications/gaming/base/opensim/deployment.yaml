@@ -59,11 +59,16 @@ spec:
             - name: data
               mountPath: /opt/opensim/bin/sqlite-database
           resources:
+            # Measured 24h peak 173Mi, against a 2Gi request. Sized to 512Mi —
+            # comfortable headroom over observed, without reserving capacity the
+            # scheduler could give to something that will actually use it. Requests are
+            # what kube-scheduler packs on, so an over-declared one starves a node just
+            # as effectively as an under-declared one lies about it. (TALOS-ri7d)
             requests:
-              cpu: 500m
-              memory: 2Gi
+              cpu: 250m
+              memory: 512Mi
             limits:
-              memory: 4Gi
+              memory: 2Gi
           # OpenSim takes time to initialize
           startupProbe:
             tcpSocket:

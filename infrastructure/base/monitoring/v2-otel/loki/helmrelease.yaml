@@ -18,6 +18,28 @@ spec:
         namespace: monitoring
       interval: 12h
   values:
+    # The chart's default chunks cache is an 8GB memcached with a matching 9830Mi
+    # request AND limit. Measured over 24h on this cluster it peaks at 140Mi and
+    # floors at 19Mi — it has never come close to filling, because this homelab does
+    # not push enough chunks through Loki to need it.
+    #
+    # That default was reserving 9.6GiB of scheduler capacity for 140Mi of real use,
+    # on talos02-gpu. Requests are what kube-scheduler packs on, so that is 9.6GiB
+    # other workloads could not be given. It was the single largest phantom
+    # reservation in the cluster — larger than anything the fleet-wide audit flagged.
+    #
+    # -m 1024 with a 1536Mi request is ~7x the observed peak. If Loki's query
+    # performance ever suggests the cache is undersized, raise BOTH numbers together:
+    # memcached will happily accept -m larger than its request and then get OOMKilled
+    # when it tries to use it. (TALOS-ri7d)
+    chunksCache:
+      allocatedMemory: 1024
+      resources:
+        requests:
+          cpu: 100m
+          memory: 1536Mi
+        limits:
+          memory: 1536Mi
     # Deployment mode - single binary for homelab
     deploymentMode: SingleBinary
     loki:
