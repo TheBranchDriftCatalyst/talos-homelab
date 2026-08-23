@@ -4,8 +4,20 @@
 > Companion to [embedded-db-migration-audit.md](embedded-db-migration-audit.md) §3, which flagged
 > SPIRE as a delete candidate. This document verifies that finding independently and takes it
 > further.
-> Investigated 2026-08-22/23 against the live cluster. **Read-only — nothing was changed.**
+> Investigated 2026-08-22/23 against the live cluster.
 > Driver: [TALOS-1d4o] (blocks [TALOS-3gte] → [TALOS-k62s], EPIC 0 node prep).
+>
+> ## ✅ EXECUTED 2026-08-22 — user approved after review
+>
+> The recommendation below was carried out. Commit `9ce8e807` flips the two booleans and
+> removes the four postRenderer patches; a follow-up commit removes the artifacts that became
+> dead. **The CNI is healthy on all 5 nodes.** See [§10](#10-execution-record-2026-08-22)
+> for the before/after health evidence and for two things this document did not predict:
+> Server-Side Apply field-ownership residue that stopped Flux from removing the SPIRE
+> plumbing on its own, and the fact that `spire-namespace.yaml` was never creating
+> `cilium-spire` at all.
+>
+> **Rollback is `git revert 9ce8e807` plus `flux reconcile kustomization cilium --with-source`.**
 
 ## TL;DR
 
@@ -459,6 +471,131 @@ stale or rewritten to point at zTunnel. Not done here — out of scope for this 
 
 **Not done (deliberately):** nothing was disabled, deleted, scaled or patched. No backup was taken,
 because [§4](#4-if-it-stays-what-does-losing-the-pv-cost) concludes there is nothing worth backing up.
+
+---
+
+## 10. Execution record (2026-08-22)
+
+Executed on user approval. Recorded here because two things did not go the way
+[§3](#3-what-exactly-would-disabling-remove) predicted, and both are reusable lessons.
+
+### What was changed in git
+
+| Commit | Contents |
+| --- | --- |
+| `9ce8e807` | `values.yaml` both booleans → false; all four postRenderer patches removed; `spire-namespace.yaml` deleted and replaced by `kube-system-namespace.yaml` |
+| follow-up | dead artifacts: `wedge-buster-spire-agent` CronJob, `spire-alerts.yaml`, the `spire-health` dashboard (CRD + JSON), the `cilium-spire` entries in `velero.yaml` and the OTel operator `namespaceSelector`, and the recovery PV entry |
+
+Before committing, the chart was rendered at v1.20.0 with the real values file both ways and
+the resource sets diffed: **63 → 47 resources, exactly the predicted 16 removed, 0 added**, and
+the only content changes among the 47 survivors were `cilium-config` and the `spire-agent-socket`
+volume leaving the two pod templates. Nothing else moved.
+
+### Surprise 1 — `spire-namespace.yaml` never created `cilium-spire`
+
+`infrastructure/base/cilium/kustomization.yaml` sets `namespace: kube-system`. Kustomize's
+namespace transformer does not merely stamp `metadata.namespace` on namespaced resources — for a
+`Namespace` object it **rewrites `metadata.name`**. So that file rendered as
+`Namespace/kube-system` carrying `pod-security.kubernetes.io/enforce|warn: privileged`, and the
+live `kube-system` Namespace is labelled `kustomize.toolkit.fluxcd.io/name: cilium` to prove it.
+`cilium-spire` was created by the chart the whole time (`app.kubernetes.io/managed-by: Helm`).
+
+The helmrelease.yaml comment claiming *"the standalone spire-namespace.yaml has been quietly
+doing all the work"* was therefore wrong about which namespace it was working on. It was
+silently maintaining kube-system's PSA labels. Those labels are **inert** — kube-system is in
+the apiserver's PodSecurity `exemptions.namespaces` (with `media-prod` and `local-path-storage`),
+so PSA is bypassed there regardless of labels — but they are now asserted by an honestly-named
+`kube-system-namespace.yaml` that renders byte-identically, rather than by accident.
+
+### Surprise 2 — SSA field ownership stopped Flux from finishing the job
+
+After `flux reconcile kustomization cilium --with-source`, helm upgraded to release **17** and the
+deployed manifest was correct (0 SPIRE references, `mesh-auth-enabled: "false"`). Helm deleted the
+`cilium-spire` namespace and everything in it. **But the live `cilium` DaemonSet did not roll** —
+generation stayed at 14 and it still mounted `spire-agent-socket`, and `cilium-config` still
+carried the 8 `mesh-auth-spire-*` keys.
+
+Cause: `kubectl get ds cilium --show-managed-fields` shows the DaemonSet has **six** field
+managers, including `manager=helm op=Apply time=2026-05-29T19:39:50Z` — the original manual
+`helm upgrade --take-ownership` — and that stale manager still **owns** the `spire-agent-socket`
+volume entry. Server-Side Apply only removes fields the *applying* manager owns. helm-controller
+applied a manifest without the volume, but it never owned that field, so the field stayed.
+
+Consequence while stale: the running agents and operator still had mutual auth enabled with SPIRE
+already deleted, and retried every 10–20s —
+`SPIRE Delegate API Client failed to init watcher` on the agents,
+`Failed to watch the Workload API ... no such file or directory` on the operator. Warn-level,
+no traffic impact (nothing fails closed, per [§5](#5-what-is-the-risk-of-disabling)), but not a
+finished change.
+
+Resolved with three guarded patches, in ascending blast-radius order, converging live state onto
+the already-committed desired state:
+
+1. `cilium-config` — removed the 8 stale `mesh-auth-*` keys (no pod impact).
+2. `cilium-operator` Deployment — removed the volume + mount; single replica, rolled clean.
+3. `cilium` DaemonSet — removed the volume + mount; rolled all 5 nodes at `maxUnavailable: 1`.
+
+> **This is not SPIRE-specific and it is not over.** Any field the pre-Flux manual install set is
+> currently beyond Flux's reach on the Cilium DaemonSet, Deployment and ConfigMap. A live audit
+> found **17** keys in `cilium-config` that the v1.20.0 chart no longer renders; only 8 were
+> SPIRE's. The other 9 — `arping-refresh-period`, `debug-verbose`,
+> `enable-k8s-terminating-endpoint`, `enable-local-redirect-policy`,
+> `enable-runtime-device-detection`, `enable-svc-source-range-check`,
+> `hubble-export-file-max-backups`, `hubble-export-file-max-size-mb`, `policy-cidr-match-mode` —
+> are older-chart leftovers that are **still in effect** on the running agents. They were left
+> alone deliberately: removing them changes agent behaviour and has nothing to do with SPIRE.
+> Worth its own ticket.
+
+### CNI health — before and after
+
+| Check | Before (01:01Z) | After (01:11Z) |
+| --- | --- | --- |
+| cilium-agent pods Running | 5/5 | **5/5**, all 5 rolled, 0 restarts |
+| `cilium-dbg status --brief`, per node | OK ×5 | **OK ×5** |
+| Controller Status (talos00) | 64/64 healthy | **75/75 healthy** |
+| Modules Health | Degraded(0) OK(116) | **Degraded(0) OK(111)** |
+| Nodes Ready | 5/5 | **5/5** |
+| Pods stuck ContainerCreating | 0 | **0** |
+| agent `level=error` in last 60s | — | **0 on all 5 nodes** |
+| CiliumNetworkPolicies | 6 | **6** |
+| CiliumClusterwideNetworkPolicies | 0 | **0** |
+| Policies referencing `authentication` | 0 | **0** |
+| CiliumIdentities | 289 | **290** (stable; meltdown signature is >1000) |
+
+Agents now log `Spire Delegate API Client is disabled as no socket path is configured` and make
+no further SPIRE connection attempts. The `--mesh-auth-spire-*` lines still visible in the startup
+flag dump are Cilium's compiled-in defaults (note `spire-server.spire.svc`, not our old
+`spire-server.cilium-spire.svc`), inert with `mesh-auth-enabled: false`.
+
+### What remained, and why
+
+- **`cilium-spire` Namespace: `Terminating`.** It is empty — all content deleted, no finalizers
+  remaining. It is blocked on `NamespaceDeletionDiscoveryFailure` for
+  `upload.cdi.kubevirt.io/v1beta1`, a transient CDI aggregated-API discovery failure at 01:03:14Z.
+  All APIServices including that one now report `Available=True`, so the namespace controller
+  should finalize on retry. **Unrelated to SPIRE** — it would block any namespace deletion.
+- **PV `rec-cilium-spire-spire-data-spire-server-0`: `Released`, not deleted.** The PVC is gone
+  (so the StatefulSet and its claim are cleared) but the PV has `persistentVolumeReclaimPolicy:
+  Retain` and `recovery/` is **not** Flux-managed — it was applied by hand, so removing the entry
+  from git cannot delete the live object. **This is still the talos03 pin and still needs one
+  manual command**, which requires operator approval:
+
+  ```
+  kubectl delete pv rec-cilium-spire-spire-data-spire-server-0
+  ```
+
+  Until then talos03 carries **14** node-bound PVs instead of 13. The other 13 are the
+  `media-experimental` configs and `pihole/etc-pihole-pihole-4` — a separate workstream.
+  The ~14.5 MB of hostPath data under
+  `/var/lib/rancher/local-path-provisioner/pvc-e031fb33-..._cilium-spire_spire-data-spire-server-0`
+  can be left to the node reset; per [§4](#4-if-it-stays-what-does-losing-the-pv-cost) it is
+  worthless.
+
+### Still stale, not touched
+
+[service-mesh.md](service-mesh.md) still presents Cilium mTLS as the chosen direction and gives
+instructions to *enable* this feature. It will now walk someone into a removed feature. Flagged in
+[§8](#8-recommendation) as out of scope; still true, still needs doing.
 
 ---
 
