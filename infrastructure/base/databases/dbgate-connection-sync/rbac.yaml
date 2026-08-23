@@ -5,14 +5,17 @@ metadata:
   name: dbgate-connection-sync
   namespace: databases
 ---
-# Discover every CNPG cluster, cluster-wide.
+# Discover every CNPG cluster AND every declarative tenant database, cluster-wide.
+# `databases` is required since TALOS-clz4: multi-tenant clusters bootstrap a placeholder
+# database and declare their real databases as Database CRs, so clusters alone no longer
+# describe what dbgate should connect to.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: dbgate-connection-sync
 rules:
   - apiGroups: [postgresql.cnpg.io]
-    resources: [clusters]
+    resources: [clusters, databases]
     verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

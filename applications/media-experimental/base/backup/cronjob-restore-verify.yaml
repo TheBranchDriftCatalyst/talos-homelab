@@ -1,0 +1,175 @@
+---
+# RESTORE VERIFICATION: proves the archives actually restore, without touching
+# anything live. TALOS-uml1 -- an untested restore is not a backup.
+#
+# It runs the SAME restore.sh as config-restore, with one difference: the targets
+# are generic ephemeral volumes instead of the real PVCs. Kubernetes creates a
+# fresh empty local-path PVC per volume when the pod starts and deletes it when
+# the pod goes away, so the test cleans up after itself and no live PVC is ever
+# at risk. Because the script is shared, a pass here is evidence about the real
+# restore path and not about a lookalike.
+#
+# Each volume passes only if every file's sha256 matches the list captured at
+# backup time AND the file count matches.
+#
+#   kubectl -n media-experimental create job --from=cronjob/config-restore-verify \
+#           config-restore-verify-$(date +%s)
+#   kubectl -n media-experimental logs -f job/config-restore-verify-<id>
+#
+# QUIESCE=false: the targets are throwaway volumes, so the live apps stay up.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: config-restore-verify
+  labels:
+    app.kubernetes.io/component: config-backup
+spec:
+  suspend: true
+  schedule: "0 0 31 2 *"       # never -- manual trigger only
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: config-backup
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+          containers:
+            - name: verify
+              image: alpine/k8s:1.34.9
+              command: [/bin/sh, /scripts/restore.sh]
+              env:
+                - name: NAMESPACE
+                  valueFrom:
+                    fieldRef: {fieldPath: metadata.namespace}
+                - name: VOLUMES
+                  value: >-
+                    audiobookshelf=audiobookshelf-config audiobookshelf=audiobookshelf-metadata
+                    bindery=bindery-config booksonic=booksonic-config chaptarr=chaptarr-config
+                    kavita=kavita-config komga=komga-config libation=libation-config
+                    librarr=librarr-config livrarr=livrarr-config mylar3=mylar3-config
+                    storyteller=storyteller-config
+                - name: QUIESCE
+                  value: "false"    # scratch targets -- leave the live apps running
+                - name: FORCE
+                  value: "false"    # ephemeral volumes start empty, so safe mode passes
+                - name: RUN_ID
+                  value: ""
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {memory: 512Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - {name: scripts, mountPath: /scripts, readOnly: true}
+                - {name: backup, mountPath: /backup, readOnly: true}
+                - {name: scratch, mountPath: /tmp}
+                - {name: audiobookshelf-config, mountPath: /vol/audiobookshelf-config}
+                - {name: audiobookshelf-metadata, mountPath: /vol/audiobookshelf-metadata}
+                - {name: bindery-config, mountPath: /vol/bindery-config}
+                - {name: booksonic-config, mountPath: /vol/booksonic-config}
+                - {name: chaptarr-config, mountPath: /vol/chaptarr-config}
+                - {name: kavita-config, mountPath: /vol/kavita-config}
+                - {name: komga-config, mountPath: /vol/komga-config}
+                - {name: libation-config, mountPath: /vol/libation-config}
+                - {name: librarr-config, mountPath: /vol/librarr-config}
+                - {name: livrarr-config, mountPath: /vol/livrarr-config}
+                - {name: mylar3-config, mountPath: /vol/mylar3-config}
+                - {name: storyteller-config, mountPath: /vol/storyteller-config}
+          volumes:
+            - {name: scripts, configMap: {name: config-backup-scripts, defaultMode: 0755}}
+            - {name: backup, persistentVolumeClaim: {claimName: config-backup}}
+            - {name: scratch, emptyDir: {sizeLimit: 1Gi}}
+            # Generic ephemeral volumes: created empty on pod start, deleted with
+            # the pod. No scratch PVC is left behind to tidy up or to rot.
+            - name: audiobookshelf-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: audiobookshelf-metadata
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: bindery-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: booksonic-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: chaptarr-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: kavita-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: komga-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: libation-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: librarr-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: livrarr-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: mylar3-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}
+            - name: storyteller-config
+              ephemeral:
+                volumeClaimTemplate:
+                  spec:
+                    accessModes: [ReadWriteOnce]
+                    storageClassName: local-path
+                    resources: {requests: {storage: 1Gi}}

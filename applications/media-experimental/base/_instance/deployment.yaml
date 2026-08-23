@@ -27,7 +27,17 @@ spec:
       annotations:
         backup.velero.io/backup-volumes: "config"
     spec:
-      # local-path appdata → pin to talos03 (matches arr-stack convention)
+      # THE SECOND HALF OF THE NODE PIN. The config PVC is local-path, so its PV
+      # carries a nodeAffinity of its own and the pod could not leave that node
+      # anyway — but a hard-coded hostname here is an INDEPENDENT pin that
+      # outlives the volume. sonarr proved the failure mode: its PVC was removed
+      # and the pod stayed welded to the node while every check reported green.
+      # So the node name is a variable, substituted by Flux from cluster-settings
+      # (MEDIA_EXPERIMENTAL_NODE, default talos03). Moving the stack after a node
+      # reset is then one ConfigMap value, and backup/cronjob-restore.yaml reads
+      # the SAME variable so the restore Job provisions the fresh local-path PVCs
+      # on the node the pods are about to be sent to. Change them together or not
+      # at all.
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -35,7 +45,7 @@ spec:
               - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: In
-                    values: [talos03]
+                    values: ["${MEDIA_EXPERIMENTAL_NODE:=talos03}"]
       securityContext:
         fsGroup: 1000
         supplementalGroups: [100, 1000]  # 100 = Synology 'users' for NFS write
