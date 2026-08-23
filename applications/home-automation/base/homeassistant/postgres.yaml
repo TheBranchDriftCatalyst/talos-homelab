@@ -34,11 +34,21 @@ spec:
   # SAFE AT 1 ONLY BECAUSE STORAGE STAYS ON NFS (fatboy-nfs-appdata), which is
   # node-independent: a node loss reschedules the pod and it re-attaches. NEVER set
   # instances:1 on local-path — that PV pins to a node and a node loss strands the DB.
-  instances: 1
+  instances: 3 # 3 copies on 3 nodes — required for local-path, see storage note
   imagePullPolicy: IfNotPresent
   storage:
     size: 2Gi
-    storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
+    # local-path = node NVMe. Every Postgres commit is a WAL fsync; on NFS that is a
+    # network round trip to the Synology. Durability comes from streaming replication
+    # plus barman backups, not the filesystem — CNPG's own guidance. (TALOS-npt4)
+    #
+    # instances: 3 above is LOAD-BEARING, not a nicety. local-path is
+    # WaitForFirstConsumer, so each PV pins to the node that first mounts it. A single
+    # instance on local-path is stranded by a node loss with no copy anywhere else.
+    # Three instances + CNPG's default anti-affinity = three copies on three nodes, and
+    # a lost node becomes a promotion. NEVER drop this back to 1 while on local-path;
+    # if it genuinely must run single-instance, move it back to NFS first.
+    storageClass: local-path
   monitoring:
     enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
   # Object-store backups → MinIO (TALOS-xgrl). Config lives in the ObjectStore

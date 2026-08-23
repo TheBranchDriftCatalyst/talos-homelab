@@ -79,7 +79,7 @@ spec:
   # linkwarden/zipline rationale rather than arr-postgres's 3. One instance on NFS
   # is still fully node-independent — the PVC follows the pod to any node, which is
   # the property this whole exercise exists to preserve.
-  instances: 1
+  instances: 3 # 3 copies on 3 nodes — required for local-path, see storage note
   storage:
     size: 10Gi
     # fatboy-nfs-appdata, NOT local-path. Two reasons, both load-bearing:
@@ -87,7 +87,17 @@ spec:
     #      provisioned them. That is precisely the pin this app must not have.
     #   2. RECLAIM POLICY. This class is Retain; local-path is the cluster DEFAULT
     #      class and its policy is Delete.
-    storageClass: fatboy-nfs-appdata
+    # local-path = node NVMe. Every Postgres commit is a WAL fsync; on NFS that is a
+    # network round trip to the Synology. Durability comes from streaming replication
+    # plus barman backups, not the filesystem — CNPG's own guidance. (TALOS-npt4)
+    #
+    # instances: 3 above is LOAD-BEARING, not a nicety. local-path is
+    # WaitForFirstConsumer, so each PV pins to the node that first mounts it. A single
+    # instance on local-path is stranded by a node loss with no copy anywhere else.
+    # Three instances + CNPG's default anti-affinity = three copies on three nodes, and
+    # a lost node becomes a promotion. NEVER drop this back to 1 while on local-path;
+    # if it genuinely must run single-instance, move it back to NFS first.
+    storageClass: local-path
   monitoring:
     enablePodMonitor: false # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
   bootstrap:
