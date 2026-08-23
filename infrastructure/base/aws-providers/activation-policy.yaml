@@ -17,12 +17,17 @@
 # etcd object and starts no controller.
 #
 # The chart's default MRAP activated "*", which defeated the whole mechanism.
-# operators/crossplane/helmrelease.yaml now sets provider.defaultActivations to
-# [] so the init container stops seeding that catch-all, and this policy — owned
-# by Flux, reviewable in git — is the single activation source.
 #
-# MRAPs are ADDITIVE across objects: a resource is Active if ANY policy matches
-# it. So a second catch-all anywhere would silently undo this file.
+# NAMED `default` DELIBERATELY. This is not the chart's object any more — it is
+# ours, and the name is how we take it over. MRAPs are ADDITIVE across objects:
+# a resource is Active if ANY policy matches it, so leaving a separate catch-all
+# named `default` in place would silently negate every narrowing here. Rather
+# than delete it out of band (which git would not record), we declare `default`
+# ourselves and let Flux server-side-apply the narrow list over the "*".
+# operators/crossplane/helmrelease.yaml additionally sets
+# provider.defaultActivations to [] so `core init` never re-seeds a catch-all.
+#
+# Corollary: never add a policy matching "*" anywhere in this repo.
 #
 # Entries are exact MRD names (<plural>.<group>), which is what the docs require
 # for non-wildcard matches. Every entry below is a resource some Composition in
@@ -36,7 +41,7 @@
 apiVersion: apiextensions.crossplane.io/v1alpha1
 kind: ManagedResourceActivationPolicy
 metadata:
-  name: catalyst-activations
+  name: default
 spec:
   activate:
     # --- s3: XBucket (xbucket-composition.yaml) — provider installed ---
