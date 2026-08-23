@@ -22,7 +22,17 @@ spec:
   imagePullPolicy: IfNotPresent
   storage:
     size: 10Gi
-    storageClass: fatboy-nfs-appdata # interim node-independent storage; NVMe block later (TALOS-1ujn)
+    # local-path = node NVMe. Every Postgres commit is a WAL fsync, and on NFS that is
+    # a network round trip to the Synology. Durability here comes from streaming
+    # replication plus barman backups, not from the filesystem — which is CNPG's own
+    # guidance.
+    #
+    # Safe at instances: 3 and ONLY at 3. local-path is WaitForFirstConsumer so each PV
+    # pins to the node that first mounts it; a single instance would be stranded by a
+    # node loss. Three instances with CNPG's default anti-affinity means three copies on
+    # three nodes and a lost node becomes a promotion. Never drop to 1 while on
+    # local-path — move back to NFS first if it ever must run single. (TALOS-npt4)
+    storageClass: local-path
   monitoring:
     enablePodMonitor: false  # covered by the global cnpg-clusters PodMonitor (TALOS-7u3)
   # Object-store backups → MinIO (TALOS-a1hk). Config lives in the ObjectStore
