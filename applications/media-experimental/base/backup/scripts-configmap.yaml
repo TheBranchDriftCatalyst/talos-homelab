@@ -267,6 +267,11 @@ data:
       kubectl -n "$NAMESPACE" get pods -l "app=$1" -o name 2>/dev/null | wc -l | tr -d ' '
     }
 
+    # uid:gid=count over a .meta listing, so the log states the ownership outright.
+    owner_histogram() {
+      awk '{print $2 ":" $3}' "$1" | LC_ALL=C sort | uniq -c | awk '{printf "%s=%s ", $2, $1}'
+    }
+
     quiesce() {
       d="$1"
       [ "$QUIESCE" = "true" ] || return 0
@@ -327,12 +332,20 @@ data:
         return 1
       fi
 
-      # Ownership/mode drift is reported but not fatal: several of these images
-      # chown their config dir on startup, so a diff here is informational.
+      # Ownership/mode is checked and REPORTED EITHER WAY. It used to print only on
+      # a mismatch, which meant a passing run proved ownership by silence -- useless
+      # evidence for the one defect this path actually had (capabilities drop ALL
+      # takes CAP_CHOWN from uid 0, so every restored file landed as 0:0 while the
+      # apps run as PUID/PGID 1000). Not fatal on a diff: a few of these images chown
+      # their config dir on startup.
       if [ -f "$SRC/$pvc.meta" ]; then
-        ( cd "$tgt" && find . -print0 | LC_ALL=C sort -z | xargs -0 -r stat -c '%n %u %g %a %F' ) > /tmp/meta.now
-        if ! diff -q "$SRC/$pvc.meta" /tmp/meta.now >/dev/null 2>&1; then
-          echo "  NOTE: ownership/mode differs from capture time:"
+        ( cd "$tgt" && find . -print0 | LC_ALL=C sort -z |
+          xargs -0 -r stat -c '%n %u %g %a %F' ) > /tmp/meta.now
+        n_meta="$(grep -c . "$SRC/$pvc.meta" 2>/dev/null || true)"
+        if diff -q "$SRC/$pvc.meta" /tmp/meta.now >/dev/null 2>&1; then
+          echo "  owner/mode OK: $n_meta paths match capture -- uid:gid $(owner_histogram /tmp/meta.now)"
+        else
+          echo "  owner/mode DIFFERS from capture time:"
           diff "$SRC/$pvc.meta" /tmp/meta.now | head -10
         fi
       fi
