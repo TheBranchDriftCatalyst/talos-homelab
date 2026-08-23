@@ -13,18 +13,11 @@ spec:
   resources:
     requests:
       storage: 5Gi
----
-# SQLite DB PVC - Local storage (SQLite doesn't like NFS)
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: sonarr-db-local
-  labels:
-    app: sonarr
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: local-path
-  resources:
-    requests:
-      storage: 2Gi
+# NO sonarr-db-local PVC. It bound rec-media-sonarr-db-local, a local-path PV
+# with nodeAffinity to talos03, and was the thing actually pinning sonarr to
+# that node. Sonarr's database is in the arr-postgres CNPG cluster now
+# (TALOS-eaa4), so the claim is gone -- the arr-stack Kustomization runs
+# prune: true, and removing it here is what deletes it. The PV is
+# reclaimPolicy: Retain and is hand-written in
+# recovery/pv-recovery-2026-05-09.yaml, which no Kustomization applies, so it
+# goes Released and has to be deleted by hand.
