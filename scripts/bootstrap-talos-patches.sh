@@ -39,7 +39,7 @@ NODES=(
 PATCHES=(
   "${REPO_ROOT}/docs/05-runbooks/talos-kubelet-iscsi-patch.yaml|iSCSI / Democratic-CSI extraMounts"
   "${REPO_ROOT}/docs/05-runbooks/talos-kubelet-localpath-patch.yaml|local-path-provisioner extraMount"
-  "${REPO_ROOT}/docs/05-runbooks/talos-kubelet-maxpods-patch.yaml|maxPods 110 -> 200 (TALOS-d5b5)"
+  "${REPO_ROOT}/docs/05-runbooks/talos-kubelet-maxpods-patch.yaml talos-kubelet-memory-reserve-patch.yaml|maxPods 110 -> 200 (TALOS-d5b5)"
 )
 
 DRY_RUN=false
