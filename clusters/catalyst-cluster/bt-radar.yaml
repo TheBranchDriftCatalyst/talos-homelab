@@ -15,6 +15,24 @@
 #
 # dependsOn traefik for the IngressRoute CRD, external-secrets for the 1Password-backed
 # credentials, and catalyst-cnpg-appdb for the database composite.
+#
+# ⚠️ TEMPORARY HOME. bt-radar is an APPLICATION, not infrastructure, so under this cluster's
+# dual-GitOps split it belongs to ArgoCD from its own repo — not to Flux from here. It lives
+# here only because that is the fastest path to deploying and iterating on a POC while the
+# app itself is still being written.
+#
+# THE MIGRATION, when the POC settles:
+#   1. Move applications/bt-radar/base/* -> workspace/bt-radar/k8s/base/
+#      and the cluster-specific bits    -> workspace/bt-radar/k8s/talos00/
+#      matching catalyst-llm/k8s/{base,talos00,local}, which is the established layout.
+#   2. Add an ArgoCD Application in infrastructure/base/argocd/applications/bt-radar.yaml
+#      pointing at that repo, path k8s/talos00 — same as the existing openscad Application.
+#   3. DELETE this Flux Kustomization and applications/bt-radar/ in the SAME commit as
+#      step 2. Leaving both live means Flux and ArgoCD fight over the same objects, each
+#      reverting the other, which is the single worst failure mode of dual GitOps.
+#
+# Keeping the manifests kustomize-shaped now (a base/ with a kustomization.yaml) is what
+# makes that a move rather than a rewrite.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
