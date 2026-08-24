@@ -28,10 +28,18 @@ spec:
         app.kubernetes.io/name: bt-agent
         app.kubernetes.io/part-of: bt-radar
     spec:
-      # Only nodes that physically have a Bluetooth radio. Label them with:
-      #   kubectl label node talos01 talos02-gpu talos03 talos06 catalyst.io/bluetooth=true
+      # Only nodes that physically have a Bluetooth radio — discovered automatically.
+      #
+      # NFD labels this from the USB device class: e0 is "wireless controller", which is
+      # where Bluetooth radios live. Enabled in infrastructure/base/intel-gpu/nfd-helmrelease.yaml;
+      # the chart does not do it by default, which is why the cluster had no usb-* labels
+      # at all despite every bare-metal node carrying a radio.
+      #
+      # NO MANUAL LABELLING. Plug a BLE dongle into any node and it is selected within one
+      # NFD interval; pull it out and the label goes away and the pod is descheduled.
+      # talos00 is a VM with no radio and is excluded automatically, with nothing to remember.
       nodeSelector:
-        catalyst.io/bluetooth: "true"
+        feature.node.kubernetes.io/usb-e0.present: "true"
       # A DaemonSet must be able to land on control planes too — three of the four
       # radio-bearing nodes are control planes in this cluster.
       tolerations:

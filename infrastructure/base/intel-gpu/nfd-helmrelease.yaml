@@ -85,10 +85,43 @@ spec:
               - '0300' # VGA controller
               - '0302' # 3D controller
               - '12' # Processing accelerators
+              - '0280' # Wireless network controller — the WiFi cards
             deviceLabelFields:
               - class
               - vendor
               - device
+
+          # USB. NOT enabled by the chart — NFD's default USB whitelist is 0e/ef/fe/ff
+          # (video, misc, application, vendor-specific), which is why this cluster had
+          # ZERO usb-* labels despite every bare-metal node carrying a Bluetooth radio.
+          #
+          # These are the classes worth scheduling against, i.e. "I plugged a thing in and
+          # a pod needs to find it":
+          usb:
+            deviceClassWhitelist:
+              - '02' # CDC / communications — serial adapters
+              - '03' # HID
+              - '08' # Mass storage
+              - '0a' # CDC data — the other half of USB serial
+              - '0e' # Video — webcams, capture cards
+              - 'e0' # Wireless — Bluetooth radios live here
+            # class ONLY, deliberately — no vendor, no device.
+            #
+            # The pci source above labels class_vendor_device, which is right for GPUs where
+            # you care WHICH card. Here the question is "does this node have a Bluetooth
+            # radio / a serial dongle at all", and the hardware differs per node: Intel
+            # 8087:0026 on talos06, 8087:0037 on talos02-gpu, 8087:0032 on talos01, Realtek
+            # 0bda:a728 on talos03 and talos06. Labelling by vendor+device would give a
+            # DIFFERENT label on every node and nothing could select them as a group.
+            #
+            # With class only, every node with any Bluetooth radio gets the same label:
+            #     feature.node.kubernetes.io/usb-e0.present=true
+            # and any node with a Zigbee/Matter stick gets usb-02 / usb-0a. That is what
+            # applications/bt-radar/base/40-bt-agent.yaml selects on. Plug a dongle into any
+            # node and it is labelled within one NFD interval — no manual kubectl label —
+            # and the label disappears again when it is unplugged.
+            deviceLabelFields:
+              - class
 
     # Garbage collector for stale labels
     gc:
