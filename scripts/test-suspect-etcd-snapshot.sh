@@ -435,7 +435,7 @@ if [[ "$DUR_P99" == "null" ]]; then
   verdict_label="UNKNOWN — etcd metrics not scraped"
   verdict_explanation="No samples returned data for etcd_disk_backend_commit_duration_seconds.
 This usually means nothing is scraping etcd's metrics endpoint at :2381.
-Talos exposes it (see configs/nodes/controlplane.yaml: listen-metrics-urls)
+Talos exposes it (see configs/patches/controlplane-baseline.yaml: listen-metrics-urls)
 but the alloy scrape config in infrastructure/base/monitoring/v2-otel/alloy/
 needs an explicit prometheus.scrape stanza for the CP node:2381. Add one,
 re-run this probe.

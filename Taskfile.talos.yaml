@@ -122,12 +122,29 @@ tasks:
       - sleep 30
 
   patches:
-    desc: Apply required kubelet machine-config patches (iSCSI + local-path) to all nodes
+    desc: "SUPERSEDED — kubelet patches are declared in talconfig.yaml; prints where they went"
+    summary: |
+      Kept so the muscle memory lands on an explanation instead of "no such file".
+
+      This applied iSCSI/local-path extraMounts, maxPods, memory reserves and image GC to
+      every node with `talosctl patch mc`. All of it is now declared in
+      configs/talconfig.yaml (patches/all-kubelet-baseline.yaml, patches/maxpods-200.yaml,
+      patches/talos03-maxpods.yaml) and applied by talhelper. Running both mechanisms is what
+      produced the drift this cluster migrated to talhelper to stop.
+
+      It had also been aborting on a malformed patch path for some time, so it was not
+      actually applying anything. See scripts/bootstrap-talos-patches.sh for the details.
+
+      Use task talos:verify-dry-run, task talos:verify, or task talos:apply-config NODE=<host>.
     cmds:
       - ./scripts/bootstrap-talos-patches.sh
 
   patches-check:
-    desc: Dry-run the kubelet machine-config patch bootstrap (no changes)
+    desc: "SUPERSEDED — use task talos:verify-dry-run instead"
+    summary: |
+      The read-only half of the superseded patch bootstrap. `task talos:verify-dry-run` is the
+      real answer to the question this used to answer: it asks each node what applying the
+      generated config would actually do, against the machine rather than against a plan.
     cmds:
       - ./scripts/bootstrap-talos-patches.sh --check
 
