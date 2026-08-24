@@ -86,10 +86,16 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /config
+          # Measured over 7d to 2026-08-24: memory floor 65Mi, peak 106Mi.
+          # That window contains a real batch run — peak CPU hit 1.0 core — so
+          # 106Mi is what a full library pass actually costs, not an idle
+          # reading. 192Mi request is 1.8x that.
+          # BURST-NOLIM and staying that way: kometa is a batch metadata job,
+          # and a memory limit would kill it mid-pass on a larger library.
           resources:
             requests:
               cpu: 100m
-              memory: 512Mi
+              memory: 192Mi
       volumes:
         - name: config-template
           configMap:
