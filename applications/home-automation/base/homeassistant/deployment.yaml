@@ -55,7 +55,24 @@ spec:
       containers:
         - name: homeassistant
           image: ghcr.io/home-assistant/home-assistant:stable
-          imagePullPolicy: IfNotPresent
+          # ⚠️ ALWAYS, not IfNotPresent, and the reason is specific.
+          #
+          # :stable is a FLOATING TAG. With IfNotPresent a node serves whatever it cached —
+          # possibly months ago — and never re-pulls, so THE RUNNING VERSION BECOMES
+          # NODE-DEPENDENT. Home Assistant then upgrades its on-disk storage on a newer node
+          # and cannot read it back on an older one:
+          #
+          #   UnsupportedStorageVersionError: Storage file http has version 2 which is newer
+          #   than the max supported version 1
+          #
+          # That is exactly what happened. HA had been ready=0 for FIFTEEN DAYS, unnoticed
+          # because nothing restarted it; the talhelper rolling reboot surfaced it by
+          # rescheduling the pod onto a node with a stale cache.
+          #
+          # Same bug already fixed for the arr-stack in fcc6c601 — "IfNotPresent made version
+          # node-dependent". Floating tag + IfNotPresent is a latent outage waiting for the
+          # next reschedule. (TALOS-1t2q)
+          imagePullPolicy: Always
 
           env:
             - name: TZ
@@ -115,7 +132,9 @@ spec:
         # Matter Server sidecar for Matter/Thread device support
         - name: matter-server
           image: ghcr.io/home-assistant-libs/python-matter-server:stable
-          imagePullPolicy: IfNotPresent
+          # Always, same reason as the HA container above — a floating tag with IfNotPresent
+          # makes the running version depend on which node the pod happened to land on.
+          imagePullPolicy: Always
           securityContext:
             privileged: true  # Required for Matter commissioning
           env:
