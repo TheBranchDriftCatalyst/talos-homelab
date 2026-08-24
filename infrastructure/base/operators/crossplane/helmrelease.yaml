@@ -37,6 +37,26 @@ spec:
   upgrade:
     crds: CreateReplace
   values:
+    # Soft-repel from talos01. gj3n's alloy-node DaemonSet (224Mi + 64Mi reloader) could not
+    # schedule there — talos01 was 31Mi short — and a DaemonSet must run on every node, so
+    # it thrashed: upgrade timed out, Flux rolled the HelmRelease back to 128Mi, the pod
+    # fit again, Flux retried, repeat. Four attempts before it stalled.
+    #
+    # crossplane is the right thing to move: 1024Mi, no PVC, no pin, and a controller does
+    # not care which node it runs on. talos02-gpu and talos06 each have >25Gi free.
+    #
+    # NOT a resize. Its 1Gi was set deliberately after the 2026-08-15 OOMKill incident and
+    # must stay — this only changes WHERE it runs. Preference, not a pin.
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values: [talos01]
+
     # Single core replica for homelab
     replicas: 1
 
