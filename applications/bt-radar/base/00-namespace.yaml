@@ -9,3 +9,29 @@ metadata:
     # provisioning — a CatalystCNPGAppDB, a DaemonSet sensor, a collector, and an
     # ingress — with a genuinely useful RF presence radar as the payload.
     catalyst.io/stage: poc-demo
+
+    # PodSecurity: privileged, and this is NOT laziness — it is a kernel requirement.
+    #
+    # bt-agent needs hostNetwork plus NET_ADMIN and NET_RAW, and none of the three is
+    # negotiable. Verified against the kernel source:
+    #   net/bluetooth/af_bluetooth.c  bt_sock_create()  -> if (net != &init_net) return
+    #     -EAFNOSUPPORT. A pod outside the host netns cannot create ANY Bluetooth socket.
+    #   net/bluetooth/hci_sock.c  hci_sock_bind(), HCI_CHANNEL_USER -> requires CAP_NET_ADMIN,
+    #     and HCI User Channel is what go-ble uses.
+    #   net/bluetooth/hci_sock.c  hci_sock_sendmsg() -> commands above HCI_SFLT_MAX_OGF (5)
+    #     bypass the security filter and require CAP_NET_RAW. LE Set Scan Parameters and
+    #     LE Set Scan Enable are OGF 0x08, i.e. exactly the two commands this application
+    #     depends on.
+    # No device plugin can remove these. Allocate() hands over device nodes, mounts and env
+    # vars; it cannot hand over a network namespace or a capability. A Bluetooth adapter has
+    # no device node at all — hciN exists only as a socket endpoint and a sysfs directory.
+    #
+    # PodSecurity is namespace-scoped and therefore all-or-nothing, so this raises the CEILING
+    # for the whole namespace. It does not lower any individual pod's own restrictions:
+    # bt-collector and wifi-agent still declare runAsNonRoot, readOnlyRootFilesystem and
+    # capabilities drop ALL, and those still apply. Only bt-agent actually uses the headroom.
+    #
+    # Matches how argocd, backup, crossplane-demo and crowdsec are already labelled here.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
