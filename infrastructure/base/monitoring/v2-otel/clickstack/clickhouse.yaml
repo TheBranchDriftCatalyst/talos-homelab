@@ -77,9 +77,23 @@ spec:
             nodeAffinity:
               requiredDuringSchedulingIgnoredDuringExecution:
                 nodeSelectorTerms:
+                  # Narrowed from `node-role.kubernetes.io/control-plane DoesNotExist`.
+                  # THREE of five nodes carry the control-plane role (talos00, talos01,
+                  # talos03) but only talos00 is tainted, so the old expression avoided
+                  # 3 of 5 nodes to dodge a problem that exists on 1 — and it was a
+                  # direct contributor to talos02-gpu carrying 116 pods against
+                  # talos00's 20.
+                  #
+                  # The underlying bug it was written for is real: a PV binds to
+                  # talos00, the taint is later re-asserted, and the pod is stuck
+                  # Pending forever with its data on an untouchable node. Excluding
+                  # talos00 by hostname keeps that protection exactly, at the cost of
+                  # one node instead of three. kernel-panic-capture already does it
+                  # this way. (TALOS-3hl8.3)
                   - matchExpressions:
-                      - key: node-role.kubernetes.io/control-plane
-                        operator: DoesNotExist
+                      - key: kubernetes.io/hostname
+                        operator: NotIn
+                        values: [talos00]
           securityContext:
             runAsUser: 101
             runAsGroup: 101
