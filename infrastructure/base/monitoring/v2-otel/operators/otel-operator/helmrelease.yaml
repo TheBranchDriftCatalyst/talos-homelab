@@ -1,0 +1,103 @@
+---
+# OpenTelemetry Operator
+# Provides CRDs: OpenTelemetryCollector, Instrumentation
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: open-telemetry
+  namespace: monitoring
+spec:
+  interval: 1h
+  url: https://open-telemetry.github.io/opentelemetry-helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: opentelemetry-operator
+  namespace: monitoring
+spec:
+  interval: 30m
+  timeout: 15m  # Allow extra time for informer sync during startup
+  chart:
+    spec:
+      chart: opentelemetry-operator
+      # Bumped 0.74.0 -> 0.114.1 (operator 0.113.0 -> 0.152.0) to escape a
+      # CrashLoop where the operator's runtime Create() of its self-metrics
+      # ServiceMonitor returned AlreadyExists and the manager exited 1.
+      # Upstream has moved to CreateOrUpdate semantics in newer releases.
+      version: '0.114.1'
+      sourceRef:
+        kind: HelmRepository
+        name: open-telemetry
+        namespace: monitoring
+      interval: 12h
+  install:
+    crds: Create
+  upgrade:
+    crds: CreateReplace
+  values:
+    # Manager configuration
+    manager:
+      leaderElection:
+        enabled: false
+      # Had no request and no limit — chart default is {}. Measured 24h to
+      # 2026-08-24: p50 70Mi, peak 165Mi (2.4x); the spikes are informer
+      # resyncs across the three watched namespaces. BURSTABLE.
+      resources:
+        requests:
+          cpu: 25m
+          memory: 96Mi
+        limits:
+          memory: 320Mi
+      # Limit namespace scope to reduce informer sync load
+      # Bug workaround: single namespace needs trailing comma
+      # See: https://github.com/open-telemetry/opentelemetry-operator/issues/2667
+      env:
+        ENABLE_WEBHOOKS: "true"
+        WATCH_NAMESPACE: "monitoring,media,default,"
+      # Collector image (for CRD-created collectors)
+      collectorImage:
+        repository: otel/opentelemetry-collector-contrib
+        tag: '0.115.0'
+      # Instrumentation auto-inject support
+      autoInstrumentationImage:
+        python:
+          repository: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-python
+          tag: '0.48b0'
+        nodejs:
+          repository: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-nodejs
+          tag: '0.52.0'
+        java:
+          repository: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java
+          tag: '2.8.0'
+        go:
+          repository: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-go
+          tag: 'v0.14.0-alpha'
+      # Disable ServiceMonitor creation (we manage separately)
+      serviceMonitor:
+        enabled: false
+
+    # Enable admission webhooks
+    admissionWebhooks:
+      certManager:
+        enabled: false # Use self-signed if no cert-manager
+      autoGenerateCert:
+        enabled: true
+      # CRITICAL: failurePolicy MUST be Ignore.
+      # See: docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md
+      # If this operator crashes (it has before — see ServiceMonitor orphan bug)
+      # and failurePolicy=Fail, every pod create stalls on the webhook timeout
+      # which can cascade into a cluster-wide outage.  With Ignore, apiserver
+      # logs a warning and proceeds.
+      failurePolicy: Ignore
+      # Skip core/system namespaces — these should NEVER need OTel auto-injection,
+      # and protecting them from any webhook flakiness is good defense.
+      namespaceSelector:
+        matchExpressions:
+          - key: kubernetes.io/metadata.name
+            operator: NotIn
+            values:
+              - kube-system
+              - flux-system
+              - kube-node-lease
+              - kube-public
