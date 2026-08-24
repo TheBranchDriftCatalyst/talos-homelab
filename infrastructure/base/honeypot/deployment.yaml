@@ -1,0 +1,122 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cowrie
+  namespace: honeypot
+  labels:
+    app: cowrie
+    app.kubernetes.io/name: cowrie
+    app.kubernetes.io/component: honeypot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cowrie
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: cowrie
+        app.kubernetes.io/name: cowrie
+        app.kubernetes.io/component: honeypot
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      nodeSelector:
+        kubernetes.io/hostname: talos03
+      containers:
+        - name: cowrie
+          image: cowrie/cowrie:latest
+          imagePullPolicy: Always
+          ports:
+            - name: ssh
+              containerPort: 2222
+              hostPort: 2222
+              protocol: TCP
+            - name: telnet
+              containerPort: 2223
+              hostPort: 2223
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: cowrie-config
+              mountPath: /cowrie/cowrie-git/etc/cowrie.cfg
+              subPath: cowrie.cfg
+              readOnly: true
+            - name: cowrie-var-lib
+              mountPath: /cowrie/cowrie-git/var/lib/cowrie
+            - name: cowrie-var-log
+              mountPath: /cowrie/cowrie-git/var/log/cowrie
+          # NOTE: the cowrie/cowrie image is shell-less (no /bin/sh) so exec
+          # probes are impossible, and the only listening ports ARE the honeypot
+          # ports — so every tcpSocket probe is logged by Cowrie as a
+          # session.connect/closed and pollutes the capture data. The old 5s
+          # readiness + 10s liveness produced ~700 fake sessions/hour (8x real
+          # traffic in load tests). Readiness is meaningless here (access is via
+          # hostPort, not the Service), so it's removed; liveness is slowed to
+          # 5-min so noise is negligible. Honeypot analytics/CrowdSec additionally
+          # filter the pod CIDR (10.244.0.0/16) — kubelet probe traffic is never a
+          # real attacker. (TALOS-u3l follow-up.)
+          livenessProbe:
+            tcpSocket:
+              port: ssh
+            initialDelaySeconds: 60
+            periodSeconds: 300
+            failureThreshold: 3
+        # Log-shipper sidecar: streams Cowrie's JSON event log to STDOUT so it
+        # reaches both (a) Alloy -> Loki (durable, queryable in Grafana) and
+        # (b) the CrowdSec agent (CRI stdout tail -> crowdsecurity/cowrie parser
+        # -> decisions). Cowrie's output_jsonlog only writes a file in the shared
+        # emptyDir; nothing tailed it before (TALOS-l05 / TALOS-e9h). `touch`
+        # first so `tail -F` doesn't race Cowrie creating the file.
+        - name: logship
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - 'touch /var/log/cowrie/cowrie.json; exec tail -n+1 -F /var/log/cowrie/cowrie.json'
+          volumeMounts:
+            - name: cowrie-var-log
+              mountPath: /var/log/cowrie
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: cowrie-config
+          configMap:
+            name: cowrie-config
+        # Honeypot state (downloads, snapshots, tty captures, instance
+        # UUID) is intentionally ephemeral. Cowrie auto-creates its
+        # subdirs on startup, and ship-to-Mimir/Graylog via output plugins
+        # is the durable record. Avoids the local-path PVC getting pinned
+        # to a node that doesn't match the hostPort nodeSelector.
+        - name: cowrie-var-lib
+          emptyDir: {}
+        - name: cowrie-var-log
+          emptyDir: {}

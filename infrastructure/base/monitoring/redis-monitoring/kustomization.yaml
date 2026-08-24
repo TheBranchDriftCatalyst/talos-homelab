@@ -1,0 +1,25 @@
+---
+# redis_exporter fleet for the Dragonfly caches.
+#
+# Replaces the failed direct-scrape approach (dragonfly-monitoring/, removed):
+# Dragonfly's multiplexed RESP+HTTP :6379/metrics can't be scraped by Alloy
+# (hangs/times out — TALOS-tf6o). Instead we run one small oliver006/redis_exporter
+# per Dragonfly, each talking pure RESP to its cache and exposing clean redis_*
+# over HTTP :9121, scraped by the shared PodMonitor. Feeds the "Dragonfly / Redis
+# Cache" dashboard (Ops/Databases).
+#
+# Add a new cache (e.g. authentik) by copying an exporter-*.yaml, pointing
+# --redis.addr at its svc, and giving it a unique redis_cache label.
+# Included by ../v2-otel/kustomization.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# NO global namespace: each resource sets its own. The argocd-dragonfly exporter lives in the
+# `argocd` ns (the operator's per-Dragonfly NetworkPolicy only allows :6379 from same-ns pods);
+# the PodMonitor stays in `monitoring`. boomtime-cache's exporter is NOT here — boomtime is an
+# ArgoCD-owned (app-repo) namespace, so its exporter belongs in that repo (cross-repo follow-up).
+
+resources:
+  - exporter-argocd-dragonfly.yaml
+  - exporter-authentik-cache.yaml # redis_exporter in the `authentik` ns (TALOS-5aop)
+  - podmonitor.yaml

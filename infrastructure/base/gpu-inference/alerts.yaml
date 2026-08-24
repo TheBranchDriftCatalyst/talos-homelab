@@ -1,0 +1,83 @@
+---
+# Cost + liveness alerts for the ephemeral GPU (TALOS-7p3v).
+#
+# WHY THESE MATTER MORE THAN USUAL: neither GPU XR is committed to git, so there is no
+# git diff that tells you a GPU is running. `kubectl get xgpuinstance` and these alerts
+# are the only signal that money is being spent.
+#
+# GROUNDING NOTE: alerts here are built on metrics that EXIST TODAY (kube-state-metrics +
+# KEDA operator metrics, both confirmed scraped). Alerting directly on XGPUInstance
+# existence would need either kube-state-metrics CustomResourceStateMetrics config or the
+# broker exporting its own metric -- neither exists yet, so gateway replicas is used as
+# the proxy for "a GPU should be running". Tighten this once the broker exports
+# gpu_broker_instance_exists.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: gpu-inference-alerts
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/part-of: gpu-inference
+    prometheus: kube-prometheus
+spec:
+  groups:
+    - name: gpu-inference.cost
+      rules:
+        # The headline cost alarm. The gateway being up implies a GPU is (or should be)
+        # provisioned at ~$0.16/hr. Up for hours means either genuine sustained use or a
+        # stuck scale-down.
+        - alert: GPUGatewayUpTooLong
+          expr: |
+            kube_deployment_spec_replicas{namespace="gpu-inference",deployment="ollama-gateway"} > 0
+          for: 4h
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU gateway has been scaled up for 4h (~$0.64+ of spot spend)"
+            description: >-
+              ollama-gateway has had replicas>0 for 4 hours, which means an AWS GPU box is
+              billing. Either traffic is genuinely sustained, or scale-down is stuck.
+              Check: kubectl get xgpuinstance; kubectl get httpscaledobject -n gpu-inference.
+              The tier-1 reaper should cap this at maxInstanceLifetime from the GPUProfile.
+
+        # If the reaper stops running, the cost backstop is gone and nobody would know.
+        - alert: GPUReaperNotRunning
+          expr: |
+            time() - kube_cronjob_status_last_successful_time{namespace="gpu-inference",cronjob="gpu-instance-reaper"} > 3600
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU instance reaper has not succeeded in over an hour"
+            description: >-
+              The tier-1 reaper is the only thing standing between a wedged gpu-broker and
+              an unbounded AWS bill. If it is not running, treat a live GPU as unattended:
+              verify with kubectl get xgpuinstance and delete manually if present.
+
+        - alert: GPUReaperFailing
+          expr: kube_job_failed{namespace="gpu-inference"} > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "A gpu-inference reaper Job is failing"
+            description: "kubectl logs -n gpu-inference job/{{ $labels.job_name }}"
+
+    - name: gpu-inference.availability
+      rules:
+        # Cold start is 2-5 min. Stuck NotReady well past that means the box failed to
+        # provision or the tunnel is down -- and buffered requests are piling up against
+        # the interceptor's 600s ceiling.
+        - alert: GPUGatewayStuckNotReady
+          expr: |
+            kube_deployment_status_replicas_unavailable{namespace="gpu-inference",deployment="ollama-gateway"} > 0
+          for: 12m
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU gateway NotReady for 12m — cold start should take 2-5 min"
+            description: >-
+              The gateway readiness probe gates on the GPU backend answering /health, so
+              this means the EC2 box never came up or the tunnel/EndpointSlice is wrong.
+              Buffered requests will start timing out at the 600s interceptor ceiling.
+              Check: kubectl get xgpuinstance -o wide; kubectl get endpointslice -n gpu-inference.

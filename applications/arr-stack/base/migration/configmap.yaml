@@ -1,0 +1,127 @@
+---
+# Migration scripts for arr-stack
+# Copies config files and backups from source to target PVCs
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arr-migration-scripts
+data:
+  migrate.sh: |
+    #!/bin/sh
+    set -e
+
+    APP="${1:-all}"
+    SOURCE_BASE="/source"
+
+    log() { echo "[$(date '+%H:%M:%S')] $*"; }
+
+    migrate_app() {
+      local app="$1"
+      local source_path="$2"
+      local target_path="/target/$app"
+
+      log "=== Migrating $app ==="
+
+      # Check source exists
+      if [ ! -d "$source_path" ]; then
+        log "ERROR: Source not found: $source_path"
+        return 1
+      fi
+
+      # Create target directories
+      mkdir -p "$target_path/asp" "$target_path/Backups"
+
+      # Copy config.xml if exists (but don't overwrite if target has one)
+      if [ -f "$source_path/config.xml" ]; then
+        if [ ! -f "$target_path/config.xml" ]; then
+          log "Copying config.xml"
+          cp "$source_path/config.xml" "$target_path/config.xml"
+        else
+          log "config.xml already exists, skipping"
+        fi
+      fi
+
+      # Copy asp/ encryption keys (critical for credential decryption)
+      if [ -d "$source_path/asp" ]; then
+        log "Copying encryption keys (asp/)"
+        cp -r "$source_path/asp/"* "$target_path/asp/" 2>/dev/null || true
+      fi
+
+      # Copy latest backup for restore
+      if [ -d "$source_path/Backups/scheduled" ]; then
+        local latest_backup=$(ls -t "$source_path/Backups/scheduled/"*.zip 2>/dev/null | head -1)
+        if [ -n "$latest_backup" ]; then
+          log "Copying latest backup: $(basename "$latest_backup")"
+          mkdir -p "$target_path/Backups/scheduled"
+          cp "$latest_backup" "$target_path/Backups/scheduled/"
+        fi
+      fi
+
+      # Set permissions
+      chmod -R 755 "$target_path"
+
+      log "=== $app migration complete ==="
+    }
+
+    case "$APP" in
+      sonarr)
+        migrate_app "sonarr" "$SOURCE_BASE/arrs/sonarr"
+        ;;
+      radarr)
+        migrate_app "radarr" "$SOURCE_BASE/arrs/radarr"
+        ;;
+      prowlarr)
+        migrate_app "prowlarr" "$SOURCE_BASE/prowlarr"
+        ;;
+      all)
+        migrate_app "sonarr" "$SOURCE_BASE/arrs/sonarr"
+        migrate_app "radarr" "$SOURCE_BASE/arrs/radarr"
+        migrate_app "prowlarr" "$SOURCE_BASE/prowlarr"
+        ;;
+      *)
+        echo "Usage: $0 [sonarr|radarr|prowlarr|all]"
+        exit 1
+        ;;
+    esac
+
+    log "Migration complete!"
+
+  validate.sh: |
+    #!/bin/sh
+    # Validate migration was successful
+
+    check_app() {
+      local app="$1"
+      local path="/target/$app"
+      local errors=0
+
+      echo "=== Validating $app ==="
+
+      # Check config.xml
+      if [ -f "$path/config.xml" ]; then
+        echo "[OK] config.xml exists"
+      else
+        echo "[WARN] config.xml missing"
+      fi
+
+      # Check asp/ keys
+      if [ -d "$path/asp" ] && [ "$(ls -A "$path/asp" 2>/dev/null)" ]; then
+        echo "[OK] encryption keys present"
+      else
+        echo "[WARN] encryption keys missing - stored credentials won't work"
+        errors=$((errors + 1))
+      fi
+
+      # Check backups
+      if ls "$path/Backups/scheduled/"*.zip 1>/dev/null 2>&1; then
+        echo "[OK] backup files present"
+      else
+        echo "[WARN] no backup files found"
+      fi
+
+      return $errors
+    }
+
+    check_app "sonarr"
+    check_app "radarr"
+    check_app "prowlarr"

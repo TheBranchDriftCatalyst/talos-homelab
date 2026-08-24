@@ -1,0 +1,596 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crowdsec
+  namespace: crowdsec
+spec:
+  interval: 30m
+  timeout: 15m
+  chart:
+    spec:
+      chart: crowdsec
+      version: '0.20.0'
+      sourceRef:
+        kind: HelmRepository
+        name: crowdsec
+        namespace: crowdsec
+      interval: 12h
+  upgrade:
+    cleanupOnFail: true
+  values:
+    # Talos runs containerd, not docker — the agent must read CRI-format container logs.
+    container_runtime: containerd
+    image:
+      repository: crowdsecurity/crowdsec
+      tag: v1.7.8
+
+    # ---- custom whitelist parser (mounted into the agent) — never ban internal/LAN/Cloudflare ----
+    config:
+      parsers:
+        # ---- Cowrie SSH/Telnet honeypot parser (agent side) — rec #3, the honeypot→CTI move ----
+        # No crowdsecurity/cowrie hub item exists (TALOS-e9h), so parse Cowrie's JSON here. The
+        # logship sidecar tails cowrie.json to stdout; the k8s acquisition tags it program: cowrie
+        # (helmrelease agent.acquisition below). cri-logs (s00) strips the CRI prefix into
+        # evt.Parsed.message (the JSON); this parser extracts source_ip + eventid so the
+        # honeypot/cowrie-activity scenario can fire and SHARE the signal to CAPI/community CTI.
+        # Sample event: {"eventid":"cowrie.session.connect","src_ip":"x.x.x.x","src_port":..,
+        #   "dst_port":2222,"session":"..","timestamp":"2026-..Z","message":".."}
+        s01-parse:
+          cowrie-logs.yaml: |
+            onsuccess: next_stage
+            # Only Cowrie stdout JSON (program set by the k8s acquisition; guard on a leading '{').
+            filter: "evt.Parsed.program == 'cowrie' && evt.Parsed.message startsWith '{'"
+            name: homelab/cowrie-logs
+            description: "Parse Cowrie SSH/Telnet honeypot JSON events → source_ip for CrowdSec"
+            # Belt-and-suspenders: drop pod-CIDR sources (kubelet tcpSocket liveness probe on :2222
+            # shows as cowrie.session.connect from 10.244.x — NOT an attacker). RFC1918 is already
+            # covered by homelab/whitelist (s02-enrich, 10.0.0.0/8), but whitelisting at parse time
+            # avoids even bucketing probe noise. Public attackers (post :22 exposure) are non-RFC1918
+            # → pass through → alert + CTI share. (coordinator item 2)
+            whitelist:
+              reason: "internal pod/probe traffic to the honeypot — not an attacker"
+              cidr:
+                - "10.244.0.0/16" # Cilium pod CIDR (kubelet probes, in-cluster health checks)
+            statics:
+              - meta: service
+                value: ssh
+              - meta: source_ip
+                expression: "JsonExtract(evt.Parsed.message, 'src_ip')"
+              - meta: cowrie_eventid
+                expression: "JsonExtract(evt.Parsed.message, 'eventid')"
+              - meta: log_type
+                expression: "'cowrie_' + JsonExtract(evt.Parsed.message, 'eventid')"
+              - target: evt.StrTime
+                expression: "JsonExtract(evt.Parsed.message, 'timestamp')"
+        s02-enrich:
+          homelab-whitelist.yaml: |
+            name: homelab/whitelist
+            description: "Never ban internal, cluster, LAN, or Cloudflare-edge traffic"
+            whitelist:
+              reason: "trusted internal + LAN + CDN"
+              ip:
+                - "127.0.0.1"
+                - "::1" # IPv6 loopback
+                # ---- OPERATOR HOME IP (TALOS-crowdsec-selfban) ----
+                # 2026-08-20: this address was BANNED for 32h by
+                # LePresidente/http-generic-403-bf, locking the operator out of
+                # Authentik SSO (auth.knowledgedump.space returned 403 for every
+                # path). The scenario is self-reinforcing: a few 403s from a
+                # misbehaving SSO flow look like a brute-force, the ban makes
+                # EVERYTHING return 403, which looks like more brute-force.
+                #
+                # Why the existing entries did not cover it: traffic arriving via
+                # Cloudflare has its real client IP restored by forwardedHeaders
+                # (see the CF-edge CIDRs below), so CrowdSec sees this address and
+                # not a Cloudflare edge IP. Beware the near-miss: 108.162.192.0/18
+                # below is CLOUDFLARE and does NOT contain 108.64.x.x.
+                #
+                # FRAGILE: ATT residential = DYNAMIC. When this address rotates the
+                # whitelist silently stops protecting the operator and the lockout
+                # recurs with no obvious cause. If you are locked out of SSO again,
+                # CHECK THIS VALUE FIRST:
+                #   curl -s https://api.ipify.org
+                #   kubectl exec -n crowdsec <agent> -- cscli decisions list --ip <you>
+                - "108.64.138.156"
+              cidr:
+                # RFC1918 — pods/services (Cilium, 10.96.0.0/12 svc) + LAN
+                - "10.0.0.0/8"
+                - "172.16.0.0/12"
+                - "192.168.0.0/16"
+                # IPv6 internal — Cilium dual-stack pod/service ULA + link-local. WITHOUT these,
+                # k8s-audit scenarios ban internal IPv6 (observed: alerts #24/#25 banned
+                # fdad:3925:98eb:... via crowdsecurity/k8s-audit-api-server-bruteforce). (rec #1)
+                - "fd00::/8" # Unique Local Addresses (Cilium pod/service CIDR)
+                - "fe80::/10" # link-local
+                # Cloudflare edge (safety net; real client IP already resolves past CF via forwardedHeaders)
+                - "173.245.48.0/20"
+                - "103.21.244.0/22"
+                - "103.22.200.0/22"
+                - "103.31.4.0/22"
+                - "141.101.64.0/18"
+                - "108.162.192.0/18"
+                - "190.93.240.0/20"
+                - "188.114.96.0/20"
+                - "197.234.240.0/22"
+                - "198.41.128.0/17"
+                - "162.158.0.0/15"
+                - "104.16.0.0/13"
+                - "104.24.0.0/14"
+                - "172.64.0.0/13"
+                - "131.0.72.0/22"
+                - "2400:cb00::/32"
+                - "2606:4700::/32"
+                - "2803:f800::/32"
+                - "2405:b500::/32"
+                - "2405:8100::/32"
+                - "2a06:98c0::/29"
+                - "2c0f:f248::/32"
+      # Tarpit → CrowdSec (LOG-ONLY): any IP that reaches the iocaine AI-tarpit host
+      # (trap.knowledgedump.space) is a confirmed bot/scraper. This scenario alerts on it; the
+      # simulation.yaml below keeps it DETECT-ONLY (alert, never ban) until we choose to enforce.
+      # target_fqdn is the host field the crowdsecurity/traefik-logs parser sets. (TALOS-mko/pbn)
+      scenarios:
+        iocaine-tarpit.yaml: |
+          type: trigger
+          name: homelab/iocaine-tarpit
+          description: "IP reached the iocaine AI-tarpit (trap.knowledgedump.space) — confirmed bot/scraper"
+          filter: "evt.Meta.target_fqdn == 'trap.knowledgedump.space'"
+          groupby: "evt.Meta.source_ip"
+          blackhole: 5m
+          labels:
+            remediation: true
+            type: scan
+            service: http
+            behavior: "http:scan"
+        # ---- Cowrie honeypot → HIGH-CONFIDENCE CTI signal (rec #3 / coordinator item 2) ----
+        # ANY interaction with the SSH/Telnet honeypot is malicious — there is no legitimate reason
+        # to touch the trap. Trigger (bans on first event) so a single connect flags the IP.
+        # remediation: true → the default_ip_remediation profile issues a ban that the TRAEFIK (and
+        # future Cloudflare) bouncer enforces for all OTHER services; the honeypot itself is reached
+        # via hostPort 2222/2223 (bypasses Traefik) so the ban never stops honeypot engagement — the
+        # attacker keeps interacting while being blocked everywhere else. share_custom: true (console.yaml
+        # below) forwards this custom-scenario alert to CAPI → contributes to the community blocklist/CTI.
+        # NOT excluded in simulation.yaml → it is a REAL, shareable, enforced signal (unlike the tarpit).
+        cowrie-activity.yaml: |
+          type: trigger
+          name: homelab/cowrie-activity
+          description: "IP interacted with the Cowrie SSH/Telnet honeypot — confirmed malicious"
+          filter: "evt.Meta.log_type startsWith 'cowrie_'"
+          groupby: "evt.Meta.source_ip"
+          blackhole: 1m
+          labels:
+            remediation: true
+            type: scan
+            service: ssh
+            behavior: "ssh:bruteforce"
+            classification:
+              - "attack.T1110" # MITRE ATT&CK: Brute Force
+            confidence: 3 # honeypot interaction = maximum confidence for CTI weighting
+            spoofable: 0 # TCP session established → source IP not spoofable
+            label: "SSH/Telnet honeypot interaction"
+      # DETECT-ONLY for the tarpit: exclude it from enforcement so it ALERTS but never bans yet.
+      # Delete this exclusion (and flip nothing else) to turn tarpit hits into real bans.
+      simulation.yaml: |
+        simulation: false
+        exclusions:
+          - homelab/iocaine-tarpit
+          # LePresidente/http-generic-403-bf -> DETECT-ONLY (TALOS-y260).
+          #
+          # Kept for the signal, demoted from enforcing because the evidence is
+          # one-sided. Measured 2026-08-21 across all 35 alerts in the LAPI:
+          #
+          #   6 alerts  http-generic-403-bf   1 distinct IP   <- the OPERATOR, every time
+          #   5 alerts  http-technology-probing   5 distinct IPs
+          #   5 alerts  http-probing              5 distinct IPs
+          #   4 alerts  http-crawl-non_statics    4 distinct IPs
+          #   3 alerts  http-admin-interface-probing / wordpress-scan / bad-user-agent
+          #
+          # Every other scenario shows a spread of distinct attacker IPs. This one
+          # has caught ZERO real attackers here and banned the operator SIX times
+          # in four hours, including a 32h SSO lockout.
+          #
+          # It is also self-reinforcing: it bans on repeated 403s, and once banned
+          # the bouncer returns 403 for everything, which is itself a stream of
+          # 403s. The ban manufactures its own confirming evidence.
+          #
+          # Worse, the trigger was our own outage: the first bans (20:13, 20:16)
+          # land minutes after the talos00 control-plane shutdown at 20:07, when
+          # ingress was partially down and the operator was reloading. So planned
+          # maintenance locked the operator out of SSO.
+          #
+          # Redundancy argument for keeping enforcement OFF: a genuine 403
+          # brute-forcer would almost certainly also trip http-probing or
+          # http-admin-interface-probing, both of which ARE enforcing and both of
+          # which demonstrably catch real IPs.
+          #
+          # Revisit if it ever alerts on an IP that is not ours.
+          - LePresidente/http-generic-403-bf
+          # ---- NEW APP-LEVEL SCENARIOS: DETECT-ONLY ON ARRIVAL ----
+          # These are fed by app logs CrowdSec has never parsed before, so their
+          # false-positive behaviour here is unknown. After http-generic-403-bf
+          # banned the operator six times in four hours (32h SSO lockout), nothing
+          # new gets to ban until we have watched what it actually catches.
+          #
+          # PROMOTION CRITERIA: remove a line once it has alerted on at least one
+          # IP that is not ours and has produced no operator false positives.
+          # Check with:
+          #   cscli alerts list --scenario <name>
+          #
+          # NOTE crowdsecurity/plex ships NO scenario — only plex-allowlist, a
+          # parser that PREVENTS bans. Nothing to simulate, safe as-is.
+          - firix/authentik-bf
+          - LePresidente/jellyfin-bf
+          - LePresidente/grafana-bf
+          - crowdsecurity/impossible-travel
+          - crowdsecurity/impossible-travel-user
+          # wave 2 — app brute-force scenarios, same detect-only rule
+          - schiz0phr3ne/sonarr-bf
+          - schiz0phr3ne/radarr-bf
+          - schiz0phr3ne/prowlarr-bf
+          - crowdsecurity/sabnzbd-bf
+          - gilbsgilbs/qbittorrent-bf
+          - plague-doctor/audiobookshelf-bf
+          - crowdsecurity/home-assistant-bf
+          - timokoessler/mongodb-bf
+          # http-dos: rate-based, and the single most likely thing to catch our
+          # own tooling (dashboards polling, scrapers, kubectl loops). Simulated
+          # until proven otherwise.
+          - crowdsecurity/http-dos-bypass-cache
+          - crowdsecurity/http-dos-random-uri
+          - crowdsecurity/http-dos-switching-ua
+          - crowdsecurity/http-dos-invalid-http-versions
+          # NOTE: gauth-fr/immich and LearningSpot/litellm ship NO scenarios
+          # (parsers only) — nothing to simulate. crowdsecurity/http-cve is
+          # CVE-exploit detection with effectively zero false-positive risk, so it
+          # is left ENFORCING deliberately.
+
+      # ---- LAPI general config (config.yaml.local, mounted ONLY into the LAPI pod) ----
+      # The crowdsec v1.7.8 entrypoint (docker_start.sh) does NOT template db_config from the
+      # DB_* env vars — it only handles sqlite WAL/perms. So the LAPI reads its datastore config
+      # from THIS file. The chart's default config.yaml.local ships db_config COMMENTED OUT, which
+      # silently leaves the effective datastore as ephemeral SQLite (/var/lib/crowdsec/data/
+      # crowdsec.db) — wiped on every LAPI reschedule → agents/appsec fail "machine not found" +
+      # CrashLoopBackOff. Overriding config.yaml.local here activates the CNPG Postgres datastore.
+      #
+      # crowdsec expands ${ENV} in this file at load time, so we reuse the DB_* env vars already
+      # injected into lapi.env (creds from the CNPG-generated crowdsec-postgres-app secret; host/
+      # sslmode static). ${REGISTRATION_TOKEN} is chart-generated + injected into LAPI/agent/appsec
+      # pods — keep the auto_registration block verbatim so agents/appsec re-register cleanly once
+      # the Postgres schema exists (they run `cscli lapi register --token $REGISTRATION_TOKEN`).
+      config.yaml.local: |
+        api:
+          server:
+            auto_registration: # Activate if not using TLS for authentication
+              enabled: true
+              token: "${REGISTRATION_TOKEN}" # /!\ Do not modify this variable (auto-generated and handled by the chart)
+              allowed_ranges: # /!\ Make sure to adapt to the pod IP ranges used by your cluster
+                - "127.0.0.1/32"
+                - "192.168.0.0/16"
+                - "10.0.0.0/8"
+                - "172.16.0.0/12"
+        db_config:
+          type: pgx # postgres via the pgx driver (crowdsec's recommended pg backend)
+          user: ${DB_USER} # from crowdsec-postgres-app secret (via lapi.env)
+          password: ${DB_PASSWORD} # from crowdsec-postgres-app secret (via lapi.env)
+          db_name: ${DB_NAME} # from crowdsec-postgres-app secret (via lapi.env)
+          host: ${DB_HOST} # crowdsec-postgres-rw (CNPG read-write service)
+          port: 5432
+          sslmode: require # CNPG serves TLS; encrypt without client-cert verification
+          use_wal: true # sqlite-only knob; ignored for pgx (harmless) — silences the WAL warning
+
+      # ---- Console sharing options (LAPI-only, rec #5) — enable CONTEXT forwarding ----
+      # Overrides the chart-default console.yaml (was share_context: false). Forwarding context
+      # (crowdsecurity/bf_base + http_base contexts, already installed) gives the app.crowdsec.net
+      # Console per-alert CTI enrichment (AS, reputation, background-noise scoring). share_custom
+      # stays true so custom scenarios (cowrie/tarpit) reach CAPI; manual decisions stay private.
+      console.yaml: |
+        share_manual_decisions: false
+        share_custom: true
+        share_tainted: true
+        share_context: true
+
+      # ---- Decision profiles (LAPI-only, rec #7) — ESCALATING ban TTL + Discord notify ----
+      # Overrides the chart-default profiles.yaml. duration_expr makes repeat offenders sticky:
+      # 4h on the 1st decision, 8h on the 2nd, 12h on the 3rd, ... = (count+1)*4h. The `discord_default`
+      # notifier (config.notifications below) posts every ban to Discord (rec #6). on_success: break
+      # keeps one decision per alert. Cowrie/http/appsec bans all flow through default_ip_remediation.
+      profiles.yaml: |
+        name: default_ip_remediation
+        filters:
+          - Alert.Remediation == true && Alert.GetScope() == "Ip"
+        decisions:
+          - type: ban
+            duration: 4h
+        duration_expr: Sprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)
+        notifications:
+          - discord_default
+        on_success: break
+        ---
+        name: default_range_remediation
+        filters:
+          - Alert.Remediation == true && Alert.GetScope() == "Range"
+        decisions:
+          - type: ban
+            duration: 4h
+        duration_expr: Sprintf('%dh', (GetDecisionsCount(Alert.GetValue()) + 1) * 4)
+        notifications:
+          - discord_default
+        on_success: break
+
+      # ---- Notification plugins (LAPI-only, rec #6) — Discord via the built-in http plugin ----
+      # The engine image already ships notification-http at /usr/local/lib/crowdsec/plugins/. This
+      # config renders a Discord-compatible JSON body ({"content": ...}) and POSTs it to the webhook.
+      # The URL comes from ${DISCORD_WEBHOOK_URL} (injected into the LAPI pod from the crowdsec-discord
+      # secret — externalsecret.yaml). group_wait/group_threshold batch bursts so we don't get rate
+      # limited by Discord. Referenced by name `discord_default` in profiles.yaml above.
+      notifications:
+        discord.yaml: |
+          type: http
+          name: discord_default
+          log_level: info
+          format: |
+            {"content": "🛡️ **CrowdSec ban** ({{len .}} alert{{if gt (len .) 1}}s{{end}}):\n{{range . -}}{{$a := .}}{{range .Decisions -}}• `{{.Value}}` — {{$a.Scenario}} → {{.Type}} {{.Duration}}{{if $a.Source}} ({{$a.Source.Cn}}/{{$a.Source.AsName}}){{end}}\n{{end}}{{end}}"}
+          url: ${DISCORD_WEBHOOK_URL}
+          method: POST
+          headers:
+            Content-Type: application/json
+          # Batch bursts: collect up to group_threshold alerts or group_wait, whichever first.
+          group_wait: 15s
+          group_threshold: 10
+
+    # ---- LAPI: Local API + decisions DB + Console enrollment + bouncer registration ----
+    lapi:
+      env:
+        # Auto-registers a bouncer named "traefik" with this key (same value the plugin uses).
+        # optional:true → the engine boots + detects NOW without the key; when the 1Password
+        # `crowdsec` item lands, restart LAPI to register the bouncer + enroll. (TALOS-pbn)
+        - name: BOUNCER_KEY_traefik
+          valueFrom:
+            secretKeyRef:
+              name: crowdsec-keys
+              key: BOUNCER_KEY_traefik
+              optional: true
+        # Console enrollment (community blocklists + app.crowdsec.net dashboard).
+        - name: ENROLL_KEY
+          valueFrom:
+            secretKeyRef:
+              name: crowdsec-enroll
+              key: ENROLL_KEY
+              optional: true
+        - name: ENROLL_INSTANCE_NAME
+          value: "talos-homelab"
+        - name: ENROLL_TAGS
+          value: "k8s talos traefik"
+        # Discord webhook for ban notifications (rec #6). ${DISCORD_WEBHOOK_URL} is referenced by
+        # config.notifications.discord.yaml above. optional:true → LAPI boots even before the
+        # crowdsec-discord ExternalSecret lands (externalsecret.yaml); notifier no-ops until present.
+        - name: DISCORD_WEBHOOK_URL
+          valueFrom:
+            secretKeyRef:
+              name: crowdsec-discord
+              key: DISCORD_WEBHOOK_URL
+              optional: true
+        # ---- Datastore: CloudNativePG Postgres (postgres.yaml, TALOS-pbn) ----
+        # Replaces SQLite-on-local-path. The crowdsec entrypoint templates config.yaml's
+        # db_config from these DB_* env vars. LAPI is now stateless → survives any reschedule
+        # (state lives in Postgres). Creds come from the CNPG-generated crowdsec-postgres-app
+        # secret; host/type/sslmode are static.
+        - name: DB_TYPE
+          value: "pgx" # postgres via the pgx driver (crowdsec's recommended pg backend)
+        - name: DB_HOST
+          value: "crowdsec-postgres-rw" # CNPG read-write service
+        - name: DB_PORT
+          value: "5432"
+        - name: DB_SSLMODE
+          value: "require" # CNPG serves TLS; encrypt without client-cert verification
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef: {name: crowdsec-postgres-app, key: dbname}
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef: {name: crowdsec-postgres-app, key: username}
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef: {name: crowdsec-postgres-app, key: password}
+      persistentVolume:
+        data: # No SQLite PVC — the datastore is now CNPG Postgres (postgres.yaml)
+          enabled: false
+        config:
+          enabled: false
+      # Keep the LAPI OFF the small control-plane node (talos00): NO toleration → talos00's taint
+      # blocks it → schedules on a worker. LAPI is now stateless (Postgres-backed), so it reschedules
+      # freely; the machines/decisions DB persists in CNPG across any reschedule. (TALOS-pbn)
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6060"
+        prometheus.io/path: "/metrics"
+        backup.velero.io/backup-volumes: data
+      metrics:
+        enabled: true # exposes :6060 (Alloy scrapes via the annotations above)
+      resources:
+        requests: {cpu: 100m, memory: 200Mi}
+        limits: {memory: 500Mi}
+
+    # ---- AGENT: log-processor DaemonSet reading Traefik pod logs on every node ----
+    agent:
+      acquisition:
+        - namespace: traefik
+          podName: "traefik-*"
+          program: traefik # → crowdsecurity/traefik parser
+        # Cowrie honeypot events (the `logship` sidecar emits Cowrie JSON on
+        # stdout). Pipes honeypot activity into CrowdSec for visibility/signals.
+        # NOTE: there is NO crowdsecurity/cowrie hub collection — a custom parser
+        # + ssh-bf mapping is a follow-up (TALOS-e9h). AND while the honeypot is
+        # internal-only, its source IPs are RFC1918 -> matched by the homelab
+        # whitelist parser above -> no auto-ban (by design; bans will fire once
+        # the honeypot is publicly exposed). Unparsed lines are dropped harmlessly.
+        - namespace: honeypot
+          podName: "cowrie-*"
+          program: cowrie
+        # ---- APP-LEVEL ACQUISITION (TALOS-y260 follow-up) ----
+        # Until now CrowdSec only saw Traefik's edge logs, so anything that got
+        # PAST the reverse proxy and brute-forced an app directly was invisible.
+        # These feed the per-app hub collections added to COLLECTIONS below.
+        #
+        # The `program` value is NOT cosmetic — each hub parser filters on it
+        # exactly, so a mismatch means the parser silently never fires:
+        #   firix/authentik-logs      Lower(program) in ['authentik','authentik-server']
+        #   LePresidente/gitea-logs   program == 'gitea'
+        #   LePresidente/jellyfin-logs program == 'jellyfin'
+        #   LePresidente/grafana-logs program == 'grafana'
+        #
+        # Authentik: the identity provider, so brute-force here matters most of all.
+        - namespace: authentik
+          podName: "authentik-server-*"
+          program: authentik
+        # FORGEJO: DELIBERATELY ABSENT. Verified 2026-08-21 by triggering a real
+        # failed login — Forgejo emits
+        #   "router: completed GET /api/v1/user for <ip>:<port>, 401 Unauthorized"
+        # but LePresidente/gitea-logs requires
+        #   "Failed authentication attempt for <user> from <ip>:<port>"
+        # Those do not match, so the gitea parser would never fire. Wiring it up
+        # anyway would have looked like coverage while providing none. A custom
+        # parser against Forgejo's router lines is the fix (same approach as
+        # homelab/cowrie-logs). Tracked separately.
+        # NOTE the old glob also matched forgejo-postgres-* (CNPG), pulling
+        # database logs in as unparsed noise.
+        - namespace: media
+          podName: "jellyfin-*"
+          program: jellyfin
+        - namespace: media
+          podName: "plex-*"
+          program: plex
+        # grafana-deployment-* — NOT grafana-operator-*, which is the operator and
+        # emits no auth logs.
+        - namespace: monitoring
+          podName: "grafana-deployment-*"
+          program: grafana
+        # ---- WAVE 2 (TALOS-y260): the rest of the exposed stack ----
+        # program values copied EXACTLY from each hub parser's filter. The *arr
+        # apps are CAPITALISED in their filters ('Sonarr'/'Radarr'/'Prowlarr') —
+        # lowercase here would silently parse nothing.
+        - namespace: media
+          podName: "sonarr-*"
+          program: Sonarr
+        - namespace: media
+          podName: "radarr-*"
+          program: Radarr
+        - namespace: media
+          podName: "prowlarr-*"
+          program: Prowlarr
+        - namespace: media
+          podName: "sabnzbd-*"
+          program: sabnzbd
+        - namespace: media
+          podName: "qbittorrent-*"
+          program: qbittorrent
+        - namespace: media-experimental
+          podName: "audiobookshelf-*"
+          program: audiobookshelf
+        # immich-* would also catch immich-machine-learning / -postgres; the
+        # server pod is the one that authenticates.
+        - namespace: media-private
+          podName: "immich-5*"
+          program: immich
+        # homeassistant-7* not homeassistant-*: the broad glob also matched
+        # homeassistant-postgres-N (CNPG), whose logs were being read and dropped
+        # as unparsed noise. Confirmed in the acquisition metrics audit.
+        - namespace: home-automation
+          podName: "homeassistant-7*"
+          program: home-assistant
+        - namespace: catalyst-llm
+          podName: "litellm-*"
+          program: litellm
+        - namespace: monitoring
+          podName: "clickstack-mongodb-*"
+          program: mongodb
+      # k8s API-server audit log (Metadata policy already enabled on Talos). File source — the agent
+      # already host-mounts /var/log, so no extra mount. Only talos00 (single control-plane) has the
+      # file; on worker nodes it's absent and harmlessly skipped. crowdsecurity/k8s-audit detects
+      # sensitive events (secret reads, exec, RBAC/priv-esc, anonymous access). (TALOS-pbn)
+      additionalAcquisition:
+        - source: file
+          filenames:
+            - /var/log/audit/kube/kube-apiserver.log
+          labels:
+            type: k8s-audit
+      env:
+        # (crowdsecurity/whitelists is NOT a collection; RFC1918/CF whitelisting is the custom
+        #  homelab/whitelist parser above. whitelist-good-actors = community known-good bots.)
+        - name: COLLECTIONS
+          value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/whitelist-good-actors crowdsecurity/k8s-audit firix/authentik LePresidente/jellyfin crowdsecurity/plex LePresidente/grafana crowdsecurity/sshd-impossible-travel crowdsecurity/appsec-generic-rules schiz0phr3ne/sonarr schiz0phr3ne/radarr schiz0phr3ne/prowlarr crowdsecurity/sabnzbd gilbsgilbs/qbittorrent plague-doctor/audiobookshelf gauth-fr/immich crowdsecurity/home-assistant LearningSpot/litellm timokoessler/mongodb crowdsecurity/http-cve crowdsecurity/http-dos crowdsecurity/pgsql"
+      # Traefik is a DaemonSet on every node incl control-plane — the agent must be too.
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6060"
+        prometheus.io/path: "/metrics"
+      metrics:
+        enabled: true
+      resources:
+        requests: {cpu: 100m, memory: 150Mi}
+        limits: {memory: 250Mi}
+
+    # ---- APPSEC / WAF on :7422 — DETECT-ONLY first (default_remediation: allow) ----
+    appsec:
+      enabled: true
+      acquisitions:
+        - source: appsec
+          listen_addr: "0.0.0.0:7422"
+          path: /
+          appsec_config: homelab/appsec-detect
+          labels:
+            type: appsec
+      configs:
+        appsec-detect.yaml: |
+          name: homelab/appsec-detect
+          # DETECT-ONLY: log matches but never block. Flip to `ban` after observing no false
+          # positives (TALOS-pbn). CRS stays out-of-band permanently (low false-positive risk).
+          default_remediation: allow
+          default_pass_action: allow
+          blocked_http_code: 403
+          inband_rules:
+            - crowdsecurity/base-config
+            - crowdsecurity/vpatch-*
+          outofband_rules:
+            - crowdsecurity/crs
+          # ---- boomtime telemetry exclusion (2026-08-14) ----
+          # Coding-telemetry ingest bodies inherently contain file paths, shell
+          # commands, and code fragments — CRS 932260 (unix-shell RCE) fired on
+          # a legit heartbeats.bulk payload and the appsec-outofband scenario
+          # escalated it to a BAN of the operator's home IP, despite this config
+          # being detect-only inline. These routes are auth-gated ingest; their
+          # payloads will trip injection rules forever, so scope them out rather
+          # than whack-a-mole individual CRS IDs.
+          pre_eval:
+            # Skip body scanning entirely on the code-carrying routes (also
+            # skips inband vpatch BODY checks there — accepted: vpatch CVE
+            # signatures are overwhelmingly path/query based, and these routes
+            # are API-key-gated).
+            - filter: req.URL.Path startsWith "/api/v1/users/current/heartbeats" || req.URL.Path startsWith "/api/v1/users/current/import" || req.URL.Path startsWith "/api/v1/users/current/db/import"
+              apply:
+                - DisableBodyInspection()
+          on_match:
+            # Belt for anything that still matches (headers/query): never let an
+            # out-of-band CRS hit on these routes become an event that feeds the
+            # ban scenario, and drop the alert noise.
+            - filter: IsOutBand && (req.URL.Path startsWith "/api/v1/users/current/heartbeats" || req.URL.Path startsWith "/api/v1/users/current/import" || req.URL.Path startsWith "/api/v1/users/current/db/import")
+              apply:
+                - CancelAlert()
+                - CancelEvent()
+      env:
+        - name: COLLECTIONS
+          value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-crs"
+      podAnnotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "6060"
+        prometheus.io/path: "/metrics"
+      metrics:
+        enabled: true
+      resources:
+        requests: {cpu: 100m, memory: 150Mi}
+        limits: {memory: 300Mi}

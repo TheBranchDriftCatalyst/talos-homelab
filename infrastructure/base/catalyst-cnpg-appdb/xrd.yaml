@@ -1,0 +1,179 @@
+---
+# CatalystCNPGAppDB — the house abstraction for "this application needs a Postgres database".
+#
+# One CR yields the four objects every database in this cluster needs and which, until now,
+# have been hand-copied per app:
+#   - postgresql.cnpg.io/Cluster        the database itself
+#   - barmancloud.cnpg.io/ObjectStore   where its backups go
+#   - postgresql.cnpg.io/ScheduledBackup  something actually asking for backups
+#   - the velero-exclude label + app-secret reflector annotation that wire it into
+#     the rest of the platform (Velero demarcation, dbgate auto-connect)
+#
+# WHY THIS EXISTS. Measured across the fifteen CNPG clusters in this cluster on 2026-08-23:
+# the ten hand-written ObjectStores were BYTE-IDENTICAL apart from name, namespace and
+# destinationPath — all three derivable from the cluster's own identity. Roughly 260 lines
+# carrying no information.
+#
+# But line count is not the reason. The reason is that OMISSION IS SILENT.
+# gaming/guacamole-postgres ran for months with no ObjectStore, no ScheduledBackup and no
+# WAL archiving, while ALSO carrying velero.io/exclude-from-backup — so the Velero
+# exclusion was working exactly as designed and nothing whatsoever was backing the database
+# up. It looked deliberately managed. It was found only by hand-auditing all fifteen
+# clusters before a storage migration (TALOS-npt4), and it was the single cluster that
+# could not be migrated safely as a result, because moving storage rebuilds every PVC and
+# there was no copy to fall back on.
+#
+# OPINIONATED ON PURPOSE, in the same spirit as XBucket refusing to make encryption a
+# parameter: BACKUP IS NOT A PARAMETER HERE. There is no `backup: false`. A
+# CatalystCNPGAppDB that is not backed up is not a thing this platform can express, because
+# that is precisely the state guacamole was in.
+#
+# Likewise `instances` defaults to 3 and the schema REFUSES 1 when storage is local-path
+# — see the note on that field. That combination strands a database on a dead node.
+#
+# WHAT THIS DELIBERATELY DOES NOT REPLACE:
+#   - emberstack/reflector KEEPS BOTH of its jobs here, deliberately:
+#       (a) distributing the shared minio/cnpg-minio-backup secret out to every app
+#           namespace that runs a database, and
+#       (b) mirroring each <cluster>-app secret into the `databases` namespace so dbgate
+#           auto-connects to every database with no per-app configuration.
+#     Both are one-source-to-many-namespaces with live re-sync on rotation, which is
+#     exactly what reflector is for. A composition could copy a secret once, but it would
+#     not track rotation, so re-implementing either here would be a downgrade dressed up
+#     as consolidation.
+#   - The Kyverno policies cnpg-velero-exclude and reflect-cnpg-app-secrets MUST STAY until
+#     every cluster is a CatalystCNPGAppDB. Four clusters (books, dagster, postgres-knowledge,
+#     manyfold) are ArgoCD-managed from sister repos and are not this repo's to convert;
+#     retiring those policies early would silently un-wire them.
+# apiextensions.crossplane.io/v2 — v1 is deprecated on Crossplane 2.x and the API
+# server warns on it. Schema is compatible; scope: Namespaced is the v2 way to say what
+# v1 expressed with claimNames.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: catalystcnpgappdbs.db.catalyst.io
+spec:
+  group: db.catalyst.io
+  # Crossplane v2 namespaced composite — the XR lives in the app's own namespace next to
+  # the workload it serves, with no separate claim indirection (the v1 claimNames pattern).
+  scope: Namespaced
+  names:
+    kind: CatalystCNPGAppDB
+    plural: catalystcnpgappdbs
+  defaultCompositionRef:
+    name: catalyst-cnpg-appdb
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [database, backupSchedule]
+              properties:
+                database:
+                  type: string
+                  description: >-
+                    Database name created by initdb. Also used as the owner role unless
+                    `owner` is set. Note initdb runs ONCE — changing this later does
+                    nothing to an existing cluster.
+                owner:
+                  type: string
+                  description: Owner role. Defaults to the database name.
+                instances:
+                  type: integer
+                  default: 3
+                  minimum: 1
+                  maximum: 5
+                  description: >-
+                    Replica count. THREE IS THE DEFAULT AND SHOULD STAY THAT WAY on
+                    local-path. local-path is WaitForFirstConsumer, so each PV pins to the
+                    node that first mounts it; a single instance is stranded by a node loss
+                    with no copy anywhere else — strictly worse than NFS. Three instances
+                    plus CNPG's default pod anti-affinity means three copies on three nodes
+                    and a lost node becomes a promotion. Only drop below 3 with
+                    storageClass set to a network volume.
+                storageSize:
+                  type: string
+                  default: 5Gi
+                storageClass:
+                  type: string
+                  default: local-path
+                  description: >-
+                    local-path is the node's NVMe and is the right answer for Postgres:
+                    every commit is a WAL fsync, and on NFS that is a network round trip to
+                    the Synology. Durability comes from streaming replication plus barman
+                    backups, not from the filesystem. Use fatboy-nfs-appdata only for a
+                    cluster that genuinely cannot run 3 instances.
+                backupSchedule:
+                  type: string
+                  description: >-
+                    REQUIRED, no default, deliberately. Six-field cron (sec min hour dom mon
+                    dow). The fleet is staggered across 02:00-04:15 so fourteen databases do
+                    not all hit MinIO in the same minute, and a default would quietly
+                    collapse that. Pick a free slot and say so in the manifest.
+                retentionPolicy:
+                  type: string
+                  default: "30d"
+                credentialsSecret:
+                  type: string
+                  description: >-
+                    Name of an EXISTING secret holding the owner's username/password, wired
+                    to bootstrap.initdb.secret.name. Leave unset and CNPG generates
+                    <cluster>-app with a random password, which is the normal case.
+                    Set it when the credentials must be stable and known — e.g. authentik,
+                    whose application config references the same secret, so letting CNPG
+                    mint a fresh password would lock the SSO provider out of its own
+                    database. initdb runs once, so this is inert on an existing cluster,
+                    but it must still be rendered or the composite's output silently
+                    diverges from the live object.
+                encoding:
+                  type: string
+                  default: UTF8
+                localeCollate:
+                  type: string
+                  default: C
+                  description: >-
+                    PIN THIS BEFORE LOADING DATA. initdb runs exactly once, so the
+                    collation a database is created with is the collation it keeps
+                    forever — changing this field later does nothing to an existing
+                    cluster. CNPG's own default is C, and C is what every existing
+                    cluster here was created with, so the default matches reality. If a
+                    database genuinely needs locale-aware ORDER BY on text, set it at
+                    creation or accept a dump/restore later.
+                localeCType:
+                  type: string
+                  default: C
+                  description: See localeCollate — same one-shot semantics.
+                imageName:
+                  type: string
+                  description: >-
+                    Optional operand image override, e.g. a -standard- image for pgvector.
+                    Leave unset for the operator default. NOTE the -minimal- images have NO
+                    pgvector and -system- is deprecated.
+                parameters:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Extra postgresql.conf parameters.
+                resources:
+                  type: object
+                  properties:
+                    requestsCpu:
+                      type: string
+                      default: 50m
+                    requestsMemory:
+                      type: string
+                      default: 256Mi
+                    limitsMemory:
+                      type: string
+            status:
+              type: object
+              properties:
+                clusterName:
+                  type: string
+                readyInstances:
+                  type: integer

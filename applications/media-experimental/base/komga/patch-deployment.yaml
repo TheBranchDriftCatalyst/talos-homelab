@@ -1,0 +1,80 @@
+---
+# komga deltas vs ../_instance/deployment.yaml (SMP; container merge key is
+# the placeholder name — renamed afterwards in kustomization.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-template
+  labels:
+    app.kubernetes.io/name: komga
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: komga
+    spec:
+      containers:
+        - name: app-template
+          image: gotson/komga:latest
+          env:
+            - name: TZ
+              value: America/New_York
+            # -------- NATIVE OIDC (Authentik) — Spring Security OAuth2 (TALOS-xgrl.18) --------
+            # Komga does its OWN OIDC discovery + token exchange (native), so the
+            # Tachiyomi/Mihon/Paperback + OPDS mobile clients keep working (a
+            # forward-auth proxy would break them). registrationId = `authentik`.
+            # Issuer = the PUBLIC-cert host so the phone (and the pod, via the
+            # CoreDNS rewrite → traefik) trust it with no homelab-CA plumbing;
+            # provider is still created in-cluster. Spring relaxed-binding env
+            # form of spring.security.oauth2.client.{registration,provider}.authentik.*
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_ID
+              value: komga
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: authentik-komga-oidc   # reflected from ns authentik by reflector
+                  key: client-secret
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_CLIENT_NAME
+              value: Authentik
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_SCOPE
+              value: openid,email,profile
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_AUTHORIZATION_GRANT_TYPE
+              value: authorization_code
+            # Hardcoded full external URL (not the {baseUrl} template) so it matches
+            # the provider redirect_uri regardless of how Komga sees forwarded headers.
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_AUTHENTIK_REDIRECT_URI
+              value: https://komga.talos00/login/oauth2/code/authentik
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_AUTHENTIK_ISSUER_URI
+              value: https://auth.knowledgedump.space/application/o/komga/
+            - name: SPRING_SECURITY_OAUTH2_CLIENT_PROVIDER_AUTHENTIK_USER_NAME_ATTRIBUTE
+              value: preferred_username
+            # Auto-provision a Komga user on first OIDC login (komga.oauth2-account-creation).
+            - name: KOMGA_OAUTH2_ACCOUNT_CREATION
+              value: "true"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: comics
+              mountPath: /comics
+            - name: books
+              mountPath: /books
+          livenessProbe:
+            initialDelaySeconds: 40
+          readinessProbe:
+            initialDelaySeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: komga-config
+        - name: comics
+          persistentVolumeClaim:
+            claimName: comics
+        - name: books
+          persistentVolumeClaim:
+            claimName: books

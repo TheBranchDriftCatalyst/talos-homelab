@@ -1,0 +1,72 @@
+---
+# Altinity ClickHouse Operator
+# Provides CRDs (clickhouse.altinity.com/v1):
+#   - ClickHouseInstallation
+#   - ClickHouseInstallationTemplate
+#   - ClickHouseOperatorConfiguration
+#   - ClickHouseKeeperInstallation
+# Docs: https://docs.altinity.com/altinitykubernetesoperator/
+#
+# NOTE: The upstream install bundle defaults the operator to the kube-system
+# namespace. We deliberately override that here — the operator runs in the
+# dedicated `clickhouse` namespace (HelmRelease/HelmRepository namespace +
+# default targetNamespace) and watches ALL namespaces via watchNamespaces.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: altinity-clickhouse-operator
+  namespace: clickhouse
+spec:
+  interval: 1h
+  url: https://docs.altinity.com/clickhouse-operator/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: clickhouse-operator
+  namespace: clickhouse
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: altinity-clickhouse-operator
+      version: '0.27.2'
+      sourceRef:
+        kind: HelmRepository
+        name: altinity-clickhouse-operator
+        namespace: clickhouse
+      interval: 12h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    # Force the operator Deployment name to `clickhouse-operator`
+    # (matches the Flux healthCheck target).
+    fullnameOverride: clickhouse-operator
+
+    # Watch ClickHouseInstallation resources in ALL namespaces.
+    # ".*" is a regex matching every namespace.
+    watchNamespaces:
+      - ".*"
+
+    # Single operator pod, small footprint for the homelab.
+    operator:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # The metrics-exporter is a SECOND container in the same pod and had no
+    # request at all — this chart splits operator.resources and
+    # metrics.resources, and only the first was set.
+    # Measured 24h to 2026-08-24: p50 23Mi, peak 28Mi (1.2x). BURSTABLE.
+    metrics:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 32Mi
+        limits:
+          memory: 96Mi

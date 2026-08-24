@@ -1,0 +1,45 @@
+---
+# Barman Cloud CNPG-I plugin (TALOS: barman plugin migration).
+#
+# Replaces the operator's in-tree `spec.backup.barmanObjectStore` (deprecated
+# CNPG 1.26, REMOVED in 1.30). Runs as a plugin Deployment next to the
+# operator (must share its namespace: databases) plus a per-instance sidecar
+# injected into cluster pods when a Cluster declares
+#   spec.plugins: [{name: barman-cloud.cloudnative-pg.io, ...}]
+# Backup config moves from the Cluster into per-cluster ObjectStore CRs.
+# TLS between operator and plugin comes from cert-manager (chart default).
+#
+# Docs: https://cloudnative-pg.io/plugin-barman-cloud/docs/intro/
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: plugin-barman-cloud
+  namespace: databases
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: plugin-barman-cloud
+      version: '0.7.1'
+      sourceRef:
+        kind: HelmRepository
+        name: cloudnative-pg
+        namespace: databases
+      interval: 12h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+    cleanupOnFail: true
+  values:
+    # The plugin Deployment had no request and no limit — this HelmRelease
+    # carried no values block at all and the chart defaults resources to {}.
+    # Measured 24h to 2026-08-24: p50 28Mi, peak 45Mi (1.6x). BURSTABLE.
+    # NOTE this is the plugin controller only, not the barman-cloud sidecars
+    # injected into each CNPG Cluster — those are set on the ObjectStore CR.
+    resources:
+      requests:
+        cpu: 25m
+        memory: 48Mi
+      limits:
+        memory: 128Mi

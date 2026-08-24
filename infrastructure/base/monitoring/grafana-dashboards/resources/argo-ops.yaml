@@ -1,0 +1,37 @@
+---
+# GrafanaDashboard CR: "Argo Ops".
+#
+# Fleet-wide ArgoCD operations dashboard — health × sync matrix, problem apps
+# (OutOfSync / Degraded / orphaned resources), sync & reconcile activity, and
+# control-plane health (repo-server git, redis, cluster connections).
+#
+# Fully label-driven off the argocd_app_info gauge: health_status, sync_status,
+# and autosync_enabled are LABELS on that metric (the deprecated
+# argocd_app_health_status / argocd_app_sync_status series are ABSENT in this
+# cluster and render No-data, so they are intentionally NOT used). Panels also
+# consume argocd_app_sync_total / argocd_app_reconcile_bucket /
+# argocd_app_orphaned_resources_count / argocd_git_* / argocd_redis_* /
+# argocd_cluster_* — every query ground-verified against the Mimir API.
+#
+# Templated on $project + $health + $sync (all multi + All) so any newly
+# tracked ArgoCD Application appears automatically with no edits.
+#
+# JSON lives at ../json/argo-ops.json, packaged into the `dashboard-argo-ops`
+# ConfigMap by the kustomization configMapGenerator (disableNameSuffixHash:
+# true). uid "argo-ops" is stable.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: argo-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: gitops
+spec:
+  folderRef: ops-gitops
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-argo-ops
+    key: argo-ops.json

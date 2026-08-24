@@ -116,10 +116,38 @@ hubble:
   # and less event loss under bursts. Must be (2^n - 1): 4095, 8191, 16383,
   # 32767, 65535.
   eventBufferCapacity: 16383
+  # All three Hubble containers ran with no memory request — chart defaults
+  # for hubble.relay.resources and hubble.ui.{frontend,backend}.resources are
+  # all {}. Measured 24h to 2026-08-24, all BURSTABLE:
+  #   relay     p50 18Mi  peak 33Mi
+  #   frontend  p50 14Mi  peak 16Mi
+  #   backend   p50 10Mi  peak 26Mi
+  # 32Mi is the floor: below that the request buys the scheduler nothing and
+  # costs the pod eviction ranking.
   relay:
     enabled: true
+    resources:
+      requests:
+        cpu: 25m
+        memory: 32Mi
+      limits:
+        memory: 96Mi
   ui:
     enabled: true
+    frontend:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 64Mi
+    backend:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 96Mi
   # Hubble metrics (port 9965)
   metrics:
     enabled:

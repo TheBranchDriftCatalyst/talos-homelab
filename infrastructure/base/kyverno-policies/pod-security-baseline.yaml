@@ -1,0 +1,34 @@
+---
+# Baseline pod-security guardrail (TALOS-xgrl.8). AUDIT mode — it REPORTS violations
+# in PolicyReports but blocks NOTHING, so we get the true violation set across the
+# cluster without risking any workload. Once the reports are reviewed, flip specific
+# namespaces to Enforce (per-rule failureActionOverrides) and/or backfill PSA enforce
+# labels on the app namespaces the audit flagged (media-private, downloads, boomtime,
+# catalyst, catalyst-llm, immich, databases, minio, clickhouse, dungeon-library).
+#
+# Uses Kyverno's native Pod Security Standard validator (level: baseline) rather than
+# hand-rolled disallow-privileged rules — it's the full PSS baseline control set.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: pod-security-baseline
+  annotations:
+    policies.kyverno.io/title: Pod Security Baseline (Audit)
+    policies.kyverno.io/category: Pod Security Standards (Baseline)
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Audits all Pods against the PSS baseline profile. Reports only — no enforcement.
+spec:
+  background: true
+  rules:
+    - name: baseline
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        failureAction: Audit
+        podSecurity:
+          level: baseline
+          version: latest

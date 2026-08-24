@@ -1,0 +1,102 @@
+---
+# Crossplane
+# Provides (pkg.crossplane.io): Provider, Configuration, Function,
+#   DeploymentRuntimeConfig
+# Provides (apiextensions.crossplane.io): CompositeResourceDefinition,
+#   Composition
+# provider-kubernetes (installed via provider.yaml) additionally provides
+#   (kubernetes.crossplane.io): Object, ProviderConfig
+# Docs: https://docs.crossplane.io/
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: crossplane
+  namespace: crossplane-system
+spec:
+  interval: 1h
+  url: https://charts.crossplane.io/stable
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crossplane
+  namespace: crossplane-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: crossplane
+      version: '2.3.4'
+      sourceRef:
+        kind: HelmRepository
+        name: crossplane
+        namespace: crossplane-system
+      interval: 12h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    # Single core replica for homelab
+    replicas: 1
+
+    # Do NOT seed the chart's default "activate everything" MRAP.
+    #
+    # The chart normally runs `core init --activation '*'`, which creates a MRAP
+    # named `default` that promotes every ManagedResourceDefinition a provider
+    # ships into a real CRD. With the upjet AWS family that is >1000 CRDs at
+    # ~3MiB of apiserver memory each — the direct cause of the 2026-08-15
+    # apiserver saturation and crossplane OOMKills.
+    #
+    # Emptying this renders the init container as plain `core init` (verified via
+    # `helm template`), so activation comes solely from the reviewable allowlist
+    # in infrastructure/base/aws-providers/activation-policy.yaml. MRAPs are
+    # additive, so leaving the catch-all here would silently override it.
+    #
+    # NOTE: `core init` only CREATES the default MRAP when absent; it never
+    # rewrites an existing one, so emptying this value alone would leave the
+    # existing catch-all in place. The takeover is done by declaring the MRAP
+    # named `default` in aws-providers/activation-policy.yaml, which Flux
+    # server-side-applies over it. This value keeps `core init` from re-seeding
+    # a catch-all if crossplane is ever reinstalled from scratch.
+    provider:
+      defaultActivations: []
+
+    # Sized for upjet provider CRD load, NOT for "a small homelab controller".
+    #
+    # Measured 2026-08-20 with ONLY provider-aws-s3 installed: crossplane-core was
+    # using 467Mi against a 512Mi limit -- 91% -- which is why it had accumulated 88
+    # OOMKill restarts. The single provider-aws-s3 pod alone uses 544Mi, i.e. more
+    # than core's entire old limit.
+    #
+    # Crossplane core's memory scales with the number of CRDs it watches. The cluster
+    # has 364 CRDs today; re-adding provider-aws-ec2 adds roughly 250 more (a ~69%
+    # jump in one step), which is exactly what OOMKilled it and saturated the
+    # apiserver on 2026-08-15 (see the incident note in aws-providers/provider.yaml).
+    #
+    # 4Gi is deliberate headroom, not a guess at the steady state -- an OOMKilled
+    # crossplane mid-reconcile is far more expensive than reserved-but-unused RAM.
+    # There is room: crossplane runs on talos06 (63GiB allocatable, 30% used), and it
+    # is NOT pinned to talos00, so this costs the control plane nothing.
+    resourcesCrossplane:
+      requests:
+        cpu: 100m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 4Gi
+
+    # rbac-manager keeps provider ClusterRoles aggregated
+    rbacManager:
+      replicas: 1
+
+    # rbac-manager aggregates a ClusterRole per provider CRD, so its footprint also
+    # grows with the CRD count. It had 15 restarts alongside core's 88; modest bump so
+    # it is not the next thing to fall over when ec2 lands.
+    resourcesRBACManager:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi

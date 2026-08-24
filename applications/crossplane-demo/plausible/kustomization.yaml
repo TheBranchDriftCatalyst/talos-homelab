@@ -1,0 +1,21 @@
+---
+# Plausible Community Edition (TALOS-4gg) — direct-deploy of the app + its data
+# stores via the operators the cluster already runs:
+#   * Postgres      → CatalystCNPGAppDB  (plausible-appdb.yaml)
+#   * ClickHouse    → Altinity operator  (clickhouse.yaml)
+#   * SECRET_KEY_BASE → external-secrets / 1Password (externalsecret.yaml)
+# The Postgres half is now exactly that: a Crossplane composite (CatalystCNPGAppDB).
+#
+# The parent applications/crossplane-demo/kustomization.yaml adds `- plausible/`.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: crossplane-demo
+resources:
+  - externalsecret.yaml # SECRET_KEY_BASE / TOTP_VAULT_KEY from 1Password
+  - plausible-appdb.yaml # CatalystCNPGAppDB → Cluster + ObjectStore + ScheduledBackup
+  - clickhouse.yaml # Altinity ClickHouseInstallation (plausible)
+  - deployment.yaml # Plausible Deployment + Service
+  - ingressroute.yaml # Traefik IngressRoute (plausible.talos00, lan-only)
+  - sites-registry.yaml # ConfigMap analytics-sites (site registry = source of truth) (TALOS-4gg)
+  - site-reconciler.yaml # reconcile SQL ConfigMap + one-shot Job + 15m CronJob (TALOS-4gg)
+  - exporter/ # Plausible Stats-API Prometheus exporter (Analytics Ops metrics) (TALOS-4gg)

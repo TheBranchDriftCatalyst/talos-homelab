@@ -1,0 +1,114 @@
+---
+# Plausible Stats-API Prometheus exporter (TALOS-4gg).
+#
+# Scrape wiring: this cluster scrapes with Alloy, NOT a ServiceMonitor. Alloy's
+# `discovery.relabel "pods"` keeps only pods carrying the prometheus.io/scrape
+# annotation and reads prometheus.io/{port,path} off the POD template
+# (infrastructure/base/monitoring/v2-otel/alloy/helmrelease.yaml). So the only
+# wiring needed is the three annotations below — no repo-side Alloy edit.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plausible-stats-exporter
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible-stats-exporter
+    app.kubernetes.io/part-of: plausible
+    app.kubernetes.io/component: metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: plausible-stats-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: plausible-stats-exporter
+        app.kubernetes.io/part-of: plausible
+        app.kubernetes.io/component: metrics
+      annotations:
+        # Alloy pod-discovery contract (see note above).
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg # Zot (registry.talos00) auth — same secret the flex deploy uses
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          # Built/pushed later — registry is mid-migration (see Dockerfile).
+          image: registry.talos00/talos00-registry/plausible-stats-exporter:latest
+          ports:
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PLAUSIBLE_BASE_URL
+              value: http://plausible.crossplane-demo.svc.cluster.local:8000
+            - name: SITES_FILE
+              value: /etc/plausible/sites.json
+            - name: SCRAPE_INTERVAL
+              value: 60s
+            # Stats API key — from ExternalSecret plausible-api-keys (1Password).
+            - name: PLAUSIBLE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: plausible-api-keys
+                  key: stats-read-key
+          volumeMounts:
+            - name: sites
+              mountPath: /etc/plausible
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            initialDelaySeconds: 5
+            periodSeconds: 30
+      volumes:
+        - name: sites
+          configMap:
+            name: analytics-sites
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: plausible-stats-exporter
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible-stats-exporter
+    app.kubernetes.io/part-of: plausible
+    app.kubernetes.io/component: metrics
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: plausible-stats-exporter
+  ports:
+    - name: metrics
+      port: 8080
+      targetPort: metrics
+      protocol: TCP

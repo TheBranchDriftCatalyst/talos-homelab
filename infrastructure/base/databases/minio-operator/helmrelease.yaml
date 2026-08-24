@@ -1,0 +1,52 @@
+---
+# MinIO Operator
+# Provides: Tenant, PolicyBinding CRDs
+# Docs: https://min.io/docs/minio/kubernetes/upstream/
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: minio-operator
+  namespace: databases
+spec:
+  interval: 1h
+  url: https://operator.min.io
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: minio-operator
+  namespace: databases
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: operator
+      version: '7.1.1' # TALOS-zadf.12/.5 (was 6.0.4). v7: CRD auto-migrate + tenant restart; sidecar auto-tracks; no MinIOJob in use
+      sourceRef:
+        kind: HelmRepository
+        name: minio-operator
+        namespace: databases
+      interval: 12h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    # Operator configuration
+    operator:
+      replicaCount: 1
+
+      # Resources for homelab
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+
+      # Environment for operator
+      env:
+        - name: MINIO_OPERATOR_TLS_ENABLE
+          value: "off"
+
+    # Console configuration (operator console, not tenant console)
+    console:
+      enabled: false  # We'll access tenant consoles directly

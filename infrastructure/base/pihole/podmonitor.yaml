@@ -1,0 +1,40 @@
+---
+# PodMonitor for the Pi-hole prometheus-exporter sidecar.
+#
+# WHY a repo-managed PodMonitor instead of the chart's built-in one:
+#   The mojo2600 chart can emit its own PodMonitor (monitoring.podMonitor.enabled),
+#   but this repo's philosophy is explicit-in-git scrape config. Keep the chart's
+#   podMonitor DISABLED (monitoring.podMonitor.enabled: false) and let THIS file own
+#   the scrape — otherwise you get two PodMonitors and double scraping.
+#
+# HOW it's discovered:
+#   The v2-otel Alloy runs prometheus.operator.podmonitors "default" with NO selector
+#   (see infrastructure/base/monitoring/v2-otel/alloy/helmrelease.yaml ~L129), so ANY
+#   PodMonitor in ANY namespace is scraped. No special release/label is required.
+#
+# METRICS SOURCE (Pi-hole v6):
+#   Pi-hole v6 has NO native FTL /metrics endpoint. Metrics come from the chart's
+#   sidecar (ekofr/pihole-exporter), which speaks the v6 REST API and re-exposes
+#   Prometheus metrics on container port 9617 (port name "prometheus", path /metrics).
+#   The sidecar targets 127.0.0.1 in its own pod, so every exporter reports the SAME
+#   `hostname` label — DO NOT aggregate by `hostname`. Alloy adds `pod`/`namespace`,
+#   so per-instance breakout uses `pod`.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: pihole
+  namespace: pihole
+  labels:
+    app.kubernetes.io/name: pihole
+    app.kubernetes.io/component: metrics
+spec:
+  namespaceSelector:
+    matchNames:
+      - pihole
+  selector:
+    matchLabels:
+      app: pihole # chart applies app=pihole to every pod
+  podMetricsEndpoints:
+    - port: prometheus # sidecar containerPort name (monitoring.sidecar.port=9617)
+      path: /metrics
+      interval: 30s

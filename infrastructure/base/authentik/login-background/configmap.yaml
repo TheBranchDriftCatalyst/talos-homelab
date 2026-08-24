@@ -1,0 +1,96 @@
+---
+# =============================================================================
+# catalyst-bg — rotating login-background nginx config  (TALOS-4o0k)
+# -----------------------------------------------------------------------------
+# WHY THIS SERVICE EXISTS
+#   The Authentik login page is served on the PUBLIC, LE-trusted host
+#   auth.knowledgedump.space. A CSS background-image must load over a host with
+#   a browser-TRUSTED cert or it is blocked (mixed-content / untrusted-cert).
+#   The images live in MinIO, whose only trusted-cert route (s3.talos00) is
+#   HTTP-only and internal. So we cannot point the CSS straight at MinIO.
+#   Authentik also allows custom CSS but NOT custom JS, so "a different random
+#   image on every page load" cannot be done client-side — it needs a
+#   server-side per-request pick. This tiny nginx does both:
+#     1. picks one of bg1..bg6 at random PER REQUEST (split_clients on the
+#        always-unique $request_id), and
+#     2. proxies the chosen object out of MinIO's internal HTTP S3 API, so the
+#        bytes reach the browser over THIS service's Traefik LE cert
+#        (bg.knowledgedump.space) — never MinIO's untrusted/HTTP endpoint.
+#
+# HOW THE RANDOM PICK WORKS
+#   split_clients hashes its key ($request_id — RFC-unique per request) into the
+#   0..2^32 space and assigns a bucket. Percentages must sum to ~100 with a `*`
+#   catch-all absorbing the rounding remainder. 5 x 16.7% = 83.5%, `*` -> bg6
+#   takes the remaining ~16.5%, so all six are ~evenly weighted.
+#
+# split_clients is an http-context directive; conf.d/*.conf is `include`d INSIDE
+# the http{} block of the stock nginx.conf, so defining it here is valid.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalyst-bg
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: catalyst-bg
+    app.kubernetes.io/part-of: authentik
+data:
+  default.conf: |
+    # Random object per request, keyed on the always-unique request id.
+    split_clients "${request_id}" $bg {
+        16.7%   bg1.jpg;
+        16.7%   bg2.jpg;
+        16.7%   bg3.jpg;
+        16.7%   bg4.jpg;
+        16.7%   bg5.jpg;
+        *       bg6.jpg;
+    }
+
+    # Cluster DNS (CoreDNS ClusterIP). Because the proxy_pass host is given as a
+    # runtime variable ($minio_host) nginx re-resolves it PER REQUEST instead of
+    # caching one pod IP at startup — so a MinIO pod restart (new IP on the
+    # headless minio-hl service) does not wedge this proxy until a reload.
+    resolver 10.96.0.10 valid=30s ipv6=off;
+
+    server {
+        listen 8080;
+        server_name _;
+
+        # Cheap liveness/readiness endpoint (does NOT hit MinIO).
+        location = /healthz {
+            access_log off;
+            add_header Content-Type text/plain;
+            return 200 "ok\n";
+        }
+
+        location / {
+            # Never let the browser (or Cloudflare) cache one image — every load
+            # must re-hit this service to re-roll the random pick.
+            add_header Cache-Control "no-store" always;
+
+            # MinIO's internal HTTP S3 API. The bucket `catalyst-bgs` is set to
+            # anonymous/public download, so no auth header is needed. Host var
+            # forces per-request DNS re-resolution (see resolver note above).
+            set $minio_host "minio-hl.minio.svc.cluster.local";
+            proxy_pass http://$minio_host:9000/catalyst-bgs/$bg;
+
+            # S3 virtual-host/path routing keys off Host — send the MinIO host.
+            proxy_set_header Host $minio_host;
+            proxy_set_header X-Real-IP $remote_addr;
+
+            # Strip MinIO/S3 fingerprint headers so the response looks like it
+            # came from this service, not an S3 backend.
+            proxy_hide_header x-amz-request-id;
+            proxy_hide_header x-amz-id-2;
+            proxy_hide_header x-amz-bucket-region;
+            proxy_hide_header x-amz-meta-server-side-encryption;
+            proxy_hide_header x-minio-deployment-id;
+            proxy_hide_header Server;
+            # Re-assert our own no-store over any S3 Cache-Control.
+            proxy_hide_header Cache-Control;
+
+            proxy_intercept_errors on;
+            proxy_connect_timeout 3s;
+            proxy_read_timeout 10s;
+        }
+    }

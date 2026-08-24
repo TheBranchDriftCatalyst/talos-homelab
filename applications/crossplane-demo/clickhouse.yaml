@@ -1,0 +1,46 @@
+---
+# ClickHouse — provisioned by the Altinity operator (ClickHouseInstallation CRD).
+# Minimal 1 shard / 1 replica. The operator creates a `clickhouse-demo` ClusterIP Service
+# (ports 8123 http / 9000 native). Default user, no password, LAN-open (demo only).
+# The flex util CREATE TABLE + INSERT + SELECT here.
+apiVersion: clickhouse.altinity.com/v1
+kind: ClickHouseInstallation
+metadata:
+  name: demo
+  namespace: crossplane-demo
+spec:
+  # demo paused (Plausible-only), TALOS-4gg — flux-resume-safe: matches live.
+  # Altinity operator scales the STS to 0 (chi-demo StatefulSet 0/0) but keeps the CR.
+  stop: "yes"
+  configuration:
+    clusters:
+      - name: demo
+        layout:
+          shardsCount: 1
+          replicasCount: 1
+    users:
+      default/networks/ip:
+        - "::/0"
+      default/access_management: "1"
+  defaults:
+    templates:
+      dataVolumeClaimTemplate: data-volume
+      podTemplate: clickhouse
+  templates:
+    volumeClaimTemplates:
+      - name: data-volume
+        spec:
+          accessModes: [ReadWriteOnce]
+          storageClassName: local-path
+          resources:
+            requests:
+              storage: 1Gi
+    podTemplates:
+      - name: clickhouse
+        spec:
+          containers:
+            - name: clickhouse
+              image: clickhouse/clickhouse-server:24.8
+              resources:
+                requests: {cpu: 100m, memory: 256Mi}
+                limits: {memory: 1Gi}

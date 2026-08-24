@@ -1,0 +1,58 @@
+---
+# MongoDB — Instance Ops
+#
+# The Mongo counterpart to cnpg-databases.json. Fed by a percona/mongodb_exporter
+# SIDECAR in each MongoDBCommunity pod, discovered by the cluster-wide
+# mongodb-clusters PodMonitor (infrastructure/base/monitoring/mongodb-monitoring).
+#
+# PREREQUISITES, both of which were absent and had to be built first — a dashboard
+# authored before them would have been entirely empty panels:
+#   1. the exporter sidecar (the MongoDB operator ships NO metrics of its own)
+#   2. --collect-all on that exporter. Without it only ~23 dbstats series exist
+#      (storage/object counts) and NONE of connections, opcounters, global-lock
+#      queue, WiredTiger cache or network. With it: 4729 distinct metrics.
+#   3. the `clusterMonitor` role on admin for the exporter's user. Without it
+#      --collect-all PANICS inside the exporter HTTP handler (exporter.go:364) and
+#      serves zero bytes while the container still reports 3/3 Ready.
+#
+# FILTERS: $namespace + $pod, both from label_values(mongodb_up, ...).
+#
+# GROUNDING (mimir-query-frontend, X-Scope-OrgID: anonymous; every target executed
+# against monitoring/clickstack-mongodb-0 — 0 broken, 0 empty):
+#   mongodb_up                              exporter reachability
+#   mongodb_ss_uptime                       carries rs_state (1=PRIMARY)
+#   mongodb_ss_connections                  label conn_type: current|available|active
+#   mongodb_ss_opcounters                   label legacy_op_type: command|query|insert|...
+#   mongodb_ss_metrics_document             label doc_op_type: inserted|updated|deleted|returned
+#   mongodb_ss_globalLock_currentQueue      label count_type: readers|writers|total
+#   mongodb_ss_globalLock_activeClients_*   readers/writers
+#   mongodb_ss_wt_cache_*                   incl. maximum_bytes_configured
+#   mongodb_ss_mem_resident / _virtual      reported in MiB, converted to bytes in-panel
+#   mongodb_ss_network_bytesIn / bytesOut
+#   mongodb_ss_asserts                      label assert_type
+#   mongodb_mongod_db_*                     per-database data/index/object counts
+#
+# GOTCHA WORTH KEEPING: `mongodb_up` does NOT carry the rs_state label — only the
+# ss_* metrics do. Selecting rs_state on mongodb_up silently matches nothing and
+# reads 0 while the member is genuinely PRIMARY. The PRIMARY-members panel uses
+# mongodb_ss_uptime for exactly this reason.
+#
+# CARDINALITY NOTE: --collect-all produces ~11k series PER INSTANCE here. That is
+# the price of a real ops dashboard, but it is worth watching if several Mongos
+# are onboarded — this one instance is a meaningful fraction of a small Mimir.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: mongodb-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: databases
+spec:
+  folderRef: ops-databases
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-mongodb-ops
+    key: mongodb-ops.json

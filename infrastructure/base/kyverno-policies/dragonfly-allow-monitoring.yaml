@@ -1,0 +1,82 @@
+---
+# RBAC: Kyverno's background controller cannot create NetworkPolicies (or watch Dragonfly
+# CRs) by default. The generate rule below needs both — grant via an aggregated ClusterRole
+# (the rbac.kyverno.io/aggregate-to-background-controller label wires these rules into the
+# kyverno background-controller's aggregated role). delete is required so synchronize can
+# clean up the downstream NetworkPolicy when a Dragonfly is removed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background:dragonfly-netpol
+  labels:
+    app.kubernetes.io/part-of: kyverno
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, update, patch, delete, get, list, watch]
+  - apiGroups: [dragonflydb.io]
+    resources: [dragonflies]
+    verbs: [get, list, watch]
+---
+# Generating policy: for every Dragonfly CR, generate an additive NetworkPolicy
+# `allow-monitoring-to-<name>` in the Dragonfly's namespace that lets the monitoring
+# namespace reach the redis port (:6379) — the scrape path for the redis_exporters that
+# run in `monitoring` (infrastructure/base/monitoring/redis-monitoring/).
+#
+# WHY: the dragonfly-operator renders a per-Dragonfly NetworkPolicy restricting :6379
+# ingress to same-namespace peers, which black-holes the cross-namespace exporters.
+# k8s UNIONS all NetworkPolicies selecting a pod, so the generated policy purely OPENS
+# the scrape path without touching the operator-managed one. This replaces the
+# hand-written copies (infrastructure/base/argocd/netpol-allow-monitoring.yaml,
+# infrastructure/base/authentik/netpol-allow-monitoring.yaml) and fixes the Dragonflies
+# that never got one (boomtime/boomtime-cache, crossplane-demo/demo).
+#
+# Pod selection: the operator labels every Dragonfly pod `app: <dragonfly-name>`
+# (verified on live pods), so the podSelector is derived from the CR name.
+# generateExisting covers the Dragonflies that already exist when this policy lands;
+# synchronize keeps the downstream NetworkPolicy in step (and deletes it with the CR).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: dragonfly-allow-monitoring
+  annotations:
+    policies.kyverno.io/title: Generate allow-monitoring NetworkPolicy per Dragonfly
+    policies.kyverno.io/category: Networking
+    policies.kyverno.io/subject: Dragonfly, NetworkPolicy
+    policies.kyverno.io/description: >-
+      Generates an additive allow-monitoring-to-<name> NetworkPolicy in each Dragonfly's
+      namespace, opening :6379 ingress from the monitoring namespace so the
+      redis_exporters can scrape it. Covers existing Dragonflies (generateExisting) and
+      tracks CR lifecycle (synchronize).
+spec:
+  admission: true
+  background: true
+  rules:
+    - name: generate-allow-monitoring-netpol
+      match:
+        any:
+          - resources:
+              kinds:
+                - dragonflydb.io/v1alpha1/Dragonfly
+      generate:
+        generateExisting: true
+        synchronize: true
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: allow-monitoring-to-{{ request.object.metadata.name }}
+        namespace: "{{ request.object.metadata.namespace }}"
+        data:
+          spec:
+            podSelector:
+              matchLabels:
+                app: "{{ request.object.metadata.name }}"
+            policyTypes: [Ingress]
+            ingress:
+              - from:
+                  - namespaceSelector:
+                      matchLabels:
+                        kubernetes.io/metadata.name: monitoring
+                ports:
+                  - protocol: TCP
+                    port: 6379

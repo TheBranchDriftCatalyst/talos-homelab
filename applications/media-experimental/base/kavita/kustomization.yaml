@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# kavita = ../_instance skeleton + deltas only (see patch-*.yaml).
+
+resources:
+  - ../_instance
+  - ingressroute-http.yaml  # web→https redirect (native OIDC route is on websecure)
+
+labels:
+  # App identity — stamped into metadata + selectors + pod template.
+  - pairs:
+      app: kavita
+    includeSelectors: true
+  - pairs:
+      app.kubernetes.io/component: ebook-reader
+      category: ebook-reader
+
+patches:
+  - path: patch-deployment.yaml
+    target: {kind: Deployment}
+  - path: patch-ingressroute.yaml
+    target: {kind: IngressRoute, name: app-template}  # scope: NOT the -http redirect route
+  # Rename template placeholders + set ports.
+  - target: {kind: Deployment, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: kavita}
+      - {op: replace, path: /spec/template/spec/containers/0/name, value: kavita}
+      - {op: replace, path: /spec/template/spec/containers/0/ports/0/containerPort, value: 5000}
+  - target: {kind: Service, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: kavita}
+      - {op: replace, path: /spec/ports/0/port, value: 5000}
+  - target: {kind: IngressRoute, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: kavita}
+  - target: {kind: PersistentVolumeClaim, name: app-template-config}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: kavita-config}

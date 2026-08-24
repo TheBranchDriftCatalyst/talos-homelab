@@ -1,0 +1,27 @@
+---
+# Flux Kustomization for jetstack/version-checker — image-version exporter.
+# Exposes version_checker_is_latest{...} for the "App Ops — Image Versions"
+# Grafana dashboard. Scraped into Mimir via its ServiceMonitor (Alloy).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: version-checker
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/monitoring/version-checker
+  prune: true
+  # wait:false — a slow/erroring registry lookup must never gate the Kustomization;
+  # the Deployment + ServiceMonitor reconcile independently.
+  wait: false
+  dependsOn:
+    - name: monitoring  # `monitoring` namespace + ServiceMonitor CRD
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

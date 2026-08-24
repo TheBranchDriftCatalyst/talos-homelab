@@ -1,0 +1,50 @@
+---
+# BookOrbit /data (APP_DATA_PATH) — derived app data, on NODE-INDEPENDENT NFS.
+#
+# THIS IS THE PVC THAT WOULD NORMALLY PIN THE APP, AND IT DOES NOT. Every other
+# media-experimental app takes its `<app>-config` PVC from ../_instance/pvc.yaml,
+# which is `storageClassName: local-path` — and a local-path PV carries a
+# nodeAffinity to whichever node provisioned it, which is why ../_instance's
+# Deployment also hard-codes a matching nodeAffinity to talos03. BookOrbit does not
+# include ../_instance at all, and this claim is on fatboy-nfs-appdata, whose PVs
+# have no nodeAffinity. The pod can schedule anywhere.
+#
+# THE NFS QUESTION WAS ASKED, NOT ASSUMED. Putting appdata on NFS is exactly how
+# the arr stack got into trouble, so the contents were checked against upstream
+# before choosing this class. /data holds ordinary files and directories only —
+# `covers/`, `book-bucket/`, `book-dock/` staging, author images, user avatars,
+# fonts, custom icons, Kobo thumbnails, kepub conversions. There is NO embedded
+# database and NO file-locking workload: BookOrbit keeps ALL persistent state in
+# PostgreSQL (server/package.json depends on `pg` + `drizzle-orm`, with no
+# better-sqlite3 or embedded KV store). The only sqlite in the repo is in the
+# KOReader Lua plugin, which runs on the e-reader, and in import connectors that
+# READ foreign backup files. So the classic NFS byte-range-locking corruption risk
+# does not apply here.
+#
+# Two real NFS caveats, both handled rather than ignored:
+#   1. The entrypoint chown -R's /data on every start and hard-exits if a write
+#      probe fails, which is a guaranteed failure against a root_squash export.
+#      Disabled via BOOKORBIT_FIX_PERMISSIONS=false in deployment.yaml, which is
+#      precisely what upstream documents that variable for.
+#   2. Book Dock auto-ingest watches /data/book-dock with chokidar/inotify and no
+#      polling option. inotify does not fire for writes made by OTHER NFS clients,
+#      so files dropped onto the share from elsewhere will not auto-import. Uploads
+#      made THROUGH BookOrbit still work (same client). See OIDC.md's sibling note
+#      in README terms — this is a feature caveat, not a data-safety one.
+#
+# ReadWriteOnce, not RWX: one replica, Recreate strategy. RWO on an NFS-backed PV
+# is still node-independent — it means one node at a time, not one specific node.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bookorbit-data
+  labels:
+    app: bookorbit
+    app.kubernetes.io/name: bookorbit
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 20Gi

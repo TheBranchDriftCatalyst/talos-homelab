@@ -1,0 +1,212 @@
+{
+  "uid": "dragonfly-cache",
+  "title": "Dragonfly / Redis Cache",
+  "tags": ["db", "cache", "redis", "dragonfly"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 2,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "redis",
+        "label": "Cache",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "mimir" },
+        "query": { "query": "label_values(redis_up, redis_cache)", "refId": "StandardVariableQuery" },
+        "regex": "",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    { "id": 1, "type": "row", "title": "Fleet Overview", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 } },
+
+    {
+      "id": 2, "type": "stat", "title": "Caches up",
+      "description": "Number of redis_exporter targets reporting redis_up == 1 (Dragonfly reachable over RESP).",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "count(redis_up{redis_cache=~\"$redis\"} == 1)" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Total memory used",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (redis_cache) (redis_memory_used_bytes{redis_cache=~\"$redis\"}))" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Connected clients",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (redis_cache) (redis_connected_clients{redis_cache=~\"$redis\"}))" } ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Fleet ops/sec",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "ops", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(rate(redis_commands_processed_total{redis_cache=~\"$redis\"}[$__rate_interval]))" } ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Total keys",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (redis_cache, db) (redis_db_keys{redis_cache=~\"$redis\"}))" } ]
+    },
+    {
+      "id": 7, "type": "stat", "title": "Fleet hit ratio [5m]",
+      "description": "keyspace_hits / (keyspace_hits + keyspace_misses) over the last 5m across selected caches.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 0.8 }, { "color": "green", "value": 0.95 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(rate(redis_keyspace_hits_total{redis_cache=~\"$redis\"}[5m])) / (sum(rate(redis_keyspace_hits_total{redis_cache=~\"$redis\"}[5m])) + sum(rate(redis_keyspace_misses_total{redis_cache=~\"$redis\"}[5m])))" } ]
+    },
+
+    {
+      "id": 8, "type": "table", "title": "Caches",
+      "description": "One row per Dragonfly cache: version, up, uptime, connected clients, memory used vs max, total keys.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 5 },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Uptime" }, "properties": [ { "id": "unit", "value": "s" } ] },
+          { "matcher": { "id": "byName", "options": "Mem Used" }, "properties": [ { "id": "unit", "value": "bytes" } ] },
+          { "matcher": { "id": "byName", "options": "Mem Max" }, "properties": [ { "id": "unit", "value": "bytes" } ] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "container": true, "endpoint": true, "cluster": true, "service": true, "namespace": true, "pod": true, "role": true, "maxmemory_policy": true, "redis_build_id": true, "redis_mode": true, "os": true, "Value #Info": true }, "renameByName": { "redis_cache": "Cache", "redis_version": "Version", "Value #Up": "Up", "Value #Uptime": "Uptime", "Value #Cli": "Clients", "Value #MemU": "Mem Used", "Value #MemM": "Mem Max", "Value #Keys": "Keys" } } }
+      ],
+      "targets": [
+        { "refId": "Info", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache, redis_version) (redis_instance_info{redis_cache=~\"$redis\"})" },
+        { "refId": "Up", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_up{redis_cache=~\"$redis\"})" },
+        { "refId": "Uptime", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_uptime_in_seconds{redis_cache=~\"$redis\"})" },
+        { "refId": "Cli", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_connected_clients{redis_cache=~\"$redis\"})" },
+        { "refId": "MemU", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_memory_used_bytes{redis_cache=~\"$redis\"})" },
+        { "refId": "MemM", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_memory_max_bytes{redis_cache=~\"$redis\"})" },
+        { "refId": "Keys", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum by (redis_cache) (max by (redis_cache, db) (redis_db_keys{redis_cache=~\"$redis\"}))" }
+      ]
+    },
+
+    { "id": 10, "type": "row", "title": "Memory", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 } },
+
+    {
+      "id": 11, "type": "timeseries", "title": "Memory used vs max (maxmemory)",
+      "description": "Working-set memory vs the configured maxmemory (--maxmemory). Dashed line = max; approaching it triggers evictions. If 'max' is flat 0 the cache reports no maxmemory in INFO — swap redis_memory_max_bytes for redis_config_maxmemory.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/max/" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{redis_cache}} used", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_memory_used_bytes{redis_cache=~\"$redis\"})" },
+        { "refId": "B", "legendFormat": "{{redis_cache}} rss", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_memory_used_rss_bytes{redis_cache=~\"$redis\"})" },
+        { "refId": "C", "legendFormat": "{{redis_cache}} max", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_memory_max_bytes{redis_cache=~\"$redis\"})" }
+      ]
+    },
+    {
+      "id": 12, "type": "gauge", "title": "Memory usage % of maxmemory",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 90 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [ { "refId": "A", "legendFormat": "{{redis_cache}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "100 * max by (redis_cache) (redis_memory_used_bytes{redis_cache=~\"$redis\"}) / max by (redis_cache) (redis_memory_max_bytes{redis_cache=~\"$redis\"} > 0)" } ]
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Evicted & expired keys/sec [5m]",
+      "description": "Rate of evictions (memory-pressure driven) and TTL expirations. Sustained evictions mean maxmemory is too small for the working set.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/evicted/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{redis_cache}} evicted", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (rate(redis_evicted_keys_total{redis_cache=~\"$redis\"}[5m]))" },
+        { "refId": "B", "legendFormat": "{{redis_cache}} expired", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (rate(redis_expired_keys_total{redis_cache=~\"$redis\"}[5m]))" }
+      ]
+    },
+
+    { "id": 20, "type": "row", "title": "Throughput & Clients", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 } },
+
+    {
+      "id": 21, "type": "timeseries", "title": "Commands processed/sec",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{redis_cache}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (rate(redis_commands_processed_total{redis_cache=~\"$redis\"}[$__rate_interval]))" } ]
+    },
+    {
+      "id": 22, "type": "timeseries", "title": "Keyspace hits vs misses/sec [5m]",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/miss/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{redis_cache}} hits", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (rate(redis_keyspace_hits_total{redis_cache=~\"$redis\"}[5m]))" },
+        { "refId": "B", "legendFormat": "{{redis_cache}} misses", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (rate(redis_keyspace_misses_total{redis_cache=~\"$redis\"}[5m]))" }
+      ]
+    },
+    {
+      "id": 23, "type": "timeseries", "title": "Connected & blocked clients",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 20, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{redis_cache}} clients", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_connected_clients{redis_cache=~\"$redis\"})" },
+        { "refId": "B", "legendFormat": "{{redis_cache}} blocked", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_blocked_clients{redis_cache=~\"$redis\"})" }
+      ]
+    },
+    {
+      "id": 24, "type": "timeseries", "title": "Network I/O bytes/sec [5m]",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "fieldConfig": { "defaults": { "unit": "Bps", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{redis_cache}} in", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (rate(redis_net_input_bytes_total{redis_cache=~\"$redis\"}[5m]))" },
+        { "refId": "B", "legendFormat": "{{redis_cache}} out", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (rate(redis_net_output_bytes_total{redis_cache=~\"$redis\"}[5m]))" }
+      ]
+    },
+
+    { "id": 30, "type": "row", "title": "Keyspace & Uptime", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 } },
+
+    {
+      "id": 31, "type": "timeseries", "title": "Keys per cache",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{redis_cache}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum by (redis_cache) (max by (redis_cache, db) (redis_db_keys{redis_cache=~\"$redis\"}))" } ]
+    },
+    {
+      "id": 32, "type": "timeseries", "title": "Uptime",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{redis_cache}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (redis_cache) (redis_uptime_in_seconds{redis_cache=~\"$redis\"})" } ]
+    }
+  ]
+}

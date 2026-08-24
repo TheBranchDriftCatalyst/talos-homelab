@@ -1,0 +1,36 @@
+---
+# GrafanaDashboard CR: "Monitoring Ops" (meta-monitoring / observability explorer).
+#
+# ONE focused dashboard to operate the monitoring stack ITSELF: scrape-target
+# health, per-job series counts & cardinality, the Alloy -> Mimir/Loki/Tempo
+# ingestion pipeline, and problem-spotters for double-scrapes and cardinality
+# blowups.
+#
+# CORRECTNESS: kube_* queries are scoped to job="kube-state-metrics". KSM is
+# double-scraped on this cluster (also via job="kubernetes-service-endpoints",
+# honor_labels collision). The "Double-Scrape Detection" row deliberately
+# surfaces that duplication. See TALOS-57t.
+#
+# All targets use the Mimir datasource (uid "mimir"). Tempo is deployed but
+# currently idle (no trace traffic), so it is represented only by a build_info
+# up-count rather than empty trace panels.
+#
+# JSON at ../json/monitoring-ops.json -> ConfigMap dashboard-monitoring-ops
+# (configMapGenerator, disableNameSuffixHash). uid "monitoring-ops" is stable.
+# See TALOS-70n.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: monitoring-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folderRef: ops-observability
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-monitoring-ops
+    key: monitoring-ops.json

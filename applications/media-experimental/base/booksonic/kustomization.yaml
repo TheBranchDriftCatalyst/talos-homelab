@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# booksonic = ../_instance skeleton + deltas only (see patch-*.yaml).
+
+resources:
+  - ../_instance
+  - ingressroute-http.yaml  # web→https redirect (SSO route is on websecure)
+
+labels:
+  # App identity — stamped into metadata + selectors + pod template.
+  - pairs:
+      app: booksonic
+    includeSelectors: true
+  - pairs:
+      app.kubernetes.io/component: audiobook-server
+      category: audiobook-server
+
+patches:
+  - path: patch-deployment.yaml
+    target: {kind: Deployment}
+  - path: patch-ingressroute.yaml
+    target: {kind: IngressRoute, name: app-template}
+  # Rename template placeholders + set ports.
+  - target: {kind: Deployment, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: booksonic}
+      - {op: replace, path: /spec/template/spec/containers/0/name, value: booksonic}
+      - {op: replace, path: /spec/template/spec/containers/0/ports/0/containerPort, value: 4040}
+  - target: {kind: Service, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: booksonic}
+      - {op: replace, path: /spec/ports/0/port, value: 4040}
+  - target: {kind: IngressRoute, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: booksonic}
+  - target: {kind: PersistentVolumeClaim, name: app-template-config}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: booksonic-config}

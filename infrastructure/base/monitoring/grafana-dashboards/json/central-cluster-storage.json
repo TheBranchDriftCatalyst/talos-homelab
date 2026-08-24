@@ -1,0 +1,4954 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "ONE view of ALL storage across the cluster: node physical disks, PersistentVolumes/PVCs (by storage class), MinIO object storage (per-bucket S3 footprint for Loki/Mimir/Tempo/Dagster), CloudNativePG database sizes, Velero backups, and NAS/NFS free space. Fully label-driven (by node/namespace/storageclass/bucket) so it adapts as nodes, PVCs and buckets come and go. Metrics from Mimir (uid: mimir).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "preload": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Summary \u2014 cluster-wide storage at a glance",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Sum of all writable local-disk filesystems across every node (node-exporter). Excludes tmpfs/overlay/NFS to avoid double-counting.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 1
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Physical Capacity (raw)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Physical bytes in use across all node local disks = size - avail.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 1
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}) - sum(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Physical Used",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Sum of capacity of all bound PersistentVolumes (kube-state-metrics).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(kube_persistentvolume_capacity_bytes{job=\"kube-state-metrics\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "PV Capacity (provisioned)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Sum of storage requested by all PersistentVolumeClaims.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 1
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "PVC Requested (allocated)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Object bytes stored in MinIO (S3 backend for Loki/Mimir/Tempo/Dagster). Requires the minio scrape enabled in this change.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 1
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "minio_cluster_usage_total_bytes",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "MinIO Used",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Free space on the NAS volume backing the NFS storage classes (df via the nfs-storage-exporter probe).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 500000000000.0
+              },
+              {
+                "color": "green",
+                "value": 2000000000000.0
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 1
+      },
+      "id": 7,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "min(nfs_backend_avail_bytes)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "NAS Free (NFS backend)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Biggest single PVC by requested size.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 1
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "max(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Largest PVC",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Sum of all CloudNativePG database sizes (excludes template DBs).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Databases Total",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Cluster Physical Capacity \u2014 node disks",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Percent used of each node's writable local disks (aggregated per node).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent",
+          "max": 100,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 6
+      },
+      "id": 11,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - sum by(node)(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}) / sum by(node)(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{node}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Per-node disk %used",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Used bytes per node over time, stacked to show total physical consumption growth.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 6
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by(node)(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}) - sum by(node)(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"})",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{node}}",
+          "range": true
+        }
+      ],
+      "title": "Node filesystem used bytes (stacked)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Every writable local filesystem per node: device, mount, fstype, size, used, avail, %used. Excludes tmpfs/overlay/NFS.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "%Used"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "gauge",
+                  "mode": "gradient"
+                }
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "min",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 13,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Used"
+          }
+        ]
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}",
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}",
+          "refId": "B",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"} - on(node,device,mountpoint,fstype) node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}",
+          "refId": "C",
+          "format": "table",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"} / on(node,device,mountpoint,fstype) node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"})",
+          "refId": "D",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Node filesystems",
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "cluster": true,
+              "instance": true,
+              "job": true,
+              "namespace": true,
+              "service": true,
+              "kubernetes_io_hostname": true,
+              "kubernetes_node": true,
+              "container": true,
+              "endpoint": true,
+              "pod": true,
+              "prometheus": true
+            },
+            "renameByName": {
+              "node": "Node",
+              "device": "Device",
+              "mountpoint": "Mount",
+              "fstype": "FS",
+              "Value #A": "Size",
+              "Value #B": "Avail",
+              "Value #C": "Used",
+              "Value #D": "%Used"
+            },
+            "indexByName": {
+              "node": 0,
+              "mountpoint": 1,
+              "device": 2,
+              "fstype": 3,
+              "Value #A": 4,
+              "Value #C": 5,
+              "Value #B": 6,
+              "Value #D": 7
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 23
+      },
+      "id": 14,
+      "panels": [],
+      "title": "Persistent Volumes \u2014 PVCs",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Number of PersistentVolumeClaims in the cluster.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 24
+      },
+      "id": 15,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "PVC count",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Total storage requested across all PVCs.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 24
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "PVC Requested total",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Total capacity of all bound PVs.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 24
+      },
+      "id": 17,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(kube_persistentvolume_capacity_bytes{job=\"kube-state-metrics\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "PV Capacity total",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "PVC requested bytes grouped by storage class (local-path vs the NFS classes, etc.).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 15,
+        "x": 9,
+        "y": 24
+      },
+      "id": 18,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by(storageclass)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"} * on(namespace,persistentvolumeclaim) group_left(storageclass) kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"})",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{storageclass}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Requested by StorageClass",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Largest PVCs by requested size.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "id": 19,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "topk(15, sum by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"}))",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Top 15 PVC consumers (requested)",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Requested PVC bytes per namespace over time.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by(namespace)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"})",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{namespace}}",
+          "range": true
+        }
+      ],
+      "title": "PVC requested over time by namespace",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Every PVC with namespace, storage class, backing PV, and requested size. Sorted by requested size. NOTE: live 'used' bytes are unavailable (kubelet_volume_stats not scraped \u2014 see Follow-ups panel).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "id": 21,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Requested"
+          }
+        ]
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"} * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"}",
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "All PVCs",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "cluster": true,
+              "instance": true,
+              "job": true,
+              "service": true,
+              "endpoint": true,
+              "container": true,
+              "pod": true,
+              "prometheus": true
+            },
+            "renameByName": {
+              "namespace": "Namespace",
+              "persistentvolumeclaim": "PVC",
+              "storageclass": "StorageClass",
+              "volumename": "PV",
+              "Value": "Requested"
+            },
+            "indexByName": {
+              "namespace": 0,
+              "persistentvolumeclaim": 1,
+              "storageclass": 2,
+              "volumename": 3,
+              "Value": 4
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 47
+      },
+      "id": 22,
+      "panels": [],
+      "title": "Object Storage \u2014 MinIO (S3 backend for Loki/Mimir/Tempo/Dagster)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Percent of MinIO usable capacity consumed.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent",
+          "max": 100,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 48
+      },
+      "id": 23,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "100 * minio_cluster_usage_total_bytes / minio_cluster_capacity_usable_total_bytes",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "used %",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "MinIO usable %used",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "MinIO usable total capacity (after erasure coding).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 48
+      },
+      "id": 24,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "minio_cluster_capacity_usable_total_bytes",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Usable capacity",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "MinIO usable free capacity.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 48
+      },
+      "id": 25,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "minio_cluster_capacity_usable_free_bytes",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Usable free",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "MinIO object bytes stored.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 52
+      },
+      "id": 26,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "minio_cluster_usage_total_bytes",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Used",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Total object count across all buckets.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 52
+      },
+      "id": 27,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "minio_cluster_usage_object_total",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Objects",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Per-bucket object storage usage \u2014 where the Loki/Mimir/Tempo/Dagster footprints live.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "id": 28,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+        "expr": "sum(minio_cluster_usage_total_bytes)",
+          "refId": "A",
+          "format": "time_series",
+        "legendFormat": "cluster total",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "MinIO cluster usage",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Per-bucket usage growth (observability + datalake object footprint).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+        "expr": "sum(minio_cluster_usage_total_bytes)",
+          "refId": "A",
+          "format": "time_series",
+        "legendFormat": "cluster total",
+          "range": true
+        }
+      ],
+      "title": "MinIO cluster usage over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Per-bucket object counts over time.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+        "expr": "sum(minio_cluster_usage_object_total)",
+          "refId": "A",
+          "format": "time_series",
+        "legendFormat": "cluster total",
+          "range": true
+        }
+      ],
+      "title": "MinIO objects over time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 64
+      },
+      "id": 31,
+      "panels": [],
+      "title": "Databases \u2014 CloudNativePG",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Sum of all CloudNativePG database sizes (excludes template DBs).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 65
+      },
+      "id": 32,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "DB total size",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Number of CloudNativePG databases reporting a size (excludes template DBs).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 65
+      },
+      "id": 33,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "DB count",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Each CloudNativePG database by on-disk size.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 18,
+        "x": 6,
+        "y": 65
+      },
+      "id": 34,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by(namespace,datname)(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{namespace}}/{{datname}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Databases by size",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Per-database on-disk size over time.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 69
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by(namespace,pod,datname)(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{namespace}}/{{datname}}",
+          "range": true
+        }
+      ],
+      "title": "Database size over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Every CloudNativePG database: cluster namespace, instance pod, database name, size. Sorted by size.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 69
+      },
+      "id": 36,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Size"
+          }
+        ]
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "cnpg_pg_database_size_bytes{datname!~\"template.*\"}",
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Database sizes",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "cluster": true,
+              "instance": true,
+              "job": true,
+              "container": true,
+              "endpoint": true,
+              "service": true,
+              "prometheus": true
+            },
+            "renameByName": {
+              "namespace": "Namespace",
+              "pod": "Pod",
+              "datname": "Database",
+              "Value": "Size"
+            },
+            "indexByName": {
+              "namespace": 0,
+              "pod": 1,
+              "datname": 2,
+              "Value": 3
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 77
+      },
+      "id": 37,
+      "panels": [],
+      "title": "Backups (Velero), NAS & Control-plane",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Time since the most recent successful Velero backup across all schedules.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 93600
+              },
+              {
+                "color": "red",
+                "value": 187200
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 78
+      },
+      "id": 38,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "time() - max(velero_backup_last_successful_timestamp)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Last backup age",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Total size of the most recent tarball across Velero schedules.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 78
+      },
+      "id": 39,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(velero_backup_tarball_size_bytes)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Backup data (last)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Most recent backup tarball size per Velero schedule.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 18,
+        "x": 6,
+        "y": 78
+      },
+      "id": 40,
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by(schedule)(velero_backup_tarball_size_bytes)",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{schedule}}",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "Velero backup size by schedule",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Total size of the NAS filesystem backing the NFS storage classes (df via nfs-storage-exporter).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 82
+      },
+      "id": 41,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "max(nfs_backend_size_bytes)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "NAS volume size",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Used bytes on the NAS NFS backend.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 82
+      },
+      "id": 42,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "max(nfs_backend_used_bytes)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "NAS used",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Free bytes on the NAS NFS backend.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 500000000000.0
+              },
+              {
+                "color": "green",
+                "value": 2000000000000.0
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 82
+      },
+      "id": 43,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "min(nfs_backend_avail_bytes)",
+          "refId": "A",
+          "format": "time_series",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "NAS free",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Percent used of the NAS NFS backend volume.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent",
+          "max": 100,
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 9,
+        "y": 82
+      },
+      "id": 44,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "100 * max(nfs_backend_used_bytes) / max(nfs_backend_size_bytes)",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "NAS",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "title": "NAS %used",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "NAS NFS backend free space over time (per server/export).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 5,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 15,
+        "y": 82
+      },
+      "id": 45,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "nfs_backend_avail_bytes",
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "{{server}}:{{export}}",
+          "range": true
+        }
+      ],
+      "title": "NAS free over time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "description": "Storage telemetry that does not exist yet in this cluster.",
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 88
+      },
+      "id": 46,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "**These require new scrape targets/exporters (not built here to avoid broken panels):**\n\n- **PVC *used* bytes** \u2014 `kubelet_volume_stats_*` is not scraped. This dashboard shows PVC *requested* size only. Fix: add a kubelet metrics scrape (`/metrics` volume stats) to Alloy so `kubelet_volume_stats_used_bytes` / `_capacity_bytes` appear.\n- **etcd DB size** \u2014 `etcd_mvcc_db_total_size_in_bytes` is not scraped (Talos control-plane etcd metrics endpoint not wired). Fix: expose + scrape etcd metrics, then add a panel with a quota threshold.\n\n**Gaps filled in this change:** MinIO object/bucket usage (native PodMonitor + public metrics), and NAS/NFS free space (`nfs-storage-exporter` df probe). CloudNativePG per-database sizes already existed (`cnpg_pg_database_size_bytes`).",
+        "mode": "markdown"
+      },
+      "pluginVersion": "11.0.0",
+      "title": "Follow-ups \u2014 storage gaps not yet metricized",
+      "type": "text"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 94
+      },
+      "id": 47,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "PVCs stuck in Pending or Lost phase (kube-state-metrics). 0 = all bound. GROUNDED: currently 0 (122 Bound).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 95
+          },
+          "id": 48,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "count(kube_persistentvolumeclaim_status_phase{phase=~\"Pending|Lost\"}==1) or vector(0)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "Unbound / Pending PVCs",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "PersistentVolumes in Failed or Released phase \u2014 orphaned volumes needing reclaim. GROUNDED: 10 Released now.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 95
+          },
+          "id": 49,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "count(kube_persistentvolume_status_phase{phase=~\"Failed|Released\"}==1) or vector(0)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "PVs Failed / Released",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Writable local filesystems remounted read-only (danger). Excludes squashfs/overlay/tmpfs. GROUNDED: 0.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 95
+          },
+          "id": 50,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "count(node_filesystem_readonly{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\"}==1) or vector(0)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "Read-only mounts",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Filesystems reporting a device error (danger). Excludes squashfs/overlay/tmpfs. GROUNDED: 0.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 95
+          },
+          "id": 51,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "count(node_filesystem_device_error{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\"}==1) or vector(0)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "Device-error mounts",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "nfs-storage-exporter df-probe scrape success (1=up). GROUNDED: 1 (storageclass fatboy-nfs-appdata).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "DOWN",
+                      "color": "red",
+                      "index": 1
+                    },
+                    "1": {
+                      "text": "UP",
+                      "color": "green",
+                      "index": 0
+                    }
+                  }
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 95
+          },
+          "id": 52,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "min(nfs_backend_scrape_success)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "NFS exporter up",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "minio_cluster_health_status (1=healthy). Deduped across scrape jobs. GROUNDED: 1.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "Unhealthy",
+                      "color": "red",
+                      "index": 1
+                    },
+                    "1": {
+                      "text": "Healthy",
+                      "color": "green",
+                      "index": 0
+                    }
+                  }
+                }
+              ],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 95
+          },
+          "id": 53,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max(minio_cluster_health_status)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "MinIO cluster health",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "minio_cluster_drive_online_total (deduped). GROUNDED: 1.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 99
+          },
+          "id": 54,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max(minio_cluster_drive_online_total)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "MinIO drives online",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "minio_cluster_drive_offline_total (deduped). 0 = all drives up. GROUNDED: 0.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 99
+          },
+          "id": 55,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max(minio_cluster_drive_offline_total)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "MinIO drives offline",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "minio_cluster_nodes_online_total (deduped). GROUNDED: 1.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 99
+          },
+          "id": 56,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max(minio_cluster_nodes_online_total)",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "MinIO nodes online",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Inode table utilisation per node = 100*(1 - files_free/files). Excludes tmpfs/overlay. GROUNDED: 0.05\u20134.2%.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 70
+                  },
+                  {
+                    "color": "red",
+                    "value": 90
+                  }
+                ]
+              },
+              "unit": "percent",
+              "max": 100,
+              "min": 0
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 99
+          },
+          "id": 57,
+          "options": {
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max by(node)(100*(1 - node_filesystem_files_free{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}/node_filesystem_files{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}))",
+              "refId": "A",
+              "format": "time_series",
+              "instant": true,
+              "range": false,
+              "legendFormat": "{{node}}"
+            }
+          ],
+          "title": "Per-node inode %used",
+          "type": "gauge"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Last backup status per Velero schedule. NOTE (grounded vs Velero source): velero_backup_last_status 1=SUCCESS, 0=FAILURE \u2014 opposite of some docs. GROUNDED: 3 schedules, all 1/OK.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Status"
+                },
+                "properties": [
+                  {
+                    "id": "mappings",
+                    "value": [
+                      {
+                        "type": "value",
+                        "options": {
+                          "0": {
+                            "text": "FAIL",
+                            "color": "red",
+                            "index": 1
+                          },
+                          "1": {
+                            "text": "OK",
+                            "color": "green",
+                            "index": 0
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "type": "color-background"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 107
+          },
+          "id": 58,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": false,
+                "displayName": "Schedule"
+              }
+            ]
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "velero_backup_last_status",
+              "refId": "A",
+              "format": "table",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "Velero backup status by schedule",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "cluster": true,
+                  "instance": true,
+                  "job": true,
+                  "container": true,
+                  "endpoint": true,
+                  "service": true,
+                  "namespace": true,
+                  "pod": true,
+                  "prometheus": true
+                },
+                "renameByName": {
+                  "schedule": "Schedule",
+                  "Value": "Status"
+                },
+                "indexByName": {
+                  "schedule": 0,
+                  "Value": 1
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Per-schedule rate of velero_backup_failure_total. Sustained >0 = failing schedule.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 107
+          },
+          "id": 59,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "sum by(schedule)(rate(velero_backup_failure_total[$__rate_interval]))",
+              "refId": "A",
+              "format": "time_series",
+              "instant": false,
+              "range": true,
+              "legendFormat": "{{schedule}}"
+            }
+          ],
+          "title": "Velero backup failure rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "rate(node_nfs_rpc_retransmissions_total) \u2014 client-side NFS mount health (retransmits signal a struggling server/network). GROUNDED: 0.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 115
+          },
+          "id": 60,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "sum by(instance)(rate(node_nfs_rpc_retransmissions_total[$__rate_interval]))",
+              "refId": "A",
+              "format": "time_series",
+              "instant": false,
+              "range": true,
+              "legendFormat": "{{instance}}"
+            }
+          ],
+          "title": "NFS RPC retransmission rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Any PVC currently Pending or Lost, by namespace. Empty = healthy. GROUNDED: empty now (all 122 Bound); populates when a claim fails to bind.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 115
+          },
+          "id": 61,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": false,
+                "displayName": "Namespace"
+              }
+            ]
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "kube_persistentvolumeclaim_status_phase{phase=~\"Pending|Lost\"}==1",
+              "refId": "A",
+              "format": "table",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "Pending / Lost PVCs (by namespace)",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "cluster": true,
+                  "instance": true,
+                  "job": true,
+                  "container": true,
+                  "endpoint": true,
+                  "service": true,
+                  "pod": true,
+                  "prometheus": true,
+                  "Value": true
+                },
+                "renameByName": {
+                  "namespace": "Namespace",
+                  "persistentvolumeclaim": "PVC",
+                  "phase": "Phase"
+                },
+                "indexByName": {
+                  "namespace": 0,
+                  "persistentvolumeclaim": 1,
+                  "phase": 2
+                }
+              }
+            }
+          ],
+          "type": "table"
+        }
+      ],
+      "title": "Health gap-fills (PVC/FS/NFS/Velero/MinIO)",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 122
+      },
+      "id": 62,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "SCOPE: kubelet_volume_stats_* is only emitted for PVCs whose volume plugin has a stats provider \u2014 on this cluster that means NFS-backed PVCs ONLY (fatboy-nfs-appdata, synology-nfs, tdarr-*). The ~52 local-path/hostPath PVCs will NEVER appear here (by design, not a bug). Do not read these panels as all-PVC coverage.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 16,
+            "x": 0,
+            "y": 123
+          },
+          "id": 63,
+          "options": {
+            "code": {
+              "language": "plaintext",
+              "showLineNumbers": false,
+              "showMiniMap": false
+            },
+            "content": "**Scope \u2014 NFS-backed PVCs only.** `kubelet_volume_stats_*` is only emitted for PVCs whose volume plugin has a stats provider \u2014 on this cluster that is the **NFS-backed PVCs only** (fatboy-nfs-appdata, synology-nfs, tdarr-*). The ~52 local-path/hostPath PVCs will **never** appear here (by design, not a bug) \u2014 do **not** read these panels as all-PVC coverage.\n\nNotes: most NFS PVCs share the same NAS backend, so used% is the backend filesystem fill and moves in lockstep. RWX PVCs mounted on multiple nodes are deduplicated with `max by (namespace, persistentvolumeclaim)`. Inode panels are omitted: `kubelet_volume_stats_inodes*` exists but NFS reports 0 inodes, so inode-% is undefined here.",
+            "mode": "markdown"
+          },
+          "pluginVersion": "11.0.0",
+          "title": "Scope: NFS-backed PVCs only (kubelet volume-stats)",
+          "type": "text"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Count of NFS-backed PVCs whose filesystem is more than 85% full. NFS-backed PVCs only \u2014 local-path PVCs never emit kubelet_volume_stats_* (see scope note).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 4,
+            "x": 16,
+            "y": 123
+          },
+          "id": 64,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "count(max by (namespace, persistentvolumeclaim) (100 * kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) > 85) or vector(0)",
+              "instant": true,
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "NFS PVCs >85% full",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "NFS-backed PVCs whose available bytes, linearly extrapolated from the last 24h (predict_linear), go negative within 7 days. 0 = nothing on track to fill. NFS-backed PVCs only (see scope note).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 4,
+            "x": 20,
+            "y": 123
+          },
+          "id": 65,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "count(max by (namespace, persistentvolumeclaim) (predict_linear(kubelet_volume_stats_available_bytes[24h], 7*86400)) < 0) or vector(0)",
+              "instant": true,
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Projected full <7d",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Live filesystem fill per NFS-backed PVC from kubelet volume stats: capacity, used, available and used-%. Deduplicated across nodes (RWX PVCs mount on several nodes) with max by (namespace, persistentvolumeclaim). NFS-backed PVCs only \u2014 local-path PVCs never appear here (see scope note). Most rows share the same NAS backend so used-% is near-identical by design.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "bytes"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Used %"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percent"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 1
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "mode": "basic",
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "green",
+                          "value": null
+                        },
+                        {
+                          "color": "yellow",
+                          "value": 75
+                        },
+                        {
+                          "color": "orange",
+                          "value": 85
+                        },
+                        {
+                          "color": "red",
+                          "value": 90
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 128
+          },
+          "id": 66,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "Used %"
+              }
+            ]
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max by (namespace, persistentvolumeclaim) (100 * kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$pvc\"} / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "D"
+            }
+          ],
+          "title": "NFS PVC fill \u2014 capacity / used / available / used-%",
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "namespace": "Namespace",
+                  "persistentvolumeclaim": "PVC",
+                  "Value #A": "Capacity",
+                  "Value #B": "Used",
+                  "Value #C": "Available",
+                  "Value #D": "Used %"
+                },
+                "indexByName": {
+                  "namespace": 0,
+                  "persistentvolumeclaim": 1,
+                  "Value #A": 2,
+                  "Value #B": 3,
+                  "Value #C": 4,
+                  "Value #D": 5
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Available bytes per NFS-backed PVC over time \u2014 the fill trend. Deduplicated with max by (namespace, persistentvolumeclaim). Because most PVCs share the same NAS backend the lines largely overlap; divergent lines are dedicated exports. NFS-backed PVCs only (see scope note).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 5,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "bytes"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 0,
+            "y": 138
+          },
+          "id": 67,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "maxHeight": 600,
+              "mode": "multi",
+              "sort": "asc"
+            }
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Available bytes per PVC (trend)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "Naive linear forecast: available_bytes / deriv(used_bytes[6h]) in days, only for PVCs actively filling (deriv > 0). clamp_min guards divide-by-zero. May be sparse or empty when nothing is filling \u2014 that is fine. Since most PVCs share one NAS backend, their days-to-full converge on the backend's number. NFS-backed PVCs only (see scope note).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "d"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Days to full"
+                },
+                "properties": [
+                  {
+                    "id": "decimals",
+                    "value": 1
+                  },
+                  {
+                    "id": "custom.cellOptions",
+                    "value": {
+                      "mode": "basic",
+                      "type": "color-background"
+                    }
+                  },
+                  {
+                    "id": "thresholds",
+                    "value": {
+                      "mode": "absolute",
+                      "steps": [
+                        {
+                          "color": "red",
+                          "value": null
+                        },
+                        {
+                          "color": "orange",
+                          "value": 7
+                        },
+                        {
+                          "color": "yellow",
+                          "value": 30
+                        },
+                        {
+                          "color": "green",
+                          "value": 90
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 138
+          },
+          "id": 68,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": false,
+                "displayName": "Days to full"
+              }
+            ]
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "editorMode": "code",
+              "expr": "(max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\"$pvc\"}) / max by (namespace, persistentvolumeclaim) (clamp_min(deriv(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$pvc\"}[6h]), 1)) / 86400) and max by (namespace, persistentvolumeclaim) (deriv(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$pvc\"}[6h])) > 0",
+              "format": "table",
+              "instant": true,
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Fill forecast \u2014 days to full (actively filling PVCs)",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "namespace": "Namespace",
+                  "persistentvolumeclaim": "PVC",
+                  "Value": "Days to full"
+                },
+                "indexByName": {
+                  "namespace": 0,
+                  "persistentvolumeclaim": 1,
+                  "Value": 2
+                }
+              }
+            }
+          ],
+          "type": "table"
+        }
+      ],
+      "title": "PVC Capacity & Fill \u2014 NFS (kubelet volume-stats)",
+      "type": "row"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": [
+    "storage",
+    "capacity",
+    "infrastructure"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "node",
+        "label": "Node",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "mimir"
+        },
+        "query": {
+          "query": "label_values(node_filesystem_size_bytes, node)",
+          "refId": "node"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "mimir"
+        },
+        "query": {
+          "query": "label_values(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"}, namespace)",
+          "refId": "namespace"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      },
+      {
+        "name": "storageclass",
+        "label": "StorageClass",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "mimir"
+        },
+        "query": {
+          "query": "label_values(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"}, storageclass)",
+          "refId": "storageclass"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      },
+      {
+        "name": "pvc",
+        "label": "PVC (NFS-stats)",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "mimir"
+        },
+        "query": {
+          "query": "label_values(kubelet_volume_stats_capacity_bytes, persistentvolumeclaim)",
+          "refId": "pvc"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "sort": 1
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Central Cluster Storage",
+  "uid": "central-cluster-storage",
+  "version": 1,
+  "weekStart": ""
+}

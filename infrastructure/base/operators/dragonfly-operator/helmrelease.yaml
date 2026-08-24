@@ -1,0 +1,53 @@
+---
+# Dragonfly Operator
+# Provides: Dragonfly CRD (dragonflydb.io/v1alpha1)
+# Manages Dragonfly in-memory datastore instances (Redis/Memcached-compatible).
+# No cert-manager/webhook cert dependency.
+# Docs: https://www.dragonflydb.io/docs/getting-started/kubernetes
+# OCI chart: oci://ghcr.io/dragonflydb/dragonfly-operator/helm/dragonfly-operator
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: dragonfly-operator
+  namespace: dragonfly-operator-system
+spec:
+  type: oci
+  interval: 1h
+  url: oci://ghcr.io/dragonflydb/dragonfly-operator/helm
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: dragonfly-operator
+  namespace: dragonfly-operator-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: dragonfly-operator
+      version: 'v1.6.1'
+      sourceRef:
+        kind: HelmRepository
+        name: dragonfly-operator
+        namespace: dragonfly-operator-system
+      interval: 12h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    # Deterministic Deployment name for Flux healthChecks
+    fullnameOverride: dragonfly-operator
+
+    # Single operator replica for homelab
+    replicaCount: 1
+
+    manager:
+      # Small resources for homelab
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 250m
+          memory: 256Mi

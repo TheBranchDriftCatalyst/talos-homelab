@@ -1,0 +1,32 @@
+# Ad-hoc CANARY namespace + PVC for the NFS-lifecycle DR test.
+# NOT deployed by Flux — the test applies/deletes it, and NOTHING here touches production data.
+#
+# The PVC provisions on `fatboy-nfs-appdata` (Synology dynamic NFS). Because that StorageClass
+# uses pathPattern `${.PVC.namespace}/${.PVC.name}`, the on-disk directory is scoped to THIS
+# throwaway namespace/name — never onto any real *arr app-config path. archiveOnDelete=true +
+# reclaimPolicy=Retain means a DELETE archives (renames) the dir rather than reusing it, so a
+# same-name recreate MUST land on a fresh, empty directory. That "zero stale bytes" invariant
+# is exactly the reclaim/reuse data-hygiene guard this DR test proves (regression: 2026-05-09
+# total local-path PVC loss + NFS data-hygiene review).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nfs-dr-canary
+  labels:
+    storage.io/component: dr-canary
+    app.kubernetes.io/managed-by: nfs-lifecycle-dr-test
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-dr-canary-pvc
+  namespace: nfs-dr-canary
+  labels:
+    storage.io/component: dr-canary
+spec:
+  storageClassName: fatboy-nfs-appdata
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 64Mi

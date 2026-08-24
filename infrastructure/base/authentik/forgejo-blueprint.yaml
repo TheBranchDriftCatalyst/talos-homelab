@@ -1,0 +1,84 @@
+---
+# Authentik Blueprint for Forgejo OIDC SSO.
+#
+# Group (forgejo-admins) + OAuth2Provider (forgejo) + Application (forgejo).
+# Forgejo's OAuth callback path is /user/oauth2/<auth-source-name>/callback; our
+# auth source is named "authentik", so the redirect URI is
+# https://forge.knowledgedump.space/user/oauth2/authentik/callback.
+#
+# Forgejo does OIDC discovery against the PUBLIC-scheme issuer on auth.talos00;
+# the Forgejo pod resolves auth.talos00 in-cluster via the CoreDNS rewrite
+# (same as Zot), the browser via Pi-hole -> Traefik. client_secret from !Env
+# FORGEJO_OIDC_CLIENT_SECRET (authentik-forgejo-oidc Secret, 1Password
+# forgejo.oidc-client-secret). optional:true so a missing secret never
+# CrashLoops the worker. See TALOS-6nf.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-forgejo-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  forgejo-oidc.yaml: |
+    version: 1
+    metadata:
+      name: Forgejo OIDC SSO
+      labels:
+        blueprints.goauthentik.io/description: "Forgejo OIDC SSO: group, OAuth2 provider, and application"
+    entries:
+
+      - model: authentik_core.group
+        id: forgejo-admins-group
+        identifiers:
+          name: forgejo-admins
+        attrs:
+          is_superuser: false
+
+      - model: authentik_providers_oauth2.oauth2provider
+        id: forgejo-oauth2-provider
+        identifiers:
+          name: forgejo
+        attrs:
+          name: forgejo
+          client_type: confidential
+          client_id: forgejo
+          client_secret: !Env FORGEJO_OIDC_CLIENT_SECRET
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+          include_claims_in_id_token: true
+          sub_mode: hashed_user_id
+          issuer_mode: per_provider
+          redirect_uris:
+            - matching_mode: strict
+              url: https://forge.knowledgedump.space/user/oauth2/authentik/callback
+            - matching_mode: strict
+              url: http://forge.talos00/user/oauth2/authentik/callback
+          property_mappings:
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+
+      - model: authentik_core.application
+        id: forgejo-application
+        identifiers:
+          slug: forgejo
+        attrs:
+          name: Forgejo
+          slug: forgejo
+          provider: !KeyOf forgejo-oauth2-provider
+          meta_launch_url: https://forge.knowledgedump.space
+          meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/forgejo.png
+          meta_description: "Forgejo git forge + multi-format package registry (npm/PyPI/Maven/...)"
+          meta_publisher: "Catalyst Homelab"
+          open_in_new_tab: false
+          policy_engine_mode: any
+          group: talos-apps
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, forgejo]], group: !Find [authentik_core.group, [name, talos-apps]], order: 0}
+        attrs: {enabled: true}
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, forgejo]], group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}
+        attrs: {enabled: true}

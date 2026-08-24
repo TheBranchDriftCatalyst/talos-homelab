@@ -1,0 +1,35 @@
+---
+# Replaces spec.routes wholesale on BOTH IngressRoutes: per-instance Host + the
+# FINAL (nameSuffix-ed) Service name + middlewares (authentik forward-auth on
+# websecure, redirect-https on web). Service ref written post-suffix by hand; the
+# middlewares are re-declared because the strategic-merge replaces spec.routes
+# (TALOS-xgrl.18).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: homepage
+spec:
+  routes:
+    - match: Host(`apps.homepage.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: homepage-apps
+          port: 3000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: homepage-http
+spec:
+  routes:
+    - match: Host(`apps.homepage.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: homepage-apps
+          port: 3000

@@ -1,0 +1,41 @@
+---
+# XInstance — a machine you need (GPU box, VPN endpoint, weird binary).
+# ██ POC-DEMO ██ (catalyst.io/stage: poc-demo) — schema-unvalidated until the
+# TALOS-3g8f creds gate opens, same caveat as XFargateApp. v1alpha1 keeps it
+# tight: ONE optional open port, no EIP (spot boxes tunnel OUT via userData —
+# wireguard/tailscale — rather than exposing inference/api ports publicly).
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xinstances.aws.catalyst.io
+  labels: {catalyst.io/stage: poc-demo}
+spec:
+  group: aws.catalyst.io
+  names: {kind: XInstance, plural: xinstances}
+  defaultCompositionRef: {name: xinstance-aws}
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [instanceName, ami, vpcId, subnetId]
+              properties:
+                instanceName: {type: string}
+                instanceType: {type: string, default: t4g.small}
+                ami: {type: string, description: "AMI id or SSM alias (resolve:ssm:/aws/service/...)"}
+                spot: {type: boolean, default: false}
+                rootVolumeGb: {type: integer, default: 30}
+                region: {type: string, default: us-west-2}
+                vpcId: {type: string}
+                subnetId: {type: string}
+                openPort: {type: integer, default: 0, description: "0 = no ingress (tunnel-out pattern)"}
+                userData: {type: string, default: ""}
+            status:
+              type: object
+              properties:
+                publicIp: {type: string}

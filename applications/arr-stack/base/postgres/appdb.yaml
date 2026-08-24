@@ -1,0 +1,40 @@
+---
+# The arr stack's Postgres, as a CatalystCNPGAppDB.
+#
+# Replaces cluster.yaml, objectstore.yaml and scheduledbackup.yaml. The composite renders
+# all three plus the ExternalSecret that brings the MinIO backup credentials into this
+# namespace — previously that required the namespace to be listed on a reflector allowlist
+# in infrastructure/base/minio/cnpg-backup/externalsecret.yaml, which is a step nobody
+# remembers until a backup fails with "secrets cnpg-minio-backup not found".
+#
+# databases.yaml STAYS. It declares the per-application Database CRs (sonarr-main,
+# radarr-main, prowlarr-main and the three -log databases) that live inside this cluster.
+# Those are separate resources with their own lifecycle and are not part of this composite.
+#
+# This cluster holds the data migrated out of SQLite earlier — 845 series, 5,393 movies —
+# so values here reproduce the previous Cluster exactly rather than tidying anything up:
+# same 18.4-system-trixie image, same 20Gi on local-path, same 3 instances, same C
+# collation, same 100m/512Mi requests, same 03:05 backup slot.
+#
+# The image tag is left alone deliberately. -system- images are deprecated upstream in
+# favour of -standard-, but swapping the operand image is a real change with real risk,
+# not part of a manifest refactor. Worth its own ticket, not a drive-by.
+apiVersion: db.catalyst.io/v1alpha1
+kind: CatalystCNPGAppDB
+metadata:
+  name: arr-postgres
+  namespace: media
+spec:
+  database: arrstack
+  owner: arrstack
+  instances: 3
+  storageSize: 20Gi
+  storageClass: local-path
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+  # 03:05 daily — the slot this cluster already had. The fleet is staggered across
+  # 02:00-04:15 so fourteen databases do not all hit MinIO in the same minute.
+  backupSchedule: "0 5 3 * * *"
+  retentionPolicy: "30d"
+  resources:
+    requestsCpu: 100m
+    requestsMemory: 512Mi

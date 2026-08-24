@@ -1,0 +1,62 @@
+---
+# librarr deltas vs ../_instance/deployment.yaml (SMP; container merge key
+# is the placeholder name — renamed afterwards in kustomization.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-template
+  labels:
+    app.kubernetes.io/name: librarr
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: librarr
+    spec:
+      containers:
+        - name: app-template
+          image: ghcr.io/jeremiahm37/librarr:latest
+          env:
+            - name: TZ
+              value: America/New_York
+            # TODO: replace changeme creds + API_KEY post-deploy
+            - name: AUTH_USERNAME
+              value: "admin"
+            - name: AUTH_PASSWORD
+              value: "changeme"
+            - name: API_KEY
+              value: "changeme-generate-me"
+            - name: QB_URL
+              value: "http://qbittorrent.media.svc.cluster.local:8080"
+          volumeMounts:
+            - name: config
+              mountPath: /data
+            - name: books
+              mountPath: /books/ebooks
+            - name: audiobooks
+              mountPath: /books/audiobooks
+            - name: comics
+              mountPath: /books/manga
+            - name: downloads-complete
+              mountPath: /downloads
+          resources:
+            requests:
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: librarr-config
+        - name: books
+          persistentVolumeClaim:
+            claimName: books
+        - name: audiobooks
+          persistentVolumeClaim:
+            claimName: audiobooks
+        - name: comics
+          persistentVolumeClaim:
+            claimName: comics
+        - name: downloads-complete
+          persistentVolumeClaim:
+            claimName: downloads-complete

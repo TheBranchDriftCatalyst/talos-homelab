@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: catalyst-data
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: catalyst-data
+    app.kubernetes.io/part-of: catalyst
+  # Image update config lives in the ImageUpdater CRD at
+  # infrastructure/base/argocd/image-updater/catalyst-data-image-updater.yaml
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  info:
+    - name: GitHub Repository
+      value: https://github.com/TheBranchDriftCatalyst/catalyst-data
+  source:
+    repoURL: https://github.com/TheBranchDriftCatalyst/catalyst-data.git
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: catalyst-data
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas

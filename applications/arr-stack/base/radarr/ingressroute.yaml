@@ -1,0 +1,60 @@
+---
+# Radarr — HTTPS + Authentik forward-auth SSO on radarr.talos00 (TALOS-xgrl.14).
+# High-priority /api + /feed route (no auth mw) keeps API-key / RSS clients working;
+# default route is gated by `authentik`. In-app login suppressed via
+# RADARR__AUTH__METHOD=External + AUTH__REQUIRED=DisabledForLocalAddresses.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: radarr
+  labels:
+    app: radarr
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "Radarr"
+    gethomepage.dev/description: "Movie Management"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/weight: "11"
+    gethomepage.dev/icon: "radarr.png"
+    gethomepage.dev/siteMonitor: "http://radarr.media.svc.cluster.local:7878"
+    gethomepage.dev/widget.type: "radarr"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_RADARR_KEY}}"
+    gethomepage.dev/widget.enableQueue: "true"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`radarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))
+      kind: Rule
+      priority: 100
+      services:
+        - name: radarr
+          port: 7878
+    - match: Host(`radarr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: radarr
+          port: 7878
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: radarr-http
+  labels:
+    app: radarr
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`radarr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: radarr
+          port: 7878

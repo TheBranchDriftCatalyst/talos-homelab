@@ -1,0 +1,27 @@
+---
+# Default TLS certificate for all IngressRoutes
+# Uses the Let's Encrypt wildcard certificate for *.knowledgedump.space as the
+# default fallback. Additional wildcard certs are registered under
+# `certificates` so Traefik can serve them via SNI for matching hostnames
+# without IngressRoutes needing explicit TLS secret references.
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: traefik
+spec:
+  defaultCertificate:
+    secretName: knowledgedump-wildcard-tls
+  certificates:
+    - secretName: knowledgedump-wildcard-tls
+    # talos-private hierarchy: *.priv.talos00 (homelab-ca, LAN-only, SSO cookie domain).
+    # Replaces the retired amber + kelsboi wildcards. (TALOS-h4j / TALOS-xgrl.13)
+    # FUTURE: add priv-knowledgedump-wildcard-tls when taking talos-private public.
+    - secretName: priv-talos00-wildcard-tls
+    # bare *.talos00 (homelab-ca, LAN-only). Serves the arr-stack SSO HTTPS routes
+    # (sonarr.talos00 etc.) via SNI so their IngressRoutes need only `tls: {}`. (TALOS-xgrl.14)
+    - secretName: talos00-wildcard-tls
+    # *.homepage.talos00 (homelab-ca, LAN-only). Serves the 2-label Homepage board
+    # hosts (apps.homepage.talos00 etc.) that *.talos00 can't match — via SNI so the
+    # homepage IngressRoutes need only `tls: {}`. (TALOS-xgrl.18)
+    - secretName: homepage-talos00-wildcard-tls

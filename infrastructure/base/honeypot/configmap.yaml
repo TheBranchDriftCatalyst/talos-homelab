@@ -1,0 +1,63 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cowrie-config
+  namespace: honeypot
+data:
+  # Minimal cowrie.cfg: only override values that differ from the image's
+  # shipped cowrie.cfg.dist. Leave path-related defaults alone — they are
+  # relative to the container WORKDIR (/cowrie/cowrie-git) and resolving
+  # them against an absolute `/cowrie/var/...` prefix (as the old config
+  # did) makes plugin init silently fail, causing twistd to report
+  # "Unknown command: cowrie" and CrashLoopBackOff.
+  #
+  # See the shipped template for full path defaults:
+  #   /cowrie/cowrie-git/etc/cowrie.cfg.dist
+  cowrie.cfg: |
+    [honeypot]
+    # Hostname the honeypot will pretend to be
+    hostname = srv01
+
+    # Timezone
+    timezone = UTC
+
+    # Interaction timeout (seconds)
+    interact_timeout = 180
+
+    # Allow `exec` commands (otherwise SSH clients get "not implemented")
+    exec_enabled = true
+
+    # The cowrie/cowrie image ships pre-created var/lib/cowrie/{tty,downloads}
+    # subdirs, but the deployment mounts an emptyDir over var/lib/cowrie which
+    # wipes them. Cowrie does NOT recreate these at runtime, so opening the
+    # per-session ttylog (var/lib/cowrie/tty/<ts>.log) throws FileNotFoundError
+    # inside openShell/execCommand — the interactive shell and exec channel both
+    # fail, so NO cowrie.command.input is ever logged (login succeeds, then the
+    # session hangs idle). Likewise the download artifact tempfile
+    # (var/lib/cowrie/downloads/) can't be created, breaking file_download.
+    # Repoint both leaf paths at the mount root (which exists) so no missing
+    # subdir is required. (Alternative: an initContainer that mkdirs the subdirs.)
+    ttylog_path = var/lib/cowrie
+    download_path = var/lib/cowrie
+
+    [ssh]
+    enabled = true
+    listen_endpoints = tcp:2222:interface=0.0.0.0
+    version = SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1
+
+    # Telnet is disabled by default in the upstream config; enable it
+    # on the alternate port the deployment exposes.
+    [telnet]
+    enabled = true
+    listen_endpoints = tcp:2223:interface=0.0.0.0
+
+    [output_jsonlog]
+    enabled = true
+    # Relative to WORKDIR → /cowrie/cowrie-git/var/log/cowrie/cowrie.json
+    logfile = var/log/cowrie/cowrie.json
+    epoch_timestamp = false
+
+    [output_textlog]
+    enabled = true
+    logfile = var/log/cowrie/cowrie.log

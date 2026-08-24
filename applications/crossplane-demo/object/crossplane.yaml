@@ -1,0 +1,32 @@
+---
+# Crossplane demo: provision a real K8s object THROUGH Crossplane's provider-kubernetes.
+# ProviderConfig (InjectedIdentity → uses the provider's in-cluster SA, RBAC granted in the
+# operator dir) + an Object that renders ConfigMap `crossplane-made-this` in crossplane-demo.
+# The flex util reads that ConfigMap to prove the managed resource reconciled.
+# NOTE: ProviderConfig + Object are cluster-scoped (no namespace); their CRDs only exist after
+# Crossplane + provider-kubernetes install, so Flux applies with retries after `operators` is Ready.
+apiVersion: kubernetes.crossplane.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: InjectedIdentity
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: crossplane-made-this
+spec:
+  providerConfigRef:
+    name: default
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: crossplane-made-this
+        namespace: crossplane-demo
+      data:
+        message: "Provisioned by Crossplane via provider-kubernetes (TALOS-ja5)"
+        provisioner: crossplane

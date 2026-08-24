@@ -1,0 +1,32 @@
+---
+# Analytics Ops dashboard (TALOS-4gg)
+#
+# End-to-end view of the Plausible analytics stack:
+#   - Overview KPIs incl. registry coverage (Plausible sites / GA tag counts) from the
+#     analytics registry exporter — GA is a CONFIGURED-app count only, no GA API is queried.
+#   - Event ingestion via Traefik router metrics for the public tracking route
+#     (router=~".*plausible.*tracking.*", i.e. crossplane-demo-plausible-public-tracking-*@kubernetescrd).
+#   - Injection coverage across analytics-injected routers ($injected regex; Traefik exposes no
+#     per-middleware label, so opted-in app routers must be matched by name — see panel note).
+#   - Per-site stats from the plausible-stats-exporter (plausible_* gauges, $site/$period vars).
+#   - Backend health/resources for plausible (Deployment), clickhouse (chi-plausible-*),
+#     and plausible-db (CNPG) in the crossplane-demo namespace.
+#   - Provisioning: plausible-site-reconciler CronJob + exporter plausible_up / scrape duration.
+#
+# Datasource uid: mimir (same Prometheus/Mimir datasource as every other dashboard here).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: analytics-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folderRef: ops-analytics
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-analytics-ops
+    key: analytics-ops.json

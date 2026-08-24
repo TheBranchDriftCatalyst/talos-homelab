@@ -1,0 +1,30 @@
+# Gaming - KubeVirt VMs + Guacamole
+load('ext://uibutton', 'cmd_button')
+load('ext://k8s_attach', 'k8s_attach')
+
+allow_k8s_contexts('admin@catalyst-cluster')
+ns, label = 'gaming', '1-apps-gaming'
+
+# Guacamole remote access
+k8s_attach('guacamole', 'deployment/guacamole', namespace=ns, port_forwards=['8088:8080'], labels=[label],
+           links=[link('http://guac.talos00', 'Guacamole (Ingress)'), link('http://localhost:8088', 'Local')])
+k8s_attach('guacd', 'deployment/guacd', namespace=ns, labels=[label])
+
+cmd_button(name='btn-guac-status', resource='guacamole', text='Status', icon_name='info',
+    argv=['sh', '-c', 'echo "=== Guacamole ===" && kubectl get pods -n gaming -l app=guacamole -owide && echo && echo "=== guacd ===" && kubectl get pods -n gaming -l app=guacd -owide'])
+
+# Windows VM (KubeVirt CRD - not a standard deployment)
+local_resource('windows-gameserver', labels=[label], auto_init=True, trigger_mode=TRIGGER_MODE_MANUAL,
+    cmd='echo "=== VM ===" && kubectl get vm windows-gameserver -n gaming -owide 2>/dev/null || echo "Not found" && echo && echo "=== VMI ===" && kubectl get vmi windows-gameserver -n gaming -owide 2>/dev/null || echo "Not running"',
+    links=[link('http://guac.talos00', 'Access via Guacamole')])
+
+def vm_btn(name, text, icon, cmd, confirm=False):
+    cmd_button(name=name, resource='windows-gameserver', text=text, icon_name=icon, argv=['sh', '-c', cmd], requires_confirmation=confirm)
+
+vm_btn('btn-vm-start', 'Start', 'play_arrow', 'echo "Starting VM..." && virtctl start windows-gameserver -n gaming && echo "Start initiated"')
+vm_btn('btn-vm-stop', 'Stop', 'stop', 'echo "Stopping VM..." && virtctl stop windows-gameserver -n gaming --grace-period=60 && echo "Stop initiated"', True)
+vm_btn('btn-vm-restart', 'Restart', 'refresh', 'echo "Restarting VM..." && virtctl restart windows-gameserver -n gaming --grace-period=60 && echo "Restart initiated"', True)
+vm_btn('btn-vm-console', 'Console', 'terminal', 'echo "Opening console (Ctrl+] to exit)..." && virtctl console windows-gameserver -n gaming')
+vm_btn('btn-vm-vnc', 'VNC', 'desktop_windows', 'echo "Starting VNC proxy on :5900..." && virtctl vnc windows-gameserver -n gaming')
+vm_btn('btn-vm-rdp', 'RDP', 'connected_tv', 'echo "RDP port-forward on :3389 - connect with Remote Desktop" && kubectl port-forward svc/windows-gameserver-rdp -n gaming 3389:3389')
+vm_btn('btn-vm-status', 'Details', 'assessment', 'echo "=== VM ===" && kubectl get vm windows-gameserver -n gaming -oyaml | grep -A20 "status:" && echo && echo "=== VMI ===" && kubectl get vmi windows-gameserver -n gaming -oyaml 2>/dev/null | grep -A30 "status:" || echo "VMI not running"')

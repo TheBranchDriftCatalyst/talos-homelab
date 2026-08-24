@@ -1,0 +1,25 @@
+---
+# Kustomize Component: LAN-only middleware for internal routes
+#
+# Usage:
+# 1. Add label to your IngressRoute: `traefik.io/lan-only: "true"`
+# 2. Include this component in your kustomization.yaml:
+#    components:
+#      - ../../infrastructure/base/traefik/components/lan-only
+#
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+patches:
+  # Patch IngressRoutes labeled with lan-only: "true"
+  - target:
+      group: traefik.io
+      version: v1alpha1
+      kind: IngressRoute
+      labelSelector: "traefik.io/lan-only=true"
+    patch: |-
+      - op: add
+        path: /spec/routes/0/middlewares/-
+        value:
+          name: lan-only
+          namespace: traefik

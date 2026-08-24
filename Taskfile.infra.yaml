@@ -1,0 +1,142 @@
+# Taskfile for infrastructure deployment
+version: '3'
+
+vars:
+  KUBECONFIG: './.output/kubeconfig'
+
+tasks:
+  # Infrastructure and application *deployment* is not done from here. Flux reconciles
+  # everything under infrastructure/ and applications/ from the Kustomizations in
+  # clusters/catalyst-cluster/; ArgoCD reconciles app repos. The deploy-* tasks that used to
+  # live here shelled out to scripts that kubectl-applied over Flux -- the anti-pattern this
+  # repo's CLAUDE.md warns about -- and their scripts and manifests are gone. To deploy, commit
+  # to git and let Flux reconcile (task infra:flux-reconcile to force it).
+  # What remains below is bootstrap, reconciliation control, and read-only operations.
+
+  # ============================================
+  # ArgoCD Management
+  # ============================================
+
+  bootstrap-argocd:
+    desc: Bootstrap ArgoCD GitOps controller
+    cmds:
+      - ./scripts/bootstrap-argocd.sh
+
+  argocd-apps:
+    desc: Apply all ArgoCD application definitions
+    cmds:
+      - echo "Applying ArgoCD applications..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/argocd/applications/
+      - echo "✅ ArgoCD applications applied"
+
+  # ============================================
+  # FluxCD Management
+  # ============================================
+
+  flux-reconcile:
+    desc: Force reconciliation of all Flux resources
+    cmds:
+      - flux reconcile kustomization flux-system --with-source
+      - echo "✅ Flux reconciliation triggered"
+
+  flux-status:
+    desc: Check Flux system status
+    cmds:
+      - flux check
+      - flux get all
+
+  # ============================================
+  # External Secrets Operator
+  # ============================================
+
+  deploy-eso:
+    desc: Deploy External Secrets Operator
+    cmds:
+      - echo "Deploying External Secrets Operator..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/external-secrets/
+      - echo "✅ External Secrets Operator deployed"
+
+  setup-1password:
+    desc: |
+      Bootstrap 1Password Connect secrets idempotently (one-command recovery).
+      Requires:
+        - OP_CONNECT_TOKEN env var (export OP_CONNECT_TOKEN=...)
+        - ./1password-credentials.json at project root (gitignored)
+      See: docs/05-runbooks/cluster-bootstrap.md
+    cmds:
+      - |
+        if [ -z "${OP_CONNECT_TOKEN:-}" ]; then
+          echo "❌ OP_CONNECT_TOKEN environment variable is not set."
+          echo "   Retrieve the token from 1Password (developer-tools > Connect > catalyst-eso)"
+          echo "   then run:  export OP_CONNECT_TOKEN='<token>'"
+          exit 1
+        fi
+        echo "✅ OP_CONNECT_TOKEN is set"
+      - |
+        CREDS_FILE="${OP_CREDENTIALS_FILE:-./1password-credentials.json}"
+        if [ ! -f "${CREDS_FILE}" ]; then
+          echo "❌ Credentials file not found at: ${CREDS_FILE}"
+          echo "   Download 1password-credentials.json from the Connect server setup page"
+          echo "   and place it at the project root (it is gitignored)."
+          exit 1
+        fi
+        echo "✅ Credentials file present at ${CREDS_FILE}"
+      - ./scripts/external-secrets/setup-1password-connect.sh --auto
+
+  setup-1password-force:
+    desc: Re-bootstrap 1Password Connect secrets (recreates even if they exist)
+    cmds:
+      - |
+        if [ -z "${OP_CONNECT_TOKEN:-}" ]; then
+          echo "❌ OP_CONNECT_TOKEN environment variable is not set."
+          exit 1
+        fi
+        if [ ! -f "${OP_CREDENTIALS_FILE:-./1password-credentials.json}" ]; then
+          echo "❌ 1password-credentials.json not found at project root."
+          exit 1
+        fi
+      - ./scripts/external-secrets/setup-1password-connect.sh --auto --force
+
+  # ============================================
+  # Registry Management
+  # ============================================
+
+  deploy-registry:
+    desc: Deploy Docker registry
+    cmds:
+      - echo "Deploying Docker registry..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/registry/
+      - echo "✅ Docker registry deployed"
+
+  registry-port-forward:
+    desc: Port-forward to Docker registry (localhost:5000)
+    cmds:
+      - echo "Forwarding registry to localhost:5000..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} port-forward -n registry svc/zot 5000:5000
+
+  # ============================================
+  # Resource Management
+  # ============================================
+
+  apply-namespaces:
+    desc: Apply all namespace definitions
+    cmds:
+      - echo "Applying namespaces..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/namespaces/
+      - echo "✅ Namespaces applied"
+
+  apply-storage:
+    desc: Apply storage classes and PVCs
+    cmds:
+      - echo "Applying storage resources..."
+      - kubectl --kubeconfig {{.KUBECONFIG}} apply -k infrastructure/base/storage/
+      - echo "✅ Storage resources applied"
+
+  # ============================================
+  # Dashboards & Status
+  # ============================================
+
+  dashboard-arr-stack:
+    desc: Show ARR stack dashboard with real-time status
+    cmds:
+      - ./applications/arr-stack/dashboard.sh

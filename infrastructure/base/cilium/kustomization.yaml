@@ -1,0 +1,40 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Cilium CNI — Flux-managed (TALOS-ocj, activated 2026-05-30).
+#
+# Before 2026-05-30, Cilium was applied manually via `helm upgrade --install
+# --take-ownership`. After identifying identity bloat as the root cause of
+# the May-21/-22/-27/-29 cascade of meltdowns (TALOS-yyt), we activated
+# Flux management — cluster stable, cascade eliminated, no more excuses.
+#
+# Values live in `values.yaml` (this directory) and are mounted via the
+# ConfigMap below for the HelmRelease to consume.
+#
+# Cilium is INFRA → Flux. Apps go in ArgoCD. See docs/02-architecture/dual-gitops.md.
+
+namespace: kube-system
+
+resources:
+  - helmrelease.yaml
+  # Existing Cilium-adjacent manifests that were already here
+  - ingressroute.yaml
+  # kube-system-namespace.yaml replaces spire-namespace.yaml (2026-08-22, TALOS-1d4o).
+  # Same rendered output — read the header of that file before assuming otherwise:
+  # the old filename was misleading, kustomize's namespace transformer was rewriting
+  # its Namespace name from cilium-spire to kube-system.
+  - kube-system-namespace.yaml
+  # LoadBalancer IPAM + L2 announcements (LAN IPs for Pi-hole DNS)
+  - lb-ipam.yaml
+
+# Generate `cilium-values` ConfigMap from values.yaml. HelmRelease references
+# it via valuesFrom. `disableNameSuffixHash: true` so the HelmRelease can
+# reference the static name; without it kustomize appends a content hash
+# that the HelmRelease wouldn't be able to predict.
+configMapGenerator:
+  - name: cilium-values
+    files:
+      - values.yaml=values.yaml
+    options:
+      disableNameSuffixHash: true

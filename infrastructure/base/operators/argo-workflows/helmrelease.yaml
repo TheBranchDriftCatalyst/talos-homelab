@@ -1,0 +1,78 @@
+---
+# Argo Workflows (argoproj)
+# Provides CRDs (argoproj.io/v1alpha1):
+#   - Workflow
+#   - CronWorkflow
+#   - WorkflowTemplate
+#   - ClusterWorkflowTemplate
+#   (+ WorkflowEventBinding, WorkflowTaskSet, WorkflowArtifactGCTask)
+# Docs: https://argo-workflows.readthedocs.io/
+#
+# Minimal demo install: controller + server, no SSO, no artifact repository.
+# Deployment names (for Flux healthChecks):
+#   - argo-workflows-workflow-controller
+#   - argo-workflows-server
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: argo
+  namespace: argo
+spec:
+  interval: 1h
+  url: https://argoproj.github.io/argo-helm
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: argo-workflows
+  namespace: argo
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: argo-workflows
+      version: '1.0.23'
+      sourceRef:
+        kind: HelmRepository
+        name: argo
+        namespace: argo
+      interval: 12h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    # Install the bundled CRDs with the chart.
+    crds:
+      install: true
+
+    # Workflow controller (schedules/reconciles Workflow pods).
+    controller:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+    # Argo Server UI/API — in-cluster ClusterIP, server auth only (no SSO).
+    server:
+      enabled: true
+      replicas: 1
+      authModes:
+        - server
+      serviceType: ClusterIP
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+
+    # RBAC so workflow pods can run (hello-world needs no artifact repo).
+    workflow:
+      serviceAccount:
+        create: true
+      rbac:
+        create: true

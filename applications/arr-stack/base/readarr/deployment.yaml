@@ -1,0 +1,87 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: readarr
+  labels:
+    app: readarr
+    app.kubernetes.io/name: readarr
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: readarr
+  template:
+    metadata:
+      labels:
+        app: readarr
+        app.kubernetes.io/name: readarr
+    spec:
+      containers:
+        - name: readarr
+          image: ghcr.io/onedr0p/readarr-develop:latest
+          imagePullPolicy: Always
+          # Import common environment variables (PUID, PGID, TZ)
+          envFrom:
+            - configMapRef:
+                name: arr-common-env
+          # Trust the Authentik forward-auth reverse proxy → NO in-app login
+          # (no double login); api-key still required for /api. (TALOS-xgrl.14)
+          env:
+            - name: READARR__AUTH__METHOD
+              value: External
+            - name: READARR__AUTH__REQUIRED
+              value: DisabledForLocalAddresses
+          ports:
+            - name: http
+              containerPort: 8787
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            # Synology books library
+            - name: synology-books
+              mountPath: /data/synology/books
+            # Downloads (Synology)
+            - name: downloads-complete
+              mountPath: /data/downloads/complete
+            - name: downloads-incomplete
+              mountPath: /data/downloads/incomplete
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /ping
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: readarr-config
+        # Synology Books library
+        - name: synology-books
+          persistentVolumeClaim:
+            claimName: synology-books
+        # Synology downloads
+        - name: downloads-complete
+          persistentVolumeClaim:
+            claimName: synology-downloads-complete
+        - name: downloads-incomplete
+          persistentVolumeClaim:
+            claimName: synology-downloads-incomplete

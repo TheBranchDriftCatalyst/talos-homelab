@@ -1,0 +1,79 @@
+---
+# BookOrbit's Postgres, as a CatalystCNPGAppDB (TALOS-npt4).
+#
+# Replaces a 108-line hand-written Cluster, a 31-line ObjectStore and a 22-line
+# ScheduledBackup. The composite renders all three, plus the ExternalSecret that pulls the
+# MinIO backup credentials into this namespace — which previously meant remembering to add
+# `media-experimental` to a central reflector allowlist that fails late and quietly when
+# you forget it (the Cluster comes up green and only the first backup errors with
+# `secrets "cnpg-minio-backup" not found`).
+#
+# The composite ADOPTED the live objects rather than recreating them: the previous commit
+# set kustomize.toolkit.fluxcd.io/prune: disabled on all three, so dropping their manifests
+# here took them off Flux's delete path without deleting anything. The database underneath
+# is the same one, same PVCs, same 121 tables.
+#
+# ============================================================================
+# THE `-standard-` SUFFIX IN imageName IS LOAD-BEARING. DO NOT DROP IT.
+# ============================================================================
+# BookOrbit needs four extensions — uuid-ossp, pg_trgm, unaccent (ordinary contrib) and
+# `vector` (pgvector, not contrib). pgvector runs in the BASELINE migration
+# (server/src/db/migrations/0000_baseline.sql: `"embedding" vector(256)` and an HNSW index
+# on vector_cosine_ops), so without it BookOrbit does not start degraded — it does not
+# start. Of the four PG18 operand flavours:
+#   -standard-trixie  HAS pgvector 0.8.6.  <- pinned here
+#   -minimal-trixie   NO pgvector. Fails the baseline migration.
+#   -system-trixie    standard + bundled barman binaries; DEPRECATED upstream, and this
+#                     cluster uses the barman-cloud CNPG-I plugin anyway.
+#   18.4 (unsuffixed) legacy system flavour, still Debian 11 bullseye.
+# An unpinned cluster follows the operator default, so leaving imageName off is not a
+# neutral choice here.
+#
+# CNPG 1.30's spec.postgresql.extensions (ImageVolume-mounted extension images) is a TRAP
+# on this cluster: the Kubernetes ImageVolume feature gate is not enabled, and the API
+# server SILENTLY STRIPS the image volume and its volumeMount from the persisted spec —
+# no error, no event. The cluster would reconcile "successfully" with no vector.so. Verified
+# empirically 2026-08-22 with a probe Pod. It is also unnecessary, since the stock
+# -standard- image already bundles all four.
+#
+# COLLATION IS en_US.utf8, NOT THE C DEFAULT, AND THAT IS DELIBERATE. initdb runs exactly
+# once, so this is a one-shot setting and editing it later does nothing. Under C, text
+# sorts by byte value, so a book list gives "Almond, Banana, apple, cherry". For an app
+# whose primary interactions ARE sorted title/author/series lists and whose search runs
+# through pg_trgm and unaccent, that is a user-visible defect. Pinned while the database
+# was empty; changing it now would cost a dump/restore.
+#
+# Extensions are NOT declared here — database.yaml holds the Database CR that keeps all
+# four declared true, which is what makes `vector` (trusted=f, superuser-only) creatable
+# at all.
+apiVersion: db.catalyst.io/v1alpha1
+kind: CatalystCNPGAppDB
+metadata:
+  name: bookorbit-postgres
+  namespace: media-experimental
+spec:
+  database: bookorbit
+  owner: bookorbit
+  # THREE, and the storage class below is why. local-path is WaitForFirstConsumer, so each
+  # PV pins to the node that first mounts it; a single instance there is stranded by a node
+  # loss with no copy anywhere else. Three instances plus CNPG's default anti-affinity means
+  # three copies on three nodes and a lost node becomes a promotion. Never drop this to 1
+  # while on local-path.
+  instances: 3
+  storageSize: 10Gi
+  # Node NVMe, not NFS. Every Postgres commit is a WAL fsync, and on NFS that is a network
+  # round trip to the Synology; durability comes from streaming replication plus barman
+  # backups, not from the filesystem. Migrated off fatboy-nfs-appdata 2026-08-23.
+  storageClass: local-path
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-standard-trixie
+  # 03:10 daily, unchanged. The fleet is deliberately staggered across 02:00-04:15 so
+  # fourteen databases do not all hit MinIO in the same minute — forgejo 02:00,
+  # crowdsec 02:30, linkwarden 02:45, homeassistant 03:00, THIS 03:10, plausible 03:15,
+  # zipline 03:30, manyfold 04:00, guacamole 04:15. Six-field cron: sec min hour dom mon dow.
+  backupSchedule: "0 10 3 * * *"
+  encoding: UTF8
+  localeCollate: en_US.utf8
+  localeCType: en_US.utf8
+  resources:
+    requestsCpu: 100m
+    requestsMemory: 256Mi

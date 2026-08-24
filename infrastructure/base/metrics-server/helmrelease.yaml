@@ -1,0 +1,45 @@
+---
+# metrics-server — the Kubernetes resource-metrics API (metrics.k8s.io v1beta1).
+# The cluster had NO resource-metrics API (Alloy->Mimir is long-term observability, not the
+# control-plane metrics API), so `kubectl top` failed with "Metrics API not available" and the
+# gethomepage Kubernetes widget (cluster/node CPU+mem) showed "API Error" on every board.
+# metrics-server serves node/pod resource metrics for `kubectl top`, HPA, and that widget.
+#
+# TALOS NOTE: Talos kubelets serve /metrics/resource over a self-signed cert, so metrics-server
+# needs --kubelet-insecure-tls (skip cert verification) and InternalIP addressing. (TALOS-qt7u)
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: metrics-server
+  namespace: kube-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: metrics-server
+      version: '3.12.2' # prefer-latest: bump via Renovate
+      sourceRef:
+        kind: HelmRepository
+        name: metrics-server
+        namespace: kube-system
+      interval: 12h
+  # KEEP THIS LITERAL. Every other HelmRelease in the repo had its retries stripped in
+  # TALOS-a38d.5, because the helmrelease-remediation-defaults Kyverno policy now injects
+  # remediation.retries: 3 at admission. This release lives in kube-system, which is in Kyverno's
+  # resourceFilters exclusion list, so the webhook NEVER sees it -- removing these lines here
+  # would silently drop it to Flux's retries: 0 default, not to 3.
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: 3
+  values:
+    args:
+      - --kubelet-insecure-tls # Talos kubelet serving certs are self-signed
+      - --kubelet-preferred-address-types=InternalIP
+      - --metric-resolution=30s
+    resources:
+      requests: {cpu: 25m, memory: 64Mi}
+      limits: {memory: 128Mi}

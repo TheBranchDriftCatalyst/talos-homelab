@@ -1,0 +1,227 @@
+---
+# Authentik Blueprint: NATIVE OIDC SSO for the three media-experimental apps that
+# have their OWN accounts + first-party MOBILE clients (TALOS-xgrl.18):
+#   Audiobookshelf, Komga, Kavita.
+#
+# WHY NATIVE OIDC (not forward-auth like the rest of media-experimental):
+#   Each of these apps ships mobile clients that do the OAuth flow themselves —
+#   the Audiobookshelf app (AppAuth), Komga (Tachiyomi/Mihon/Paperback + OPDS),
+#   Kavita (Paperback/OPDS). A Traefik forward-auth proxyprovider only understands
+#   a browser cookie, so it would break every one of those native clients. Instead
+#   each app is a confidential authentik_providers_oauth2.oauth2provider (like
+#   immich/grafana/forgejo) and does its OWN OIDC discovery + token exchange.
+#   Native OIDC providers do NOT join the embedded outpost (that is only for
+#   forward_single proxy providers), so talos-private-blueprint.yaml is untouched.
+#
+# ISSUER HOST = auth.knowledgedump.space (the PUBLIC HTTPS authentik route),
+# deliberately NOT auth.talos00 or auth.priv.talos00 — identical rationale to
+# immich-blueprint.yaml:
+#   * The mobile clients distrust the homelab-ca self-signed cert and (AppAuth)
+#     reject a plain-HTTP issuer. https://auth.knowledgedump.space has a VALID
+#     public cert, so both the app POD (server-side discovery/token) and the
+#     phone trust it with zero CA plumbing.
+#   * The app pods resolve auth.knowledgedump.space IN-CLUSTER via the CoreDNS
+#     rewrite -> traefik.traefik.svc (coredns-configmap.yaml, TALOS-6vf); the
+#     phone via Pi-hole (on-LAN) / Cloudflare (off-LAN) -> same Traefik.
+#   * issuer_mode: per_provider keeps the discovery issuer + id_token `iss`
+#     consistent for every provider below:
+#       https://auth.knowledgedump.space/application/o/<app>/
+#     The providers are still CREATED in-cluster; only the issuer URL is public.
+#
+# The apps themselves stay reachable at https://<app>.talos00 (LAN wildcard cert
+# via the default TLSStore). Their OIDC routes need NO authentik middleware —
+# each app enforces access itself after the token exchange. Access is ALSO gated
+# at the IdP by the Application PolicyBindings below (talos-media OR cluster-admin,
+# policy_engine_mode: any) — a user in neither group is denied at /authorize, so
+# autoRegister never creates an account for them.
+#
+# CLIENT SECRET (per app): a self-contained ESO Password generator (NO 1Password)
+# in externalsecret.yaml produces Secret authentik-<app>-oidc (key client-secret)
+# in ns authentik for the worker !Env below, and reflector fans the SAME value
+# into ns media-experimental so the app config uses an identical secret. The
+# worker env <APP>_OIDC_CLIENT_SECRET is optional:true (helmrelease.yaml, owned by
+# the orchestrator) so a missing secret can never CrashLoop the worker.
+#
+# The `talos-media` group is owned by arr-stack-blueprint.yaml, `cluster-admin` by
+# talos-private-blueprint.yaml — both referenced here via !Find (cross-blueprint).
+#
+# Mounted via chart-native blueprints.configMaps (helmrelease.yaml, orchestrator-
+# owned): add `authentik-media-oidc-blueprint` to that list + this file to
+# authentik/kustomization.yaml resources.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-media-oidc-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  media-oidc.yaml: |
+    version: 1
+    metadata:
+      name: Media apps native OIDC SSO (audiobookshelf/komga/kavita)
+      labels:
+        blueprints.goauthentik.io/description: "Native OIDC providers + applications for audiobookshelf/komga/kavita (talos-media group)"
+    entries:
+
+      # ===================================================================
+      # Audiobookshelf  (OIDC configured in its admin UI — Settings >
+      #   Authentication; see audiobookshelf/OIDC.md). Redirect URIs per the
+      #   Audiobookshelf OIDC docs: web /auth/openid/callback +
+      #   /auth/openid/mobile-redirect, plus the mobile app custom scheme
+      #   audiobookshelf://oauth (the app hands this to the server, which swaps
+      #   in the https mobile-redirect for the IdP round-trip).
+      # ===================================================================
+      - model: authentik_providers_oauth2.oauth2provider
+        id: audiobookshelf-oauth2-provider
+        identifiers:
+          name: audiobookshelf
+        attrs:
+          name: audiobookshelf
+          client_type: confidential
+          client_id: audiobookshelf
+          # Default "" so the provider applies BEFORE the ESO secret exists (env unset →
+          # !Env would be null → serializer rejects). Created with an empty secret
+          # (harmless — nothing points at it yet); the ESO generator populates the real
+          # value, then restart authentik-worker so !Env re-evaluates.
+          client_secret: !Env [AUDIOBOOKSHELF_OIDC_CLIENT_SECRET, ""]
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+          include_claims_in_id_token: true
+          sub_mode: hashed_user_id
+          issuer_mode: per_provider
+          redirect_uris:
+            - matching_mode: strict
+              url: https://audiobookshelf.talos00/auth/openid/callback
+            - matching_mode: strict
+              url: https://audiobookshelf.talos00/auth/openid/mobile-redirect
+            - matching_mode: strict
+              url: audiobookshelf://oauth
+          property_mappings:
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+      - model: authentik_core.application
+        id: audiobookshelf-application
+        identifiers:
+          slug: audiobookshelf
+        attrs:
+          name: Audiobookshelf
+          slug: audiobookshelf
+          provider: !KeyOf audiobookshelf-oauth2-provider
+          meta_launch_url: https://audiobookshelf.talos00
+          meta_description: "Audiobookshelf - self-hosted audiobook & podcast server"
+          meta_publisher: "Catalyst Homelab"
+          meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/audiobookshelf.png
+          open_in_new_tab: false
+          policy_engine_mode: any
+          group: talos-media
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, audiobookshelf]], group: !Find [authentik_core.group, [name, talos-media]], order: 0}
+        attrs: {enabled: true}
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, audiobookshelf]], group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}
+        attrs: {enabled: true}
+
+      # ===================================================================
+      # Komga  (OIDC configured DECLARATIVELY via Spring Security env vars in
+      #   komga/patch-deployment.yaml). Spring OAuth2 callback path is
+      #   /login/oauth2/code/{registrationId}; registrationId = authentik.
+      # ===================================================================
+      - model: authentik_providers_oauth2.oauth2provider
+        id: komga-oauth2-provider
+        identifiers:
+          name: komga
+        attrs:
+          name: komga
+          client_type: confidential
+          client_id: komga
+          client_secret: !Env [KOMGA_OIDC_CLIENT_SECRET, ""]
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+          include_claims_in_id_token: true
+          sub_mode: hashed_user_id
+          issuer_mode: per_provider
+          redirect_uris:
+            - matching_mode: strict
+              url: https://komga.talos00/login/oauth2/code/authentik
+          property_mappings:
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+      - model: authentik_core.application
+        id: komga-application
+        identifiers:
+          slug: komga
+        attrs:
+          name: Komga
+          slug: komga
+          provider: !KeyOf komga-oauth2-provider
+          meta_launch_url: https://komga.talos00
+          meta_description: "Komga - comic / manga / ebook server"
+          meta_publisher: "Catalyst Homelab"
+          meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/komga.png
+          open_in_new_tab: false
+          policy_engine_mode: any
+          group: talos-media
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, komga]], group: !Find [authentik_core.group, [name, talos-media]], order: 0}
+        attrs: {enabled: true}
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, komga]], group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}
+        attrs: {enabled: true}
+
+      # ===================================================================
+      # Kavita  (OIDC configured in its admin UI — Settings > Users >
+      #   OpenID Connect; see kavita/OIDC.md. Requires Kavita >= 0.8.8 —
+      #   OIDC landed in 0.8.8, NOT 0.8.6). Fixed callback paths /signin-oidc
+      #   (login) + /signout-callback-oidc (post-logout).
+      # ===================================================================
+      - model: authentik_providers_oauth2.oauth2provider
+        id: kavita-oauth2-provider
+        identifiers:
+          name: kavita
+        attrs:
+          name: kavita
+          client_type: confidential
+          client_id: kavita
+          client_secret: !Env [KAVITA_OIDC_CLIENT_SECRET, ""]
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+          include_claims_in_id_token: true
+          sub_mode: hashed_user_id
+          issuer_mode: per_provider
+          redirect_uris:
+            - matching_mode: strict
+              url: https://kavita.talos00/signin-oidc
+            - matching_mode: strict
+              url: https://kavita.talos00/signout-callback-oidc
+          property_mappings:
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+      - model: authentik_core.application
+        id: kavita-application
+        identifiers:
+          slug: kavita
+        attrs:
+          name: Kavita
+          slug: kavita
+          provider: !KeyOf kavita-oauth2-provider
+          meta_launch_url: https://kavita.talos00
+          meta_description: "Kavita - ebook / comic / manga reader"
+          meta_publisher: "Catalyst Homelab"
+          meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/kavita.png
+          open_in_new_tab: false
+          policy_engine_mode: any
+          group: talos-media
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, kavita]], group: !Find [authentik_core.group, [name, talos-media]], order: 0}
+        attrs: {enabled: true}
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, kavita]], group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}
+        attrs: {enabled: true}

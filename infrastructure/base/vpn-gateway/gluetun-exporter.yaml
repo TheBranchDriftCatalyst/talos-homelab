@@ -1,0 +1,142 @@
+---
+# Gluetun Exporter - exposes VPN status as Prometheus metrics
+# Scrapes gluetun control API and serves /metrics endpoint
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gluetun-exporter-script
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: gluetun-exporter
+data:
+  exporter.sh: |
+    #!/bin/sh
+    # Simple Prometheus exporter for gluetun VPN status
+    # Queries localhost:8000 (gluetun control server) and serves metrics on :9091
+
+    METRICS_PORT="${METRICS_PORT:-9091}"
+    GLUETUN_API="${GLUETUN_API:-http://localhost:8000}"
+
+    # Store metrics in temp file
+    METRICS_FILE="/tmp/metrics"
+
+    # Extract JSON field value - handles {"key":"value"} format
+    get_json_field() {
+      echo "$1" | grep -o "\"$2\":\"[^\"]*\"" | cut -d'"' -f4
+    }
+
+    update_metrics() {
+      # Query gluetun public IP API
+      response=$(wget -qO- --timeout=5 "${GLUETUN_API}/v1/publicip/ip" 2>/dev/null)
+
+      if [ -z "$response" ]; then
+        cat > "$METRICS_FILE" << 'METRICS'
+    # HELP gluetun_up Whether gluetun VPN is connected
+    # TYPE gluetun_up gauge
+    gluetun_up 0
+    METRICS
+        return
+      fi
+
+      # Parse JSON response
+      ip=$(get_json_field "$response" "public_ip")
+      country=$(get_json_field "$response" "country")
+      region=$(get_json_field "$response" "region")
+      city=$(get_json_field "$response" "city")
+
+      # Get VPN status
+      vpn_status=$(wget -qO- --timeout=5 "${GLUETUN_API}/v1/vpn/status" 2>/dev/null)
+      status=$(get_json_field "$vpn_status" "status")
+
+      # Determine if connected
+      if [ "$status" = "running" ]; then
+        up=1
+      else
+        up=0
+      fi
+
+      # Write metrics (escape special chars in labels)
+      ip="${ip:-unknown}"
+      country="${country:-unknown}"
+      region="${region:-unknown}"
+      city="${city:-unknown}"
+      status="${status:-unknown}"
+
+      cat > "$METRICS_FILE" << METRICS
+    # HELP gluetun_up Whether gluetun VPN is connected (1=up, 0=down)
+    # TYPE gluetun_up gauge
+    gluetun_up{public_ip="${ip}",country="${country}",region="${region}",city="${city}"} ${up}
+
+    # HELP gluetun_info VPN connection information (always 1, labels contain info)
+    # TYPE gluetun_info gauge
+    gluetun_info{public_ip="${ip}",country="${country}",region="${region}",city="${city}",status="${status}"} 1
+    METRICS
+    }
+
+    # Simple HTTP server using netcat
+    serve_metrics() {
+      while true; do
+        # Update metrics
+        update_metrics
+
+        # Read metrics file
+        metrics=$(cat "$METRICS_FILE" 2>/dev/null || echo "# No metrics available")
+        content_length=$(echo "$metrics" | wc -c)
+
+        # Serve via netcat (handle one request at a time)
+        {
+          echo "HTTP/1.1 200 OK"
+          echo "Content-Type: text/plain; charset=utf-8"
+          echo "Content-Length: $content_length"
+          echo ""
+          echo "$metrics"
+        } | nc -l -p "$METRICS_PORT" -q 1 2>/dev/null || \
+        {
+          echo "HTTP/1.1 200 OK"
+          echo "Content-Type: text/plain; charset=utf-8"
+          echo "Content-Length: $content_length"
+          echo ""
+          echo "$metrics"
+        } | nc -l -p "$METRICS_PORT" 2>/dev/null
+
+        # Small delay to prevent tight loop on errors
+        sleep 0.1
+      done
+    }
+
+    echo "Starting gluetun-exporter on port ${METRICS_PORT}"
+    echo "Gluetun API: ${GLUETUN_API}"
+
+    # Initial metrics update
+    update_metrics
+
+    # Start serving
+    serve_metrics
+---
+# PodMonitor to scrape all gluetun-exporter sidecars in vpn-gateway namespace
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: gluetun-exporter
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: gluetun-exporter
+spec:
+  selector:
+    matchExpressions:
+      # Match any pod with app.kubernetes.io/name label (gluetun, securexng, etc)
+      - key: app.kubernetes.io/name
+        operator: Exists
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      relabelings:
+        # Add service label from app.kubernetes.io/name
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+  namespaceSelector:
+    matchNames:
+      - vpn-gateway

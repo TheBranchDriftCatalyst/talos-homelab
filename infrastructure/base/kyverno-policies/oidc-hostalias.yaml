@@ -1,0 +1,160 @@
+---
+# Inject the Authentik hostAlias into any pod that does SERVER-SIDE OIDC.
+#
+# THE PROBLEM THIS REPLACES: auth.knowledgedump.space is Cloudflare-proxied.
+# Browser logins through the proxy are fine, but a pod's own OIDC calls
+# (discovery / token / JWKS) egress via the home IP into Cloudflare, whose bot
+# protection blocks them — correctly, since those calls genuinely ARE automated
+# traffic. The symptom is an SSO login that dies mid-flow with
+#   "Failed to open tcp connection to auth.knowledgedump.space:443 (execution expired)"
+#
+# The fix has always been a hostAlias pinning auth.knowledgedump.space to the
+# in-cluster Traefik Service, so those calls never leave the cluster. That was
+# hand-copied into boomtime (gaka-93f.11.2) and later, after the same outage
+# recurred, into manyfold. Every NEW app doing server-side OIDC hits the same
+# wall and only discovers it in production.
+#
+# This turns that recurring outage into a label:
+#     catalyst.io/oidc: "true"
+#
+# THE IP IS READ LIVE, NOT HARDCODED. The alias used to carry a literal ClusterIP.
+# A Service's clusterIP is immutable once assigned, so the literal was stable —
+# but stable is not durable: any RECREATION of svc/traefik (namespace rebuild,
+# kustomization prune-and-recreate, restore from backup) draws a fresh address
+# from the service CIDR, and from that moment every oidc-labelled pod pins the
+# hostname to an IP nothing answers on. Worse, that failure reproduces the
+# ORIGINAL symptom byte for byte — "execution expired" — so it reads as a
+# Cloudflare problem and costs the same debugging a second time. The traefikIP
+# apiCall below reads spec.clusterIP at each pod's admission, so the alias is
+# correct by construction and svc/traefik can be recreated freely.
+#
+# THE LOOKUP CAN FAIL, AND THAT IS WHY THE SECOND RULE EXISTS. A literal cannot
+# fail; an API call can. failurePolicy is Ignore (below), so an apiCall that
+# errors — read RBAC revoked, svc/traefik absent, kyverno itself unavailable —
+# does not block the pod. The mutation is simply SKIPPED, and the pod starts with
+# no alias at all: the original outage, reintroduced, with nothing recorded on the
+# pod and that same misleading "execution expired" as its only symptom. Failing
+# open on a pod's admission path is right. Failing open INVISIBLY is not. The
+# audit rule below has no other purpose than to make the skip observable.
+#
+# WHY THE DETECTOR IS A KYVERNO AUDIT RULE AND NOT AN ALERT. A PrometheusRule was
+# the first choice, since an alert reaches a human instead of waiting to be
+# queried. It is not implementable here. Verified against the live TSDB
+# 2026-08-21: kube-state-metrics publishes 50 kube_pod_* series and NOT ONE
+# carries hostAlias data (upstream does not collect it in any pod metric family),
+# and this cluster runs kube-state-metrics without --metric-labels-allowlist, so
+# there is no kube_pod_labels series either and PromQL cannot even SELECT the
+# catalyst.io/oidc pods. Both halves of the query are missing, so alerting would
+# mean shipping a bespoke exporter — considerably more machinery than the single
+# mutation it guards. Kyverno already holds both facts at admission, so it makes
+# the assertion itself and surfaces it as a PolicyReport:
+#     kubectl get policyreport -A -o json \
+#       | jq -r '.items[] | .metadata.namespace + "/" + (.results[]? | select(.policy=="oidc-hostalias" and .result=="fail") | .resources[0].name)'
+#
+# background: true IS LOAD-BEARING, not housekeeping. The severest failure mode is
+# kyverno being unavailable at admission: failurePolicy Ignore admits the pod
+# unmutated AND produces no admission report, because nothing evaluated it. A pod
+# in that state is invisible to an admission-time-only detector for its entire
+# life. Only a background re-scan by the reports controller ever sees it.
+#
+# SCOPING: deliberately opt-IN per pod. A cluster-wide mutation that rewrote
+# every pod spec would be a much larger blast radius for no benefit — only a
+# handful of apps ever do server-side OIDC.
+#
+# NOTE hostAliases are ADDITIVE here: the patch appends, so a pod that already
+# declares its own aliases keeps them.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: oidc-hostalias
+  labels:
+    app.kubernetes.io/part-of: kyverno
+  annotations:
+    policies.kyverno.io/title: Authentik OIDC hostAlias
+    policies.kyverno.io/category: Networking
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Pods labelled catalyst.io/oidc=true get a hostAlias pinning auth.knowledgedump.space to the in-cluster Traefik ClusterIP, read live from svc/traefik, so server-side OIDC calls never traverse Cloudflare. A companion audit rule reports any such pod that ends up without the alias.
+spec:
+  # Mutation only — never block a pod because of this. The audit rule is Audit,
+  # not Enforce, for the same reason (see there).
+  failurePolicy: Ignore
+  # Required by the audit rule so the reports controller re-scans EXISTING pods;
+  # see the background note in the header. Inert for the mutate rule, which
+  # declares no mutate.targets and so is admission-only either way.
+  background: true
+  rules:
+  - name: add-authentik-hostalias
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          selector:
+            matchLabels:
+              catalyst.io/oidc: "true"
+    context:
+    - name: traefikIP
+      apiCall:
+        urlPath: "/api/v1/namespaces/traefik/services/traefik"
+        jmesPath: "spec.clusterIP"
+    preconditions:
+      all:
+      # Refuse to patch anything that is not a dotted quad. A headless or
+      # ExternalName svc/traefik yields "None" or "", and a hostAlias carrying
+      # that is REJECTED BY THE API SERVER — which would turn a degraded login
+      # into "no oidc pod can be created at all", the one outcome this policy
+      # promises never to cause. Skipping instead keeps the failure soft, and
+      # the audit rule below reports the skip.
+      - key: '{{ regex_match(''^[0-9]{1,3}(\.[0-9]{1,3}){3}$'', to_string(traefikIP || ''absent'')) }}'
+        operator: Equals
+        value: true
+    mutate:
+      patchStrategicMerge:
+        spec:
+          hostAliases:
+          - ip: "{{ traefikIP }}"
+            hostnames:
+            - auth.knowledgedump.space
+
+  # --- the detector -------------------------------------------------------------
+  # Fires whenever an oidc-labelled pod exists WITHOUT the alias, i.e. whenever the
+  # rule above was skipped. Runs after it: the API server calls every mutating
+  # webhook before any validating one, so at admission this sees the patched pod.
+  #
+  # It asserts PRESENCE OF THE HOSTNAME and deliberately does not check the IP.
+  # Checking the IP would require the same traefikIP apiCall, so the detector would
+  # go blind in precisely the circumstance it exists to detect. Presence is also
+  # the honest invariant: when the apiCall succeeds it returns the live clusterIP
+  # by definition, so an alias that is present cannot be pointing somewhere stale.
+  #
+  # Audit, never Enforce. A pod missing the alias is degraded, not broken — only
+  # server-side OIDC suffers, and refusing to schedule it would escalate a failed
+  # login into a dead workload. Nothing about this policy is worth blocking a pod.
+  - name: audit-authentik-hostalias-present
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+          selector:
+            matchLabels:
+              catalyst.io/oidc: "true"
+    validate:
+      failureAction: Audit
+      message: >-
+        Pod is labelled catalyst.io/oidc=true but carries no hostAlias for
+        auth.knowledgedump.space, so its server-side OIDC calls will egress through
+        Cloudflare and fail with "execution expired". The add-authentik-hostalias
+        mutation did not apply. Check svc/traefik exists and has a real clusterIP
+        (kubectl get svc traefik -n traefik), that the kyverno controllers can read
+        it, and that the admission controller was up when this pod was admitted.
+      deny:
+        conditions:
+          all:
+          # `|| []` keeps this TOTAL: a pod with no hostAliases at all projects to
+          # null, which would otherwise error instead of failing the check.
+          - key: '{{ contains(request.object.spec.hostAliases[].hostnames[] || `[]`, ''auth.knowledgedump.space'') }}'
+            operator: Equals
+            value: false

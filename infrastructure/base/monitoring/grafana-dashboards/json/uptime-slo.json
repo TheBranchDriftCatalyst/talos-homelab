@@ -1,0 +1,279 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Uptime / SLO overview driven by blackbox-exporter probes. Grounded 2026-08-08 against Mimir: 13 probe targets across two jobs (prometheus-blackbox-exporter with full-URL instance labels, blackbox-probes with friendly-name instance labels). All series carry probe_success, probe_http_status_code and probe_duration_seconds. probe_ssl_earliest_cert_expiry returned NO data (every target is plain HTTP), so no TLS-expiry panel is included. Templated on $instance (label_values(probe_success, instance), multi + All).",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "Availability Summary",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Overall availability across all probe targets (mean of probe_success * 100). 100% = every probed endpoint is up.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "orange", "value": 90}, {"color": "yellow", "value": 99}, {"color": "green", "value": 99.9}]},
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 2
+        }
+      },
+      "gridPos": {"h": 5, "w": 8, "x": 0, "y": 1},
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "avg(probe_success{instance=~\"$instance\"}) * 100", "legendFormat": "Overall Up %"}
+      ],
+      "title": "Overall Availability",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of probe targets currently reporting up (probe_success == 1).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 5, "w": 8, "x": 8, "y": 1},
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(probe_success{instance=~\"$instance\"} == 1)", "legendFormat": "Targets Up"}
+      ],
+      "title": "Targets Up",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Number of probe targets currently reporting down (probe_success == 0). Any non-zero value is actionable.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "none",
+          "noValue": "0"
+        }
+      },
+      "gridPos": {"h": 5, "w": 8, "x": 16, "y": 1},
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false},
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "count(probe_success{instance=~\"$instance\"} == 0)", "legendFormat": "Targets Down"}
+      ],
+      "title": "Targets Down",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 6},
+      "id": 101,
+      "panels": [],
+      "title": "Endpoint Status",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Per-endpoint current status. Status column is colored green (1 = up) / red (0 = down). HTTP status code and last probe duration shown per instance. Note: several blackbox modules report an HTTP status of 0 even when the probe succeeds (TCP-level success); trust the Status column (probe_success) as the source of truth.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"align": "auto", "cellOptions": {"type": "auto"}, "inspect": false},
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "Status"},
+            "properties": [
+              {"id": "custom.cellOptions", "value": {"type": "color-background"}},
+              {"id": "color", "value": {"mode": "thresholds"}},
+              {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}},
+              {"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "DOWN", "index": 0}, "1": {"text": "UP", "index": 1}}}]},
+              {"id": "custom.width", "value": 110}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "HTTP Status"},
+            "properties": [{"id": "custom.width", "value": 120}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Probe Duration"},
+            "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 3}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Endpoint"},
+            "properties": [{"id": "custom.width", "value": 420}]
+          }
+        ]
+      },
+      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 7},
+      "id": 4,
+      "options": {
+        "showHeader": true,
+        "sortBy": [{"displayName": "Status", "desc": false}]
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "probe_success{instance=~\"$instance\"}", "format": "table", "instant": true, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "probe_http_status_code{instance=~\"$instance\"}", "format": "table", "instant": true, "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "probe_duration_seconds{instance=~\"$instance\"}", "format": "table", "instant": true, "refId": "C"}
+      ],
+      "title": "Endpoint status",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {"byField": "instance", "mode": "outer"}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true, "Time 1": true, "Time 2": true, "Time 3": true,
+              "__name__": true, "__name__ 1": true, "__name__ 2": true, "__name__ 3": true,
+              "cluster": true, "cluster 1": true, "cluster 2": true, "cluster 3": true,
+              "container": true, "container 1": true, "container 2": true, "container 3": true,
+              "endpoint": true, "endpoint 1": true, "endpoint 2": true, "endpoint 3": true,
+              "namespace": true, "namespace 1": true, "namespace 2": true, "namespace 3": true,
+              "pod": true, "pod 1": true, "pod 2": true, "pod 3": true,
+              "service": true, "service 1": true, "service 2": true, "service 3": true,
+              "job 1": true, "job 2": true, "job 3": true,
+              "target 1": true, "target 2": true, "target 3": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "instance": "Endpoint",
+              "job": "Job",
+              "target": "Target",
+              "Value #A": "Status",
+              "Value #B": "HTTP Status",
+              "Value #C": "Probe Duration"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18},
+      "id": 102,
+      "panels": [],
+      "title": "Trends",
+      "type": "row"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "probe_success over time per endpoint (1 = up, 0 = down). Any dip to 0 is an outage window for that target.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2, "showPoints": "never", "spanNulls": false, "stepAfter": true, "lineInterpolation": "stepAfter"},
+          "unit": "none",
+          "min": 0,
+          "max": 1,
+          "decimals": 0
+        }
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 19},
+      "id": 5,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["min", "mean"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "probe_success{instance=~\"$instance\"}", "legendFormat": "{{instance}}"}
+      ],
+      "title": "Probe Success (up/down) per Endpoint",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "mimir"},
+      "description": "Total probe duration (probe_duration_seconds) per endpoint over time — latency of each probe. Rising duration is an early warning even while probe_success stays 1.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2, "showPoints": "never", "spanNulls": false},
+          "unit": "s"
+        }
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 19},
+      "id": 6,
+      "options": {
+        "legend": {"displayMode": "table", "placement": "right", "showLegend": true, "calcs": ["mean", "max"]},
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "probe_duration_seconds{instance=~\"$instance\"}", "legendFormat": "{{instance}}"}
+      ],
+      "title": "Probe Duration per Endpoint",
+      "type": "timeseries"
+    }
+  ],
+  "preload": false,
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["uptime", "slo", "blackbox", "availability", "observability"],
+  "templating": {
+    "list": [
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "mimir"},
+        "query": {"query": "label_values(probe_success, instance)", "refId": "StandardVariableQuery"},
+        "regex": "",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": {"text": "All", "value": "$__all"}
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "Uptime / SLO",
+  "uid": "uptime-slo",
+  "version": 1,
+  "weekStart": ""
+}

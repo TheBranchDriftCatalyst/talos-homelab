@@ -1,0 +1,22 @@
+# Zipline - Image/file sharing (namespace media-private, CNPG-backed DB)
+load('ext://uibutton', 'cmd_button')
+load('ext://k8s_attach', 'k8s_attach')
+
+allow_k8s_contexts('admin@catalyst-cluster')
+ns, label = 'media-private', '1-apps-media'
+
+k8s_attach('zipline', 'deployment/zipline', namespace=ns, port_forwards=['3050:3000'], labels=[label],
+           links=[link('http://xzip.talos00', 'Zipline (Ingress)'), link('http://localhost:3050', 'Local')])
+
+cmd_button(name='btn-zipline-logs', resource='zipline', text='App Logs', icon_name='description',
+    argv=['sh', '-c', 'echo "=== Zipline Logs (last 50) ===" && kubectl logs -n media-private deploy/zipline -c zipline --tail=50'])
+cmd_button(name='btn-zipline-db', resource='zipline', text='DB Logs', icon_name='storage',
+    argv=['sh', '-c', 'echo "=== CNPG PostgreSQL Logs (last 30) ===" && kubectl logs -n media-private -l cnpg.io/cluster=zipline-postgres --tail=30'])
+cmd_button(name='btn-zipline-status', resource='zipline', text='Status', icon_name='info',
+    argv=['sh', '-c', 'echo "=== Pods ===" && kubectl get pods -n media-private -owide && echo && echo "=== Storage ===" && kubectl get pvc -n media-private && echo && echo "=== CNPG ===" && kubectl get cluster -n media-private zipline-postgres'])
+cmd_button(name='btn-zipline-restart', resource='zipline', text='Restart', icon_name='refresh', requires_confirmation=True,
+    argv=['sh', '-c', 'echo "Restarting Zipline..." && kubectl rollout restart deploy/zipline -n media-private && kubectl rollout status deploy/zipline -n media-private --timeout=120s && echo "Restarted"'])
+cmd_button(name='btn-zipline-stats', resource='zipline', text='Upload Stats', icon_name='analytics',
+    argv=['sh', '-c', 'echo "=== Upload Stats ===" && kubectl exec -n media-private deploy/zipline -c zipline -- sh -c "echo \"Files: $(find /zipline/uploads -type f 2>/dev/null | wc -l)\"; echo \"Size: $(du -sh /zipline/uploads 2>/dev/null | cut -f1)\"; echo; echo \"Recent (last 10):\"; ls -lt /zipline/uploads 2>/dev/null | head -10"'])
+cmd_button(name='btn-zipline-psql', resource='zipline', text='DB Shell', icon_name='terminal',
+    argv=['sh', '-c', 'echo "Connecting to CNPG PostgreSQL..." && kubectl exec -it -n media-private zipline-postgres-1 -- psql -U zipline -d zipline'])

@@ -1,0 +1,32 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: external-dns
+
+resources:
+  # namespace.yaml intentionally NOT included — the namespace is owned by
+  # infrastructure/base/namespaces/external-dns.yaml (which carries the
+  # PSA enforce=privileged labels needed by the desec-ddns gluetun sidecar).
+  # Including it here caused an ownership tug-of-war that wiped the PSA
+  # labels and blocked Pod creation (TALOS-q1a).
+  # - namespace.yaml
+  - dnsendpoint-crd.yaml
+  - externalsecret.yaml
+  - rbac.yaml
+  - deployment.yaml
+  - servicemonitor.yaml
+  - dnsendpoints.yaml
+  - cf-records-exporter/deployment.yaml # live CF record inventory exporter (TALOS-2kg)
+  - cf-records-exporter/podmonitor.yaml
+
+# exporter.py is a Python script (contains $ / ${} tokens) delivered as a ConfigMap.
+# substitute: disabled → Flux postBuild envsubst SKIPS it (all its vars are runtime env,
+# not cluster-settings) so it can't wedge this kustomization the way an unguarded script would.
+configMapGenerator:
+  - name: cf-records-exporter-script
+    files:
+      - cf-records-exporter/exporter.py
+    options:
+      annotations:
+        kustomize.toolkit.fluxcd.io/substitute: disabled

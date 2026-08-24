@@ -1,0 +1,318 @@
+---
+# Apache Guacamole — clientless remote-desktop gateway for the Windows gameserver VM.
+# Stays in the gaming namespace (coupled to the VM it fronts).
+#
+# TRUE SINGLE-SIGN-ON (TALOS-xgrl.15): the former in-webapp login (admin +
+# sha256-hashed password in a user-mapping.xml ConfigMap) is GONE. Guacamole now
+# auto-logs-in from the `X-authentik-username` header set by the Authentik
+# forward-auth middleware on guacamole.priv.talos00 — no second login prompt.
+#
+# WHY A DATABASE: the stock guacamole/guacamole:1.6.0 header-auth extension only
+# establishes IDENTITY (it never sets a password). The file connection source
+# (user-mapping.xml) authorises via `Authorization.validate()`, which REQUIRES a
+# non-null password — so header-auth + user-mapping.xml grants ZERO connections
+# (verified against the 1.6.0 source). Guacamole therefore needs a JDBC
+# connection store for header/SSO-authenticated users. This is the same pattern
+# the official Authentik + Guacamole integration uses. We use CloudNativePG (the
+# repo standard — forgejo / linkwarden / zipline / crowdsec).
+#
+# HOW HEADER-AUTH IS ENABLED (1.6.0 image, no jar wrangling): the header
+# extension ships bundled in the image, mapped to the `HTTP_AUTH_` env prefix by
+# guacamole-docker/build.d/010-map-guacamole-extensions.sh. Setting
+# `HTTP_AUTH_HEADER` both (a) enables the extension (presence of an HTTP_AUTH_*
+# var → 700-configure-features.sh symlinks the jar into extensions) and (b) sets
+# guacamole.properties `http-auth-header` (via enable-environment-properties,
+# which the 1.6.0 entrypoint turns on automatically). Default header if unset is
+# REMOTE_USER; we point it at Authentik's X-authentik-username.
+#
+# SECURITY INVARIANT (must hold): Guacamole is a ClusterIP service reachable ONLY
+# via the forward-auth IngressRoute below; there is NO route that skips the
+# `authentik` middleware, and no NodePort/LB. The middleware's authResponseHeaders
+# set X-authentik-username from Authentik's auth RESPONSE, overwriting any
+# client-supplied value — so the header cannot be spoofed. If that ever changes
+# (a direct route, or the header not stripped/overwritten), header-auth becomes a
+# trivial auth bypass. Only the seeded user 'Panda' has a connection; unknown
+# header values authenticate but see no connections (AUTO_CREATE_ACCOUNTS is off).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guacd
+  labels: {app: guacd}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: guacd}
+  template:
+    metadata:
+      labels: {app: guacd}
+    spec:
+      containers:
+        - name: guacd
+          image: guacamole/guacd:1.6.0 # pinned (was :latest)
+          ports:
+            - {containerPort: 4822, name: guacd}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guacd
+  labels: {app: guacd}
+spec:
+  type: ClusterIP
+  selector: {app: guacd}
+  ports:
+    - {name: guacd, port: 4822, targetPort: 4822}
+---
+# Idempotent seed applied to the Guacamole DB by the guacamole-dbinit Job AFTER
+# the schema is loaded. Creates the one RDP connection to the Windows gameserver
+# and authorises the Authentik user 'Panda' (header-auth identity) to READ it.
+# Written against the guacamole/guacamole:1.6.0 PostgreSQL schema (guacamole_entity
+# / guacamole_user / guacamole_connection[_parameter|_permission]).
+#
+# NOTE on the username: this MUST match the exact value Authentik puts in
+# X-authentik-username. The ticket specifies 'Panda'. If the outpost actually
+# emits lowercase 'panda', edit BOTH occurrences below (guacamole usernames are
+# case-sensitive) — see the verification runbook.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: guacamole-seed
+  labels: {app: guacamole}
+data:
+  seed.sql: |
+    -- 1. The RDP connection (top-level, parent_id IS NULL). The UNIQUE
+    --    (connection_name, parent_id) constraint does NOT dedupe when parent_id
+    --    is NULL (NULLs compare distinct in Postgres), so guard with NOT EXISTS.
+    INSERT INTO guacamole_connection (connection_name, protocol)
+    SELECT 'Windows Gameserver (RDP)', 'rdp'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM guacamole_connection
+      WHERE connection_name = 'Windows Gameserver (RDP)' AND parent_id IS NULL
+    );
+
+    -- 1b. Connection parameters (upsert each — keeps the manifest the source of truth).
+    INSERT INTO guacamole_connection_parameter (connection_id, parameter_name, parameter_value)
+    SELECT c.connection_id, p.name, p.value
+    FROM guacamole_connection c
+    CROSS JOIN (VALUES
+      ('hostname','windows-gameserver-rdp'),
+      ('port','3389'),
+      ('security','any'),
+      ('ignore-cert','true'),
+      ('color-depth','32'),
+      ('resize-method','reconnect'),
+      ('enable-wallpaper','true'),
+      ('enable-font-smoothing','true'),
+      ('clipboard-encoding','UTF-8')
+    ) AS p(name, value)
+    WHERE c.connection_name = 'Windows Gameserver (RDP)' AND c.parent_id IS NULL
+    ON CONFLICT (connection_id, parameter_name)
+      DO UPDATE SET parameter_value = EXCLUDED.parameter_value;
+
+    -- 2. The 'Panda' identity. SSO-only: password_hash is NOT NULL in the schema,
+    --    so set a random, unguessable, throwaway hash. Nobody logs in with a
+    --    password (header-auth bypasses it, and Guacamole is unreachable except
+    --    via forward-auth), so the value is irrelevant beyond being non-null.
+    INSERT INTO guacamole_entity (name, type)
+    SELECT 'Panda', 'USER'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM guacamole_entity WHERE name = 'Panda' AND type = 'USER'
+    );
+
+    INSERT INTO guacamole_user (entity_id, password_hash, password_salt, password_date)
+    SELECT e.entity_id, decode(md5(random()::text), 'hex'), NULL, CURRENT_TIMESTAMP
+    FROM guacamole_entity e
+    WHERE e.name = 'Panda' AND e.type = 'USER'
+      AND NOT EXISTS (SELECT 1 FROM guacamole_user u WHERE u.entity_id = e.entity_id);
+
+    -- 3. Authorise Panda to READ the connection.
+    INSERT INTO guacamole_connection_permission (entity_id, connection_id, permission)
+    SELECT e.entity_id, c.connection_id, 'READ'::guacamole_object_permission_type
+    FROM guacamole_entity e
+    JOIN guacamole_connection c
+      ON c.connection_name = 'Windows Gameserver (RDP)' AND c.parent_id IS NULL
+    WHERE e.name = 'Panda' AND e.type = 'USER'
+    ON CONFLICT (entity_id, connection_id, permission) DO NOTHING;
+---
+# One-shot idempotent DB init: loads the Guacamole schema (pulled from the pinned
+# image so it always matches the running version — NOT vendored) if absent, then
+# applies the seed. Deliberately loads ONLY 001-create-schema.sql, skipping the
+# image's 002-create-admin-user.sql so the default guacadmin/guacadmin password
+# account is NEVER created (it would be a password-login bypass of SSO).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: guacamole-dbinit
+  labels: {app: guacamole, component: dbinit}
+spec:
+  backoffLimit: 20
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels: {app: guacamole, component: dbinit}
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        # Copy the version-matched schema out of the guacamole image.
+        - name: extract-schema
+          image: guacamole/guacamole:1.6.0
+          command:
+            - sh
+            - -c
+            - cp /opt/guacamole/extensions/guacamole-auth-jdbc/postgresql/schema/001-create-schema.sql /schema/schema.sql
+          volumeMounts:
+            - {name: schema, mountPath: /schema}
+      containers:
+        - name: init
+          image: postgres:17-alpine
+          env:
+            - {name: PGHOST, value: guacamole-postgres-rw.gaming.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            - name: PGDATABASE
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: dbname}}
+            - name: PGUSER
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: username}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: password}}
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "==> waiting for postgres"
+              until pg_isready -q; do sleep 2; done
+              if psql -tAc "SELECT to_regclass('public.guacamole_connection')" | grep -q guacamole_connection; then
+                echo "==> schema already present"
+              else
+                echo "==> loading guacamole schema"
+                psql -v ON_ERROR_STOP=1 -f /schema/schema.sql
+              fi
+              echo "==> applying seed (connection + Panda grant)"
+              psql -v ON_ERROR_STOP=1 -f /seed/seed.sql
+              echo "==> done"
+          volumeMounts:
+            - {name: schema, mountPath: /schema}
+            - {name: seed, mountPath: /seed}
+      volumes:
+        - {name: schema, emptyDir: {}}
+        - name: seed
+          configMap: {name: guacamole-seed}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: guacamole
+  labels: {app: guacamole}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: guacamole}
+  template:
+    metadata:
+      labels: {app: guacamole}
+    spec:
+      initContainers:
+        # Do not start the webapp until the schema (and seed) exist, so the JDBC
+        # extension initialises cleanly on first boot instead of CrashLooping.
+        - name: wait-for-schema
+          image: postgres:17-alpine
+          env:
+            - {name: PGHOST, value: guacamole-postgres-rw.gaming.svc.cluster.local}
+            - {name: PGPORT, value: "5432"}
+            - name: PGDATABASE
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: dbname}}
+            - name: PGUSER
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: username}}
+            - name: PGPASSWORD
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: password}}
+          command:
+            - sh
+            - -c
+            - until psql -tAc "SELECT to_regclass('public.guacamole_connection')" | grep -q guacamole_connection; do echo "waiting for guacamole schema"; sleep 3; done
+      containers:
+        - name: guacamole
+          image: guacamole/guacamole:1.6.0 # pinned (was :latest)
+          env:
+            - {name: GUACD_HOSTNAME, value: guacd}
+            - {name: GUACD_PORT, value: "4822"}
+            - {name: WEBAPP_CONTEXT, value: ROOT}
+            # HTTP header authentication (bundled extension, enabled by presence of
+            # this HTTP_AUTH_* var). Trusts Authentik's forward-auth header → auto-login.
+            - {name: HTTP_AUTH_HEADER, value: X-authentik-username}
+            # JDBC connection store (bundled postgresql extension, enabled by the
+            # POSTGRESQL_* vars). AUTO_CREATE_ACCOUNTS intentionally left OFF: only
+            # the pre-seeded 'Panda' user has access; unknown identities get no
+            # connections. Guacamole property names: postgresql-{hostname,port,
+            # database,username,password}.
+            - {name: POSTGRESQL_HOSTNAME, value: guacamole-postgres-rw.gaming.svc.cluster.local}
+            - {name: POSTGRESQL_PORT, value: "5432"}
+            - name: POSTGRESQL_DATABASE
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: dbname}}
+            - name: POSTGRESQL_USERNAME
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: username}}
+            - name: POSTGRESQL_PASSWORD
+              valueFrom: {secretKeyRef: {name: guacamole-postgres-app, key: password}}
+          ports:
+            - {containerPort: 8080, name: http}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {cpu: 500m, memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: guacamole
+  labels: {app: guacamole}
+spec:
+  type: ClusterIP
+  selector: {app: guacamole}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080}
+---
+# SSO-protected route — guacamole.priv.talos00 behind Authentik forward-auth.
+# The `authentik` middleware sets X-authentik-username, which the webapp trusts
+# for auto-login (see header comment / SECURITY INVARIANT).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: guacamole
+  labels: {app: guacamole}
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Apache Guacamole"
+    gethomepage.dev/description: "Clientless remote desktop gateway"
+    gethomepage.dev/group: "Gaming"
+    gethomepage.dev/icon: "guacamole.png"
+    gethomepage.dev/siteMonitor: "http://guacamole.gaming.svc.cluster.local:8080"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`guacamole.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: guacamole
+          port: 8080
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: guacamole-http
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`guacamole.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: guacamole
+          port: 8080

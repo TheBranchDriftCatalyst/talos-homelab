@@ -1,0 +1,51 @@
+---
+# NOTE: For batch jobs, consider pushing metrics directly to Mimir's remote_write
+# endpoint (http://mimir-gateway.monitoring.svc:80/api/v1/push) instead of using
+# pushgateway. Pushgateway metrics persist as gauges until overwritten, causing
+# "stale" values between job runs. Direct remote_write creates discrete data
+# points only when the job actually runs. See pod-cleanup CronJob for an example.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: prometheus-pushgateway
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: prometheus-pushgateway
+      version: '3.8.0' # 3.0 break is StatefulSet+persistence only — we run Deployment, no PV (TALOS-4vc; no 4.x exists)
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+        namespace: monitoring
+      interval: 12h
+
+  values:
+    # Ensure replica count is set (prevent scale-down to 0)
+    replicaCount: 1
+
+    # Resources for homelab
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+
+    # Persistence disabled - metrics are ephemeral batch job results
+    persistentVolume:
+      enabled: false
+
+    # ServiceMonitor for Prometheus to scrape pushgateway
+    serviceMonitor:
+      enabled: true
+      namespace: monitoring
+      additionalLabels: {}
+      # Honor labels pushed by jobs
+      honorLabels: true
+
+    # Pod annotations — do NOT set prometheus.io/scrape here.
+    # Alloy has a dedicated pushgateway scraper with honor_labels: true.
+    # Adding the annotation causes the generic "pods" scraper to also
+    # pick it up WITHOUT honor_labels, creating duplicate series with
+    # job="kubernetes-pods" instead of the original pushed job label.
+    podAnnotations: {}

@@ -1,0 +1,117 @@
+---
+# ArgoCD Metrics Services and ServiceMonitors
+# These enable Prometheus to scrape metrics from ArgoCD components
+
+# Service for ArgoCD Server metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-server-metrics
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-server-metrics
+    app.kubernetes.io/component: metrics
+spec:
+  selector:
+    app.kubernetes.io/name: argocd-server
+  ports:
+    - name: metrics
+      port: 8083
+      targetPort: 8083
+---
+# Service for ArgoCD Application Controller metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-application-controller-metrics
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-application-controller-metrics
+    app.kubernetes.io/component: metrics
+spec:
+  selector:
+    app.kubernetes.io/name: argocd-application-controller
+  ports:
+    - name: metrics
+      port: 8082
+      targetPort: 8082
+---
+# Service for ArgoCD Repo Server metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: argocd-repo-server-metrics
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-repo-server-metrics
+    app.kubernetes.io/component: metrics
+spec:
+  selector:
+    app.kubernetes.io/name: argocd-repo-server
+  ports:
+    - name: metrics
+      port: 8084
+      targetPort: 8084
+---
+# ServiceMonitor for ArgoCD Server
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-server-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: argocd
+    prometheus: kube-prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - argocd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-server-metrics
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+---
+# ServiceMonitor for ArgoCD Application Controller
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-application-controller-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: argocd
+    prometheus: kube-prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - argocd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-application-controller-metrics
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+---
+# ServiceMonitor for ArgoCD Repo Server
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd-repo-server-metrics
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: argocd
+    prometheus: kube-prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - argocd
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-repo-server-metrics
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics

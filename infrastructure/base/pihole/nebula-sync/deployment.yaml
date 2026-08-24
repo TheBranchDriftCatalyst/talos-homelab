@@ -1,0 +1,91 @@
+---
+# ⚠️ "nebula-sync" = PI-HOLE CONFIG SYNC (v6 Teleporter). NOT "Nebula" the mesh VPN.
+#
+# Config-sync worker that follows the active primary. The sync LOGIC lives in sync.sh
+# (loaded via a ConfigMap — kustomize configMapGenerator), so this manifest stays code-free.
+# Labeled app=nebula-sync (NOT app=pihole) so it's never a DNS-VIP endpoint or a self-sync
+# target. See sync.sh for behavior + the bare-$VAR / Flux-envsubst note.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nebula-sync
+  namespace: pihole
+  labels:
+    app: nebula-sync
+    app.kubernetes.io/component: config-sync
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nebula-sync
+  template:
+    metadata:
+      labels:
+        app: nebula-sync
+        app.kubernetes.io/component: config-sync
+    spec:
+      serviceAccountName: nebula-sync
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: sync
+          image: alpine/k8s:1.34.1 # bundles kubectl + curl
+          command: ["/bin/sh", "/scripts/sync.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          env:
+            - name: SYNC_INTERVAL
+              value: "300" # seconds between syncs (read at runtime by sync.sh)
+            - name: PIHOLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pihole-admin
+                  key: password
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: metrics # sync.sh writes Prometheus text here; the sidecar serves it
+              mountPath: /metrics
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 64Mi}
+          livenessProbe: # self-heal if the loop wedges (no reached-active in ~2 intervals)
+            exec:
+              command: ["/bin/sh", "-c", "test $(( $(date +%s) - $(cat /tmp/last-sync 2>/dev/null || echo 0) )) -lt 900"]
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
+        # Metrics endpoint. sync.sh (kubectl+curl image) has no reliable HTTP server, so a
+        # tiny busybox serves the textfile it writes to the shared emptyDir. busybox:1.36 is
+        # the repo-wide standard and its httpd applet is always present (unlike alpine's
+        # split-out busybox-extras). Scraped by nebula-sync/podmonitor.yaml → Mimir via Alloy.
+        - name: metrics
+          image: busybox:1.36
+          command: ["httpd", "-f", "-p", "9092", "-h", "/metrics"]
+          ports:
+            - name: metrics # PodMonitor references this port name
+              containerPort: 9092
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true # httpd only reads the shared docroot
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - name: metrics
+              mountPath: /metrics
+              readOnly: true
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {memory: 16Mi}
+      volumes:
+        - name: script
+          configMap:
+            name: nebula-sync-script # configMapGenerator (see kustomization.yaml)
+            defaultMode: 0555
+        - name: metrics # shared between sync.sh (writer) and busybox httpd (reader)
+          emptyDir: {}

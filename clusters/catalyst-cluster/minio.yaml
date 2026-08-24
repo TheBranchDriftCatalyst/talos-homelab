@@ -1,0 +1,28 @@
+---
+# MinIO - S3-compatible object storage (Operator-managed Tenant)
+# Provides S3 backend for OTEL stack (Mimir, Tempo, Loki)
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: minio
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/minio
+  prune: true
+  wait: true
+  dependsOn:
+    - name: namespaces
+    - name: storage
+    - name: databases  # MinIO Operator must be deployed first
+  healthChecks:
+    # Tenant creates a StatefulSet, not Deployment
+    - apiVersion: apps/v1
+      kind: StatefulSet
+      name: minio-pool-0
+      namespace: minio

@@ -1,0 +1,40 @@
+---
+# Home Assistant base configuration
+# This gets mounted to /config/configuration.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homeassistant-config
+  labels:
+    app: homeassistant
+    app.kubernetes.io/name: homeassistant
+    app.kubernetes.io/part-of: home-automation
+data:
+  configuration.yaml: |
+    # Loads default set of integrations. Do not remove.
+    default_config:
+
+    # Load frontend themes from the themes folder
+    frontend:
+      themes: !include_dir_merge_named themes
+
+    automation: !include automations.yaml
+    script: !include scripts.yaml
+    scene: !include scenes.yaml
+
+    # Recorder configuration - CloudNativePG Postgres (see postgres.yaml, TALOS-hx77.1).
+    # db_url is injected at runtime from the CNPG-GENERATED homeassistant-postgres-app
+    # secret via the RECORDER_DB_URL env var (deployment.yaml secretKeyRef -> `uri` key),
+    # so NO plaintext password lives in git (de-hardcoded, TALOS-mf91 / epic TALOS-031k).
+    recorder:
+      db_url: !env_var RECORDER_DB_URL
+      purge_keep_days: 30
+      commit_interval: 5
+
+    # Reverse proxy configuration (Traefik)
+    http:
+      use_x_forwarded_for: true
+      trusted_proxies:
+        - 10.0.0.0/8
+        - 172.16.0.0/12
+        - 192.168.0.0/16

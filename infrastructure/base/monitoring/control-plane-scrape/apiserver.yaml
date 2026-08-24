@@ -1,0 +1,58 @@
+---
+# kube-apiserver metrics — scrape the built-in default/kubernetes Service
+# (port name "https", 443 → 6443). Bearer token + skip-verify; the
+# metricRelabelings keep list bounds cardinality (~apiserver histograms are
+# the biggest offenders on a full apiserver scrape).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kube-apiserver
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: kube-apiserver
+spec:
+  selector:
+    matchLabels:
+      component: apiserver
+      provider: kubernetes
+  namespaceSelector:
+    matchNames:
+      - default
+  endpoints:
+    - port: https
+      scheme: https
+      interval: 30s
+      bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tlsConfig:
+        insecureSkipVerify: true
+      metricRelabelings:
+        # Cardinality control: keep only the request/latency families we
+        # actually alert and dashboard on, plus the apiserver's own Go
+        # runtime metrics — a few dozen series, and without them the
+        # apiserver's heap is not measurable at all.
+        - sourceLabels: [__name__]
+          regex: (apiserver_request_.*|etcd_request_.*|go_memstats_.*|go_goroutines|process_resident_memory_bytes|process_cpu_seconds_total)
+          action: keep
+        # The keep list above is inverted from what its name suggests: the
+        # apiserver latency histograms ARE the cardinality. Measured
+        # 2026-08-24 against Mimir, these three drops remove 68,942 series
+        # (9.4% of alloy's 730,891 WAL series) with no consumer anywhere in
+        # this repo. Counts are `count({__name__=~"..."})` at that date.
+        #
+        # 28,848 series. Zero hits in any dashboard JSON or alert rule.
+        - sourceLabels: [__name__]
+          regex: apiserver_request_sli_duration_seconds_.*
+          action: drop
+        # 10,064 series. Zero hits in any dashboard JSON or alert rule.
+        - sourceLabels: [__name__]
+          regex: apiserver_request_body_size_bytes_.*
+          action: drop
+        # 30,030 series. All six queries over
+        # apiserver_request_duration_seconds_bucket already exclude these
+        # verbs — two via verb!~"WATCH|CONNECT" (catalyst-k8s-dashboard,
+        # etcd-snapshot-correlation) and four via positive verb allowlists
+        # verb=~"LIST|GET" / verb=~"POST|PUT|PATCH|DELETE"
+        # (kubevirt-control-plane) — so no panel changes.
+        - sourceLabels: [__name__, verb]
+          regex: apiserver_request_duration_seconds_.*;(WATCH|CONNECT)
+          action: drop

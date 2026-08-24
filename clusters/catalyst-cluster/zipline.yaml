@@ -1,0 +1,37 @@
+---
+# Kustomization for Zipline (self-hosted file/image sharing), namespace
+# media-private. GitOps-ified + migrated off the co-pod postgres:15-alpine to a
+# CloudNativePG cluster (TALOS-0w6d, epic TALOS-031k). Was previously a MANUAL
+# kubectl-applied Deployment (no Flux ownership label) — this brings it under
+# Flux reconciliation like every other app.
+#
+# dependsOn:
+#   - storage           → provides the fatboy-nfs-appdata StorageClass (uploads PVC + CNPG PGDATA)
+#   - databases         → CloudNativePG operator + the postgresql.cnpg.io Cluster CRD
+#   - external-secrets  → ClusterSecretStore `onepassword` for the CORE_SECRET ExternalSecret
+#
+# The media-private namespace already exists on the cluster (currently created
+# outside git); this Kustomization does NOT manage the Namespace object, so
+# `prune: true` only reaps zipline's own resources.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: zipline
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/zipline
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: storage
+    - name: databases
+    - name: external-secrets
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

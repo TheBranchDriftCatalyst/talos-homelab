@@ -1,0 +1,38 @@
+---
+# Linkwarden app data - NFS for node-independent scheduling
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: linkwarden-data
+  labels:
+    app: linkwarden
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 10Gi
+---
+# PostgreSQL data PVC REMOVED (TALOS-3eui): the DB moved to the CNPG-managed
+# `linkwarden-postgres` Cluster (postgres.yaml), which provisions its own
+# `linkwarden-postgres-1` PVC. The old bare `linkwarden-postgres` PVC is retired
+# manually AFTER the bookmarks are verified in the new cluster (see runbook) — it
+# is intentionally NOT deleted by this kustomization so the source data survives a
+# failed cutover for rollback.
+---
+# Meilisearch data - NFS for search index
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: linkwarden-meili
+  labels:
+    app: linkwarden
+    component: meilisearch
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 2Gi

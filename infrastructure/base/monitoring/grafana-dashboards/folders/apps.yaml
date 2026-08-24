@@ -1,0 +1,40 @@
+---
+# "Apps" Grafana folder — the DOMAIN perspective.
+#
+# Deliberately a sibling of "Ops" (folders/ops.yaml), not a child of it. The two
+# answer different questions about the same workloads:
+#
+#   Ops > App    — is the pod up, is it scaling, is the queue draining?
+#                  Owned by this repo; the platform operator's view.
+#   Apps         — what did the application DO? Job runs, domain outcomes,
+#                  data ingested, the daily log review. Owned by the app's own
+#                  repo; the application author's view.
+#
+# The FOLDER is declared centrally here (same as every other GrafanaFolder in
+# this repo) so folder uids stay unique and reviewable in one place. The
+# DASHBOARDS that live in it are declared by each application's own deploy
+# overlay and reference this folder by `spec.folderRef: apps` — grafana-operator
+# runs cluster-scoped (namespaceScope:false), so a GrafanaDashboard CR in an app
+# namespace reconciles into the shared Grafana and lands here.
+#
+# Current members (declared in workspace/boomtime/k8s/overlays/talos00-knowledgedump):
+#   - boomtime — Daily Review   (uid boomtime-daily-review)
+#   - boomtime — Domain Ingest  (uid boomtime-domain-ingest)
+#
+# When a second application shows up, give it a nested child folder here
+# (parentFolderRef: apps) exactly the way ops.yaml nests Network/Cluster/etc.,
+# and move that app's dashboards onto the child. With one app it would only add
+# a click.
+#
+# Requires: grafana-operator v5.20+ / Grafana 12.1+ (nested folders GA).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaFolder
+metadata:
+  name: apps
+  namespace: monitoring
+spec:
+  uid: apps
+  title: 'Apps'
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'

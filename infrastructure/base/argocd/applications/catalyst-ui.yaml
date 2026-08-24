@@ -1,0 +1,63 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: catalyst-ui
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: catalyst-ui
+    app.kubernetes.io/part-of: catalyst
+  # Image update config lives in the ImageUpdater CRD at
+  # infrastructure/base/argocd/image-updater/catalyst-ui-image-updater.yaml
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # External links shown in ArgoCD UI
+  info:
+    - name: GitHub Repository
+      value: https://github.com/TheBranchDriftCatalyst/catalyst-ui
+    - name: Container Registry
+      value: https://ghcr.io/thebranchdriftcatalyst/catalyst-ui
+    - name: Application
+      value: http://catalyst.talos00
+    - name: GitHub Pages (Demo)
+      value: https://thebranchdriftcatalyst.github.io/catalyst-ui/
+
+  # Source repository
+  source:
+    repoURL: https://github.com/TheBranchDriftCatalyst/catalyst-ui.git
+    targetRevision: main
+    path: k8s
+
+  # Destination cluster
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: catalyst
+
+  # Sync policy
+  syncPolicy:
+    automated:
+      prune: true # Delete resources that are no longer in git
+      selfHeal: true # Automatically sync when cluster state differs
+      allowEmpty: false # Don't delete all resources if source is empty
+
+    syncOptions:
+      - CreateNamespace=true # Automatically create the namespace if it doesn't exist
+      - PrunePropagationPolicy=foreground # Wait for resources to be deleted
+      - PruneLast=true # Prune at the end of sync
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Ignore differences in certain fields
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas # Ignore replica count changes (e.g., from HPA)

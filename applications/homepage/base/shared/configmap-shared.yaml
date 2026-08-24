@@ -1,0 +1,445 @@
+---
+# ConfigMap shared by ALL homepage instances (mounted read-only by every
+# instance Deployment). Content migrated from the old arr-stack
+# configmap-services.yaml. services.yaml here is an EMPTY placeholder — real
+# services are auto-discovered per-instance via IngressRoute annotations
+# (gethomepage.dev/instance.<name>, stamped by the Kyverno policy), and the
+# master overlay swaps in its own static-services ConfigMap for the entries
+# that cannot be auto-discovered.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-shared
+  labels:
+    app: homepage
+    app.kubernetes.io/name: homepage
+data:
+  services.yaml: |
+    ---
+    # Intentionally empty. Services are auto-discovered from IngressRoute
+    # annotations filtered by this instance's instanceName. The master
+    # instance overrides this file via its own ConfigMap (see
+    # overlays/master/configmap-services.yaml).
+    []
+
+  widgets.yaml: |
+    ---
+    # Homepage Widgets Configuration
+    # Documentation: https://gethomepage.dev/configs/info-widgets/
+
+    # Kubernetes cluster information
+    - kubernetes:
+        cluster:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+          label: "Talos Cluster"
+        nodes:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+
+    # Search bar - use private search
+    - search:
+        provider: ["duckduckgo", "google", "bing"]
+        focus: false
+        showSearchSuggestions: true
+        target: _blank
+
+    # Greeting with date/time
+    - greeting:
+        text_size: 2xl
+        text: "Catalyst Homelab"
+
+    - datetime:
+        text_size: xl
+        format:
+          dateStyle: long
+          timeStyle: short
+          hour12: true
+
+    # OpenMeteo weather
+    - openmeteo:
+        label: San Francisco
+        latitude: 37.7749
+        longitude: -122.4194
+        timezone: America/Los_Angeles
+        units: imperial
+        cache: 5
+
+  bookmarks.yaml: |
+    ---
+    # Homepage Bookmarks Configuration
+    # Documentation: https://gethomepage.dev/configs/bookmarks/
+
+    - Quick Links:
+        - GitHub:
+            - icon: github.png
+              href: https://github.com/TheBranchDriftCatalyst
+              description: My GitHub Profile
+
+        - Homelab Repo:
+            - icon: github.png
+              href: https://github.com/TheBranchDriftCatalyst/talos-homelab
+              description: This Infrastructure
+
+        - Claude:
+            - icon: https://www.anthropic.com/images/icons/apple-touch-icon.png
+              href: https://claude.ai
+              description: AI Assistant
+
+    - Documentation:
+        - Kubernetes:
+            - icon: kubernetes.png
+              href: https://kubernetes.io/docs/
+              description: K8s Docs
+
+        - Talos Linux:
+            - icon: https://www.talos.dev/images/logo.svg
+              href: https://www.talos.dev/
+              description: Talos OS
+
+        - Homepage:
+            - icon: homepage.png
+              href: https://gethomepage.dev/
+              description: Dashboard Docs
+
+        - Cilium:
+            - icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/cilium.png
+              href: https://docs.cilium.io/
+              description: CNI & Network Policy
+
+    - DevOps:
+        - ArgoCD:
+            - icon: argocd.png
+              href: https://argo-cd.readthedocs.io/
+              description: GitOps CD
+
+        - Flux:
+            - icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/flux-cd.png
+              href: https://fluxcd.io/docs/
+              description: GitOps Toolkit
+
+        - Traefik:
+            - icon: traefik.png
+              href: https://doc.traefik.io/traefik/
+              description: Ingress
+
+        - Helm Charts:
+            - icon: helm.png
+              href: https://artifacthub.io/
+              description: Artifact Hub
+
+  docker.yaml: |
+    ---
+    # Not used - Kubernetes handles container management
+
+  # -------------------------------------------------------------------------
+  # CATALYST CONTROL ROOM skin — shared by all 8 boards.
+  # gethomepage auto-loads /app/config/custom.css and /app/config/custom.js
+  # (mounted by subPath in base/instance/deployment.yaml).
+  # custom.js stamps <html data-board="<subdomain>"> so ONE stylesheet can
+  # re-key its accent per board (llm.homepage.talos00 -> data-board="llm";
+  # bare homepage.talos00 -> "master"). Selectors verified against
+  # gethomepage v1.13.2 source (service-card / services-group /
+  # service-group-name / bookmark-* / information-widget-* / #background).
+  # Fonts are fetched by the BROWSER (same egress already assumed for the
+  # dashboard-icons CDN); full system fallback stacks are declared.
+  # -------------------------------------------------------------------------
+  custom.css: |
+    /* ====================================================================
+       CATALYST CONTROL ROOM — one aesthetic, eight boards
+       Graphite terminal base + per-board signal accent.
+       Accent is keyed off <html data-board="..."> (set by custom.js).
+       ==================================================================== */
+    @import url("https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap");
+
+    :root {
+      --font-display: "Chakra Petch", "Avenir Next Condensed", "Franklin Gothic Medium", "Trebuchet MS", sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+      /* RGB triplets so alpha can be composed with rgb(var(--x) / a) */
+      --accent: 34 211 238; /* default = master cyan */
+      --panel: 15 20 28;
+      --line: 255 255 255;
+    }
+
+    /* Per-board signal accent ------------------------------------------- */
+    :root[data-board="master"] { --accent: 34 211 238; }  /* cyan    */
+    :root[data-board="arrs"]   { --accent: 244 114 182; } /* pink    */
+    :root[data-board="data"]   { --accent: 251 191 36; }  /* amber   */
+    :root[data-board="llm"]    { --accent: 167 139 250; } /* violet  */
+    :root[data-board="infra"]  { --accent: 52 211 153; }  /* emerald */
+    :root[data-board="obs"]    { --accent: 251 146 60; }  /* orange  */
+    :root[data-board="home"]   { --accent: 248 113 113; } /* coral   */
+    :root[data-board="apps"]   { --accent: 96 165 250; }  /* blue    */
+
+    /* Bespoke graphite ramp: homepage derives EVERY theme-* color from
+       --color-50..900 (rgb triplets, see tailwind.config.js), so overriding
+       them here reskins text/cards/scrollbars everywhere at once. */
+    html.dark {
+      --color-50: 246 248 250 !important;
+      --color-100: 233 237 242 !important;
+      --color-200: 209 217 227 !important;
+      --color-300: 156 168 184 !important;
+      --color-400: 106 118 136 !important;
+      --color-500: 74 84 100 !important;
+      --color-600: 42 50 62 !important;
+      --color-700: 24 30 40 !important;
+      --color-800: 11 14 20 !important;
+      --color-900: 6 8 12 !important;
+      --scrollbar-thumb: rgb(42 50 62);
+      --scrollbar-track: rgb(13 17 24);
+    }
+
+    /* Atmosphere: layered horizon glow + fine blueprint grid + film grain */
+    html.dark, html.dark body { background-color: #0a0d13 !important; }
+    #background {
+      background:
+        radial-gradient(1100px 520px at 12% -8%, rgb(var(--accent) / 0.13), transparent 62%),
+        radial-gradient(900px 620px at 95% 112%, rgb(var(--accent) / 0.07), transparent 58%),
+        repeating-linear-gradient(0deg, rgb(var(--line) / 0.022) 0 1px, transparent 1px 44px),
+        repeating-linear-gradient(90deg, rgb(var(--line) / 0.022) 0 1px, transparent 1px 44px),
+        linear-gradient(175deg, #0c1017 0%, #090c11 55%, #07090d 100%) !important;
+    }
+    #background::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+      opacity: 0.05;
+      mix-blend-mode: overlay;
+    }
+    /* Signal strip: 2px accent scanline pinned to the top of the viewport */
+    body::before {
+      content: "";
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      z-index: 70;
+      pointer-events: none;
+      background: linear-gradient(90deg, transparent 2%, rgb(var(--accent) / 0.85) 18%,
+        rgb(var(--accent) / 0.25) 55%, transparent 92%);
+    }
+
+    ::selection { background: rgb(var(--accent) / 0.3); color: #fff; }
+    :focus-visible { outline: 2px solid rgb(var(--accent) / 0.7); outline-offset: 2px; }
+
+    /* Base type: full-mono board (terminal), display face for headings */
+    html, body { font-family: var(--font-mono); letter-spacing: 0; }
+
+    /* Group headers: editorial rule — glowing tick, tracked caps, hairline */
+    .service-group-name, .bookmark-group-name {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      font-family: var(--font-display) !important;
+      font-size: 0.8rem !important;
+      font-weight: 600 !important;
+      text-transform: uppercase;
+      letter-spacing: 0.24em;
+      color: rgb(var(--color-100)) !important;
+    }
+    .service-group-name::before, .bookmark-group-name::before {
+      content: "";
+      flex: none;
+      width: 8px;
+      height: 8px;
+      margin-right: 0.7em;
+      background: rgb(var(--accent));
+      box-shadow: 0 0 10px rgb(var(--accent) / 0.8);
+    }
+    .service-group-name::after, .bookmark-group-name::after {
+      content: "";
+      flex: 1 1 0%;
+      height: 1px;
+      margin-left: 0.9em;
+      background: linear-gradient(90deg, rgb(var(--accent) / 0.55), rgb(var(--line) / 0.08) 45%, transparent 95%);
+    }
+
+    /* Service cards: notched panel (clipped top-right corner), hairline
+       border, accent glow on hover */
+    .service-card {
+      border-radius: 3px !important;
+      border: 1px solid rgb(var(--line) / 0.07);
+      background: linear-gradient(180deg, rgb(var(--panel) / 0.92), rgb(var(--panel) / 0.78)) !important;
+      clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+      box-shadow: inset 0 1px 0 rgb(var(--line) / 0.04);
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+    }
+    .service-card::before {
+      content: "";
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 2px;
+      background: linear-gradient(180deg, rgb(var(--accent) / 0), rgb(var(--accent) / 0.5), rgb(var(--accent) / 0));
+      opacity: 0;
+      transition: opacity 0.18s ease;
+    }
+    .service-card:hover {
+      border-color: rgb(var(--accent) / 0.55);
+      box-shadow: 0 0 0 1px rgb(var(--accent) / 0.25), 0 6px 22px rgb(var(--accent) / 0.1),
+        inset 0 1px 0 rgb(var(--line) / 0.05);
+      transform: translateY(-1px);
+    }
+    .service-card:hover::before { opacity: 1; }
+    .service-name {
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 0.78rem !important;
+      letter-spacing: 0.02em;
+    }
+    .service-description {
+      font-family: var(--font-mono);
+      font-size: 0.66rem !important;
+      letter-spacing: 0.01em;
+      color: rgb(var(--color-400)) !important;
+    }
+
+    /* Bookmarks: same voice, quieter volume */
+    .bookmark-name { font-family: var(--font-mono); font-weight: 500; letter-spacing: 0.03em; }
+    .bookmark-description { font-family: var(--font-mono); color: rgb(var(--color-400)) !important; }
+    #bookmarks a:hover .bookmark-name { color: rgb(var(--accent)); }
+
+    /* Information widget strip: mono metrics + accent-fade baseline rule */
+    #information-widgets { font-family: var(--font-mono); position: relative; padding-bottom: 0.9rem; }
+    #information-widgets::after {
+      content: "";
+      position: absolute;
+      left: 2rem; right: 2rem; bottom: 0;
+      height: 1px;
+      background: linear-gradient(90deg, rgb(var(--accent) / 0.5), rgb(var(--line) / 0.06) 30%, transparent 90%);
+    }
+    .information-widget-greeting {
+      font-family: var(--font-display) !important;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.26em;
+      color: rgb(var(--color-100));
+      text-shadow: 0 0 18px rgb(var(--accent) / 0.35);
+    }
+    .information-widget-greeting::before { content: "// "; color: rgb(var(--accent)); }
+    .information-widget-datetime {
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+      color: rgb(var(--color-300));
+    }
+    .information-widget-kubernetes, .information-widget-openmeteo { font-size: 0.72rem; }
+    #information-widgets input { font-family: var(--font-mono); font-size: 0.8rem; }
+
+    /* Tabs (if a board ever declares them) */
+    #myTab button { font-family: var(--font-display); text-transform: uppercase; letter-spacing: 0.15em; }
+
+    /* Footer: recede until pointed at (version row is hidden via settings) */
+    #footer { opacity: 0.55; transition: opacity 0.2s ease; }
+    #footer:hover { opacity: 1; }
+
+    /* Board chip: fixed corner identity tag (element injected by custom.js) */
+    #board-chip {
+      position: fixed;
+      right: 14px; bottom: 12px;
+      z-index: 60;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px 5px 9px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.28em;
+      color: rgb(var(--color-200) / 0.9);
+      border: 1px solid rgb(var(--accent) / 0.45);
+      background: rgb(11 14 20 / 0.78);
+      backdrop-filter: blur(6px);
+      clip-path: polygon(8px 0, 100% 0, 100% 100%, 0 100%, 0 8px);
+      pointer-events: none;
+      user-select: none;
+    }
+    #board-chip-dot {
+      width: 6px; height: 6px;
+      background: rgb(var(--accent));
+      box-shadow: 0 0 8px rgb(var(--accent) / 0.9);
+    }
+
+    /* Sparse boards (data/llm/obs/home/apps): centered, capped width,
+       larger cards — curated landing pads, not empty grids */
+    :root[data-board="data"] #services, :root[data-board="data"] #layout-groups, :root[data-board="data"] #bookmarks,
+    :root[data-board="llm"] #services, :root[data-board="llm"] #layout-groups, :root[data-board="llm"] #bookmarks,
+    :root[data-board="obs"] #services, :root[data-board="obs"] #layout-groups, :root[data-board="obs"] #bookmarks,
+    :root[data-board="home"] #services, :root[data-board="home"] #layout-groups, :root[data-board="home"] #bookmarks,
+    :root[data-board="apps"] #services, :root[data-board="apps"] #layout-groups, :root[data-board="apps"] #bookmarks {
+      justify-content: center;
+    }
+    :root[data-board="data"] .services-group, :root[data-board="llm"] .services-group,
+    :root[data-board="obs"] .services-group, :root[data-board="home"] .services-group,
+    :root[data-board="apps"] .services-group {
+      flex: 0 1 720px !important;
+      max-width: 720px;
+    }
+    :root[data-board="data"] .service-card, :root[data-board="llm"] .service-card,
+    :root[data-board="obs"] .service-card, :root[data-board="home"] .service-card,
+    :root[data-board="apps"] .service-card {
+      padding: 0.45rem 0.55rem;
+    }
+    :root[data-board="data"] .service-name, :root[data-board="llm"] .service-name,
+    :root[data-board="obs"] .service-name, :root[data-board="home"] .service-name,
+    :root[data-board="apps"] .service-name {
+      font-size: 0.9rem !important;
+    }
+    :root[data-board="data"] .service-description, :root[data-board="llm"] .service-description,
+    :root[data-board="obs"] .service-description, :root[data-board="home"] .service-description,
+    :root[data-board="apps"] .service-description {
+      font-size: 0.72rem !important;
+    }
+
+    /* Entrance: one staggered rise on load; honors reduced-motion */
+    @keyframes ctl-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+    @keyframes ctl-fade { from { opacity: 0; } }
+    @keyframes ctl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+    @media (prefers-reduced-motion: no-preference) {
+      #information-widgets { animation: ctl-fade 0.6s ease-out both; }
+      .services-group { animation: ctl-rise 0.55s cubic-bezier(0.2, 0.7, 0.3, 1) backwards; }
+      .services-group:nth-child(1) { animation-delay: 0.04s; }
+      .services-group:nth-child(2) { animation-delay: 0.08s; }
+      .services-group:nth-child(3) { animation-delay: 0.12s; }
+      .services-group:nth-child(4) { animation-delay: 0.16s; }
+      .services-group:nth-child(5) { animation-delay: 0.2s; }
+      .services-group:nth-child(6) { animation-delay: 0.24s; }
+      .services-group:nth-child(7) { animation-delay: 0.28s; }
+      .services-group:nth-child(8) { animation-delay: 0.32s; }
+      .services-group:nth-child(n+9) { animation-delay: 0.36s; }
+      #board-chip-dot { animation: ctl-pulse 2.4s ease-in-out infinite; }
+    }
+
+  custom.js: |
+    /* CATALYST CONTROL ROOM — board identity.
+       Derives the board from the subdomain (llm.homepage.talos00 -> "llm";
+       bare homepage.talos00 -> "master"), stamps <html data-board="..."> for
+       the per-board CSS accent, and mounts the corner board chip.
+       Defensive: must never break the dashboard. */
+    (function () {
+      try {
+        var sub = (window.location.hostname.split(".")[0] || "").toLowerCase();
+        var board = sub === "homepage" || sub === "localhost" || sub === "" ? "master" : sub;
+        document.documentElement.setAttribute("data-board", board);
+        var mount = function () {
+          if (document.getElementById("board-chip") || !document.body) return;
+          var chip = document.createElement("div");
+          chip.id = "board-chip";
+          var dot = document.createElement("span");
+          dot.id = "board-chip-dot";
+          chip.appendChild(dot);
+          chip.appendChild(document.createTextNode("catalyst / " + board));
+          document.body.appendChild(chip);
+        };
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", mount);
+        } else {
+          mount();
+        }
+      } catch (e) {
+        /* no-op */
+      }
+    })();

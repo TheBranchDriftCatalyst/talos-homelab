@@ -1,0 +1,150 @@
+---
+# Tdarr Server PVs - pointing to existing data on Synology NFS
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: tdarr-config-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: tdarr-appdata
+  claimRef:
+    namespace: tdarr
+    name: tdarr-config
+  nfs:
+    server: 192.168.1.36
+    path: /volume1/appdata/media/tdarr-config
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: tdarr-server-pv
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: tdarr-appdata
+  claimRef:
+    namespace: tdarr
+    name: tdarr-server
+  nfs:
+    server: 192.168.1.36
+    path: /volume1/appdata/media/tdarr-server
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: tdarr-logs-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: tdarr-appdata
+  claimRef:
+    namespace: tdarr
+    name: tdarr-logs
+  nfs:
+    server: 192.168.1.36
+    path: /volume1/appdata/media/tdarr-logs
+---
+# Tdarr Server PVCs - bound to existing NFS data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tdarr-config
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: tdarr-appdata
+  volumeName: tdarr-config-pv
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tdarr-server
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: tdarr-appdata
+  volumeName: tdarr-server-pv
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tdarr-logs
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: tdarr-appdata
+  volumeName: tdarr-logs-pv
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Tdarr-specific PVs for NFS media access
+# These point to the same NFS paths as media namespace but are bound to tdarr namespace
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: tdarr-synology-movies
+spec:
+  capacity:
+    storage: 30Ti
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: tdarr-nfs
+  claimRef:
+    namespace: tdarr
+    name: synology-movies
+  nfs:
+    server: 192.168.1.36
+    path: /volume1/media/movies
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: tdarr-synology-tv
+spec:
+  capacity:
+    storage: 30Ti
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: tdarr-nfs
+  claimRef:
+    namespace: tdarr
+    name: synology-tv
+  nfs:
+    server: 192.168.1.36
+    path: /volume1/media/tv
+---
+# Media access PVCs bound to tdarr-specific PVs
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-movies
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: tdarr-nfs
+  volumeName: tdarr-synology-movies
+  resources:
+    requests:
+      storage: 30Ti
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-tv
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: tdarr-nfs
+  volumeName: tdarr-synology-tv
+  resources:
+    requests:
+      storage: 30Ti

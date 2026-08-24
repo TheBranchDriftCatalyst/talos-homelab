@@ -1,0 +1,258 @@
+# Browser Agent Tiltfile
+# Generic browser automation with multiple modes (Poisonarr, Researcher, Monitor)
+#
+# Usage: cd applications/poisonarr && tilt up
+#
+# Features:
+#   - ReAct pattern browser agent
+#   - Local Ollama LLM
+#   - Real-time monitoring UI
+#   - Always headless (no visible browser)
+
+load('ext://uibutton', 'cmd_button')
+
+# Configuration
+LABEL_AGENT = '1-poisonarr'
+LABEL_BUILD = '2-build'
+LABEL_TEST = '3-testing'
+CONFIG_PATH = '../dev-config.yaml'
+
+# ============================================
+# Local Ollama (Mac)
+# ============================================
+
+local_resource(
+    'ollama-local',
+    serve_cmd='pkill -f "ollama serve" 2>/dev/null; sleep 1; OLLAMA_HOST=0.0.0.0:11434 ollama serve',
+    readiness_probe=probe(
+        http_get=http_get_action(port=11434, path='/'),
+        initial_delay_secs=3,
+        period_secs=5,
+    ),
+    labels=[LABEL_AGENT],
+    auto_init=True,
+    allow_parallel=True,
+    links=[
+        link('http://localhost:11434', 'Ollama API'),
+    ],
+)
+
+# ============================================
+# SearXNG Search Engine
+# ============================================
+
+local_resource(
+    'searxng',
+    serve_cmd='''
+        docker rm -f searxng 2>/dev/null || true
+        docker run --rm --name searxng \
+            -p 8888:8080 \
+            -e SEARXNG_BASE_URL=http://localhost:8888 \
+            searxng/searxng:latest
+    ''',
+    readiness_probe=probe(
+        http_get=http_get_action(port=8888, path='/'),
+        initial_delay_secs=5,
+        period_secs=10,
+    ),
+    labels=[LABEL_AGENT],
+    auto_init=True,
+    links=[
+        link('http://localhost:8888', 'SearXNG Search'),
+    ],
+)
+
+# ============================================
+# Install Dependencies
+# ============================================
+
+local_resource(
+    'install-deps',
+    cmd='''
+        cd src && \
+        python3 -m venv .venv && \
+        source .venv/bin/activate && \
+        pip install -q -r requirements.txt && \
+        playwright install chromium && \
+        echo "Dependencies installed"
+    ''',
+    deps=['./src/requirements.txt'],
+    labels=[LABEL_AGENT],
+    auto_init=True,
+)
+
+# ============================================
+# Main Agent (Headless)
+# ============================================
+
+local_resource(
+    'browser-agent',
+    serve_cmd='''
+        cd src && \
+        source .venv/bin/activate && \
+        export CONFIG_PATH=''' + CONFIG_PATH + ''' && \
+        export UI_PORT=8080 && \
+        export AGENT_MODE=poisonarr && \
+        python -u entrypoint.py
+    ''',
+    deps=[
+        './src/browser_agent',
+        './src/entrypoint.py',
+        './dev-config.yaml',
+    ],
+    labels=[LABEL_AGENT],
+    resource_deps=['install-deps', 'ollama-local', 'searxng'],
+    links=[
+        link('http://localhost:8080', 'Browser Agent UI'),
+        link('http://localhost:11434', 'Ollama API'),
+    ],
+)
+
+# ============================================
+# Test Buttons
+# ============================================
+
+cmd_button(
+    name='btn-test-llm',
+    resource='browser-agent',
+    argv=['sh', '-c', '''
+        cd src && \
+        source .venv/bin/activate && \
+        export CONFIG_PATH=''' + CONFIG_PATH + ''' && \
+        python -c "
+from browser_agent.config import BrowserAgentConfig
+from browser_agent.core.navigator import Navigator
+
+config = BrowserAgentConfig.load()
+nav = Navigator(model=config.navigator_model)
+
+print('Navigator model:', config.navigator_model)
+print('Reasoner model:', config.reasoner_model)
+print('Config loaded successfully!')
+"
+    '''],
+    text='Test Config',
+    icon_name='psychology'
+)
+
+cmd_button(
+    name='btn-test-snapshot',
+    resource='browser-agent',
+    argv=['sh', '-c', '''
+        cd src && \
+        source .venv/bin/activate && \
+        python -c "
+import asyncio
+from playwright.async_api import async_playwright
+
+async def test():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.goto('https://news.ycombinator.com')
+        snapshot = await page.accessibility.snapshot()
+        print('Accessibility Snapshot (first 2000 chars):')
+        print(str(snapshot)[:2000])
+        await browser.close()
+
+asyncio.run(test())
+"
+    '''],
+    text='Test Accessibility Snapshot',
+    icon_name='visibility'
+)
+
+# ============================================
+# Docker Build
+# ============================================
+
+local_resource(
+    'docker-build',
+    cmd='echo "Docker build ready"',
+    labels=[LABEL_BUILD],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-docker-build',
+    resource='docker-build',
+    argv=['sh', '-c', '''
+        cd src && \
+        docker build -t registry.talos00:5000/poisonarr:latest . && \
+        echo "Built: registry.talos00:5000/poisonarr:latest"
+    '''],
+    text='Build Image',
+    icon_name='build'
+)
+
+cmd_button(
+    name='btn-docker-push',
+    resource='docker-build',
+    argv=['sh', '-c', '''
+        kubectl port-forward -n registry svc/nexus-docker 5000:5000 &
+        PF_PID=$!
+        sleep 2
+        cd src && \
+        docker build -t localhost:5000/poisonarr:latest . && \
+        docker push localhost:5000/poisonarr:latest && \
+        echo "Pushed to registry"
+        kill $PF_PID 2>/dev/null
+    '''],
+    text='Build & Push',
+    icon_name='cloud_upload'
+)
+
+# ============================================
+# Cluster Deployment
+# ============================================
+
+local_resource(
+    'deploy-cluster',
+    cmd='echo "Cluster deployment ready"',
+    labels=[LABEL_BUILD],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-deploy',
+    resource='deploy-cluster',
+    argv=['sh', '-c', '''
+        kubectl apply -k base/ && \
+        kubectl rollout status deploy/poisonarr -n poisonarr --timeout=120s && \
+        echo "Deployed to cluster"
+    '''],
+    text='Deploy',
+    icon_name='rocket_launch'
+)
+
+cmd_button(
+    name='btn-logs',
+    resource='deploy-cluster',
+    argv=['sh', '-c', 'kubectl logs -n poisonarr deploy/poisonarr -f --tail=50'],
+    text='Pod Logs',
+    icon_name='description'
+)
+
+# ============================================
+# Testing
+# ============================================
+
+local_resource(
+    'tests',
+    cmd='echo "Tests ready"',
+    labels=[LABEL_TEST],
+    auto_init=False,
+)
+
+cmd_button(
+    name='btn-lint',
+    resource='tests',
+    argv=['sh', '-c', '''
+        cd src && \
+        source .venv/bin/activate && \
+        pip install -q ruff && \
+        ruff check browser_agent/ entrypoint.py
+    '''],
+    text='Lint',
+    icon_name='rule'
+)

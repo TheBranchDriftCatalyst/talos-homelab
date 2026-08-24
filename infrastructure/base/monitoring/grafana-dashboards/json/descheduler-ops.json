@@ -1,0 +1,937 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "panels": [],
+      "title": "Balance \u2014 what the descheduler acts on",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 2,
+      "title": "Pods per node vs the 200 ceiling",
+      "type": "timeseries",
+      "description": "THE core panel. The descheduler's LowNodeUtilization plugin balances on this. Before 2026-08-21 the ceiling was 110 and talos02-gpu sat at 109 \u2014 a node at maxPods REJECTS new pods, which silently cancelled 22 Velero PodVolumeBackups a night and made the daily backup PartiallyFailed for 3 days. maxPods is now 200. The hard limit is the per-node /24 pod CIDR (254 usable), so ~240 is the absolute ceiling; above that kubelet admits pods Cilium cannot address and they wedge in ContainerCreating. See TALOS-d5b5.",
+      "gridPos": {
+        "h": 9,
+        "w": 14,
+        "x": 0,
+        "y": 1
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count by (node) (kube_pod_info{node!=\"\"})",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "max by (node) (kube_node_status_capacity{resource=\"pods\"})",
+          "legendFormat": "capacity",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 3,
+      "title": "Pod utilisation % \u2014 with the action thresholds",
+      "type": "timeseries",
+      "description": "The descheduler classifies each node against these two lines. ABOVE 65% = overutilized, it evicts. BELOW 40% = underutilized, it receives. IN BETWEEN = left alone deliberately. A flat run with everything in-band and zero evictions is the intended steady state, NOT a broken balancer.",
+      "gridPos": {
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 1
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "100 * (count by (node) (kube_pod_info{node!=\"\"})) / on(node) group_left() (max by (node) (kube_node_status_capacity{resource=\"pods\"}))",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "vector(65)",
+          "legendFormat": "target: evict above",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "vector(40)",
+          "legendFormat": "threshold: receive below",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 10
+      },
+      "id": 4,
+      "panels": [],
+      "title": "Descheduler runs",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 5,
+      "title": "Last run",
+      "type": "stat",
+      "description": "Seconds since the CronJob last fired. Schedule is 17 * * * * restricted to hours 0-1 and 7-23, so a gap of up to ~6h overnight is EXPECTED \u2014 hours 2-6 are deliberately skipped to stay clear of the Velero backup window.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 11
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "time() - max(kube_cronjob_status_last_schedule_time{cronjob=\"descheduler\"})",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 7200
+              },
+              {
+                "color": "red",
+                "value": 25200
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 6,
+      "title": "Runs succeeded (24h)",
+      "type": "stat",
+      "description": "Completed descheduler Jobs in the last 24h. With hours 2-6 skipped, expect roughly 19/day.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 11
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(kube_job_status_succeeded{namespace=\"descheduler\"}[24h]))",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 7,
+      "title": "Runs FAILED (24h)",
+      "type": "stat",
+      "description": "Any non-zero value means the descheduler could not complete \u2014 most likely RBAC or an API change. It fails CLOSED (no evictions), so this is a silent-degradation signal, not an outage.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 11
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(increase(kube_job_status_failed{namespace=\"descheduler\"}[24h]))",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 8,
+      "title": "Spread (max-min pods/node)",
+      "type": "stat",
+      "description": "Crude balance score: gap between the fullest and emptiest node. It will NOT go to zero \u2014 talos00 is a tainted control-plane, and on the busiest node ~39 of 109 pods are structurally immovable (13 DaemonSet, 23 nodeSelector-pinned, 3 local-path PVC). Watch the trend, not the absolute value.",
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 11
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "max(count by (node) (kube_pod_info{node!=\"\"})) - min(count by (node) (kube_pod_info{node!=\"\"}))",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 120
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 9,
+      "panels": [],
+      "title": "Effect \u2014 did anything actually move?",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 10,
+      "title": "Pod churn per node (creations/5m)",
+      "type": "timeseries",
+      "description": "A spike on one node with a matching dip elsewhere is a rebalance landing. Sustained churn everywhere is NOT the descheduler \u2014 with maxNoOfPodsToEvictTotal:3 it can move at most 3 pods per run, so it can never be the cause of large-scale churn.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (node) (changes(kube_pod_created[5m]) * on(pod,namespace) group_left() kube_pod_info)",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 11,
+      "title": "Pods per node \u2014 stacked",
+      "type": "timeseries",
+      "description": "Total scheduled load and how it is distributed. The total should stay flat across a rebalance \u2014 pods move between nodes, they are not created or destroyed.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count by (node) (kube_pod_info{node!=\"\"})",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 45,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "id": 12,
+      "panels": [],
+      "title": "Guardrails \u2014 what it must never touch",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 13,
+      "title": "Immovable pods by class (per node)",
+      "type": "timeseries",
+      "description": "DaemonSet pods can never be moved \u2014 one per node by definition. On talos02-gpu these are 13 of 109. Also protected but not charted here: 23 pods pinned by nodeSelector/affinity (nodeFit:true blocks eviction unless another node genuinely satisfies them) and every pod holding a local-path PVC (podProtections by storage class). That last guard is the critical one: local-path uses WaitForFirstConsumer, so the PV is pinned to its node and an evicted pod would be stranded Pending forever.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count by (node) (kube_pod_owner{owner_kind=\"DaemonSet\"} * on(pod,namespace) group_left(node) kube_pod_info)",
+          "legendFormat": "DaemonSet {{node}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "id": 14,
+      "title": "Pending pods (must stay at zero)",
+      "type": "timeseries",
+      "description": "THE regression alarm for this whole feature. If a rebalance strands a pod \u2014 most plausibly one holding a node-pinned local-path PV \u2014 it lands here and stays. A brief blip during normal scheduling is fine; a Pending pod that persists after a descheduler run means a protection failed and should be investigated immediately.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum by (namespace) (kube_pod_status_phase{phase=\"Pending\"} > 0)",
+          "legendFormat": "{{namespace}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 15,
+      "panels": [],
+      "title": "Run output (read straight from the descheduler's own logs via Loki)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "id": 16,
+      "type": "timeseries",
+      "title": "Pods evicted per run",
+      "description": "Parsed from the descheduler's own summary line, which it prints at the end of every run:\n  \"Number of evictions/requests\" totalEvicted=N evictionRequests=N\n\nNo pushgateway and no extra CronJob: Alloy already ships every pod's stdout to Loki, so the run output is in Loki the moment the job exits. Piggybacking on that stream means there is nothing extra to keep alive, and it cannot silently stop working while the descheduler itself keeps running.\n\nZero is the expected value. maxNoOfPodsToEvictTotal is 3, so this series is hard-capped at 3 per run by design.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "A",
+          "expr": "sum(max_over_time({namespace=\"descheduler\"} |= \"Number of evictions/requests\" | regexp \"totalEvicted=(?P<evicted>[0-9]+)\" | unwrap evicted [$__auto]))",
+          "legendFormat": "pods evicted"
+        }
+      ],
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "sum"
+          ],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 1,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "id": 17,
+      "type": "logs",
+      "title": "Node classification + eviction decisions",
+      "description": "The lines that explain WHY a run did or did not act:\n  \"Node has been classified\" category=underutilized|overutilized node=...\n  \"Number of underutilized nodes\" / \"Number of overutilized nodes\"\n  \"All nodes are under target utilization, nothing to do here\"\n  \"Total number of evictions/requests\"\n\nThis is the panel to read when the balance graphs look skewed but nothing moved \u2014 it states the classification the descheduler actually made, rather than leaving you to infer it from pod counts.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "A",
+          "expr": "{namespace=\"descheduler\"} |~ \"has been classified|Number of (under|over)utilized|nothing to do here|Total number of evictions|evicted\""
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "id": 18,
+      "type": "timeseries",
+      "title": "Nodes classified under/over utilized",
+      "description": "How many nodes each run put in each bucket. 'overutilized' rising above zero is the leading indicator that a rebalance is about to happen \u2014 and the only condition under which this descheduler ever evicts anything.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "A",
+          "expr": "sum(max_over_time({namespace=\"descheduler\"} |= \"Number of underutilized nodes\" | regexp \"totalNumber=(?P<n>[0-9]+)\" | unwrap n [$__auto]))",
+          "legendFormat": "underutilized"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "B",
+          "expr": "sum(max_over_time({namespace=\"descheduler\"} |= \"Number of overutilized nodes\" | regexp \"totalNumber=(?P<n>[0-9]+)\" | unwrap n [$__auto]))",
+          "legendFormat": "overutilized"
+        }
+      ],
+      "options": {
+        "legend": {
+          "calcs": [
+            "max",
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "showPoints": "auto",
+            "spanNulls": true,
+            "stepAfter": true
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "id": 19,
+      "type": "logs",
+      "title": "Errors and skipped evictions",
+      "description": "Anything that went wrong, plus evictions the guards BLOCKED. A pod refused because of a PodDisruptionBudget, a local-path PVC protection, or nodeFit failing to find a home appears here \u2014 that is the descheduler working correctly, not an error. Persistent genuine errors (RBAC, API changes) mean it is failing CLOSED: no evictions happen and nothing else complains, which is exactly the kind of silent degradation this panel exists to surface.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "editorMode": "code",
+          "queryType": "range",
+          "refId": "A",
+          "expr": "{namespace=\"descheduler\"} |~ \"(?i)\\\\berror\\\\b|failed|cannot|denied|violat|skipping|not evict\""
+        }
+      ],
+      "options": {
+        "dedupStrategy": "exact",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": true
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      }
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": [
+    "descheduler",
+    "scheduling",
+    "capacity",
+    "talos"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "Descheduler / Node Balance",
+  "uid": "descheduler-ops",
+  "version": 1
+}

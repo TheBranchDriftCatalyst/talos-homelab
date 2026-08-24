@@ -1,0 +1,146 @@
+---
+# crowdsec-web-ui (TheDuffman85/crowdsec-web-ui) — a lightweight LAPI-connected local UI to view
+# alerts/decisions/metrics + manual bans, until the CrowdSec Console is enrolled (TALOS-5of).
+# Reaches the LAPI (crowdsec-service:8080) as the pre-registered `crowdsec-web-ui` machine.
+# NOTE: the machine credential (secret crowdsec-web-ui-creds) is currently registered imperatively
+# (cscli machines add) — re-register if the LAPI DB is ever wiped; GitOps-ify via 1Password later.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: crowdsec-web-ui-data
+  namespace: crowdsec
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crowdsec-web-ui
+  namespace: crowdsec
+  labels:
+    app: crowdsec-web-ui
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # RWO PVC
+  selector:
+    matchLabels:
+      app: crowdsec-web-ui
+  template:
+    metadata:
+      labels:
+        app: crowdsec-web-ui
+    spec:
+      # No control-plane toleration → stays OFF the small talos00 node, schedules on a worker. (TALOS-pbn)
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+        - name: web-ui
+          image: ghcr.io/theduffman85/crowdsec-web-ui:latest
+          ports:
+            - {name: http, containerPort: 3000}
+          env:
+            - {name: CONFIG_INSTANCE_LAPI_URL, value: "http://crowdsec-service.crowdsec.svc.cluster.local:8080"}
+            - {name: CONFIG_INSTANCE_LAPI_AUTH_USERNAME, value: "crowdsec-web-ui"}
+            - name: CONFIG_INSTANCE_LAPI_AUTH_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: crowdsec-web-ui-creds, key: password}
+            # Prometheus :6060 endpoints (level: full) for the Metrics tab. Split across the 3
+            # chart components — 0=LAPI/remediation, 1=agent/log-processor+parser+whitelist, 2=AppSec.
+            # CONFIG_INSTANCE_METRICS_URL (legacy singular) and
+            # CONFIG_INSTANCES_0_METRICS_0_URL are THE SAME SETTING — the app refuses
+            # to start if both are set:
+            #   "both CONFIG_INSTANCE_METRICS_URL and CONFIG_INSTANCES_0_METRICS_0_URL
+            #    target the same setting. Set only one."
+            # Using the indexed form so all three entries (lapi / log-processor /
+            # appsec) are declared consistently.
+            - {name: CONFIG_INSTANCES_0_METRICS_0_URL, value: "http://crowdsec-service.crowdsec.svc.cluster.local:6060/metrics"}
+            - {name: CONFIG_INSTANCES_0_METRICS_0_ID, value: "lapi"}
+            - {name: CONFIG_INSTANCES_0_METRICS_0_NAME, value: "LAPI"}
+            - {name: CONFIG_INSTANCES_0_METRICS_1_URL, value: "http://crowdsec-agent-service.crowdsec.svc.cluster.local:6060/metrics"}
+            - {name: CONFIG_INSTANCES_0_METRICS_1_ID, value: "log-processor"}
+            - {name: CONFIG_INSTANCES_0_METRICS_1_NAME, value: "Log-processor"}
+            - {name: CONFIG_INSTANCES_0_METRICS_2_URL, value: "http://crowdsec-appsec-service.crowdsec.svc.cluster.local:6060/metrics"}
+            - {name: CONFIG_INSTANCES_0_METRICS_2_ID, value: "appsec"}
+            - {name: CONFIG_INSTANCES_0_METRICS_2_NAME, value: "AppSec"}
+          volumeMounts:
+            - {name: data, mountPath: /app/data}
+          readinessProbe:
+            httpGet: {path: /, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: crowdsec-web-ui-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crowdsec-web-ui
+  namespace: crowdsec
+  labels:
+    app: crowdsec-web-ui
+spec:
+  selector:
+    app: crowdsec-web-ui
+  ports:
+    - {name: http, port: 3000, targetPort: http}
+---
+# LAN-only + Authentik forward-auth SSO: https://crowdsec.talos00 (TALOS-xgrl.14).
+# lan-only restricts to the LAN; the `authentik` forward-auth middleware then gates on the
+# talos-admin (or cluster-admin) group. TLS: default TLSStore serves the *.talos00 wildcard
+# via SNI. DOUBLE-LOGIN: crowdsec-web-ui has its OWN LAPI machine console login — SSO gates
+# the page, but the web-ui still presents its own login (inherent, no declarative suppression).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: crowdsec-web-ui
+  namespace: crowdsec
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "CrowdSec"
+    gethomepage.dev/description: "IPS decisions, alerts + metrics (local, pre-Console)"
+    gethomepage.dev/group: "Infrastructure"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`crowdsec.talos00`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: crowdsec-web-ui
+          port: 3000
+---
+# HTTP→HTTPS redirect for crowdsec.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: crowdsec-web-ui-http
+  namespace: crowdsec
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`crowdsec.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: crowdsec-web-ui
+          port: 3000

@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: headlamp
+  namespace: infra-control
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: headlamp
+# SEV-2 (TALOS-xgrl.7): was cluster-admin. Bound to the built-in read-only `view`
+# role (excludes secrets + RBAC). Headlamp is now behind Authentik SSO + TLS. If
+# interactive edits are needed, bump to `edit` (still excludes secrets/cluster-admin).
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: headlamp
+    namespace: infra-control
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: headlamp
+  namespace: infra-control
+  labels:
+    app: headlamp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: headlamp
+  template:
+    metadata:
+      labels:
+        app: headlamp
+    spec:
+      serviceAccountName: headlamp
+      containers:
+        - name: headlamp
+          image: ghcr.io/headlamp-k8s/headlamp:v0.44.0 # pinned (was :latest) — TALOS-xgrl.7
+          ports:
+            - containerPort: 4466
+              name: http
+          env:
+            - name: HEADLAMP_CONFIG_BASE_URL
+              value: ''
+            - name: HEADLAMP_CONFIG_IN_CLUSTER
+              value: 'true'
+          resources:
+            requests:
+              memory: '64Mi'
+              cpu: '25m'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: headlamp
+  namespace: infra-control
+  labels:
+    app: headlamp
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 4466
+      protocol: TCP
+      name: http
+  selector:
+    app: headlamp

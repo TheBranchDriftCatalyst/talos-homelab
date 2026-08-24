@@ -1,0 +1,1093 @@
+---
+# Grafana Alloy - Unified telemetry collector
+# Replaces: OTEL Collector, Fluent Bit, Grafana Agent
+# Native support for Loki, Tempo, Mimir, Prometheus
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: alloy
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: alloy
+      version: '1.11.1'
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+      interval: 12h
+  values:
+    # Alloy configuration
+    alloy:
+      # HyperDX/ClickStack ingestion key (TALOS-4clh) — ESO-managed secret,
+      # read in the config below via sys.env(). Never inlined in git.
+      extraEnv:
+        - name: HYPERDX_INGESTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hyperdx-ingestion
+              key: ingestion_api_key
+        # Go's default GOGC=100 lets the heap grow to 2x live before it
+        # collects, and RSS follows the GC target, not the live set.
+        # Measured 2026-08-24: live heap 2584Mi, next_gc 5266Mi, RSS 5666Mi
+        # — the GC target IS the RSS. GOMEMLIMIT is a soft ceiling on total
+        # Go runtime memory: the collector runs more often instead of
+        # letting RSS double. Go never OOMs itself on it.
+        # If alloy's live heap ever approaches this, GC thrashes (CPU burn,
+        # not a crash) — that is the signal to cut cardinality again, and
+        # the 8Gi limit below is the backstop for a genuine runaway.
+        - name: GOMEMLIMIT
+          value: "3750MiB"
+      # Resources - Alloy does heavy Prometheus scraping + OTEL collection
+      # 730,891 remote-write WAL series at ~3.7KiB of live heap each is
+      # 2.6Gi of genuine working set; the old 1Gi request was 4x under and
+      # invisible to the scheduler. BURSTABLE: GOMEMLIMIT is the operative
+      # ceiling, the hard limit only fires if GOMEMLIMIT has already failed.
+      resources:
+        requests:
+          cpu: 200m
+          memory: 4Gi
+        limits:
+          memory: 8Gi
+      configMap:
+        create: true
+        content: |
+          // ============================================
+          // OTLP Receivers - Accept telemetry from apps
+          // ============================================
+          otelcol.receiver.otlp "default" {
+            grpc {
+              endpoint = "0.0.0.0:4317"
+            }
+            http {
+              endpoint = "0.0.0.0:4318"
+            }
+
+            output {
+              metrics = [otelcol.processor.batch.default.input]
+              logs    = [otelcol.processor.batch.default.input]
+              traces  = [otelcol.processor.batch.default.input]
+            }
+          }
+
+          // ============================================
+          // Processors
+          // ============================================
+          otelcol.processor.batch "default" {
+            timeout = "10s"
+            send_batch_size = 1024
+
+            output {
+              metrics = [otelcol.exporter.otlphttp.mimir.input]
+              // DUAL-WRITE (TALOS-cjny/xam9): Loki+Tempo keep their pipelines
+              // unchanged; ClickStack gets a copy for SQL analytics and
+              // log<->trace correlation (otel_logs carries TraceId/SpanId).
+              logs    = [
+                otelcol.exporter.loki.default.input,
+                otelcol.exporter.otlphttp.clickstack.input,
+              ]
+              traces  = [
+                otelcol.exporter.otlp.tempo.input,
+                otelcol.exporter.otlphttp.clickstack.input,
+              ]
+            }
+          }
+
+          // ============================================
+          // Exporters
+          // ============================================
+
+          // Logs -> Loki
+          otelcol.exporter.loki "default" {
+            forward_to = [loki.write.default.receiver]
+          }
+
+          loki.write "default" {
+            endpoint {
+              url = "http://loki.monitoring.svc:3100/loki/api/v1/push"
+            }
+          }
+
+          // ============================================
+          // ClickStack / HyperDX (dual-write) — TALOS-cjny / TALOS-xam9
+          // ============================================
+          // Pod logs arrive as LOKI entries, so they need conversion to OTLP
+          // first; OTLP-native logs/traces go straight to the exporter from
+          // otelcol.processor.batch.default.
+          otelcol.receiver.loki "clickstack" {
+            output {
+              logs = [otelcol.processor.batch.clickstack.input]
+            }
+          }
+
+          otelcol.processor.batch "clickstack" {
+            timeout = "10s"
+            // send_batch_max_size MUST be >= send_batch_size. Alloy rejects the
+            // ENTIRE config otherwise and refuses to start — that crashlooped
+            // the collector on 2026-08-15 when only send_batch_size was set.
+            send_batch_size     = 4096
+            send_batch_max_size = 8192
+
+            output {
+              logs = [otelcol.exporter.otlphttp.clickstack.input]
+            }
+          }
+
+          otelcol.exporter.otlphttp "clickstack" {
+            client {
+              endpoint = "http://clickstack-otel-collector.monitoring.svc:4318"
+              tls {
+                insecure = true
+              }
+              // ClickStack secures OTLP ingest with the team's ingestion key
+              // (minted by our own HyperDX, stored in our own MongoDB).
+              headers = {
+                "authorization" = sys.env("HYPERDX_INGESTION_KEY"),
+              }
+            }
+          }
+
+          // Traces -> Tempo
+          otelcol.exporter.otlp "tempo" {
+            client {
+              endpoint = "tempo.monitoring.svc:4317"
+              tls {
+                insecure = true
+              }
+            }
+          }
+
+          // Metrics -> Mimir (via OTLP HTTP)
+          otelcol.exporter.otlphttp "mimir" {
+            client {
+              endpoint = "http://mimir-gateway.monitoring.svc:80/otlp"
+              tls {
+                insecure = true
+              }
+            }
+          }
+
+          // ============================================
+          // Kubernetes Discovery
+          // ============================================
+          discovery.kubernetes "pods" {
+            role = "pod"
+          }
+
+          discovery.kubernetes "nodes" {
+            role = "node"
+          }
+
+          discovery.kubernetes "services" {
+            role = "service"
+          }
+
+          discovery.kubernetes "endpoints" {
+            role = "endpoints"
+          }
+
+          // ============================================
+          // Prometheus Operator CRD Support
+          // ============================================
+          // Scrape targets defined by PodMonitor CRDs
+          // This allows per-namespace or per-app metric collection config
+          prometheus.operator.podmonitors "default" {
+            forward_to = [prometheus.relabel.add_cluster.receiver]
+
+            // Scrape all namespaces (no filter = all)
+            // namespaces = ["vpn-gateway", "monitoring"]
+          }
+
+          // Scrape targets defined by ServiceMonitor CRDs
+          // Standard Prometheus Operator pattern for service discovery
+          prometheus.operator.servicemonitors "default" {
+            forward_to = [prometheus.relabel.add_cluster.receiver]
+
+            // Scrape all namespaces (no filter = all)
+            // namespaces = ["monitoring"]
+          }
+
+          // ============================================
+          // Cluster Log Collection
+          // ============================================
+          // Relabel pod targets to add proper Kubernetes labels for Loki
+          discovery.relabel "pod_logs" {
+            targets = discovery.kubernetes.pods.targets
+
+            // Extract namespace
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            // Extract pod name
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            // Extract container name
+            rule {
+              source_labels = ["__meta_kubernetes_pod_container_name"]
+              target_label  = "container"
+            }
+            // Extract node name
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // Extract app label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app"]
+              target_label  = "app"
+            }
+            // Extract app.kubernetes.io/name label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              target_label  = "app_kubernetes_io_name"
+            }
+            // Extract k8s-app label (for Cilium and system components)
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+              target_label  = "k8s_app"
+            }
+            // Add cluster label
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+            // Add job label for consistency
+            rule {
+              target_label = "job"
+              replacement  = "kubernetes-pods"
+            }
+          }
+
+          loki.source.kubernetes "pods" {
+            targets    = discovery.relabel.pod_logs.output
+            // DUAL-WRITE: same stream to Loki AND (via the loki->OTLP
+            // converter) to ClickStack.
+            forward_to = [
+              loki.write.default.receiver,
+              otelcol.receiver.loki.clickstack.receiver,
+            ]
+          }
+
+          // ============================================
+          // Prometheus Scraping - Cluster Metrics
+          // ============================================
+          // Comprehensive labeling for dashboard compatibility
+          // Based on kube-prometheus-stack patterns
+
+          // ----------------------------------------
+          // Kubelet Metrics
+          // ----------------------------------------
+          discovery.relabel "kubelet" {
+            targets = discovery.kubernetes.nodes.targets
+
+            // Route through k8s API
+            rule {
+              target_label = "__address__"
+              replacement  = "kubernetes.default.svc:443"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              regex         = "(.+)"
+              target_label  = "__metrics_path__"
+              replacement   = "/api/v1/nodes/$1/proxy/metrics"
+            }
+            // Standard labels for dashboards
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "node"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "instance"
+            }
+            // kubernetes_io_hostname for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "kubernetes_io_hostname"
+            }
+            // kubernetes_node for legacy dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "kubernetes_node"
+            }
+            // Cluster label for multi-cluster dashboards
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "kubelet" {
+            job_name        = "kubelet"
+            targets         = discovery.relabel.kubelet.output
+            scheme          = "https"
+            scrape_interval = "60s"
+            bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            tls_config {
+              ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              insecure_skip_verify = true
+            }
+            forward_to = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // cAdvisor Metrics (container-level)
+          // ----------------------------------------
+          discovery.relabel "cadvisor" {
+            targets = discovery.kubernetes.nodes.targets
+
+            rule {
+              target_label = "__address__"
+              replacement  = "kubernetes.default.svc:443"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              regex         = "(.+)"
+              target_label  = "__metrics_path__"
+              replacement   = "/api/v1/nodes/$1/proxy/metrics/cadvisor"
+            }
+            // Node label for node-level aggregation
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "node"
+            }
+            // Instance as node name (not IP)
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "instance"
+            }
+            // kubernetes_io_hostname for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "kubernetes_io_hostname"
+            }
+            // kubernetes_node for legacy dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_node_name"]
+              target_label  = "kubernetes_node"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "cadvisor" {
+            job_name        = "cadvisor"
+            targets         = discovery.relabel.cadvisor.output
+            scheme          = "https"
+            scrape_interval = "60s"
+            bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+            tls_config {
+              ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+              insecure_skip_verify = true
+            }
+            forward_to = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Pod Metrics (prometheus.io/scrape annotated)
+          // ----------------------------------------
+          discovery.relabel "pods" {
+            targets = discovery.kubernetes.pods.targets
+
+            // Only scrape pods with prometheus.io/scrape annotation
+            rule {
+              source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+              regex         = "true"
+              action        = "keep"
+            }
+            // Exclude cilium-operator (handled by dedicated scraper with io_cilium_app label)
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              regex         = "cilium-operator"
+              action        = "drop"
+            }
+            // Use custom path if specified
+            rule {
+              source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_path"]
+              regex         = "(.+)"
+              target_label  = "__metrics_path__"
+            }
+            // Use custom port if specified
+            rule {
+              source_labels = ["__address__", "__meta_kubernetes_pod_annotation_prometheus_io_port"]
+              regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+              replacement   = "$1:$2"
+              target_label  = "__address__"
+            }
+            // Standard Kubernetes labels
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_container_name"]
+              target_label  = "container"
+            }
+            // Node for node-level aggregation
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // App labels for service discovery
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app"]
+              target_label  = "app"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              target_label  = "app_kubernetes_io_name"
+            }
+            // k8s-app label for Cilium and other system components
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+              target_label  = "k8s_app"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "pods" {
+            job_name        = "kubernetes-pods"
+            targets         = discovery.relabel.pods.output
+            scrape_interval = "60s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // kube-state-metrics
+          // ----------------------------------------
+          // NOTE: Do NOT add namespace relabel - kube-state-metrics metrics
+          // already include the correct namespace label for each resource.
+          // Adding a namespace relabel would overwrite it with "monitoring".
+          discovery.relabel "kube_state_metrics" {
+            targets = discovery.kubernetes.services.targets
+
+            rule {
+              source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+              regex         = "kube-state-metrics"
+              action        = "keep"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "kube_state_metrics" {
+            job_name        = "kube-state-metrics"
+            targets         = discovery.relabel.kube_state_metrics.output
+            scrape_interval = "60s"
+            // Honor labels from KSM to preserve namespace, pod, etc.
+            honor_labels    = true
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Node Exporter (node hardware/OS metrics)
+          // ----------------------------------------
+          discovery.relabel "node_exporter" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            rule {
+              source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+              regex         = "prometheus-node-exporter"
+              action        = "keep"
+            }
+            // Use node name as instance (instead of IP:port)
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "instance"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // kubernetes_io_hostname for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "kubernetes_io_hostname"
+            }
+            // kubernetes_node for legacy dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "kubernetes_node"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "node_exporter" {
+            // Use kubernetes-service-endpoints job name for dashboard compatibility
+            job_name        = "kubernetes-service-endpoints"
+            targets         = discovery.relabel.node_exporter.output
+            scrape_interval = "60s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Hubble Metrics (Cilium network flow metrics)
+          // ----------------------------------------
+          discovery.relabel "hubble_metrics" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only hubble-metrics service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "hubble-metrics"
+              action        = "keep"
+            }
+            // Endpoints-role SD also emits targets for the backing pods' OTHER
+            // declared container ports (cilium agents declare several that are
+            // closed or non-HTTP) — and the instance=pod-name relabel below
+            // collapsed good+phantom targets into one name, so 4/5 agents
+            // showed ServiceDown 24/7 while :9965 was perfectly scrapable.
+            // Keep only the service's actual endpoint port.
+            rule {
+              source_labels = ["__meta_kubernetes_endpoint_port_name"]
+              regex         = "hubble-metrics"
+              action        = "keep"
+            }
+            // Pod name label for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            // Node label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // Instance as pod name for dashboard compatibility
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "instance"
+            }
+            // k8s_app label for Cilium/Hubble dashboards
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+              target_label  = "k8s_app"
+            }
+            // Namespace
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            // Service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            // Cluster label
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "hubble_metrics" {
+            job_name        = "hubble"
+            targets         = discovery.relabel.hubble_metrics.output
+            // 30s interval for compatibility with dashboard rate[1m] windows
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Cilium Operator Metrics (port 9963)
+          // ----------------------------------------
+          discovery.relabel "cilium_operator" {
+            targets = discovery.kubernetes.pods.targets
+
+            // Keep only cilium-operator pods
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+              regex         = "cilium-operator"
+              action        = "keep"
+            }
+            // Set metrics port to 9963
+            rule {
+              source_labels = ["__address__"]
+              regex         = "([^:]+)(?::\\d+)?"
+              replacement   = "$1:9963"
+              target_label  = "__address__"
+            }
+            // Pod name label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            // Node label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            // Namespace
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            // Add io_cilium_app label for dashboard compatibility
+            rule {
+              target_label = "io_cilium_app"
+              replacement  = "operator"
+            }
+            // k8s_app label
+            rule {
+              source_labels = ["__meta_kubernetes_pod_label_k8s_app"]
+              target_label  = "k8s_app"
+            }
+            // Cluster label
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "cilium_operator" {
+            job_name        = "cilium-operator"
+            targets         = discovery.relabel.cilium_operator.output
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // ArgoCD Metrics
+          // ----------------------------------------
+          discovery.relabel "argocd" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only argocd-*-metrics services
+            rule {
+              source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_service_name"]
+              regex         = "argocd;argocd-.*-metrics"
+              action        = "keep"
+            }
+            // Endpoints-role SD also emits targets for the backing pods' OTHER
+            // container ports (server :8080 API, repo-server :8081 gRPC) — those
+            // phantom targets can never be scraped and fired ServiceDown 24/7.
+            // Keep only the service's actual endpoint port (named `metrics`).
+            rule {
+              source_labels = ["__meta_kubernetes_endpoint_port_name"]
+              regex         = "metrics"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "argocd" {
+            job_name        = "argocd"
+            targets         = discovery.relabel.argocd.output
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Blackbox Exporter (probe metrics)
+          // ----------------------------------------
+          discovery.relabel "blackbox" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only blackbox exporter service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "prometheus-blackbox-exporter"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "blackbox" {
+            job_name        = "blackbox"
+            targets         = discovery.relabel.blackbox.output
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // Blackbox probe targets - scrape blackbox exporter with target params
+          // Uses static targets with relabeling to set probe targets
+          discovery.relabel "blackbox_probes" {
+            targets = [
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://grafana-service.monitoring:3000", "instance" = "grafana" },
+              // mimir-gateway is the Mimir gateway: it serves 200 on "/" but
+              // 404 on "/ready" (only individual Mimir components expose
+              // /ready). Probing /ready read DOWN (http 404). Use "/". TALOS-5356.
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://mimir-gateway.monitoring:80/", "instance" = "mimir" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://loki.monitoring:3100/ready", "instance" = "loki" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://tempo.monitoring:3200/ready", "instance" = "tempo" },
+              // Traefik dashboard/api/ping are on the `traefik-internal` service
+              // (port 9000). The `traefik` service does not expose 9000, so the
+              // probe hung to the 5s timeout and read DOWN. TALOS-5356.
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://traefik-internal.traefik:9000/ping", "instance" = "traefik" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://argocd-server.argocd:80", "instance" = "argocd" },
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://hubble-ui.kube-system:80", "instance" = "hubble-ui" },
+            ]
+
+            rule {
+              source_labels = ["__param_target"]
+              target_label  = "target"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "blackbox_probes" {
+            job_name        = "blackbox-probes"
+            scrape_interval = "60s"
+            metrics_path    = "/probe"
+            params          = { "module" = ["http_2xx"] }
+            targets         = discovery.relabel.blackbox_probes.output
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Pushgateway Metrics (batch job metrics)
+          // ----------------------------------------
+          discovery.relabel "pushgateway" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only pushgateway service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "prometheus-pushgateway"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "pushgateway" {
+            job_name        = "pushgateway"
+            targets         = discovery.relabel.pushgateway.output
+            scrape_interval = "60s"
+            // Honor labels from pushed metrics (preserves job="pod_cleanup" etc)
+            honor_labels    = true
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // MinIO Metrics (S3-compatible storage)
+          // ----------------------------------------
+          prometheus.scrape "minio" {
+            job_name        = "minio"
+            scrape_interval = "60s"
+            metrics_path    = "/minio/v2/metrics/cluster"
+            targets         = [{ "__address__" = "minio-hl.minio.svc:9000" }]
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Traefik Metrics (Ingress controller)
+          // ----------------------------------------
+          discovery.relabel "traefik" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep only traefik-metrics service
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "traefik-metrics"
+              action        = "keep"
+            }
+            // Keep ONLY the metrics port (9100). The k8s `endpoints` SD role
+            // also surfaces every OTHER container port of the pods backing the
+            // traefik-metrics service (80/443/1080/8080/9000/7687) as targets —
+            // none of those serve /metrics, so ~25 phantom targets (5 non-metrics
+            // ports x 5 pods) stay permanently up==0 and inflate the ServiceDown
+            // alert. Filtering on the metrics port keeps only the real /metrics
+            // endpoint. (TALOS-xgrl.11)
+            rule {
+              source_labels = ["__address__"]
+              regex         = "(.+):9100"
+              action        = "keep"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_name"]
+              target_label  = "pod"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "traefik" {
+            job_name        = "traefik"
+            targets         = discovery.relabel.traefik.output
+            scrape_interval = "30s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Service Monitors (prometheus.io annotated services)
+          // ----------------------------------------
+          discovery.relabel "service_monitors" {
+            targets = discovery.kubernetes.endpoints.targets
+
+            // Keep services with prometheus.io/scrape annotation
+            rule {
+              source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_scrape"]
+              regex         = "true"
+              action        = "keep"
+            }
+            // Exclude node-exporter (handled separately)
+            rule {
+              source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+              regex         = "prometheus-node-exporter"
+              action        = "drop"
+            }
+            // Exclude hubble-metrics (handled separately with pod labels)
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "hubble-metrics"
+              action        = "drop"
+            }
+            // Exclude pushgateway (handled separately with honor_labels)
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "prometheus-pushgateway"
+              action        = "drop"
+            }
+            // Exclude blackbox-exporter (handled by dedicated `blackbox` +
+            // `blackbox_probes` scrapes; leaving it enabled here would
+            // double-scrape the `up{}` series and wedge Alloy's WAL with
+            // out-of-order rejects — see AlloyWALSampleRejection alert).
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              regex         = "prometheus-blackbox-exporter"
+              action        = "drop"
+            }
+            // Exclude kube-state-metrics (handled by the dedicated
+            // `kube_state_metrics` scrape above with honor_labels=true). Without
+            // this drop KSM is scraped TWICE: here with honor_labels=false, so
+            // its `namespace` label collides to "monitoring" and the real value
+            // is shoved into `exported_namespace`. That doubled every KSM series
+            // (~491x2), corrupted namespace/node labels forcing every dashboard
+            // to filter job="kube-state-metrics", and threw
+            // err-mimir-sample-duplicate-timestamp WAL rejects. See TALOS-57t.
+            rule {
+              source_labels = ["__meta_kubernetes_service_label_app_kubernetes_io_name"]
+              regex         = "kube-state-metrics"
+              action        = "drop"
+            }
+            // Use custom port if specified
+            rule {
+              source_labels = ["__address__", "__meta_kubernetes_service_annotation_prometheus_io_port"]
+              regex         = "([^:]+)(?::\\d+)?;(\\d+)"
+              replacement   = "$1:$2"
+              target_label  = "__address__"
+            }
+            // Use custom path if specified
+            rule {
+              source_labels = ["__meta_kubernetes_service_annotation_prometheus_io_path"]
+              regex         = "(.+)"
+              target_label  = "__metrics_path__"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_namespace"]
+              target_label  = "namespace"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_service_name"]
+              target_label  = "service"
+            }
+            rule {
+              source_labels = ["__meta_kubernetes_pod_node_name"]
+              target_label  = "node"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+            }
+          }
+
+          prometheus.scrape "service_monitors" {
+            job_name        = "kubernetes-service-endpoints"
+            targets         = discovery.relabel.service_monitors.output
+            scrape_interval = "60s"
+            forward_to      = [prometheus.relabel.add_cluster.receiver]
+          }
+
+          // ----------------------------------------
+          // Common Metric Relabeling
+          // ----------------------------------------
+          // Add cluster label to all metrics (fallback)
+          prometheus.relabel "add_cluster" {
+            // Drop ClickHouse error-string metric pollution. The
+            // clickhouse-operator metrics exporter (clickhouse ns, scraped via
+            // the kubernetes-pods annotation job) emits system.errors as series
+            // whose __name__ is the literal error string, e.g.
+            // `chi_clickhouse_Code:_241__DB::Exception...`. Each distinct error
+            // becomes a new metric name (~133 seen), polluting Mimir's series
+            // index. Legit ClickHouse metrics (chi_clickhouse_event_*,
+            // chi_clickhouse_metric_*, ...) are NOT matched by this regex.
+            // (TALOS-xgrl.11)
+            rule {
+              source_labels = ["__name__"]
+              regex         = "chi_clickhouse_Code.*"
+              action        = "drop"
+            }
+            rule {
+              target_label = "cluster"
+              replacement  = "talos-homelab"
+              action       = "replace"
+            }
+            forward_to = [prometheus.remote_write.mimir.receiver]
+          }
+
+          // ============================================
+          // Remote Write to Mimir
+          // ============================================
+          // WAL bounds (2026-07-15 TALOS-234 root cause fix):
+          // Alloy's default max_keepalive_time is 8h, but during the 30d
+          // meltdown the WAL grew to 30 DAYS of samples that Mimir kept
+          // rejecting as "sample-timestamp-too-old", blocking fresh samples.
+          // Explicit tight bounds guarantee that a Mimir outage of any
+          // duration only backlogs 2h of WAL — after that, samples are
+          // forcibly dropped and fresh scrapes flow again. Trades
+          // recoverability of long outages (>2h) for pipeline liveness.
+          // (Also mitigates alloy/alloy#4038 — default truncate_frequency
+          // reportedly not respected in clustering mode.)
+          prometheus.remote_write "mimir" {
+            endpoint {
+              url = "http://mimir-gateway.monitoring.svc:80/api/v1/push"
+            }
+            wal {
+              truncate_frequency = "15m"
+              min_keepalive_time = "30m"
+              max_keepalive_time = "2h"
+            }
+          }
+
+          // ============================================
+          // Mimir Rules Sync (PrometheusRule CRDs -> Mimir Ruler)
+          // ============================================
+          // Watches PrometheusRule CRDs and syncs them to Mimir's ruler API
+          // This allows recording rules defined in app repos to be automatically
+          // provisioned to Mimir when deployed via ArgoCD/Flux
+          mimir.rules.kubernetes "rules" {
+            address = "http://mimir-gateway.monitoring.svc:80"
+            tenant_id = "anonymous"
+
+            // Sync rules every 30 seconds
+            sync_interval = "30s"
+
+            // Watch all PrometheusRule CRDs in the cluster
+            // No selector = sync all rules
+          }
+
+          // ============================================
+          // Self-monitoring
+          // ============================================
+          prometheus.exporter.self "alloy" {}
+
+          prometheus.scrape "self" {
+            targets         = prometheus.exporter.self.alloy.targets
+            scrape_interval = "60s"
+            forward_to      = [prometheus.remote_write.mimir.receiver]
+          }
+
+      # Extra ports for OTLP
+      extraPorts:
+        - name: otlp-grpc
+          port: 4317
+          targetPort: 4317
+          protocol: TCP
+        - name: otlp-http
+          port: 4318
+          targetPort: 4318
+          protocol: TCP
+
+    # Controller settings
+    controller:
+      type: deployment
+      replicas: 1
+
+    # RBAC for Kubernetes API access (scraping kubelet, pods, etc.)
+    rbac:
+      create: true
+
+    serviceAccount:
+      create: true
+
+    # ClusterRole rules for Prometheus scraping
+    crds:
+      create: false
+
+    # Service
+    service:
+      enabled: true
+      type: ClusterIP
+
+    # ServiceMonitor
+    serviceMonitor:
+      enabled: true
+      additionalLabels:
+        release: kube-prometheus-stack

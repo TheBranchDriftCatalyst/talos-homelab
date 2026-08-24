@@ -1,0 +1,33 @@
+---
+# GrafanaDashboard CR for the Central Cluster Storage dashboard.
+#
+# ONE dashboard for ALL storage across the cluster: node physical disks,
+# PersistentVolumes/PVCs (by storage class), MinIO object storage (per-bucket
+# S3 footprint for Loki/Mimir/Tempo/Dagster), CloudNativePG database sizes,
+# Velero backups, and NAS/NFS free space. Fully label-driven so it adapts as
+# nodes, PVCs and buckets come and go.
+#
+# JSON lives at ../json/central-cluster-storage.json and is packaged into the
+# `dashboard-central-cluster-storage` ConfigMap by the grafana-dashboards
+# kustomization (configMapGenerator, disableNameSuffixHash: true → the plain
+# ConfigMap name below resolves). uid "central-cluster-storage" is stable.
+#
+# Some panels depend on scrape targets added alongside this dashboard:
+#   - MinIO object/bucket panels  -> infrastructure/base/minio (PodMonitor + public metrics)
+#   - NAS/NFS free-space panels    -> infrastructure/base/monitoring/nfs-storage-exporter
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: central-cluster-storage
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folderRef: ops-storage
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-central-cluster-storage
+    key: central-cluster-storage.json

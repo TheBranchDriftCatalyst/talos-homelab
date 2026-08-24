@@ -1,0 +1,27 @@
+---
+# Config PVC - NFS storage (config files, backups)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prowlarr-config
+  labels:
+    app: prowlarr
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 1Gi
+
+# The prowlarr-db-local PVC is GONE (TALOS-93cz). It held the SQLite database on
+# a local-path PV whose nodeAffinity pinned prowlarr to talos02-gpu; the data
+# lives in the arr-postgres CNPG cluster now. Removing it from git is what
+# deletes it -- the arr-stack Kustomization has prune: true. Its PV,
+# rec-media-prowlarr-db-local, was reclaimPolicy: Retain and is not Flux-managed
+# (see recovery/pv-recovery-2026-05-09.yaml, an incident archive), so it was
+# deleted by hand afterwards.
+#
+# Do NOT re-add a local-path PVC here. local-path is the cluster default class
+# and its reclaimPolicy is Delete, so a new one would have less protection than
+# the hand-written Retain PV it replaced.

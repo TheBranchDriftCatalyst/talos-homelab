@@ -1,0 +1,35 @@
+---
+# Authentik's Postgres, as a CatalystCNPGAppDB.
+#
+# Replaces postgres.yaml (Cluster + ScheduledBackup) and objectstore.yaml. The composite
+# renders those three plus the ExternalSecret that brings MinIO backup credentials into
+# this namespace, which previously required the namespace to appear on a reflector
+# allowlist — a step nobody remembers until a backup fails.
+#
+# credentialsSecret IS LOAD-BEARING HERE, unlike everywhere else in the fleet. Authentik's
+# own configuration reads authentik-postgres-app, so the database owner's password must
+# stay exactly what that secret holds. Every other cluster lets CNPG mint <cluster>-app
+# with a random password; if this one did that on a rebuild, the identity provider would
+# be locked out of its own database and every service behind SSO with it.
+#
+# Values reproduce the previous Cluster exactly: same 17.0 image, same 8Gi on local-path,
+# same 3 instances, same C collation, same 50m/256Mi requests, same 02:15 backup slot.
+apiVersion: db.catalyst.io/v1alpha1
+kind: CatalystCNPGAppDB
+metadata:
+  name: authentik-postgres
+  namespace: authentik
+spec:
+  database: authentik
+  owner: authentik
+  credentialsSecret: authentik-postgres-app
+  instances: 3
+  storageSize: 8Gi
+  storageClass: local-path
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.0
+  # 02:15 daily — the slot this cluster already had. The fleet is staggered across
+  # 02:00-04:15 so fifteen databases do not all hit MinIO in the same minute.
+  backupSchedule: "0 15 2 * * *"
+  resources:
+    requestsCpu: 50m
+    requestsMemory: 256Mi

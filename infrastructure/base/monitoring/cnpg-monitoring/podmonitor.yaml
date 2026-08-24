@@ -1,0 +1,42 @@
+---
+# Cluster-wide auto-discovery PodMonitor for ALL CloudNativePG instances.
+#
+# WHY: CNPG only creates a per-Cluster PodMonitor when that Cluster opts in with
+# `spec.monitoring.enablePodMonitor: true`. That's per-database toil and easy to
+# forget. This single PodMonitor selects EVERY CNPG instance pod in EVERY
+# namespace by the operator-managed label `cnpg.io/podRole: instance`, so any
+# newly-provisioned CNPG database is scraped automatically with zero per-cluster
+# config. Alloy's `prometheus.operator.podmonitors "default"` already discovers
+# PodMonitors across all namespaces, so this Just Works the moment it lands.
+#
+# The metrics land in Mimir with labels: namespace, pod, cnpg.io/cluster (as
+# `cnpg_io_cluster` after relabel is NOT applied — CNPG's own exporter emits the
+# job/pod/namespace labels; the dashboard templates on `namespace` + `pod`).
+#
+# DEDUP NOTE: To avoid double-scraping, Clusters we control should NOT also set
+# enablePodMonitor: true. `applications/scratch/example-postgres/cluster.yaml`
+# is updated to drop it. The boomtime Cluster lives in a separate repo — its
+# operator PodMonitor still exists, but the dashboard aggregates `by (namespace,
+# pod)` so a transient double-scrape is harmless (identical gauge values, rates
+# collapse); clean it up there when convenient.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cnpg-clusters
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: cnpg-monitoring
+    app.kubernetes.io/part-of: cloudnative-pg
+spec:
+  # Discover CNPG instance pods in ALL namespaces.
+  # NOTE: `{}` means "the PodMonitor's OWN namespace" in Prometheus Operator
+  # semantics — `any: true` is required to scrape across all namespaces. (The
+  # operator's per-cluster PodMonitors use `{}` only because they are co-located
+  # with their pods; this global one lives in `monitoring`, so it MUST use any.)
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics

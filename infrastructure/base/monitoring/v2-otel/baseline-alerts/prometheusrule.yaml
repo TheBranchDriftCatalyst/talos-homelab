@@ -1,0 +1,157 @@
+---
+# Cluster-baseline alerts
+# Fills the gap left by NOT running kube-prometheus-stack — we use a custom
+# Alloy + Mimir stack which doesn't ship the standard node/pod/cluster
+# alert set.  These are the six universally-recommended alerts every
+# k8s cluster should have, scoped to this homelab's tolerances.
+# See TALOS-vbr for the audit that prompted these.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cluster-baseline-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: cluster-baseline
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # 1. DiskSpaceLow — CRITICAL post-UPS-2026-05-09
+    # ----------------------------------------------------------------
+    - name: cluster.disk
+      rules:
+        - alert: NodeFilesystemAlmostOutOfSpace
+          expr: |
+            (
+              node_filesystem_avail_bytes{job="node-exporter",fstype!=""}
+              /
+              node_filesystem_size_bytes{job="node-exporter",fstype!=""}
+            ) * 100 < 10
+            and
+            node_filesystem_readonly{job="node-exporter",fstype!=""} == 0
+          for: 10m
+          labels:
+            severity: warning
+            category: baseline
+          annotations:
+            summary: "Filesystem has less than 10% space available"
+            description: >-
+              Filesystem on {{ $labels.instance }} mountpoint {{ $labels.mountpoint }}
+              has only {{ printf "%.1f" $value }}% space remaining.
+
+        - alert: NodeFilesystemCriticallyOutOfSpace
+          expr: |
+            (
+              node_filesystem_avail_bytes{job="node-exporter",fstype!=""}
+              /
+              node_filesystem_size_bytes{job="node-exporter",fstype!=""}
+            ) * 100 < 3
+            and
+            node_filesystem_readonly{job="node-exporter",fstype!=""} == 0
+          for: 5m
+          labels:
+            severity: critical
+            category: baseline
+          annotations:
+            summary: "Filesystem has less than 3% space available"
+            description: >-
+              Filesystem on {{ $labels.instance }} mountpoint {{ $labels.mountpoint }}
+              has only {{ printf "%.1f" $value }}% space remaining.  Disk is
+              about to fill — kubelet may start GC'ing images or evicting pods.
+
+    # ----------------------------------------------------------------
+    # 2. CPU + Memory pressure
+    # ----------------------------------------------------------------
+    - name: cluster.resources
+      rules:
+        - alert: NodeHighCPUUsage
+          expr: |
+            100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+          for: 15m
+          labels:
+            severity: warning
+            category: baseline
+          annotations:
+            summary: "Node CPU > 90% for 15m"
+            description: "{{ $labels.instance }} CPU at {{ printf \"%.1f\" $value }}%"
+
+        - alert: NodeHighMemoryUsage
+          expr: |
+            (
+              1 - (
+                node_memory_MemAvailable_bytes{job="node-exporter"}
+                /
+                node_memory_MemTotal_bytes{job="node-exporter"}
+              )
+            ) * 100 > 90
+          for: 15m
+          labels:
+            severity: warning
+            category: baseline
+          annotations:
+            summary: "Node memory > 90% for 15m"
+            description: "{{ $labels.instance }} memory at {{ printf \"%.1f\" $value }}%"
+
+    # ----------------------------------------------------------------
+    # 3. Node / pod health
+    # ----------------------------------------------------------------
+    - name: cluster.kubelet
+      rules:
+        - alert: KubeNodeNotReady
+          expr: |
+            kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 10m
+          labels:
+            severity: critical
+            category: baseline
+          annotations:
+            summary: "Node {{ $labels.node }} not Ready for >10m"
+            description: >-
+              Kubelet on {{ $labels.node }} is not reporting Ready.  Check
+              `talosctl service kubelet status` and recent kernel logs.
+
+        - alert: KubePodCrashLoopBackOff
+          expr: |
+            rate(kube_pod_container_status_restarts_total[15m]) * 60 * 15 > 3
+          for: 15m
+          labels:
+            severity: warning
+            category: baseline
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} crash-looping"
+            description: >-
+              Container {{ $labels.container }} has restarted more than 3 times
+              in 15 minutes. Pre-existing broken pods (neo4j, etc.) should be
+              excluded explicitly — see Alertmanager routing config.
+
+        - alert: KubePodNotReady
+          expr: |
+            sum by(namespace, pod) (
+              kube_pod_status_phase{phase=~"Pending|Unknown|Failed"}
+            ) > 0
+          for: 15m
+          labels:
+            severity: warning
+            category: baseline
+          annotations:
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} not Ready for 15m"
+            description: >-
+              Pod has been in Pending, Unknown, or Failed for 15+ minutes.
+
+    # ----------------------------------------------------------------
+    # 4. Targets / scrape health
+    # ----------------------------------------------------------------
+    - name: cluster.scrape
+      rules:
+        - alert: ServiceDown
+          expr: up == 0
+          for: 10m
+          labels:
+            severity: warning
+            category: baseline
+          annotations:
+            summary: "Scrape target {{ $labels.job }}/{{ $labels.instance }} down"
+            description: >-
+              Prometheus could not scrape {{ $labels.instance }} for the
+              {{ $labels.job }} job for >10m.  Either the target is down
+              or the scrape config is wrong.

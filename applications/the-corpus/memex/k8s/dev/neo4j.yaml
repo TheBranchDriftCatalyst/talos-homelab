@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: neo4j-pvc
+  namespace: corpus-dev
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neo4j
+  namespace: corpus-dev
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: neo4j
+  template:
+    metadata:
+      labels:
+        app: neo4j
+    spec:
+      containers:
+        - name: neo4j
+          image: neo4j:5-community
+          ports:
+            - containerPort: 7474  # HTTP
+            - containerPort: 7687  # Bolt
+          env:
+            - name: NEO4J_AUTH
+              value: neo4j/neo4j-dev
+            - name: NEO4J_PLUGINS
+              value: '["apoc"]'
+            - name: NEO4J_dbms_security_procedures_unrestricted
+              value: "apoc.*"
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 7474
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: neo4j-data
+          persistentVolumeClaim:
+            claimName: neo4j-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j
+  namespace: corpus-dev
+spec:
+  selector:
+    app: neo4j
+  ports:
+    - name: http
+      port: 7474
+      targetPort: 7474
+    - name: bolt
+      port: 7687
+      targetPort: 7687

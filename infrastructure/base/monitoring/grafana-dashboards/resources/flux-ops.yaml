@@ -1,0 +1,38 @@
+---
+# GrafanaDashboard CR: "Flux Ops".
+#
+# Flux (GitOps Toolkit) operations dashboard — reconcile golden signals
+# (rate / errors / duration p50-p99 by kind), controller work queues
+# (depth / adds / wait p99), apiserver pressure (rest_client by controller),
+# and a per-object Ready / Suspended matrix.
+#
+# Golden-signal panels ride the controller-exported metrics
+# (gotk_reconcile_duration_seconds_*, controller_runtime_reconcile_*,
+# workqueue_*, rest_client_requests_total — all ground-verified against the
+# Mimir API). The per-object matrix panels consume gotk_resource_info /
+# gotk_reconcile_condition / gotk_suspend_status, which only exist once the
+# kube-state-metrics customResourceState config for Flux is deployed
+# (infrastructure/base/monitoring/v2-otel/kube-state-metrics/helmrelease.yaml)
+# — those panels are description-marked and guarded with `or vector(0)`.
+#
+# Templated on $controller (multi + All) from controller_runtime_reconcile_total.
+#
+# JSON lives at ../json/flux-ops.json, packaged into the `dashboard-flux-ops`
+# ConfigMap by the kustomization configMapGenerator (disableNameSuffixHash:
+# true). uid "flux-ops" is stable.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: flux-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: gitops
+spec:
+  folderRef: ops-gitops
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-flux-ops
+    key: flux-ops.json

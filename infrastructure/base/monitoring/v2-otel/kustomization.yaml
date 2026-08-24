@@ -1,0 +1,66 @@
+---
+# Consolidated Monitoring Stack
+# Combines V2 OTEL data plane with Grafana and exporters
+# NOTE: Operators are deployed separately via monitoring-v2-operators kustomization
+#       to ensure CRDs are available before data plane resources.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+
+resources:
+  # Data plane components (metrics, logs, traces)
+  - mimir/
+  - loki/
+  - tempo/
+  - alloy/         # Deployment — cluster-wide scraping + OTLP receiver
+  - alloy-node/    # DaemonSet — per-node logs (kernel-capture, etc.) — TALOS-kpcap
+
+  # Kubernetes metrics
+  - kube-state-metrics/
+  - node-exporter/
+  - blackbox-exporter/
+
+  # Cluster baseline alerts (filling the kube-prometheus-stack gap — TALOS-vbr)
+  - baseline-alerts/
+
+  # Mimir Alertmanager tenant config (pushes Discord routing via CronJob)
+  - alertmanager-config/
+
+  # Grafana Operator & Instances (from parent monitoring dir)
+  - ../grafana-operator
+  - ../grafana-instances
+
+  # Grafana configuration
+  - grafana-datasources/
+  - ../grafana-dashboards
+
+  # KubeVirt monitoring (ServiceMonitor + PrometheusRule)
+  - ../../kubevirt/monitoring
+
+  # CloudNativePG cluster-wide auto-scrape (one PodMonitor for all CNPG DBs)
+  - ../cnpg-monitoring
+  - ../mongodb-monitoring # global PodMonitor for MongoDBCommunity (mirrors cnpg-monitoring)
+
+  # Dragonfly caches via redis_exporter (one exporter per cache + shared PodMonitor).
+  # Replaces the removed dragonfly-monitoring/ direct-scrape PodMonitor, which
+  # could not scrape Dragonfly's multiplexed RESP+HTTP :6379/metrics (TALOS-tf6o).
+  - ../redis-monitoring
+
+  # RabbitMQ cluster-wide auto-scrape (one PodMonitor for all RabbitmqClusters)
+  - ../rabbitmq-monitoring
+
+  # KEDA autoscaling metrics (PodMonitor for keda-operator / metrics-apiserver)
+  - ../keda-monitoring
+
+  # Exporters
+  - ../kasa-exporter
+  - ../tdarr-exporter
+  - ../pushgateway
+  - ../nfs-storage-exporter # NAS/NFS free space (node-exporter can't see the NAS)
+
+  # Dedicated log-analytics stack (ClickHouse + HyperDX); Alloy dual-writes
+  # here AND to Loki — Loki stays the ops tail (TALOS-cjny)
+  - clickstack
+
+  # Ingress
+  - ingressroutes.yaml

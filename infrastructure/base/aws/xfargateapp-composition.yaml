@@ -1,0 +1,154 @@
+---
+# Composition for XFargateApp (TALOS-hk7i). Public-IP direct, no ALB.
+# NOTE: like XBucket, field-level schema quirks surface on first LIVE compose
+# (creds-gated) — verification pass is ticketed for unblock day.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata: {name: xfargateapp-aws}
+spec:
+  compositeTypeRef: {apiVersion: aws.catalyst.io/v1alpha1, kind: XFargateApp}
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef: {name: function-patch-and-transform}
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: ecs-cluster
+            base:
+              apiVersion: ecs.aws.upbound.io/v1beta1
+              kind: Cluster
+              spec: {forProvider: {region: us-west-2}}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.appName, toFieldPath: "metadata.annotations[crossplane.io/external-name]"}
+          - name: exec-role
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: Role
+              spec:
+                forProvider:
+                  assumeRolePolicy: |
+                    {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}
+            patches:
+              - type: CombineFromComposite
+                combine:
+                  variables: [{fromFieldPath: spec.appName}]
+                  strategy: string
+                  string: {fmt: "%s-exec"}
+                toFieldPath: "metadata.annotations[crossplane.io/external-name]"
+          - name: exec-role-policy
+            base:
+              apiVersion: iam.aws.upbound.io/v1beta1
+              kind: RolePolicyAttachment
+              spec:
+                forProvider:
+                  policyArn: arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+                  roleSelector: {matchControllerRef: true}
+          - name: log-group
+            base:
+              apiVersion: cloudwatchlogs.aws.upbound.io/v1beta1
+              kind: Group
+              spec: {forProvider: {region: us-west-2, retentionInDays: 14}}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - type: CombineFromComposite
+                combine:
+                  variables: [{fromFieldPath: spec.appName}]
+                  strategy: string
+                  string: {fmt: "/xfargate/%s"}
+                toFieldPath: "metadata.annotations[crossplane.io/external-name]"
+          - name: sg
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: SecurityGroup
+              spec:
+                forProvider:
+                  region: us-west-2
+                  description: xfargateapp ingress (managed by crossplane)
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.vpcId, toFieldPath: spec.forProvider.vpcId}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.appName, toFieldPath: spec.forProvider.name}
+              - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.id, toFieldPath: status.securityGroupId}
+          - name: sg-ingress
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: SecurityGroupRule
+              spec:
+                forProvider:
+                  region: us-west-2
+                  type: ingress
+                  protocol: tcp
+                  cidrBlocks: ["0.0.0.0/0"]
+                  securityGroupIdSelector: {matchControllerRef: true}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.port, toFieldPath: spec.forProvider.fromPort, transforms: [{type: convert, convert: {toType: int}}]}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.port, toFieldPath: spec.forProvider.toPort, transforms: [{type: convert, convert: {toType: int}}]}
+          - name: sg-egress
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: SecurityGroupRule
+              spec:
+                forProvider:
+                  region: us-west-2
+                  type: egress
+                  protocol: "-1"
+                  fromPort: 0
+                  toPort: 0
+                  cidrBlocks: ["0.0.0.0/0"]
+                  securityGroupIdSelector: {matchControllerRef: true}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+          - name: taskdef
+            base:
+              apiVersion: ecs.aws.upbound.io/v1beta1
+              kind: TaskDefinition
+              spec:
+                forProvider:
+                  region: us-west-2
+                  networkMode: awsvpc
+                  requiresCompatibilities: [FARGATE]
+                  cpu: "256"
+                  memory: "512"
+                  executionRoleArnSelector: {matchControllerRef: true}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.appName, toFieldPath: spec.forProvider.family}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.cpu, toFieldPath: spec.forProvider.cpu}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.memory, toFieldPath: spec.forProvider.memory}
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - {fromFieldPath: spec.appName}
+                    - {fromFieldPath: spec.image}
+                    - {fromFieldPath: spec.port}
+                    - {fromFieldPath: spec.appName}
+                    - {fromFieldPath: spec.region}
+                  strategy: string
+                  string:
+                    fmt: '[{"name":"%s","image":"%s","essential":true,"portMappings":[{"containerPort":%s,"protocol":"tcp"}],"logConfiguration":{"logDriver":"awslogs","options":{"awslogs-group":"/xfargate/%s","awslogs-region":"%s","awslogs-stream-prefix":"app"}}}]'
+                toFieldPath: spec.forProvider.containerDefinitions
+          - name: service
+            base:
+              apiVersion: ecs.aws.upbound.io/v1beta1
+              kind: Service
+              spec:
+                forProvider:
+                  region: us-west-2
+                  launchType: FARGATE
+                  desiredCount: 1
+                  clusterSelector: {matchControllerRef: true}
+                  taskDefinitionSelector: {matchControllerRef: true}
+                  networkConfiguration:
+                    - assignPublicIp: true
+                      subnets: []
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.appName, toFieldPath: "metadata.annotations[crossplane.io/external-name]"}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.desiredCount, toFieldPath: spec.forProvider.desiredCount}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.assignPublicIp, toFieldPath: "spec.forProvider.networkConfiguration[0].assignPublicIp"}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.subnetIds, toFieldPath: "spec.forProvider.networkConfiguration[0].subnets"}
+              - {type: FromCompositeFieldPath, fromFieldPath: status.securityGroupId, toFieldPath: "spec.forProvider.networkConfiguration[0].securityGroups[0]"}

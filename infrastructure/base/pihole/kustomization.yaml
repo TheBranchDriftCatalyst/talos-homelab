@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pihole
+
+resources:
+  - namespace.yaml
+  - priorityclass.yaml
+  - externalsecret.yaml
+  - statefulset.yaml # replaces the mojo2600 Deployment chart (per-pod persistent SQLite)
+  - service-vip.yaml # single VIP: DNS :53 + web :80 → active-follows-lease
+  - service-headless.yaml # stable pod DNS names for nebula-sync
+  - podmonitor.yaml
+  - nebula-sync/rbac.yaml # SA + ClusterRole (read L2 lease + pods)
+  - nebula-sync/deployment.yaml # config-sync worker (follows the active primary)
+  - nebula-sync/podmonitor.yaml # scrape the worker's /metrics (busybox httpd sidecar)
+
+# nebula-sync's script lives in a file (not inline in the manifest) and is delivered as a
+# ConfigMap. The name-suffix hash means editing sync.sh auto-rolls the Deployment.
+# substitute: disabled → Flux postBuild envsubst SKIPS this ConfigMap. sync.sh is a shell
+# script whose $VARs are all runtime (container env / kubectl), NOT Flux cluster-settings, and
+# shell tokens like ${...} / $((...)) otherwise make envsubst fail ("unable to parse variable
+# name") and wedge the whole pihole kustomization.
+configMapGenerator:
+  - name: nebula-sync-script
+    files:
+      - sync.sh=nebula-sync/sync.sh
+    options:
+      annotations:
+        kustomize.toolkit.fluxcd.io/substitute: disabled

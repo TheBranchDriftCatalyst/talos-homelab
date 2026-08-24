@@ -1,0 +1,39 @@
+---
+# Guacamole's Postgres, as a CatalystCNPGAppDB.
+#
+# Replaces a 49-line hand-written Cluster plus a 63-line file holding its ObjectStore and
+# ScheduledBackup. The composite renders all three, plus the ExternalSecret that brings the
+# MinIO backup credentials into this namespace — which previously required editing a
+# central reflector allowlist that nobody remembers exists until a backup fails.
+#
+# This cluster is why the type is opinionated about backups. It ran for months with NO
+# ObjectStore, NO ScheduledBackup and no WAL archiving, while carrying
+# velero.io/exclude-from-backup — so the Velero exclusion worked exactly as intended and
+# nothing at all backed it up. It was the only one of fifteen in that state and it was
+# found by hand-auditing, not by any alert. A CatalystCNPGAppDB cannot express that state.
+#
+# Values reproduce the previous Cluster exactly: same image, same 2Gi on
+# fatboy-nfs-appdata, same database and owner, same C collation, same resources. Only the
+# instance count and storage class are worth revisiting later — instances 1 on NFS is
+# deliberate for now, since local-path requires 3 replicas to be safe.
+apiVersion: db.catalyst.io/v1alpha1
+kind: CatalystCNPGAppDB
+metadata:
+  name: guacamole-postgres
+  namespace: gaming
+spec:
+  database: guacamole
+  owner: guacamole
+  instances: 1
+  storageSize: 2Gi
+  # Still NFS, deliberately. Moving to local-path requires instances: 3 first — a single
+  # instance on a WaitForFirstConsumer volume is stranded by a node loss. Tracked on
+  # TALOS-npt4 along with the other remaining clusters.
+  storageClass: fatboy-nfs-appdata
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.0
+  # 04:15 daily — the free slot in the deliberately staggered fleet (forgejo 02:00 through
+  # manyfold 04:00) so backups do not all hit MinIO at once.
+  backupSchedule: "0 15 4 * * *"
+  resources:
+    requestsCpu: 50m
+    requestsMemory: 256Mi

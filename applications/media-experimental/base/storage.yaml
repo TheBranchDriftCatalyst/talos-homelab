@@ -1,0 +1,125 @@
+---
+# Synology (fatboy) NFS libraries + downloads for the media-experimental namespace.
+# Dedicated PVs (-exp suffix) point at the SAME NFS exports as the production `media`
+# namespace — PVs bind 1:1 to PVCs, so a separate namespace needs its own PVs even when
+# the underlying share is shared. All RWX; NFS handles concurrent access.
+#
+# Vars substituted via Flux postBuild from cluster-settings:
+#   ${SYNOLOGY_IP}=192.168.1.36 (fatboy)  ${SYNOLOGY_VOLUME}=/volume1
+#
+# ⚠ PREREQUISITE: /media/audiobooks and /media/comics must exist and be NFS-exported on
+#   the NAS. /media/books and /downloads/complete already exist.
+
+# ============================================================================
+# PERSISTENT VOLUMES
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-media-books-exp
+  labels: { type: synology-nfs, media-type: books, experimental: "true" }
+spec:
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity: { storage: 500Gi }
+  mountOptions: [hard, nfsvers=4.1, noatime, nodiratime, rsize=1048576, wsize=1048576]
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/media/books"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-media-audiobooks-exp
+  labels: { type: synology-nfs, media-type: audiobooks, experimental: "true" }
+spec:
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity: { storage: 500Gi }
+  mountOptions: [hard, nfsvers=4.1, noatime, nodiratime, rsize=1048576, wsize=1048576]
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/media/audiobooks"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-media-comics-exp
+  labels: { type: synology-nfs, media-type: comics, experimental: "true" }
+spec:
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity: { storage: 500Gi }
+  mountOptions: [hard, nfsvers=4.1, noatime, nodiratime, rsize=1048576, wsize=1048576]
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/media/comics"
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-downloads-complete-exp
+  labels: { type: synology-nfs, download-type: complete, experimental: "true" }
+spec:
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity: { storage: 1Ti }
+  mountOptions: [hard, nfsvers=4.1, noatime, nodiratime, rsize=1048576, wsize=1048576]
+  nfs:
+    server: "${SYNOLOGY_IP}"
+    path: "${SYNOLOGY_VOLUME}/downloads/complete"
+# ============================================================================
+# PERSISTENT VOLUME CLAIMS (media-experimental namespace)
+# ============================================================================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: books
+  namespace: media-experimental
+  labels: { app.kubernetes.io/component: media-storage }
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: synology-nfs
+  volumeName: synology-media-books-exp
+  resources: { requests: { storage: 500Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audiobooks
+  namespace: media-experimental
+  labels: { app.kubernetes.io/component: media-storage }
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: synology-nfs
+  volumeName: synology-media-audiobooks-exp
+  resources: { requests: { storage: 500Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: comics
+  namespace: media-experimental
+  labels: { app.kubernetes.io/component: media-storage }
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: synology-nfs
+  volumeName: synology-media-comics-exp
+  resources: { requests: { storage: 500Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: downloads-complete
+  namespace: media-experimental
+  labels: { app.kubernetes.io/component: download-storage }
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: synology-nfs
+  volumeName: synology-downloads-complete-exp
+  resources: { requests: { storage: 1Ti } }
