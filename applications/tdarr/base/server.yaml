@@ -1,6 +1,13 @@
 ---
-# Tdarr Server - runs on talos06 (Intel Arc 140T)
-# Coordinates distributed transcoding workers across cluster
+# Tdarr Server - schedules anywhere.
+# Coordinates distributed transcoding workers across cluster.
+# It does NOT transcode: no gpu.intel.com/i915 request, no /dev/dri mount --
+# that is the worker DaemonSet, which selects gpu-arc=true and so runs on
+# every Arc node. And all six of this pod's volumes are NFS PVs on
+# 192.168.1.36 (tdarr-appdata / tdarr-nfs), none of them node-bound.
+# It used to carry `nodeSelector: kubernetes.io/hostname: talos06` labelled
+# "for consistent PVC access"; both halves of that were false, and it just
+# meant a talos06 outage took the transcode coordinator down with it.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,10 +31,6 @@ spec:
       annotations:
         backup.velero.io/backup-volumes: "config,server,logs"
     spec:
-      # Pin to talos06 for consistent PVC access
-      nodeSelector:
-        kubernetes.io/hostname: talos06
-
       securityContext:
         fsGroup: 100
         supplementalGroups: [44, 100, 1026]
