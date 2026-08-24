@@ -1,0 +1,645 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vpn-rotator-script
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: vpn-rotator
+    app.kubernetes.io/component: script
+data:
+  rotate.py: |
+    #!/usr/bin/env python3
+    """
+    VPN Rotator - Deterministic weighted random rotation for gluetun sidecars
+
+    Features:
+    - Auto-discovers pods with label: vpn-gateway.io/rotation=enabled
+    - Excludes pods with label: vpn-gateway.io/rotation=disabled
+    - Tracks usage counts per server for balanced distribution
+    - Pushes metrics to Mimir
+    - Configurable parallel/staggered rotation
+    - Blue-green rotation for zero-downtime (requires RWX storage)
+
+    Blue-green mode (vpn-gateway.io/rotation-strategy=blue-green on deployment):
+    1. Scale deployment to +1 replica
+    2. Wait for new pod to be ready with VPN validated
+    3. Delete the oldest pod (graceful handoff)
+    4. Traffic seamlessly moves to new pod
+    """
+
+    import json
+    import os
+    import random
+    import subprocess
+    import sys
+    import time
+    import urllib.request
+    import urllib.error
+    from datetime import datetime, timezone
+    from typing import Dict, List, Optional, Tuple
+
+    # Configuration from environment
+    ROTATION_MODE = os.getenv("VPN_ROTATION_MODE", "parallel")  # parallel or staggered
+    STAGGER_DELAY = int(os.getenv("VPN_ROTATION_STAGGER_DELAY", "30"))  # seconds
+    JITTER_MAX = int(os.getenv("VPN_ROTATION_JITTER_MAX", "600"))  # seconds (10 min)
+    BLUE_GREEN_WAIT_TIMEOUT = int(os.getenv("BLUE_GREEN_WAIT_TIMEOUT", "120"))  # seconds
+    # Metrics are exposed via vpn-rotator-exporter (pull model)
+    STATE_FILE = "/state/rotation-state.json"
+    DRY_RUN = os.getenv("DRY_RUN", "false").lower() == "true"
+
+    # ISO 3166-1 alpha-2 country code to full name mapping
+    # Used to derive country from server key (e.g., se-de-1 → DE → Germany)
+    ISO_COUNTRY_CODES = {
+        "ad": "Andorra", "ae": "United Arab Emirates", "af": "Afghanistan",
+        "al": "Albania", "am": "Armenia", "ar": "Argentina", "at": "Austria",
+        "au": "Australia", "az": "Azerbaijan", "ba": "Bosnia and Herzegovina",
+        "be": "Belgium", "bg": "Bulgaria", "bh": "Bahrain", "br": "Brazil",
+        "by": "Belarus", "ca": "Canada", "ch": "Switzerland", "cl": "Chile",
+        "cn": "China", "co": "Colombia", "cr": "Costa Rica", "cy": "Cyprus",
+        "cz": "Czechia", "de": "Germany", "dk": "Denmark", "ee": "Estonia",
+        "eg": "Egypt", "es": "Spain", "fi": "Finland", "fr": "France",
+        "gb": "United Kingdom", "ge": "Georgia", "gr": "Greece", "hk": "Hong Kong",
+        "hr": "Croatia", "hu": "Hungary", "id": "Indonesia", "ie": "Ireland",
+        "il": "Israel", "in": "India", "is": "Iceland", "it": "Italy",
+        "jp": "Japan", "ke": "Kenya", "kr": "South Korea", "kz": "Kazakhstan",
+        "lt": "Lithuania", "lu": "Luxembourg", "lv": "Latvia", "ma": "Morocco",
+        "md": "Moldova", "me": "Montenegro", "mk": "North Macedonia", "mx": "Mexico",
+        "my": "Malaysia", "ng": "Nigeria", "nl": "Netherlands", "no": "Norway",
+        "nz": "New Zealand", "pe": "Peru", "ph": "Philippines", "pk": "Pakistan",
+        "pl": "Poland", "pt": "Portugal", "ro": "Romania", "rs": "Serbia",
+        "ru": "Russia", "sa": "Saudi Arabia", "se": "Sweden", "sg": "Singapore",
+        "si": "Slovenia", "sk": "Slovakia", "th": "Thailand", "tr": "Turkey",
+        "tw": "Taiwan", "ua": "Ukraine", "uk": "United Kingdom", "us": "United States",
+        "uy": "Uruguay", "vn": "Vietnam", "za": "South Africa",
+    }
+
+    def get_country_from_key(server_key: str) -> str:
+        """
+        Derive country name from server key using ISO codes.
+        Key format: se-XX-N where XX is ISO country code (e.g., se-de-1 → Germany)
+        """
+        parts = server_key.split("-")
+        if len(parts) >= 2:
+            country_code = parts[1].lower()
+            return ISO_COUNTRY_CODES.get(country_code, country_code.upper())
+        return "Unknown"
+
+    def log(msg: str, level: str = "INFO"):
+        """Structured logging"""
+        ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        print(f'{{"ts":"{ts}","level":"{level}","msg":"{msg}"}}', flush=True)
+
+    def apply_jitter():
+        """Sleep for random jitter before starting"""
+        jitter = random.randint(0, JITTER_MAX)
+        log(f"Applying jitter: sleeping {jitter} seconds")
+        if not DRY_RUN:
+            time.sleep(jitter)
+
+    def load_state() -> Dict:
+        """Load rotation state from file"""
+        try:
+            with open(STATE_FILE, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {"server_counts": {}, "pod_servers": {}, "last_rotation": None}
+
+    def save_state(state: Dict):
+        """Save rotation state to file"""
+        if DRY_RUN:
+            log(f"DRY_RUN: Would save state: {json.dumps(state)}")
+            return
+        try:
+            with open(STATE_FILE, 'w') as f:
+                json.dump(state, f, indent=2)
+        except Exception as e:
+            log(f"Failed to save state: {e}", "ERROR")
+
+    def get_available_servers() -> List[str]:
+        """Read available server keys from mounted secret"""
+        servers = []
+        secret_dir = "/secrets"
+        try:
+            for key in os.listdir(secret_dir):
+                if key.startswith("se-") and not key.startswith("notes"):
+                    servers.append(key)
+        except Exception as e:
+            log(f"Failed to read secrets: {e}", "ERROR")
+        return sorted(servers)
+
+    def pick_server_weighted(state: Dict, servers: List[str], exclude_current: Optional[str] = None) -> str:
+        """
+        Pick server with lowest usage count (deterministic balancing)
+        On ties, random selection among tied servers
+        Optionally exclude current server to force rotation
+        """
+        counts = state.get("server_counts", {})
+
+        # Initialize missing servers with 0
+        for s in servers:
+            if s not in counts:
+                counts[s] = 0
+
+        # Filter out excluded server
+        candidates = [s for s in servers if s != exclude_current]
+        if not candidates:
+            candidates = servers  # Fallback if only one server
+
+        # Find minimum count
+        min_count = min(counts.get(s, 0) for s in candidates)
+
+        # Get all servers with minimum count
+        tied = [s for s in candidates if counts.get(s, 0) == min_count]
+
+        # Random selection among tied
+        return random.choice(tied)
+
+    def discover_pods() -> List[Dict]:
+        """
+        Discover pods with vpn-gateway.io/rotation=enabled label
+        Returns list of {namespace, name, pod_ip, current_server, rotation_strategy}
+        """
+        cmd = [
+            "kubectl", "get", "pods", "-A",
+            "-l", "vpn-gateway.io/rotation=enabled",
+            "-o", "json"
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+        except Exception as e:
+            log(f"Failed to discover pods: {e}", "ERROR")
+            return []
+
+        pods = []
+        for item in data.get("items", []):
+            meta = item.get("metadata", {})
+            labels = meta.get("labels", {})
+
+            # Skip if explicitly disabled
+            if labels.get("vpn-gateway.io/rotation") == "disabled":
+                continue
+
+            # Find gluetun container and get pod IP
+            pod_ip = item.get("status", {}).get("podIP")
+            if not pod_ip:
+                continue
+
+            pods.append({
+                "namespace": meta.get("namespace"),
+                "name": meta.get("name"),
+                "pod_ip": pod_ip,
+                "deployment": labels.get("app.kubernetes.io/name", meta.get("name")),
+                "rotation_strategy": labels.get("vpn-gateway.io/rotation-strategy", "api"),
+            })
+
+        return pods
+
+    def discover_blue_green_deployments() -> List[Dict]:
+        """
+        Discover deployments with vpn-gateway.io/rotation-strategy=blue-green label
+        Returns list of {namespace, name, replicas}
+        """
+        cmd = [
+            "kubectl", "get", "deployments", "-A",
+            "-l", "vpn-gateway.io/rotation-strategy=blue-green",
+            "-o", "json"
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+        except Exception as e:
+            log(f"Failed to discover blue-green deployments: {e}", "ERROR")
+            return []
+
+        deployments = []
+        for item in data.get("items", []):
+            meta = item.get("metadata", {})
+            spec = item.get("spec", {})
+
+            deployments.append({
+                "namespace": meta.get("namespace"),
+                "name": meta.get("name"),
+                "replicas": spec.get("replicas", 1),
+                "selector": spec.get("selector", {}).get("matchLabels", {}),
+            })
+
+        return deployments
+
+    def get_deployment_pods(namespace: str, selector: Dict) -> List[Dict]:
+        """Get pods for a deployment by selector"""
+        label_selector = ",".join(f"{k}={v}" for k, v in selector.items())
+        cmd = [
+            "kubectl", "get", "pods", "-n", namespace,
+            "-l", label_selector,
+            "-o", "json",
+            "--sort-by=.metadata.creationTimestamp"
+        ]
+
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            data = json.loads(result.stdout)
+        except Exception as e:
+            log(f"Failed to get deployment pods: {e}", "ERROR")
+            return []
+
+        pods = []
+        for item in data.get("items", []):
+            meta = item.get("metadata", {})
+            status = item.get("status", {})
+            pods.append({
+                "namespace": meta.get("namespace"),
+                "name": meta.get("name"),
+                "pod_ip": status.get("podIP"),
+                "created": meta.get("creationTimestamp"),
+                "ready": all(
+                    cs.get("ready", False)
+                    for cs in status.get("containerStatuses", [])
+                ),
+            })
+
+        return pods
+
+    def blue_green_rotate(deployment: Dict) -> bool:
+        """
+        Perform blue-green rotation for a deployment.
+        1. Scale to +1 replica
+        2. Wait for new pod to be ready with VPN working
+        3. Delete the oldest pod
+        """
+        namespace = deployment["namespace"]
+        name = deployment["name"]
+        current_replicas = deployment["replicas"]
+        selector = deployment["selector"]
+
+        log(f"Blue-green rotation starting for {namespace}/{name}")
+
+        # Get current pods (sorted by creation time, oldest first)
+        old_pods = get_deployment_pods(namespace, selector)
+        if not old_pods:
+            log(f"No pods found for {namespace}/{name}", "ERROR")
+            return False
+
+        oldest_pod = old_pods[0]
+        log(f"Oldest pod: {oldest_pod['name']} (created: {oldest_pod['created']})")
+
+        if DRY_RUN:
+            log(f"DRY_RUN: Would scale {namespace}/{name} to {current_replicas + 1}")
+            log(f"DRY_RUN: Would delete pod {oldest_pod['name']}")
+            return True
+
+        # Scale up
+        log(f"Scaling {namespace}/{name} to {current_replicas + 1} replicas")
+        cmd = [
+            "kubectl", "scale", f"deployment/{name}",
+            "-n", namespace,
+            f"--replicas={current_replicas + 1}"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            log(f"Failed to scale up: {result.stderr}", "ERROR")
+            return False
+
+        # Wait for new pod to be ready
+        log(f"Waiting for new pod to be ready (timeout: {BLUE_GREEN_WAIT_TIMEOUT}s)")
+        cmd = [
+            "kubectl", "wait", "--for=condition=ready",
+            "pod", "-l", ",".join(f"{k}={v}" for k, v in selector.items()),
+            "-n", namespace,
+            f"--timeout={BLUE_GREEN_WAIT_TIMEOUT}s"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            log(f"Timeout waiting for pods: {result.stderr}", "WARN")
+            # Don't fail - continue to check VPN
+
+        # Get updated pod list
+        new_pods = get_deployment_pods(namespace, selector)
+        if len(new_pods) <= len(old_pods):
+            log(f"New pod not created yet, waiting...", "WARN")
+            time.sleep(10)
+            new_pods = get_deployment_pods(namespace, selector)
+
+        # Find the newest pod (should be last in list)
+        newest_pod = new_pods[-1] if new_pods else None
+        if not newest_pod or newest_pod["name"] == oldest_pod["name"]:
+            log(f"Could not identify new pod", "ERROR")
+            # Scale back down
+            subprocess.run([
+                "kubectl", "scale", f"deployment/{name}",
+                "-n", namespace, f"--replicas={current_replicas}"
+            ])
+            return False
+
+        log(f"New pod: {newest_pod['name']}")
+
+        # Validate VPN on new pod
+        if newest_pod["pod_ip"]:
+            log(f"Validating VPN on new pod {newest_pod['name']}")
+            if not validate_vpn_connection(newest_pod["pod_ip"], "any"):
+                log(f"VPN validation failed on new pod", "ERROR")
+                # Delete the failed new pod and scale back
+                subprocess.run([
+                    "kubectl", "delete", "pod", newest_pod["name"],
+                    "-n", namespace
+                ])
+                subprocess.run([
+                    "kubectl", "scale", f"deployment/{name}",
+                    "-n", namespace, f"--replicas={current_replicas}"
+                ])
+                return False
+
+        # Delete the oldest pod
+        log(f"Deleting oldest pod: {oldest_pod['name']}")
+        cmd = [
+            "kubectl", "delete", "pod", oldest_pod["name"],
+            "-n", namespace,
+            "--grace-period=30"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            log(f"Failed to delete old pod: {result.stderr}", "WARN")
+
+        # Scale back to original replicas (in case we ended up with extra)
+        time.sleep(5)  # Brief wait for pod deletion to register
+        cmd = [
+            "kubectl", "scale", f"deployment/{name}",
+            "-n", namespace,
+            f"--replicas={current_replicas}"
+        ]
+        subprocess.run(cmd, capture_output=True, text=True)
+
+        log(f"Blue-green rotation complete for {namespace}/{name}")
+        return True
+
+    def get_current_server(pod_ip: str) -> Optional[str]:
+        """Get current VPN server from gluetun API"""
+        try:
+            url = f"http://{pod_ip}:8000/v1/publicip/ip"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                return data.get("country", "Unknown")
+        except Exception as e:
+            log(f"Failed to get current server for {pod_ip}: {e}", "WARN")
+            return None
+
+    def validate_vpn_connection(pod_ip: str, expected_country: str, max_retries: int = 5, delay: int = 3) -> bool:
+        """
+        Validate VPN connection is working after rotation.
+        Checks that gluetun reports 'running' status and public IP is in expected country.
+        """
+        for attempt in range(max_retries):
+            try:
+                # Check VPN status
+                status_url = f"http://{pod_ip}:8000/v1/vpn/status"
+                req = urllib.request.Request(status_url, method="GET")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    status_data = json.loads(resp.read().decode())
+                    vpn_status = status_data.get("status", "unknown")
+
+                if vpn_status != "running":
+                    log(f"VPN status check {attempt+1}/{max_retries}: status={vpn_status}, waiting...", "WARN")
+                    time.sleep(delay)
+                    continue
+
+                # Check public IP and country
+                ip_url = f"http://{pod_ip}:8000/v1/publicip/ip"
+                req = urllib.request.Request(ip_url, method="GET")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    ip_data = json.loads(resp.read().decode())
+                    public_ip = ip_data.get("public_ip", "unknown")
+                    actual_country = ip_data.get("country", "unknown")
+
+                # Verify we got a public IP (not empty/private)
+                if public_ip and public_ip != "unknown":
+                    log(f"VPN validated: public_ip={public_ip}, country={actual_country}")
+                    return True
+
+                log(f"VPN validation {attempt+1}/{max_retries}: no public IP yet, waiting...", "WARN")
+                time.sleep(delay)
+
+            except Exception as e:
+                log(f"VPN validation {attempt+1}/{max_retries} failed: {e}", "WARN")
+                time.sleep(delay)
+
+        log(f"VPN validation failed after {max_retries} attempts", "ERROR")
+        return False
+
+    def rotate_pod(pod: Dict, new_server_key: str, secret_dir: str = "/secrets") -> bool:
+        """
+        Rotate a single pod to a new VPN server
+        Updates the WireGuard private key via gluetun API
+        """
+        pod_ip = pod["pod_ip"]
+        pod_name = f"{pod['namespace']}/{pod['name']}"
+
+        # Read the new server's WireGuard key
+        try:
+            key_file = os.path.join(secret_dir, new_server_key)
+            with open(key_file, 'r') as f:
+                wg_key = f.read().strip()
+        except Exception as e:
+            log(f"Failed to read key for {new_server_key}: {e}", "ERROR")
+            return False
+
+        country = get_country_from_key(new_server_key)
+        log(f"Rotating {pod_name} to {new_server_key} ({country})")
+
+        if DRY_RUN:
+            log(f"DRY_RUN: Would rotate {pod_name} to {new_server_key}")
+            return True
+
+        # Update gluetun settings via API
+        # Gluetun expects nested payload structure for WireGuard
+        try:
+            url = f"http://{pod_ip}:8000/v1/vpn/settings"
+            payload = json.dumps({
+                "wireguard": {
+                    "private_key": wg_key
+                },
+                "provider": {
+                    "server_selection": {
+                        "countries": [country]
+                    }
+                }
+            }).encode()
+
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                method="PUT",
+                headers={"Content-Type": "application/json"}
+            )
+
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if resp.status != 200:
+                    log(f"Rotation failed for {pod_name}: HTTP {resp.status}", "ERROR")
+                    return False
+
+            # Validate the VPN connection is working
+            log(f"API update succeeded for {pod_name}, validating VPN connection...")
+            if validate_vpn_connection(pod_ip, country):
+                log(f"Successfully rotated and validated {pod_name} to {new_server_key} ({country})")
+                return True
+            else:
+                log(f"Rotation to {new_server_key} failed validation for {pod_name}", "ERROR")
+                return False
+
+        except urllib.error.HTTPError as e:
+            body = e.read().decode() if hasattr(e, 'read') else str(e)
+            log(f"Rotation failed for {pod_name}: HTTP {e.code} - {body}", "ERROR")
+            return False
+        except Exception as e:
+            log(f"Rotation failed for {pod_name}: {e}", "ERROR")
+            return False
+
+    # Metrics are exposed via vpn-rotator-exporter deployment (pull model)
+    # No push_metrics needed - exporter reads state file directly
+
+    # How long to exclude failed servers (seconds)
+    FAILED_SERVER_COOLDOWN = int(os.getenv("FAILED_SERVER_COOLDOWN", "3600"))  # 1 hour
+    MAX_RETRIES_PER_POD = int(os.getenv("MAX_RETRIES_PER_POD", "3"))
+
+    def get_healthy_servers(servers: List[str], state: Dict) -> List[str]:
+        """Filter out servers that failed recently (within cooldown period)"""
+        failed = state.get("failed_servers", {})
+        now = datetime.now(timezone.utc)
+        healthy = []
+
+        for server in servers:
+            if server in failed:
+                failed_at = datetime.fromisoformat(failed[server].replace("Z", "+00:00"))
+                age_seconds = (now - failed_at).total_seconds()
+                if age_seconds < FAILED_SERVER_COOLDOWN:
+                    log(f"Excluding {server}: failed {int(age_seconds)}s ago (cooldown: {FAILED_SERVER_COOLDOWN}s)")
+                    continue
+            healthy.append(server)
+
+        return healthy
+
+    def mark_server_failed(state: Dict, server: str):
+        """Mark a server as failed with current timestamp"""
+        state.setdefault("failed_servers", {})[server] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        log(f"Marked {server} as failed (cooldown: {FAILED_SERVER_COOLDOWN}s)")
+
+    def main():
+        log("VPN Rotator starting")
+        log(f"Config: mode={ROTATION_MODE}, stagger_delay={STAGGER_DELAY}s, jitter_max={JITTER_MAX}s")
+
+        # Apply jitter
+        apply_jitter()
+
+        # Load state
+        state = load_state()
+        log(f"Loaded state: {len(state.get('server_counts', {}))} servers tracked, {len(state.get('failed_servers', {}))} failed")
+
+        # === Blue-Green Deployments ===
+        blue_green_deployments = discover_blue_green_deployments()
+        if blue_green_deployments:
+            log(f"Found {len(blue_green_deployments)} blue-green deployments")
+            for deploy in blue_green_deployments:
+                deploy_name = f"{deploy['namespace']}/{deploy['name']}"
+                log(f"Processing blue-green deployment: {deploy_name}")
+                if blue_green_rotate(deploy):
+                    log(f"Blue-green rotation succeeded for {deploy_name}")
+                else:
+                    log(f"Blue-green rotation failed for {deploy_name}", "ERROR")
+
+        # === API-based rotation for remaining pods ===
+        # Get available servers
+        all_servers = get_available_servers()
+        if not all_servers:
+            log("No VPN servers found in secrets!", "ERROR")
+            sys.exit(1)
+        log(f"Available servers: {all_servers}")
+
+        # Discover pods (excluding blue-green ones which are already handled)
+        pods = discover_pods()
+        # Filter out pods from blue-green deployments
+        bg_deploy_names = {d["name"] for d in blue_green_deployments}
+        pods = [p for p in pods if p.get("rotation_strategy") != "blue-green" and p.get("deployment") not in bg_deploy_names]
+
+        if not pods:
+            log("No pods found for API-based rotation", "INFO")
+            if not blue_green_deployments:
+                log("No rotation targets found at all", "WARN")
+            # Still save state and exit cleanly
+            state["last_rotation"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            save_state(state)
+            sys.exit(0)
+        log(f"Discovered {len(pods)} pods for API-based rotation")
+
+        # Rotate each pod
+        results = []
+        for i, pod in enumerate(pods):
+            pod_name = f"{pod['namespace']}/{pod['name']}"
+            deployment = pod.get("deployment", pod["name"])
+
+            # Get current server for this pod (to exclude from selection)
+            current = state.get("pod_servers", {}).get(deployment)
+
+            # Get healthy servers (exclude recently failed)
+            servers = get_healthy_servers(all_servers, state)
+            if not servers:
+                log(f"No healthy servers available! All {len(all_servers)} servers failed recently.", "ERROR")
+                servers = all_servers  # Fallback to all servers
+
+            # Try rotation with retries on different servers
+            success = False
+            tried_servers = set()
+            for attempt in range(MAX_RETRIES_PER_POD):
+                # Pick new server (weighted random, excluding current and tried)
+                exclude = tried_servers | {current} if current else tried_servers
+                candidates = [s for s in servers if s not in exclude]
+                if not candidates:
+                    candidates = servers  # Fallback if we've tried all
+
+                new_server = pick_server_weighted(state, candidates, exclude_current=current)
+                tried_servers.add(new_server)
+
+                log(f"Attempt {attempt+1}/{MAX_RETRIES_PER_POD}: trying {new_server} for {pod_name}")
+
+                # Rotate
+                success = rotate_pod(pod, new_server)
+
+                if success:
+                    # Update state
+                    state.setdefault("server_counts", {})[new_server] = \
+                        state.get("server_counts", {}).get(new_server, 0) + 1
+                    state.setdefault("pod_servers", {})[deployment] = new_server
+                    results.append((deployment, new_server, True))
+                    break
+                else:
+                    # Mark server as failed
+                    mark_server_failed(state, new_server)
+
+            if not success:
+                log(f"All {MAX_RETRIES_PER_POD} attempts failed for {pod_name}", "ERROR")
+                results.append((deployment, None, False))
+
+            # Stagger delay between pods
+            if ROTATION_MODE == "staggered" and i < len(pods) - 1:
+                log(f"Stagger delay: sleeping {STAGGER_DELAY}s")
+                if not DRY_RUN:
+                    time.sleep(STAGGER_DELAY)
+
+        # Update last rotation timestamp
+        state["last_rotation"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        # Save state (exporter will read this file for metrics)
+        save_state(state)
+
+        # Summary
+        success_count = sum(1 for _, _, s in results if s)
+        error_count = len(results) - success_count
+        log(f"Rotation complete: {success_count} success, {error_count} errors")
+
+        if error_count > 0:
+            sys.exit(1)
+
+    if __name__ == "__main__":
+        main()

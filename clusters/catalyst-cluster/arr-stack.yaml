@@ -1,0 +1,27 @@
+---
+# Kustomization for arr-stack (media applications)
+# Uses themepark overlay (layers: base -> gpu -> themepark)
+# - GPU: Intel QuickSync hardware transcoding
+# - Themepark: Consistent dracula theme across all apps
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: arr-stack
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/arr-stack/overlays/themepark
+  prune: true
+  wait: true
+  timeout: 10m
+  dependsOn:
+    - name: namespaces
+    - name: storage
+    - name: intel-gpu  # GPU device plugin must be ready
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

@@ -1,0 +1,19 @@
+---
+# Headless Service for the StatefulSet — gives each pod a stable DNS name
+#   pihole-0.pihole-headless.pihole.svc.cluster.local … pihole-4…
+# used by nebula-sync to address the replicas. Not a LoadBalancer, so it gets no LB IP
+# and no L2 lease (only service-vip.yaml owns .240 → single-active stays intact).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pihole-headless
+  namespace: pihole
+  labels:
+    app: pihole
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true # stable names resolve during startup (nebula-sync)
+  selector:
+    app: pihole
+  ports:
+    - {name: web, port: 80, targetPort: http, protocol: TCP}

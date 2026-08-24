@@ -1,0 +1,29 @@
+---
+# Kustomization for kubernetes-sigs/descheduler — hourly pod-COUNT rebalancer.
+#
+# Exists because talos02-gpu pinned at 109/110 pods made Velero's per-volume backup
+# helper pods unschedulable, cancelling 22 of 67 PodVolumeBackups and leaving the daily
+# backup PartiallyFailed three days running. See the HelmRelease header for the full
+# chain. This is a data-protection fix. [TALOS-wnsq]
+#
+# Pairs with TALOS-d5b5, which raised the kubelet maxPods ceiling 110 -> 200. That fix
+# stops the rejections; this one stops the skew that walks a node back up to the ceiling.
+#
+# NO dependsOn on purpose: the chart ships no CRDs, needs no cert-manager/Traefik/
+# monitoring objects, and creates its own namespace inside this same path. Adding a
+# dependency here would only invent an ordering constraint that does not exist and give
+# Flux one more way to deadlock this Kustomization.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: descheduler
+  namespace: flux-system
+spec:
+  interval: 30m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/descheduler
+  prune: true
+  wait: true
+  timeout: 5m

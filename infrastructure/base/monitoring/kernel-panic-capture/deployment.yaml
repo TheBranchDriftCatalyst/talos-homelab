@@ -1,0 +1,96 @@
+---
+# Kernel Panic Capture — Option B (netconsole receiver)
+#
+# Listens on UDP/6666 for netconsole streams from Talos nodes.
+# Writes to host disk on the receiver node so logs survive pod restarts.
+# Hostnetwork=true so nodes can send directly to the receiver's
+# host IP without going through kube-proxy / Cilium service load balancer
+# (which would defeat the purpose if Cilium is in BPF reload during panic).
+#
+# Pinned OFF talos00 — the suspect node. If talos00 panics, the
+# receiver is on a worker (talos03 — least workload) and continues
+# capturing.
+#
+# Companion: daemonset.yaml (Option A — per-node persistent dmesg
+# stream to disk). Both capture the same data via different paths.
+#
+# Requires Talos `machine.kernel.modules.netconsole` to be configured
+# on each sender node — see infrastructure/base/cilium/values.yaml or
+# the HA migration runbook for that config (applied via
+# `talosctl apply-config` per node, requires reboot to take effect).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netconsole-receiver
+  namespace: kube-system
+  labels:
+    app: netconsole-receiver
+    app.kubernetes.io/name: netconsole-receiver
+    app.kubernetes.io/part-of: observability
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate    # hostNetwork conflict prevents rolling update
+  selector:
+    matchLabels:
+      app: netconsole-receiver
+  template:
+    metadata:
+      labels:
+        app: netconsole-receiver
+    spec:
+      # NOT on talos00 (suspect) — receiver should survive talos00 panics.
+      # Prefer talos03 (lightest workload) but allow other workers.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos00]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 10
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [talos03]
+      # hostNetwork so sender pods on Talos nodes can reach UDP port 6666
+      # on the receiver's host IP directly. Avoids kube-proxy / Cilium
+      # service routing path which is exactly what breaks during kernel
+      # panic on a CP node.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      priorityClassName: system-cluster-critical
+      containers:
+        - name: receiver
+          image: alpine/socat:1.8.0.0
+          imagePullPolicy: IfNotPresent
+          # socat: listen on UDP/6666, fork per packet, append to file.
+          # `-u` = unidirectional (read from src, write to dst).
+          # `reuseaddr` so we can rebind after pod restart.
+          args:
+            - -u
+            - UDP-RECVFROM:6666,reuseaddr,fork
+            - OPEN:/data/netconsole.log,append,creat
+          ports:
+            - name: netconsole
+              protocol: UDP
+              containerPort: 6666
+              hostPort: 6666
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          # Host disk so logs survive pod restarts on the receiver node
+          hostPath:
+            path: /var/log/netconsole-receiver
+            type: DirectoryOrCreate

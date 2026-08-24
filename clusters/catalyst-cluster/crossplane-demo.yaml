@@ -1,0 +1,32 @@
+---
+# crossplane-demo (TALOS-ja5): provisions one minimal CR of each operator + the Go flex service
+# + Celery/KEDA, and is exercised by the provisioning-demo Jest suite. dependsOn `operators`
+# (wait:true) so every CRD is registered before these CRs apply.
+#
+# NOT YET REGISTERED in flux-system/kustomization.yaml — activate (uncomment there) once:
+#   1. the registry.talos00/crossplane-demo-flex image is built + pushed (flex/Dockerfile), and
+#   2. the demo CR endpoints/creds are verified against the live operator Services.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: crossplane-demo
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/crossplane-demo
+  prune: true
+  # wait:false — this Kustomization only needs to APPLY the CRs; the operators provision them
+  # asynchronously and the provisioning-demo Jest suite verifies functionality. Gating Flux
+  # readiness on the flex Deployment (a test driver that pulls from the in-cluster registry) made
+  # a registry hiccup cascade-block the dependent crossplane-demo-object Kustomization. Decouple:
+  # Flux = "applied", Jest = "works". (TALOS-ja5)
+  wait: false
+  dependsOn:
+    - name: operators
+    - name: databases # MinIO tenant lives under the databases/minio stack
+    - name: storage

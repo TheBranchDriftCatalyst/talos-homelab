@@ -1,0 +1,29 @@
+---
+# HelmRepository 'grafana' is defined in v2-otel/tempo/helmrelease.yaml
+# to avoid duplication across the consolidated monitoring kustomization
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: grafana-operator
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: grafana-operator
+      version: 'v5.24.0' # CRDs unchanged v5.20→v5.24; folderUID/allowCrossNamespaceImport intact (TALOS-hqc)
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+  values:
+    # Watch all namespaces for GrafanaDashboard CRs
+    namespaceScope: false
+    # Resources
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+# Grafana instance configuration
+# We'll create a Grafana CR that points to our existing Grafana
+# installed by kube-prometheus-stack

@@ -1,0 +1,53 @@
+---
+# One PodMonitor for the whole redis_exporter fleet.
+#
+# Selects every redis_exporter pod (app.kubernetes.io/name: redis-exporter) in
+# the monitoring namespace and scrapes its clean HTTP /metrics on the `metrics`
+# port (9121). This is a plain HTTP/1.1 Prometheus endpoint — no h2c quirks, no
+# enableHttp2:false workaround needed (that was the direct-Dragonfly-scrape
+# problem this whole exporter approach replaces — TALOS-tf6o).
+#
+# podTargetLabels projects the pod's `redis_cache` label onto every scraped
+# series, so all redis_* metrics carry redis_cache="argocd-dragonfly" |
+# "boomtime-cache" | ... — the dimension the "Dragonfly / Redis Cache" dashboard
+# templates its $redis variable on. Add a new cache by dropping in another
+# exporter Deployment with a distinct redis_cache label; it is discovered here
+# automatically (no PodMonitor edit).
+#
+# Alloy's `prometheus.operator.podmonitors "default"` runs with NO selector, so
+# this PodMonitor is picked up cluster-wide the moment it lands → Mimir.
+#
+# METRICS emitted (oliver006/redis_exporter, redis_* namespace):
+#   redis_up, redis_uptime_in_seconds, redis_memory_used_bytes,
+#   redis_memory_used_rss_bytes, redis_memory_max_bytes, redis_config_maxmemory,
+#   redis_connected_clients, redis_blocked_clients,
+#   redis_commands_processed_total, redis_keyspace_hits_total,
+#   redis_keyspace_misses_total, redis_db_keys{db=...},
+#   redis_evicted_keys_total, redis_expired_keys_total,
+#   redis_net_input_bytes_total, redis_net_output_bytes_total,
+#   redis_instance_info{redis_version,role,maxmemory_policy,...}.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: redis-exporter
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: redis-exporter
+    app.kubernetes.io/part-of: dragonfly-monitoring
+spec:
+  # ANY namespace: the dragonfly-operator auto-creates a per-Dragonfly NetworkPolicy that only
+  # allows :6379 from SAME-namespace pods, so each redis_exporter must live in its Dragonfly's
+  # namespace (not monitoring). Select them wherever they are. (TALOS-tf6o)
+  namespaceSelector:
+    any: true
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-exporter
+  # Carry the per-exporter cache identity onto every metric so the dashboard can
+  # slice by instance.
+  podTargetLabels:
+    - redis_cache
+  podMetricsEndpoints:
+    - port: metrics # redis_exporter HTTP listener (9121)
+      path: /metrics
+      interval: 30s

@@ -1,0 +1,77 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boomtime
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: boomtime
+    app.kubernetes.io/part-of: catalyst
+  annotations:
+    # Required for `managedFieldsManagers` in ignoreDifferences to actually
+    # take effect — without this, Argo does a legacy client-side diff that
+    # ignores managed-field ownership and CNPG-owned fields still show as drift.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+  # Image update config lives in
+  # infrastructure/base/argocd/image-updater/boomtime-image-updater.yaml.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  info:
+    - name: GitHub Repository
+      value: https://github.com/TheBranchDriftCatalyst/boomtime
+    - name: Container Registry
+      value: https://ghcr.io/thebranchdriftcatalyst/boomtime
+    - name: Application
+      value: https://boomtime.knowledgedump.space
+
+  source:
+    repoURL: https://github.com/TheBranchDriftCatalyst/boomtime.git
+    targetRevision: main
+    path: k8s/overlays/talos00-knowledgedump
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boomtime
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ServerSideApply=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    # HPA / operator-managed replica count.
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    # ESO injects conversionStrategy / decodingStrategy / metadataPolicy into
+    # spec.data[].remoteRef that aren't in git.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+    # CNPG operator defaults many spec fields at runtime (postgresUID, monitoring,
+    # replicationSlots, etc.). Ignore anything owned by its field manager.
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      managedFieldsManagers:
+        - manager

@@ -1,0 +1,75 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gpu-broker
+  namespace: gpu-inference
+---
+# gpu-broker is the SINGLE WRITER of the two GPU XRs and of the backend EndpointSlice.
+# Scoped deliberately tightly: it can create/delete the XRs it stamps, but has no reach
+# into Crossplane's providers, secrets, or anything outside its own namespace beyond the
+# cluster-scoped XRs themselves.
+#
+# NOTE: xgpuinstances/xgpucaches are CLUSTER-SCOPED (spec.scope LegacyCluster), which is
+# why this needs a ClusterRole rather than a namespaced Role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-broker
+rules:
+  - apiGroups: ["aws.catalyst.io"]
+    resources: ["xgpuinstances", "xgpucaches"]
+    verbs: ["get", "list", "watch", "create", "delete", "patch", "update"]
+  - apiGroups: ["aws.catalyst.io"]
+    resources: ["xgpuinstances/status", "xgpucaches/status"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-broker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gpu-broker
+subjects:
+  - kind: ServiceAccount
+    name: gpu-broker
+    namespace: gpu-inference
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gpu-broker
+  namespace: gpu-inference
+rules:
+  # Read the demand signal.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch"]
+  # Own the backend endpoints.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Read the GPUProfile.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Emit events so scale decisions are visible in `kubectl describe`.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gpu-broker
+  namespace: gpu-inference
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gpu-broker
+subjects:
+  - kind: ServiceAccount
+    name: gpu-broker
+    namespace: gpu-inference

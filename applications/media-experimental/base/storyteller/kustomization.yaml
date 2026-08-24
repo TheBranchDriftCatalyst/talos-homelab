@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# storyteller = ../_instance skeleton + deltas only (see patch-*.yaml).
+# Extra resource: ExternalSecret for STORYTELLER_SECRET_KEY (TALOS-necc).
+# EXPERIMENTAL: image tag + port unverified; adjust if it fails to start.
+
+resources:
+  - ../_instance
+  - externalsecret.yaml
+  - ingressroute-http.yaml  # web→https redirect (SSO route is on websecure)
+
+labels:
+  # App identity — stamped into metadata + selectors + pod template.
+  - pairs:
+      app: storyteller
+    includeSelectors: true
+  # NOTE: intentionally mismatched pair (pre-existing): it serves synced
+  # ebook+audio, filed under audiobook-server on dashboards.
+  - pairs:
+      app.kubernetes.io/component: book-manager
+      category: audiobook-server
+
+patches:
+  - path: patch-deployment.yaml
+    target: {kind: Deployment}
+  - path: patch-ingressroute.yaml
+    target: {kind: IngressRoute, name: app-template}
+  # Rename template placeholders + set ports.
+  - target: {kind: Deployment, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: storyteller}
+      - {op: replace, path: /spec/template/spec/containers/0/name, value: storyteller}
+      - {op: replace, path: /spec/template/spec/containers/0/ports/0/containerPort, value: 8001}
+  - target: {kind: Service, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: storyteller}
+      - {op: replace, path: /spec/ports/0/port, value: 8001}
+  - target: {kind: IngressRoute, name: app-template}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: storyteller}
+  - target: {kind: PersistentVolumeClaim, name: app-template-config}
+    patch: |-
+      - {op: replace, path: /metadata/name, value: storyteller-config}

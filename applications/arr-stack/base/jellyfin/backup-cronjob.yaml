@@ -1,0 +1,48 @@
+---
+# CronJob to backup Jellyfin SQLite databases from local storage to NFS
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jellyfin-db-backup
+  labels:
+    app: jellyfin
+    app.kubernetes.io/name: jellyfin-db-backup
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  schedule: "0 */6 * * *" # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: busybox:latest
+              command: ["/bin/sh", "/scripts/backup.sh"]
+              env:
+                - name: DB_LOCAL_PATH
+                  value: "/db-local"
+                - name: BACKUP_PATH
+                  value: "/config-nfs/data/data.backup"
+              volumeMounts:
+                - name: config-nfs
+                  mountPath: /config-nfs
+                - name: db-local
+                  mountPath: /db-local
+                  readOnly: true
+                - name: backup-scripts
+                  mountPath: /scripts
+          volumes:
+            - name: config-nfs
+              persistentVolumeClaim:
+                claimName: jellyfin-config
+            - name: db-local
+              persistentVolumeClaim:
+                claimName: jellyfin-db-local
+            - name: backup-scripts
+              configMap:
+                name: sqlite-db-migration
+                defaultMode: 493

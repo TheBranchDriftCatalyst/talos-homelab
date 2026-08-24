@@ -1,0 +1,272 @@
+# Root Taskfile - Orchestrates domain-specific taskfiles
+version: '3'
+
+# Include domain-specific taskfiles
+includes:
+  talos: Taskfile.talos.yaml
+  k8s: Taskfile.k8s.yaml
+  dev: Taskfile.dev.yaml
+  infra: Taskfile.infra.yaml
+  security: Taskfile.security.yaml
+  certs: Taskfile.certs.yaml
+
+vars:
+  TALOS_NODE: '{{.TALOS_NODE | default "192.168.1.54"}}'
+  TALOSCONFIG: './configs/talosconfig'
+  KUBECONFIG: './.output/kubeconfig'
+
+tasks:
+  # ============================================
+  # Default Task
+  # ============================================
+
+  default:
+    desc: Show available task domains and common commands
+    cmds:
+      - echo "╔════════════════════════════════════════════╗"
+      - echo "║  Talos Homelab Task Runner                 ║"
+      - echo "╚════════════════════════════════════════════╝"
+      - echo ""
+      - echo "📦 First time setup:"
+      - echo "  task deps:install              - Install all dependencies (Homebrew, Yarn, Tilt, hooks)"
+      - echo ""
+      - echo "📋 Task domains:"
+      - echo "  • talos:*     - Talos Linux operations (config, bootstrap, health, services)"
+      - echo "  • k8s:*       - Kubernetes operations (kubeconfig, pods, dashboard, audit)"
+      - echo "  • dev:*       - Development tools (linting, formatting, hooks, Tilt)"
+      - echo "  • infra:*     - Infrastructure deployment (monitoring, observability, apps)"
+      - echo "  • certs:*     - Certificate ops (trust-cert, list, check-expiry, renew, issuers)"
+      - echo ""
+      - echo "🚀 Common commands:"
+      - echo "  task health                    - Check cluster health"
+      - echo "  task kubeconfig-merge          - Merge kubeconfig to ~/.kube/config"
+      - echo "  task get-pods                  - Get all pods"
+      - echo "  task lint                      - Run all linters"
+      - echo "  task dev:tilt-up               - Start Tilt development environment"
+      - echo "  task infra:flux-reconcile      - Force Flux to reconcile the cluster"
+      - echo ""
+      - echo "📚 List all tasks:"
+      - echo "  task --list                    - Show all available tasks"
+      - echo "  task --list-all                - Show all tasks with descriptions"
+      - echo ""
+      - echo "💡 Get help for a specific task:"
+      - echo "  task <domain>:<task> --help"
+
+  # ============================================
+  # Common Shortcuts (Most Frequently Used)
+  # ============================================
+
+  health:
+    desc: Check Talos cluster health
+    cmds:
+      - task: talos:health
+
+  dashboard:
+    desc: Open Talos dashboard
+    cmds:
+      - task: talos:dashboard
+
+  kubeconfig:
+    desc: Download kubeconfig from Talos
+    cmds:
+      - task: k8s:kubeconfig
+
+  kubeconfig-merge:
+    desc: Merge kubeconfig to ~/.kube/config (enables kubectl/kubectx)
+    cmds:
+      - task: k8s:kubeconfig-merge
+
+  trust-cert:
+    desc: Trust the homelab CA locally (idempotent) — fixes *.talos00 HTTPS warnings
+    cmds:
+      - task: certs:trust-cert
+
+  get-pods:
+    desc: Get all pods in all namespaces
+    cmds:
+      - task: k8s:get-pods
+
+  get-nodes:
+    desc: Get Kubernetes nodes
+    cmds:
+      - task: k8s:get-nodes
+
+  provision:
+    desc: Complete provisioning workflow for a fresh node
+    cmds:
+      - task: talos:provision
+
+  scripts:
+    desc: List all available scripts organized by namespace/stack
+    cmds:
+      - ./scripts/list-scripts.sh {{.CLI_ARGS}}
+
+  scripts:run:
+    desc: Interactive script runner (requires fzf)
+    cmds:
+      - ./scripts/list-scripts.sh --run
+
+  tdarr:
+    desc: Show Tdarr worker cache dashboard
+    cmds:
+      - ./applications/tdarr/scripts/tdarr-dashboard.sh {{.CLI_ARGS}}
+
+  # ============================================
+  # Dependencies & Setup
+  # ============================================
+
+  deps:install:
+    desc: Install all dependencies (Homebrew, Yarn, Tilt, git hooks)
+    cmds:
+      - echo "🚀 Installing all project dependencies..."
+      - echo ""
+      - task: _check-homebrew
+      - task: _install-brew-deps
+      - task: _install-yarn-deps
+      - task: _install-tilt
+      - task: _install-hooks
+      - echo ""
+      - echo "✅ All dependencies installed successfully!"
+      - echo ""
+      - echo "📦 Installed:"
+      - echo "  ✓ Homebrew packages (kubectl, kustomize, helm, flux, talosctl, etc.)"
+      - echo "  ✓ Node packages (markdownlint, prettier)"
+      - echo "  ✓ Tilt (local development tool)"
+      - echo "  ✓ Git hooks (lefthook)"
+      - echo ""
+      - echo "🎯 Next steps:"
+      - echo "  1. Provision cluster - task provision"
+      - echo "  2. Merge kubeconfig - task kubeconfig-merge"
+      - echo "  3. Deploy - commit to git, Flux reconciles (task infra:flux-reconcile to force)"
+      - echo "  4. Start development - task dev:tilt-up"
+
+  _check-homebrew:
+    internal: true
+    cmds:
+      - |
+        if ! command -v brew &> /dev/null; then
+          echo "❌ Homebrew not installed. Install from https://brew.sh"
+          exit 1
+        fi
+        echo "✅ Homebrew found: $(brew --version | head -1)"
+
+  _install-brew-deps:
+    internal: true
+    cmds:
+      - |
+        echo "📦 Installing Homebrew packages from Brewfile..."
+        brew bundle --file=Brewfile
+        echo "✅ Homebrew packages installed"
+
+  _install-yarn-deps:
+    internal: true
+    cmds:
+      - |
+        if ! command -v yarn &> /dev/null; then
+          echo "⚠️  Yarn not found, installing..."
+          brew install yarn
+        fi
+        echo "📦 Installing Node packages..."
+        yarn install
+        echo "✅ Node packages installed"
+
+  _install-tilt:
+    internal: true
+    cmds:
+      - |
+        if ! command -v tilt &> /dev/null; then
+          echo "📦 Installing Tilt..."
+          brew install tilt-dev/tap/tilt
+          echo "✅ Tilt installed: $(tilt version)"
+        else
+          echo "✅ Tilt already installed: $(tilt version)"
+        fi
+
+  _install-hooks:
+    internal: true
+    cmds:
+      - |
+        if ! command -v lefthook &> /dev/null; then
+          echo "❌ Lefthook not found. Should have been installed via Brewfile."
+          exit 1
+        fi
+        echo "📦 Installing git hooks..."
+        lefthook install
+        echo "✅ Git hooks installed"
+
+  setup:
+    desc: Alias for deps:install
+    cmds:
+      - task: deps:install
+
+  lint:
+    desc: Run all linters
+    cmds:
+      - task: dev:lint
+
+  format:
+    desc: Format all code
+    cmds:
+      - task: dev:format
+
+  validate:
+    desc: Validate all infrastructure manifests
+    cmds:
+      - task: dev:validate
+
+  ci:
+    desc: Run full CI pipeline locally (lint + format + validate)
+    cmds:
+      - task: dev:ci
+
+  audit:
+    desc: Generate comprehensive cluster audit report
+    cmds:
+      - task: k8s:audit
+
+  dashboard-arr:
+    desc: Show ARR stack dashboard with real-time status
+    cmds:
+      - task: infra:dashboard-arr-stack
+
+  flux-suspend:
+    desc: Suspend Flux reconciliation (enables manual control)
+    cmds:
+      - task: k8s:flux-suspend
+
+  flux-resume:
+    desc: Resume Flux reconciliation (re-enables GitOps)
+    cmds:
+      - task: k8s:flux-resume
+
+  flux-status:
+    desc: Show Flux reconciliation status
+    cmds:
+      - task: k8s:flux-status
+
+  trust-ca:
+    desc: Add homelab-ca root certificate to macOS keychain
+    cmds:
+      - task: dev:trust-ca
+
+  setup-1password:
+    desc: Bootstrap 1Password Connect (one-command recovery; see docs/05-runbooks/cluster-bootstrap.md)
+    cmds:
+      - task: infra:setup-1password
+
+  # ============================================
+  # Cleanup Tasks
+  # ============================================
+
+  clean:
+    desc: Remove generated/output files only
+    cmds:
+      - rm -rf .output
+      - echo "✅ Cleaned up generated files"
+
+  clean-all:
+    desc: Remove ALL configs including Talos configs (CAREFUL!)
+    cmds:
+      - rm -rf .output configs
+      - echo "✅ All configs and output removed"
+    prompt: This will remove ALL Talos configuration files. Continue?

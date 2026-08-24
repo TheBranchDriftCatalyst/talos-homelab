@@ -1,0 +1,88 @@
+---
+# One-shot Job that ensures the 'panda' admin exists. It talks to the CNPG DB
+# directly with a minimal throwaway app.ini (no shared PVC, no entrypoint/
+# env-to-ini dependency), runs migrations idempotently, then creates the admin
+# (idempotent — ignores "already exists"). Runs as the git user (1000) because
+# forgejo refuses to run as root. Reuses the Zot 'panda' password via ESO.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-admin-bootstrap
+  namespace: forgejo
+spec:
+  backoffLimit: 20
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo
+        app.kubernetes.io/component: admin-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: bootstrap
+          image: codeberg.org/forgejo/forgejo:16.0.3
+          env:
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: dbname } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: username } }
+            - name: DB_PASSWD
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: password } }
+            - name: ADMIN_PW
+              valueFrom: { secretKeyRef: { name: forgejo-secrets, key: admin-password } }
+            - name: OIDC_SECRET
+              valueFrom: { secretKeyRef: { name: forgejo-secrets, key: oidc-client-secret, optional: true } }
+          # NOTE: every runtime shell variable is DOUBLED ($$) so Flux's postBuild
+          # ${VAR} substitution leaves it alone (Flux turns $$ into a literal $;
+          # the shell then expands it). A single $ here gets eaten by Flux ->
+          # empty app.ini values ("dbname is empty").
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              mkdir -p /tmp/forgejo/conf
+              cat > /tmp/forgejo/conf/app.ini <<EOF
+              APP_NAME = Forgejo
+              WORK_PATH = /tmp/forgejo
+              RUN_MODE = prod
+              [security]
+              INSTALL_LOCK = true
+              [database]
+              DB_TYPE  = postgres
+              HOST     = forgejo-postgres-rw.forgejo.svc.cluster.local:5432
+              NAME     = $${DB_NAME}
+              USER     = $${DB_USER}
+              PASSWD   = $${DB_PASSWD}
+              SSL_MODE = require
+              EOF
+              CFG=/tmp/forgejo/conf/app.ini
+              echo "==> migrate (idempotent, ensures schema)"
+              forgejo -c "$$CFG" migrate
+              echo "==> ensure admin 'panda'"
+              if forgejo -c "$$CFG" admin user list 2>/dev/null | awk '{print $$2}' | grep -qx panda; then
+                echo "    admin 'panda' already exists"
+              else
+                forgejo -c "$$CFG" admin user create --admin --username panda \
+                  --email panda@catalyst.local --password "$${ADMIN_PW}" --must-change-password=false
+                echo "    admin 'panda' created"
+              fi
+              echo "==> ensure Authentik OIDC auth source"
+              if [ -z "$${OIDC_SECRET}" ]; then
+                echo "    OIDC secret not set (1Password forgejo.oidc-client-secret) — skipping"
+              elif forgejo -c "$$CFG" admin auth list 2>/dev/null | awk '{print $$2}' | grep -qx authentik; then
+                echo "    oauth source 'authentik' already exists"
+              else
+                forgejo -c "$$CFG" admin auth add-oauth --name authentik \
+                  --provider openidConnect --key forgejo --secret "$${OIDC_SECRET}" \
+                  --auto-discover-url http://auth.talos00/application/o/forgejo/.well-known/openid-configuration \
+                  --scopes "openid email profile" \
+                  --group-claim-name groups --admin-group forgejo-admins
+                echo "    oauth source 'authentik' added"
+              fi
+              echo "==> done"

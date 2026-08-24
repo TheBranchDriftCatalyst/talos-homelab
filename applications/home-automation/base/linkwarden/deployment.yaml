@@ -1,0 +1,141 @@
+---
+# Linkwarden - Self-hosted bookmark manager
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: linkwarden
+  labels:
+    app: linkwarden
+    app.kubernetes.io/name: linkwarden
+    app.kubernetes.io/part-of: home-automation
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: linkwarden
+  template:
+    metadata:
+      labels:
+        app: linkwarden
+        app.kubernetes.io/name: linkwarden
+      annotations:
+        # postgres-data dropped: the DB now lives in the CNPG linkwarden-postgres
+        # cluster (its own PVCs + object-store backups), not an in-pod volume.
+        backup.velero.io/backup-volumes: "linkwarden-data,meili-data"
+    spec:
+      containers:
+        # Linkwarden main app
+        - name: linkwarden
+          image: ghcr.io/linkwarden/linkwarden:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NEXTAUTH_URL
+              value: "https://linkwarden.knowledgedump.space/api/v1/auth"
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: nextauth-secret
+            # Full connection string from the CNPG-generated linkwarden-postgres-app
+            # secret (`uri` key = postgresql://linkwarden:<pass>@linkwarden-postgres-rw:5432/linkwarden).
+            # Prisma reads DATABASE_URL directly — no separate POSTGRES_PASSWORD, no
+            # 1Password templating, no plaintext creds in git. (TALOS-3eui)
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-postgres-app
+                  key: uri
+            - name: MEILI_HOST
+              value: "http://localhost:7700"
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: meili-master-key
+            # Registration - set to "true" after creating admin account
+            - name: NEXT_PUBLIC_DISABLE_REGISTRATION
+              value: "false"
+            # Authentik SSO
+            - name: NEXT_PUBLIC_AUTHENTIK_ENABLED
+              value: "true"
+            - name: AUTHENTIK_CUSTOM_NAME
+              value: "Authentik"
+            - name: AUTHENTIK_ISSUER
+              value: "https://auth.knowledgedump.space/application/o/linkwarden/"
+            - name: AUTHENTIK_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: authentik-client-id
+            - name: AUTHENTIK_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: authentik-client-secret
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          volumeMounts:
+            - name: linkwarden-data
+              mountPath: /data/data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+        # PostgreSQL co-pod REMOVED (TALOS-3eui): the DB now lives in the CNPG
+        # `linkwarden-postgres` Cluster (see postgres.yaml). Bookmarks were migrated
+        # via pg_dump/pg_restore before this container was dropped — see runbook.
+
+        # Meilisearch for full-text search
+        - name: meilisearch
+          image: getmeili/meilisearch:v1.52.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MEILI_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: linkwarden-secrets
+                  key: meili-master-key
+            - name: MEILI_ENV
+              value: "production"
+            # In-place DB migration on version bumps (v1.12.8 DB -> v1.52 engine needed this).
+            # Idempotent: only migrates when the on-disk DB version < engine version. (TALOS-zadf)
+            - name: MEILI_UPGRADE_DB
+              value: "true"
+          ports:
+            - name: meili
+              containerPort: 7700
+              protocol: TCP
+          volumeMounts:
+            - name: meili-data
+              mountPath: /meili_data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+
+      volumes:
+        - name: linkwarden-data
+          persistentVolumeClaim:
+            claimName: linkwarden-data
+        # postgres-data volume REMOVED — DB moved to CNPG linkwarden-postgres cluster
+        - name: meili-data
+          persistentVolumeClaim:
+            claimName: linkwarden-meili

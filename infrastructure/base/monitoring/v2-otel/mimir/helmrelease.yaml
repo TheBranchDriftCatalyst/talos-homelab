@@ -1,0 +1,279 @@
+---
+# Grafana Mimir - Scalable metrics backend
+# Replaces Prometheus for long-term metrics storage with native OTLP support
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mimir
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: mimir-distributed
+      version: '6.1.0' # TALOS-zadf.1 (was 5.5.1). Mimir 2.14.0->3.1.2 (chart 5->6 major). Latest STABLE 6.x — 6.2.x is weekly-only, not for a metrics backend. Config validated (expand-env S3 creds intact, no removed 3.0 keys used).
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+      interval: 12h
+  values:
+    # S3 (MinIO) credentials injected into every Mimir pod from the
+    # mimir-s3-credentials Secret (ESO → 1Password `minio`). structuredConfig
+    # below references ${AWS_ACCESS_KEY_ID}/${AWS_SECRET_ACCESS_KEY}; the
+    # mimir-distributed chart runs all services with -config.expand-env=true by
+    # default, so Mimir expands them at startup. (TALOS-tmqq)
+    global:
+      extraEnvFrom:
+        - secretRef:
+            name: mimir-s3-scoped # scoped `mimir` user (bucket-only), not root — TALOS-xgrl.12
+    # Classic (non-Kafka) architecture — TALOS-iuig migration 2026-08-13.
+    # Chart 6.x defaults to the experimental Kafka ingest-storage (a single-broker
+    # SPOF the chart itself calls demo-only). Going classic requires ALL THREE of:
+    # ingest_storage.enabled=false + kafka.enabled=false + ingester
+    # push_grpc_method_enabled=true — flipping only kafka.enabled leaves the
+    # ingester with NO ingest path at all (the 2026-08 SEV-2 crashloop).
+    kafka:
+      enabled: false
+    # Single-zone deployment for homelab
+    mimir:
+      structuredConfig:
+        # Multi-tenancy disabled for simplicity
+        multitenancy_enabled: false
+        # Classic ingest path (TALOS-iuig) — see kafka note above
+        ingest_storage:
+          enabled: false
+        # Memberlist self-healing (2026-08-13 ring-wedge incident): cross-node
+        # gossip dials sporadically time out during heavy-transfer windows
+        # (nightly backup burst saturating the LAN), and with single-replica
+        # ingester/distributor rings one unlucky burst left the ingester stuck
+        # non-ACTIVE for hours ("too many unhealthy instances in the ring")
+        # until a pod bounce re-registered it. rejoin_interval re-merges gossip
+        # islands automatically; the raised ingester heartbeat timeout rides
+        # out slow propagation instead of flapping unhealthy at the 1m default.
+        memberlist:
+          rejoin_interval: 1m
+        # Limits
+        limits:
+          # Increase default limits for homelab use
+          ingestion_rate: 100000
+          ingestion_burst_size: 200000
+          max_global_series_per_user: 1000000
+          max_fetched_series_per_query: 100000
+          # Ruler limits - allow more rules per group (kasa has 24)
+          ruler_max_rules_per_rule_group: 50
+          ruler_max_rule_groups_per_tenant: 100
+          # Retention - 1 year of metrics
+          compactor_blocks_retention_period: 8760h
+        # Compactor
+        compactor:
+          data_dir: /data/compactor
+          deletion_delay: 12h
+          sharding_ring:
+            kvstore:
+              store: memberlist
+        # Ingester
+        ingester:
+          # Classic distributor→ingester gRPC push (TALOS-iuig) — required when
+          # ingest_storage is off; without it the ingester has no ingest path
+          push_grpc_method_enabled: true
+          ring:
+            # RF=3 across 3 ingesters (2026-08-13, post-kafka-migration HA):
+            # ring tolerates one unhealthy member — the recurring memberlist
+            # ring-wedge class stops taking queries down. RF=2 would be worse
+            # than 1 (quorum=2 of 2). ~3x ingester memory, accepted.
+            replication_factor: 3
+            # Ride out slow gossip propagation during transfer bursts instead
+            # of flapping unhealthy at the 1m default (see memberlist note above)
+            heartbeat_timeout: 3m
+            kvstore:
+              store: memberlist
+        # Store gateway
+        store_gateway:
+          sharding_ring:
+            replication_factor: 1
+            kvstore:
+              store: memberlist
+        # Ruler (alerting)
+        ruler:
+          enable_api: true
+          ring:
+            kvstore:
+              store: memberlist
+        # Alertmanager
+        alertmanager:
+          data_dir: /data/alertmanager
+          enable_api: true
+          # Mimir 3.x serves the AM API under the external_url PATH; the chart's ruler posts to
+          # /alertmanager/api/v2/alerts, so external_url MUST carry the /alertmanager prefix or every
+          # alert 404s (broke on the 2.14→3.1.2 upgrade — audit SEV-1). (TALOS-zadf.1)
+          external_url: http://alertmanager.talos00/alertmanager
+        # Storage - S3 via MinIO
+        common:
+          storage:
+            backend: s3
+            s3:
+              endpoint: minio-hl.minio.svc:9000
+              bucket_name: mimir
+              access_key_id: "${AWS_ACCESS_KEY_ID}"
+              secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+              insecure: true
+        # Blocks storage configuration
+        blocks_storage:
+          backend: s3
+          s3:
+            endpoint: minio-hl.minio.svc:9000
+            bucket_name: mimir
+            access_key_id: "${AWS_ACCESS_KEY_ID}"
+            secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+            insecure: true
+          bucket_store:
+            sync_dir: /data/mimir-sync
+        # Alertmanager storage - must use different prefix than blocks
+        alertmanager_storage:
+          backend: s3
+          s3:
+            endpoint: minio-hl.minio.svc:9000
+            bucket_name: mimir
+            access_key_id: "${AWS_ACCESS_KEY_ID}"
+            secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+            insecure: true
+          storage_prefix: alertmanager
+        # Ruler storage - must use different prefix than blocks
+        ruler_storage:
+          backend: s3
+          s3:
+            endpoint: minio-hl.minio.svc:9000
+            bucket_name: mimir
+            access_key_id: "${AWS_ACCESS_KEY_ID}"
+            secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+            insecure: true
+          storage_prefix: ruler
+          # OTLP ingestion is enabled by default in Mimir 2.9+
+          # Access via /otlp/v1/metrics endpoint
+    # rollout-operator gates pod eviction in this namespace via a validating
+    # webhook. The chart default is failurePolicy: Fail, which means that if the
+    # operator is itself unavailable, NOTHING in the monitoring namespace can be
+    # evicted — cluster-wide, not just on the affected node.
+    #
+    # That is a deadlock, and it fired twice on 2026-08-23 during the Talos
+    # upgrade (TALOS-w5fq). The operator is a SINGLE replica with no node pinning,
+    # so draining whichever node it happens to occupy evicts the operator itself;
+    # its Service then has no endpoints, every subsequent eviction call fails with
+    #   dial tcp 10.103.87.139:443: connect: no route to host
+    # and the drain never completes. It blocked two upgrade attempts on talos06
+    # and had earlier stalled the talos01 drain, where it was misread as transient.
+    #
+    # Ignore is the correct trade here. What the webhook buys is ordered,
+    # zone-aware rollouts — worth having when it works, but this is a
+    # single-zone homelab, and losing that ordering during a drain is far cheaper
+    # than a monitoring namespace that cannot evict anything. The guarantee is
+    # nice-to-have; the deadlock is an outage.
+    rollout_operator:
+      webhooks:
+        failurePolicy: Ignore
+
+    # Component sizing for homelab (minimal; ingester+stateless HA'd 2026-08-13
+    # after the ring-wedge incident — see structuredConfig ingester.ring note)
+    ingester:
+      replicas: 3
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 20Gi
+      zoneAwareReplication:
+        enabled: false
+    distributor:
+      replicas: 2
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+    querier:
+      replicas: 2
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+    query_frontend:
+      replicas: 2
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+    store_gateway:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 10Gi
+      zoneAwareReplication:
+        enabled: false
+    compactor:
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 20Gi
+    # Disable components not needed for homelab
+    ruler:
+      enabled: true
+      replicas: 1
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+    alertmanager:
+      enabled: true
+      replicas: 1
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+      persistence:
+        enabled: true
+        storageClass: local-path
+        size: 5Gi
+    # Disable built-in minio - using external MinIO instance
+    minio:
+      enabled: false
+    # Nginx gateway
+    nginx:
+      enabled: true
+      replicas: 1
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+      nginxConfig:
+        # Fix DNS resolution - use kube-dns IP instead of hostname
+        # Default uses "kube-dns.kube-system.svc.cluster.local." which doesn't work
+        resolver: "10.96.0.10"
+        # MinIO Console checks /-/healthy to validate Prometheus URL
+        # See: https://github.com/minio/console/issues/2829
+        serverSnippet: |
+          location = /prometheus/-/healthy {
+            return 200 'Mimir is healthy';
+            add_header Content-Type text/plain;
+          }
+    # Monitoring
+    metaMonitoring:
+      serviceMonitor:
+        enabled: true
+        labels:
+          release: kube-prometheus-stack
+    # Gateway for external access
+    gateway:
+      enabledNonEnterprise: true

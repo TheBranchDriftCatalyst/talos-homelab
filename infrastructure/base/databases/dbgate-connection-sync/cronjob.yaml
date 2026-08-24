@@ -1,0 +1,58 @@
+---
+# dbgate-connection-sync (TALOS-7jxm): the SINGLE WRITER that wires dbgate ⟶ every CNPG cluster.
+#
+# Why a single writer (not a Kyverno mutate policy): dbgate needs ONE aggregate of ALL clusters.
+# A Kyverno mutateExisting rule fires once per source secret and each patches the SAME dbgate
+# Deployment — concurrent patches collide on optimistic-concurrency ("object has been modified")
+# and Kyverno does not retry, so a random subset of connections is silently dropped. A single
+# writer rebuilds the COMPLETE set atomically into a Secret that dbgate envFroms.
+#
+# This CronJob is the PERIODIC catch-up (new clusters appearing between dbgate deploys); the
+# dbgate initContainer runs the same script on every (re)deploy ("a deploy = a run"). Script is
+# shared via the dbgate-connection-sync-script ConfigMap.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dbgate-connection-sync
+  namespace: databases
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 120
+      ttlSecondsAfterFinished: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: dbgate-connection-sync
+        spec:
+          serviceAccountName: dbgate-connection-sync
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: sync
+              image: alpine/k8s:1.31.7
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              command: [sh, /scripts/sync.sh]
+              env:
+                - { name: DO_RESTART, value: "true" } # roll dbgate when the set changes
+              volumeMounts:
+                - { name: script, mountPath: /scripts }
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - name: script
+              configMap: { name: dbgate-connection-sync-script }
+            - { name: tmp, emptyDir: {} }

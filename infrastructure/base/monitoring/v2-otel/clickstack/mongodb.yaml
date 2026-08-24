@@ -1,0 +1,183 @@
+---
+# Operator-managed MongoDB for HyperDX/ClickStack (TALOS-t3ic follow-up).
+#
+# WHY THIS EXISTS: the chart's bundled mongo is a plain Deployment on a local-path
+# PVC. That PVC bound to talos00 while talos00 was schedulable; once the
+# control-plane taint was restored the pod could no longer be rescheduled there,
+# so any eviction left it permanently Pending. The 2026-08-20 control-plane reboot
+# made that latent problem real.
+#
+# Moving to the MongoDBCommunity CR fixes it structurally AND upgrades the setup:
+#   * fresh PVCs bind via WaitForFirstConsumer to whatever WORKER it schedules on,
+#     so the control-plane pinning cannot recur
+#   * a real replica set with a managed user, instead of an unmanaged single pod
+#   * SCRAM auth -- the bundled mongo ran with NO AUTHENTICATION AT ALL
+#     (mongodb://clickstack-mongodb:27017/hyperdx)
+#   * matches the house pattern: CNPG for postgres, Dragonfly for redis,
+#     RabbitMQ/ClickHouse operators. NOT on NFS -- MongoDB explicitly advises
+#     against NFS for dbPath (WiredTiger file-locking / corruption risk).
+#
+# The operator (mongodb-kubernetes 1.10.0, ns databases) does NOT create the pod
+# ServiceAccount in watched namespaces, so it is provided here -- same as
+# applications/scratch/example-mongodb.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mongodb-kubernetes-appdb
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mongodb-kubernetes-appdb
+  namespace: monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mongodb-kubernetes-appdb
+  namespace: monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mongodb-kubernetes-appdb
+subjects:
+  - kind: ServiceAccount
+    name: mongodb-kubernetes-appdb
+    namespace: monitoring
+---
+apiVersion: mongodbcommunity.mongodb.com/v1
+kind: MongoDBCommunity
+metadata:
+  name: clickstack-mongodb
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: clickstack-mongodb
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: clickstack
+spec:
+  # Single member: this is HyperDX APP METADATA (sources, dashboards, users), not
+  # telemetry. Small, and cheap to rebuild. Raise to 3 if it ever matters.
+  members: 1
+  type: ReplicaSet
+  # Chart default was mongo 5.0.32 and the live pod had been overridden to 8.3.8.
+  # 8.0.x is the current LTS the operator supports, and HyperDX works across 5-8.
+  version: "8.0.4"
+  security:
+    authentication:
+      modes: ["SCRAM"]
+  users:
+    - name: hyperdx
+      db: hyperdx
+      passwordSecretRef:
+        name: clickstack-mongodb-password
+      roles:
+        - name: readWrite
+          db: hyperdx
+        - name: dbAdmin
+          db: hyperdx
+        # Required by the metrics sidecar. Without it the exporter logs
+        # "(Unauthorized) not authorized on admin to execute command
+        # { replSetGetStatus: 1 }" and every replica-set metric is silently
+        # missing while the exporter still reports healthy.
+        - name: clusterMonitor
+          db: admin
+      scramCredentialsSecretName: clickstack-mongodb-scram
+  statefulSet:
+    spec:
+      template:
+        metadata:
+          labels:
+            # House label for metrics auto-discovery. The MongoDB operator sets
+            # only app=<name>-svc, which is per-resource and useless as a
+            # cross-cluster selector — unlike CNPG's cnpg.io/podRole=instance.
+            # The global PodMonitor in monitoring/mongodb-monitoring selects THIS,
+            # so any future MongoDBCommunity gets scraped by adding one label.
+            catalyst.io/mongodb: instance
+        spec:
+          # Belt-and-braces against the exact bug this replaces: never schedule
+          # onto a control-plane node, so the PVC can never pin there again.
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: node-role.kubernetes.io/control-plane
+                        operator: DoesNotExist
+          containers:
+            # Prometheus exporter. The MongoDB operator ships NO metrics of its
+            # own (verified: mongodb_up absent from Mimir entirely), so without
+            # this there is nothing to graph. Runs as a sidecar rather than a
+            # separate Deployment so it shares the pod's network namespace and
+            # can reach mongod on localhost — no extra Service, no credentials
+            # crossing the pod boundary.
+            - name: metrics
+              image: percona/mongodb_exporter:0.53.0
+              args:
+                # --collect-all is REQUIRED for an ops dashboard: without it the
+                # exporter emits only ~23 dbstats series (storage/object counts)
+                # and none of the things you actually operate on — connections,
+                # opcounters, replication lag, WiredTiger cache, query latency.
+                #
+                # It DID panic (exporter.go:364, zero bytes served) before the
+                # hyperdx user was granted clusterMonitor on admin: a collector
+                # hitting "(Unauthorized) not authorized on admin" appears to nil-
+                # deref rather than degrade. With the grant in place it collects
+                # cleanly. If this ever panics again, check the role FIRST — the
+                # symptom presents as a container that is 3/3 Ready and healthy
+                # while serving nothing.
+                - "--collect-all"
+                - "--compatible-mode"          # emit mongodb_* names dashboards expect
+                - "--discovering-mode"
+                - "--web.listen-address=:9216"
+              env:
+                - name: MONGODB_URI
+                  valueFrom:
+                    secretKeyRef:
+                      name: clickstack-mongodb-password
+                      key: CLICKSTACK_MONGO_URI_LOCAL
+              ports:
+                - name: metrics
+                  containerPort: 9216
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+            - name: mongod
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 512Mi
+                limits:
+                  memory: 2Gi
+            - name: mongodb-agent
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 256Mi
+                limits:
+                  memory: 512Mi
+      volumeClaimTemplates:
+        - metadata:
+            name: data-volume
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: local-path
+            resources:
+              requests:
+                storage: 10Gi

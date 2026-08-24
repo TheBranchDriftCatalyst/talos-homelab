@@ -1,0 +1,103 @@
+---
+# Control Plane Deployment
+# Manages fleet of worker agents
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: carrierarr
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/component: fleet-manager
+    app.kubernetes.io/part-of: carrierarr
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: control-plane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: control-plane
+        app.kubernetes.io/component: fleet-manager
+    spec:
+      containers:
+        - name: control-plane
+          image: ttl.sh/carrierarr-control-plane-mvp:1h
+          imagePullPolicy: Always
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: http
+              containerPort: 8090
+              protocol: TCP
+          args:
+            - --grpc-addr=:50051
+            - --http-addr=:8090
+            # gRPC-only mode (no RabbitMQ for MVP)
+            - --stale-timeout=2m
+            - --dead-threshold=5m
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+---
+# Service for internal access
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  namespace: carrierarr
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/component: fleet-manager
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: control-plane
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      protocol: TCP
+    - name: http
+      port: 8090
+      targetPort: http
+      protocol: TCP
+---
+# NodePort service for external worker-agent access
+# Workers connect to this from EC2 via public IP
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane-external
+  namespace: carrierarr
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/component: fleet-manager
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: control-plane
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: grpc
+      nodePort: 30052
+      protocol: TCP

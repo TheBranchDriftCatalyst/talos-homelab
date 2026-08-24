@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# cnpg-minio-backup now arrives as an ExternalSecret rendered BY the composite (see
+# appdb.yaml), not via the reflector allowlist — so adding a database no longer means
+# remembering to edit infrastructure/base/minio/cnpg-backup/externalsecret.yaml.
+resources:
+  - appdb.yaml # Cluster + ObjectStore + ScheduledBackup via composite (TALOS-npt4)
+  - databases.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/component: database
+      app.kubernetes.io/part-of: arr-stack

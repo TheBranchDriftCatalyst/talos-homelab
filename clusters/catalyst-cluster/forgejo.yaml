@@ -1,0 +1,28 @@
+---
+# Flux Kustomization for Forgejo (multi-format package registry, TALOS-6nf).
+# Depends on the CNPG operator (databases) for its Postgres, plus the usual
+# namespaces/storage/external-secrets. wait:false so a first-boot DB race can't
+# deadlock Flux (lesson from Zot/TALOS-6vf).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: forgejo
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/forgejo
+  prune: true
+  wait: false
+  timeout: 10m
+  dependsOn:
+    - name: namespaces
+    - name: storage
+    - name: external-secrets
+    - name: databases
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

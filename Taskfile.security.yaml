@@ -1,0 +1,69 @@
+# Security Ops tasks — CrowdSec decisions/bans + honeypot visibility.
+# Wraps `cscli` in the CrowdSec LAPI pod so you never have to kubectl-exec by
+# hand. Part of epic TALOS-hg7 (TALOS-peq).
+version: '3'
+
+vars:
+  KUBECONFIG: './.output/kubeconfig'
+  NS: crowdsec
+  LAPI: deploy/crowdsec-lapi
+
+tasks:
+  default:
+    desc: List security tasks
+    cmds:
+      - task --list --taskfile Taskfile.security.yaml
+
+  # ---- CrowdSec decisions / bans ----
+  decisions:
+    desc: "List active CrowdSec decisions (current bans)"
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} exec -n {{.NS}} {{.LAPI}} -- cscli decisions list
+
+  alerts:
+    desc: "List recent CrowdSec alerts (what triggered decisions)"
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} exec -n {{.NS}} {{.LAPI}} -- cscli alerts list
+
+  unban:
+    desc: "Remove a ban by IP (use -- IP=1.2.3.4)"
+    requires:
+      vars: [IP]
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} exec -n {{.NS}} {{.LAPI}} -- cscli decisions delete --ip {{.IP}}
+      - 'echo "✅ unbanned {{.IP}} (bouncer picks up removal within ~60s stream refresh)"'
+
+  ban:
+    desc: "Manually ban an IP (use -- IP=1.2.3.4 [DURATION=4h] [REASON=...])"
+    requires:
+      vars: [IP]
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} exec -n {{.NS}} {{.LAPI}} -- cscli decisions add --ip {{.IP}} --duration {{.DURATION | default "4h"}} --reason "{{.REASON | default "manual (task security:ban)"}}"
+      - 'echo "🔨 banned {{.IP}} — enforced at Traefik edge within ~60s"'
+
+  # ---- CrowdSec health / inventory ----
+  metrics:
+    desc: "CrowdSec metrics (acquisition, parsers, scenarios, bouncers)"
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} exec -n {{.NS}} {{.LAPI}} -- cscli metrics
+
+  bouncers:
+    desc: "List registered bouncers (Traefik) + last pull time"
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} exec -n {{.NS}} {{.LAPI}} -- cscli bouncers list
+
+  hub:
+    desc: "List installed CrowdSec collections/parsers/scenarios"
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} exec -n {{.NS}} {{.LAPI}} -- cscli hub list
+
+  # ---- Honeypot (Cowrie) visibility ----
+  honeypot-events:
+    desc: "Summarize recent Cowrie honeypot events by type"
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} logs -n honeypot -l app=cowrie -c logship --tail=300 | grep -o '"eventid":"[^"]*"' | sort | uniq -c | sort -rn
+
+  honeypot-follow:
+    desc: "Follow live Cowrie honeypot JSON events (Ctrl-C to stop)"
+    cmds:
+      - kubectl --kubeconfig {{.KUBECONFIG}} logs -n honeypot -l app=cowrie -c logship -f

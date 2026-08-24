@@ -1,0 +1,63 @@
+---
+# Sonarr — HTTPS + Authentik forward-auth SSO on sonarr.talos00 (TALOS-xgrl.14).
+# The high-priority /api + /feed route has NO auth middleware so API-key / mobile
+# clients (nzb360, LunaSea) and RSS feeds keep working; the default route is gated
+# by the `authentik` forward-auth middleware. In-app login is suppressed via
+# SONARR__AUTH__METHOD=External + AUTH__REQUIRED=DisabledForLocalAddresses (see
+# deployment) → single SSO, no double login. TLS: default TLSStore serves the
+# *.talos00 wildcard (traefik/talos00-wildcard-tls) via SNI.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: sonarr
+  labels:
+    app: sonarr
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "Sonarr"
+    gethomepage.dev/description: "TV Series Management"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/weight: "10"
+    gethomepage.dev/icon: "sonarr.png"
+    gethomepage.dev/siteMonitor: "http://sonarr.media.svc.cluster.local:8989"
+    gethomepage.dev/widget.type: "sonarr"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_SONARR_KEY}}"
+    gethomepage.dev/widget.enableQueue: "true"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`sonarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))
+      kind: Rule
+      priority: 100
+      services:
+        - name: sonarr
+          port: 8989
+    - match: Host(`sonarr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: sonarr
+          port: 8989
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: sonarr-http
+  labels:
+    app: sonarr
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`sonarr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: sonarr
+          port: 8989

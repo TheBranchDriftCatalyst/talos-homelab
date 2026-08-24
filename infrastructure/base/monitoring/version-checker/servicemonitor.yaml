@@ -1,0 +1,27 @@
+---
+# Alloy discovers ServiceMonitors cluster-wide (prometheus.operator.servicemonitors)
+# and ships the scrape to Mimir. version-checker's registry queries are slow and
+# rate-limited (results cached ~30m), so a fast scrape buys nothing — 5m interval
+# keeps the is_latest gauges fresh enough for the "App Ops — Image Versions"
+# dashboard without churn.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: version-checker
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: version-checker
+    app.kubernetes.io/component: exporter
+spec:
+  namespaceSelector:
+    matchNames: [monitoring]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: version-checker
+  endpoints:
+    - port: web
+      path: /metrics
+      scheme: http
+      interval: 5m
+      scrapeTimeout: 1m
+      honorLabels: true

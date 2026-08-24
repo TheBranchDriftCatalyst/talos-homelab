@@ -29,28 +29,11 @@ spec:
             secretKeyRef:
               name: hyperdx-ingestion
               key: ingestion_api_key
-        # Go's default GOGC=100 lets the heap grow to 2x live before it
-        # collects, and RSS follows the GC target, not the live set.
-        # Measured 2026-08-24: live heap 2584Mi, next_gc 5266Mi, RSS 5666Mi
-        # — the GC target IS the RSS. GOMEMLIMIT is a soft ceiling on total
-        # Go runtime memory: the collector runs more often instead of
-        # letting RSS double. Go never OOMs itself on it.
-        # If alloy's live heap ever approaches this, GC thrashes (CPU burn,
-        # not a crash) — that is the signal to cut cardinality again, and
-        # the 8Gi limit below is the backstop for a genuine runaway.
-        - name: GOMEMLIMIT
-          value: "3750MiB"
       # Resources - Alloy does heavy Prometheus scraping + OTEL collection
-      # 730,891 remote-write WAL series at ~3.7KiB of live heap each is
-      # 2.6Gi of genuine working set; the old 1Gi request was 4x under and
-      # invisible to the scheduler. BURSTABLE: GOMEMLIMIT is the operative
-      # ceiling, the hard limit only fires if GOMEMLIMIT has already failed.
       resources:
         requests:
           cpu: 200m
-          memory: 4Gi
-        limits:
-          memory: 8Gi
+          memory: 1Gi
       configMap:
         create: true
         content: |

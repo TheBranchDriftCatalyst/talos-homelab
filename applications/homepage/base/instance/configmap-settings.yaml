@@ -1,0 +1,60 @@
+---
+# Per-instance settings ConfigMap.
+#
+# IMPORTANT: every overlay REPLACES the settings.yaml key below via its
+# patch-settings.yaml (kustomize strategic-merge cannot merge INSIDE a string
+# value, so the whole key is swapped). The settings.yaml here is the shared
+# template WITHOUT `instanceName` — it never renders as-is; if you change
+# shared appearance defaults, mirror the change in the 8 overlay patches.
+#
+# kubernetes.yaml is NOT patched by overlays and is shared verbatim.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: homepage-settings
+  labels:
+    app: homepage
+    app.kubernetes.io/name: homepage
+data:
+  settings.yaml: |
+    ---
+    # Homepage Settings Configuration
+    # Documentation: https://gethomepage.dev/configs/settings/
+    # NOTE: instanceName is intentionally ABSENT here — each overlay's
+    # patch-settings.yaml provides the full settings including instanceName.
+    #
+    # CATALYST CONTROL ROOM appearance block (keep mirrored in all 8 overlay
+    # patches). headerStyle "clean" on purpose: the group-header treatment
+    # (glow tick + tracked caps + hairline) is drawn by the shared custom.css
+    # in base/shared/configmap-shared.yaml, and "boxed" would fight it.
+    title: Talos Homelab Dashboard
+    description: Kubernetes Media & Infrastructure Stack
+    favicon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/kubernetes.png
+    theme: dark
+    color: slate
+    cardBlur: sm
+    headerStyle: clean
+    iconStyle: theme
+    statusStyle: dot
+    showStats: true
+    useEqualHeights: true
+    hideVersion: true
+    disableUpdateCheck: true
+    target: _blank
+    quicklaunch:
+      searchDescriptions: true
+      hideInternetSearch: false
+      showSearchSuggestions: true
+      provider: duckduckgo
+    language: en
+
+  kubernetes.yaml: |
+    ---
+    # Homepage Kubernetes Configuration
+    # Documentation: https://gethomepage.dev/configs/kubernetes/
+    # mode: cluster uses the shared `homepage` ServiceAccount (base/shared).
+    # traefik: true auto-discovers Traefik IngressRoutes cluster-wide; each
+    # instance then filters them by gethomepage.dev/instance.<instanceName>
+    # annotations (stamped by the Kyverno annotation policy).
+    mode: cluster
+    traefik: true

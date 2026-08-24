@@ -1,0 +1,271 @@
+---
+# Secure Chrome - VPN-protected Chrome browser via Kasm
+# All traffic routed through gluetun VPN sidecar (Germany exit)
+# Access: https://securechrome.talos00
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secure-chrome
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+    app.kubernetes.io/component: vpn-browser
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secure-chrome
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secure-chrome
+        app.kubernetes.io/component: vpn-browser
+        vpn-gateway.io/rotation: disabled
+    spec:
+      # Init containers for setup
+      initContainers:
+        # Clean up stale WireGuard routing rules before gluetun starts
+        - name: cleanup-routes
+          image: busybox:1.36
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Flushing stale wireguard routing table 51820..."
+              ip route flush table 51820 2>/dev/null || true
+              ip -6 route flush table 51820 2>/dev/null || true
+              while ip rule del table 51820 2>/dev/null; do :; done
+              while ip -6 rule del table 51820 2>/dev/null; do :; done
+              echo "Cleanup complete"
+        # Fix permissions on NFS mount for kasm_user (uid 1000)
+        - name: fix-permissions
+          image: busybox:1.36
+          securityContext:
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Fixing permissions on /home/kasm-user..."
+              chown -R 1000:1000 /home/kasm-user
+              chmod 755 /home/kasm-user
+              echo "Permissions fixed"
+          volumeMounts:
+            - name: chrome-data
+              mountPath: /home/kasm-user
+      containers:
+        # Gluetun VPN sidecar
+        - name: gluetun
+          image: qmcgaw/gluetun:v3.41.3  # pinned 2026-05-09 — :latest had breaking DNS validation change
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    ip route flush table 51820 2>/dev/null || true
+                    ip -6 route flush table 51820 2>/dev/null || true
+                    while ip rule del table 51820 2>/dev/null; do :; done
+                    while ip -6 rule del table 51820 2>/dev/null; do :; done
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: "protonvpn"
+            - name: VPN_TYPE
+              value: "wireguard"
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: protonvpn-credentials
+                  key: se-de-1  # Germany server
+            - name: WIREGUARD_ADDRESSES
+              value: "10.2.0.2/32"
+            - name: SERVER_COUNTRIES
+              value: "Germany"
+            - name: HTTPPROXY
+              value: "off"
+            - name: SHADOWSOCKS
+              value: "off"
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              value: "10.244.0.0/16,10.96.0.0/12"
+            - name: FIREWALL_INPUT_PORTS
+              value: "6901,8000"  # Kasm web UI, gluetun control
+            - name: HTTP_CONTROL_SERVER_ADDRESS
+              value: "0.0.0.0:8000"
+            - name: HTTP_CONTROL_SERVER_AUTH
+              value: "false"
+            - name: HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE
+              value: '{"auth":"none"}'
+            - name: LOG_LEVEL
+              value: "info"
+            - name: DOT
+              value: "off"
+            - name: DOT_IPV6
+              value: "off"
+            # Healthcheck settings - more resilient to rotation
+            - name: HEALTH_VPN_DURATION_INITIAL
+              value: "30s"  # Wait 30s before first healthcheck (default 6s)
+            - name: HEALTH_VPN_DURATION_ADDITION
+              value: "15s"  # Add 15s after each failure (default 5s)
+            - name: HEALTH_SUCCESS_WAIT_DURATION
+              value: "10s"  # Wait between success checks
+            - name: HEALTH_TARGET_ADDRESS
+              value: "1.1.1.1:443"  # Use IP instead of DNS hostname
+          livenessProbe:
+            httpGet:
+              path: /v1/vpn/status
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "25m"
+
+        # Kasm Chrome browser
+        - name: chrome
+          image: kasmweb/chrome:1.19.0
+          ports:
+            - name: web
+              containerPort: 6901
+              protocol: TCP
+          env:
+            # Note: Kasm single-container images use fixed user 'kasm_user'
+            # Only password can be customized via VNC_PW
+            - name: VNC_PW
+              value: "turbopookipanda"
+            - name: KASM_DEBUG
+              value: "0"
+            # Allow internal Kubernetes network IPs
+            - name: VNC_IP_ALLOW
+              value: "10.244.0.0/16,10.96.0.0/12,192.168.0.0/16"
+          securityContext:
+            # Kasm containers need some elevated permissions
+            privileged: false
+            runAsUser: 1000
+            runAsGroup: 1000
+          resources:
+            # Measured 24h peak 1,084Mi against an 8Gi request — roughly seven gigabytes
+            # reserved and never touched, on talos01: the node that sat at 97% of its memory
+            # requested and was next in line to wedge after talos03 actually did.
+            # kube-scheduler packs on REQUESTS, so an over-declared one starves a node just as
+            # effectively as an under-declared one lies about it.
+            # 
+            # 2Gi is a little under 2x observed peak. No memory LIMIT, deliberately: a browser
+            # genuinely does spike on a heavy page or a video, and an OOMKill mid-session is a
+            # worse outcome than briefly exceeding its share — burstable is right here. CPU
+            # dropped with it; 2500m reserved two and a half cores for something that idles.
+            # (TALOS-ri7d)
+            requests:
+              cpu: 500m
+              memory: 2Gi
+          volumeMounts:
+            - name: shm
+              mountPath: /dev/shm
+            - name: chrome-data
+              mountPath: /home/kasm-user
+          livenessProbe:
+            tcpSocket:
+              port: 6901
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: 6901
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        # Shared memory for Chrome (prevents crashes)
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+        # Persistent Chrome user data (logins, bookmarks, extensions)
+        - name: chrome-data
+          persistentVolumeClaim:
+            claimName: secure-chrome-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-chrome
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+spec:
+  type: ClusterIP
+  ports:
+    - name: web
+      port: 6901
+      targetPort: 6901
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: secure-chrome
+---
+# TCP IngressRoute for HTTPS passthrough (Kasm requires its own HTTPS/WSS)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: secure-chrome
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+    app.kubernetes.io/component: ingress
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: HostSNI(`securechrome.talos00`)
+      services:
+        - name: secure-chrome
+          port: 6901
+  tls:
+    passthrough: true
+---
+# HTTP redirect to HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: secure-chrome-redirect
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`securechrome.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-to-https
+          namespace: traefik
+      services:
+        - name: secure-chrome
+          port: 6901
+---
+# Persistent storage for Chrome user data (logins, bookmarks, extensions)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: secure-chrome-data
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: secure-chrome
+    app.kubernetes.io/component: storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: fatboy-nfs-appdata
+  # NFS provisioner uses pathPattern=namespace/name, so the dynamic PV
+  # will land on the same NFS subdirectory and preserve Chrome user data.
+  resources:
+    requests:
+      storage: 5Gi

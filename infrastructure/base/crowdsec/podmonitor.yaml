@@ -1,0 +1,35 @@
+---
+# PodMonitor for the CrowdSec security engine metrics (rec #8). Scrapes the :6060 `metrics` port
+# (cs_* Prometheus families) on ALL three chart components — LAPI, agent DaemonSet, and AppSec —
+# which share the label `k8s-app: crowdsec` and the container port name `metrics`. This is the
+# scrape target the `crowdsec-ops` Grafana dashboard was waiting on
+# (infrastructure/base/monitoring/grafana-dashboards/resources/crowdsec-ops.yaml — its header notes
+# "adjust to your ServiceMonitor/PodMonitor job name once the scrape target exists").
+#
+# Alloy's `prometheus.operator.podmonitors "default"` runs with NO selector, so this PodMonitor is
+# discovered cluster-wide the moment it lands → cs_* series flow into Mimir. The pods already carry
+# prometheus.io/scrape annotations (helmrelease), but a PodMonitor is the durable, dedup-safe path
+# (the generic annotation scraper is not guaranteed to target :6060 across all three components).
+#
+# `type` label is projected onto every series so the dashboard can split lapi / agent / appsec.
+# Metrics exposed require metrics.enabled: true on each component (already set in helmrelease).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: crowdsec
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: crowdsec
+    app.kubernetes.io/component: security-monitoring
+spec:
+  # PodMonitor lives in the crowdsec ns alongside its targets → default namespaceSelector (own ns).
+  selector:
+    matchLabels:
+      k8s-app: crowdsec
+  # Carry the component identity (lapi | agent | appsec) onto every scraped series.
+  podTargetLabels:
+    - type
+  podMetricsEndpoints:
+    - port: metrics # crowdsec engine Prometheus endpoint (:6060) on every component
+      path: /metrics
+      interval: 30s

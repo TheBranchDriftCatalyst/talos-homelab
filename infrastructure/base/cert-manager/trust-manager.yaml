@@ -1,0 +1,36 @@
+---
+# trust-manager - Distributes trust bundles across Kubernetes cluster
+# Lightweight operator for managing CA certificates
+# https://cert-manager.io/docs/trust/trust-manager/
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: trust-manager
+  namespace: cert-manager
+spec:
+  interval: 30m
+  dependsOn:
+    - name: cert-manager
+      namespace: cert-manager
+  chart:
+    spec:
+      chart: trust-manager
+      version: 'v0.24.0' # TALOS-zadf.52 (was v0.13.0); no values changes (seccompProfileEnabled not used)
+      sourceRef:
+        kind: HelmRepository
+        name: jetstack
+        namespace: cert-manager
+      interval: 12h
+  values:
+    # Minimal resources for homelab
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+
+    # Use cert-manager for webhook certificate (recommended)
+    app:
+      webhook:
+        tls:
+          approverPolicy:
+            enabled: false

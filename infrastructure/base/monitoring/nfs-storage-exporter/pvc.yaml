@@ -1,0 +1,20 @@
+---
+# Tiny probe PVC on an NFS storage class. Its only job is to give the exporter a
+# mountpoint whose `df` reports the WHOLE underlying NAS filesystem (the dynamic
+# NFS provisioner carves this out as a subdir of the shared export, so df sees the
+# full volume — total/used/avail). No server IP is hardcoded anywhere; the backend
+# is whatever `fatboy-nfs-appdata` points at (same class MinIO's tenant uses).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-free-probe
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: nfs-storage-exporter
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 1Gi

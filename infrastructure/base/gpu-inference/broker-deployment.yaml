@@ -1,0 +1,68 @@
+---
+# gpu-broker — reconciles DEMAND -> GPU EXISTENCE.
+#
+#   gateway replicas > 0  AND no XGPUCache     -> stamp cache (must exist first)
+#   gateway replicas > 0  AND no XGPUInstance  -> stamp instance, attached to the cache
+#   gateway replicas == 0 AND XGPUInstance     -> delete INSTANCE ONLY (cache stays warm)
+#   XR status.publicIp changes                 -> rewrite the gpu-backend EndpointSlice
+#
+# Both XRs are stamped from the GPUProfile ConfigMap and are NEVER committed to git —
+# see gpuprofile.yaml for why (the three Flux/Crossplane zombie modes).
+#
+# ---------------------------------------------------------------------------
+# SCAFFOLD STATE: replicas 0 and the image does not exist yet.
+# Source will live in the sister repo workspace/gpu-broker/ (this repo is manifests-only).
+# Until that image is built and this is scaled to 1, the whole stack is INERT — which is
+# intended: EPIC A (creds + ec2 provider) must land first, and a broker running against a
+# cluster with no ec2 CRDs would just error-loop.
+# Scaling this to 1 is the single switch that arms real AWS spend. Do not flip it before
+# the EPIC D reapers are deployed and verified.
+# ---------------------------------------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-broker
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-broker
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gpu-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gpu-broker
+        app.kubernetes.io/part-of: gpu-inference
+    spec:
+      serviceAccountName: gpu-broker
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: broker
+          image: ghcr.io/thebranchdriftcatalyst/gpu-broker:PLACEHOLDER-NOT-BUILT-YET
+          args:
+            - --gateway-deployment=ollama-gateway
+            - --profile-configmap=gpu-profile
+            - --backend-service=gpu-backend
+            - --namespace=gpu-inference
+          env:
+            - name: LOG_LEVEL
+              value: info
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

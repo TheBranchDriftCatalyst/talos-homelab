@@ -1,0 +1,116 @@
+# Ad-hoc CANARY for the Cilium LB-IPAM DR test — NOT deployed by Flux (applied/deleted by the
+# test only, and ONLY when CILIUM_LBIPAM_DR_DESTRUCTIVE=1).
+#
+# A fully self-contained, throwaway LoadBalancer stack so the destructive chaos (delete the L2
+# announcement lease / evict the announcing cilium-agent) hits THIS canary VIP instead of the
+# real pihole VIP (192.168.1.240) or any other production LoadBalancer — zero blast radius on
+# real LAN services.
+#
+# Isolation is total and by-construction:
+#   * its OWN namespace (lbipam-dr)
+#   * its OWN CiliumLoadBalancerIPPool with a DEDICATED block that does NOT overlap the prod
+#     pihole pool (192.168.1.240-250). Default canary IP = 192.168.1.251 (env-overridable).
+#   * its OWN CiliumL2AnnouncementPolicy selecting ONLY app=lbipam-canary — the prod L2 policy
+#     (lan-pihole-l2, serviceSelector app=pihole) never matches this Service, and this policy
+#     never matches pihole. The two announcement domains are disjoint.
+#
+# externalTrafficPolicy: Cluster so EVERY node is an eligible L2 announcer regardless of where
+# the backend pods land — that is what lets the VIP re-announce from a different node after we
+# take out the current lease holder (the whole point of the failover measurement).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lbipam-dr
+  labels:
+    app.kubernetes.io/component: dr-canary
+    kubernetes.io/metadata.name: lbipam-dr
+---
+# DEDICATED pool — single throwaway IP just past the prod pihole pool (.240-.250). Override the
+# block with CILIUM_LBIPAM_CANARY_BLOCK_START / _STOP if .251 is not free on your LAN.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: lbipam-canary-pool
+  labels:
+    app.kubernetes.io/component: dr-canary
+spec:
+  blocks:
+    - start: "192.168.1.251"
+      stop: "192.168.1.251"
+  serviceSelector:
+    matchLabels:
+      app: lbipam-canary
+---
+# DEDICATED L2 policy — announces ONLY the canary VIP. No nodeSelector => every node is a
+# candidate announcer, so the VIP can move to a surviving node when the holder is taken out.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: lbipam-canary-l2
+  labels:
+    app.kubernetes.io/component: dr-canary
+spec:
+  serviceSelector:
+    matchLabels:
+      app: lbipam-canary
+  loadBalancerIPs: true
+  externalIPs: false
+---
+# Tiny backend — 2 replicas spread across nodes so the VIP is serviceable no matter which node
+# announces it. whoami answers HTTP :80 (used for an optional VIP reachability probe).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lbipam-canary
+  namespace: lbipam-dr
+  labels:
+    app: lbipam-canary
+    app.kubernetes.io/component: dr-canary
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: lbipam-canary
+  template:
+    metadata:
+      labels:
+        app: lbipam-canary
+        app.kubernetes.io/component: dr-canary
+    spec:
+      terminationGracePeriodSeconds: 5
+      # spread across nodes so a surviving node always has a local backend to serve the VIP
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: lbipam-canary
+      containers:
+        - name: whoami
+          image: traefik/whoami:v1.10.4
+          args: ["--port", "80"]
+          ports:
+            - {name: http, containerPort: 80}
+          resources:
+            requests: {cpu: 5m, memory: 8Mi}
+            limits: {memory: 32Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lbipam-canary
+  namespace: lbipam-dr
+  labels:
+    app: lbipam-canary # LB-IPAM pool + L2 policy select on this
+  annotations:
+    # pin to the dedicated canary IP (env-overridable via the test); keeps allocation deterministic
+    lbipam.cilium.io/ips: "192.168.1.251"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster # every node is an eligible L2 announcer (failover target)
+  selector:
+    app: lbipam-canary
+  ports:
+    - {name: http, port: 80, targetPort: http, protocol: TCP}

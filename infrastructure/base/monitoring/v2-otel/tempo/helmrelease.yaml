@@ -1,0 +1,153 @@
+---
+# Tempo - Distributed Tracing Backend
+# Using Helm chart instead of tempo-operator (operator requires cert-manager)
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  interval: 1h
+  url: https://grafana.github.io/helm-charts
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: tempo
+  namespace: monitoring
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: tempo
+      version: '1.24.4' # TALOS-zadf.7 (was 1.24.1). Monolithic chart caps at app 2.9.0; 2.10+/3.0 = re-platform (own bead)
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+        namespace: monitoring
+      interval: 12h
+  # PostRenderer to fix buggy chart output - removes unsupported "defaults: {}" from overrides
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: ConfigMap
+              name: tempo
+            patch: |
+              - op: replace
+                path: /data/tempo.yaml
+                value: |
+                  multitenancy_enabled: false
+                  usage_report:
+                    reporting_enabled: true
+                  compactor:
+                    compaction:
+                      block_retention: 168h
+                  distributor:
+                    receivers:
+                      otlp:
+                        protocols:
+                          grpc:
+                            endpoint: 0.0.0.0:4317
+                          http:
+                            endpoint: 0.0.0.0:4318
+                  ingester: {}
+                  server:
+                    http_listen_port: 3200
+                  storage:
+                    trace:
+                      backend: s3
+                      s3:
+                        bucket: tempo
+                        endpoint: minio-hl.minio.svc:9000
+                        access_key: "${AWS_ACCESS_KEY_ID}"
+                        secret_key: "${AWS_SECRET_ACCESS_KEY}"
+                        insecure: true
+                      local:
+                        path: /var/tempo/traces
+                      wal:
+                        path: /var/tempo/wal
+                  querier: {}
+                  query_frontend: {}
+                  overrides:
+                    per_tenant_override_config: /conf/overrides.yaml
+                    metrics_generator_processors:
+                      - service-graphs
+                      - span-metrics
+                      - local-blocks
+                  metrics_generator:
+                    storage:
+                      path: /tmp/tempo
+                      remote_write:
+                        - url: http://mimir-gateway.monitoring.svc:80/api/v1/push
+                    traces_storage:
+                      path: /tmp/traces
+                    processor:
+                      local_blocks:
+                        flush_to_storage: true
+  values:
+    # Single binary mode (appropriate for homelab)
+    tempo:
+      # Expand ${AWS_ACCESS_KEY_ID}/${AWS_SECRET_ACCESS_KEY} in the tempo config
+      # (both the chart values block below and the postRenderer-patched ConfigMap)
+      # and source them from the tempo-s3-credentials Secret (ESO → 1Password
+      # `minio`). extraArgs is a map → renders `-config.expand-env=true`. TALOS-tmqq
+      extraArgs:
+        config.expand-env: "true"
+      extraEnvFrom:
+        - secretRef:
+            name: tempo-s3-scoped # scoped `tempo` user (bucket-only), not root — TALOS-xgrl.12
+      metricsGenerator:
+        enabled: true
+        remoteWriteUrl: 'http://mimir-gateway.monitoring.svc:80/api/v1/push'
+      # Storage - MinIO S3-compatible (must be under tempo:)
+      storage:
+        trace:
+          backend: s3
+          s3:
+            bucket: tempo
+            endpoint: minio-hl.minio.svc:9000
+            access_key: "${AWS_ACCESS_KEY_ID}"
+            secret_key: "${AWS_SECRET_ACCESS_KEY}"
+            insecure: true
+
+    # Enable OTLP receivers
+    traces:
+      otlp:
+        grpc:
+          enabled: true
+        http:
+          enabled: true
+      zipkin:
+        enabled: false
+      jaeger:
+        thriftHttp:
+          enabled: false
+
+    # Disable local persistence (using S3)
+    persistence:
+      enabled: false
+
+    # Tolerate control-plane taint - may be scheduled on talos00
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+
+    # Resources
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+    # ServiceMonitor for Prometheus scraping
+    serviceMonitor:
+      enabled: true
+
+    # Search configuration
+    search:
+      enabled: true
+
+    # Service configuration for internal access
+    service:
+      type: ClusterIP

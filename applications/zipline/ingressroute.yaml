@@ -1,0 +1,68 @@
+---
+# Internal LAN access (HTTP) — mirrors the live `zipline-local` IngressRoute
+# exactly (host, entrypoint, middleware, service/port) so reconciliation is a
+# no-op takeover, not a routing change.
+#
+# NOTE: the live host is `xzip.talos00` (leading x). Preserved verbatim per the
+# migration brief. Rename to `zip.talos00` here if you want the friendlier host —
+# just update /etc/hosts to match. External (knowledgedump.space / TLS) routes
+# from the old orphan manifest are intentionally NOT recreated because they are
+# NOT present on the live cluster.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zipline-local
+  labels:
+    app: zipline
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`xzip.talos00`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+      services:
+        - name: zipline
+          port: 3000
+---
+# SSO route — zipline.priv.talos00 behind Authentik forward-auth (talos-private group).
+# (TALOS-xgrl.13). The xzip.talos00 lan-only route above is kept for now.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zipline-priv
+  labels:
+    app: zipline
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`zipline.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: zipline
+          port: 3000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zipline-priv-http
+  labels:
+    app: zipline
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`zipline.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: zipline
+          port: 3000

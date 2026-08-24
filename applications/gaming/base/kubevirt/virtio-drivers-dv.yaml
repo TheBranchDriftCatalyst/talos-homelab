@@ -1,0 +1,32 @@
+---
+# PVC for VirtIO Windows drivers ISO
+#
+# History:
+#   Originally a CDI DataVolume (source: upload) populated via
+#   `virtctl image-upload dv virtio-drivers --image-path=virtio-win.iso`.
+#
+#   Post UPS-2026-05-09 incident, the underlying disk was recovered via a
+#   static PV (rec-gaming-virtio-drivers, claimRef bound) and the data is
+#   already present on talos06. CDI does not recognize externally
+#   pre-populated PVCs and was leaving the DV stuck in `UploadReady`,
+#   which gated the VMI on `DataVolumesReady=False / NotAllDVsReady`.
+#
+#   Switched to a plain PVC (matches the windows-iso/windows-gameserver-disk
+#   pattern in windows-vm.yaml). The VM already mounts this volume via
+#   `persistentVolumeClaim` so no VM spec change is required.
+#
+# To re-import virtio drivers in the future, recreate as a DataVolume
+# temporarily and run `virtctl image-upload`, then revert to PVC.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: virtio-drivers
+  labels:
+    app: windows-gameserver
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: local-path

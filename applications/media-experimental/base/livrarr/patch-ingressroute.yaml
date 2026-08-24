@@ -1,0 +1,35 @@
+---
+# livrarr — HTTPS + Authentik forward-auth SSO on livrarr.talos00 (TALOS-xgrl.14).
+# High-priority /api route has NO auth middleware so API-key clients (*arr / download
+# clients) keep working; the default route is gated by the `authentik` forward-auth
+# middleware. Livrarr keeps its own login (no External-auth env) → inherent double-login
+# on the web UI, acceptable. TLS: default TLSStore serves the *.talos00 wildcard via SNI.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: app-template
+  annotations:
+    gethomepage.dev/name: "Livrarr"
+    gethomepage.dev/description: "Books *arr (alpha)"
+    gethomepage.dev/group: "Book Automation (Exp)"
+    gethomepage.dev/weight: "23"
+    gethomepage.dev/icon: "book.png"
+    gethomepage.dev/siteMonitor: "http://livrarr.media-experimental.svc.cluster.local:8789"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`livrarr.${CLUSTER_DOMAIN}`) && PathPrefix(`/api`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: livrarr
+          port: 8789
+    - match: Host(`livrarr.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: livrarr
+          port: 8789

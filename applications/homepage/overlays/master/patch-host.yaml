@@ -1,0 +1,37 @@
+---
+# Replaces spec.routes wholesale on BOTH IngressRoutes: per-instance Host + the
+# FINAL (nameSuffix-ed) Service name + middlewares (authentik forward-auth on
+# websecure, redirect-https on web). kustomize's nameReference fixup doesn't know
+# Traefik CRDs, so the service ref is written post-suffix by hand; and because a
+# strategic-merge on spec.routes replaces the list, the middlewares must be
+# re-declared here (TALOS-xgrl.18). master = the god-view, gated to cluster-admin
+# ONLY in the blueprint.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: homepage
+spec:
+  routes:
+    - match: Host(`homepage.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: homepage-master
+          port: 3000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: homepage-http
+spec:
+  routes:
+    - match: Host(`homepage.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: homepage-master
+          port: 3000

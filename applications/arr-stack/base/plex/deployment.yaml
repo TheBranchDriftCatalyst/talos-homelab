@@ -1,0 +1,139 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plex
+  labels:
+    app: plex
+    app.kubernetes.io/name: plex
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: plex
+  template:
+    metadata:
+      labels:
+        app: plex
+        app.kubernetes.io/name: plex
+      annotations:
+        # Velero backup: only config and db-local, exclude media libraries
+        backup.velero.io/backup-volumes: "config,db-local"
+    spec:
+      hostNetwork: true # Required for Plex discovery
+
+      # GPU device access (Intel QSV on talos02-gpu)
+      securityContext:
+        fsGroup: 44  # video group for /dev/dri access
+      initContainers:
+        # Migrate SQLite databases from NFS to local storage
+        - name: migrate-db
+          image: busybox:latest
+          command: ["/bin/sh", "/scripts/migrate.sh"]
+          env:
+            - name: DB_SOURCE_PATH
+              value: "/config/Library/Application Support/Plex Media Server/Plug-in Support/Databases"
+            - name: DB_LOCAL_PATH
+              value: "/db-local"
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: db-local
+              mountPath: /db-local
+            - name: migration-scripts
+              mountPath: /scripts
+      containers:
+        - name: plex
+          image: lscr.io/linuxserver/plex:latest
+          imagePullPolicy: Always
+
+          # Privileged for GPU device access
+          securityContext:
+            privileged: true
+
+          env:
+            - name: PUID
+              value: '1000'
+            - name: PGID
+              value: '1000'
+            - name: TZ
+              value: 'America/Los_Angeles'
+            - name: VERSION
+              value: 'docker'
+            - name: PLEX_CLAIM
+              value: '' # Set this for initial setup: https://www.plex.tv/claim/
+          ports:
+            - name: http
+              containerPort: 32400
+              protocol: TCP
+          volumeMounts:
+            # GPU device for hardware transcoding (Intel QSV)
+            - name: dri
+              mountPath: /dev/dri
+            - name: config
+              mountPath: /config
+            # Synology media libraries (read/write for Plex to update metadata)
+            - name: synology-movies
+              mountPath: /data/synology/movies
+            - name: synology-tv
+              mountPath: /data/synology/tv
+            # - name: synology-music
+            #   mountPath: /data/synology/music
+            - name: transcode
+              mountPath: /transcode
+            # Local storage for SQLite databases (symlinked from /config)
+            - name: db-local
+              mountPath: /db-local
+          livenessProbe:
+            httpGet:
+              path: /web/index.html
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /web/index.html
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+      volumes:
+        # GPU device for Intel QSV transcoding
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        - name: config
+          persistentVolumeClaim:
+            claimName: plex-config
+        # Synology media libraries
+        - name: synology-movies
+          persistentVolumeClaim:
+            claimName: synology-movies
+        - name: synology-tv
+          persistentVolumeClaim:
+            claimName: synology-tv
+        # - name: synology-music
+        #   persistentVolumeClaim:
+        #     claimName: synology-music
+        - name: transcode
+          emptyDir: {}
+        # Local storage for SQLite databases - avoids NFS locking issues
+        - name: db-local
+          persistentVolumeClaim:
+            claimName: plex-db-local
+        # Shared migration scripts
+        - name: migration-scripts
+          configMap:
+            name: sqlite-db-migration
+            defaultMode: 493

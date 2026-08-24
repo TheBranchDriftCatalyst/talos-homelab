@@ -1,0 +1,87 @@
+---
+# DaemonSet to copy CDI spec from /var/cdi to /var/run/cdi on NVIDIA GPU nodes
+# This is needed because nvidia-container-runtime.cdi only looks in /etc/cdi and /var/run/cdi
+# (not custom paths configured in containerd's cdi_spec_dirs)
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nvidia-cdi-init
+  namespace: kube-system
+  labels:
+    app: nvidia-cdi-init
+spec:
+  selector:
+    matchLabels:
+      app: nvidia-cdi-init
+  template:
+    metadata:
+      labels:
+        app: nvidia-cdi-init
+    spec:
+      # Only run on NVIDIA GPU nodes
+      nodeSelector:
+        node.kubernetes.io/gpu-vendor: nvidia
+      # Need host PID for nsenter if used
+      hostPID: true
+      # Tolerate GPU worker taints if any
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+      initContainers:
+        - name: copy-cdi-spec
+          image: alpine:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "=== NVIDIA CDI Spec Initializer ==="
+              mkdir -p /var-run-cdi
+
+              if [ -f /var-cdi/nvidia.yaml ]; then
+                cp /var-cdi/nvidia.yaml /var-run-cdi/
+                echo "CDI spec copied successfully"
+
+                # WORKAROUND: Talos nvidia-container-runtime-wrapper doesn't recognize
+                # nvidia-cdi-hook command. Use .real binary directly to bypass wrapper.
+                # See: https://github.com/NVIDIA/libnvidia-container/issues/176
+                echo "Patching CDI spec to use nvidia-cdi-hook.real..."
+                sed -i 's|/usr/local/bin/nvidia-cdi-hook|/usr/local/bin/nvidia-cdi-hook.real|g' /var-run-cdi/nvidia.yaml
+
+                echo "Devices in spec:"
+                grep "^  name:" /var-run-cdi/nvidia.yaml || true
+                echo "Hook paths patched to use .real binaries"
+              else
+                echo "ERROR: CDI spec not found at /var/cdi/nvidia.yaml"
+                echo ""
+                echo "Generate it manually by running this on the node:"
+                echo "  nvidia-ctk cdi generate --output=/var/cdi/nvidia.yaml"
+                echo ""
+                echo "Or use this helper pod:"
+                echo "  kubectl apply -f nvidia-cdi-generator.yaml"
+                exit 1
+              fi
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: var-cdi
+              mountPath: /var-cdi
+              readOnly: true
+            - name: var-run-cdi
+              mountPath: /var-run-cdi
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+          resources:
+            requests:
+              cpu: "1m"
+              memory: "4Mi"
+      volumes:
+        - name: var-cdi
+          hostPath:
+            path: /var/cdi
+            type: DirectoryOrCreate
+        - name: var-run-cdi
+          hostPath:
+            path: /var/run/cdi
+            type: DirectoryOrCreate

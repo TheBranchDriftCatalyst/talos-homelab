@@ -1,0 +1,57 @@
+---
+# Let's Encrypt Staging ClusterIssuer (for testing - higher rate limits)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    # Staging server (use for testing to avoid rate limits)
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: djdanielsh@gmail.com # TODO: need to rxtract this to ESO
+    privateKeySecretRef:
+      name: letsencrypt-staging-account-key
+    solvers:
+    - dns01:
+        cloudflare:
+          apiTokenSecretRef:
+            name: cloudflare-api-token
+            key: api-token
+      selector:
+        dnsZones:
+        - knowledgedump.space
+---
+# Let's Encrypt Production ClusterIssuer
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-production
+spec:
+  acme:
+    # Production server
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: djdanielsh@gmail.com # TODO: need to rxtract this to ESO
+    privateKeySecretRef:
+      name: letsencrypt-production-account-key
+    solvers:
+    # Cloudflare DNS-01 solver for knowledgedump.space
+    - dns01:
+        cloudflare:
+          apiTokenSecretRef:
+            name: cloudflare-api-token
+            key: api-token
+      selector:
+        dnsZones:
+        - knowledgedump.space
+    # deSEC DNS-01 solver for kelsboi.dedyn.io (via cert-manager-webhook-desec)
+    - dns01:
+        webhook:
+          groupName: acme.pr0ton11.github.com
+          solverName: desec
+          config:
+            apiKeySecretRef:
+              name: desec-api-token
+              key: DESEC_TOKEN
+      selector:
+        dnsZones:
+        - kelsboi.dedyn.io

@@ -1,0 +1,85 @@
+---
+# The Go "flex" utility — the single demo service that exercises every provisioned backend.
+# Image is built from ./ (Dockerfile) and pushed to the in-cluster Nexus (registry.talos00).
+# RABBITMQ_URL / OPENSEARCH creds are assembled from Secret-backed vars via $(VAR) interpolation
+# (works with a shell-less distroless image). Endpoints may need tweaking against the live
+# Services after first deploy (TALOS-ja5).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-flex
+  namespace: crossplane-demo
+  labels:
+    app: demo-flex
+spec:
+  # demo paused (Plausible-only), TALOS-4gg — flux-resume-safe: matches live (0).
+  replicas: 0
+  selector:
+    matchLabels:
+      app: demo-flex
+  template:
+    metadata:
+      labels:
+        app: demo-flex
+    spec:
+      serviceAccountName: demo-flex
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg # ESO-templated dockerconfigjson (registry.talos00 auth)
+      containers:
+        - name: flex
+          image: registry.talos00/talos00-registry/crossplane-demo-flex:latest
+          ports:
+            - {name: http, containerPort: 8080}
+          env:
+            - {name: DEMO_NAMESPACE, value: crossplane-demo}
+            # --- MinIO (existing tenant in ns minio; root creds from 1Password
+            #     via the demo-minio-credentials ExternalSecret) — TALOS-tmqq ---
+            - {name: MINIO_ENDPOINT, value: "minio.minio.svc.cluster.local:80"}
+            - name: MINIO_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: demo-minio-credentials, key: MINIO_ACCESS_KEY}}
+            - name: MINIO_SECRET_KEY
+              valueFrom: {secretKeyRef: {name: demo-minio-credentials, key: MINIO_SECRET_KEY}}
+            - {name: MINIO_BUCKET, value: "demo"}
+            # --- RabbitMQ (assembled from the operator's default-user Secret) ---
+            - name: RABBIT_USER
+              valueFrom: {secretKeyRef: {name: demo-rabbit-default-user, key: username}}
+            - name: RABBIT_PASS
+              valueFrom: {secretKeyRef: {name: demo-rabbit-default-user, key: password}}
+            - {name: RABBITMQ_URL, value: "amqp://$(RABBIT_USER):$(RABBIT_PASS)@demo-rabbit.crossplane-demo.svc.cluster.local:5672/"}
+            - {name: RABBITMQ_QUEUE, value: "demo"}
+            # --- Dragonfly / Redis ---
+            - {name: REDIS_ADDR, value: "demo.crossplane-demo.svc.cluster.local:6379"}
+            # --- ClickHouse (default user, no password) ---
+            - {name: CLICKHOUSE_ADDR, value: "clickhouse-demo.crossplane-demo.svc.cluster.local:9000"}
+            - {name: CLICKHOUSE_USER, value: "default"}
+            - {name: CLICKHOUSE_PASSWORD, value: ""}
+            # --- OpenSearch (operator-generated admin creds, self-signed TLS) ---
+            - {name: OPENSEARCH_URL, value: "https://demo.crossplane-demo.svc.cluster.local:9200"}
+            - {name: OPENSEARCH_USER, value: "admin"}
+            - name: OPENSEARCH_PASSWORD
+              valueFrom: {secretKeyRef: {name: demo-admin-password, key: password, optional: true}}
+            # --- Argo / Crossplane / Celery ---
+            - {name: ARGO_WORKFLOWTEMPLATE, value: "demo-hello"}
+            - {name: ARGO_SA, value: "demo-argo"}
+            - {name: CROSSPLANE_CONFIGMAP, value: "crossplane-made-this"}
+            - {name: CELERY_MARKER_KEY, value: "celery:flex:done"}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-flex
+  namespace: crossplane-demo
+  labels:
+    app: demo-flex
+spec:
+  selector:
+    app: demo-flex
+  ports:
+    - {name: http, port: 80, targetPort: http}

@@ -1,0 +1,45 @@
+---
+# Scrape MinIO's Prometheus metrics (requires MINIO_PROMETHEUS_AUTH_TYPE=public in
+# tenant.yaml). Two endpoints: /cluster (minio_cluster_*, minio_node_* incl.
+# drive health) + /bucket (minio_bucket_* usage/objects). Alloy picks this up via
+# its cluster-wide `prometheus.operator.servicemonitors` scrape → Mimir. Revives
+# the MinIO row of central-cluster-storage. (TALOS-qtix / epic TALOS-vmd)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: minio
+    app.kubernetes.io/component: metrics
+spec:
+  namespaceSelector:
+    matchNames: [minio]
+  selector:
+    matchLabels:
+      v1.min.io/tenant: minio
+  endpoints:
+    - port: http-minio
+      path: /minio/v2/metrics/cluster
+      scheme: http
+      interval: 30s
+      honorLabels: true
+      # The tenant label matches 3 services (minio LB, minio-console, minio-hl);
+      # keep ONLY the headless minio-hl target so the same pod isn't scraped twice
+      # (dup targets double sum() panels). (TALOS-qtix)
+      relabelings:
+        - action: keep
+          sourceLabels: [__meta_kubernetes_service_name]
+          regex: minio-hl
+    - port: http-minio
+      path: /minio/v2/metrics/bucket
+      scheme: http
+      interval: 30s
+      honorLabels: true
+      # The tenant label matches 3 services (minio LB, minio-console, minio-hl);
+      # keep ONLY the headless minio-hl target so the same pod isn't scraped twice
+      # (dup targets double sum() panels). (TALOS-qtix)
+      relabelings:
+        - action: keep
+          sourceLabels: [__meta_kubernetes_service_name]
+          regex: minio-hl

@@ -1,0 +1,226 @@
+{
+  "uid": "keda-autoscaling",
+  "title": "KEDA Autoscaling",
+  "tags": ["autoscaling", "keda", "scaledobject", "hpa"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "mimir" },
+        "query": { "query": "label_values(keda_resource_registered_total, exported_namespace)", "refId": "StandardVariableQuery" },
+        "regex": "",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "scaledObject",
+        "label": "ScaledObject",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "mimir" },
+        "query": { "query": "label_values(keda_scaler_active{exported_namespace=~\"$namespace\"}, scaledObject)", "refId": "StandardVariableQuery" },
+        "regex": "",
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "sort": 1,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 100, "type": "text", "title": "About this dashboard",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": { "mode": "markdown", "content": "**Automatic cluster-wide KEDA visibility.** Scaler, trigger, resource, and error series come from the KEDA operator; HPA replicas come from kube-state-metrics. KEDA's workload namespace is exposed as `exported_namespace` because the scrape target itself lives in `keda`. Queries deduplicate overlapping scrape paths before aggregation, so newly registered ScaledObjects and ScaledJobs appear without dashboard edits." }
+    },
+    { "id": 1, "type": "row", "title": "Fleet Overview", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 3 } },
+
+    {
+      "id": 2, "type": "stat", "title": "ScaledObjects",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (exported_namespace, type) (keda_resource_registered_total{type=\"scaled_object\", exported_namespace=~\"$namespace\"})) or vector(0)" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "ScaledJobs",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (exported_namespace, type) (keda_resource_registered_total{type=\"scaled_job\", exported_namespace=~\"$namespace\"})) or vector(0)" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Active scalers",
+      "description": "Scalers currently reporting active (keda_scaler_active == 1) — i.e. their trigger is above threshold and driving scale-out.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (exported_namespace, scaledObject, scaler, triggerIndex) (keda_scaler_active{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"})) or vector(0)" } ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Scalers in error [5m]",
+      "description": "Scalers with a non-zero error rate over the last 5m (query/connection failures to the trigger source).",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "count(max by (exported_namespace, scaledObject, scaler, triggerIndex) (rate(keda_scaler_detail_errors_total{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}[5m])) > 0) or vector(0)" } ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "KEDA-managed HPAs",
+      "description": "HorizontalPodAutoscalers managed by KEDA, discovered by joining each HPA scale target from kube-state-metrics to the matching KEDA ScaledObject. This also includes HPAs with custom names.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "none", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "count(max by (namespace, horizontalpodautoscaler, scaledObject) (kube_horizontalpodautoscaler_spec_max_replicas{namespace=~\"$namespace\"} * on (namespace, horizontalpodautoscaler) group_left (scaledObject) label_replace((max by (namespace, horizontalpodautoscaler, scaletargetref_name) (kube_horizontalpodautoscaler_info{namespace=~\"$namespace\"}) and on (namespace, scaletargetref_name) label_replace(label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{type=\"scaledobject\", exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.+)\"), \"scaletargetref_name\", \"$1\", \"scaledObject\", \"(.+)\")), \"scaledObject\", \"$1\", \"scaletargetref_name\", \"(.+)\")))" } ]
+    },
+    {
+      "id": 7, "type": "stat", "title": "Current replicas (managed)",
+      "description": "Sum of current replicas across KEDA-managed HPAs (kube-state-metrics).",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum(max by (namespace, horizontalpodautoscaler, scaledObject) (kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"$namespace\"} * on (namespace, horizontalpodautoscaler) group_left (scaledObject) label_replace((max by (namespace, horizontalpodautoscaler, scaletargetref_name) (kube_horizontalpodautoscaler_info{namespace=~\"$namespace\"}) and on (namespace, scaletargetref_name) label_replace(label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{type=\"scaledobject\", exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.+)\"), \"scaletargetref_name\", \"$1\", \"scaledObject\", \"(.+)\")), \"scaledObject\", \"$1\", \"scaletargetref_name\", \"(.+)\")))" } ]
+    },
+
+    {
+      "id": 8, "type": "table", "title": "ScaledObjects — scaler activity & resulting HPA replicas",
+      "description": "Per ScaledObject: whether any scaler is active, current metric value reported to the HPA, and the HPA min/current/desired/max replicas. HPA rows are joined through kube-state-metrics scale-target ownership and do not depend on an HPA naming convention.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Active" }, "properties": [ { "id": "mappings", "value": [ { "type": "value", "options": { "1": { "text": "active", "color": "green", "index": 0 }, "0": { "text": "idle", "color": "text", "index": 1 } } } ] }, { "id": "custom.cellOptions", "value": { "type": "color-text" } } ] },
+          { "matcher": { "id": "byName", "options": "Current" }, "properties": [ { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } } ] }
+        ]
+      },
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } },
+      "transformations": [
+        { "id": "merge", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "container": true, "endpoint": true, "cluster": true, "service": true, "horizontalpodautoscaler": true, "exported_namespace": true }, "renameByName": { "namespace": "Namespace", "scaledObject": "ScaledObject", "Value #Act": "Active", "Value #Val": "Metric Value", "Value #Cur": "Current", "Value #Des": "Desired", "Value #Min": "Min", "Value #Max": "Max" } } }
+      ],
+      "targets": [
+        { "refId": "Act", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.*)\")" },
+        { "refId": "Val", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "label_replace(max by (exported_namespace, scaledObject) (keda_scaler_metrics_value{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.*)\")" },
+        { "refId": "Cur", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, horizontalpodautoscaler, scaledObject) (kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"$namespace\"} * on (namespace, horizontalpodautoscaler) group_left (scaledObject) label_replace((max by (namespace, horizontalpodautoscaler, scaletargetref_name) (kube_horizontalpodautoscaler_info{namespace=~\"$namespace\"}) and on (namespace, scaletargetref_name) label_replace(label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{type=\"scaledobject\", exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.+)\"), \"scaletargetref_name\", \"$1\", \"scaledObject\", \"(.+)\")), \"scaledObject\", \"$1\", \"scaletargetref_name\", \"(.+)\"))" },
+        { "refId": "Des", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, horizontalpodautoscaler, scaledObject) (kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"$namespace\"} * on (namespace, horizontalpodautoscaler) group_left (scaledObject) label_replace((max by (namespace, horizontalpodautoscaler, scaletargetref_name) (kube_horizontalpodautoscaler_info{namespace=~\"$namespace\"}) and on (namespace, scaletargetref_name) label_replace(label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{type=\"scaledobject\", exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.+)\"), \"scaletargetref_name\", \"$1\", \"scaledObject\", \"(.+)\")), \"scaledObject\", \"$1\", \"scaletargetref_name\", \"(.+)\"))" },
+        { "refId": "Min", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, horizontalpodautoscaler, scaledObject) (kube_horizontalpodautoscaler_spec_min_replicas{namespace=~\"$namespace\"} * on (namespace, horizontalpodautoscaler) group_left (scaledObject) label_replace((max by (namespace, horizontalpodautoscaler, scaletargetref_name) (kube_horizontalpodautoscaler_info{namespace=~\"$namespace\"}) and on (namespace, scaletargetref_name) label_replace(label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{type=\"scaledobject\", exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.+)\"), \"scaletargetref_name\", \"$1\", \"scaledObject\", \"(.+)\")), \"scaledObject\", \"$1\", \"scaletargetref_name\", \"(.+)\"))" },
+        { "refId": "Max", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, horizontalpodautoscaler, scaledObject) (kube_horizontalpodautoscaler_spec_max_replicas{namespace=~\"$namespace\"} * on (namespace, horizontalpodautoscaler) group_left (scaledObject) label_replace((max by (namespace, horizontalpodautoscaler, scaletargetref_name) (kube_horizontalpodautoscaler_info{namespace=~\"$namespace\"}) and on (namespace, scaletargetref_name) label_replace(label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{type=\"scaledobject\", exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.+)\"), \"scaletargetref_name\", \"$1\", \"scaledObject\", \"(.+)\")), \"scaledObject\", \"$1\", \"scaletargetref_name\", \"(.+)\"))" }
+      ]
+    },
+
+    { "id": 10, "type": "row", "title": "Scalers", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 } },
+
+    {
+      "id": 11, "type": "timeseries", "title": "Scaler active (1 = active)",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 1, "custom": { "drawStyle": "line", "fillOpacity": 30, "showPoints": "never", "lineInterpolation": "stepAfter" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{exported_namespace}}/{{scaledObject}} {{scaler}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (exported_namespace, scaledObject, scaler, triggerIndex) (keda_scaler_active{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"})" } ]
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Scaler metric value",
+      "description": "Current metric value each scaler reports to the HPA (compared internally against the trigger threshold to decide scaling).",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{exported_namespace}}/{{scaledObject}} {{scaler}} {{metric}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (exported_namespace, scaledObject, scaler, metric, triggerIndex) (keda_scaler_metrics_value{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"})" } ]
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Scaler metric latency",
+      "description": "Time KEDA took to fetch the metric from the trigger source. Rising latency = a slow/struggling trigger backend.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{exported_namespace}}/{{scaledObject}} {{scaler}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (exported_namespace, scaledObject, scaler, triggerIndex) (keda_scaler_metrics_latency_seconds{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"})" } ]
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "HPA replicas — current vs desired",
+      "description": "kube-state-metrics view of KEDA-managed HPAs, discovered through their scale-target ownership. Desired diverging above current = a scale-up in progress.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/desired/" }, "properties": [ { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{namespace}}/{{horizontalpodautoscaler}} current", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, horizontalpodautoscaler, scaledObject) (kube_horizontalpodautoscaler_status_current_replicas{namespace=~\"$namespace\"} * on (namespace, horizontalpodautoscaler) group_left (scaledObject) label_replace((max by (namespace, horizontalpodautoscaler, scaletargetref_name) (kube_horizontalpodautoscaler_info{namespace=~\"$namespace\"}) and on (namespace, scaletargetref_name) label_replace(label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{type=\"scaledobject\", exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.+)\"), \"scaletargetref_name\", \"$1\", \"scaledObject\", \"(.+)\")), \"scaledObject\", \"$1\", \"scaletargetref_name\", \"(.+)\"))" },
+        { "refId": "B", "legendFormat": "{{namespace}}/{{horizontalpodautoscaler}} desired", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (namespace, horizontalpodautoscaler, scaledObject) (kube_horizontalpodautoscaler_status_desired_replicas{namespace=~\"$namespace\"} * on (namespace, horizontalpodautoscaler) group_left (scaledObject) label_replace((max by (namespace, horizontalpodautoscaler, scaletargetref_name) (kube_horizontalpodautoscaler_info{namespace=~\"$namespace\"}) and on (namespace, scaletargetref_name) label_replace(label_replace(max by (exported_namespace, scaledObject) (keda_scaler_active{type=\"scaledobject\", exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}), \"namespace\", \"$1\", \"exported_namespace\", \"(.+)\"), \"scaletargetref_name\", \"$1\", \"scaledObject\", \"(.+)\")), \"scaledObject\", \"$1\", \"scaletargetref_name\", \"(.+)\"))" }
+      ]
+    },
+
+    { "id": 20, "type": "row", "title": "Triggers & Resources", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 } },
+
+    {
+      "id": 21, "type": "timeseries", "title": "Trigger totals by type",
+      "description": "Number of configured triggers across the cluster, grouped by trigger type (rabbitmq, cron, prometheus, ...).",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" }, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{type}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (type) (keda_trigger_registered_total)" } ]
+    },
+    {
+      "id": 22, "type": "piechart", "title": "Resource totals by type",
+      "description": "KEDA resources by kind (scaled_object, scaled_job, trigger_authentication, ...).",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 34 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "legend": { "displayMode": "table", "placement": "right", "values": ["value"] }, "pieType": "donut" },
+      "targets": [ { "refId": "A", "legendFormat": "{{type}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum by (type) (max by (exported_namespace, type) (keda_resource_registered_total{exported_namespace=~\"$namespace\"}))" } ]
+    },
+    {
+      "id": 23, "type": "stat", "title": "KEDA build info",
+      "description": "Running KEDA operator version (keda_build_info).",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 34 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/^version$/" }, "colorMode": "none", "graphMode": "none", "textMode": "name" },
+      "targets": [ { "refId": "A", "format": "table", "instant": true, "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (version) (keda_build_info)" } ]
+    },
+
+    { "id": 30, "type": "row", "title": "Errors & Metrics Pipeline", "collapsed": false, "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 } },
+
+    {
+      "id": 31, "type": "timeseries", "title": "Error rates [5m]",
+      "description": "Scaler-level, scaler-detail, and ScaledObject-level error rates. Sustained non-zero = a trigger source KEDA cannot reach or a reconcile failure.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 43 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "legendFormat": "{{exported_namespace}}/{{scaledObject}} object", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (exported_namespace, scaledObject) (rate(keda_scaled_object_errors_total{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}[5m]))" },
+        { "refId": "B", "legendFormat": "{{exported_namespace}}/{{scaledObject}} detail", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "max by (exported_namespace, scaledObject, scaler, triggerIndex) (rate(keda_scaler_detail_errors_total{exported_namespace=~\"$namespace\", scaledObject=~\"$scaledObject\"}[5m]))" }
+      ]
+    },
+    {
+      "id": 32, "type": "timeseries", "title": "Metrics-apiserver gRPC calls [5m] (live today)",
+      "description": "GetMetrics gRPC calls the metrics-apiserver makes to the operator, by result code. Non-OK codes = the HPA metrics pipeline is failing. Sourced from keda_internal_metricsservice_grpc_* on the metrics-apiserver — this is scraped as soon as the PodMonitor lands, independent of the operator's Prometheus toggle.",
+      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 43 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" } }, "overrides": [ { "matcher": { "id": "byRegexp", "options": "/^(?!.*OK).*$/" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "legendFormat": "{{grpc_method}} {{grpc_code}}", "datasource": { "type": "prometheus", "uid": "mimir" }, "expr": "sum by (grpc_method, grpc_code) (rate(keda_internal_metricsservice_grpc_client_handled_total[5m]))" } ]
+    }
+  ]
+}

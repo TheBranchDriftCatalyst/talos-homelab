@@ -1,0 +1,58 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: etcd-backup-alerts
+  labels:
+    app.kubernetes.io/name: etcd-backup
+    app.kubernetes.io/component: backup
+spec:
+  groups:
+    - name: etcd-backup.cronjob
+      rules:
+        - alert: EtcdBackupJobFailed
+          expr: |
+            kube_job_status_failed{namespace="backup", job_name=~"etcd-backup-.*"} > 0
+          for: 5m
+          labels:
+            severity: critical
+            component: etcd-backup
+          annotations:
+            summary: "etcd backup job {{ $labels.job_name }} failed"
+            description: >-
+              Job {{ $labels.job_name }} in namespace backup has failed.
+              Investigate with `kubectl logs -n backup -l job-name={{ $labels.job_name }} --all-containers`.
+              Without etcd snapshots, recovery from a control plane disk failure
+              (like the 2026-05-09 incident) is not possible.
+
+        - alert: EtcdBackupNotRunning
+          # Alert if no successful etcd backup completed in the last 2 hours
+          # (hourly schedule + buffer). Uses `time() - kube_cronjob_status_last_successful_time`.
+          expr: |
+            time() - max(kube_cronjob_status_last_successful_time{
+              namespace="backup", cronjob="etcd-backup"
+            }) > 7200
+          for: 10m
+          labels:
+            severity: critical
+            component: etcd-backup
+          annotations:
+            summary: "etcd backup CronJob has not succeeded in over 2 hours"
+            description: >-
+              Last successful etcd-backup run was
+              {{ $value | humanizeDuration }} ago. Expected hourly cadence.
+              Check the CronJob and recent jobs in the backup namespace.
+
+        - alert: EtcdBackupCronJobMissing
+          # CronJob doesn't exist at all — manifest reverted or deleted
+          expr: |
+            absent(kube_cronjob_info{namespace="backup", cronjob="etcd-backup"})
+          for: 15m
+          labels:
+            severity: critical
+            component: etcd-backup
+          annotations:
+            summary: "etcd-backup CronJob is missing from the cluster"
+            description: >-
+              The etcd-backup CronJob in namespace backup is not present.
+              Check Flux reconciliation for infrastructure/base/backup/.

@@ -1,0 +1,359 @@
+# Cilium CNI values for Talos Linux cluster
+# Generated for catalyst-cluster multi-node setup
+
+# Staged upgrade safety (TALOS-p2g3): pin to the version we're upgrading FROM so each new minor
+# keeps backward-compatible defaults and doesn't flip disruptive ones (e.g. the 1.17 SDS/
+# tls.secretSync default). Bump this one minor BEHIND the chart on each hop; only raise it to
+# adopt new defaults once the whole 1.16→1.20 campaign is done + verified.
+upgradeCompatibility: "1.19"
+
+# =============================================================================
+# Cluster Identity (required for ClusterMesh)
+# =============================================================================
+cluster:
+  name: talos-home
+  id: 1
+
+# Replace kube-proxy with Cilium's eBPF implementation
+kubeProxyReplacement: true
+
+# =============================================================================
+# LoadBalancer IPAM + L2 announcements (LAN-local LoadBalancer IPs)
+# =============================================================================
+# Enables type:LoadBalancer services to get a LAN IP from a CiliumLoadBalancerIPPool
+# and be announced on the L2 segment via ARP (no BGP router needed). Used to give
+# the in-cluster Pi-hole a dedicated DNS IP (192.168.1.240). Pool + policy live in
+# lb-ipam.yaml. Requires kubeProxyReplacement (set above).
+l2announcements:
+  enabled: true
+# Higher client rate limit is recommended once L2 is on (per-node lease renewals).
+k8sClientRateLimit:
+  qps: 10
+  burst: 20
+
+# =============================================================================
+# MTU Configuration for ClusterMesh over Nebula
+# =============================================================================
+# Nebula TUN interface has MTU 1300 (due to WireGuard-like encapsulation)
+# VXLAN tunneling adds ~50 bytes overhead
+# Set MTU to 1250 to prevent fragmentation when tunneling over Nebula
+MTU: 1250
+
+# =============================================================================
+# NodePort Configuration for Multi-Network Access
+# =============================================================================
+# Include both LAN and Nebula network CIDRs so NodePort services are accessible
+# via both interfaces. This is required for ClusterMesh via Nebula overlay.
+nodePort:
+  addresses:
+    - 192.168.1.0/24   # LAN network
+    - 10.100.0.0/16    # Nebula overlay network
+
+# Kubernetes API server endpoint — KubePrism (localhost:7445).
+#
+# 2026-05-29 correction: earlier today I claimed KubePrism wasn't listening
+# based on a /proc/net/tcp grep. The grep used the WRONG hex value (`:1D1D`
+# instead of `:1D15` — 7445 dec = 0x1D15). Re-verified: KubePrism IS
+# listening on 127.0.0.1:7445 in LISTEN state on all 5 nodes, and the Talos
+# `KubePrismStatus` resource shows HEALTHY=true.
+#
+# Why this matters: KubePrism is apid's userspace TCP proxy. cilium-agent
+# connect(localhost:7445) → Cilium's BPF socket-LB sees no matching
+# ClusterIP → pass-through → apid forwards to whichever apiserver is
+# healthy. This decouples cilium-agent bootstrap from Cilium's own eBPF
+# datapath, breaking the cilium#41108 chicken-and-egg that caused meltdowns
+# #2-#5 on 2026-05-29: every cilium-agent restart on talos00 was failing to
+# reach apiserver during the eBPF reload window. With KubePrism, the
+# agent's apiserver path goes through apid (host networking, never Cilium).
+k8sServiceHost: localhost
+k8sServicePort: 7445
+
+# =============================================================================
+# Prometheus Metrics Configuration
+# =============================================================================
+# Enable Prometheus metrics for observability
+# Reference: https://docs.cilium.io/en/stable/observability/metrics/
+
+# Cilium Agent metrics (port 9962)
+prometheus:
+  enabled: true
+  port: 9962
+  serviceMonitor:
+    enabled: false  # We use PodMonitor instead (no Service exists)
+
+# Single replica for operator (can scale later)
+operator:
+  replicas: 1
+  # Cilium Operator metrics (port 9963)
+  prometheus:
+    enabled: true
+    port: 9963
+    serviceMonitor:
+      enabled: false  # We use PodMonitor instead
+
+# Use Kubernetes IPAM (compatible with existing pod CIDR)
+ipam:
+  mode: kubernetes
+
+# Hubble observability
+hubble:
+  enabled: true
+  # Hubble flow buffer (~64MiB at 16383 events). Restored 2026-05-30 after
+  # the meltdown root cause (TALOS-yyt — CiliumIdentity bloat) was fixed
+  # and the agent memory limit raised to 2GiB. The earlier 8191 drop was
+  # an unrelated workaround. Bigger buffer = more flow history in Hubble UI
+  # and less event loss under bursts. Must be (2^n - 1): 4095, 8191, 16383,
+  # 32767, 65535.
+  eventBufferCapacity: 16383
+  relay:
+    enabled: true
+  ui:
+    enabled: true
+  # Hubble metrics (port 9965)
+  metrics:
+    enabled:
+      - dns
+      - drop
+      - tcp
+      - flow
+      - port-distribution
+      - icmp
+      - policy:sourceContext=app|workload-name|pod|reserved-identity;destinationContext=app|workload-name|pod|dns|reserved-identity;labelsContext=source_namespace,destination_namespace
+      - httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction
+    port: 9965
+    enableOpenMetrics: true
+    serviceMonitor:
+      enabled: false  # We use PodMonitor instead
+
+# Talos-specific security context
+securityContext:
+  capabilities:
+    ciliumAgent:
+      - CHOWN
+      - KILL
+      - NET_ADMIN
+      - NET_RAW
+      - IPC_LOCK
+      - SYS_ADMIN
+      - SYS_RESOURCE
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    cleanCiliumState:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+
+# Talos uses cgroupv2
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+
+# =============================================================================
+# DNS Proxy Configuration
+# =============================================================================
+# Disable transparent DNS proxy mode - Talos's hostDNS handles DNS forwarding
+# The transparent proxy can't reach Talos's 127.0.0.53 from pod namespace
+dnsProxy:
+  enableTransparentMode: false
+
+# Resource limits.
+# memory raised 1Gi → 2Gi after 2026-05-29 meltdown. The CP-pinned agent on
+# talos00 carries the heaviest endpoint map (system pods + SPIRE + Hubble Relay
+# + ClusterMesh apiserver), and Go's GOMEMLIMIT was thrashing GC near the 1GiB
+# ceiling. Removing the cap entirely is the Cilium-DS upstream recommendation,
+# but 2Gi gives breathing room without unbounded usage.
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# =============================================================================
+# SPIRE-based Mutual TLS Authentication — REMOVED 2026-08-22 (TALOS-1d4o)
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/network/servicemesh/mutual-authentication/mutual-authentication/
+# Full investigation + evidence: docs/02-architecture/cilium-spire-disposition.md
+#
+# Disabled after a read-only audit against the live cluster established, independently:
+#   - NOTHING USED IT. 6 CiliumNetworkPolicies, 0 CiliumClusterwideNetworkPolicies, and zero
+#     references to `authentication` in any of them. Mutual auth is enforced PER-POLICY via
+#     `authentication.mode: required`; with no policy setting it, SPIRE was deciding no traffic.
+#     Nothing fails closed when it goes.
+#   - IT IS DEPRECATED IN THE VERSION WE RUN. Verbatim from the v1.20.0 chart values, directly
+#     above the `mutual:` key: "Deprecated as of Cilium v1.20, this feature will be removed in
+#     Cilium v1.21." (cilium#47132). Beta since 2023, never promoted, limited security support,
+#     superseded upstream by zTunnel. There is no version where we get more life out of it.
+#   - ITS STATE IS DERIVED, NOT PRECIOUS. The SPIRE datastore is a projection of CiliumIdentity;
+#     cilium-operator re-registered 258 identities in its first minute on last startup.
+#   - IT COST US REAL TOIL. spire-agent's projected SA token wedges into a self-perpetuating
+#     expired-token CrashLoopBackOff on kubelet restart. The "durable fix" (KeyManager disk on
+#     emptyDir, 2026-08-09) was live for 12 days and the wedge recurred anyway on 2026-08-21,
+#     because agents re-attest ~every 30 min indefinitely — the token is on the hot path
+#     continuously, not just at cold start. Every node upgrade re-triggered this.
+#
+# Removing this also cleared the 1Ti-claim spire-server PVC pinning talos03 (TALOS-3gte).
+#
+# ROLLBACK: flip both booleans back to true and `flux reconcile kustomization cilium
+# --with-source`. The chart re-renders all 16 SPIRE resources. Identities re-register
+# automatically (~1 min), so a revert costs nothing but a brief re-attestation cycle.
+# NOTE: both flags must move together — the chart rejects `mutual.spire.enabled: true`
+# with `authentication.enabled: false`.
+
+authentication:
+  enabled: false
+  mutual:
+    spire:
+      enabled: false
+
+# =============================================================================
+# Egress Gateway for VPN Traffic Steering (DISABLED)
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/network/egress-gateway/
+#
+# DISABLED: Abandoned node-level WireGuard approach due to router NAT issues.
+# Now using pod-based gluetun VPN gateway instead.
+# Re-enable if you need to route traffic through specific nodes/interfaces.
+
+egressGateway:
+  enabled: false
+
+# Agent liveness — REVERTED to chart default after 2026-05-29 post-mortem.
+# The 15-min grace (failureThreshold: 30) was hiding silent rot: the cluster
+# accumulated 1991 cilium-agent restarts over 5 days without alerting before
+# the 2026-05-29 meltdown made it obvious. Fail loud at 5min instead — pair
+# with PrometheusRules on restart rate (TALOS-txl) so we hear the alarm.
+#
+# NOTE: chart schema expects `livenessProbe` at top level (not nested under
+# `agent`). Prior `agent.livenessProbe.failureThreshold: 30` was schema-
+# invalid; helm would have rejected the render. Yet the live DS had it set —
+# so it was almost certainly live-patched via `kubectl edit ds cilium`
+# during the 2026-05-22 incident response and never made it into rendered
+# manifests. Fix the structure properly now.
+livenessProbe:
+  failureThreshold: 10   # chart default — 10 × 30s = 5min grace
+# DaemonSet rolling update — tightened from 2 → 1 to prevent multi-agent
+# downtime during agent rotation breaking apiserver host-network connectivity.
+updateStrategy:
+  rollingUpdate:
+    maxUnavailable: 1
+
+# BPF masquerade required for egress gateway
+bpf:
+  masquerade: true
+  # Increase BPF policy map size — default 16384 was overflowing on talos03
+  # under our identity count (~50 namespaces × policies). Error was:
+  #   "Failed to add PolicyMap key: no space left on device"
+  # 65536 gives headroom for further growth.
+  policyMapMax: 65536
+  # Also bump LB map max in proportion (was already 65536, keep for clarity)
+  lbMapMax: 65536
+
+# =============================================================================
+# WireGuard Transparent Encryption (TESTING - DISABLED)
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/security/network/encryption-wireguard/
+#
+# ISSUE: WireGuard + VXLAN causes 100% cross-node packet loss
+# Tested: MTU=1370, devices="en+" - still broken
+# Next: Try native routing mode instead of VXLAN tunnel
+#
+# encryption:
+#   enabled: true
+#   type: wireguard
+#   nodeEncryption: false
+
+# =============================================================================
+# Native Routing for Nebula Mesh Network
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/network/concepts/routing/#native-routing
+#
+# Traffic to the Nebula CIDR (10.100.0.0/16) bypasses Cilium's eBPF datapath
+# and is routed natively by the kernel to the nebula0 TUN interface.
+# This enables cross-cluster pod-to-pod connectivity via Nebula overlay.
+#
+# Without this, Cilium's eBPF intercepts Nebula-bound traffic but can't
+# route it through the TUN interface, causing connectivity failures.
+
+ipv4NativeRoutingCIDR: "10.100.0.0/16"
+
+# =============================================================================
+# Identity-Relevant Labels (CRITICAL — prevents identity bloat meltdowns)
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/operations/performance/scalability/identity-relevant-labels
+#
+# 2026-05-30 root cause of the week-long meltdown saga (TALOS-yyt):
+#   Cilium was using ALL pod labels for identity computation. Per the Cilium
+#   ConfigMap dump and identity audit we ran today:
+#     - 19,439 CiliumIdentity CRDs in etcd for 180 live pods (100x bloat).
+#     - 18,710 from job-name / batch.kubernetes.io/job-name (one-shot Jobs).
+#     - 14,931 from dagster/run-id (Dagster was migrated to catalyst-data repo;
+#       residue remained because identity GC could never finish).
+#     - 2,594 from velero.io/pod-volume-backup (one per backup).
+#   Each cilium-agent restart triggered a LIST returning 30MB / 9438 objects,
+#   which saturated etcd → apiserver Handler timeout → KubePrism EOF →
+#   cilium-agent fatal at startup → kubelet restart → loop. cilium-operator
+#   itself crashlooped 189x/20h on the same cascade, so identity GC (15min
+#   interval) NEVER completed.
+#
+# The fix below denies high-churn labels from contributing to identity,
+# halting NEW pollution. The accompanying one-shot cleanup script
+# (`scripts/cleanup-cilium-identities.sh`) drops the existing 19k stale CRDs.
+#
+# Format: space-separated regex; `!` prefix denies. Patterns append to chart
+# defaults (which already include the policy-relevant prefixes). We only need
+# to exclude pollution sources.
+labels: "!.*controller-uid.* !.*pod-template-hash.* !.*batch\\.kubernetes\\.io.* !job-name !.*dagster.* !helm\\.sh.* !.*velero\\.io/pod-volume-backup.* !.*velero\\.io/repo-name.*"
+
+# =============================================================================
+# ClusterMesh for Multi-Cluster Connectivity
+# =============================================================================
+# Reference: https://docs.cilium.io/en/stable/network/clustermesh/clustermesh/
+#
+# Enables cross-cluster service discovery and pod-to-pod connectivity
+# across talos-home (ID:1) and aws-lighthouse (ID:2) clusters via Nebula mesh
+
+clustermesh:
+  useAPIServer: true
+  apiserver:
+    # SCALED TO 0 — 2026-05-29.
+    # ClusterMesh is provisioned (certs, NodePort, TLS SANs) but no peer
+    # cluster is registered yet (`enable-external-workloads=false`).
+    # Running its 3 containers (etcd + apiserver + kvstoremesh) pinned to the
+    # control-plane was load that contributed to the CP meltdowns.
+    # Restore to `replicas: 1` once the AWS lighthouse peer is actually wired
+    # up. Tracked: TALOS-fed-enable (re-enable ClusterMesh on federation cut-in)
+    replicas: 0
+    service:
+      type: NodePort
+      nodePort: 32379
+    tls:
+      auto:
+        enabled: true
+        method: helm
+      # Include additional IPs for cross-cluster connectivity via port forwarders
+      # These IPs will be included in the server certificate SANs
+      # Must include all IPs that clients connect to (including forwarded IPs)
+      server:
+        extraIpAddresses:
+          - 192.168.1.54   # Talos control plane LAN IP
+          - 10.100.0.1     # Talos Nebula mesh IP
+          - 10.100.2.1     # AWS Nebula mesh IP (clients connect via AWS forwarder)
+    # Pin ClusterMesh API server to control plane node (has Nebula)
+    # This ensures the NodePort 32379 is accessible via Nebula IP (10.100.0.1)
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: node-role.kubernetes.io/control-plane
+                  operator: Exists
+    # Tolerate control-plane taint to actually schedule on the control plane
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule

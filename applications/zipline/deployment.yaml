@@ -1,0 +1,91 @@
+---
+# Zipline - Self-hosted image/file sharing
+# https://github.com/diced/zipline
+#
+# GitOps + CNPG migration (TALOS-0w6d): the co-pod `postgres:15-alpine` sidecar
+# is GONE. Zipline talks to the CNPG `zipline-postgres-rw` service and reads its
+# full connection string from the CNPG-generated `zipline-postgres-app` secret
+# (`uri` key = postgresql://zipline:<pass>@zipline-postgres-rw:5432/zipline).
+# CORE_SECRET comes from the zipline-secrets ExternalSecret (1Password item
+# `zipline`, field `core-secret`). No plaintext secrets remain in git.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zipline
+  labels:
+    app: zipline
+    app.kubernetes.io/name: zipline
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: zipline
+  template:
+    metadata:
+      labels:
+        app: zipline
+      annotations:
+        # DB is CNPG-managed now; only the uploads volume needs Velero coverage.
+        backup.velero.io/backup-volumes: uploads
+    spec:
+      containers:
+        # Zipline application
+        - name: zipline
+          image: ghcr.io/diced/zipline:latest
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            # CORE_SECRET (token-signing key) from the zipline-secrets
+            # ExternalSecret (1Password item `zipline`, field core-secret).
+            - name: CORE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: zipline-secrets
+                  key: CORE_SECRET
+            # Full DB connection string straight from the CNPG-generated
+            # zipline-postgres-app secret — points at the -rw service, carries
+            # the random rotated password. No plaintext, no templating needed.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: zipline-postgres-app
+                  key: uri
+            # Website configuration
+            - name: WEBSITE_TITLE
+              value: "Catalyst Share"
+          volumeMounts:
+            - name: uploads
+              mountPath: /zipline/uploads
+            - name: public
+              mountPath: /zipline/public
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+      volumes:
+        # The uploaded FILES — preserved across the migration (see pvc.yaml).
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: zipline-uploads
+        - name: public
+          emptyDir: {}

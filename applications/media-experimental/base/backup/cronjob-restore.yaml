@@ -1,0 +1,132 @@
+---
+# RESTORE: repopulate the config volumes from an archive. TALOS-uml1.
+#
+# Shipped SUSPENDED and it must stay that way -- this writes to live app volumes.
+#
+# Sequence after a talos03 reset (full runbook in ./README.md):
+#   1. delete the 12 dead local-path PVCs; Flux recreates them from git
+#   2. make sure MEDIA_EXPERIMENTAL_NODE in cluster-settings names the node the
+#      apps should now run on, so the fresh PVCs provision where the pods will go
+#   3. kubectl -n media-experimental create job --from=cronjob/config-restore \
+#              config-restore-$(date +%s)
+#
+# Defaults to the newest CLEAN run (backup.sh only writes LATEST on a fully
+# successful run). Pin an older one with RUN_ID=20260823T004500Z.
+#
+# FORCE=false means it REFUSES to write into a non-empty volume. That is the
+# safety interlock: restoring over live data needs a deliberate FORCE=true.
+#
+# nodeAffinity IS set here, unlike the backup job, and it has to be: after a reset
+# the PVCs are fresh and WaitForFirstConsumer, so THIS POD decides which node
+# local-path provisions on. It must be the same node the Deployments are pinned
+# to, hence the same variable.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: config-restore
+  labels:
+    app.kubernetes.io/component: config-backup
+spec:
+  suspend: true
+  schedule: "0 0 31 2 *"       # never (Feb 31st) -- this is a manual-trigger template
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Manually created Jobs (kubectl create job --from=cronjob/...) are NOT
+      # covered by successfulJobsHistoryLimit, so without a TTL they and their
+      # pods live forever -- and for the verify job that means its generic
+      # ephemeral PVCs are never collected either, since they are owned by the
+      # pod. One day is long enough to read the logs.
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0          # never silently retry a write into app data
+      template:
+        spec:
+          serviceAccountName: config-backup
+          restartPolicy: Never
+          affinity:
+            nodeAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+                nodeSelectorTerms:
+                  - matchExpressions:
+                      - key: kubernetes.io/hostname
+                        operator: In
+                        values: ["${MEDIA_EXPERIMENTAL_NODE:=talos03}"]
+          securityContext:
+            runAsUser: 0        # restore files under their captured uid/gid
+            runAsGroup: 0
+          containers:
+            - name: restore
+              image: alpine/k8s:1.34.9
+              command: [/bin/sh, /scripts/restore.sh]
+              env:
+                - name: NODE_NAME
+                  valueFrom:
+                    fieldRef: {fieldPath: spec.nodeName}
+                - name: NAMESPACE
+                  valueFrom:
+                    fieldRef: {fieldPath: metadata.namespace}
+                - name: VOLUMES
+                  value: >-
+                    audiobookshelf=audiobookshelf-config audiobookshelf=audiobookshelf-metadata
+                    bindery=bindery-config booksonic=booksonic-config chaptarr=chaptarr-config
+                    kavita=kavita-config komga=komga-config libation=libation-config
+                    librarr=librarr-config livrarr=livrarr-config mylar3=mylar3-config
+                    storyteller=storyteller-config
+                - name: QUIESCE
+                  value: "true"
+                - name: FORCE
+                  value: "false"    # refuse to overwrite a non-empty volume
+                - name: RUN_ID
+                  value: ""         # empty = newest clean run (BACKUP_ROOT/LATEST)
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {memory: 512Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                seccompProfile: {type: RuntimeDefault}
+                capabilities:
+                  # These are required, not decoration -- dropping ALL takes them away
+                  # from uid 0 too.
+                  #   DAC_OVERRIDE  read/write the mode-0600 files owned by other uids
+                  #                 (bindery.db, chaptarr's asp/key-*.xml); without it
+                  #                 tar gets "Permission denied" AS ROOT
+                  #   CHOWN         restore each file's captured uid:gid. Without it the
+                  #                 whole tree lands as 0:0 and the apps' PUID/PGID 1000
+                  #                 processes inherit someone else's data
+                  #   FOWNER        restore modes on files we do not own
+                  drop: [ALL]
+                  add: [DAC_OVERRIDE, CHOWN, FOWNER]
+              volumeMounts:
+                - {name: scripts, mountPath: /scripts, readOnly: true}
+                - {name: backup, mountPath: /backup, readOnly: true}
+                - {name: scratch, mountPath: /tmp}
+                - {name: audiobookshelf-config, mountPath: /vol/audiobookshelf-config}
+                - {name: audiobookshelf-metadata, mountPath: /vol/audiobookshelf-metadata}
+                - {name: bindery-config, mountPath: /vol/bindery-config}
+                - {name: booksonic-config, mountPath: /vol/booksonic-config}
+                - {name: chaptarr-config, mountPath: /vol/chaptarr-config}
+                - {name: kavita-config, mountPath: /vol/kavita-config}
+                - {name: komga-config, mountPath: /vol/komga-config}
+                - {name: libation-config, mountPath: /vol/libation-config}
+                - {name: librarr-config, mountPath: /vol/librarr-config}
+                - {name: livrarr-config, mountPath: /vol/livrarr-config}
+                - {name: mylar3-config, mountPath: /vol/mylar3-config}
+                - {name: storyteller-config, mountPath: /vol/storyteller-config}
+          volumes:
+            - {name: scripts, configMap: {name: config-backup-scripts, defaultMode: 0755}}
+            - {name: backup, persistentVolumeClaim: {claimName: config-backup}}
+            - {name: scratch, emptyDir: {sizeLimit: 1Gi}}
+            - {name: audiobookshelf-config, persistentVolumeClaim: {claimName: audiobookshelf-config}}
+            - {name: audiobookshelf-metadata, persistentVolumeClaim: {claimName: audiobookshelf-metadata}}
+            - {name: bindery-config, persistentVolumeClaim: {claimName: bindery-config}}
+            - {name: booksonic-config, persistentVolumeClaim: {claimName: booksonic-config}}
+            - {name: chaptarr-config, persistentVolumeClaim: {claimName: chaptarr-config}}
+            - {name: kavita-config, persistentVolumeClaim: {claimName: kavita-config}}
+            - {name: komga-config, persistentVolumeClaim: {claimName: komga-config}}
+            - {name: libation-config, persistentVolumeClaim: {claimName: libation-config}}
+            - {name: librarr-config, persistentVolumeClaim: {claimName: librarr-config}}
+            - {name: livrarr-config, persistentVolumeClaim: {claimName: livrarr-config}}
+            - {name: mylar3-config, persistentVolumeClaim: {claimName: mylar3-config}}
+            - {name: storyteller-config, persistentVolumeClaim: {claimName: storyteller-config}}

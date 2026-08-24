@@ -1,0 +1,114 @@
+---
+# Self-healing registrar for the `crowdsec-web-ui` LAPI machine (TALOS-pbn).
+#
+# WHY: the web-ui machine is added imperatively (`cscli machines add crowdsec-web-ui`),
+# so unlike the agents + `traefik` bouncer (which re-register from env each boot) it has
+# no automatic re-register path. The LAPI datastore is now durable CNPG Postgres
+# (postgres.yaml), so a registered machine normally persists across restarts — but this
+# CronJob still (a) performs the FIRST registration idempotently and (b) is a
+# belt-and-suspenders safety net if the Postgres DB is ever rebuilt/migrated. It only
+# (re)registers when the machine is absent, so a healthy LAPI is never disturbed.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crowdsec-machine-registrar
+  namespace: crowdsec
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crowdsec-machine-registrar
+  namespace: crowdsec
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crowdsec-machine-registrar
+  namespace: crowdsec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crowdsec-machine-registrar
+subjects:
+  - kind: ServiceAccount
+    name: crowdsec-machine-registrar
+    namespace: crowdsec
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crowdsec-web-ui-register
+  namespace: crowdsec
+  labels:
+    app: crowdsec-web-ui
+spec:
+  # Every 5 min: bounds the "LAPI Offline" window after a LAPI restart to <5min.
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 120
+      ttlSecondsAfterFinished: 300
+      template:
+        metadata:
+          labels:
+            app: crowdsec-web-ui
+            app.kubernetes.io/component: machine-registrar
+        spec:
+          serviceAccountName: crowdsec-machine-registrar
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: register
+              # alpine/k8s (kubectl + sh) — replaced bitnami/kubectl:1.31, which Broadcom pulled
+              # from Docker Hub (Aug 2025 bitnamilegacy move) → ErrImagePull. Needs a SHELL image
+              # (the command below is a multi-line sh script), so distroless registry.k8s.io/kubectl
+              # won't work here. (TALOS-pbn)
+              image: alpine/k8s:1.34.1
+              env:
+                - name: WEBUI_PW
+                  valueFrom:
+                    secretKeyRef:
+                      name: crowdsec-web-ui-creds
+                      key: password
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  # Idempotent: only (re)register if the web-ui machine is absent,
+                  # so a healthy LAPI is never disturbed. --force keeps the password
+                  # in lockstep with the secret when it does register.
+                  if kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
+                       cscli machines list -o json 2>/dev/null | grep -q '"crowdsec-web-ui"'; then
+                    echo "crowdsec-web-ui machine present — nothing to do"
+                  else
+                    echo "crowdsec-web-ui machine MISSING — (re)registering from secret"
+                    kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
+                      cscli machines add crowdsec-web-ui --password "$WEBUI_PW" --force
+                    echo "registered — Web UI will auth on its next bootstrap retry (~30s)"
+                  fi

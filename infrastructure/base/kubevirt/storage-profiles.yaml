@@ -1,0 +1,36 @@
+---
+# CDI StorageProfiles — declare what CDI cannot infer for non-CSI provisioners.
+#
+# CDI auto-creates an (empty) StorageProfile per StorageClass; with no
+# claimPropertySets it cannot infer accessMode/volumeMode for PVC population
+# and fires CDIStorageProfilesIncomplete (info) for every profile, plus
+# CDIDefaultStorageClassDegraded (warning) because local-path (the k8s
+# default) has neither smart-clone nor RWX. Filling these in completes the
+# profiles; fatboy-nfs-appdata (RWX-capable NFS) is additionally marked the
+# virt-default StorageClass via the is-default-virt-class annotation on the
+# SC itself (postRenderer in storage/nfs-provisioner/helmrelease.yaml), which
+# clears the degraded alert legitimately.
+#
+# NOTE: CDI owns .status on these objects; only .spec is ours.
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: StorageProfile
+metadata:
+  name: fatboy-nfs-appdata
+spec:
+  claimPropertySets:
+    # nfs-subdir-external-provisioner: filesystem-only, RWX-capable
+    - accessModes:
+        - ReadWriteMany
+        - ReadWriteOnce
+      volumeMode: Filesystem
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: StorageProfile
+metadata:
+  name: local-path
+spec:
+  claimPropertySets:
+    # rancher local-path: hostPath-backed, single-node, filesystem-only
+    - accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem

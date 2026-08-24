@@ -1,0 +1,64 @@
+# Reserve memory for the kubelet, containerd and the kernel so a node DEFENDS ITSELF
+# instead of letting workloads consume the memory the node needs to stay alive.
+#
+# WHY — talos03 wedged on 2026-08-23T21:43:44Z and needed a physical power cycle.
+# Measured from Mimir over the hour before it went:
+#     mem available   0.6 GiB   (min 0.6, max 1.8)   <-- at the floor
+#     cpu busy        6.7-14.3%                       healthy
+#     load15          1.5-2.3                         healthy
+#     disk io util    2.7-23.3%                       healthy
+# Pure memory exhaustion. The signature is distinctive and worth recognising: the node
+# still answered ping, every TCP port stayed OPEN (50000/10250/2379/6443), but no
+# handshake ever completed and machined's own socket was closed —
+#     raw-read unix @->/system/run/machined/machine.sock: use of closed network connection
+# That is a node thrashing, not a node that crashed. Nothing short of a power cycle
+# recovers it, and the kernel log does not survive the reboot, so the metrics are the
+# only forensic trail. See TALOS-hyga.
+#
+# THE UNDERLYING SHAPE. Kubernetes had NO memory reserved on any node — kubelet,
+# containerd and the kernel were competing with workloads for the last gigabyte and
+# losing. Worse, the scheduler packs on CPU and on REQUESTS, so:
+#     talos03  15.0 Gi RAM, 16 CPUs   ~1 GiB per core — the LEAST RAM in the fleet
+#              while looking CPU-abundant, so it attracts work it cannot feed.
+#     talos01  23.2 Gi RAM, 22.6 Gi already requested — 97%, essentially no headroom.
+# Anything running without a memory request is invisible to that arithmetic entirely.
+#
+# WHAT THIS BUYS. It converts "node wedges and needs someone to walk over and power
+# cycle it" into "a pod gets evicted" — a recoverable, observable event. It does NOT
+# create memory; a genuinely oversubscribed node still sheds pods. That is the point.
+#
+# THE NUMBERS, and why they are not larger. 1Gi system + 1Gi kube + 500Mi eviction
+# threshold reserves ~2.5Gi. On talos03 that is 17% of 15Gi, which is a real cost —
+# but it is 17% that was ALREADY being used by the kernel and kubelet, just without
+# the scheduler knowing. Going higher would idle memory on the 62Gi nodes for no gain.
+#
+# EXPECT ALLOCATABLE TO DROP, AND EXPECT THAT TO SURFACE OVERCOMMIT. talos01 sits at
+# 22.6Gi requested against 23.2Gi capacity; after this its allocatable is ~20.7Gi, so
+# it is openly overcommitted. Reducing allocatable does NOT evict running pods — the
+# scheduler simply stops placing new ones there. Eviction happens only if the node
+# actually crosses the evictionHard threshold, which is the behaviour being asked for.
+#
+# NOT A REBOOT: kubelet config applies via talosctl patch mc in default auto mode,
+# which restarts kubelet only. Running containers are undisturbed. Same mechanism as
+# the maxPods patch alongside this file.
+#
+# Apply per node (do talos03 FIRST — it is the one that failed — then verify before
+# moving on, since this changes scheduling on every node it touches):
+#   talosctl --talosconfig configs/talosconfig -e 192.168.1.54 \
+#     patch mc --nodes <node-ip> --patch @docs/05-runbooks/talos-kubelet-memory-reserve-patch.yaml
+#
+# Verify:
+#   kubectl get nodes -o custom-columns=\
+#     NAME:.metadata.name,CAP:.status.capacity.memory,ALLOC:.status.allocatable.memory
+machine:
+  kubelet:
+    extraConfig:
+      systemReserved:
+        memory: 1Gi
+        cpu: 200m
+      kubeReserved:
+        memory: 1Gi
+        cpu: 200m
+      evictionHard:
+        memory.available: 500Mi
+        nodefs.available: 10%

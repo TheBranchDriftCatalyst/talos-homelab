@@ -1,0 +1,204 @@
+---
+# ClickStack / HyperDX (TALOS-cjny) — dedicated log-analytics UI + OTel
+# collector. chart 1.1.1 / app 2.8.0 (latest 2026-08).
+#
+# Deviations from chart defaults, all deliberate:
+#  - clickhouse.enabled=false  -> we use the Altinity-operator CHI
+#    (clickhouse.yaml) instead of the chart's unmanaged StatefulSet. Keeps
+#    ClickHouse under the same operator/CRD pattern as plausible.
+#  - mongodb.image bumped 5.0.32 -> 8.3.8. Mongo holds HyperDX APP STATE only
+#    (users/dashboards/saved searches) — no log data — so it is rebuildable
+#    if the major jump misbehaves; revert to mongo:5.0.32-focal if HyperDX
+#    fails to connect (documented on TALOS-cjny).
+#  - usageStatsEnabled=false (homelab, no phone-home).
+#  - chart ingress left off: exposure is our Traefik IngressRoute
+#    (ingressroute.yaml -> hyperdx.talos00).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: clickstack
+  namespace: monitoring
+spec:
+  interval: 30m
+  # 20m: the stack has a slow, interdependent startup — mongo init, then the
+  # app, then the otel-collector's OpAMP handshake back to the app. The 5m
+  # default expired mid-boot and each retry TERMINATED pods that were seconds
+  # from ready (observed 2026-08-15), looking like a crashloop that wasn't.
+  timeout: 20m
+  chart:
+    spec:
+      chart: clickstack
+      version: '1.1.1'
+      sourceRef:
+        kind: HelmRepository
+        name: hyperdx
+        namespace: monitoring
+      interval: 12h
+  install:
+    crds: CreateReplace
+    # The ONLY HelmRelease in the repo that overrides remediation. Everything else takes
+    # retries: 3 from the helmrelease-remediation-defaults Kyverno policy, which is why no
+    # other release spells it out any more — do not "tidy" this one to match them. The
+    # policy is add-if-absent, so this block wins and stays.
+    remediation:
+      retries: 2
+      remediateLastFailure: false # don't tear down a stack that's still converging
+  upgrade:
+    crds: CreateReplace
+    cleanupOnFail: true
+  # Injects the ESO-generated Mongo URI as a Helm value.
+  #
+  # valuesFrom, NOT Kustomization postBuild: postBuild runs envsubst over EVERY
+  # manifest in the Kustomization path, so enabling it here broke the unrelated
+  # mimir HelmRelease, whose config legitimately contains a runtime ${AWS_ACCESS_KEY_ID}
+  # literal that Flux then tried to resolve and failed on in strict mode.
+  # valuesFrom is scoped to THIS release and reads the Secret from the
+  # HelmRelease's own namespace, so no cross-namespace mirroring is needed either.
+  valuesFrom:
+    - kind: Secret
+      name: clickstack-mongodb-password
+      valuesKey: CLICKSTACK_MONGO_URI
+      targetPath: hyperdx.mongoUri
+
+  values:
+    global:
+      storageClassName: local-path
+
+    # Bundled ClickHouse OFF — the Altinity CHI is the store.
+    #
+    # config.users still matters with enabled:false — the chart templates the
+    # COLLECTOR's CLICKHOUSE_USER/PASSWORD and the app's connection from these
+    # keys. Chart defaults invent users (otelcollector/app) that only its own
+    # bundled StatefulSet would create; against our CHI they'd fail auth and
+    # the collector never becomes ready (observed 2026-08-15). Point them at
+    # `default` with an empty password, matching the plausible CHI precedent
+    # (ClusterIP-only, no ingress on 8123/9000) — no invented secrets in git.
+    clickhouse:
+      enabled: false
+      config:
+        users:
+          otelUserName: "default"
+          otelUserPassword: ""
+          appUserPassword: ""
+
+    # Bundled mongo DISABLED — replaced by the operator-managed MongoDBCommunity
+    # in mongodb.yaml (app state only: sources/dashboards/users, not logs).
+    #
+    # The chart ships a plain Deployment on a local-path PVC. That PVC bound to
+    # talos00 while it was schedulable; once the control-plane taint was restored
+    # the pod could never be rescheduled there, so the first eviction left it
+    # permanently Pending (the 2026-08-20 control-plane reboot surfaced it).
+    # The CR pins away from control-plane nodes so it cannot recur, and adds
+    # SCRAM auth — the bundled one ran with NO AUTHENTICATION AT ALL.
+    mongodb:
+      enabled: false
+
+    # Collector writes OTLP -> ClickHouse over the native protocol.
+    otel:
+      clickhouseEndpoint: "tcp://clickhouse-hyperdx-logs.monitoring.svc:9000"
+
+    hyperdx:
+      # mongoUri is injected from a Secret via spec.valuesFrom below —
+      # deliberately NOT set here, so the credential never lands in git.
+      # The app container runs THREE node processes (API :8000, Next.js UI
+      # :3000, alert-task). The chart ships no limits; under node memory
+      # pressure the container was OOMKilled (exit 137) and came back with the
+      # UI process missing while readiness — which only probes the API port —
+      # still reported 1/1. Explicit headroom keeps the UI alive. (2026-08-15)
+      resources:
+        requests:
+          cpu: 100m
+          memory: 512Mi
+        limits:
+          memory: 2Gi
+      appUrl: "http://hyperdx.talos00"
+      # Override the chart's default (which appends :3000) — Traefik serves
+      # this on :80, so the browser-facing URL carries no port.
+      frontendUrl: "http://hyperdx.talos00"
+      usageStatsEnabled: false
+      # PRE-PROVISIONED SOURCES (TALOS-cjny) — so the UI needs no click-ops.
+      # HyperDX auto-provisions these when a team has NO sources yet, which
+      # means changes here only apply to a FRESH team: to re-apply, drop the
+      # sources from Mongo and restart the app (documented on the ticket).
+      #
+      # Derived from the chart defaults with two deliberate changes:
+      #  1. trace/span ids and service name are read from LogAttributes, not
+      #     the native OTLP columns. Pod logs are stdout-scraped via
+      #     loki.source.kubernetes, which leaves ServiceName/TraceId EMPTY —
+      #     but Alloy parses the JSON body into LogAttributes, so the fields
+      #     are there as indexed map keys (cheaper than JSONExtract on Body).
+      #     serviceNameExpression falls back app -> app.kubernetes.io/name ->
+      #     container so EVERY pod gets a usable service, not just ones that
+      #     emit OTLP natively (verified: kometa/traefik/mimir/alloy/... all
+      #     resolve). trace_id/span_id come from boomtime's slog (TALOS-kvg1).
+      #  2. the metric + session sources are dropped: Mimir owns metrics and
+      #     nothing writes hyperdx_sessions, so they'd be dead entries.
+      # Log<->trace correlation (traceSourceId/logSourceId) is already wired.
+      defaultSources: |
+        [
+          {
+            "from": {
+              "databaseName": "default",
+              "tableName": "otel_logs"
+            },
+            "kind": "log",
+            "timestampValueExpression": "TimestampTime",
+            "name": "Logs",
+            "displayedTimestampValueExpression": "Timestamp",
+            "implicitColumnExpression": "Body",
+            "serviceNameExpression": "coalesce(nullIf(ServiceName, ''), nullIf(LogAttributes['app'], ''), nullIf(LogAttributes['app_kubernetes_io_name'], ''), nullIf(LogAttributes['container'], ''), 'unknown')",
+            "bodyExpression": "Body",
+            "eventAttributesExpression": "LogAttributes",
+            "resourceAttributesExpression": "ResourceAttributes",
+            "defaultTableSelectExpression": "Timestamp,ServiceName,SeverityText,Body",
+            "severityTextExpression": "SeverityText",
+            "traceIdExpression": "LogAttributes['trace_id']",
+            "spanIdExpression": "LogAttributes['span_id']",
+            "connection": "Local ClickHouse",
+            "traceSourceId": "Traces",
+            "sessionSourceId": "Sessions",
+            "metricSourceId": "Metrics"
+          },
+          {
+            "from": {
+              "databaseName": "default",
+              "tableName": "otel_traces"
+            },
+            "kind": "trace",
+            "timestampValueExpression": "Timestamp",
+            "name": "Traces",
+            "displayedTimestampValueExpression": "Timestamp",
+            "implicitColumnExpression": "SpanName",
+            "serviceNameExpression": "ServiceName",
+            "bodyExpression": "SpanName",
+            "eventAttributesExpression": "SpanAttributes",
+            "resourceAttributesExpression": "ResourceAttributes",
+            "defaultTableSelectExpression": "Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName",
+            "traceIdExpression": "TraceId",
+            "spanIdExpression": "SpanId",
+            "durationExpression": "Duration",
+            "durationPrecision": 9,
+            "parentSpanIdExpression": "ParentSpanId",
+            "spanNameExpression": "SpanName",
+            "spanKindExpression": "SpanKind",
+            "statusCodeExpression": "StatusCode",
+            "statusMessageExpression": "StatusMessage",
+            "connection": "Local ClickHouse",
+            "logSourceId": "Logs",
+            "sessionSourceId": "Sessions",
+            "metricSourceId": "Metrics"
+          }
+        ]
+
+      # Point the UI at the operator-managed CHI (default user, no password —
+      # ClusterIP-only, same posture as the plausible CHI).
+      defaultConnections: |
+        [
+          {
+            "name": "ClickHouse (hyperdx-logs)",
+            "host": "http://clickhouse-hyperdx-logs.monitoring.svc:8123",
+            "port": 8123,
+            "username": "default",
+            "password": ""
+          }
+        ]

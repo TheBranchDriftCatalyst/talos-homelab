@@ -1,0 +1,55 @@
+---
+# Intel NFD Rules - detect Intel GPUs and label nodes automatically
+# These rules tell NFD how to identify Intel GPU hardware
+apiVersion: nfd.k8s-sigs.io/v1alpha1
+kind: NodeFeatureRule
+metadata:
+  name: intel-gpu-device
+  namespace: node-feature-discovery
+spec:
+  rules:
+    - name: 'intel.gpu'
+      labels:
+        'intel.feature.node.kubernetes.io/gpu': 'true'
+      matchFeatures:
+        - feature: pci.device
+          matchExpressions:
+            vendor: {op: In, value: ['8086']}  # Intel vendor ID
+            class: {op: In, value: ['0300', '0380']}  # VGA/Display controller
+    # Narrower rule: only nodes with a real Intel Arc GPU (usable gpu.intel.com/i915).
+    # tdarr's worker DaemonSet uses required affinity, so it must NOT match talos01's
+    # weaker iGPU (8086:46b3), which carries the generic 'gpu' label but exposes 0 i915.
+    # Add future Arc device IDs to the 'device' list to onboard new transcode nodes.
+    - name: 'intel.gpu-arc'
+      labels:
+        'intel.feature.node.kubernetes.io/gpu-arc': 'true'
+      matchFeatures:
+        - feature: pci.device
+          matchExpressions:
+            vendor: {op: In, value: ['8086']}   # Intel
+            device: {op: In, value: ['7d51']}   # Arc 140T (Meteor Lake) — real transcode GPU
+---
+# Intel GPU Device Plugin Custom Resource
+# Deploys the actual GPU plugin to nodes with Intel GPUs
+apiVersion: deviceplugin.intel.com/v1
+kind: GpuDevicePlugin
+metadata:
+  name: intel-gpu-plugin
+  namespace: intel-device-plugins
+spec:
+  image: intel/intel-gpu-plugin:0.36.0
+  initImage: intel/intel-gpu-initcontainer:0.36.0
+  # Share GPU between multiple containers
+  # Each physical GPU exposed as N virtual devices. Set high enough
+  # for media apps (Plex, Tdarr, Jellyfin) + ML workloads
+  # (whisper transcription, pyannote diarization) to coexist.
+  # The GPU handles scheduling internally — oversubscription is safe
+  # for workloads that don't all run simultaneously.
+  sharedDevNum: 10
+  # Log level: 1=error, 2=warning, 3=info, 4=debug
+  logLevel: 2
+  # Enable monitoring resource endpoint
+  enableMonitoring: true
+  # Only deploy on nodes with Intel GPU (labeled by NFD)
+  nodeSelector:
+    intel.feature.node.kubernetes.io/gpu: 'true'

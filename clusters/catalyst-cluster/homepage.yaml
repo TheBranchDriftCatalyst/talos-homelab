@@ -1,0 +1,31 @@
+---
+# Kustomization for the multi-instance homepage dashboards (TALOS-qt7u).
+# Renders applications/homepage: shared SA/RBAC/ExternalSecrets/ConfigMap
+# plus 8 gethomepage instances (master + arrs/data/llm/infra/obs/home/apps),
+# each filtering auto-discovered IngressRoutes by its instanceName.
+# dependsOn:
+#   - namespaces: the `homepage` namespace
+#   - external-secrets: ClusterSecretStore for the homepage-* ExternalSecrets
+#   - reflector: mirrors arr-stack-secrets from ns media into ns homepage
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: homepage
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/homepage
+  prune: true
+  wait: true
+  timeout: 5m
+  dependsOn:
+    - name: namespaces
+    - name: external-secrets
+    - name: reflector
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

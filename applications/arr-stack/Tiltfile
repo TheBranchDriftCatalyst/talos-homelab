@@ -1,0 +1,90 @@
+# Arr-Stack Tiltfile
+# Media automation stack (Sonarr, Radarr, Plex, etc.)
+#
+# Can run standalone or be included by root Tiltfile.
+# Observe-only mode - Flux manages all deployments., backup dbs etc.
+# Also attaches certain dev commands and tooling for dev tweaking of the live cluster in certain places
+
+# Load extensions
+load('ext://uibutton', 'cmd_button', 'location')
+load('ext://k8s_attach', 'k8s_attach')
+
+# Load shared modules
+load('../../tilt/_shared/kometa_ops.star', 'kometa_buttons')
+load('../../tilt/_shared/homepage_ops.star', 'homepage_sync_button')
+
+# Allow homelab context
+allow_k8s_contexts('admin@homelab-single')
+
+# Configuration
+namespace = 'media'
+
+# Labels for UI grouping (sorted alphabetically in Tilt sidebar)
+LABEL_ARR = '1-arr-automation'
+LABEL_SERVERS = '2-media-servers'
+LABEL_PLEX_TOOLS = '3-plex-tools'
+LABEL_DASH = '4-dashboard'
+
+# ============================================
+# Arr Automation (Indexer + *arr apps)
+# ============================================
+
+k8s_attach('prowlarr', 'deployment/prowlarr', namespace='media',
+           port_forwards=['9696:9696'], labels=[LABEL_ARR])
+
+k8s_attach('sonarr', 'deployment/sonarr', namespace='media',
+           port_forwards=['8989:8989'], labels=[LABEL_ARR])
+
+k8s_attach('radarr', 'deployment/radarr', namespace='media',
+           port_forwards=['7878:7878'], labels=[LABEL_ARR])
+
+k8s_attach('seerr', 'deployment/seerr', namespace='media',
+           port_forwards=['5055:5055'], labels=[LABEL_ARR])
+
+k8s_attach('sabnzbd', 'deployment/sabnzbd', namespace='media',
+           port_forwards=['8080:8080'], labels=[LABEL_ARR])
+
+# ============================================
+# Media Servers
+# ============================================
+
+k8s_attach('plex', 'deployment/plex', namespace='media',
+           port_forwards=['32400:32400'], labels=[LABEL_SERVERS])
+
+k8s_attach('jellyfin', 'deployment/jellyfin', namespace='media',
+           port_forwards=['8096:8096'], labels=[LABEL_SERVERS])
+
+k8s_attach('tdarr', 'deployment/tdarr', namespace='media',
+           port_forwards=['8265:8265'], labels=[LABEL_SERVERS])
+
+# ============================================
+# Plex Tools (Metadata & Posters)
+# ============================================
+
+k8s_attach('tautulli', 'deployment/tautulli', namespace='media',
+           port_forwards=['8181:8181'], labels=[LABEL_PLEX_TOOLS])
+
+k8s_attach('posterr', 'deployment/posterr', namespace='media',
+           port_forwards=['3002:3000'], labels=[LABEL_PLEX_TOOLS])
+
+k8s_attach('kometa', 'deployment/kometa', namespace='media',
+           labels=[LABEL_PLEX_TOOLS])
+
+k8s_attach('posterizarr', 'deployment/posterizarr', namespace='media',
+           port_forwards=['8000:8000'], labels=[LABEL_PLEX_TOOLS])
+
+# Kometa ops buttons (from shared module)
+kometa_buttons('kometa', 'media')
+
+# ============================================
+# Dashboard
+# ============================================
+
+k8s_attach('homepage', 'deployment/homepage', namespace='media',
+           port_forwards=['3001:3000'], labels=[LABEL_DASH])
+
+# Homepage sync button (from shared module)
+homepage_sync_button('homepage', './scripts/sync-api-keys.sh')
+
+# Show namespace dashboard on Tiltfile load (--plain for non-TTY output)
+print(local('./scripts/namespace-dashboard.sh media --plain 2>/dev/null || true', quiet=True))

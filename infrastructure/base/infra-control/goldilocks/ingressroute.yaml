@@ -1,0 +1,47 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: goldilocks
+  namespace: infra-control
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "Goldilocks"
+    gethomepage.dev/description: "Resource Recommendations"
+    gethomepage.dev/group: "Home & Tools"
+    gethomepage.dev/weight: "11"
+    gethomepage.dev/icon: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/goldilocks.png"
+    gethomepage.dev/siteMonitor: "http://goldilocks-dashboard.infra-control.svc.cluster.local:80"
+spec:
+  # HTTPS + Authentik forward-auth SSO (TALOS-xgrl.14). talos-admin / cluster-admin gated.
+  # TLS: default TLSStore serves the *.talos00 wildcard via SNI.
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`goldilocks.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: goldilocks-dashboard
+          port: 80
+---
+# HTTP→HTTPS redirect for goldilocks.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: goldilocks-http
+  namespace: infra-control
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`goldilocks.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: goldilocks-dashboard
+          port: 80

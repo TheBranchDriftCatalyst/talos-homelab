@@ -1,0 +1,380 @@
+---
+# Backup / restore scripts for the media-experimental config volumes (TALOS-uml1).
+#
+# ⚠ kustomize.toolkit.fluxcd.io/substitute: disabled is LOAD-BEARING.
+#   Flux postBuild runs envsubst over every rendered resource and envsubst eats
+#   BOTH ${VAR} and $VAR, which would shred every shell variable below. The
+#   annotation exempts this one resource so the scripts reach the cluster verbatim.
+#   (The CronJobs alongside it DO want substitution, for the node name.)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-backup-scripts
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+data:
+  backup.sh: |
+    #!/bin/sh
+    # Quiesce -> tar -> checksum -> self-verify, for a set of RWO config volumes.
+    #
+    # Nothing here is media-experimental specific: the volume set comes from $VOLUMES
+    # and every volume is mounted at $VOL_ROOT/<pvc> by the calling CronJob. Point it at
+    # another namespace's volumes and it works unchanged.
+    #
+    # WHY QUIESCE: 9 of these volumes hold live SQLite. A tar of an open database can
+    # capture the main file and its -wal out of step and restore to a corrupt database.
+    # Scaling the owning Deployment to 0 first makes the volume quiet, so the .db/-wal/-shm
+    # set in the archive is internally consistent (SQLite replays the WAL on next open).
+    # Apps are quiesced ONE AT A TIME, so the stack is never fully down.
+    set -eu
+
+    : "${NAMESPACE:=media-experimental}"
+    : "${BACKUP_ROOT:=/backup}"
+    : "${VOL_ROOT:=/vol}"
+    : "${VOLUMES:?VOLUMES must be set (space-separated deployment=pvc pairs)}"
+    : "${QUIESCE:=true}"
+    : "${QUIESCE_TIMEOUT:=180}"
+    : "${VERIFY:=full}"   # full | listing | none
+    : "${RETAIN:=5}"
+    : "${SCRATCH:=/tmp/verify}"
+
+    RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+    DEST="$BACKUP_ROOT/$RUN_ID"
+    MANIFEST="$DEST/MANIFEST.txt"
+    FAILED=0
+
+    mkdir -p "$DEST"
+
+    # Always put replica counts back, even on error/abort. Without this a failed run
+    # leaves apps scaled to 0 until a human notices.
+    SCALED=""
+    unquiesce_all() {
+      for entry in $SCALED; do
+        d="${entry%%:*}"; r="${entry#*:}"
+        echo "restore replicas: $d -> $r"
+        kubectl -n "$NAMESPACE" scale deploy "$d" --replicas="$r" >/dev/null 2>&1 || \
+          echo "WARNING: could not scale $d back to $r -- CHECK THIS"
+      done
+      SCALED=""
+    }
+    trap unquiesce_all EXIT INT TERM
+
+    pods_for() {
+      kubectl -n "$NAMESPACE" get pods -l "app=$1" -o name 2>/dev/null | wc -l | tr -d ' '
+    }
+
+    quiesce() {
+      d="$1"
+      [ "$QUIESCE" = "true" ] || return 0
+      want="$(kubectl -n "$NAMESPACE" get deploy "$d" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+      [ -n "$want" ] || { echo "  no deployment $d -- backing up volume without quiescing"; return 0; }
+      SCALED="$SCALED $d:$want"
+      echo "  scaling $d $want -> 0"
+      kubectl -n "$NAMESPACE" scale deploy "$d" --replicas=0 >/dev/null
+      i=0
+      while [ "$(pods_for "$d")" != "0" ]; do
+        i=$((i + 1))
+        if [ "$i" -gt "$QUIESCE_TIMEOUT" ]; then
+          echo "  TIMEOUT: $d pods still present after ${QUIESCE_TIMEOUT}s"
+          return 1
+        fi
+        # Re-assert every 5s. Flux owns spec.replicas and puts it back to 1 on its
+        # reconcile interval, which used to make this loop unwinnable -- it timed out
+        # on whichever app happened to be quiesced when Flux came round.
+        [ $((i % 5)) -eq 0 ] && kubectl -n "$NAMESPACE" scale deploy "$d" --replicas=0 >/dev/null 2>&1
+        sleep 1
+      done
+      echo "  $d quiesced"
+    }
+
+    unquiesce() {
+      d="$1"
+      [ "$QUIESCE" = "true" ] || return 0
+      rest=""
+      for entry in $SCALED; do
+        if [ "${entry%%:*}" = "$d" ]; then
+          echo "  scaling $d back to ${entry#*:}"
+          kubectl -n "$NAMESPACE" scale deploy "$d" --replicas="${entry#*:}" >/dev/null
+        else
+          rest="$rest $entry"
+        fi
+      done
+      SCALED="$rest"
+    }
+
+    # Round-trips the archive we just wrote into a scratch dir and re-checks every
+    # file against the checksum list. A backup that has not been read back is a guess.
+    selfverify() {
+      pvc="$1"; expect="$2"
+      [ "$VERIFY" = "none" ] && return 0
+      if [ "$VERIFY" = "listing" ]; then
+        tar tzf "$DEST/$pvc.tar.gz" >/dev/null || return 1
+        return 0
+      fi
+      rm -rf "$SCRATCH"; mkdir -p "$SCRATCH"
+      tar xzf "$DEST/$pvc.tar.gz" --numeric-owner -C "$SCRATCH" || {
+        echo "  self-verify FAILED: archive would not extract"; return 1; }
+      if ! ( cd "$SCRATCH" && sha256sum -c "$DEST/$pvc.sha256" >/dev/null 2>&1 ); then
+        echo "  self-verify FAILED: checksum mismatch on re-read"; return 1
+      fi
+      # Count against what find saw on the SOURCE, not against the checksum list.
+      # Both of those come from the same read, so if the read was short they agree
+      # with each other and a truncated archive sails through.
+      n_out="$(find "$SCRATCH" -type f | wc -l | tr -d ' ')"
+      if [ "$n_out" != "$expect" ]; then
+        echo "  self-verify FAILED: source had $expect files, archive restored $n_out"
+        return 1
+      fi
+      rm -rf "$SCRATCH"
+      echo "  self-verify OK ($n_out files re-read from the archive)"
+    }
+
+    archive() {
+      pvc="$1"; deploy="$2"
+      src="$VOL_ROOT/$pvc"
+      if [ ! -d "$src" ]; then
+        echo "  ERROR: $src is not mounted -- add it to the CronJob volumes"
+        return 1
+      fi
+      files="$(find "$src" -type f | wc -l | tr -d ' ')"
+      bytes="$(find "$src" -type f -print0 | xargs -0 -r stat -c %s | awk '{s+=$1} END {print s+0}')"
+
+      # EVERY step below is checked explicitly. `set -e` is inert inside a function
+      # invoked as an `if` condition, which is how a tar that printed
+      # "error exit delayed from previous errors" once still produced a manifest row.
+      #
+      # -print0/-0 because config dirs contain filenames with spaces.
+      if ! ( cd "$src" && find . -type f -print0 | LC_ALL=C sort -z |
+             xargs -0 -r sha256sum ) > "$DEST/$pvc.sha256"; then
+        echo "  ERROR: could not read every file in $src (checksum pass failed)"
+        return 1
+      fi
+      n_sum="$(grep -c . "$DEST/$pvc.sha256" 2>/dev/null || true)"
+      if [ "${n_sum:-0}" != "$files" ]; then
+        echo "  ERROR: checksummed ${n_sum:-0} of $files files -- refusing to record a short archive"
+        return 1
+      fi
+      # Ownership and mode are not in the checksum list but do matter to these apps
+      # (PUID/PGID 1000 images), so they are captured separately and diffed on restore.
+      ( cd "$src" && find . -print0 | LC_ALL=C sort -z |
+        xargs -0 -r stat -c '%n %u %g %a %F' ) > "$DEST/$pvc.meta" || true
+
+      if ! tar czf "$DEST/$pvc.tar.gz" --numeric-owner -C "$src" .; then
+        echo "  ERROR: tar reported errors for $src"
+        return 1
+      fi
+      asize="$(stat -c %s "$DEST/$pvc.tar.gz")"
+      asha="$(sha256sum "$DEST/$pvc.tar.gz" | cut -d' ' -f1)"
+      echo "  $files files, $bytes bytes -> $asize bytes compressed"
+      selfverify "$pvc" "$files" || return 1
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$pvc" "$deploy" "$files" "$bytes" "$asize" "$asha" >> "$MANIFEST"
+    }
+
+    {
+      echo "# media-experimental config backup"
+      echo "# run_id=$RUN_ID"
+      echo "# namespace=$NAMESPACE"
+      echo "# node=${NODE_NAME:-unknown}"
+      echo "# quiesce=$QUIESCE verify=$VERIFY"
+      echo "# started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      printf '# %s\t%s\t%s\t%s\t%s\t%s\n' pvc deployment files bytes archive_bytes archive_sha256
+    } > "$MANIFEST"
+
+    echo "=== backup run $RUN_ID -> $DEST ==="
+    for spec in $VOLUMES; do
+      deploy="${spec%%=*}"; pvc="${spec#*=}"
+      echo "--- $pvc (deployment $deploy)"
+      if quiesce "$deploy"; then
+        if archive "$pvc" "$deploy"; then
+          # A Flux reconcile mid-run would scale the app back up under us. Cheap to check.
+          if [ "$QUIESCE" = "true" ] && [ "$(pods_for "$deploy")" != "0" ]; then
+            echo "  ERROR: $deploy came back up during the archive -- archive may be inconsistent"
+            FAILED=$((FAILED + 1))
+          fi
+        else
+          echo "  ERROR: archiving $pvc failed"
+          FAILED=$((FAILED + 1))
+        fi
+      else
+        echo "  ERROR: could not quiesce $deploy -- SKIPPING $pvc rather than tar a live SQLite file"
+        FAILED=$((FAILED + 1))
+      fi
+      unquiesce "$deploy"
+    done
+
+    if [ "$FAILED" = "0" ]; then
+      echo "status=OK" >> "$MANIFEST"
+      echo "$RUN_ID" > "$BACKUP_ROOT/LATEST"
+      # Only a clean run is allowed to become LATEST; a partial one must never be
+      # what a restore silently picks up.
+    else
+      echo "status=PARTIAL ($FAILED volume(s) failed)" >> "$MANIFEST"
+    fi
+    echo "# finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$MANIFEST"
+
+    # Retention: keep the newest $RETAIN run directories.
+    runs="$(ls -1d "$BACKUP_ROOT"/*/ 2>/dev/null | LC_ALL=C sort || true)"
+    total="$(echo "$runs" | grep -c . || true)"
+    if [ "$total" -gt "$RETAIN" ]; then
+      echo "$runs" | sed -n "1,$((total - RETAIN))p" | while read -r old; do
+        [ -n "$old" ] && { echo "pruning $old"; rm -rf "$old"; }
+      done
+    fi
+
+    echo
+    cat "$MANIFEST"
+    [ "$FAILED" = "0" ] || exit 1
+    echo "=== backup $RUN_ID complete ==="
+  restore.sh: |
+    #!/bin/sh
+    # Repopulate config volumes from an archive written by backup.sh, then prove it.
+    #
+    # Used two ways, same code path both times:
+    #   1. after a node reset -- fresh empty local-path PVCs, QUIESCE=true
+    #   2. as the verification job -- throwaway ephemeral PVCs, QUIESCE=false
+    # (2) is what makes (1) trustworthy, so they must not diverge.
+    set -eu
+
+    : "${NAMESPACE:=media-experimental}"
+    : "${BACKUP_ROOT:=/backup}"
+    : "${VOL_ROOT:=/vol}"
+    : "${VOLUMES:?VOLUMES must be set (space-separated deployment=pvc pairs)}"
+    : "${QUIESCE:=true}"
+    : "${QUIESCE_TIMEOUT:=180}"
+    : "${FORCE:=false}"    # true = wipe a non-empty target before extracting
+    : "${RUN_ID:=}"
+
+    [ -n "$RUN_ID" ] || RUN_ID="$(cat "$BACKUP_ROOT/LATEST" 2>/dev/null || true)"
+    [ -n "$RUN_ID" ] || { echo "FATAL: no RUN_ID given and $BACKUP_ROOT/LATEST is absent"; exit 1; }
+    SRC="$BACKUP_ROOT/$RUN_ID"
+    [ -d "$SRC" ] || { echo "FATAL: no such backup run: $SRC"; exit 1; }
+
+    FAILED=0
+    PASSED=0
+
+    SCALED=""
+    unquiesce_all() {
+      for entry in $SCALED; do
+        d="${entry%%:*}"; r="${entry#*:}"
+        kubectl -n "$NAMESPACE" scale deploy "$d" --replicas="$r" >/dev/null 2>&1 || \
+          echo "WARNING: could not scale $d back to $r -- CHECK THIS"
+      done
+      SCALED=""
+    }
+    trap unquiesce_all EXIT INT TERM
+
+    pods_for() {
+      kubectl -n "$NAMESPACE" get pods -l "app=$1" -o name 2>/dev/null | wc -l | tr -d ' '
+    }
+
+    # uid:gid=count over a .meta listing, so the log states the ownership outright.
+    owner_histogram() {
+      awk '{print $2 ":" $3}' "$1" | LC_ALL=C sort | uniq -c | awk '{printf "%s=%s ", $2, $1}'
+    }
+
+    quiesce() {
+      d="$1"
+      [ "$QUIESCE" = "true" ] || return 0
+      want="$(kubectl -n "$NAMESPACE" get deploy "$d" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+      [ -n "$want" ] || { echo "  no deployment $d -- restoring volume without quiescing"; return 0; }
+      SCALED="$SCALED $d:$want"
+      kubectl -n "$NAMESPACE" scale deploy "$d" --replicas=0 >/dev/null
+      i=0
+      while [ "$(pods_for "$d")" != "0" ]; do
+        i=$((i + 1))
+        [ "$i" -gt "$QUIESCE_TIMEOUT" ] && { echo "  TIMEOUT waiting for $d"; return 1; }
+        # Re-assert: Flux owns spec.replicas and will put it back mid-wait.
+        [ $((i % 5)) -eq 0 ] && kubectl -n "$NAMESPACE" scale deploy "$d" --replicas=0 >/dev/null 2>&1
+        sleep 1
+      done
+      echo "  $d quiesced"
+    }
+
+    restore_volume() {
+      pvc="$1"
+      tgt="$VOL_ROOT/$pvc"
+      arc="$SRC/$pvc.tar.gz"
+
+      [ -d "$tgt" ] || { echo "  ERROR: $tgt is not mounted"; return 1; }
+      [ -f "$arc" ] || { echo "  ERROR: $arc missing from run $RUN_ID"; return 1; }
+
+      # Archive integrity BEFORE touching the target: never clear a volume for an
+      # archive that turns out to be unreadable.
+      want_sha="$(awk -v p="$pvc" '$1 == p {print $6}' "$SRC/MANIFEST.txt" 2>/dev/null || true)"
+      have_sha="$(sha256sum "$arc" | cut -d' ' -f1)"
+      if [ -n "$want_sha" ] && [ "$want_sha" != "$have_sha" ]; then
+        echo "  ERROR: archive checksum mismatch (manifest $want_sha, on disk $have_sha)"
+        return 1
+      fi
+      tar tzf "$arc" >/dev/null || { echo "  ERROR: archive is not a readable tar.gz"; return 1; }
+
+      if [ -n "$(ls -A "$tgt" 2>/dev/null)" ]; then
+        if [ "$FORCE" != "true" ]; then
+          echo "  REFUSING: $tgt is not empty and FORCE is not true"
+          return 1
+        fi
+        echo "  FORCE: clearing $tgt"
+        find "$tgt" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+      fi
+
+      tar xzf "$arc" --numeric-owner -C "$tgt"
+
+      # Verify against the SAME checksum list the backup wrote, in the restored tree.
+      if ! ( cd "$tgt" && sha256sum -c "$SRC/$pvc.sha256" > /tmp/check.out 2>&1 ); then
+        echo "  CHECKSUM FAILURES:"
+        grep -v ': OK$' /tmp/check.out | head -20
+        return 1
+      fi
+      n_want="$(grep -c . "$SRC/$pvc.sha256" || true)"
+      n_have="$(find "$tgt" -type f | wc -l | tr -d ' ')"
+      if [ "$n_want" != "$n_have" ]; then
+        echo "  ERROR: file count mismatch -- expected $n_want, found $n_have"
+        return 1
+      fi
+
+      # Ownership/mode is checked and REPORTED EITHER WAY. It used to print only on
+      # a mismatch, which meant a passing run proved ownership by silence -- useless
+      # evidence for the one defect this path actually had (capabilities drop ALL
+      # takes CAP_CHOWN from uid 0, so every restored file landed as 0:0 while the
+      # apps run as PUID/PGID 1000). Not fatal on a diff: a few of these images chown
+      # their config dir on startup.
+      if [ -f "$SRC/$pvc.meta" ]; then
+        ( cd "$tgt" && find . -print0 | LC_ALL=C sort -z |
+          xargs -0 -r stat -c '%n %u %g %a %F' ) > /tmp/meta.now
+        n_meta="$(grep -c . "$SRC/$pvc.meta" 2>/dev/null || true)"
+        if diff -q "$SRC/$pvc.meta" /tmp/meta.now >/dev/null 2>&1; then
+          echo "  owner/mode OK: $n_meta paths match capture -- uid:gid $(owner_histogram /tmp/meta.now)"
+        else
+          echo "  owner/mode DIFFERS from capture time:"
+          diff "$SRC/$pvc.meta" /tmp/meta.now | head -10
+        fi
+      fi
+
+      bytes="$(find "$tgt" -type f -print0 | xargs -0 -r stat -c %s | awk '{s+=$1} END {print s+0}')"
+      echo "  PASS: $n_have files, $bytes bytes, all sha256 verified"
+    }
+
+    echo "=== restore from run $RUN_ID ($SRC) ==="
+    echo "=== FORCE=$FORCE QUIESCE=$QUIESCE ==="
+    sed -n '1,8p' "$SRC/MANIFEST.txt" 2>/dev/null || true
+    echo
+
+    for spec in $VOLUMES; do
+      deploy="${spec%%=*}"; pvc="${spec#*=}"
+      echo "--- $pvc (deployment $deploy)"
+      if quiesce "$deploy"; then
+        if restore_volume "$pvc"; then
+          PASSED=$((PASSED + 1))
+        else
+          FAILED=$((FAILED + 1))
+        fi
+      else
+        echo "  ERROR: could not quiesce $deploy -- SKIPPING"
+        FAILED=$((FAILED + 1))
+      fi
+    done
+
+    unquiesce_all
+    echo
+    echo "=== restore summary: $PASSED passed, $FAILED failed (run $RUN_ID) ==="
+    [ "$FAILED" = "0" ] || exit 1

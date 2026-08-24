@@ -1,0 +1,228 @@
+---
+# RBAC: Kyverno's background controller has NO write access to Traefik IngressRoutes by
+# default. mutateExisting (retroactive stamping of the ~34 existing IngressRoutes) needs it —
+# grant via an aggregated ClusterRole. The rbac.kyverno.io/aggregate-to-background-controller
+# label wires these rules into the kyverno background-controller's aggregated role. Without
+# this the policy reports "not authorized to update IngressRoute". (TALOS-qt7u)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background:homepage-instance
+  labels:
+    app.kubernetes.io/part-of: kyverno
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups: ["traefik.io"]
+    resources: [ingressroutes]
+    verbs: [get, list, watch, update, patch]
+---
+# Mutating policy: for every Traefik IngressRoute annotated gethomepage.dev/enabled: "true",
+# stamp per-instance annotations so the resource is picked up by the homepage boards:
+#   - gethomepage.dev/instance.master: "true"  ALWAYS — the master board catches everything.
+#   - gethomepage.dev/instance.<domain>: "true" — lands it on the matching per-domain board.
+#
+# IMPORTANT (why static per-domain rules, not a ConfigMap lookup): Kyverno forbids variables in
+# a patchesJson6902 PATH ("should not have variables in patchesJSON6902 path section"). The
+# annotation KEY is dynamic (instance.<domain>), and patchStrategicMerge cannot use a variable
+# map key either. So the namespace->domain mapping is encoded as ONE STATIC RULE PER DOMAIN,
+# each matching that domain's namespaces (match.resources.namespaces) with a hard-coded patch
+# path. To reassign a namespace, move it between rules' `namespaces:` lists.
+#
+# All rules run at admission (new/updated IngressRoutes) AND retroactively via
+# mutateExistingOnPolicyUpdate (existing IngressRoutes, when this policy is created/updated).
+# Legacy gethomepage.dev/instance: "main" is left intact — inert (master instance is `master`).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: homepage-instance-assignment
+  annotations:
+    policies.kyverno.io/title: Homepage per-instance auto-assignment
+    policies.kyverno.io/category: Homepage
+    policies.kyverno.io/subject: IngressRoute
+    policies.kyverno.io/description: >-
+      Stamps gethomepage.dev/instance.master and gethomepage.dev/instance.<domain> annotations
+      onto every homepage-enabled Traefik IngressRoute, so each service lands on both the master
+      board and its per-domain board. One static rule per domain (matched by namespace). Applies
+      retroactively to existing IngressRoutes via mutateExisting.
+spec:
+  admission: true
+  background: true
+  rules:
+    # --- Rule: always stamp the master instance (every enabled route) -------------------
+    - name: stamp-master
+      match:
+        any:
+          - resources: { kinds: [IngressRoute] }
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        # `/` -> `~1` in the JSON pointer; op:add is idempotent; /metadata/annotations exists
+        # (the matched enabled annotation guarantees a non-empty map).
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.master"
+            value: "true"
+    # --- Per-domain rules: static path, matched by namespace ----------------------------
+    - name: stamp-arrs
+      match:
+        any:
+          - resources:
+              kinds: [IngressRoute]
+              namespaces: [media, downloads, media-experimental, tdarr, metube, tubesync]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.arrs"
+            value: "true"
+    - name: stamp-data
+      match:
+        any:
+          - resources:
+              kinds: [IngressRoute]
+              namespaces: [catalyst-data]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.data"
+            value: "true"
+    - name: stamp-llm
+      match:
+        any:
+          - resources:
+              kinds: [IngressRoute]
+              namespaces: [catalyst-llm]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.llm"
+            value: "true"
+    - name: stamp-infra
+      match:
+        any:
+          - resources:
+              kinds: [IngressRoute]
+              namespaces: [argocd, forgejo, traefik, registry, infra-control, crowdsec, iocaine, authentik, databases, kube-system, external-secrets, cert-manager, flux-system]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.infra"
+            value: "true"
+    - name: stamp-obs
+      match:
+        any:
+          - resources:
+              kinds: [IngressRoute]
+              namespaces: [monitoring]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.obs"
+            value: "true"
+    - name: stamp-home
+      match:
+        any:
+          - resources:
+              kinds: [IngressRoute]
+              namespaces: [home-automation, default]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.home"
+            value: "true"
+    - name: stamp-apps
+      match:
+        any:
+          - resources:
+              kinds: [IngressRoute]
+              namespaces: [boomtime, catalyst, crossplane-demo, gaming, dungeon-library, vpn-gateway]
+      preconditions:
+        all:
+          - key: '{{ request.object.metadata.annotations."gethomepage.dev/enabled" || '''' }}'
+            operator: Equals
+            value: "true"
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+            name: "{{ request.object.metadata.name }}"
+            namespace: "{{ request.object.metadata.namespace }}"
+        patchesJson6902: |-
+          - op: add
+            path: "/metadata/annotations/gethomepage.dev~1instance.apps"
+            value: "true"

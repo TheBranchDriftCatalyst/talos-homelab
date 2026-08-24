@@ -1,0 +1,102 @@
+---
+# TIER 1 REAPER — kills a running GPU instance. THE COST BACKSTOP.
+#
+# Deliberately INDEPENDENT of gpu-broker. In the normal path the broker deletes the
+# instance when the gateway scales to 0. This exists for when the broker is dead, wedged,
+# or was never scaled up: because neither XR is in git, a broker that crashes with an
+# instance running would otherwise bill ~$0.16/hr indefinitely with nothing watching.
+#
+# Two independent triggers, either is sufficient:
+#   1. gateway is at 0 replicas (no demand) but an instance still exists -> reap
+#   2. instance older than maxInstanceLifetime -> reap regardless of traffic
+#
+# Deleting the XGPUInstance leaves the XGPUCache alone: WARM tier, ~$16/mo, ~2min wake.
+# The cache is tier 2's problem (reaper-cache-cronjob.yaml).
+#
+# Runs every 10 min. Note this is coarser than instanceIdleTimeout by design — the broker
+# owns responsive scale-down, this owns "never bill forever".
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: gpu-instance-reaper
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: gpu-broker
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reaper
+              image: alpine/k8s:1.34.9
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+
+                  # Pre-EPIC-A the ec2 providers are not installed, so the XR kinds do not
+                  # exist. That is an expected state, not a failure -- report it and exit
+                  # clean rather than masking a real error with `|| true`.
+                  if ! kubectl get crd xgpuinstances.aws.catalyst.io >/dev/null 2>&1; then
+                    echo "XGPUInstance CRD absent (AWS chain not yet enabled) - nothing to reap"
+                    exit 0
+                  fi
+
+                  MAX=$(kubectl get cm gpu-profile -n gpu-inference \
+                        -o jsonpath='{.data.maxInstanceLifetime}')
+                  echo "maxInstanceLifetime=${MAX}"
+
+                  REPLICAS=$(kubectl get deploy ollama-gateway -n gpu-inference \
+                             -o jsonpath='{.spec.replicas}')
+                  echo "gateway replicas=${REPLICAS}"
+
+                  NAMES=$(kubectl get xgpuinstances \
+                          -l app.kubernetes.io/part-of=gpu-inference \
+                          -o jsonpath='{.items[*].metadata.name}')
+                  if [ -z "${NAMES}" ]; then
+                    echo "no XGPUInstance present - nothing to reap"
+                    exit 0
+                  fi
+
+                  for N in ${NAMES}; do
+                    AGE_TS=$(kubectl get xgpuinstance "${N}" \
+                             -o jsonpath='{.metadata.creationTimestamp}')
+                    AGE_S=$(( $(date -u +%s) - $(date -u -d "${AGE_TS}" +%s) ))
+                    MAX_S=$(echo "${MAX}" | sed 's/h/*3600/;s/m/*60/;s/s//' | awk '{print}' | bc)
+
+                    if [ "${REPLICAS}" = "0" ]; then
+                      echo "REAP ${N}: gateway at 0 replicas, no demand"
+                      kubectl delete xgpuinstance "${N}"
+                    elif [ "${AGE_S}" -gt "${MAX_S}" ]; then
+                      echo "REAP ${N}: age ${AGE_S}s exceeds maxInstanceLifetime ${MAX_S}s"
+                      kubectl delete xgpuinstance "${N}"
+                    else
+                      echo "KEEP ${N}: age ${AGE_S}s, gateway replicas ${REPLICAS}"
+                    fi
+                  done

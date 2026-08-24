@@ -1,0 +1,63 @@
+---
+# Public HTTPS: forge.knowledgedump.space. DNS-only (proxied=false) — package
+# uploads (npm/PyPI/etc.) can exceed Cloudflare's 100MB proxy cap. TLS via the
+# *.knowledgedump.space wildcard (TLSStore).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: forgejo-public
+  namespace: forgejo
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: forge.knowledgedump.space
+    external-dns.alpha.kubernetes.io/target: knowledgedump.space
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "false"
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`forge.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        # LLM-scraper UAs browsing the code get PROXY'd to the iocaine tarpit;
+        # git/OCI clients (non-bot UAs) pass through untouched. (TALOS-mko)
+        - name: bot-wrangler
+          namespace: traefik
+      services:
+        - name: forgejo
+          port: 3000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: forgejo-public-http
+  namespace: forgejo
+spec:
+  entryPoints: [web]
+  routes:
+    - match: Host(`forge.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - { name: redirect-https, namespace: traefik }
+      services:
+        - name: forgejo
+          port: 3000
+---
+# Internal: forge.talos00 (LAN + in-cluster, HTTP).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: forgejo
+  namespace: forgejo
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Forgejo"
+    gethomepage.dev/description: "Git forge + package registry (npm/PyPI/...)"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/href: "https://forge.knowledgedump.space"
+spec:
+  entryPoints: [web]
+  routes:
+    - match: Host(`forge.talos00`)
+      kind: Rule
+      services:
+        - name: forgejo
+          port: 3000

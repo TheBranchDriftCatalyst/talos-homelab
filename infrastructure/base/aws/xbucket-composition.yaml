@@ -1,0 +1,142 @@
+---
+# Composition for XBucket (TALOS-hk7i) — Pipeline mode (Crossplane 2.x) via
+# function-patch-and-transform. Child resources bind to the Bucket through
+# matchControllerRef selectors; region is patched into every member (upjet
+# requires it per-resource).
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xbucket-aws
+spec:
+  compositeTypeRef:
+    apiVersion: aws.catalyst.io/v1alpha1
+    kind: XBucket
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: bucket
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: Bucket
+              spec:
+                forProvider:
+                  region: us-west-2
+                  tags:
+                    managed-by: crossplane
+                    cluster: talos-homelab
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.bucketName
+                toFieldPath: metadata.annotations[crossplane.io/external-name]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.region
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.tags
+                toFieldPath: spec.forProvider.tags
+                policy:
+                  fromFieldPath: Optional
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.arn
+                toFieldPath: status.bucketArn
+          - name: versioning
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: BucketVersioning
+              spec:
+                forProvider:
+                  region: us-west-2
+                  bucketSelector:
+                    matchControllerRef: true
+                  versioningConfiguration:
+                    - status: Enabled
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.region
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.versioning
+                toFieldPath: spec.forProvider.versioningConfiguration[0].status
+                transforms:
+                  - type: convert
+                    convert:
+                      toType: string
+                  - type: map
+                    map:
+                      "true": Enabled
+                      "false": Suspended
+                policy:
+                  fromFieldPath: Optional
+          - name: sse
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: BucketServerSideEncryptionConfiguration
+              spec:
+                forProvider:
+                  region: us-west-2
+                  bucketSelector:
+                    matchControllerRef: true
+                  rule:
+                    - applyServerSideEncryptionByDefault:
+                        - sseAlgorithm: AES256
+                      bucketKeyEnabled: true
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.region
+          - name: public-access-block
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: BucketPublicAccessBlock
+              spec:
+                forProvider:
+                  region: us-west-2
+                  bucketSelector:
+                    matchControllerRef: true
+                  blockPublicAcls: true
+                  blockPublicPolicy: true
+                  ignorePublicAcls: true
+                  restrictPublicBuckets: true
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.region
+          - name: lifecycle
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: BucketLifecycleConfiguration
+              spec:
+                forProvider:
+                  region: us-west-2
+                  bucketSelector:
+                    matchControllerRef: true
+                  rule:
+                    - id: tiering
+                      status: Enabled
+                      filter:
+                        - prefix: ""
+                      transition:
+                        - days: 30
+                          storageClass: STANDARD_IA
+                        - days: 90
+                          storageClass: GLACIER
+            patches:
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.region
+                toFieldPath: spec.forProvider.region
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.standardIaAfterDays
+                toFieldPath: spec.forProvider.rule[0].transition[0].days
+                policy:
+                  fromFieldPath: Optional
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.glacierAfterDays
+                toFieldPath: spec.forProvider.rule[0].transition[1].days
+                policy:
+                  fromFieldPath: Optional

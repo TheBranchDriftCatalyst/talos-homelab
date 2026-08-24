@@ -1,0 +1,76 @@
+---
+# Authentik Blueprint: home apps — per-app forward_single SSO (TALOS-xgrl.14).
+#
+# Domain: talos00 (bare, LAN-only). Each app (omnitools/frigate) becomes its OWN Application
+# (forward_single) → its own launcher tile in the `talos-home` section. Access = the
+# `talos-home` group OR `cluster-admin` (two PolicyBindings, policy_engine_mode: any).
+# forward_single apps route /outpost.goauthentik.io/* to authentik-server via the broadened
+# HostRegexp route in authentik/ingressroute.yaml.
+#
+# `talos-home` is a NEW shared group — its group entry is declared by the OWNER in
+# talos-private-blueprint.yaml. It is referenced here via !Find (cross-blueprint), same as
+# `cluster-admin`. Do NOT declare the group in this file.
+#
+# Each provider must ALSO be unioned into the embedded outpost — that list is authoritative
+# in talos-private-blueprint.yaml (REPLACE-not-merge), so the !Find entries live there.
+#
+# Mounted via chart-native blueprints.configMaps (helmrelease.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-home-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  home.yaml: |
+    version: 1
+    metadata:
+      name: home per-app forward_single applications
+      labels:
+        blueprints.goauthentik.io/description: "Per-app forward_single applications for the talos-home apps"
+    entries:
+      # talos-home group declared HERE (owner) so this blueprint is self-contained + applies
+      # independently; talos-private-blueprint's outpost !Find of frigate/omnitools then resolves.
+      # Avoids the circular dep (group in a blueprint that !Finds these providers). TALOS-xgrl.18
+      - {model: authentik_core.group, id: g-talos-home, identifiers: {name: talos-home}, attrs: {attributes: {description: "Home automation / tools."}}}
+      # ========== OmniTools ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-omnitools
+        identifiers: {name: omnitools}
+        attrs:
+          name: omnitools
+          mode: forward_single
+          external_host: https://omnitools.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-omnitools, identifiers: {slug: omnitools}, attrs: {name: OmniTools, slug: omnitools, group: talos-home, provider: !KeyOf p-omnitools, meta_launch_url: https://omnitools.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/omni-tools.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-omnitools-own, identifiers: {target: !KeyOf a-omnitools, group: !Find [authentik_core.group, [name, talos-home]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-omnitools-ca, identifiers: {target: !KeyOf a-omnitools, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== Frigate ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-frigate
+        identifiers: {name: frigate}
+        attrs:
+          name: frigate
+          mode: forward_single
+          external_host: https://frigate.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-frigate, identifiers: {slug: frigate}, attrs: {name: Frigate, slug: frigate, group: talos-home, provider: !KeyOf p-frigate, meta_launch_url: https://frigate.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/frigate.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-frigate-own, identifiers: {target: !KeyOf a-frigate, group: !Find [authentik_core.group, [name, talos-home]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-frigate-ca, identifiers: {target: !KeyOf a-frigate, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}

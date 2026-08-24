@@ -1,0 +1,98 @@
+---
+# Public HTTPS route for the Zot registry: registry.knowledgedump.space.
+#
+# HTTPS is REQUIRED for the OIDC UI login — Zot's OAuth state cookie is
+# SameSite=None; Secure (the callback is a cross-site redirect from Authentik),
+# and browsers drop Secure cookies over plain HTTP. So SSO only works on this
+# TLS host. Docker push/pull (htpasswd) works on any host.
+#
+# DNS-only (cloudflare-proxied=false): a container registry pushes large image
+# layers, and Cloudflare's proxy caps request bodies at 100MB — proxying would
+# break `docker push`. Same rationale as the media services. external-dns
+# creates the Cloudflare record to the home IP (kept current by cloudflare-ddns).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zot-public
+  namespace: registry
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: registry.knowledgedump.space
+    external-dns.alpha.kubernetes.io/target: knowledgedump.space
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "false"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`registry.knowledgedump.space`)
+      kind: Rule
+      services:
+        - name: zot
+          port: 5000
+---
+# HTTP -> HTTPS redirect for the public host.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zot-public-http
+  namespace: registry
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`registry.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: zot
+          port: 5000
+---
+# Internal route: registry.talos00 (cutover from Nexus). HTTP (web entrypoint)
+# for in-cluster + LAN docker push/pull with the panda htpasswd token — same
+# hostname the cluster already pulls from, so nothing that pulls has to change.
+# OIDC UI login does NOT work over this HTTP host (Secure cookie); use the public
+# HTTPS host (registry.knowledgedump.space) for SSO. zot.talos00 test route
+# retired at cutover.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zot
+  namespace: registry
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Zot Registry"
+    gethomepage.dev/description: "OCI registry (Nexus replacement)"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/href: "https://registry.knowledgedump.space"
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`registry.talos00`)
+      kind: Rule
+      services:
+        - name: zot
+          port: 5000
+---
+# HTTPS route for registry.talos00. Docker and containerd BOTH probe https:// first;
+# without a websecure route Traefik 404s them (they never fall back to the http route
+# above), which broke `docker push` (404) and in-cluster pulls. Serves the
+# *.knowledgedump.space wildcard — its SAN doesn't cover registry.talos00, but the LAN
+# docker daemons list registry.talos00 under insecure-registries and Talos containerd
+# uses the http:// mirror endpoint, so neither verifies this SAN. This route just stops
+# the https probe from 404ing. (TALOS-6vf / TALOS-2je)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zot-talos00-tls
+  namespace: registry
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`registry.talos00`)
+      kind: Rule
+      services:
+        - name: zot
+          port: 5000

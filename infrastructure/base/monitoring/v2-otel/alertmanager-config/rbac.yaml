@@ -1,0 +1,47 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alertmanager-config-pusher
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alertmanager-config-pusher
+    app.kubernetes.io/component: alertmanager-config
+---
+# The pusher only reads the Discord webhook secret + config ConfigMap
+# from its own namespace and POSTs to Mimir's Alertmanager API over
+# the in-cluster service. No cluster-scoped permissions needed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: alertmanager-config-pusher
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alertmanager-config-pusher
+    app.kubernetes.io/component: alertmanager-config
+rules:
+  - apiGroups: ['']
+    resources: ['secrets']
+    resourceNames: ['discord-webhook']
+    verbs: ['get']
+  - apiGroups: ['']
+    resources: ['configmaps']
+    resourceNames: ['alertmanager-config-template']
+    verbs: ['get']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: alertmanager-config-pusher
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alertmanager-config-pusher
+    app.kubernetes.io/component: alertmanager-config
+subjects:
+  - kind: ServiceAccount
+    name: alertmanager-config-pusher
+    namespace: monitoring
+roleRef:
+  kind: Role
+  name: alertmanager-config-pusher
+  apiGroup: rbac.authorization.k8s.io

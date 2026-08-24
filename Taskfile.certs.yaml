@@ -1,0 +1,128 @@
+# Taskfile for certificate operations — cert-manager PKI + local trust.
+# cert-manager has no UI; these are the common CLI operations (view certs in Grafana
+# via its Prometheus metrics, or Headlamp for the Certificate/ClusterIssuer CRDs).
+version: '3'
+
+vars:
+  CA_SECRET: homelab-ca-secret
+  CA_NS: cert-manager
+  CA_FILE: '{{.HOME}}/homelab-ca.crt'
+
+tasks:
+  default:
+    desc: List certificate tasks
+    cmds:
+      - task --list | grep -E '^\* certs:' || true
+    silent: true
+
+  # ============================================
+  # Local trust (client-side)
+  # ============================================
+
+  trust-cert:
+    desc: Trust the homelab CA in the macOS keychain (idempotent) — fixes *.talos00 / *.priv.talos00 HTTPS warnings
+    cmds:
+      - |
+        if [ "$(uname)" != "Darwin" ]; then
+          echo "❌ macOS only (uses the 'security' keychain tool)."
+          echo "   Linux: task certs:export-ca, then sudo cp {{.CA_FILE}} to"
+          echo "          /usr/local/share/ca-certificates/ and run update-ca-certificates"
+          exit 1
+        fi
+        command -v kubectl >/dev/null 2>&1 || { echo "❌ kubectl not found"; exit 1; }
+        echo "→ extracting homelab CA ({{.CA_NS}}/{{.CA_SECRET}}) → {{.CA_FILE}}"
+        kubectl get secret {{.CA_SECRET}} -n {{.CA_NS}} -o jsonpath='{.data.tls\.crt}' | base64 -d > "{{.CA_FILE}}"
+        [ -s "{{.CA_FILE}}" ] || { echo "❌ could not read the CA (check kubectl context / cluster access)"; exit 1; }
+        FPR="$(openssl x509 -in "{{.CA_FILE}}" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g')"
+        echo "→ homelab CA SHA-1: $FPR"
+        # Idempotent: skip (no sudo) if a cert with this exact fingerprint is already trusted.
+        # Comparing by fingerprint also means a rotated/renewed CA is re-added automatically.
+        if security find-certificate -a -Z /Library/Keychains/System.keychain 2>/dev/null \
+             | grep -qi "SHA-1 hash: $FPR"; then
+          echo "✅ already trusted — nothing to do."
+          exit 0
+        fi
+        if [ ! -t 0 ]; then
+          echo "⚠ sudo needs an interactive terminal (password / Touch ID)."
+          echo "  Run 'task trust-cert' in Terminal.app/iTerm — or, since the CA is already at"
+          echo "  {{.CA_FILE}}, run this one line there:"
+          echo "  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain {{.CA_FILE}}"
+          exit 1
+        fi
+        echo "→ adding to the System keychain as a trusted root (sudo / Touch ID) …"
+        sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "{{.CA_FILE}}"
+        echo "✅ homelab CA trusted. Fully quit + reopen Chrome/Safari → *.talos00 / *.priv.talos00 get the padlock."
+        echo "   Firefox uses its own store — import {{.CA_FILE}}"
+        echo "   (Settings → Privacy & Security → Certificates → Import)."
+
+  untrust-cert:
+    desc: Remove the homelab CA from the macOS keychain (reverse of trust-cert)
+    cmds:
+      - |
+        [ "$(uname)" = "Darwin" ] || { echo "❌ macOS only"; exit 1; }
+        sudo security delete-certificate -c homelab-ca /Library/Keychains/System.keychain 2>/dev/null \
+          && echo "✅ homelab CA removed from the System keychain" \
+          || echo "ℹ homelab CA not present in the System keychain (nothing to do)"
+
+  export-ca:
+    desc: Write the homelab CA root to {{.CA_FILE}} (for Firefox / other devices — no sudo)
+    cmds:
+      - |
+        kubectl get secret {{.CA_SECRET}} -n {{.CA_NS}} -o jsonpath='{.data.tls\.crt}' | base64 -d > "{{.CA_FILE}}"
+        [ -s "{{.CA_FILE}}" ] || { echo "❌ could not read the CA"; exit 1; }
+        echo "✅ wrote {{.CA_FILE}}"
+        openssl x509 -in "{{.CA_FILE}}" -noout -subject -issuer -enddate
+
+  # ============================================
+  # cluster-side inspection (cert-manager)
+  # ============================================
+
+  list:
+    desc: List all Certificates cluster-wide (ready + secret + age)
+    cmds:
+      - kubectl get certificate -A -o wide
+
+  check-expiry:
+    desc: Show every Certificate sorted by expiry (spot soon-to-expire)
+    cmds:
+      - |
+        C='NS:.metadata.namespace,NAME:.metadata.name,READY:.status.conditions[0].status,EXPIRES:.status.notAfter'
+        kubectl get certificate -A -o custom-columns="$C" --sort-by=.status.notAfter
+
+  status:
+    desc: Detailed status of a Certificate (use -- NAME=priv-talos00-wildcard NS=traefik)
+    cmds:
+      - |
+        if command -v cmctl >/dev/null 2>&1; then
+          cmctl status certificate {{.NAME}} -n {{.NS}}
+        else
+          echo "ℹ cmctl not installed (brew install cmctl) — falling back to describe:"
+          kubectl describe certificate {{.NAME}} -n {{.NS}}
+        fi
+    vars:
+      NS: '{{.NS | default "traefik"}}'
+    requires:
+      vars: [NAME]
+
+  renew:
+    desc: Force-renew a Certificate now (use -- NAME=... NS=...)
+    cmds:
+      - |
+        if command -v cmctl >/dev/null 2>&1; then
+          cmctl renew {{.NAME}} -n {{.NS}}
+          echo "✅ renewal triggered for {{.NAME}}"
+        else
+          echo "❌ cmctl not installed. Install it (brew install cmctl) — it's the safe way to renew."
+          echo "   Hard alternative (reissues from scratch): kubectl delete secret <secretName> -n {{.NS}}"
+          exit 1
+        fi
+    vars:
+      NS: '{{.NS | default "traefik"}}'
+    requires:
+      vars: [NAME]
+
+  issuers:
+    desc: List ClusterIssuers + Issuers and their readiness
+    cmds:
+      - kubectl get clusterissuers -o wide
+      - kubectl get issuers -A -o wide 2>/dev/null || true

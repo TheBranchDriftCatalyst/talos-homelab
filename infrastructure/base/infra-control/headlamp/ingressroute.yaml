@@ -1,0 +1,48 @@
+---
+# Headlamp — SSO-protected via Authentik forward-auth on headlamp.priv.talos00
+# (TALOS-xgrl.7/.13). Access requires talos-private group membership. Paired with the
+# bounded `view` role (no cluster-admin/secrets). HTTPS only + web→HTTPS redirect.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: headlamp
+  namespace: infra-control
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "Headlamp"
+    gethomepage.dev/description: "Kubernetes Dashboard"
+    gethomepage.dev/group: "Home & Tools"
+    gethomepage.dev/weight: "10"
+    gethomepage.dev/icon: "https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/kubernetes-dashboard.png"
+    gethomepage.dev/siteMonitor: "http://headlamp.infra-control.svc.cluster.local:80"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`headlamp.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: headlamp
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: headlamp-http
+  namespace: infra-control
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`headlamp.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: headlamp
+          port: 80

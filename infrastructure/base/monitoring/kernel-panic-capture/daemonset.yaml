@@ -1,0 +1,102 @@
+---
+# Kernel Panic Capture — Option A (per-node persistent)
+#
+# Privileged DaemonSet on every node (including CPs) that tails
+# /dev/kmsg into a host-disk file under /var/log/kernel-capture/.
+# After a panic-reboot, the file persists on the EPHEMERAL partition
+# (/var/log) so we can `talosctl read /var/log/kernel-capture/<node>.log`
+# to see what the kernel was doing right before it died.
+#
+# Filed in response to the 2026-05-29 6+ "meltdowns" where the
+# evidence pointed at Talos00 self-rebooting via kernel.panic_on_oops=1
+# (default Talos kernel param). Without persistent capture, the panic
+# message that explains WHY the oops happened is lost on reboot.
+#
+# Companion: deployment.yaml (Option B — netconsole receiver) captures
+# the same data live over the network so it survives even when the
+# panicking node's disk write doesn't fully flush.
+#
+# Security: privileged + hostPath. Reads /dev/kmsg (kernel ring buffer)
+# and writes to /var/log on the host. Requires PodSecurity privileged
+# (kube-system already enforces this).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kernel-panic-capture
+  namespace: kube-system
+  labels:
+    app: kernel-panic-capture
+    app.kubernetes.io/name: kernel-panic-capture
+    app.kubernetes.io/part-of: observability
+spec:
+  selector:
+    matchLabels:
+      app: kernel-panic-capture
+  template:
+    metadata:
+      labels:
+        app: kernel-panic-capture
+    spec:
+      # Run on every node including control plane.
+      tolerations:
+        - operator: Exists
+      # Pinning hostPID for visibility into kernel-level events
+      hostPID: true
+      # Priority high so kubelet doesn't evict under pressure
+      priorityClassName: system-node-critical
+      containers:
+        - name: kmsg-stream
+          image: busybox:1.36
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            runAsNonRoot: false
+          command:
+            - /bin/sh
+          args:
+            - -c
+            - |
+              set -u
+              NODE="${MY_NODE_NAME:-$(hostname)}"
+              mkdir -p /host-var-log/kernel-capture
+              # Rotate yesterday's log if it exists and is large
+              LOGFILE="/host-var-log/kernel-capture/${NODE}.log"
+              # Cap the log at 100MB by rotating
+              if [ -f "$LOGFILE" ]; then
+                SIZE=$(wc -c < "$LOGFILE" 2>/dev/null || echo 0)
+                if [ "$SIZE" -gt 104857600 ]; then
+                  mv "$LOGFILE" "${LOGFILE}.1"
+                fi
+              fi
+              echo "[$(date -u +%FT%TZ)] kernel-panic-capture START on ${NODE} pid=$$" >> "$LOGFILE"
+              # Stream /dev/kmsg. Opening /dev/kmsg gives a continuous reader
+              # by default — cat will block waiting for new messages, never EOF.
+              # `cat` from busybox is sufficient.
+              exec cat /dev/kmsg >> "$LOGFILE"
+          env:
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              # No CPU limit — kernel events can spike
+              memory: 64Mi
+          volumeMounts:
+            - name: dev-kmsg
+              mountPath: /dev/kmsg
+            - name: host-var-log
+              mountPath: /host-var-log
+      volumes:
+        - name: dev-kmsg
+          hostPath:
+            path: /dev/kmsg
+            type: CharDevice
+        - name: host-var-log
+          hostPath:
+            path: /var/log
+            type: Directory

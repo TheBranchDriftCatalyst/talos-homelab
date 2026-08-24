@@ -1,0 +1,134 @@
+---
+# Posterizarr - Automated poster maker for Plex
+# Downloads textless posters from Fanart.tv, TMDB, TVDB
+# Integrates with Kometa for asset organization
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: posterizarr
+  labels:
+    app: posterizarr
+    app.kubernetes.io/name: posterizarr
+    app.kubernetes.io/part-of: arr-stack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: posterizarr
+  template:
+    metadata:
+      labels:
+        app: posterizarr
+        app.kubernetes.io/name: posterizarr
+      annotations:
+        # Velero backup: config only
+        backup.velero.io/backup-volumes: "config"
+    spec:
+      # NFS storage - can schedule on any node
+      securityContext:
+        fsGroup: 1000
+        supplementalGroups: [100, 1000]
+      initContainers:
+        # Fix permissions on shared assets directory
+        - name: fix-permissions
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /kometa-config/assets
+              chmod -R 777 /kometa-config/assets
+          volumeMounts:
+            - name: kometa-config
+              mountPath: /kometa-config
+        # Copy default overlays + custom synthwave overlays
+        - name: copy-overlays
+          image: ghcr.io/fscorrupt/posterizarr:latest
+          command:
+            - sh
+            - -c
+            - |
+              # First copy all original Overlayfiles (fonts, default overlays)
+              echo "Copying original Overlayfiles..."
+              cp -rv /app/Overlayfiles/* /merged-overlays/
+
+              # Then copy custom overlays from config (synthwave) to overlay originals
+              if [ -d /config/overlays ]; then
+                echo "Adding custom overlays from /config/overlays..."
+                cp -v /config/overlays/*.png /merged-overlays/ 2>/dev/null || true
+              fi
+
+              echo "Merged overlay directory:"
+              ls -la /merged-overlays/
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: overlayfiles
+              mountPath: /merged-overlays
+      containers:
+        - name: posterizarr
+          image: ghcr.io/fscorrupt/posterizarr:latest
+          imagePullPolicy: Always
+          # Posterizarr requires user: directive, not PUID/PGID env vars
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          env:
+            - name: TZ
+              value: 'America/Los_Angeles'
+            - name: TERM
+              value: 'xterm'
+            # RUN_TIME: disabled = manual/webhook only, or set to "HH:MM" for scheduled
+            - name: RUN_TIME
+              value: 'disabled'
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            # Full kometa-config for shared asset path (/kometa-config/assets)
+            - name: kometa-config
+              mountPath: /kometa-config
+            # Mount assets at /assets for posterizarr's default path validation
+            - name: kometa-config
+              mountPath: /assets
+            # Custom overlays (synthwave) copied from config via initContainer
+            - name: overlayfiles
+              mountPath: /app/Overlayfiles
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+          # Posterizarr can be very busy during library processing
+          # Use generous timeouts to avoid killing during batch jobs
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: posterizarr-config-nfs
+        # Kometa's config PVC - we mount the 'assets' subdir at /assets
+        - name: kometa-config
+          persistentVolumeClaim:
+            claimName: kometa-config-nfs
+        # Merged overlays: original + custom (synthwave, etc.)
+        - name: overlayfiles
+          emptyDir: {}

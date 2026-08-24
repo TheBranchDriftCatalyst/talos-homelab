@@ -1,0 +1,32 @@
+---
+# Bootstrap CRDs - Foundational CustomResourceDefinitions installed early
+#
+# Why this exists:
+#   On a fresh cluster bootstrap, Flux's server-side dry-run validation
+#   rejects manifests that reference Kinds whose CRDs are not yet
+#   installed (e.g. ServiceMonitor, IngressRoute, Application,
+#   NodeFeatureRule, GpuDevicePlugin, GrafanaDashboard). This Kustomization
+#   pre-installs those CRDs so all downstream operators / HelmReleases
+#   can apply cleanly without circular dependencies.
+#
+# Dependency contract:
+#   - depends only on `namespaces` (so it runs as early as possible)
+#   - downstream Kustomizations that consume these CRDs depend on
+#     `bootstrap-crds` so Flux orders them after the CRDs exist
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: bootstrap-crds
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/bootstrap-crds
+  prune: true
+  wait: true
+  dependsOn:
+    - name: namespaces

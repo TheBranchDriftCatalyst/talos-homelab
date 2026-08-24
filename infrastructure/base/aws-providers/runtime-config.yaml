@@ -1,0 +1,62 @@
+---
+# Memory requests/limits for every AWS provider pod (TALOS-2x3c).
+#
+# WHY THIS EXISTS. On 2026-08-23 talos03 exhausted memory and wedged hard — every TCP
+# port still open, no handshake completing, machined's socket closed, requiring a power
+# cycle. CPU (6-14%), load15 (1.5-2.3) and disk I/O (3-23%) were all healthy; only
+# memory was gone (0.6GiB available, measured from Mimir).
+#
+# Upjet providers ship with NO resource requests at all, so a provider pod is INVISIBLE
+# to kube-scheduler: it reports zero and then resides at ~350-660Mi. Six crossplane
+# provider pods had accumulated on talos03 totalling roughly 2GiB that the scheduler
+# believed was free, on top of concurrent CNPG replica rebuilds from the storage
+# migration. Nothing was overcommitted on paper because nothing was on paper.
+#
+# The four AWS providers were re-added between 21:30:16 and 21:41:08; talos03 went
+# NotReady at 21:43:44 — two and a half minutes after the last pair.
+#
+# Providers with no explicit runtimeConfigRef fall back to a DeploymentRuntimeConfig
+# named `default`, which Crossplane creates with an empty spec. Declaring `default`
+# here takes that object over by name (the same trick activation-policy.yaml uses on
+# the MRAP) so the values reach every AWS provider INCLUDING upbound-provider-family-aws,
+# which Crossplane installs automatically as a dependency and which is therefore not
+# declarable in git.
+#
+# Sizing, measured 2026-08-23 with all providers steady:
+#   family-aws 657Mi | s3 392Mi | ec2 366Mi | cloudwatchlogs 355Mi
+#   ecs 349Mi | iam 341Mi
+# The request covers the largest (family) rather than the median, because one config
+# serves all six and under-requesting is the exact defect being fixed here.
+# Over-reserving ~400Mi on the five smaller pods is cheap next to another power cycle.
+# The limit leaves ~2x headroom over observed for reconcile spikes; it is a backstop,
+# not a target — an OOMKilled provider is a bad trade for RAM.
+#
+# CRD LOAD IS A SEPARATE AXIS and is already handled. The original incident that caused
+# these providers to be REMOVED was CRD-driven: provider-aws-ec2 alone registers roughly
+# 250 CRDs and saturated the apiserver. They were re-added behind the activation
+# allowlist in activation-policy.yaml, so only 38 aws.upbound.io CRDs are registered
+# today. Do not remove that allowlist to "just make a resource work".
+#
+# This must live in aws-providers rather than operators/crossplane: it is a
+# pkg.crossplane.io kind, which does not exist until the Crossplane HelmRelease has
+# reconciled, and referencing it from the operators Kustomization fails that
+# Kustomization's dry-run.
+apiVersion: pkg.crossplane.io/v1beta1
+kind: DeploymentRuntimeConfig
+metadata:
+  name: default
+spec:
+  deploymentTemplate:
+    spec:
+      selector: {}
+      template:
+        spec:
+          containers:
+            - name: package-runtime
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 768Mi
+                limits:
+                  cpu: "1"
+                  memory: 1536Mi

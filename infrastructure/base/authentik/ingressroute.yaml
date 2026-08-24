@@ -1,0 +1,117 @@
+---
+# Authentik portal — local LAN access (HTTP)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-local
+  namespace: authentik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`auth.talos00`)
+      kind: Rule
+      services:
+        - name: authentik-server
+          port: 80
+---
+# Authentik portal — public HTTPS (Cloudflare)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik
+  namespace: authentik
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: auth.knowledgedump.space
+    external-dns.alpha.kubernetes.io/target: knowledgedump.space
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`auth.knowledgedump.space`)
+      kind: Rule
+      services:
+        - name: authentik-server
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-http
+  namespace: authentik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`auth.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: authentik-server
+          port: 80
+---
+# talos-private SSO endpoint — auth.priv.talos00 (HTTPS, LAN-only).
+# This is the external_host of the talos-private forward_domain proxy provider:
+# serving Authentik here scopes the SSO session cookie to .priv.talos00 (a valid
+# registrable domain — talos00 is the public suffix), giving single-sign-on across
+# every *.priv.talos00 service. pihole's *.talos00 wildcard resolves it internally;
+# TLS served via TLSStore SNI from the *.priv.talos00 homelab-ca wildcard.
+# FUTURE: a parallel auth.priv.knowledgedump.space route (LE + Cloudflare) when public.
+# (TALOS-h4j / TALOS-xgrl.13)
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-priv
+  namespace: authentik
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`auth.priv.talos00`)
+      kind: Rule
+      services:
+        - name: authentik-server
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-priv-http
+  namespace: authentik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`auth.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: authentik-server
+          port: 80
+---
+# forward_single outpost routing (TALOS-xgrl.13): every *.talos00 forward-auth app's
+# /outpost.goauthentik.io/* path must reach the embedded outpost (authentik-server), not the
+# app. ONE regexp route covers ALL forward-auth apps (present and future) — no per-app edit here
+# when a new service is added. The regexp matches BOTH bare <app>.talos00 (arr-stack, TALOS-xgrl.14)
+# AND <x>.priv.talos00 (the `.` in the char class covers the extra label). priority 20 beats the
+# apps' Host() routes for this path only. NO auth middleware — the outpost serves it directly.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-outpost-priv
+  namespace: authentik
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: HostRegexp(`^[a-z0-9.-]+\.talos00$`) && PathPrefix(`/outpost.goauthentik.io/`)
+      kind: Rule
+      priority: 20
+      services:
+        - name: authentik-server
+          port: 80

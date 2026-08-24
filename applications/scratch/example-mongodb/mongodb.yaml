@@ -1,0 +1,128 @@
+---
+# ServiceAccount for the MongoDBCommunity pods.
+# The mongodb-kubernetes (MCK) operator defaults the community StatefulSet pod SA
+# to `mongodb-kubernetes-appdb` (renamed from community-operator's `mongodb-database`).
+# The operator does NOT auto-create it in watched resource namespaces, so we provide it here.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mongodb-kubernetes-appdb
+  namespace: scratch
+---
+# Role to allow MongoDB agent to patch pods (set annotations)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mongodb-kubernetes-appdb
+  namespace: scratch
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+# RoleBinding for MongoDB agent
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mongodb-kubernetes-appdb
+  namespace: scratch
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mongodb-kubernetes-appdb
+subjects:
+  - kind: ServiceAccount
+    name: mongodb-kubernetes-appdb
+    namespace: scratch
+---
+# Example MongoDB using the mongodb-kubernetes (MCK) operator — MongoDBCommunity kind
+# Docs: https://github.com/mongodb/mongodb-kubernetes/tree/master/docs/mongodbcommunity
+apiVersion: mongodbcommunity.mongodb.com/v1
+kind: MongoDBCommunity
+metadata:
+  name: scratch-mongodb
+  namespace: scratch
+  labels:
+    app.kubernetes.io/name: scratch-mongodb
+    app.kubernetes.io/component: database
+spec:
+  # Number of members (1 for scratch, 3 for HA production)
+  members: 1
+  type: ReplicaSet
+  version: "7.0.14"
+
+  # Security configuration
+  security:
+    authentication:
+      modes: ["SCRAM"]
+
+  # Users to create
+  users:
+    - name: scratch_user
+      db: scratch_db
+      passwordSecretRef:
+        name: scratch-mongodb-password
+      roles:
+        - name: readWrite
+          db: scratch_db
+        - name: clusterAdmin
+          db: admin
+      scramCredentialsSecretName: scratch-mongodb-scram
+
+  # Storage configuration
+  statefulSet:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: mongod
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 512Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+            - name: mongodb-agent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+      volumeClaimTemplates:
+        - metadata:
+            name: data-volume
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: fatboy-nfs-appdata
+            resources:
+              requests:
+                storage: 5Gi
+        - metadata:
+            name: logs-volume
+          spec:
+            accessModes: ["ReadWriteOnce"]
+            storageClassName: fatboy-nfs-appdata
+            resources:
+              requests:
+                storage: 1Gi
+---
+# Service for external access to MongoDB
+apiVersion: v1
+kind: Service
+metadata:
+  name: scratch-mongodb-external
+  namespace: scratch
+spec:
+  type: ClusterIP
+  selector:
+    app: scratch-mongodb-svc
+  ports:
+    - name: mongodb
+      port: 27017
+      targetPort: 27017

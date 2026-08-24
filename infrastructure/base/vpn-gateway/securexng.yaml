@@ -1,0 +1,281 @@
+---
+# SecureXNG - SearXNG with gluetun sidecar for transparent VPN routing
+# Uses same VPN credentials as main gateway for unified exit IP
+# VPN rotation: restart main gluetun or update credential secret
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: securexng
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+    app.kubernetes.io/component: secure-search
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: securexng
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: securexng
+        app.kubernetes.io/component: secure-search
+        vpn-gateway.io/rotation: enabled
+      annotations:
+        policy.cilium.io/proxy-visibility: "<Egress/443/TCP/HTTP>"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Clean up stale WireGuard routing rules before gluetun starts
+      # Fixes "adding IPv4/IPv6 rule: file exists" error on pod restarts
+      initContainers:
+        - name: cleanup-routes
+          image: busybox:1.38.0
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Flushing stale wireguard routing table 51820..."
+              ip route flush table 51820 2>/dev/null || true
+              ip -6 route flush table 51820 2>/dev/null || true
+              while ip rule del table 51820 2>/dev/null; do :; done
+              while ip -6 rule del table 51820 2>/dev/null; do :; done
+              echo "Cleanup complete"
+      containers:
+        # Gluetun sidecar - same VPN server as main gateway
+        - name: gluetun
+          image: qmcgaw/gluetun:v3.41.3  # pinned 2026-05-09 — :latest had breaking DNS validation change
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN]
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    ip route flush table 51820 2>/dev/null || true
+                    ip -6 route flush table 51820 2>/dev/null || true
+                    while ip rule del table 51820 2>/dev/null; do :; done
+                    while ip -6 rule del table 51820 2>/dev/null; do :; done
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: "protonvpn"
+            - name: VPN_TYPE
+              value: "wireguard"
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: protonvpn-credentials
+                  key: se-de-1  # Germany server - different from main gateway (Netherlands)
+            - name: WIREGUARD_ADDRESSES
+              value: "10.2.0.2/32"
+            - name: SERVER_COUNTRIES
+              value: "Germany"
+            - name: HTTPPROXY
+              value: "off"
+            - name: SHADOWSOCKS
+              value: "off"
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              value: "10.244.0.0/16,10.96.0.0/12"
+            - name: FIREWALL_INPUT_PORTS
+              value: "8080,8000,9091"  # SearXNG, control, metrics
+            - name: HTTP_CONTROL_SERVER_ADDRESS
+              value: "0.0.0.0:8000"
+            - name: HTTP_CONTROL_SERVER_AUTH
+              value: "false"
+            - name: HTTP_CONTROL_SERVER_AUTH_DEFAULT_ROLE
+              value: '{"auth":"none"}'
+            - name: LOG_LEVEL
+              value: "info"
+            - name: DOT
+              value: "off"  # Disable DNS over TLS
+            - name: DOT_IPV6
+              value: "off"  # Disable IPv6 DNS to avoid routing issues
+            # Healthcheck settings - more resilient to rotation
+            - name: HEALTH_VPN_DURATION_INITIAL
+              value: "30s"  # Wait 30s before first healthcheck (default 6s)
+            - name: HEALTH_VPN_DURATION_ADDITION
+              value: "15s"  # Add 15s after each failure (default 5s)
+            - name: HEALTH_SUCCESS_WAIT_DURATION
+              value: "10s"  # Wait between success checks
+            - name: HEALTH_TARGET_ADDRESS
+              value: "1.1.1.1:443"  # Use IP instead of DNS hostname
+          # Use internal gluetun health API instead of external site
+          # External checks (ifconfig.me) are unreliable and cause false restarts
+          livenessProbe:
+            httpGet:
+              path: /v1/vpn/status
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "25m"
+        - name: searxng
+          image: searxng/searxng:latest
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: SEARXNG_BASE_URL
+              value: "https://securexng.talos00"
+            - name: SEARXNG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: securexng-secret
+                  key: secret
+                  optional: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/searxng
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+
+        # Gluetun metrics exporter
+        - name: gluetun-exporter
+          image: busybox:1.38.0
+          command: ["/bin/sh", "/scripts/exporter.sh"]
+          ports:
+            - name: metrics
+              containerPort: 9091
+              protocol: TCP
+          env:
+            - name: GLUETUN_API
+              value: "http://localhost:8000"
+            - name: METRICS_PORT
+              value: "9091"
+          volumeMounts:
+            - name: exporter-script
+              mountPath: /scripts
+          resources:
+            requests:
+              memory: "8Mi"
+              cpu: "5m"
+      volumes:
+        - name: config
+          emptyDir: {}  # Fresh config each restart for privacy
+        - name: exporter-script
+          configMap:
+            name: gluetun-exporter-script
+            defaultMode: 493  # 0755 in decimal
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: securexng
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: securexng
+---
+# SearXNG signing secret: de-hardcoded to 1Password via ExternalSecret
+# (securexng-externalsecret.yaml, TALOS-3zz1 / epic TALOS-031k). The old inline
+# plaintext value (exposed on the PUBLIC repo, now rotated) is
+# gone; the target Secret keeps the name `securexng-secret` / key `secret` so the
+# SEARXNG_SECRET consumer above (optional: true) resolves unchanged.
+---
+# TLS Certificate for mTLS (external clients)
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: mtls-strict
+  namespace: vpn-gateway
+spec:
+  minVersion: VersionTLS12
+  clientAuth:
+    # Require client certificate for external access
+    clientAuthType: RequireAndVerifyClientCert
+    # Reference to CA secret for client cert validation
+    secretNames:
+      - securexng-ca
+---
+# IngressRoute — HTTPS + Authentik forward-auth SSO on securexng.talos00 (TALOS-xgrl.18).
+# Gated by the `authentik` forward-auth middleware (talos-apps OR cluster-admin). TLS: default
+# TLSStore serves the *.talos00 wildcard via SNI (tls: {}), matching the cluster SSO pattern.
+#
+# NOTE: this REPLACES the previous mTLS client-cert gate (tls.options: mtls-strict). SSO via
+# Authentik is now the access control. The `mtls-strict` TLSOption + `securexng-ca` secret
+# above are left in place but are now UNREFERENCED — the operator may remove them if the
+# client-cert flow is no longer wanted, or re-add `options: {name: mtls-strict}` for
+# defence-in-depth (mTLS AND SSO) if desired.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: securexng
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+    app.kubernetes.io/component: ingress
+  annotations:
+    description: "VPN-protected SearXNG behind Authentik forward-auth SSO (talos-apps)"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`securexng.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: securexng
+          port: 8080
+---
+# HTTP→HTTPS redirect for securexng.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: securexng-http
+  namespace: vpn-gateway
+  labels:
+    app.kubernetes.io/name: securexng
+    app.kubernetes.io/component: ingress
+  annotations:
+    description: "VPN-protected SearXNG - HTTP→HTTPS redirect"
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`securexng.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: securexng
+          port: 8080
+# NOTE: Cilium Network Policies for mTLS between pods would go here
+# Currently disabled - gluetun sidecar handles VPN routing internally
+# For pod-to-pod mTLS with central gateway, see TALOS-adp (dynamic proxy UI)

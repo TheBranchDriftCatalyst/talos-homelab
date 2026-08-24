@@ -1,0 +1,266 @@
+---
+# BookOrbit — self-hosted ebook / audiobook / comic / PDF library with built-in
+# web readers and Kobo + KOReader sync (epic TALOS-3hl8).
+#
+# ============================================================================
+# THIS DEPLOYMENT IS DELIBERATELY NOT BUILT FROM ../_instance. READ THIS FIRST.
+# ============================================================================
+# Every other app in media-experimental starts from ../_instance, and that
+# skeleton hard-codes BOTH halves of the node pin:
+#   - deployment.yaml: a requiredDuringScheduling nodeAffinity to talos03
+#   - pvc.yaml:        a `local-path` config PVC, whose PV carries its own
+#                      nodeAffinity to whichever node provisioned it
+# The affinity exists BECAUSE of the PVC. Inheriting the skeleton and then trying
+# to patch the pin back out means deleting a resource from a base (kustomize
+# `$patch: delete`) plus a JSON-patch `remove` of the affinity — obscure, fragile,
+# and it would silently re-pin the app the moment someone edits the skeleton. The
+# skeleton IS the pinning pattern, so this app does not inherit it. That is the
+# whole point of the ticket: BookOrbit keeps its state in PostgreSQL (see
+# postgres.yaml), so it never needs node-local storage and must not acquire a pin.
+#
+# THERE IS NO nodeAffinity, NO nodeSelector, AND NO local-path PVC IN THIS APP.
+# If you are about to add one, you are re-creating the problem EPIC 3 exists to
+# remove — and the thing currently blocking talos03 from being reset and promoted
+# to a control plane. Fix the storage instead.
+#
+# The two patches the PARENT kustomization applies to every Deployment in this
+# namespace still reach this one, and both are wanted:
+#   revisionHistoryLimit: 3     and     enableServiceLinks: false
+# The latter matters here — BookOrbit reads PORT, and k8s service-link injection
+# would otherwise define <SVC>_PORT=tcp://... in the pod env.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bookorbit
+  labels:
+    app: bookorbit
+    app.kubernetes.io/name: bookorbit
+spec:
+  # ONE replica, Recreate. Not arbitrary: the entrypoint runs
+  # `node dist/scripts/migrate.js` before the server on EVERY pod start, so a
+  # rolling update would run two migrators against one database concurrently. The
+  # RWO /data claim points the same way.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: bookorbit
+  template:
+    metadata:
+      labels:
+        app: bookorbit
+        app.kubernetes.io/name: bookorbit
+        # Kyverno oidc-hostalias injects a hostAlias pinning auth.knowledgedump.space
+        # to the live traefik ClusterIP. BookOrbit does SERVER-SIDE OIDC (discovery,
+        # token exchange, JWKS) once a provider is configured, and without this those
+        # calls egress to Cloudflare, whose bot protection blocks them — the failure
+        # reads as "execution expired" and has cost this cluster the same debugging
+        # twice. Set NOW rather than when OIDC is switched on, because the pod is
+        # what carries it and the label costs nothing while OIDC is unconfigured.
+        catalyst.io/oidc: "true"
+      annotations:
+        # /data is CNPG-independent app data (covers, thumbnails, conversions) and
+        # is not covered by the Postgres backups — Velero should take it.
+        backup.velero.io/backup-volumes: "data"
+    spec:
+      securityContext:
+        # 1000/1000 matches BookOrbit's documented PUID/PGID default.
+        # supplementalGroup 100 = Synology 'users', required to write the NFS media
+        # exports (same as every sibling in this namespace).
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        supplementalGroups: [100, 1000]
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Gate startup on the `vector` extension EXISTING. Without this, a fresh
+        # database loses a race and the symptom is genuinely misleading.
+        #
+        # OBSERVED ON FIRST DEPLOY (2026-08-22): the app came up before the CNPG
+        # Database CR had finished reconciling, its own startup
+        # `CREATE EXTENSION IF NOT EXISTS "vector"` ran as the unprivileged
+        # `bookorbit` role, and it exited 1 with
+        #     permission denied to create extension "vector"
+        #     hint: Must be superuser to create this extension.
+        # three times before the CR landed the extensions and it started cleanly.
+        # It self-heals, but it self-heals THROUGH CrashLoopBackOff, which reads as
+        # a broken deploy to the next person and can trip restart alerting. It
+        # recurs on every fresh bootstrap — a rebuilt namespace, a restore into an
+        # empty cluster.
+        #
+        # Waiting here turns that into an honest `Init:0/1` with a log line saying
+        # what it is waiting for. If the Database CR never reconciles, this blocks
+        # instead of crashlooping, which is the clearer failure of the two.
+        #
+        # Same image as the CNPG operand pinned in postgres.yaml — already present
+        # in-cluster, carries psql, and adds no new dependency to track.
+        - name: wait-for-extensions
+          image: ghcr.io/cloudnative-pg/postgresql:18.4-standard-trixie
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              until psql "$DATABASE_URL" -tAc \
+                "SELECT 1 FROM pg_extension WHERE extname = 'vector'" | grep -q 1; do
+                echo "waiting for the vector extension (CNPG Database CR reconciles it)..."
+                sleep 2
+              done
+              echo "vector extension present - starting bookorbit"
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bookorbit-postgres-app
+                  key: uri
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      containers:
+        - name: bookorbit
+          # Pinned to a real release, NOT :latest. GHCR tags carry NO `v` prefix even
+          # though the git tags do — ghcr.io/bookorbit/bookorbit:v2.7.0 is a 404,
+          # :2.7.0 resolves. Upstream ships roughly weekly via semantic-release, so
+          # :latest with imagePullPolicy IfNotPresent would drift into an unplanned
+          # major upgrade on any pod reschedule — the same way a stale :latest caused
+          # an unplanned upgrade during the sonarr migration.
+          image: ghcr.io/bookorbit/bookorbit:2.7.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: TZ
+              value: America/New_York
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            # Public-facing URL. CLIENT_URL defaults to APP_URL, so CORS follows.
+            - name: APP_URL
+              value: https://bookorbit.${CLUSTER_DOMAIN}
+            # ---- database -------------------------------------------------------
+            # The whole connection string comes from the CNPG-generated secret's
+            # `uri` key. BookOrbit's entrypoint only synthesises DATABASE_URL from
+            # the discrete POSTGRES_* vars when DATABASE_URL is unset, and the
+            # discrete vars never reach the app itself (they are absent from
+            # env.validation.ts) — so setting the URI directly is both sufficient
+            # and the form with no password in git.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bookorbit-postgres-app
+                  key: uri
+            # ---- required app secrets (ESO-generated, see externalsecret.yaml) ---
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bookorbit-secrets
+                  key: JWT_SECRET
+            - name: SETUP_BOOTSTRAP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bookorbit-secrets
+                  key: SETUP_BOOTSTRAP_TOKEN
+            # ---- storage behaviour ----------------------------------------------
+            - name: APP_DATA_PATH
+              value: /data
+            # MUST be false on NFS. The entrypoint otherwise chown -R's all of /data
+            # on every start and hard-exits when its write probe fails against a
+            # root_squash export. Upstream documents this variable for exactly the
+            # "platform manages /data ownership" case, which fsGroup above does.
+            - name: BOOKORBIT_FIX_PERMISSIONS
+              value: "false"
+            # Confine the in-app library browser to the mounted libraries so the
+            # picker cannot wander the container root.
+            - name: LIBRARY_BROWSE_ROOT
+              value: /library
+            # ---- runtime --------------------------------------------------------
+            # Coherent with the 2Gi memory limit below: Node's old-space cap is set
+            # to 1536Mi, leaving ~512Mi of headroom for non-heap (native buffers
+            # during ebook/kepub conversion, the Python cloudscraper helper used for
+            # Kobo sync). Left at the compose default of `auto` it reads the cgroup
+            # limit and takes 75% (1536Mi) anyway — this states it rather than
+            # depending on that derivation staying the same across releases.
+            - name: NODE_MAX_OLD_SPACE_SIZE
+              value: "1536"
+            - name: LOG_LEVEL
+              value: info
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            # Libraries: the EXISTING namespace-level Synology NFS claims from
+            # ../storage.yaml — the same PVs komga (/books, /comics) and
+            # audiobookshelf (audiobooks) already use. No new claim is created.
+            # Mounted under one parent so LIBRARY_BROWSE_ROOT=/library exposes all
+            # three as browsable library sources in the setup wizard.
+            - name: books
+              mountPath: /library/books
+            - name: audiobooks
+              mountPath: /library/audiobooks
+            - name: comics
+              mountPath: /library/comics
+            # Read-only rootfs — upstream's compose runs the same way, writable at
+            # /tmp and /data only.
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            # NOTE: upstream's compose grants CHOWN/DAC_OVERRIDE/FOWNER/SETGID/SETUID.
+            # Those exist so its entrypoint can start as root, fix ownership, and
+            # su-exec down to PUID/PGID. This pod starts as 1000 directly, so the
+            # entrypoint takes its non-root branch (migrate, then exec the server)
+            # and needs none of them.
+          # First boot runs 72 Drizzle migrations against an empty database before
+          # the health endpoint answers, so the startup budget is generous —
+          # 60 x 5s = 5 minutes — while liveness stays tight afterwards.
+          startupProbe:
+            httpGet: {path: /api/v1/health, port: http}
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: {path: /api/v1/health, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: {path: /api/v1/health, port: http}
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: bookorbit-data
+        - name: books
+          persistentVolumeClaim:
+            claimName: books
+        - name: audiobooks
+          persistentVolumeClaim:
+            claimName: audiobooks
+        - name: comics
+          persistentVolumeClaim:
+            claimName: comics
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,180 @@
+---
+# Grafana Dashboards Kustomization
+#
+# Two types of dashboards:
+# 1. JSON files (json/) - Custom dashboards, editable in UI or code
+# 2. Grafana.com references - Community dashboards by ID
+#
+# Workflow:
+#   - Edit JSON files directly OR use Grafana UI
+#
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: monitoring
+
+# Generate ConfigMaps from JSON files (custom dashboards)
+configMapGenerator:
+  - name: dashboard-descheduler-ops
+    files:
+      - json/descheduler-ops.json
+  - name: dashboard-mongodb-ops
+    files:
+      - json/mongodb-ops.json
+  - name: dashboard-workload-ops
+    files:
+      - json/workload-ops.json
+  - name: dashboard-analytics-ops
+    files:
+      - json/analytics-ops.json
+  - name: dashboard-crowdsec-ops
+    files:
+      - json/crowdsec-ops.json
+  - name: dashboard-cowrie-ops
+    files:
+      - json/cowrie-ops.json
+  - name: dashboard-pod-cleanup
+    files:
+      - json/pod-cleanup.json
+  - name: dashboard-resource-efficiency
+    files:
+      - json/resource-efficiency.json
+  - name: dashboard-tdarr-transcoding
+    files:
+      - json/tdarr-transcoding.json
+  - name: dashboard-vpn-gateway
+    files:
+      - json/vpn-gateway.json
+  - name: dashboard-kubevirt-control-plane
+    files:
+      - json/kubevirt-control-plane.json
+  - name: dashboard-kubevirt-vm-info
+    files:
+      - json/kubevirt-vm-info.json
+  - name: dashboard-talos-cluster-debug
+    files:
+      - json/talos-cluster-debug.json
+  - name: dashboard-cilium-bpf-pressure
+    files:
+      - json/cilium-bpf-pressure.json
+  - name: dashboard-talos00-memory-deepdive
+    files:
+      - json/talos00-memory-deepdive.json
+  - name: dashboard-etcd-snapshot-correlation
+    files:
+      - json/etcd-snapshot-correlation.json
+  - name: dashboard-pihole
+    files:
+      - json/pihole.json
+  - name: dashboard-external-dns
+    files:
+      - json/external-dns.json
+  - name: dashboard-central-cluster-storage
+    files:
+      - json/central-cluster-storage.json
+  - name: dashboard-cnpg-databases
+    files:
+      - json/cnpg-databases.json
+  - name: dashboard-dragonfly-cache
+    files:
+      - json/dragonfly-cache.json
+  - name: dashboard-rabbitmq
+    files:
+      - json/rabbitmq.json
+  - name: dashboard-keda
+    files:
+      - json/keda.json
+  - name: dashboard-catalyst-k8s-dashboard
+    files:
+      - json/catalyst-k8s-dashboard.json
+  - name: dashboard-monitoring-ops
+    files:
+      - json/monitoring-ops.json
+  - name: dashboard-kubevirt-vm-ops
+    files:
+      - json/kubevirt-vm-ops.json
+  - name: dashboard-network-ops
+    files:
+      - json/network-ops.json
+  - name: dashboard-traefik-ops
+    files:
+      - json/traefik-ops.json
+  - name: dashboard-app-ops-image-versions
+    files:
+      - json/app-ops-image-versions.json
+  - name: dashboard-argo-ops
+    files:
+      - json/argo-ops.json
+  - name: dashboard-uptime-slo
+    files:
+      - json/uptime-slo.json
+  - name: dashboard-flux-ops
+    files:
+      - json/flux-ops.json
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+resources:
+  # Nested "Ops" folder hierarchy (GrafanaFolder CRs)
+  - folders/ops.yaml
+
+  # "Apps" folder — the DOMAIN perspective, sibling of Ops. The folder is
+  # declared here; the dashboards inside it are declared by each application's
+  # own deploy overlay via `spec.folderRef: apps`. See folders/apps.yaml.
+  - folders/apps.yaml
+
+  # Custom dashboards (reference ConfigMaps)
+  - resources/pod-cleanup.yaml
+  - resources/resource-efficiency.yaml
+  - resources/tdarr-transcoding.yaml
+  - resources/vpn-gateway.yaml
+  - resources/kubevirt-vm-info.yaml
+  - resources/talos-cluster-debug.yaml
+  - resources/cilium-bpf-pressure.yaml
+  - resources/descheduler-ops.yaml
+  - resources/talos00-memory-deepdive.yaml
+  - resources/etcd-snapshot-correlation.yaml
+  - resources/pihole.yaml
+  - resources/central-cluster-storage.yaml
+  - resources/cnpg-databases.yaml
+  - resources/dragonfly-cache.yaml
+  - resources/rabbitmq.yaml
+  - resources/keda.yaml
+  - resources/catalyst-k8s-dashboard.yaml
+  - resources/monitoring-ops.yaml
+  - resources/kubevirt-vm-ops.yaml
+  - resources/network-ops.yaml
+  - resources/traefik-ops.yaml
+  - resources/analytics-ops.yaml
+  - resources/workload-ops.yaml
+  - resources/mongodb-ops.yaml
+  - resources/crowdsec-ops.yaml
+  - resources/cowrie-ops.yaml
+  - resources/app-ops-image-versions.yaml
+  - resources/argo-ops.yaml
+  - resources/uptime-slo.yaml
+  - resources/flux-ops.yaml
+
+  # Community dashboards (Grafana.com references - don't need JSON files)
+  - external/argocd-dashboards.yaml
+  - external/external-dns-dashboard.yaml
+  - external/gitops-dashboards.yaml
+  # external/hybrid-cluster-dashboards.yaml REMOVED: its only entry was the
+  # liqo-overview CR importing grafanaCom id 16098, which actually resolves to
+  # the "Node Exporter Dashboard 20240520 通用JOB分组版" (uid StarsL-JOB-node) —
+  # a wrong-id import, not a Liqo dashboard. Removed to prune it from Grafana.
+  # external/infrastructure-dashboards.yaml REMOVED (TALOS-7u3): its only entry
+  # was the postgres_exporter dashboard (id 9628) which is empty against CNPG's
+  # cnpg_* metrics. Replaced by resources/cnpg-databases.yaml below.
+  # external/kubernetes-dashboards.yaml REMOVED (Legacy cleanup): its only
+  # entries were k8s-pvc (id 13646, uid peR80gTGk) and k8s-volumes (id 11454,
+  # uid c4b51582-0375-4f71-9f33-64ceae3bcb7a). Replaced by the custom
+  # "Central Cluster Storage" dashboard (resources/central-cluster-storage.yaml)
+  # which now carries kubelet_volume_stats_* PVC capacity/fill panels.
+  - external/loki-dashboards.yaml
+  # external/traefik-dashboards.yaml REMOVED (Legacy cleanup): its only entries
+  # were traefik-v2-alt (id 4475, uid qPdAviJmz) and traefik-services (id 12250,
+  # uid O23g2BeWk). Replaced by the custom "Traefik Ops" dashboard
+  # (resources/traefik-ops.yaml) in Ops/Network.
+  - external/kubevirt-dashboards.yaml

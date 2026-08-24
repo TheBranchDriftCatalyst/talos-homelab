@@ -1,0 +1,284 @@
+---
+# Plausible CE declarative site reconciler (TALOS-4gg).
+#
+# WHY DIRECT POSTGRES UPSERT (not Elixir RPC):
+#   Plausible CE has NO Sites Provisioning API. The two candidate mechanisms were:
+#     (a) `bin/plausible rpc/remote` running an Elixir Plausible.Sites upsert, and
+#     (b) a direct, idempotent SQL upsert into `sites` + `site_memberships`.
+#   (a) is fragile here: CE runs with distributed Erlang OFF, so `rpc` can't attach
+#       to the live node, and `eval` would boot a whole second app instance (full
+#       env + migrations) just to call an internal function whose signature drifts
+#       between releases. (b) is version-stable for the DEPLOYED v2.x schema, needs
+#       only the CNPG-issued app credential, and is trivially idempotent via unique
+#       indexes + ON CONFLICT DO NOTHING — it never clobbers existing sites, owners,
+#       or stats (stats live in ClickHouse, keyed by domain string, untouched here).
+#   Chosen: (b). If Plausible is ever upgraded to v3.x (teams schema), reconcile.sql
+#   must be revised for `teams`/`team_memberships` — see report.
+#
+# The SQL runs as ONE transaction, two statements:
+#   1. INSERT every registry domain into `sites` (ON CONFLICT (domain) DO NOTHING).
+#   2. INSERT owner membership for every registry domain (ON CONFLICT DO NOTHING —
+#      untargeted, so it also absorbs the partial UNIQUE(site_id) WHERE role='owner'
+#      arbiter when a site already has a different owner).
+# Statement 2 sees rows inserted by statement 1 (same transaction), so brand-new
+# sites get their owner membership in the same run.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plausible-site-reconciler-sql
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/part-of: plausible
+    app.kubernetes.io/component: site-reconciler
+  annotations:
+    # Literal SQL — no Flux envsubst (the `:'var'` psql placeholders and any `$` are
+    # for psql/Postgres, not for envsubst).
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+data:
+  reconcile.sql: |
+    -- Idempotent Plausible CE site provisioning (v2.x schema: sites + site_memberships).
+    -- Inputs (psql -v):
+    --   sites_json  : the registry JSON array (contents of analytics-sites/sites.json)
+    --   owner_email : email of the owning user (must already exist in `users`)
+    \set ON_ERROR_STOP on
+
+    BEGIN;
+
+    -- 1) Ensure a site row for every registry domain. Never updates existing sites
+    --    (protects timezone/stats settings already configured in the UI).
+    INSERT INTO sites (domain, timezone, inserted_at, updated_at)
+    SELECT DISTINCT
+           item->>'domain' AS domain,
+           'Etc/UTC'       AS timezone,
+           now()           AS inserted_at,
+           now()           AS updated_at
+    FROM jsonb_array_elements(:'sites_json'::jsonb) AS e(item)
+    WHERE COALESCE(item->>'domain', '') <> ''
+    ON CONFLICT (domain) DO NOTHING;
+
+    -- 2) Ensure the owner has an 'owner' membership for every registry domain
+    --    (covers both freshly-inserted and pre-existing sites). Untargeted
+    --    ON CONFLICT DO NOTHING is deliberate: it swallows BOTH the
+    --    (site_id,user_id) unique index and the partial UNIQUE(site_id)
+    --    WHERE role='owner' index, so a site already owned by someone else is
+    --    left exactly as-is instead of erroring.
+    INSERT INTO site_memberships (site_id, user_id, role, inserted_at, updated_at)
+    SELECT si.id, u.id, 'owner', now(), now()
+    FROM jsonb_array_elements(:'sites_json'::jsonb) AS e(item)
+    JOIN sites si ON si.domain = item->>'domain'
+    JOIN users u  ON u.email   = :'owner_email'
+    WHERE COALESCE(item->>'domain', '') <> ''
+    ON CONFLICT DO NOTHING;
+
+    COMMIT;
+
+    -- Visibility in Job/CronJob logs: show the resulting registry-domain state.
+    SELECT s.domain,
+           s.id AS site_id,
+           bool_or(sm.role = 'owner') AS has_owner
+    FROM sites s
+    LEFT JOIN site_memberships sm ON sm.site_id = s.id
+    WHERE s.domain IN (
+      SELECT item->>'domain'
+      FROM jsonb_array_elements(:'sites_json'::jsonb) AS e(item)
+      WHERE COALESCE(item->>'domain', '') <> ''
+    )
+    GROUP BY s.domain, s.id
+    ORDER BY s.domain;
+---
+# Shared pod template is expressed inline in both the one-shot Job and the CronJob
+# below (Kubernetes has no native "podTemplate ref"). Keep the two container specs
+# identical when editing.
+#
+# One-shot Job — runs the reconcile ONCE immediately on apply so a newly added site
+# shows up without waiting up to 15m for the next CronJob tick.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: plausible-site-reconciler-init
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/part-of: plausible
+    app.kubernetes.io/component: site-reconciler
+  annotations:
+    # Re-run this Job on every reconcile of changed content by keeping the name
+    # stable; if you need to force a rerun after editing the registry, delete the
+    # completed Job (kubectl delete job -n crossplane-demo plausible-site-reconciler-init)
+    # or just rely on the CronJob's next tick.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 4
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: plausible
+        app.kubernetes.io/part-of: plausible
+        app.kubernetes.io/component: site-reconciler
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 26
+        runAsGroup: 26
+        fsGroup: 26
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: reconciler
+          # Reuse the CNPG operand image already present on nodes: it ships a matching
+          # psql client (server is postgresql:16.4), avoids a Docker Hub pull, and is
+          # a maintained, minimal image.
+          image: ghcr.io/cloudnative-pg/postgresql:16.4
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              echo "[reconciler] $(date -u +%FT%TZ) reading registry"
+              cat /registry/sites.json
+              echo "[reconciler] applying idempotent upsert"
+              psql "$DATABASE_URL" \
+                --set=ON_ERROR_STOP=1 \
+                --set=sites_json="$(cat /registry/sites.json)" \
+                --set=owner_email="$OWNER_EMAIL" \
+                -f /sql/reconcile.sql
+              echo "[reconciler] done"
+          env:
+            # CNPG-generated connection string (host plausible-db-rw:5432, db
+            # plausible_db, owner-user creds). No secret material in git.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: plausible-db-app
+                  key: uri
+            - name: OWNER_EMAIL
+              value: djdanielsh@gmail.com
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: registry
+              mountPath: /registry
+              readOnly: true
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: registry
+          configMap:
+            name: analytics-sites
+        - name: sql
+          configMap:
+            name: plausible-site-reconciler-sql
+        - name: tmp
+          emptyDir: {}
+---
+# CronJob — re-reconciles every 15 minutes so registry edits (and any manually
+# deleted memberships) self-heal. Idempotent, so overlapping/rerun is harmless;
+# Forbid concurrency anyway.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: plausible-site-reconciler
+  namespace: crossplane-demo
+  labels:
+    app.kubernetes.io/name: plausible
+    app.kubernetes.io/part-of: plausible
+    app.kubernetes.io/component: site-reconciler
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 120
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: plausible
+            app.kubernetes.io/part-of: plausible
+            app.kubernetes.io/component: site-reconciler
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 26
+            runAsGroup: 26
+            fsGroup: 26
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reconciler
+              image: ghcr.io/cloudnative-pg/postgresql:16.4
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  echo "[reconciler] $(date -u +%FT%TZ) reading registry"
+                  cat /registry/sites.json
+                  echo "[reconciler] applying idempotent upsert"
+                  psql "$DATABASE_URL" \
+                    --set=ON_ERROR_STOP=1 \
+                    --set=sites_json="$(cat /registry/sites.json)" \
+                    --set=owner_email="$OWNER_EMAIL" \
+                    -f /sql/reconcile.sql
+                  echo "[reconciler] done"
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: plausible-db-app
+                      key: uri
+                - name: OWNER_EMAIL
+                  value: djdanielsh@gmail.com
+                - name: HOME
+                  value: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: 25m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi
+              volumeMounts:
+                - name: registry
+                  mountPath: /registry
+                  readOnly: true
+                - name: sql
+                  mountPath: /sql
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: registry
+              configMap:
+                name: analytics-sites
+            - name: sql
+              configMap:
+                name: plausible-site-reconciler-sql
+            - name: tmp
+              emptyDir: {}

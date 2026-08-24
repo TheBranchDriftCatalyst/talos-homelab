@@ -1,0 +1,35 @@
+---
+# The scale-from-zero trigger + request buffer (TALOS-o3jn).
+#
+# The interceptor holds inbound requests while ollama-gateway is scaled to 0 (or scaled up
+# but NotReady, i.e. GPU still warming) and releases them once the Deployment reports
+# Ready. Because gateway readiness is gated on the real GPU backend, "Ready" here genuinely
+# means "vLLM is serving".
+#
+# scaledownPeriod is the IDLE WINDOW: no traffic for this long -> gateway back to 0 ->
+# gpu-broker deletes the XGPUInstance (the EBS cache survives; see the GPUProfile's
+# cacheTtl for the second tier). 1800s = 30 min, deliberately generous because a cold start
+# costs 2-5 min and thrashing is expensive.
+#
+# NOTE (v1 scope): HTTP + SSE only. WebSocket upgrade is intentionally unsupported —
+# an idle-but-open WS would otherwise count as demand and pin a ~$0.16/hr GPU up for as
+# long as someone leaves a browser tab open. Revisit only with message-based idle tracking.
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: ollama-gateway
+  namespace: gpu-inference
+spec:
+  hosts:
+    - ollama.talos00
+  scaleTargetRef:
+    name: ollama-gateway
+    kind: Deployment
+    apiVersion: apps/v1
+    service: ollama-gateway
+    port: 80
+  replicas:
+    min: 0     # true scale-to-zero; the GPU bill follows this number
+    max: 1     # one GPU box. Raising this without teaching gpu-broker about
+               # multiple XRs would create orphaned instances.
+  scaledownPeriod: 1800

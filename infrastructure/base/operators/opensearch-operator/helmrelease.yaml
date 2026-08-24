@@ -1,0 +1,55 @@
+---
+# OpenSearch Kubernetes Operator (opensearch-project)
+# Provides CRDs (opensearch.opster.io/v1):
+#   - OpenSearchCluster
+#   - OpensearchRole / OpensearchUser / OpensearchUserRoleBinding
+#   - OpensearchRole/User/ActionGroup/Tenant/ISMPolicy/ComponentTemplate/etc.
+# The operator is CLUSTER-SCOPED (watches all namespaces) and manages its own
+# admission webhook + TLS certificates.
+# Docs: https://opensearch-project.github.io/opensearch-k8s-operator/
+#
+# TALOS GOTCHA (do NOT solve here — this only installs the operator):
+# OpenSearch data nodes require the kernel sysctl `vm.max_map_count=262144`.
+# On Talos Linux the node default is lower; the actual OpenSearchCluster CR
+# (built elsewhere) will need either an initContainer with privileged
+# sysctl, an allowedUnsafeSysctls kubelet setting, or — preferably — a Talos
+# machineconfig `machine.sysctls: { vm.max_map_count: "262144" }`.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: opensearch-operator
+  namespace: opensearch-operator-system
+spec:
+  interval: 1h
+  url: https://opensearch-project.github.io/opensearch-k8s-operator/
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: opensearch-operator
+  namespace: opensearch-operator-system
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: opensearch-operator
+      version: '3.0.2'
+      sourceRef:
+        kind: HelmRepository
+        name: opensearch-operator
+        namespace: opensearch-operator-system
+      interval: 12h
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    # Single manager pod, small footprint for the homelab.
+    # Deployment name is `opensearch-operator-controller-manager`.
+    manager:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          memory: 350Mi

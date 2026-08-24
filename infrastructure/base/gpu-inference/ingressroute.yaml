@@ -1,0 +1,31 @@
+---
+# ollama.talos00 -> the KEDA HTTP interceptor (NOT straight to the gateway).
+#
+# Routing through the interceptor is what makes scale-from-zero work: with the gateway at
+# 0 replicas there is no pod to route to, so a direct route would 503. The interceptor is
+# always up (min 1), holds the request, triggers the scale-up, and forwards once the
+# gateway reports Ready.
+#
+# TRAEFIK TIMEOUTS: Traefik's default respondingTimeout would cut a held request long
+# before a 2-5 min cold start finishes. The 600s budget has to be set on the ENTRYPOINT
+# (a static/global setting), not here — an IngressRoute cannot raise it. See README.md;
+# until that entrypoint change lands, cold starts will be cut short by Traefik regardless
+# of what the interceptor is willing to wait.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ollama
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: ollama-gateway
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`ollama.talos00`)
+      services:
+        - name: keda-add-ons-http-interceptor-proxy
+          namespace: keda
+          port: 8080

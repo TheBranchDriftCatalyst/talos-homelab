@@ -1,0 +1,39 @@
+---
+# Security Ops — Cowrie SSH honeypot dashboard
+#
+# Loki-backed visualization of captured SSH-honeypot activity. A logship sidecar
+# emits Cowrie JSON on stdout -> Alloy -> Loki. Stream labels:
+#   {namespace="honeypot", container="logship", app="cowrie", pod=~"cowrie-.*"}
+#
+# Each log line is a JSON object parsed with `| json`. Fields used:
+#   eventid   e.g. cowrie.command.input, cowrie.login.success/failed,
+#             cowrie.session.connect, cowrie.session.file_download.failed
+#   src_ip    attacker source IP
+#   username / password   attempted / captured credentials
+#   input     the command typed into the honeypot shell
+#   session   session id
+#   url       download URL
+#   version   SSH client version string
+#
+# NOTE: pod-CIDR (10.244.x.x) traffic is kubelet/health-probe noise and is
+# filtered out (src_ip !~ `10.244..*`) on the attacker-IP / unique-IP panels so
+# it does not skew counts. cowrie.command.input already originates only from real
+# interactive sessions, so the command panels need no such filter.
+#
+# Datasource: Loki (uid loki-v2). Metrics datasource (mimir) is not used here.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: cowrie-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: security
+spec:
+  folderRef: ops-security
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-cowrie-ops
+    key: cowrie-ops.json
