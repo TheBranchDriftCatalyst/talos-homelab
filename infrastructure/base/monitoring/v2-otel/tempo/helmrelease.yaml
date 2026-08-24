@@ -88,6 +88,18 @@ spec:
   values:
     # Single binary mode (appropriate for homelab)
     tempo:
+      # The grafana/tempo chart reads resources from tempo.resources, NOT from
+      # a top-level `resources:` — the block that used to sit at the bottom of
+      # this file was a dead key and the container has been running with no
+      # request and no limit. Measured 24h to 2026-08-24: p50 616Mi, peak
+      # 1316Mi (2.1x). BURSTABLE: block flush and compaction are genuinely
+      # spiky, so the limit is 1.5x peak rather than tight.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 768Mi
+        limits:
+          memory: 2Gi
       # Expand ${AWS_ACCESS_KEY_ID}/${AWS_SECRET_ACCESS_KEY} in the tempo config
       # (both the chart values block below and the postRenderer-patched ConfigMap)
       # and source them from the tempo-s3-credentials Secret (ESO → 1Password
@@ -134,11 +146,7 @@ spec:
         operator: Exists
         effect: NoSchedule
 
-    # Resources
-    resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
+    # Resources moved to tempo.resources above — the chart never read this key.
 
     # ServiceMonitor for Prometheus scraping
     serviceMonitor:
