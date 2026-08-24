@@ -24,6 +24,13 @@ spec:
       labels:
         app: app-template
         app.kubernetes.io/name: app-template
+        # Stamped explicitly on the POD, not just the Deployment. The kustomization's
+        # `labels:` block adds app.kubernetes.io/part-of to resource metadata but NOT to
+        # pod templates — that is what its own "does not touch selectors" comment means.
+        # The topologySpreadConstraint below selects on this label, and a labelSelector
+        # matching zero pods is a SILENT no-op: the constraint is accepted, reports
+        # nothing, and simply never spreads anything.
+        app.kubernetes.io/part-of: media-experimental
       annotations:
         backup.velero.io/backup-volumes: "config"
     spec:
@@ -49,6 +56,27 @@ spec:
       #
       # talos03 is the 15 GiB node that wedged on memory exhaustion today; this stack
       # was 11 of the workloads holding it there. (TALOS-3hl8.4)
+      # SPREAD, not a pin. Removing the old hostname affinity was necessary but not
+      # sufficient: with no constraint at all, kube-scheduler put all twelve straight
+      # back onto talos03. That is not random — talos03 has the MOST CPU in the fleet
+      # (15600m) and the LEAST memory (12.5Gi allocatable), and the default
+      # BalancedAllocation scoring favours a node whose CPU and memory utilisation are
+      # out of balance. Memory-only pods are exactly what "corrects" that imbalance, so
+      # the emptiest-looking node by CPU keeps winning for the workloads least able to
+      # afford it. It is the same shape as the wedge: the scheduler reasons about
+      # requests and cores, not about the 0.61 GiB of real memory that node had left.
+      #
+      # maxSkew 2 rather than 1: twelve pods over five nodes cannot divide evenly, and
+      # skew 1 would leave pods Pending whenever a node is briefly unavailable.
+      # ScheduleAnyway keeps it a preference — the stack must never fail to start
+      # because the spread cannot be satisfied.
+      topologySpreadConstraints:
+        - maxSkew: 2
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: media-experimental
       securityContext:
         fsGroup: 1000
         supplementalGroups: [100, 1000]  # 100 = Synology 'users' for NFS write

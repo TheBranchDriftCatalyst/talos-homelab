@@ -51,6 +51,10 @@ spec:
       labels:
         app: bookorbit
         app.kubernetes.io/name: bookorbit
+        # Matches the topologySpreadConstraint below and the one in _instance, so
+        # bookorbit is counted in the same spread domain as the other eleven rather
+        # than scheduling independently of them.
+        app.kubernetes.io/part-of: media-experimental
         # Kyverno oidc-hostalias injects a hostAlias pinning auth.knowledgedump.space
         # to the live traefik ClusterIP. BookOrbit does SERVER-SIDE OIDC (discovery,
         # token exchange, JWKS) once a provider is configured, and without this those
@@ -64,6 +68,19 @@ spec:
         # is not covered by the Postgres backups — Velero should take it.
         backup.velero.io/backup-volumes: "data"
     spec:
+      # Same spread as the _instance template — bookorbit does not use that template but
+      # belongs to the same stack, so it shares the constraint or the spread is skewed by
+      # one pod that ignores it. See _instance/deployment.yaml for why this exists:
+      # unpinning alone put all twelve back on talos03, because that node has the most CPU
+      # and the least memory and the scheduler's BalancedAllocation favours it for
+      # memory-only pods.
+      topologySpreadConstraints:
+        - maxSkew: 2
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: media-experimental
       securityContext:
         # 1000/1000 matches BookOrbit's documented PUID/PGID default.
         # supplementalGroup 100 = Synology 'users', required to write the NFS media
