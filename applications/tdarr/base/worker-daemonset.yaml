@@ -165,12 +165,19 @@ spec:
           resources:
             requests:
               cpu: "500m"
-              memory: 1Gi
+              # UNDER-declared, not over: measured max_over_time 7d across every
+              # worker pod is 1259Mi against this 1Gi request, so the scheduler
+              # was short ~260Mi per worker. Transcode load is episodic — the
+              # 24h peak is only 1150Mi, which is why this needs a 7d window to
+              # size honestly. 1280Mi covers the observed worst case. (2026-08-24)
+              memory: 1280Mi
               gpu.intel.com/i915: "1"
             limits:
               # GPU limit ensures exclusive access during encoding
               gpu.intel.com/i915: "1"
-            # No CPU/memory limits - let workers use available node resources
+            # No CPU/memory limits - let workers use available node resources.
+            # KEEP IT THAT WAY. A memory limit on a transcoder turns a large
+            # file or a busy queue into an OOMKill mid-encode.
 
       volumes:
         # Shared node info from init container
