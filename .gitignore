@@ -94,9 +94,22 @@ configs/cilium-manifest*.yaml.bak
 # the secretbox encryption secret, and cluster.id / cluster.secret. Anyone holding
 # it can mint a node into this cluster. It is backed up to 1Password and must NEVER
 # be committed — this entry exists so that cannot happen by accident.
-talos/talsecret.yaml
-talos/talsecret.sops.yaml
+# ⚠️ MATCHED BY FILENAME, NOT PATH — deliberately.
+#
+# These were originally `talos/talsecret.yaml`, an anchored path. The planned migration ends
+# with `mv talos/ configs/`, at which point an anchored rule stops matching and a subsequent
+# `git add` would stage the cluster's entire CA and token bundle. Verified: with the anchored
+# form, `git check-ignore configs/talsecret.yaml` returned nothing.
+#
+# Filename patterns survive the directory move. Do not re-anchor these.
+talsecret.yaml
+talsecret.sops.yaml
+**/talsecret.yaml
+**/talsecret.sops.yaml
 
 # Generated machine configs. Same reason: they embed the bundle's contents inline.
 # Regenerate with `talhelper genconfig` rather than tracking them.
-talos/clusterconfig/
+# Generated machine configs — they embed the secrets bundle inline. Filename-matched for the
+# same reason as above, so the rule survives the directory rename.
+clusterconfig/
+**/clusterconfig/
