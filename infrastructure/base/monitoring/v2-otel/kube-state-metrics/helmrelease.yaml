@@ -18,6 +18,21 @@ spec:
         namespace: monitoring
       interval: 12h
   values:
+    # Soft-repel from talos03. gj3n raised the platform DaemonSets to their measured
+    # requests (~800Mi/node) and talos03, the 12.8Gi node that wedged, had 34Mi free
+    # once eda0's singleton increases landed there — KSM's own 64->288Mi bump among
+    # them. Preference, not a pin: if talos03 is the only node with room, running
+    # there beats not running at all.
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values: [talos03]
+
     # Replicas
     replicas: 1
 

@@ -27,6 +27,20 @@ spec:
         app.kubernetes.io/name: version-checker
         app.kubernetes.io/component: exporter
     spec:
+      # Soft-repel from talos03. gj3n raised the platform DaemonSet requests to their
+      # measured values, which need ~800Mi on every node — and talos03, the 12.8Gi node
+      # that wedged, had only 34Mi free once eda0's singleton increases landed there.
+      # This is one of three singletons moved to make room. Preference, not a pin: if
+      # talos03 is the only node with space, running here beats not running.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos03]
       serviceAccountName: version-checker
       securityContext:
         runAsNonRoot: true

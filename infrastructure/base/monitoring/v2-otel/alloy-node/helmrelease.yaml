@@ -42,18 +42,6 @@ spec:
         namespace: monitoring
       interval: 12h
   values:
-    # The config-reloader sidecar takes the chart default of 50Mi request and
-    # no limit. Measured 7d to 2026-08-24: p50 45Mi, peak 45Mi -- dead flat,
-    # but sitting at 90% of its request with no ceiling. 64Mi / 128Mi.
-    # (TALOS-gj3n / TALOS-eda0)
-    configReloader:
-      resources:
-        requests:
-          cpu: 10m
-          memory: 64Mi
-        limits:
-          memory: 128Mi
-
     # Use a distinct fullnameOverride so resources don't collide with
     # the existing `alloy` HelmRelease (which has its own SA, Deployment,
     # ConfigMap, Service all named `alloy`).
@@ -62,19 +50,12 @@ spec:
     alloy:
       # Lower resources than the Deployment because this only does file
       # tailing, not heavy Prometheus scraping.
-      # Measured 7d to 2026-08-24: p50 179Mi, peak 222Mi per node. The 128Mi
-      # request sat BELOW the p50 -- the per-node log collector was
-      # under-declared on every node. Limit 256Mi was only 1.15x peak.
-      # BURSTABLE. Folded in from TALOS-eda0, which approved it on the basis
-      # that its targets sat on the roomy nodes; this one is a DaemonSet and
-      # therefore lands on talos03 too, so it is landed here with gj3n's
-      # other per-node increases instead. (TALOS-gj3n / TALOS-eda0)
       resources:
         requests:
           cpu: 50m
-          memory: 224Mi
+          memory: 128Mi
         limits:
-          memory: 448Mi
+          memory: 256Mi
       # Pass node name to the Alloy config via downward API.
       extraEnv:
         - name: NODE_NAME

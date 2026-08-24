@@ -222,30 +222,13 @@ envoy:
 # + ClusterMesh apiserver), and Go's GOMEMLIMIT was thrashing GC near the 1GiB
 # ceiling. Removing the cap entirely is the Cilium-DS upstream recommendation,
 # but 2Gi gives breathing room without unbounded usage.
-# cilium-agent. Measured per node, 7d to 2026-08-24:
-#   talos02-gpu peak 890Mi   talos06 819Mi   talos00 639Mi
-#   talos01     peak 568Mi   talos03 547Mi
-# p50 sits 243-436Mi depending on endpoint count. A 256Mi request against an
-# 890Mi fleet peak was 2.7 GiB invisible to the scheduler across five nodes,
-# and cilium-agent is the component whose eviction takes networking down for
-# the whole node.
-#
-# request == limit at 1536Mi (1.7x the fleet peak). This REPLACES the old
-# 2Gi limit / 256Mi request split. The request is what the scheduler packs
-# on, so the old pair told it 256Mi while the process used up to 890Mi.
-#
-# Sized to the FLEET maximum, not per node, because a DaemonSet has one pod
-# template and resources cannot vary by node. talos03 only peaks at 547Mi and
-# a 640Mi request would be honest there — there is simply no mechanism to
-# express it, and inventing one via a Kyverno mutation would silently no-op
-# in kube-system. The single honest number is the right trade. (TALOS-gj3n)
 resources:
   limits:
     cpu: 1000m
-    memory: 1536Mi
+    memory: 2Gi
   requests:
     cpu: 100m
-    memory: 1536Mi
+    memory: 256Mi
 
 # =============================================================================
 # SPIRE-based Mutual TLS Authentication — REMOVED 2026-08-22 (TALOS-1d4o)

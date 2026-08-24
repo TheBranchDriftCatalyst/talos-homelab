@@ -201,6 +201,20 @@ spec:
       zoneAwareReplication:
         enabled: false
     distributor:
+      # Soft-repel from talos03. gj3n raised the platform DaemonSets to their measured
+      # requests (~800Mi/node); talos03 is the 12.8Gi node that wedged and had 34Mi free
+      # afterwards, leaving traefik and alloy-node Pending there. The distributor is
+      # freely movable — no PVC, no pin — and talos06/talos02-gpu each have >25Gi free.
+      # Preference, not a pin: running on talos03 beats not running.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos03]
       replicas: 2
       # p50 79Mi but peak 1115Mi -- 14.1x. Request stays at 256Mi (3.2x p50):
       # you do not request a spiky component at its peak.

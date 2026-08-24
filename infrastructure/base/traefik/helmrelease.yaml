@@ -210,25 +210,11 @@ spec:
       runAsUser: 0
       runAsNonRoot: false
 
-    # Resources. Measured 7d to 2026-08-24: p50 314Mi, peak 335Mi per pod --
-    # flat at 1.07x, because Traefik holds its router/service table resident
-    # and this cluster's route count is stable.
-    #
-    # request == limit at 512Mi (1.53x peak). Flatness is what makes req==lim
-    # cheap here: there is no burst to accommodate, so pinning costs nothing
-    # and gives the strongest eviction protection available to the ingress
-    # path. Losing Traefik on a node takes every IngressRoute on it down.
-    #
-    # The old 128Mi request against 314Mi steady state under-declared the
-    # DaemonSet by ~930Mi across five nodes. No cpu limit -- throttling the
-    # ingress proxy is worse than anything the limit would prevent.
-    # (TALOS-gj3n)
+    # Resources
     resources:
       requests:
         cpu: 50m
-        memory: 512Mi
-      limits:
-        memory: 512Mi
+        memory: 128Mi
 
     # Enable Prometheus metrics
     metrics:
