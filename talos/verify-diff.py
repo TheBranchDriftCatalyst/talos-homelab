@@ -24,8 +24,26 @@ for name,ip in NODES.items():
     for d in yaml.safe_load_all(raw):
         if d and "spec" in d:
             s=d["spec"]; live=yaml.safe_load(s) if isinstance(s,str) else s; break
-    gen=next(d for d in yaml.safe_load_all(open(f"talos/clusterconfig/catalyst-cluster-{name}.yaml")) if d and "machine" in d)
+    # ⚠️ READ EVERY DOCUMENT, not just the v1alpha1 one.
+    #
+    # talhelper emits a MULTI-DOCUMENT config: the v1alpha1 machine config plus separate
+    # documents such as HostnameConfig. An earlier version of this script took only the first
+    # document containing "machine" and was therefore blind to the rest — which is exactly
+    # where the reboot-causing change lives (talhelper moves hostname into a HostnameConfig
+    # document and must remove machine.features.stableHostname, and Talos classifies THAT
+    # removal as reboot-required).
+    #
+    # Non-v1alpha1 documents are surfaced under a synthetic "<doc:KIND>" prefix so they show
+    # up in the diff rather than silently not being compared.
+    gendocs=[d for d in yaml.safe_load_all(open(f"talos/clusterconfig/catalyst-cluster-{name}.yaml")) if d]
+    gen=next((d for d in gendocs if "machine" in d), {})
+    extra={}
+    for d in gendocs:
+        if d is gen: continue
+        kind=d.get("kind") or d.get("apiVersion") or "unknown"
+        for k,v in flat(d).items(): extra[f"<doc:{kind}>.{k}"]=v
     lf,gf=flat(live or {}),flat(gen or {})
+    gf.update(extra)   # additional documents participate in the comparison
     diffs=[]
     for k in sorted(set(lf)|set(gf)):
         a,b=lf.get(k,"<absent>"),gf.get(k,"<absent>")

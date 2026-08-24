@@ -108,6 +108,23 @@ that removal as reboot-required. It is unavoidable with talhelper's output.
 
 This is not a drift-close; it is **a planned rolling reboot of the fleet**.
 
+### Before you start: stop being single-endpoint
+
+The live client config lists only `192.168.1.54`. When talos00 reboots you lose `talosctl`
+entirely — including the commands you would use to see whether it came back. Add the other
+control planes as endpoints FIRST:
+
+```bash
+talosctl config endpoint 192.168.1.54 192.168.1.177 192.168.1.30
+talosctl -n 192.168.1.30 version          # prove a non-talos00 endpoint works
+```
+
+The generated `clusterconfig/talosconfig` already lists all three, which is one concrete way
+it is better than the current one.
+
+The same applies to `kubectl`: your kubeconfig points at `https://192.168.1.54:6443` only, so
+talos00's reboot is a total kubectl outage regardless. Expect it, rather than debugging it.
+
 Order — workers first, endpoint last:
 
 ```
