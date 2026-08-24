@@ -88,6 +88,38 @@ nodes:
       customization:
         systemExtensions:
           officialExtensions:
+            # ⚠️ INERT TODAY. KEPT BY EXPLICIT DECISION — do not "tidy this up". TALOS-v3wy.
+            #
+            # ── SETTLED 2026-08-24, by the user directly ────────────────────────────────
+            # "keep the iscsi stuff, it will be used at some point."
+            #
+            # This is a DECISION, not an open question, and it was taken with the evidence
+            # below already on the table. Do NOT remove these to "converge downward" on the
+            # grounds that nothing uses them today — the intent is forward-looking, and the
+            # extension is simply inert until a consumer exists. If you are here because the
+            # asymmetry looks like a mistake: it is not. Reopening this costs reboots.
+            # ───────────────────────────────────────────────────────────────────────────
+            #
+            # This is the extension the header calls out as being "on some nodes and not
+            # others with nothing in git explaining why". Here is the why.
+            #
+            # Added 2026-01-16 for Democratic-CSI (Synology iSCSI). That effort was never
+            # wired into a Flux Kustomization, never ran, and its last artifact was deleted
+            # 2026-08-09 as an abandoned orphan leaking a DSM credential (TALOS-rpyc). It
+            # reached only this node and talos03 before the effort died. The "drift" was
+            # never a regression — it is the high-water mark of an abandoned rollout.
+            #
+            # Verified 2026-08-24 against the live cluster: zero CSIDrivers, no iSCSI
+            # StorageClass, no iSCSI PV, no pod with an iSCSI volume, and /var/lib/iscsi
+            # holds no node or session records here or on talos03. iSCSI has never attached
+            # a volume in this cluster.
+            #
+            # NOT REMOVED, because removal is not free: a schematic change means a new
+            # installer image, i.e. `talosctl upgrade` + a REBOOT per node, to gain nothing.
+            # And TALOS-1ujn (NVMe block storage, evaluating Longhorn) would need it back —
+            # Longhorn on Talos requires siderolabs/iscsi-tools AND siderolabs/util-linux-tools
+            # on EVERY node. If that lands, roll both out fleet-wide there, where a real
+            # consumer justifies the reboots. Do not reboot three nodes for symmetry alone.
             - siderolabs/iscsi-tools
     patches:
       - "@./patches/controlplane-baseline.yaml"
@@ -138,6 +170,7 @@ nodes:
           officialExtensions:
             - siderolabs/amd-ucode
             - siderolabs/amdgpu
+            # Inert, kept deliberately — see the full note on talos01. TALOS-v3wy.
             - siderolabs/iscsi-tools
     patches:
       - "@./patches/controlplane-baseline.yaml"

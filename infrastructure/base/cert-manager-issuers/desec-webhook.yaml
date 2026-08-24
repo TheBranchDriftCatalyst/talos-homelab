@@ -45,7 +45,12 @@ spec:
     image:
       repository: ghcr.io/pr0ton11/cert-manager-desec-webhook
       tag: latest
-      pullPolicy: IfNotPresent
+      # Always, not IfNotPresent: :latest is a floating tag, and IfNotPresent makes each
+      # node serve whatever it cached — so the running version depends on which node the
+      # pod landed on. This webhook gates DNS-01 issuance for every cert in the cluster,
+      # and a silently-different build on one node is not something a renewal failure would
+      # make obvious. (TALOS-6gnx)
+      pullPolicy: Always
 
     service:
       type: ClusterIP
