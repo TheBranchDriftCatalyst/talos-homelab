@@ -1,0 +1,126 @@
+# Tier 1 drift check: static validation of the Talos machine-config source. TALOS-xxmd.
+#
+# Catches problems BEFORE they reach a node. Deliberately requires NO cluster access and NO
+# secrets — everything here is checkable from the repo alone, which is what makes it safe to
+# run on every push.
+#
+# Tier 2 (`task talos:verify` / `talos:verify-dry-run`) compares against the live cluster and
+# cannot run here; that is a human-run check. See TALOS-frvi.
+name: talos config lint
+
+on:
+  push:
+    paths: ['talos/**', '.github/workflows/talos-config-lint.yaml']
+  pull_request:
+    paths: ['talos/**']
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── The check that matters most ──────────────────────────────────────────────
+      # A committed secrets bundle cannot be un-published. This runs FIRST so a bad commit
+      # fails before anything else spends time.
+      #
+      # The .gitignore rules were once ANCHORED PATHS (talos/talsecret.yaml), which silently
+      # stopped matching when the directory was renamed during the planned cutover — at which
+      # point a git add would have staged all five CAs and every cluster token. They are
+      # filename-matched now, but this check exists so that a regression is caught by CI
+      # rather than by someone noticing months later.
+      - name: no secrets committed
+        run: |
+          set -e
+          if git ls-files | grep -E '(^|/)talsecret(\.sops)?\.yaml$'; then
+            echo "::error::A Talos secrets bundle is tracked in git. It carries all five CAs"
+            echo "::error::and every cluster token. Remove it and rotate the cluster identity."
+            exit 1
+          fi
+          if git ls-files | grep -E 'clusterconfig/.*\.yaml$'; then
+            echo "::error::Generated machine configs are tracked. They embed the secrets"
+            echo "::error::bundle inline. Remove them; regenerate with talhelper genconfig."
+            exit 1
+          fi
+          # Belt and braces: look for key material by content, not just by filename.
+          if git grep -lE 'BEGIN (RSA |EC )?PRIVATE KEY' -- talos/ 2>/dev/null | grep .; then
+            echo "::error::Private key material found under talos/"
+            exit 1
+          fi
+          echo "✓ no secret material tracked"
+
+      - name: install talhelper
+        run: |
+          VER=$(curl -sL https://api.github.com/repos/budimanjojo/talhelper/releases/latest | jq -r .tag_name)
+          curl -sL "https://github.com/budimanjojo/talhelper/releases/download/${VER}/talhelper_linux_amd64.tar.gz" \
+            | tar xz -C /usr/local/bin talhelper
+          talhelper --version
+
+      - name: talconfig is valid
+        run: talhelper validate talconfig talos/talconfig.yaml
+
+      # ── Every patch referenced actually exists, and every patch is referenced ────
+      # A typo'd path makes talhelper fail loudly, but an ORPHANED patch fails silently —
+      # it looks applied and is not. talos02-gpu's nodeLabels patch was written and never
+      # wired in, so those labels were absent from the generated config with nothing to say so.
+      - name: patches are wired and parse
+        run: |
+          set -e
+          python3 - <<'PY'
+          import yaml, pathlib, sys, re
+          root = pathlib.Path('talos')
+          cfg  = yaml.safe_load((root/'talconfig.yaml').read_text())
+          refs = set(re.findall(r'@\./patches/([\w.-]+\.yaml)', (root/'talconfig.yaml').read_text()))
+          ondisk = {p.name for p in (root/'patches').glob('*.yaml')}
+          fail = False
+          missing = refs - ondisk
+          if missing:
+              print(f"::error::talconfig references patches that do not exist: {sorted(missing)}")
+              fail = True
+          orphan = ondisk - refs
+          if orphan:
+              print(f"::error::patches exist but are never referenced (they will NOT apply): {sorted(orphan)}")
+              fail = True
+          for p in sorted(ondisk):
+              try: yaml.safe_load((root/'patches'/p).read_text())
+              except Exception as e:
+                  print(f"::error::{p} is not valid YAML: {e}"); fail = True
+          print(f"✓ {len(refs)} patch references, {len(ondisk)} files on disk")
+          sys.exit(1 if fail else 0)
+          PY
+
+      # ── The trap that silently reset talos03's maxPods from 60 to 200 ───────────
+      # talhelper applies the GLOBAL patches list AFTER each node's own, so a per-node
+      # override of a globally-declared value LOSES, with no warning at all.
+      - name: no global patch declares a value a node overrides
+        run: |
+          python3 - <<'PY'
+          import yaml, pathlib, sys
+          root = pathlib.Path('talos')
+          txt  = (root/'talconfig.yaml').read_text()
+          cfg  = yaml.safe_load(txt)
+          def leaves(o, p=""):
+              if isinstance(o, dict):
+                  for k, v in o.items(): yield from leaves(v, f"{p}.{k}" if p else k)
+              elif not isinstance(o, list): yield p
+          def keys_of(name):
+              try: return set(leaves(yaml.safe_load((root/'patches'/name).read_text()) or {}))
+              except Exception: return set()
+          import re
+          glob = set()
+          for m in re.findall(r'@\./patches/([\w.-]+\.yaml)', txt.split('nodes:')[0]):
+              glob |= keys_of(m)
+          fail = False
+          for node in cfg.get('nodes', []):
+              nk = set()
+              for pt in node.get('patches', []):
+                  nk |= keys_of(pt.replace('@./patches/', ''))
+              clash = glob & nk
+              if clash:
+                  print(f"::error::{node['hostname']}: these keys are set BOTH globally and per-node: {sorted(clash)}")
+                  print(f"::error::talhelper applies global patches LAST, so the per-node value silently loses.")
+                  fail = True
+          print("✓ no global/per-node key collisions")
+          sys.exit(1 if fail else 0)
+          PY
