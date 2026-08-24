@@ -40,6 +40,22 @@ spec:
           memory: 1536Mi
         limits:
           memory: 1536Mi
+    # The results cache is the same phantom-reservation shape as chunksCache
+    # above, one order of magnitude down: the chart gives it -m 1024 and a
+    # matching 1229Mi request AND limit, and measured over 24h to 2026-08-24
+    # it peaks at 39Mi. 1.2GiB reserved for 39Mi of use.
+    #
+    # Same rule as chunksCache: -m and the request move TOGETHER. memcached
+    # accepts an -m larger than its request and is then OOMKilled the moment
+    # it tries to fill the slab. -m 128 is 3x the observed peak.
+    resultsCache:
+      allocatedMemory: 128
+      resources:
+        requests:
+          cpu: 50m
+          memory: 192Mi
+        limits:
+          memory: 192Mi
     # The k8s-sidecar that syncs Loki rule ConfigMaps ran with no request and
     # no limit — chart default for sidecar.resources is {}. Measured 24h to
     # 2026-08-24: p50 85Mi, peak 97Mi (1.1x). It is a Python process holding
