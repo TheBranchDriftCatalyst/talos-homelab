@@ -93,7 +93,12 @@ kubectl get secrets -A -o yaml > .output/backup/secrets-$(date +%Y%m%d).yaml
 kubectl get pv -o yaml > .output/backup/pvs-$(date +%Y%m%d).yaml
 
 # Export Talos config (IMPORTANT)
-cp configs/controlplane.yaml .output/backup/controlplane-$(date +%Y%m%d).yaml
+# talconfig.yaml is the declarative source for every node's machine config; talsecret.yaml
+# holds the cluster CA and bootstrap tokens and is gitignored, so it is the one that cannot
+# be reconstructed from the repo. configs/clusterconfig/ is regenerated output - no need to
+# back it up, but it costs nothing.
+cp configs/talconfig.yaml .output/backup/talconfig-$(date +%Y%m%d).yaml
+cp configs/talsecret.yaml .output/backup/talsecret-$(date +%Y%m%d).yaml
 cp configs/talosconfig .output/backup/talosconfig-$(date +%Y%m%d)
 ```
 

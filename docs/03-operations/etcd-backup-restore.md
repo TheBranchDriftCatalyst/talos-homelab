@@ -121,9 +121,13 @@ Wait for the node to reboot in maintenance mode (no API, no etcd, just `talosctl
 ### Step 4: bootstrap from the snapshot
 
 ```bash
-# Re-apply the machine config (re-creates STATE)
+# Re-apply the machine config (re-creates STATE).
+# Machine configs are GENERATED — regenerate first so you re-apply what the repo
+# currently declares, and use the file for THIS node. They are not interchangeable:
+# each node has its own install disk, schematic and patches.
+(cd configs && talhelper genconfig)
 talosctl apply-config --insecure -n $TALOS_NODE \
-  --file configs/controlplane.yaml
+  --file configs/clusterconfig/catalyst-cluster-<node>.yaml
 
 # Bootstrap etcd FROM THE SNAPSHOT (this is the magic flag)
 talosctl bootstrap -n $TALOS_NODE --recover-from=./db.snapshot

@@ -219,7 +219,7 @@ This performs a clean reboot cycle automatically without manual power cycling.
 - **Local-path storage (PostgreSQL)** - Data persists on disk, no data loss
 - **NFS mounts** - Automatically reconnect when pods restart
 - **Talos state** - Configuration persists in `/system/state` partition
-- **Machine config backup** - Always kept in `configs/controlplane.yaml`
+- **Machine config backup** - Declared in `configs/talconfig.yaml` (git-tracked) and regenerated into `configs/clusterconfig/` by `task talos:gen-config`. The CA and bootstrap tokens live in `configs/talsecret.yaml`, which is gitignored and backed up in 1Password - see [talsecret-1password-backup.md](../05-runbooks/talsecret-1password-backup.md).
 
 ### Post-Restart Validation Checklist
 
@@ -254,7 +254,18 @@ talosctl get machineconfig -o yaml
 ### 3. Re-apply Machine Config (If Needed)
 
 ```bash
-talosctl apply-config --file configs/controlplane.yaml
+# Regenerate first, then apply THIS node's config - they are not interchangeable.
+cd configs && talhelper genconfig && cd ..
+talosctl apply-config --file configs/clusterconfig/catalyst-cluster-<node>.yaml
+
+# Or, equivalently:
+task talos:apply-config NODE=<node>
+```
+
+Check what it would do first - this is read-only and safe at any time:
+
+```bash
+task talos:verify-dry-run
 ```
 
 ### 4. Complete Cluster Reset (LAST RESORT)
