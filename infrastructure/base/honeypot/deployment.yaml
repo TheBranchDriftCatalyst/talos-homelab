@@ -27,8 +27,28 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
-      nodeSelector:
-        kubernetes.io/hostname: talos03
+      # Moved off talos03. The node choice here was always arbitrary — the honeypot
+      # Kustomization says as much ("dedicating a box is a later phase") — and cowrie
+      # has no node-bound storage: its volumes are a ConfigMap and two emptyDirs.
+      #
+      # talos03 is the 15 GiB node that wedged on memory exhaustion. After reserving
+      # memory for kubelet its allocatable is 12.5 GiB, and it was sitting at 93% of
+      # that in requests, which blocks the honest platform DaemonSet requests in
+      # TALOS-gj3n from ever fitting. cowrie's 272Mi is part of what buys that room.
+      #
+      # SOFT, not a pin. hostPort 2222/2223 already means one cowrie per node, and
+      # those ports are free on all four other nodes (verified). This just says
+      # "anywhere but the tight one" rather than trading one arbitrary hostname for
+      # another. (TALOS-3hl8.5)
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos03]
       containers:
         - name: cowrie
           image: cowrie/cowrie:latest

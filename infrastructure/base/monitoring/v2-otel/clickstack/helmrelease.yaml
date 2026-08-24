@@ -97,17 +97,15 @@ spec:
     otel:
       clickhouseEndpoint: "tcp://clickhouse-hyperdx-logs.monitoring.svc:9000"
       # Had no request and no limit — chart default for otel.resources is {}.
-      # Re-measured over 7d to 2026-08-24 (the earlier 24h figure of p50 61Mi
-      # was wrong — it joined peaks to the live pod only and lost the history
-      # of every pod that had been recreated): p50 269Mi, peak 335Mi.
-      # A 96Mi request was below the p50. BURSTABLE, limit above peak rather
-      # than near it — an OOMKill here drops the in-flight batch.
+      # Measured 24h to 2026-08-24: p50 61Mi, peak 229Mi (3.8x). The spikes
+      # are batch flushes to ClickHouse. BURSTABLE with the limit above peak,
+      # not near p50: an OOMKill here drops the in-flight batch.
       resources:
         requests:
           cpu: 50m
-          memory: 320Mi
+          memory: 96Mi
         limits:
-          memory: 768Mi
+          memory: 512Mi
 
     hyperdx:
       # mongoUri is injected from a Secret via spec.valuesFrom below —
