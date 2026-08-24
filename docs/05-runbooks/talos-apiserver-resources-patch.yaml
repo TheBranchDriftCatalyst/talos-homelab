@@ -32,9 +32,21 @@
 # consumes node allocatable and EVICTS other pods. Applying this to a node without the
 # headroom does not fail loudly; it quietly evicts workloads.
 #
-#     talos00  12241Mi free  -> fits
-#     talos01   3864Mi free  -> fits (after moving ~2.9Gi of workloads off)
-#     talos03   2258Mi free  -> DOES NOT FIT, short by 814Mi. NOT APPLIED.
+#     talos00  12241Mi free  -> applied
+#     talos01   3864Mi free  -> applied (after moving ~2.9Gi of workloads off)
+#     talos03   3702Mi free  -> applied (after moving a further ~1.6Gi off)
+#
+# ALL THREE CONTROL PLANES ARE NOW AT 5Gi/7Gi.
+#
+# talos03 needed 814Mi more than it had. It was freed WITHOUT touching any database:
+# nine freely-movable non-stateful workloads were evicted and the PreferNoSchedule taint
+# steered every one onto talos06 — forgejo, cert-manager-cainjector, kometa, argocd-server,
+# kube-ops-view, sonarr, radarr, pulsarr, maintainerr. No manifest changes were needed,
+# because with the taint in place a plain eviction is enough.
+#
+# The six CNPG replicas on talos03 were deliberately left alone. Moving them would have
+# meant deleting database PVCs and rebuilding replicas, which was never necessary once the
+# movable non-stateful workloads were counted properly.
 #
 # talos03 remains at the old 2Gi/6Gi while genuinely using 5671Mi. That is still
 # under-declared, but it is the status quo rather than a regression, and it is safer
