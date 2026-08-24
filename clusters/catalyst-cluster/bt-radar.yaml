@@ -1,0 +1,39 @@
+---
+# bt-radar — RF presence radar POC.
+#
+# Demonstrates end-to-end app provisioning: a CatalystCNPGAppDB, a sensor tier, a collector
+# holding the credentials, and an ingress. The payload is a live radar of nearby devices.
+#
+# Two sensor sources feed the same collector through one wire contract:
+#   wifi-agent  polls the UniFi controller for associated clients + per-AP RSSI. WORKS TODAY,
+#               needs no kernel support, no privileges, and — because UniFi reports which AP
+#               saw each client — gives genuinely separated vantage points, which the
+#               co-located compute nodes cannot.
+#   bt-agent    BLE scanner, one per radio-bearing node. DEPLOYED BUT INERT: CONFIG_BT is
+#               unset in the Talos kernel, so it preflight-fails with an actionable message
+#               until the system-extension work lands. See the Phase 2 plan.
+#
+# dependsOn traefik for the IngressRoute CRD, external-secrets for the 1Password-backed
+# credentials, and catalyst-cnpg-appdb for the database composite.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: bt-radar
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/bt-radar/base
+  prune: true
+  # wait: false deliberately. `wait: true` waits on EVERY applied object rather than
+  # spec.healthChecks, and bt-agent is expected to be unhealthy until Bluetooth exists —
+  # that would stall this Kustomization for the full timeout on every reconcile.
+  wait: false
+  dependsOn:
+    - name: traefik
+    - name: external-secrets
+    - name: catalyst-cnpg-appdb

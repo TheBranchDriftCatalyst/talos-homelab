@@ -1,0 +1,65 @@
+---
+# wifi-agent polls the UniFi controller for associated clients and their per-AP RSSI, then
+# POSTs them to the collector using the same wire contract as the BLE agent.
+#
+# THIS IS THE SOURCE THAT ACTUALLY WORKS TODAY. Bluetooth is compiled out of the Talos
+# kernel (CONFIG_BT unset), so bt-agent cannot enumerate anything until that is fixed —
+# see the Phase 2 plan. wifi-agent needs no kernel changes and no privileges at all.
+#
+# It is also the better array: UniFi reports `ap_mac` per client, so with two or more APs
+# you get simultaneous RSSI from multiple PHYSICALLY SEPARATED vantage points. The compute
+# nodes are all in one place and can never provide that. ap_mac maps onto the same `node`
+# field a BLE agent would populate, so nothing downstream special-cases it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wifi-agent
+  namespace: bt-radar
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: wifi-agent }
+  template:
+    metadata:
+      labels:
+        app: wifi-agent
+        app.kubernetes.io/name: wifi-agent
+        app.kubernetes.io/part-of: bt-radar
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos01, talos03]
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: wifi-agent
+          image: registry.talos00/talos00-registry/wifi-agent:latest
+          imagePullPolicy: Always
+          args:
+            - -collector=http://bt-collector.bt-radar.svc:8080
+            - -interval=10s
+          env:
+            - { name: UNIFI_HOST, value: "https://192.168.1.1" }
+            - { name: UNIFI_SITE, value: "default" }
+            # UniFi OS uses a self-signed cert on the LAN address.
+            - { name: UNIFI_INSECURE_TLS, value: "true" }
+          envFrom:
+            - secretRef: { name: unifi-credentials }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 96Mi }

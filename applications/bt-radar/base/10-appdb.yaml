@@ -1,0 +1,28 @@
+---
+# Postgres via the cluster's Crossplane composite rather than a hand-written CNPG Cluster.
+# See infrastructure/base/catalyst-cnpg-appdb/ for the XRD.
+apiVersion: db.catalyst.io/v1alpha1
+kind: CatalystCNPGAppDB
+metadata:
+  name: bt-radar-postgres
+  namespace: bt-radar
+spec:
+  database: btradar
+  owner: btradar
+
+  # TWO, deliberately — do not "fix" this to 3.
+  # The cluster rule is never instances:1 on local-path, because a single-instance CNPG
+  # cluster gets a PodDisruptionBudget with disruptionsAllowed=0 and deadlocks any node
+  # drain. Two clears that. Three would be more resilient, but this is a POC and the
+  # cluster is memory-constrained — talos01 and talos03 both carry a PreferNoSchedule
+  # taint for exactly that reason. 2 x 256Mi is the right trade here.
+  instances: 2
+
+  # local-path = local NVMe. Postgres never goes on NFS in this cluster.
+  storageSize: 2Gi
+  storageClass: local-path
+
+  backupSchedule: "0 30 4 * * *"
+  resources:
+    requestsCpu: 50m
+    requestsMemory: 256Mi

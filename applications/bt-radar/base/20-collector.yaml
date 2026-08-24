@@ -1,0 +1,81 @@
+---
+# The collector holds the database credentials and serves the UI. It needs NO Bluetooth,
+# no host network and no capabilities, so it schedules anywhere — which is the whole point
+# of splitting it from the sensor.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bt-collector
+  namespace: bt-radar
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: the collector applies schema.sql idempotently at startup
+  # and two instances racing that on first deploy is avoidable noise for zero benefit at
+  # one replica.
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: bt-collector }
+  template:
+    metadata:
+      labels:
+        app: bt-collector
+        app.kubernetes.io/name: bt-collector
+        app.kubernetes.io/part-of: bt-radar
+    spec:
+      # Deliberately NOT pinned. Nothing here is node-bound.
+      # Soft-repel from the two memory-constrained nodes, consistent with the rest of the
+      # cluster — they carry a PreferNoSchedule taint and are at ~95% of allocatable.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos01, talos03]
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: collector
+          image: registry.talos00/talos00-registry/bt-collector:latest
+          imagePullPolicy: Always
+          args: ["-addr=:8080"]
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            # CNPG publishes this secret; the composite wires it up. Never hardcode.
+            - { name: PGHOST,     valueFrom: { secretKeyRef: { name: bt-radar-postgres-app, key: host     } } }
+            - { name: PGUSER,     valueFrom: { secretKeyRef: { name: bt-radar-postgres-app, key: username } } }
+            - { name: PGPASSWORD, valueFrom: { secretKeyRef: { name: bt-radar-postgres-app, key: password } } }
+            - { name: PGDATABASE, valueFrom: { secretKeyRef: { name: bt-radar-postgres-app, key: dbname   } } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 25m, memory: 96Mi }
+            limits:   { memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bt-collector
+  namespace: bt-radar
+spec:
+  selector: { app: bt-collector }
+  ports:
+    - { name: http, port: 8080, targetPort: http }

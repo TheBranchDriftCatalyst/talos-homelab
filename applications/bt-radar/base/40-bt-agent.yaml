@@ -1,0 +1,64 @@
+---
+# The BLE sensor. One per node with a radio.
+#
+# ⚠️ THIS CANNOT WORK YET AND THAT IS EXPECTED. Bluetooth is compiled out of the Talos
+# kernel — CONFIG_BT is unset, /sys/class/bluetooth does not exist, and the radios sit bound
+# to the generic `usb` driver. The agent's preflight check (internal/scanner/preflight.go)
+# detects exactly this and exits with an actionable message rather than a panic or a silent
+# empty scan. It is deployed now so the wiring is proven and the day the kernel work lands
+# it starts working with no manifest change.
+#
+# Until then, wifi-agent is the live data source.
+#
+# replicas are governed by the DaemonSet + nodeSelector: only nodes with a radio. talos00
+# is a VM with no Bluetooth hardware and is excluded by the label selector below.
+# A DaemonSet ignores PreferNoSchedule (it is soft), so talos01/talos03 are fine.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: bt-agent
+  namespace: bt-radar
+spec:
+  selector:
+    matchLabels: { app: bt-agent }
+  template:
+    metadata:
+      labels:
+        app: bt-agent
+        app.kubernetes.io/name: bt-agent
+        app.kubernetes.io/part-of: bt-radar
+    spec:
+      # Only nodes that physically have a Bluetooth radio. Label them with:
+      #   kubectl label node talos01 talos02-gpu talos03 talos06 catalyst.io/bluetooth=true
+      nodeSelector:
+        catalyst.io/bluetooth: "true"
+      # A DaemonSet must be able to land on control planes too — three of the four
+      # radio-bearing nodes are control planes in this cluster.
+      tolerations:
+        - { key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule }
+        - { key: catalyst.io/memory-constrained, operator: Exists, effect: PreferNoSchedule }
+      # Raw HCI socket access needs the host's network namespace and NET_ADMIN/NET_RAW.
+      # This is the ONLY privileged component, and it holds no credentials — it cannot
+      # reach the database and only ever POSTs to the collector.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg
+      containers:
+        - name: bt-agent
+          image: registry.talos00/talos00-registry/bt-agent:latest
+          imagePullPolicy: Always
+          args:
+            - -collector=http://bt-collector.bt-radar.svc:8080
+          env:
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["NET_ADMIN", "NET_RAW"]
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 96Mi }
