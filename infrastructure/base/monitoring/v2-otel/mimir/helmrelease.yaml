@@ -175,12 +175,25 @@ spec:
 
     # Component sizing for homelab (minimal; ingester+stateless HA'd 2026-08-13
     # after the ring-wedge incident — see structuredConfig ingester.ring note)
+    # Sizes below are max_over_time / p50 over 7d to 2026-08-24, measured per
+    # container across every pod in the window. [TALOS-eda0]
     ingester:
       replicas: 3
+      # p50 1316-1383Mi, peak 2567-2718Mi across the three. 512Mi against a
+      # ~1350Mi steady state was under-declared by a factor of ~2.6 -- 3.8 GiB
+      # the scheduler could not see, and this is the same under-declaration
+      # class that wedged talos03.
+      # The peak is not an anomaly: the head block grows until the 2h flush, so
+      # this is a sawtooth and the top of the tooth recurs every cycle. Request
+      # at ~peak is correct here; requesting at p50 under-requests for half of
+      # every cycle. Limit is 1.9x peak and deliberately NOT tight -- an
+      # OOMKill mid-head loses unflushed samples across the replication factor.
       resources:
         requests:
           cpu: 100m
-          memory: 512Mi
+          memory: 2560Mi
+        limits:
+          memory: 5120Mi
       persistence:
         enabled: true
         storageClass: local-path
@@ -189,28 +202,41 @@ spec:
         enabled: false
     distributor:
       replicas: 2
+      # p50 79Mi but peak 1115Mi -- 14.1x. Request stays at 256Mi (3.2x p50):
+      # you do not request a spiky component at its peak.
+      # NO LIMIT, deliberately. TALOS-eda0 proposed 96Mi/256Mi; the measured
+      # peak is 4.4x that limit, so it would OOMKill the write path on any
+      # ingest burst. Distributors sit in front of the ingesters; dropping
+      # them drops samples.
       resources:
         requests:
           cpu: 50m
           memory: 256Mi
     querier:
       replicas: 2
+      # p50 66Mi, peak 733Mi -- 11.1x, a single large range query. Request
+      # unchanged, NO LIMIT. The proposed 96Mi/192Mi limit is 3.8x below the
+      # measured peak.
       resources:
         requests:
           cpu: 50m
           memory: 256Mi
     query_frontend:
       replicas: 2
+      # p50 63Mi, peak 722Mi -- 11.5x. Request unchanged, NO LIMIT. Same
+      # reasoning as querier; the proposed 64Mi/192Mi would OOMKill it.
       resources:
         requests:
           cpu: 50m
           memory: 128Mi
     store_gateway:
       replicas: 1
+      # p50 110Mi, peak 448Mi -- 4.1x on index-header load. NO LIMIT: a limit
+      # near p50 kills it mid-load and it re-reads the whole index header.
       resources:
         requests:
           cpu: 50m
-          memory: 256Mi
+          memory: 384Mi
       persistence:
         enabled: true
         storageClass: local-path
@@ -219,10 +245,13 @@ spec:
         enabled: false
     compactor:
       replicas: 1
+      # p50 61Mi, peak 616Mi -- 10.1x. It idles near zero and spikes hard
+      # during compaction. NO LIMIT: an OOMKill mid-compaction leaves partial
+      # blocks and re-runs the whole compaction, strictly worse than the burst.
       resources:
         requests:
           cpu: 50m
-          memory: 256Mi
+          memory: 320Mi
       persistence:
         enabled: true
         storageClass: local-path
@@ -231,17 +260,24 @@ spec:
     ruler:
       enabled: true
       replicas: 1
+      # p50 282Mi, peak 329Mi -- flat, it evaluates the same rule set on a
+      # fixed interval. 128Mi was under-declared by 2.2x against steady state.
       resources:
         requests:
           cpu: 50m
-          memory: 128Mi
+          memory: 384Mi
+        limits:
+          memory: 640Mi
     alertmanager:
       enabled: true
       replicas: 1
+      # p50 55Mi, peak 60Mi -- flat.
       resources:
         requests:
           cpu: 25m
-          memory: 64Mi
+          memory: 96Mi
+        limits:
+          memory: 192Mi
       persistence:
         enabled: true
         storageClass: local-path

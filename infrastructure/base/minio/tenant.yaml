@@ -162,10 +162,23 @@ spec:
           resources:
             requests:
               storage: 100Gi
+      # Measured 7d to 2026-08-24: p50 3131Mi, peak 4656Mi against a 512Mi
+      # request — 2.6 GiB of steady-state memory the scheduler could not see,
+      # under the object store that Loki, Mimir, Tempo and Velero all write to.
+      #
+      # NOTE this is higher than TALOS-eda0 proposed. That ticket quoted p50
+      # 1210Mi and sized the request at 2560Mi; the measured p50 is 3131Mi, so
+      # 2560Mi would still have been BELOW steady state. Sized at p50 + ~6%.
+      #
+      # NO LIMIT, deliberately. MinIO sizes internal buffers to available
+      # memory and spikes on large multipart PUTs — Loki/Mimir/Tempo block
+      # uploads and Velero backups all land here concurrently. A limit turns a
+      # large concurrent upload into an OOMKill of the object store everything
+      # else depends on.
       resources:
         requests:
           cpu: 100m
-          memory: 512Mi
+          memory: 3328Mi
 
   # Mount path
   mountPath: /export
