@@ -6,23 +6,21 @@ vars:
   TALOSCONFIG: './configs/talosconfig'
   CLUSTER_NAME: 'catalyst-cluster'
   CLUSTER_ENDPOINT: 'https://{{.TALOS_NODE}}:6443'
-  # ⚠️ THESE PATHS NO LONGER EXIST. configs/nodes/ was the pre-talhelper hand-maintained
-  # config tree; it now lives in .scratch/__configs/nodes/ as an archive and is NOT the
-  # source of truth for anything.
-  #
-  # Machine configs are now GENERATED from configs/talconfig.yaml:
+  # Machine configs are GENERATED from configs/talconfig.yaml by talhelper (TALOS-ow7w):
+  #     task talos:gen-config        regenerate configs/clusterconfig/
   #     task talos:verify            regenerate and diff against every live node
-  #     task talos:verify-dry-run    ask each node what applying would do
-  #     cd configs && talhelper genconfig     -> configs/clusterconfig/catalyst-cluster-<node>.yaml
+  #     task talos:verify-dry-run    ask each node what applying would actually do
   #
-  # Any task below still referencing these vars operates on a file that is not there. They
-  # are kept only so those tasks fail loudly on a missing path rather than silently reading
-  # a stale archived config, which would be worse. Port them to the generated files or
-  # delete them. (TALOS-ow7w)
-  CONTROLPLANE_CONFIG: './.scratch/__configs/nodes/controlplane.yaml'   # ARCHIVED — do not edit
-  WORKER_CONFIG: './.scratch/__configs/nodes/worker-base.yaml'          # ARCHIVED — do not edit
-  WORKER_TALOS01_CONFIG: './.scratch/__configs/nodes/worker-talos01.yaml'
-  WORKER_TALOS02_CONFIG: './.scratch/__configs/nodes/worker-talos02-gpu.yaml'
+  # CONTROLPLANE_CONFIG / WORKER_CONFIG / WORKER_TALOS01_CONFIG / WORKER_TALOS02_CONFIG used
+  # to live here. They pointed at configs/nodes/, which the talhelper cutover archived to
+  # .scratch/__configs/nodes/. They were briefly repointed at that archive so any task still
+  # reading them would fail on an obviously-archived path rather than silently trust a
+  # months-old hand-maintained config. gen-config and apply-config were the only consumers and
+  # both now read the generated per-node files, so the vars are gone — nothing can reach the
+  # archive at all, which is a stronger version of the same guarantee.
+  #
+  # ⚠️ configs/talosconfig below is the LIVE admin credential and was deliberately left at the
+  # same path by the cutover. Do not point anything at clusterconfig/talosconfig instead.
 
 tasks:
   # ============================================
@@ -30,29 +28,90 @@ tasks:
   # ============================================
 
   gen-config:
-    desc: Generate fresh Talos configuration files
+    desc: Generate every node's machine config from configs/talconfig.yaml
+    summary: |
+      Regenerates configs/clusterconfig/catalyst-cluster-<node>.yaml for all five nodes.
+      Local only — writes files, touches no node.
+
+      REPLACED `talosctl gen config ... --output-dir ./configs` (TALOS-ow7w). That was wrong
+      in two ways once talhelper took over:
+
+        - It minted a FRESH secrets bundle with no relation to configs/talsecret.yaml, so the
+          configs it produced carried a certificate authority no node in this cluster trusts.
+
+        - It wrote talosconfig into ./configs/ — the exact path where the live admin
+          credential lives, and the path every task in this repo passes to talosctl.
+
+      Today that combination merely errors, because `gen config` refuses to overwrite an
+      existing file and configs/talosconfig is present. On a fresh clone it would not: that
+      file is gitignored, so there would be nothing to refuse, and the command would quietly
+      write a talosconfig for a cluster that does not exist. Every subsequent task would then
+      fail TLS against the real cluster for reasons pointing nowhere near this task.
+
+      Control-plane metrics exposure — the reason for the old --config-patch-control-plane
+      flag (TALOS-hzl0) — is now declared in configs/patches/controlplane-baseline.yaml and
+      applied by talhelper to every control plane, so it survives a rebuild the same way.
     cmds:
-      - mkdir -p configs
-      # --config-patch-control-plane bakes control-plane metrics exposure (etcd/
-      # scheduler/KCM) into the generated controlplane.yaml so a cluster rebuild
-      # re-applies it automatically (TALOS-hzl0). Add more --config-patch* here as needed.
-      - talosctl gen config {{.CLUSTER_NAME}} {{.CLUSTER_ENDPOINT}} --output-dir ./configs --config-patch-control-plane @docs/05-runbooks/talos-controlplane-metrics-patch.yaml
-      - echo "✅ Configs generated in ./configs/"
+      - cd configs && talhelper genconfig
+      - 'echo "✅ Generated configs/clusterconfig/ — gitignored, they carry certs and tokens"'
+      - 'echo "   Next → task talos:verify-dry-run   (what applying these would actually do)"'
 
   # ============================================
   # Node Provisioning
   # ============================================
 
   apply-config:
-    desc: Apply configuration to Talos node (use -- INSECURE=true for first-time)
+    desc: "Apply the generated config to ONE node (required: NODE=talos03. INSECURE=true for maintenance mode)"
+    summary: |
+      Applies configs/clusterconfig/catalyst-cluster-<NODE>.yaml to that one node.
+      DESTRUCTIVE — most machine-config changes reboot the node.
+
+      Takes a NODE HOSTNAME, not an IP, and no longer defaults to anything:
+          task talos:apply-config NODE=talos03
+
+      Note there is no `--` before NODE=. go-task only binds variables in the bare form;
+      `task talos:apply-config -- NODE=talos03` puts the whole string into CLI_ARGS and
+      leaves NODE empty. Several older descs in this file still show the `--` form.
+
+      It used to read a single hardcoded controlplane.yaml and target whatever TALOS_NODE
+      happened to be, which silently assumed every node shared one config. They do not — each
+      of the five has its own install disk, factory schematic and patch set, so applying one
+      node's config to another would rewrite its extensions and its install target.
+
+      Regenerates before applying, so you can never ship a stale generated file, and asks
+      talhelper for the command so the node/file pairing comes from talconfig.yaml rather than
+      from a hand-written mapping that could rot.
+
+      RUN `task talos:verify-dry-run` FIRST. It asks the node what this apply would actually
+      do — including whether it reboots — and that check has caught changes whose blast radius
+      was not visible in the manifest.
+
+      INSECURE=true is for a node in maintenance mode only (freshly booted, no config, no
+      certs yet). On a configured node it will fail; that is correct, not a bug to work around.
+    prompt: This applies a machine config to {{.NODE}} and will most likely REBOOT it. Continue?
     cmds:
       - |
-        if [ "{{.INSECURE}}" = "true" ]; then
-          talosctl apply-config --insecure --nodes {{.TALOS_NODE}} --file {{.CONTROLPLANE_CONFIG}}
-        else
-          talosctl --talosconfig {{.TALOSCONFIG}} apply-config --nodes {{.TALOS_NODE}} --file {{.CONTROLPLANE_CONFIG}}
+        set -euo pipefail
+        NODE="{{.NODE}}"
+        if [ -z "$NODE" ]; then
+          echo "✗ NODE is required — this task no longer guesses which node you mean." >&2
+          echo "" >&2
+          echo "  task talos:apply-config NODE=<hostname>       (no '--' — it would not bind)" >&2
+          echo "" >&2
+          echo "  Nodes declared in configs/talconfig.yaml:" >&2
+          grep -E '^[[:space:]]+- hostname:' configs/talconfig.yaml | awk '{print "    " $3}' >&2
+          exit 1
         fi
+        cd configs
+        # Regenerate first: applying a clusterconfig/ file that predates the current
+        # talconfig.yaml would push config the repo no longer describes.
+        talhelper genconfig
+        # Fails loudly on an unknown hostname rather than applying to the wrong machine.
+        CMD=$(talhelper gencommand apply -n "$NODE" {{if eq .INSECURE "true"}}--extra-flags=--insecure{{end}})
+        echo "→ $CMD"
+        eval "$CMD"
     vars:
+      NODE: '{{.NODE | default ""}}'
       INSECURE: '{{.INSECURE | default "false"}}'
 
   bootstrap:
@@ -73,7 +132,17 @@ tasks:
       - ./scripts/bootstrap-talos-patches.sh --check
 
   provision:
-    desc: Complete provisioning workflow for a fresh node
+    desc: "Plan a from-scratch cluster rebuild (read-only — prints the command sequence, applies nothing)"
+    summary: |
+      Runs preflight, regenerates the machine configs, and prints the exact ordered talhelper
+      command sequence a five-node rebuild needs. IT APPLIES NOTHING.
+
+      It used to apply a config and bootstrap etcd directly, back when the cluster was one
+      node and one controlplane.yaml. It is not either of those things any more. See the
+      header of scripts/provision.sh for why a faithful automated port was not attempted.
+
+      Refuses outright if any node in talconfig.yaml already answers the Talos API — for a
+      live cluster you want task talos:verify or task talos:verify-dry-run instead.
     cmds:
       - ./scripts/provision.sh
 
