@@ -1,0 +1,56 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tubesync
+  labels:
+    app: tubesync
+    app.kubernetes.io/name: tubesync
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: tubesync
+  template:
+    metadata:
+      labels:
+        app: tubesync
+        app.kubernetes.io/name: tubesync
+    spec:
+      containers:
+        - name: tubesync
+          image: ghcr.io/meeb/tubesync:latest
+          ports:
+            - name: http
+              containerPort: 4848
+              protocol: TCP
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: America/Los_Angeles
+          # Measured 24h to 2026-08-24: p50 542Mi, peak 556Mi (1.03x). Flat
+          # because tubesync holds its media index resident. BURSTABLE with a
+          # generous limit — it downloads and remuxes, which spikes.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 640Mi
+            limits:
+              memory: 1280Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: downloads
+              mountPath: /downloads
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: tubesync-config
+        - name: downloads
+          persistentVolumeClaim:
+            claimName: tubesync-downloads
