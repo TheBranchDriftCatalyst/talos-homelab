@@ -52,7 +52,7 @@ for name,ip in NODES.items():
     #
     # Non-v1alpha1 documents are surfaced under a synthetic "<doc:KIND>" prefix so they show
     # up in the diff rather than silently not being compared.
-    gendocs=[d for d in yaml.safe_load_all(open(f"talos/clusterconfig/catalyst-cluster-{name}.yaml")) if d]
+    gendocs=[d for d in yaml.safe_load_all(open(f"configs/clusterconfig/catalyst-cluster-{name}.yaml")) if d]
     gen=next((d for d in gendocs if "machine" in d), {})
     extra={}
     for d in gendocs:
