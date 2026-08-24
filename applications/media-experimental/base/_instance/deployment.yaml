@@ -83,23 +83,7 @@ spec:
       containers:
         - name: app-template
           image: overridden-per-app
-          # ⚠️ ALWAYS, not IfNotPresent. This skeleton is inherited by every app in
-          # media-experimental and NINE of them override the image with a floating :latest
-          # tag (audiobookshelf, bindery, chaptarr, kavita, komga, libation, librarr,
-          # mylar3, storyteller). With IfNotPresent a node serves whatever it cached —
-          # possibly months ago — and never re-pulls, so THE RUNNING VERSION BECOMES
-          # NODE-DEPENDENT. Every one of these apps keeps a SQLite library database on its
-          # config PVC and migrates it forward on startup; landing on a node with an older
-          # cached image means reading a database written by a newer one.
-          #
-          # That is not hypothetical — it took down Home Assistant for 15 days (88c4ee1c,
-          # UnsupportedStorageVersionError) and corrupted immich's migration state, both on
-          # the same day, both surfaced by a rolling reboot. Same bug fixed for the
-          # arr-stack in fcc6c601. (TALOS-6gnx)
-          #
-          # Note the two pinned apps here (booksonic, livrarr) also inherit Always. For a
-          # pinned tag that costs one registry round trip per pod start and changes nothing.
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 65535  # overridden per app (JSON patch)

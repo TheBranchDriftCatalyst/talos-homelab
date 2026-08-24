@@ -92,12 +92,23 @@ brew install go-task/tap/go-task kubectx k9s helm
 1. **Generate Configuration** (if not already done):
 
    ```bash
-   task talos:gen-config   # writes controlplane.yaml / worker.yaml / talosconfig into ./configs/
+   cd configs && talhelper genconfig   # writes configs/clusterconfig/catalyst-cluster-<node>.yaml
    ```
 
-   > ⚠️ The machine configs actually in use live in `configs/nodes/` (`controlplane.yaml`,
-   > `worker-base.yaml`, per-node worker files) — that is what `task talos:apply-config` reads.
-   > `task talos:gen-config` and `scripts/provision.sh` still use the flat `configs/` layout.
+   > ⚠️ Machine configs are GENERATED, not hand-edited. `configs/talconfig.yaml` is the single
+   > declarative source for all five nodes, with per-node overrides in `configs/patches/`.
+   > Editing a generated file under `configs/clusterconfig/` accomplishes nothing — the next
+   > `genconfig` overwrites it.
+   >
+   > | command | does what |
+   > |---|---|
+   > | `cd configs && talhelper genconfig` | regenerate every node's config |
+   > | `task talos:verify` | regenerate AND diff against every live node |
+   > | `task talos:verify-dry-run` | ask each node what applying would actually change |
+   >
+   > The old hand-maintained tree (`configs/nodes/`, `controlplane.yaml`, `worker-base.yaml`)
+   > was retired by the talhelper migration and is archived at `.scratch/__configs/`. It is an
+   > ARCHIVE, not the source of truth — do not edit it and do not apply from it.
 
 2. **Provision the Cluster**:
 
@@ -123,13 +134,13 @@ brew install go-task/tap/go-task kubectx k9s helm
   `machine.nodeTaints: node-role.kubernetes.io/control-plane: NoSchedule`, so talos00 runs only core
   infrastructure. That taint is deliberate for talos00 (RAM-limited) and applies to it alone.
   talos01 and talos03 were promoted to control planes on 2026-08-23 to ADD capacity and had the
-  taint removed via `configs/nodes/schedulable-controlplane-patch.yaml`. Four of five nodes are
+  taint removed via `configs/patches/talos00-controlplane-taint.yaml`. Four of five nodes are
   schedulable.
   **`allowSchedulingOnControlPlanes` does not override `machine.nodeTaints`** — Talos applies
   nodeTaints on an unconditional code path that never reads that flag, so the two can both be set
   and appear to contradict each other. nodeTaints wins. If a control plane is unexpectedly
   tainted, check `machine.nodeTaints` FIRST, not the cluster flag. See TALOS-obvn and the header of
-  `configs/nodes/schedulable-controlplane-patch.yaml`.
+  `configs/patches/talos00-controlplane-taint.yaml`.
 - **maxPods**: raised from the Talos default 110 to 200 per node (kubelet patch, see
   `scripts/bootstrap-talos-patches.sh`)
 
@@ -171,8 +182,8 @@ Everything below lives in the `monitoring` namespace, under `infrastructure/base
 
 The Kubernetes Dashboard is automatically deployed during cluster bootstrap via:
 
-- `extraManifests` (configs/nodes/controlplane.yaml:514-515) - Downloads dashboard YAML
-- `inlineManifests` (configs/nodes/controlplane.yaml:517-537) - Creates admin-user ServiceAccount
+- `extraManifests` (configs/talconfig.yaml) - Downloads dashboard YAML
+- `inlineManifests` (configs/talconfig.yaml) - Creates admin-user ServiceAccount
 
 ## Deployment
 
@@ -489,13 +500,13 @@ task talos:upgrade-k8s -- 1.34.10
 
 ### Key Configuration Settings
 
-**configs/nodes/controlplane.yaml:596** - Allow scheduling on control plane:
+**configs/talconfig.yaml** - Allow scheduling on control plane:
 
 ```yaml
 allowSchedulingOnControlPlanes: true
 ```
 
-**configs/nodes/controlplane.yaml:233-234** - ...but talos00 is still tainted, so only workloads
+**configs/talconfig.yaml** - ...but talos00 is still tainted, so only workloads
 with a matching toleration land there:
 
 ```yaml
@@ -503,7 +514,7 @@ nodeTaints:
   node-role.kubernetes.io/control-plane: 'NoSchedule'
 ```
 
-**configs/nodes/controlplane.yaml:514-537** - Auto-deploy Dashboard:
+**configs/talconfig.yaml** - Auto-deploy Dashboard:
 
 ```yaml
 extraManifests:
@@ -548,7 +559,7 @@ talosctl --talosconfig ./configs/talosconfig --nodes $TALOS_NODE bootstrap
 kubectl --kubeconfig ./.output/kubeconfig describe node | grep -A 5 "Taints:"
 
 # Remove control-plane taint — single-node bootstrap only. On the current 5-node cluster the taint
-# is INTENTIONAL and declared in configs/nodes/controlplane.yaml; removing it here is transient
+# is INTENTIONAL and declared in configs/talconfig.yaml; removing it here is transient
 # (Talos re-applies nodeTaints) and undoes the "core infra only on talos00" split.
 kubectl --kubeconfig ./.output/kubeconfig taint nodes <node-name> node-role.kubernetes.io/control-plane:NoSchedule-
 
