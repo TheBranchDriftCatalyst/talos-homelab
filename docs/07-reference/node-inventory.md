@@ -1,6 +1,6 @@
 # Node Hardware Inventory
 
-*Generated 2026-08-24 15:56 UTC by `scripts/node-dossier.sh`. Regenerate rather than hand-editing.*
+*Generated 2026-08-24 16:09 UTC by `scripts/node-dossier.sh`. Regenerate rather than hand-editing.*
 
 Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exposes as resources. **The DIMM part numbers and slot locators below are what you order replacement memory against** — no need to open the case.
 
@@ -36,6 +36,45 @@ Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exp
 > **Empty slots are NOT reported.** SMBIOS lists only populated modules; Talos exposes no resource for total slot count or the board's maximum capacity. For a socketed node, check the model's spec sheet (in its dossier below) to learn whether there is a free slot or whether existing sticks must be replaced.
 
 > **Form factor is inferred, not reported.** Mini-PCs are usually SODIMM. Confirm against the model before ordering.
+
+## Pluggable devices & passthrough
+
+Everything currently attached by USB, per node, plus where there is room to plug something in. This is the table to look at when deciding which node gets the Zigbee stick or the Bluetooth dongle.
+
+| Node | USB controllers | Attached devices | Notable |
+|---|---:|---:|---|
+| **talos00** | 1 | 1 | — |
+| **talos01** | 4 | 1 | Bluetooth (Intel) |
+| **talos02-gpu** | 4 | 1 | Bluetooth (Intel) |
+| **talos03** | 4 | 2 | Bluetooth (Bluetooth Radio) |
+| **talos06** | 4 | 2 | Bluetooth (Intel), Bluetooth (Bluetooth 5.4 Radio) |
+
+### Passing a USB device into a pod
+
+Talos has no udev rules you can edit and no host shell, so the two workable routes are:
+
+1. **hostPath mount** — simplest, and what Home Assistant / Zigbee2MQTT generally use. Mount the specific device node and schedule the pod to the node holding it:
+
+   ```yaml
+   spec:
+     nodeSelector:
+       kubernetes.io/hostname: <the node with the dongle>   # a device is not portable
+     containers:
+       - name: app
+         securityContext:
+           privileged: true          # or add the device via volumeDevices
+         volumeMounts:
+           - { name: zigbee, mountPath: /dev/ttyACM0 }
+     volumes:
+       - name: zigbee
+         hostPath: { path: /dev/serial/by-id/usb-...-if00, type: CharDevice }
+   ```
+
+   Use the stable `/dev/serial/by-id/...` path, never `/dev/ttyACM0` — the numbered name is assigned in probe order and moves when another device is plugged in.
+
+2. **A device plugin** (e.g. `smarter-device-manager`) advertises devices as schedulable resources, so pods request `smarter-devices/ttyACM0` instead of running privileged. More setup, but no privileged container and the scheduler understands the constraint.
+
+> **A USB device pins its pod to one node.** Whichever node holds the dongle, that pod cannot move — which matters here because two nodes carry a PreferNoSchedule taint. Prefer plugging into `talos02-gpu` or `talos06`, which have the headroom.
 
 ---
 
@@ -75,6 +114,24 @@ Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exp
 | Device | Size | Bus |
 |---|---:|---|
 | `/dev/sda` | 266 GB | `/pci0000:00/0000:00:0a.0/virtio3/host2/target2:0:1/2:0:1:0` |
+
+**Network ports**
+
+| Interface | State | Speed | Duplex | Port | Driver | MAC |
+|---|---|---:|---|---|---|---|
+| `ens3` | 🟢 up | — | Unknown | Other | virtio_net | `02:11:32:22:d2:c2` |
+
+**USB devices**
+
+*1 root hub(s), 1 attached device(s).*
+
+| Port | VID:PID | Vendor | Product | Class | Speed |
+|---|---|---|---|---|---:|
+| `1-1` | `0627:0001` | QEMU | QEMU USB Tablet | per-interface | 12 Mb/s |
+
+**Passthrough-able device nodes**
+
+*Other:* `/dev/hidraw0`
 
 **GPU / display**
 
@@ -124,6 +181,25 @@ Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exp
 |---|---:|---|
 | `/dev/nvme0n1` | 500 GB | `/pci0000:00/0000:00:06.0/0000:01:00.0/nvme` |
 
+**Network ports**
+
+| Interface | State | Speed | Duplex | Port | Driver | MAC |
+|---|---|---:|---|---|---|---|
+| `enp2s0` | 🟢 up | 1 GbE | Full | TwistedPair | r8169 | `e8:ff:1e:d4:d6:7a` |
+| `enp3s0` | 🟢 up | 1 GbE | Full | TwistedPair | r8169 | `e8:ff:1e:d4:d6:79` |
+
+**USB devices**
+
+*4 root hub(s), 1 attached device(s).*
+
+| Port | VID:PID | Vendor | Product | Class | Speed |
+|---|---|---|---|---|---:|
+| `3-10` | `8087:0026` | Intel | — | wireless (Bluetooth) | 12 Mb/s |
+
+*Passthrough candidates:*
+
+- `3-10` **8087:0026** — Bluetooth — pass /dev/bus/usb + NET_ADMIN, or use host networking
+
 **GPU / display**
 
 - Intel Corporation Alder Lake-UP3 GT1 [UHD Graphics]
@@ -166,6 +242,31 @@ Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exp
 |---|---:|---|
 | `/dev/nvme0n1` | 2.0 TB | `/pci0000:00/0000:00:01.0/0000:01:00.0/nvme` |
 
+**Network ports**
+
+| Interface | State | Speed | Duplex | Port | Driver | MAC |
+|---|---|---:|---|---|---|---|
+| `enp86s0` | 🟢 up | 2.5 GbE | Full | TwistedPair | igc | `88:ae:dd:73:dc:32` |
+
+**USB devices**
+
+*4 root hub(s), 1 attached device(s).*
+
+| Port | VID:PID | Vendor | Product | Class | Speed |
+|---|---|---|---|---|---:|
+| `3-10` | `8087:0037` | Intel | — | wireless (Bluetooth) | 12 Mb/s |
+
+*Passthrough candidates:*
+
+- `3-10` **8087:0037** — Bluetooth — pass /dev/bus/usb + NET_ADMIN, or use host networking
+
+**Passthrough-able device nodes**
+
+*GPU render nodes (Plex / Jellyfin / tdarr hardware transcode):*
+
+- `/dev/dri/card0`
+- `/dev/dri/renderD128`
+
 **GPU / display**
 
 - Intel Corporation Arrow Lake-P [Arc Pro 130T/140T]
@@ -207,6 +308,35 @@ Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exp
 |---|---:|---|
 | `/dev/nvme0n1` | 2.0 TB | `/pci0000:00/0000:00:01.2/0000:01:00.0/nvme` |
 
+**Network ports**
+
+| Interface | State | Speed | Duplex | Port | Driver | MAC |
+|---|---|---:|---|---|---|---|
+| `eno1` | 🟢 up | 1 GbE | Full | TwistedPair | r8169 | `c8:ff:bf:00:7b:48` |
+| `enp4s0` | ⚪ down | — | Unknown | TwistedPair | igc | `c8:ff:bf:00:7b:49` |
+
+**USB devices**
+
+*4 root hub(s), 2 attached device(s).*
+
+| Port | VID:PID | Vendor | Product | Class | Speed |
+|---|---|---|---|---|---:|
+| `3-3` | `0d8c:0014` | C-Media Electronics Inc. | USB Audio Device | per-interface | 12 Mb/s |
+| `3-4` | `0bda:b85b` | Realtek | Bluetooth Radio | wireless (Bluetooth) | 12 Mb/s |
+
+*Passthrough candidates:*
+
+- `3-4` **0bda:b85b** — Bluetooth — pass /dev/bus/usb + NET_ADMIN, or use host networking
+
+**Passthrough-able device nodes**
+
+*GPU render nodes (Plex / Jellyfin / tdarr hardware transcode):*
+
+- `/dev/dri/card0`
+- `/dev/dri/renderD128`
+
+*Other:* `/dev/hidraw0`
+
 **GPU / display**
 
 - Advanced Micro Devices, Inc. [AMD/ATI] Cezanne [Radeon Vega Series / Radeon Vega Mobile Series]
@@ -247,6 +377,34 @@ Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exp
 | Device | Size | Bus |
 |---|---:|---|
 | `/dev/nvme0n1` | 1.0 TB | `/pci0000:00/0000:00:06.0/0000:01:00.0/nvme` |
+
+**Network ports**
+
+| Interface | State | Speed | Duplex | Port | Driver | MAC |
+|---|---|---:|---|---|---|---|
+| `enp44s0` | ⚪ down | — | Unknown | TwistedPair | r8169 | `84:47:09:6d:09:a3` |
+| `enp45s0` | 🟢 up | 2.5 GbE | Full | TwistedPair | r8169 | `84:47:09:6d:09:a2` |
+
+**USB devices**
+
+*4 root hub(s), 2 attached device(s).*
+
+| Port | VID:PID | Vendor | Product | Class | Speed |
+|---|---|---|---|---|---:|
+| `3-10` | `8087:0026` | Intel | — | wireless (Bluetooth) | 12 Mb/s |
+| `3-4` | `0bda:a728` | Realtek | Bluetooth 5.4 Radio | wireless (Bluetooth) | 12 Mb/s |
+
+*Passthrough candidates:*
+
+- `3-10` **8087:0026** — Bluetooth — pass /dev/bus/usb + NET_ADMIN, or use host networking
+- `3-4` **0bda:a728** — Bluetooth — pass /dev/bus/usb + NET_ADMIN, or use host networking
+
+**Passthrough-able device nodes**
+
+*GPU render nodes (Plex / Jellyfin / tdarr hardware transcode):*
+
+- `/dev/dri/card0`
+- `/dev/dri/renderD128`
 
 **GPU / display**
 

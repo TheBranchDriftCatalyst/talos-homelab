@@ -45,11 +45,39 @@ while read -r NAME IP; do
   [[ -z "${NAME:-}" ]] && continue
   echo "==> $NAME ($IP)" >&2
   D="$WORK/$NAME"; mkdir -p "$D"; echo "$IP" > "$D/ip"
-  for R in systeminformation processors memorymodules disks pcidevices; do
+  for R in systeminformation processors memorymodules disks pcidevices linkstatuses; do
     timeout 45 talosctl -n "$IP" get "$R" -o yaml > "$D/$R.yaml" 2>/dev/null || : > "$D/$R.yaml"
   done
   timeout 30 talosctl -n "$IP" version --short > "$D/version" 2>/dev/null || : > "$D/version"
   kubectl get node "$NAME" -o json > "$D/k8s.json" 2>/dev/null || : > "$D/k8s.json"
+
+  # USB tree. sysfs has no bulk-read, so each attribute is its own call — bounded and
+  # backgrounded per device so a node with many ports does not serialise into minutes.
+  # Entries containing ':' are USB *interfaces* (e.g. 3-10:1.0), not devices; skip them.
+  # Entries like 'usb1' are root hubs — kept, because they tell you controller layout.
+  : > "$D/usb.txt"
+  USBDEVS=$(timeout 30 talosctl -n "$IP" ls /sys/bus/usb/devices 2>/dev/null | tail -n +2 | awk '{print $2}' | grep -v ':' | grep -v '^\.$')
+  for U in $USBDEVS; do
+    (
+      LINE="$U"
+      for F in idVendor idProduct manufacturer product serial bDeviceClass bInterfaceClass speed maxchild busnum devnum; do
+        V=$(timeout 12 talosctl -n "$IP" read "/sys/bus/usb/devices/$U/$F" 2>/dev/null | tr -d '\r\n' | sed 's/|/ /g')
+        LINE="$LINE|$F=$V"
+      done
+      echo "$LINE"
+    ) >> "$D/usb.txt" &
+  done
+  wait
+
+  # Device nodes that can be handed to a pod. This is the list you actually mount.
+  timeout 30 talosctl -n "$IP" ls /dev > "$D/dev.txt" 2>/dev/null || : > "$D/dev.txt"
+  # /dev alone is not enough — the paths that matter live one level down:
+  # /dev/dri/renderD128 for GPU transcode, and /dev/serial/by-id/* which is the ONLY
+  # stable name for a serial dongle.
+  : > "$D/devsub.txt"
+  for SUB in dri serial/by-id input snd; do
+    timeout 20 talosctl -n "$IP" ls "/dev/$SUB" 2>/dev/null | tail -n +2 | awk -v s="$SUB" '$2 != "." {print s"/"$2}' >> "$D/devsub.txt"
+  done
 done <<<"$NODES"
 
 echo "==> rendering $OUT" >&2
@@ -85,6 +113,53 @@ def docs(path):
 def gib(mib):
     try: return float(mib) / 1024
     except (TypeError, ValueError): return 0.0
+
+# USB class codes that matter for passthrough. bDeviceClass is 00 for most composite
+# devices (the real class lives on the interface), which is why bInterfaceClass is
+# collected too — a Zigbee stick reports 00 at device level and 02/0a at interface level.
+USB_CLASS = {
+    "00": "per-interface", "01": "audio", "02": "comms / CDC (serial)", "03": "HID",
+    "05": "physical", "06": "imaging", "07": "printer", "08": "mass storage",
+    "09": "hub", "0a": "CDC data (serial)", "0b": "smart card", "0d": "content security",
+    "0e": "video", "0f": "personal healthcare", "10": "audio/video",
+    "e0": "wireless (Bluetooth)", "ef": "misc / composite", "fe": "application",
+    "ff": "vendor-specific",
+}
+# Vendors whose IDs show up on the kind of dongle you would pass into a pod.
+USB_VENDOR = {
+    "8087": "Intel", "0a12": "Cambridge Silicon Radio", "0bda": "Realtek",
+    "10c4": "Silicon Labs (Zigbee/Matter sticks)", "1a86": "QinHeng (CH340 serial)",
+    "0403": "FTDI (serial)", "1cf1": "Dresden Elektronik (ConBee)",
+    "0451": "Texas Instruments (CC2531)", "2341": "Arduino", "046d": "Logitech",
+    "1d6b": "Linux Foundation (root hub)", "05e3": "Genesys Logic (hub)",
+    "0424": "Microchip (hub)", "413c": "Dell", "04b4": "Cypress",
+}
+PASSTHROUGH_HINT = {
+    "02": "serial — likely /dev/ttyACM* or /dev/ttyUSB*",
+    "0a": "serial — likely /dev/ttyACM* or /dev/ttyUSB*",
+    "e0": "Bluetooth — pass /dev/bus/usb + NET_ADMIN, or use host networking",
+    "03": "HID — /dev/hidraw*",
+    "08": "mass storage — /dev/sd*",
+    "0e": "video — /dev/video*",
+}
+
+def usb_rows(path):
+    """Parse the pipe-delimited usb.txt written by the collector."""
+    rows = []
+    try: lines = open(path).read().strip().split("\n")
+    except OSError: return rows
+    for ln in lines:
+        if not ln.strip(): continue
+        parts = ln.split("|")
+        d = {"_dev": parts[0]}
+        for kv in parts[1:]:
+            k, _, v = kv.partition("=")
+            if v: d[k] = v
+        if d.get("idVendor"): rows.append(d)
+    return rows
+
+def is_root_hub(u):
+    return u.get("idVendor") == "1d6b"
 
 nodes = sorted(os.path.basename(p) for p in glob.glob(f"{WORK}/*") if os.path.isdir(p))
 L = []
@@ -195,6 +270,62 @@ add("> **Form factor is inferred, not reported.** Mini-PCs are usually SODIMM. C
     "the model before ordering.")
 add("")
 
+# ---------- fleet USB / passthrough overview ----------
+add("## Pluggable devices & passthrough")
+add("")
+add("Everything currently attached by USB, per node, plus where there is room to plug "
+    "something in. This is the table to look at when deciding which node gets the Zigbee "
+    "stick or the Bluetooth dongle.")
+add("")
+add("| Node | USB controllers | Attached devices | Notable |")
+add("|---|---:|---:|---|")
+for n in nodes:
+    u = usb_rows(f"{WORK}/{n}/usb.txt")
+    hubs = [x for x in u if is_root_hub(x)]
+    real = [x for x in u if not is_root_hub(x)]
+    notable = []
+    for x in real:
+        cls = (x.get("bDeviceClass") or "").lower(); icls = (x.get("bInterfaceClass") or "").lower()
+        label = x.get("product") or USB_VENDOR.get(x.get("idVendor",""), f"{x.get('idVendor')}:{x.get('idProduct')}")
+        if cls == "e0" or icls == "e0": notable.append(f"Bluetooth ({label})")
+        elif cls in ("02","0a") or icls in ("02","0a"): notable.append(f"serial ({label})")
+        elif cls == "08" or icls == "08": notable.append(f"storage ({label})")
+    add(f"| **{n}** | {len(hubs)} | {len(real)} | {', '.join(notable) if notable else '—'} |")
+add("")
+add("### Passing a USB device into a pod")
+add("")
+add("Talos has no udev rules you can edit and no host shell, so the two workable routes are:")
+add("")
+add("1. **hostPath mount** — simplest, and what Home Assistant / Zigbee2MQTT generally use. "
+    "Mount the specific device node and schedule the pod to the node holding it:")
+add("")
+add("   ```yaml")
+add("   spec:")
+add("     nodeSelector:")
+add("       kubernetes.io/hostname: <the node with the dongle>   # a device is not portable")
+add("     containers:")
+add("       - name: app")
+add("         securityContext:")
+add("           privileged: true          # or add the device via volumeDevices")
+add("         volumeMounts:")
+add("           - { name: zigbee, mountPath: /dev/ttyACM0 }")
+add("     volumes:")
+add("       - name: zigbee")
+add("         hostPath: { path: /dev/serial/by-id/usb-...-if00, type: CharDevice }")
+add("   ```")
+add("")
+add("   Use the stable `/dev/serial/by-id/...` path, never `/dev/ttyACM0` — the numbered "
+    "name is assigned in probe order and moves when another device is plugged in.")
+add("")
+add("2. **A device plugin** (e.g. `smarter-device-manager`) advertises devices as schedulable "
+    "resources, so pods request `smarter-devices/ttyACM0` instead of running privileged. "
+    "More setup, but no privileged container and the scheduler understands the constraint.")
+add("")
+add("> **A USB device pins its pod to one node.** Whichever node holds the dongle, that pod "
+    "cannot move — which matters here because two nodes carry a PreferNoSchedule taint. "
+    "Prefer plugging into `talos02-gpu` or `talos06`, which have the headroom.")
+add("")
+
 # ---------- per-node dossiers ----------
 add("---")
 add("")
@@ -278,6 +409,97 @@ for n in nodes:
         for x in sorted(disks, key=lambda y: y.get("dev_path", "")):
             add(f"| `{x.get('dev_path','?')}` | {x.get('pretty_size','?')} | `{x.get('bus_path','?')}` |")
         add("")
+
+    # ---- network interfaces ----
+    links = docs(f"{d}/linkstatuses.yaml")
+    # Physical NICs only. Everything cilium/flannel/kube creates is virtual and would
+    # bury the real ports; a physical port has a bus path and a non-virtual driver.
+    virt_drv = {"veth", "bridge", "bonding", "tun", "vxlan", "wireguard", "dummy", "loopback", "macvlan", "ipip", "sit", "ip6tnl", "gre", "gretap", "erspan", "ifb"}
+    phys = [l for l in links
+            if l.get("driver") and l["driver"] not in virt_drv
+            and not re.match(r"(cilium|lxc|veth|flannel|kube|docker|nodelocal|lo$|dummy)", l.get("_id", ""))]
+    if phys:
+        add("**Network ports**")
+        add("")
+        add("| Interface | State | Speed | Duplex | Port | Driver | MAC |")
+        add("|---|---|---:|---|---|---|---|")
+        for l in sorted(phys, key=lambda x: x.get("_id", "")):
+            sp = l.get("speedMbit", "?")
+            try:
+                spn = int(sp)
+                sp = "—" if spn in (0, 4294967295) else (f"{spn/1000:g} GbE" if spn >= 1000 else f"{spn} Mb")
+            except (TypeError, ValueError): sp = "?"
+            st = "🟢 up" if l.get("operationalState") == "up" else "⚪ down"
+            add(f"| `{l.get('_id','?')}` | {st} | {sp} | {l.get('duplex','?')} | {l.get('port','?')} "
+                f"| {l.get('driver','?')} | `{l.get('hardwareAddr','?')}` |")
+        add("")
+
+    # ---- USB ----
+    usb = usb_rows(f"{d}/usb.txt")
+    real = [u for u in usb if not is_root_hub(u)]
+    add("**USB devices**")
+    add("")
+    if usb:
+        hubs = [u for u in usb if is_root_hub(u)]
+        add(f"*{len(hubs)} root hub(s), {len(real)} attached device(s).*")
+        add("")
+        if real:
+            add("| Port | VID:PID | Vendor | Product | Class | Speed |")
+            add("|---|---|---|---|---|---:|")
+            for u in sorted(real, key=lambda x: x["_dev"]):
+                vid = u.get("idVendor", "????"); pid = u.get("idProduct", "????")
+                cls = (u.get("bDeviceClass") or "").lower()
+                icls = (u.get("bInterfaceClass") or "").lower()
+                eff = icls if cls in ("00", "", "ef") and icls else cls
+                spd = u.get("speed", "?")
+                spd = f"{spd} Mb/s" if spd and spd != "?" else "?"
+                add(f"| `{u['_dev']}` | `{vid}:{pid}` | {u.get('manufacturer') or USB_VENDOR.get(vid,'—')} "
+                    f"| {u.get('product') or '—'} | {USB_CLASS.get(eff, eff or '—')} | {spd} |")
+            add("")
+            hints = []
+            for u in sorted(real, key=lambda x: x["_dev"]):
+                cls = (u.get("bDeviceClass") or "").lower(); icls = (u.get("bInterfaceClass") or "").lower()
+                for c in (icls, cls):
+                    if c in PASSTHROUGH_HINT:
+                        hints.append(f"- `{u['_dev']}` **{u.get('idVendor')}:{u.get('idProduct')}** — {PASSTHROUGH_HINT[c]}")
+                        break
+            if hints:
+                add("*Passthrough candidates:*")
+                add("")
+                L.extend(hints); add("")
+        else:
+            add("*No devices attached — only root hubs. Free ports are available for a "
+                "Zigbee/Matter stick, Bluetooth dongle, or UPS cable.*")
+            add("")
+    else:
+        add("*Not readable (node may be a VM or was unreachable).*")
+        add("")
+
+    # ---- serial / passthrough-able device nodes ----
+    try: devs = [l.split()[-1] for l in open(f"{d}/dev.txt").read().split(chr(10))[1:] if l.strip()]
+    except OSError: devs = []
+    try: subs = [x.strip() for x in open(f"{d}/devsub.txt").read().split(chr(10)) if x.strip()]
+    except OSError: subs = []
+    top    = [x for x in devs if re.match(r"(ttyUSB|ttyACM|hidraw|video\d)", x)]
+    serial = sorted(x for x in subs if x.startswith("serial/by-id/"))
+    dri    = sorted(x for x in subs if x.startswith("dri/") and re.search(r"render|card", x))
+    if top or serial or dri:
+        add("**Passthrough-able device nodes**")
+        add("")
+        if serial:
+            add("*Serial — use these paths, NOT `/dev/ttyACM0`: the numbered name is assigned in")
+            add("probe order and moves when anything else is plugged in.*")
+            add("")
+            for x in serial: add(f"- `/dev/{x}`")
+            add("")
+        if dri:
+            add("*GPU render nodes (Plex / Jellyfin / tdarr hardware transcode):*")
+            add("")
+            for x in dri: add(f"- `/dev/{x}`")
+            add("")
+        if top:
+            add("*Other:* " + ", ".join(f"`/dev/{x}`" for x in sorted(set(top))))
+            add("")
 
     gpus = [p for p in pci if re.search(r"vga|display|3d", str(p.get("class", "")) + str(p.get("subclass", "")), re.I)
             or re.search(r"graphic|arc|radeon|geforce|iris|uhd", str(p.get("product", "")) + str(p.get("productName", "")), re.I)]
