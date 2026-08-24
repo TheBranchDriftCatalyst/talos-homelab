@@ -66,23 +66,28 @@ spec:
         podMonitor:
           enabled: false
 
-    # Small homelab resource footprint per component
+    # Measured 7d to 2026-08-24, per container across all pods:
+    #   operator      p50 86Mi  peak 110Mi   -> request was roughly right
+    #   metricServer  p50 42Mi  peak  51Mi   -> 128Mi reserved ~77Mi for nothing
+    #   webhooks      p50 17Mi  peak  19Mi   -> 128Mi reserved ~109Mi for nothing
+    # The operator's 256Mi limit was only 2.3x peak; the other two were 13x
+    # and 5x. Sized to measurement in both directions. (TALOS-gj3n)
     resources:
       operator:
         requests:
           cpu: 100m
           memory: 128Mi
         limits:
-          memory: 256Mi
+          memory: 320Mi
       metricServer:
         requests:
           cpu: 100m
-          memory: 128Mi
+          memory: 96Mi
         limits:
-          memory: 256Mi
+          memory: 192Mi
       webhooks:
         requests:
           cpu: 50m
-          memory: 128Mi
+          memory: 48Mi
         limits:
-          memory: 256Mi
+          memory: 128Mi
