@@ -276,8 +276,14 @@ tasks:
       Runs `talosctl upgrade-k8s` against the control plane node. This rolls the
       kubelet image and kube-apiserver/controller-manager/scheduler static pods
       on every node to the target version by patching machine configs in place.
-      After upgrading, keep configs/nodes/*.yaml kubelet image pins in sync so a
-      future apply-config does not downgrade nodes.
+      ⚠️ AFTERWARDS, BUMP `kubernetesVersion:` IN configs/talconfig.yaml BY HAND. Nothing
+      does it for you — this task is a bare talosctl call with no wrapper script. Leave it
+      and the repo declares the old version while the cluster runs the new one, so
+      `task talos:verify` reports permanent drift and the next `task talos:apply-config`
+      DOWNGRADES that node's kubelet back.
+
+      (The Talos-version equivalent is handled: scripts/upgrade-talos.py bumps
+      `talosVersion:` itself after a successful upgrade. There is no such hook here.)
       NOTE: k8s v1.34.0 had a regression (kubernetes/kubernetes#133847) that
       dropped all kubelet_volume_stats_* metrics from the kubelet /metrics
       endpoint (fixed in v1.34.2) — stay on >= v1.34.2 so PVC usage dashboards work.
