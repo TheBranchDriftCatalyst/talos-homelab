@@ -1,0 +1,48 @@
+# talos03 ONLY — lower the maxPods ceiling from the fleet-wide 200 to 60.
+#
+# WHY talos03 IS DIFFERENT. It has the LEAST RAM in the cluster (15.0 GiB) and the MOST
+# CPU (16 cores) — roughly 1 GiB per core. kube-scheduler packs on CPU and on requests,
+# so a node that looks abundant on paper is the tightest in the fleet on memory, and it
+# attracts work it cannot feed.
+#
+# It is not theoretical. Measured min free memory per node over 7 days, straight from
+# node_memory_MemAvailable_bytes:
+#     talos03       0.61 GiB     <- THIS NODE
+#     talos01       1.21 GiB
+#     talos00       1.61 GiB
+#     talos06      25.44 GiB
+#     talos02-gpu  26.57 GiB
+# On 2026-08-23 talos03 crossed that floor, wedged, and needed a physical power cycle:
+# every TCP port still open, no handshake completing, machined's own socket closed.
+#
+# WHY A POD CEILING RATHER THAN ONLY MEMORY RESERVATION. The reservation added earlier
+# (1Gi system + 1Gi kube + 500Mi eviction) makes the node DEFEND itself — it evicts
+# instead of wedging. This is the other half: it stops the node being handed that much
+# work in the first place. Reservation is the airbag; this is not driving into the wall.
+#
+# WHY 60. talos03 currently runs 27 pods. 60 is more than double today's load, so nothing
+# is displaced and there is room for the CNPG replicas and DaemonSets that legitimately
+# belong here, while capping the runaway packing that a 16-core / 200-pod ceiling invites.
+# Raise it only alongside more RAM, never on its own.
+#
+# THIS FILE IS PER-NODE ON PURPOSE. Do NOT apply it to the other four. They keep 200 —
+# see talos-kubelet-maxpods-patch.yaml for why that value exists and why the pod CIDR is
+# the real ceiling at ~240. The fleet-wide file's own header notes that talos03 "will hit
+# memory pressure long before 200 pods", which is exactly what happened; this makes that
+# observation enforceable rather than a comment.
+#
+# NOT A REBOOT: kubelet config applies via talosctl patch mc in default auto mode, which
+# restarts kubelet only. Running containers are undisturbed.
+#
+# Apply:
+#   talosctl --talosconfig configs/talosconfig -e 192.168.1.54 \
+#     patch mc --nodes 192.168.1.30 --patch @docs/05-runbooks/talos03-kubelet-maxpods-patch.yaml
+#
+# Verify:
+#   kubectl get node talos03 -o jsonpath='{.status.capacity.pods}'
+#
+# Ticket: TALOS-hyga / TALOS-3zf9.
+machine:
+  kubelet:
+    extraConfig:
+      maxPods: 60
