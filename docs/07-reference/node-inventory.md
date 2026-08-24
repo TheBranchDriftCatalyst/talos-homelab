@@ -1,31 +1,127 @@
 # Node Hardware Inventory
 
-*Generated 2026-08-24 16:09 UTC by `scripts/node-dossier.sh`. Regenerate rather than hand-editing.*
+*Generated 2026-08-24 16:19 UTC by `scripts/node-dossier.sh`. Regenerate rather than hand-editing.*
 
 Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exposes as resources. **The DIMM part numbers and slot locators below are what you order replacement memory against** — no need to open the case.
 
 ## Fleet at a glance
 
-| Node | Role | System | CPU | Cores | RAM | DIMMs |
-|---|---|---|---|---:|---:|---:|
-| **talos00** | control-plane | QEMU Standard PC (i440FX + PIIX, 1996) | pc-i440fx-2.2 | 4 | 26 GiB | 2 |
-| **talos01** | control-plane | AZW EQ | 12th Gen Intel(R) Core(TM) i3-1220P | 10 | 24 GiB | 8 |
-| **talos02-gpu** | worker | ASUSTeK COMPUTER INC. NUC15CRHU5 | Intel(R) Core(TM) Ultra 5 225H | 14 | 64 GiB | 2 |
-| **talos03** | control-plane | HC Technology.,Ltd. HCAR5000-MI | AMD Ryzen 7 5800U with Radeon Graphics | 8 | 16 GiB | 2 |
-| **talos06** | worker | GMKtec NucBox_EVO-T1 | Intel(R) Core(TM) Ultra 9 285H | 16 | 64 GiB | 2 |
-| | | | **fleet total** | **52** | **194 GiB** | |
+<table>
+  <thead>
+    <tr>
+      <th>Role</th>
+      <th>Node</th>
+      <th>System</th>
+      <th>CPU</th>
+      <th align="right">Cores</th>
+      <th align="right">RAM</th>
+      <th align="right">DIMMs</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="3"><b>control-plane</b></td>
+      <td><b>talos00</b></td>
+      <td>QEMU Standard PC (i440FX + PIIX, 1996)</td>
+      <td>pc-i440fx-2.2</td>
+      <td align="right">4</td>
+      <td align="right">26 GiB</td>
+      <td align="right">2</td>
+    </tr>
+    <tr>
+      <td><b>talos01</b></td>
+      <td>AZW EQ</td>
+      <td>12th Gen Intel(R) Core(TM) i3-1220P</td>
+      <td align="right">10</td>
+      <td align="right">24 GiB</td>
+      <td align="right">8</td>
+    </tr>
+    <tr>
+      <td><b>talos03</b></td>
+      <td>HC Technology.,Ltd. HCAR5000-MI</td>
+      <td>AMD Ryzen 7 5800U with Radeon Graphics</td>
+      <td align="right">8</td>
+      <td align="right">16 GiB</td>
+      <td align="right">2</td>
+    </tr>
+    <tr>
+      <td rowspan="2"><b>worker</b></td>
+      <td><b>talos02-gpu</b></td>
+      <td>ASUSTeK COMPUTER INC. NUC15CRHU5</td>
+      <td>Intel(R) Core(TM) Ultra 5 225H</td>
+      <td align="right">14</td>
+      <td align="right">64 GiB</td>
+      <td align="right">2</td>
+    </tr>
+    <tr>
+      <td><b>talos06</b></td>
+      <td>GMKtec NucBox_EVO-T1</td>
+      <td>Intel(R) Core(TM) Ultra 9 285H</td>
+      <td align="right">16</td>
+      <td align="right">64 GiB</td>
+      <td align="right">2</td>
+    </tr>
+  </tbody>
+</table>
+
+**Fleet total: 52 cores, 194 GiB RAM across 5 nodes.**
 
 ## RAM upgrade planner
 
 **Read the *Upgradeable* column first.** Two of these machines cannot take more memory at any price, and that is not visible from the capacity numbers alone.
 
-| Node | Installed | Config | Speed | Upgradeable | Part number |
-|---|---:|---|---:|---|---|
-| **talos03** | 16 GiB | 2x8 GiB | 3200 MT/s | ✅ yes | Unknown `LD4S08G32C22ST` |
-| **talos01** | 24 GiB | 8x3 GiB | 6600 MT/s | ❌ **NO** | — |
-| **talos00** | 26 GiB | 1x10 GiB + 1x16 GiB | ? MT/s | 🖥 VM | — |
-| **talos02-gpu** | 64 GiB | 2x32 GiB | 5600 MT/s | ✅ yes | PNY Technologies Inc `M5S32S68B56MMM90-11` |
-| **talos06** | 64 GiB | 2x32 GiB | 5600 MT/s | ✅ yes | A-DATA Technology `CBDAD5S560032G-BAD` |
+<table>
+  <thead>
+    <tr>
+      <th>Upgradeable</th>
+      <th>Node</th>
+      <th align="right">Installed</th>
+      <th>Config</th>
+      <th>Speed</th>
+      <th align="right">Part number</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="3"><b>✅ Upgradeable</b></td>
+      <td><b>talos03</b></td>
+      <td align="right">16 GiB</td>
+      <td>2x8 GiB</td>
+      <td>3200 MT/s</td>
+      <td align="right">Unknown `LD4S08G32C22ST`</td>
+    </tr>
+    <tr>
+      <td><b>talos02-gpu</b></td>
+      <td align="right">64 GiB</td>
+      <td>2x32 GiB</td>
+      <td>5600 MT/s</td>
+      <td align="right">PNY Technologies Inc `M5S32S68B56MMM90-11`</td>
+    </tr>
+    <tr>
+      <td><b>talos06</b></td>
+      <td align="right">64 GiB</td>
+      <td>2x32 GiB</td>
+      <td>5600 MT/s</td>
+      <td align="right">A-DATA Technology `CBDAD5S560032G-BAD`</td>
+    </tr>
+    <tr>
+      <td rowspan="1"><b>❌ Soldered — cannot upgrade</b></td>
+      <td><b>talos01</b></td>
+      <td align="right">24 GiB</td>
+      <td>8x3 GiB</td>
+      <td>6600 MT/s</td>
+      <td align="right">—</td>
+    </tr>
+    <tr>
+      <td rowspan="1"><b>🖥 Virtual machine</b></td>
+      <td><b>talos00</b></td>
+      <td align="right">26 GiB</td>
+      <td>1x10 GiB + 1x16 GiB</td>
+      <td>? MT/s</td>
+      <td align="right">—</td>
+    </tr>
+  </tbody>
+</table>
 
 - **talos03** (HC Technology.,Ltd. HCAR5000-MI) — Replaceable sticks — match the part number below.
 - **talos01** (AZW EQ) — **Cannot be upgraded.** On-package LPDDR — no sockets exist.
@@ -41,13 +137,82 @@ Talos has no SSH, so this is read from the SMBIOS/DMI tables that `talosctl` exp
 
 Everything currently attached by USB, per node, plus where there is room to plug something in. This is the table to look at when deciding which node gets the Zigbee stick or the Bluetooth dongle.
 
-| Node | USB controllers | Attached devices | Notable |
-|---|---:|---:|---|
-| **talos00** | 1 | 1 | — |
-| **talos01** | 4 | 1 | Bluetooth (Intel) |
-| **talos02-gpu** | 4 | 1 | Bluetooth (Intel) |
-| **talos03** | 4 | 2 | Bluetooth (Bluetooth Radio) |
-| **talos06** | 4 | 2 | Bluetooth (Intel), Bluetooth (Bluetooth 5.4 Radio) |
+<table>
+  <thead>
+    <tr>
+      <th>Node</th>
+      <th>Port</th>
+      <th>VID:PID</th>
+      <th>Vendor</th>
+      <th>Product</th>
+      <th>Class</th>
+      <th align="right">Speed</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowspan="1"><b>talos00<br><small>1 controllers</small></b></td>
+      <td><code>1-1</code></td>
+      <td><code>0627:0001</code></td>
+      <td>QEMU</td>
+      <td>QEMU USB Tablet</td>
+      <td>per-interface</td>
+      <td align="right">12 Mb/s</td>
+    </tr>
+    <tr>
+      <td rowspan="1"><b>talos01<br><small>4 controllers</small></b></td>
+      <td><code>3-10</code></td>
+      <td><code>8087:0026</code></td>
+      <td>Intel</td>
+      <td>—</td>
+      <td>wireless (Bluetooth)</td>
+      <td align="right">12 Mb/s</td>
+    </tr>
+    <tr>
+      <td rowspan="1"><b>talos02-gpu<br><small>4 controllers</small></b></td>
+      <td><code>3-10</code></td>
+      <td><code>8087:0037</code></td>
+      <td>Intel</td>
+      <td>—</td>
+      <td>wireless (Bluetooth)</td>
+      <td align="right">12 Mb/s</td>
+    </tr>
+    <tr>
+      <td rowspan="2"><b>talos03<br><small>4 controllers</small></b></td>
+      <td><code>3-3</code></td>
+      <td><code>0d8c:0014</code></td>
+      <td>C-Media Electronics Inc.</td>
+      <td>USB Audio Device</td>
+      <td>per-interface</td>
+      <td align="right">12 Mb/s</td>
+    </tr>
+    <tr>
+      <td><code>3-4</code></td>
+      <td><code>0bda:b85b</code></td>
+      <td>Realtek</td>
+      <td>Bluetooth Radio</td>
+      <td>wireless (Bluetooth)</td>
+      <td align="right">12 Mb/s</td>
+    </tr>
+    <tr>
+      <td rowspan="2"><b>talos06<br><small>4 controllers</small></b></td>
+      <td><code>3-10</code></td>
+      <td><code>8087:0026</code></td>
+      <td>Intel</td>
+      <td>—</td>
+      <td>wireless (Bluetooth)</td>
+      <td align="right">12 Mb/s</td>
+    </tr>
+    <tr>
+      <td><code>3-4</code></td>
+      <td><code>0bda:a728</code></td>
+      <td>Realtek</td>
+      <td>Bluetooth 5.4 Radio</td>
+      <td>wireless (Bluetooth)</td>
+      <td align="right">12 Mb/s</td>
+    </tr>
+  </tbody>
+</table>
 
 ### Passing a USB device into a pod
 
@@ -73,6 +238,34 @@ Talos has no udev rules you can edit and no host shell, so the two workable rout
    Use the stable `/dev/serial/by-id/...` path, never `/dev/ttyACM0` — the numbered name is assigned in probe order and moves when another device is plugged in.
 
 2. **A device plugin** (e.g. `smarter-device-manager`) advertises devices as schedulable resources, so pods request `smarter-devices/ttyACM0` instead of running privileged. More setup, but no privileged container and the scheduler understands the constraint.
+
+### Making a device reachable from any node
+
+A hostPath mount welds the consumer to one machine. To let the consuming pod schedule anywhere, put a small per-node bridge in front of the device and talk to it over the network. The device stays pinned; the consumer stops being pinned.
+
+**For serial devices — Zigbee, Matter, Z-Wave, P1 meters — use `ser2net`.** This is the established route and it needs nothing special from Talos:
+
+```
+  DaemonSet (nodeSelector: the node with the stick)
+    ser2net  --  /dev/serial/by-id/usb-...-if00  <->  TCP :20108
+        |
+     Service  zigbee-serial.home-automation.svc:20108
+        |
+  Home Assistant / Zigbee2MQTT   (schedules ANYWHERE)
+    port: tcp://zigbee-serial.home-automation.svc:20108
+```
+
+Zigbee2MQTT, ZHA and Z-Wave JS all accept a `tcp://` serial port natively, so this needs no shim on the consumer side. Use a DaemonSet with a nodeSelector rather than a StatefulSet: there is no ordering or identity to preserve, only a device to sit next to.
+
+**USB/IP is NOT available on stock Talos.** The obvious answer for arbitrary USB — `usbip_host` on the node, `vhci-hcd` on the consumer — cannot be used here: neither module ships in the Talos kernel (checked against all 431 modules in `/lib/modules/6.18.44-talos`). Getting it would mean a custom kernel via Image Factory or a system extension, plus a privileged client pod loading `vhci-hcd`. That is a large amount of machinery for a homelab, and it is why the serial-over-TCP route is the recommendation for anything that speaks serial.
+
+**What Talos DOES ship**, verified on this cluster, so sticks enumerate correctly:
+
+- `cdc-acm` — built into the kernel. Covers ConBee, SkyConnect, most CC2652 and Matter sticks, which appear as `/dev/ttyACM*`.
+- `ch341`, `cp210x`, `ftdi_sio`, `pl2303` — loadable modules, covering the older USB-serial bridges that appear as `/dev/ttyUSB*`.
+- Char devices 166 (`ttyACM`) and 188 (`ttyUSB`) are registered in `/proc/devices`.
+
+**For Bluetooth**, none of this applies: the radio is already on the PCI/USB bus of every node in this fleet (see the table above), so run the consumer with host networking and `NET_ADMIN` on a node that has one, rather than bridging anything.
 
 > **A USB device pins its pod to one node.** Whichever node holds the dongle, that pod cannot move — which matters here because two nodes carry a PreferNoSchedule taint. Prefer plugging into `talos02-gpu` or `talos06`, which have the headroom.
 

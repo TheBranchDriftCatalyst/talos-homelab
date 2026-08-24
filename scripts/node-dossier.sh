@@ -161,6 +161,36 @@ def usb_rows(path):
 def is_root_hub(u):
     return u.get("idVendor") == "1d6b"
 
+def html_table(headers, groups, align=None):
+    """Emit an HTML table with a rowspan-merged first column.
+
+    Markdown tables cannot merge cells, so anything with a natural two-level shape
+    (role -> node, upgradeable -> node, node -> device) ends up repeating the parent
+    on every row. groups is [(group_label, [row, row, ...]), ...]; the group label is
+    written once with rowspan set to its row count.
+
+    Kept deliberately plain — no CSS, no classes. Renders in GitHub, IDE previews and
+    anything else that passes HTML through, and degrades to readable text if not.
+    """
+    al = align or {}
+    out = ["<table>", "  <thead>", "    <tr>"]
+    for i, h in enumerate(headers):
+        a = f' align="{al[i]}"' if i in al else ""
+        out.append(f"      <th{a}>{h}</th>")
+    out += ["    </tr>", "  </thead>", "  <tbody>"]
+    for label, rows in groups:
+        if not rows: continue
+        for j, row in enumerate(rows):
+            out.append("    <tr>")
+            if j == 0:
+                out.append(f'      <td rowspan="{len(rows)}"><b>{label}</b></td>')
+            for i, cell in enumerate(row, start=1):
+                a = f' align="{al[i]}"' if i in al else ""
+                out.append(f"      <td{a}>{cell}</td>")
+            out.append("    </tr>")
+    out += ["  </tbody>", "</table>"]
+    return out
+
 nodes = sorted(os.path.basename(p) for p in glob.glob(f"{WORK}/*") if os.path.isdir(p))
 L = []
 add = L.append
@@ -194,11 +224,15 @@ for n in nodes:
 
 add("## Fleet at a glance")
 add("")
-add("| Node | Role | System | CPU | Cores | RAM | DIMMs |")
-add("|---|---|---|---|---:|---:|---:|")
-for n, mfr, prod, cpu, cores, ram, nd, role in rows:
-    add(f"| **{n}** | {role} | {mfr} {prod} | {cpu} | {cores} | {ram:.0f} GiB | {nd} |")
-add(f"| | | | **fleet total** | **{totals['cores']}** | **{totals['ram']:.0f} GiB** | |")
+grouped = []
+for role in ("control-plane", "worker"):
+    members = [(n, mfr, prod, cpu, cores, ram, nd) for n, mfr, prod, cpu, cores, ram, nd, r in rows if r == role]
+    grouped.append((role, [[f"<b>{n}</b>", f"{mfr} {prod}", cpu, cores, f"{ram:.0f} GiB", nd]
+                           for n, mfr, prod, cpu, cores, ram, nd in sorted(members)]))
+L.extend(html_table(["Role", "Node", "System", "CPU", "Cores", "RAM", "DIMMs"], grouped,
+                    align={4: "right", 5: "right", 6: "right"}))
+add("")
+add(f"**Fleet total: {totals['cores']} cores, {totals['ram']:.0f} GiB RAM across {len(rows)} nodes.**")
 add("")
 
 # ---------- RAM upgrade planner ----------
@@ -237,8 +271,6 @@ add("")
 add("**Read the *Upgradeable* column first.** Two of these machines cannot take more memory "
     "at any price, and that is not visible from the capacity numbers alone.")
 add("")
-add("| Node | Installed | Config | Speed | Upgradeable | Part number |")
-add("|---|---:|---|---:|---|---|")
 plan = []
 for n in nodes:
     d = f"{WORK}/{n}"
@@ -254,9 +286,16 @@ for n in nodes:
     parts = sorted({f"{m.get('manufacturer','?')} `{m['productName']}`" for m in mods if m.get("productName")})
     plan.append((ram, n, cfg, "/".join(speeds), classify(mods, si), "<br>".join(parts) or "—", si))
 
-for ram, n, cfg, speed, (kind, note), parts, si in sorted(plan):
-    icon = {"SOCKETED": "✅ yes", "SOLDERED": "❌ **NO**", "VM": "🖥 VM", "UNKNOWN": "⚠️ unclear"}[kind]
-    add(f"| **{n}** | {ram:.0f} GiB | {cfg} | {speed} MT/s | {icon} | {parts} |")
+LABEL = {"SOCKETED": "✅ Upgradeable", "SOLDERED": "❌ Soldered — cannot upgrade",
+         "VM": "🖥 Virtual machine", "UNKNOWN": "⚠️ Unclear"}
+gr = []
+for kind in ("SOCKETED", "SOLDERED", "VM", "UNKNOWN"):
+    members = [(ram, n, cfg, speed, parts) for ram, n, cfg, speed, (k, _), parts, _ in sorted(plan) if k == kind]
+    if members:
+        gr.append((LABEL[kind], [[f"<b>{n}</b>", f"{ram:.0f} GiB", cfg, f"{speed} MT/s", parts]
+                                 for ram, n, cfg, speed, parts in members]))
+L.extend(html_table(["Upgradeable", "Node", "Installed", "Config", "Speed", "Part number"], gr,
+                    align={2: "right", 5: "right"}))
 add("")
 for ram, n, cfg, speed, (kind, note), parts, si in sorted(plan):
     add(f"- **{n}** ({si.get('manufacturer','?')} {si.get('productName','?')}) — {note}")
@@ -277,20 +316,30 @@ add("Everything currently attached by USB, per node, plus where there is room to
     "something in. This is the table to look at when deciding which node gets the Zigbee "
     "stick or the Bluetooth dongle.")
 add("")
-add("| Node | USB controllers | Attached devices | Notable |")
-add("|---|---:|---:|---|")
+gr = []
 for n in nodes:
     u = usb_rows(f"{WORK}/{n}/usb.txt")
     hubs = [x for x in u if is_root_hub(x)]
-    real = [x for x in u if not is_root_hub(x)]
-    notable = []
+    real = sorted((x for x in u if not is_root_hub(x)), key=lambda x: x["_dev"])
+    label = f"{n}<br><small>{len(hubs)} controllers</small>"
+    if not real:
+        gr.append((label, [["<i>— none attached —</i>", "", "", "", ""]]))
+        continue
+    body = []
     for x in real:
+        vid = x.get("idVendor", "????"); pid = x.get("idProduct", "????")
         cls = (x.get("bDeviceClass") or "").lower(); icls = (x.get("bInterfaceClass") or "").lower()
-        label = x.get("product") or USB_VENDOR.get(x.get("idVendor",""), f"{x.get('idVendor')}:{x.get('idProduct')}")
-        if cls == "e0" or icls == "e0": notable.append(f"Bluetooth ({label})")
-        elif cls in ("02","0a") or icls in ("02","0a"): notable.append(f"serial ({label})")
-        elif cls == "08" or icls == "08": notable.append(f"storage ({label})")
-    add(f"| **{n}** | {len(hubs)} | {len(real)} | {', '.join(notable) if notable else '—'} |")
+        eff = icls if cls in ("00", "", "ef") and icls else cls
+        spd = x.get("speed", "")
+        body.append([f"<code>{x['_dev']}</code>",
+                     f"<code>{vid}:{pid}</code>",
+                     x.get("manufacturer") or USB_VENDOR.get(vid, "—"),
+                     x.get("product") or "—",
+                     USB_CLASS.get(eff, eff or "—"),
+                     f"{spd} Mb/s" if spd else "?"])
+    gr.append((label, body))
+L.extend(html_table(["Node", "Port", "VID:PID", "Vendor", "Product", "Class", "Speed"], gr,
+                    align={6: "right"}))
 add("")
 add("### Passing a USB device into a pod")
 add("")
@@ -321,6 +370,50 @@ add("2. **A device plugin** (e.g. `smarter-device-manager`) advertises devices a
     "resources, so pods request `smarter-devices/ttyACM0` instead of running privileged. "
     "More setup, but no privileged container and the scheduler understands the constraint.")
 add("")
+add("### Making a device reachable from any node")
+add("")
+add("A hostPath mount welds the consumer to one machine. To let the consuming pod schedule "
+    "anywhere, put a small per-node bridge in front of the device and talk to it over the "
+    "network. The device stays pinned; the consumer stops being pinned.")
+add("")
+add("**For serial devices — Zigbee, Matter, Z-Wave, P1 meters — use `ser2net`.** This is the "
+    "established route and it needs nothing special from Talos:")
+add("")
+add("```")
+add("  DaemonSet (nodeSelector: the node with the stick)")
+add("    ser2net  --  /dev/serial/by-id/usb-...-if00  <->  TCP :20108")
+add("        |")
+add("     Service  zigbee-serial.home-automation.svc:20108")
+add("        |")
+add("  Home Assistant / Zigbee2MQTT   (schedules ANYWHERE)")
+add("    port: tcp://zigbee-serial.home-automation.svc:20108")
+add("```")
+add("")
+add("Zigbee2MQTT, ZHA and Z-Wave JS all accept a `tcp://` serial port natively, so this needs "
+    "no shim on the consumer side. Use a DaemonSet with a nodeSelector rather than a "
+    "StatefulSet: there is no ordering or identity to preserve, only a device to sit next to.")
+add("")
+add("**USB/IP is NOT available on stock Talos.** The obvious answer for arbitrary USB — "
+    "`usbip_host` on the node, `vhci-hcd` on the consumer — cannot be used here: neither "
+    "module ships in the Talos kernel (checked against all 431 modules in "
+    "`/lib/modules/6.18.44-talos`). Getting it would mean a custom kernel via Image Factory "
+    "or a system extension, plus a privileged client pod loading `vhci-hcd`. That is a large "
+    "amount of machinery for a homelab, and it is why the serial-over-TCP route is the "
+    "recommendation for anything that speaks serial.")
+add("")
+add("**What Talos DOES ship**, verified on this cluster, so sticks enumerate correctly:")
+add("")
+add("- `cdc-acm` — built into the kernel. Covers ConBee, SkyConnect, most CC2652 and Matter "
+    "sticks, which appear as `/dev/ttyACM*`.")
+add("- `ch341`, `cp210x`, `ftdi_sio`, `pl2303` — loadable modules, covering the older "
+    "USB-serial bridges that appear as `/dev/ttyUSB*`.")
+add("- Char devices 166 (`ttyACM`) and 188 (`ttyUSB`) are registered in `/proc/devices`.")
+add("")
+add("**For Bluetooth**, none of this applies: the radio is already on the PCI/USB bus of every "
+    "node in this fleet (see the table above), so run the consumer with host networking and "
+    "`NET_ADMIN` on a node that has one, rather than bridging anything.")
+add("")
+
 add("> **A USB device pins its pod to one node.** Whichever node holds the dongle, that pod "
     "cannot move — which matters here because two nodes carry a PreferNoSchedule taint. "
     "Prefer plugging into `talos02-gpu` or `talos06`, which have the headroom.")
