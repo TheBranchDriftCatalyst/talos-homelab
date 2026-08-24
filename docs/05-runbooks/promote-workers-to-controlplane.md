@@ -1,5 +1,20 @@
 # Promote Two Workers to Control Plane (1 CP → 3 CP)
 
+> ## ⚠️ COMPLETED — historical. Do not execute.
+>
+> This cluster already has three control planes: talos00, talos01 and talos03. There is
+> nothing left to promote.
+>
+> The config-generation steps are also superseded — they build configs with `talosctl gen
+> config` from `configs/secrets.yaml` into `configs/nodes/<NODE>/`, and that tree is archived
+> to `.scratch/__configs/`. Machine configs now come from `configs/talconfig.yaml` via
+> talhelper; a node's control-plane status is the `controlPlane: true` field there.
+>
+> Kept because the destructive-reset warnings are still true and still the best writeup in
+> this repo of them: Talos cannot change machine type in place, `talosctl reset` wipes
+> `/var` and therefore every `local-path` PV on that node, and Velero does not back up
+> local-path PVs. Read those before any reset, promotion or not.
+
 **Risk:** HIGH — destructive. Each promoted node is wiped and reinstalled.
 **Estimated time:** 3–5 hours including data migration. Do not start after 22:00.
 **Blast radius:** every `local-path` PersistentVolume on the promoted node is **permanently destroyed**.

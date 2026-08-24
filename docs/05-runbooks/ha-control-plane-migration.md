@@ -1,5 +1,21 @@
 # HA Control Plane Migration Runbook
 
+> ## ⚠️ COMPLETED — historical. Do not execute.
+>
+> The cluster already runs three control planes. **The live topology is talos00 + talos01 +
+> talos03 as control planes, with talos02-gpu and talos06 as workers** (verified against
+> `kubectl get nodes` and `configs/talconfig.yaml`) — note that differs from the target
+> topology stated below, which named talos06 rather than talos03.
+>
+> Its config-generation steps are also superseded. This runbook generates per-node configs
+> with `talosctl gen config` into `configs/nodes/<NODE>/`; that directory is archived to
+> `.scratch/__configs/`, and machine configs now come from `configs/talconfig.yaml` via
+> talhelper. To add or change a control plane today, edit `talconfig.yaml`, then
+> `task talos:verify-dry-run` and `task talos:apply-config NODE=<host>`.
+>
+> Kept for the reasoning — the meltdown analysis, the etcd-quorum sequencing and the
+> secrets-bundle warning are all still correct and still the reason this cluster is HA.
+
 **Beads issue:** TALOS-arx
 **Target topology:** talos00 + talos01 + talos06 (3 CPs), talos02-gpu + talos03 (2 workers)
 **Risk:** HIGH — destructive on talos01 and talos06 (full Talos reinstall)

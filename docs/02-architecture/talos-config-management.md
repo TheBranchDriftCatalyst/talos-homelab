@@ -1,7 +1,16 @@
 # Talos Machine Config Management (talhelper)
 
-**Status:** Proposed — design only, nothing applied. Tracking epic: TALOS-0bo8.
-**Date:** 2026-08-23
+**Status:** IMPLEMENTED. Tracking epic: TALOS-0bo8.
+**Date:** 2026-08-23 (design) · 2026-08-24 (cutover)
+
+> This was written as a design document and is kept as the design record — the reasoning, the
+> empirical proofs, and the open questions are all still worth reading. But it describes the
+> state of the repo *before* the cutover, so its paths are historical: `configs/nodes/` no
+> longer exists (archived to `.scratch/__configs/`), and the machine configs it proposed
+> generating are now real, at `configs/clusterconfig/`, generated from `configs/talconfig.yaml`.
+>
+> For current state see [talhelper-cutover.md](../05-runbooks/talhelper-cutover.md), or run
+> `task talos:verify` / `task talos:verify-dry-run`.
 
 ---
 
