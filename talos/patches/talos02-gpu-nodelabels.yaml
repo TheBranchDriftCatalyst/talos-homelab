@@ -1,4 +1,25 @@
 # Descriptive hardware labels, used for workload placement.
+#
+# ⚠️ VERIFIED 2026-08-24: NOTHING SELECTS ON THESE. Zero manifests in git and zero running
+# pods reference cpu-model, gpu-model, hardware-model, workload-type or
+# topology.kubernetes.io/zone in a nodeSelector or affinity. They are documentation, not
+# scheduling inputs.
+#
+# NO CONFLICT WITH NFD — they occupy different namespaces and there are zero key collisions:
+#     Talos machine.nodeLabels   node.kubernetes.io/*, topology.kubernetes.io/*      5 labels
+#     NFD                        feature.node.kubernetes.io/*, *.node.kubevirt.io/*  274 labels
+#
+# But they DUPLICATE what NFD discovers, in a worse form:
+#     hand: node.kubernetes.io/cpu-model = intel-core-ultra-9-285h
+#     NFD:  cpu-model.family=6, cpu-model.id=197, cpu-model.vendor_id=Intel
+#     hand: node.kubernetes.io/gpu-model = intel-arc-140t
+#     NFD:  pci-0300_8086_7d51.present = true          <- the real PCI ID
+# NFD's are discovered and self-correcting; these are strings someone typed and will silently
+# rot the day a component is swapped.
+#
+# KEPT because the migration reproduces live state faithfully — removing them is a behaviour
+# change and belongs in its own visible commit, not smuggled into a config migration. If you
+# do remove them, nothing will break; if you add a selector, use the NFD label instead.
 machine:
   nodeLabels:
     node.kubernetes.io/workload-type: media-transcoding
