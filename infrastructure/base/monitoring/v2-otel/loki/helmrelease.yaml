@@ -170,10 +170,16 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
+      # Measured 7d to 2026-08-24: p50 280Mi, peak 569Mi against a 1Gi
+      # request. Over-declared by ~455Mi. 640Mi is 1.12x peak; the 1280Mi
+      # limit is 2.2x peak, loose enough that a large query or a compaction
+      # burst does not hit it. [TALOS-eda0]
       resources:
         requests:
           cpu: 200m
-          memory: 1Gi
+          memory: 640Mi
+        limits:
+          memory: 1280Mi
       persistence:
         enabled: true
         storageClass: local-path

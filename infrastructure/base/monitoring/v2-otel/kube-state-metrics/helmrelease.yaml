@@ -55,14 +55,20 @@ spec:
       - volumeattachments
 
     # Resources for homelab
+    # Measured 7d to 2026-08-24: p50 218Mi, peak 421Mi. The 64Mi request was
+    # under-declared by 3.4x against steady state — and the OOMKill history
+    # below is the same fact seen from the limit side. Raising the request is
+    # what stops the scheduler putting KSM somewhere it cannot fit.
+    # Limit 512Mi -> 768Mi: peak 421Mi is 82% of 512Mi, too close to a ceiling
+    # that has already fired once. [TALOS-eda0]
     resources:
       requests:
         cpu: 10m
-        memory: 64Mi
+        memory: 288Mi
       limits:
         # Bumped 256Mi→512Mi: once the 256Mi ceiling existed, KSM DID start getting OOMKilled
         # (memcg exit137 on talos06 @21:44, creating monitoring gaps — audit M2). ~300 pods + many CRs.
-        memory: 512Mi
+        memory: 768Mi
 
     # Root cause of the 1198-restart/70d crashloop is NOT memory or cardinality: at
     # pod startup KSM connects to the apiserver ClusterIP (10.96.0.1:443) before
