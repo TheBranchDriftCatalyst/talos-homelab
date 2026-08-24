@@ -229,3 +229,62 @@ tasks:
     desc: Get etcd status
     cmds:
       - talosctl --talosconfig {{.TALOSCONFIG}} --nodes {{.TALOS_NODE}} etcd status
+
+  # ============================================
+  # Config drift detection (TALOS-frvi)
+  # ============================================
+
+  verify:
+    desc: "Compare every node's LIVE machine config against what talconfig would generate"
+    summary: |
+      Detects configuration drift — the class of problem that motivated TALOS-0bo8.
+
+      Every machine-config change in this cluster was historically applied by hand with
+      `talosctl patch mc`, so the nodes and the repo could disagree with nothing to notice.
+      They did: two GPU workers had every kubelet mount declared twice, controller-manager
+      bind-address existed on one control plane out of three, and the udev rules granting
+      Plex its GPU existed only on the nodes.
+
+      This regenerates from talos/talconfig.yaml and diffs against the live nodes.
+
+      SKIPS NOTHING. Values whose key looks secret-bearing are compared by SHA-256 prefix, so
+      a change is still detected without the value reaching your terminal. An earlier version
+      had a skip list and it hid a real regression — certSANs being silently stripped from
+      the kube-apiserver certificate.
+
+      Reads all documents, not just the first. talhelper emits a multi-document config and
+      the reboot-causing change lives in the second one.
+
+      Output is differences, not a pass/fail: some are EXPECTED (drift being corrected) and
+      some are talhelper's own behaviour. See docs/05-runbooks/talhelper-cutover.md for the
+      taxonomy of what is normal.
+    cmds:
+      - |
+        if ! command -v talhelper >/dev/null 2>&1; then
+          echo "talhelper not installed — brew install talhelper"; exit 1
+        fi
+      - cd talos && talhelper genconfig
+      - TALOSCONFIG={{.TALOSCONFIG}} python3 talos/verify-diff.py
+
+  verify-dry-run:
+    desc: "Ask each node what applying the generated config would actually do (read-only)"
+    summary: |
+      Runs `talosctl apply-config --dry-run` against every node and prints the mode line plus
+      the real diff hunks.
+
+      THIS IS THE AUTHORITATIVE CHECK. It compares against the actual machine rather than
+      against any model of it, and it is how both certSANs regressions and the fleet-wide
+      reboot were found — none of which the offline differ could see.
+
+      Applies nothing. Safe to run any time.
+    cmds:
+      - |
+        for N in "talos00 192.168.1.54" "talos01 192.168.1.177" "talos02-gpu 192.168.1.144" \
+                 "talos03 192.168.1.30" "talos06 192.168.1.19"; do
+          set -- $N
+          echo "── $1 ($2) ──"
+          TALOSCONFIG={{.TALOSCONFIG}} talosctl -n $2 apply-config --dry-run \
+            --file talos/clusterconfig/catalyst-cluster-$1.yaml 2>&1 | head -60
+          echo
+        done
+
