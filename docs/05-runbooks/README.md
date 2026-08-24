@@ -6,8 +6,10 @@ Step-by-step operational procedures for high-consequence changes and recovery sc
 this section assume you are executing under pressure — each one leads with a TL;DR, then a quick
 reference, then the full detail. Read the TL;DR before you touch anything.
 
-Machine-config patch files live here too, alongside the runbooks that apply them. They are applied by
-`scripts/bootstrap-talos-patches.sh`, not by hand.
+Machine-config patch files live here too. **They are historical records now, not the source of
+truth.** Every value in them is declared in `configs/talconfig.yaml` and applied by talhelper
+when a node's config is generated; `scripts/bootstrap-talos-patches.sh` is retired and refuses
+to run. Each file carries a banner naming its live counterpart under `configs/patches/`.
 
 ## Quick Navigation
 
@@ -27,17 +29,22 @@ Machine-config patch files live here too, alongside the runbooks that apply them
 | [talos-kubelet-maxpods-patch.yaml](talos-kubelet-maxpods-patch.yaml) | `maxPods` 110 → 200 (TALOS-d5b5). The pod CIDR `/24` is the real ceiling — do not exceed ~240 |
 | [talos-controlplane-metrics-patch.yaml](talos-controlplane-metrics-patch.yaml) | Bind kube-scheduler / controller-manager metrics to `0.0.0.0` so Alloy can scrape them |
 
-Apply them all, idempotently, across every node:
+These are applied as part of each node's generated machine config — there is no separate
+apply step. Do not apply them by hand with `talosctl patch mc`; that creates drift the next
+`task talos:apply-config` reverts.
 
 ```bash
-./scripts/bootstrap-talos-patches.sh --check   # dry run
-./scripts/bootstrap-talos-patches.sh           # apply
+task talos:verify           # regenerate and diff against every live node
+task talos:verify-dry-run   # ask each node what applying would do — read-only
+task talos:apply-config NODE=<hostname>   # apply one node (destructive)
 ```
 
 ## Key Concepts
 
-- **A reset node loses every machine-config patch.** Re-run `scripts/bootstrap-talos-patches.sh`
-  after any `talosctl reset`, or the node returns with `maxPods: 110` and local-path broken.
+- **A reset node loses every machine-config patch — but recovering them is now one step.**
+  Re-apply the node's generated config (`task talos:apply-config NODE=<hostname>`) and the bind
+  mounts, `maxPods`, reserves and image GC all come back with it. Skip it and the node returns
+  with `maxPods: 110` and local-path broken.
 - **Talos machine type is immutable.** Worker → control-plane is a full reset and reinstall, never an
   in-place edit. See [promote-workers-to-controlplane.md §1](promote-workers-to-controlplane.md#1-why-this-requires-a-full-reset).
 - **Reset wipes EPHEMERAL (`/var`), which is where local-path provisions.** Every local-path PV on a

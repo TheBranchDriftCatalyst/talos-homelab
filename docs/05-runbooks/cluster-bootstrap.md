@@ -8,14 +8,12 @@ catastrophic event (UPS failure, accidental wipe, fresh hardware, etc.).
 ## TL;DR
 
 ```bash
-# 1. Provision Talos + bootstrap etcd
-task provision
+# 1. Plan the rebuild, then run the commands it prints.
+#    task provision APPLIES NOTHING — it prints the talhelper sequence for you to run.
+task talos:provision
 
-# 2. Apply machine-config patches (kubelet bind mounts for iSCSI / local-path)
-#    One command, all nodes, idempotent:
-task talos:patches
-# (Or directly: ./scripts/bootstrap-talos-patches.sh)
-# Use --check / `task talos:patches-check` for a dry-run preview.
+# 2. (nothing to do — the kubelet bind mounts, maxPods, reserves and image GC are
+#     part of the machine config now, so step 1 already applied them)
 
 # 3. Merge kubeconfig
 task kubeconfig-merge
@@ -56,55 +54,61 @@ CLI tools required (install with `task deps:install`):
 ```bash
 export TALOS_NODE=192.168.1.54
 
-# Generate machine configs (writes configs/{controlplane,worker,talosconfig}.yaml)
+# Generate every node's machine config from configs/talconfig.yaml
+# -> configs/clusterconfig/catalyst-cluster-<node>.yaml
 task talos:gen-config
 
-# First-time apply (use INSECURE=true on a freshly imaged node)
-task talos:apply-config INSECURE=true
+# Print the ordered rebuild sequence. This APPLIES NOTHING, and refuses outright
+# if any node already answers the Talos API.
+task talos:provision
 
-# Bootstrap etcd on the control plane
+# Then run the printed commands from configs/. Per node, freshly imaged:
+task talos:apply-config NODE=talos00 INSECURE=true
+
+# Bootstrap etcd on ONE control plane, ONCE. The other two join on their own.
 task talos:bootstrap
 
 # Wait for the cluster to come up
 task talos:health
 ```
 
+`NODE=` is required and takes a hostname, not an IP — the five nodes each have their own
+install disk, factory schematic and patch set, so their configs are not interchangeable.
+Note there is no `--` before `NODE=`; go-task only binds variables in the bare form.
+
+`configs/talsecret.yaml` must exist before any of this. It holds the cluster CA and is
+gitignored, so a fresh clone will not have it — restore it from 1Password first
+([talsecret-1password-backup.md](talsecret-1password-backup.md)). Do **not** run
+`talhelper gensecret` with no arguments to "fix" a missing one: that mints a new CA, which
+does not recover this cluster but defines a different one.
+
 If any step hangs see `docs/03-operations/provisioning.md` for deeper detail.
 
-## Step 2 — Patch kubelet bind mounts
+## Step 2 — Patch kubelet bind mounts *(no longer a step)*
 
-Two machine-config patches must be applied so kubelet can see iSCSI sockets
-(Democratic-CSI / TrueNAS) and the local-path-provisioner host directory.
-Both patches live in this directory and are idempotent.
+**Nothing to do here.** Step 1 already applied these.
 
-The `bootstrap-talos-patches.sh` helper applies them to every node in one
-shot. The node IP list is hard-coded in the script — edit `NODES=( ... )` at
-the top of the file when the cluster topology changes.
+The kubelet bind mounts for iSCSI (Democratic-CSI / TrueNAS) and the local-path-provisioner
+host directory — plus `maxPods`, the memory reserves and image GC — are declared in
+`configs/talconfig.yaml` and generated into every node's machine config:
 
-```bash
-# Preview (no changes)
-task talos:patches-check
-# or: ./scripts/bootstrap-talos-patches.sh --check
+| Setting | Declared in |
+| --- | --- |
+| `/etc/iscsi`, `/var/lib/iscsi`, `/var/lib/rancher` bind mounts | `configs/patches/all-kubelet-baseline.yaml` |
+| `systemReserved` / `kubeReserved` / `evictionHard` | `configs/patches/all-kubelet-baseline.yaml` |
+| `imageMaximumGCAge: 336h` | `configs/patches/all-kubelet-baseline.yaml` |
+| `maxPods: 200` (every node except talos03) | `configs/patches/maxpods-200.yaml` |
+| `maxPods: 60` (talos03 — deliberately lower) | `configs/patches/talos03-maxpods.yaml` |
 
-# Apply to all nodes
-task talos:patches
-# or: ./scripts/bootstrap-talos-patches.sh
-```
+`scripts/bootstrap-talos-patches.sh` and `task talos:patches` used to do this with
+`talosctl patch mc`. Both are retired and now refuse to run. Applying these by hand as well
+creates drift the next `task talos:apply-config` reverts.
 
-These trigger a kubelet restart on each node — expected and finishes in a
-few seconds. Re-running on already-patched nodes is a no-op (`talosctl
-patch mc` performs a structural merge).
-
-If you only need to patch a single node manually:
+To check a node actually has them:
 
 ```bash
-talosctl --talosconfig configs/talosconfig -e "${TALOS_NODE}" \
-  patch mc --nodes <node-ip> \
-  --patch @docs/05-runbooks/talos-kubelet-iscsi-patch.yaml
-
-talosctl --talosconfig configs/talosconfig -e "${TALOS_NODE}" \
-  patch mc --nodes <node-ip> \
-  --patch @docs/05-runbooks/talos-kubelet-localpath-patch.yaml
+task talos:verify           # regenerate and diff against every live node
+task talos:verify-dry-run   # ask each node what applying would do — read-only
 ```
 
 ## Step 3 — Merge kubeconfig
