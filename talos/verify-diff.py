@@ -20,10 +20,27 @@ def redact(k,v):
 tot=0
 for name,ip in NODES.items():
     raw=subprocess.run(["talosctl","-n",ip,"get","machineconfig","-o","yaml"],capture_output=True,text=True,timeout=90).stdout
-    live=None
+    # ⚠️ THE LIVE SPEC BECOMES MULTI-DOCUMENT AFTER THE MIGRATION IS APPLIED.
+    #
+    # talhelper's config carries a separate HostnameConfig document, so once applied the node's
+    # own machineconfig spec is a multi-doc stream. yaml.safe_load() raises ComposerError on
+    # that — meaning this tool would CRASH at exactly the moment you want to re-run it to prove
+    # the apply converged. Use safe_load_all and fold any extra live documents through the same
+    # <doc:KIND> path already used for the generated side.
+    live=None; live_extra={}
     for d in yaml.safe_load_all(raw):
         if d and "spec" in d:
-            s=d["spec"]; live=yaml.safe_load(s) if isinstance(s,str) else s; break
+            sp=d["spec"]
+            if isinstance(sp,str):
+                docs=[x for x in yaml.safe_load_all(sp) if x]
+                live=next((x for x in docs if "machine" in x), docs[0] if docs else {})
+                for x in docs:
+                    if x is live: continue
+                    kind=x.get("kind") or x.get("apiVersion") or "unknown"
+                    for k,v in flat(x).items(): live_extra[f"<doc:{kind}>.{k}"]=v
+            else:
+                live=sp
+            break
     # ⚠️ READ EVERY DOCUMENT, not just the v1alpha1 one.
     #
     # talhelper emits a MULTI-DOCUMENT config: the v1alpha1 machine config plus separate
@@ -43,7 +60,8 @@ for name,ip in NODES.items():
         kind=d.get("kind") or d.get("apiVersion") or "unknown"
         for k,v in flat(d).items(): extra[f"<doc:{kind}>.{k}"]=v
     lf,gf=flat(live or {}),flat(gen or {})
-    gf.update(extra)   # additional documents participate in the comparison
+    gf.update(extra)        # generated-side extra documents
+    lf.update(live_extra)   # live-side extra documents (present after apply)
     diffs=[]
     for k in sorted(set(lf)|set(gf)):
         a,b=lf.get(k,"<absent>"),gf.get(k,"<absent>")

@@ -136,13 +136,102 @@ talos00      192.168.1.54    control plane — LAST. It is the API endpoint; whe
                              reboots you lose kubectl and talosctl until it returns.
 ```
 
-Between each node:
+### ⚠️ DECIDE ON talos02-gpu's STALE META HOSTNAME BEFORE STARTING
+
+`talos02-gpu` carries a stale hostname in its META partition — the node's **pre-rename** name:
+
+```bash
+talosctl -n 192.168.1.144 get metakeys      # key 0x0a contains  hostname: talos02
+```
+
+talos03 and talos06 also carry key 0x0a, but their embedded hostnames match their real names.
+talos00 and talos01 have none. Only talos02-gpu is stale.
+
+**This is invisible to every config diff** — META is a partition, not machine config. It is
+also normally harmless: the configuration layer outranks the platform layer, so while config
+loads correctly nothing uses it.
+
+It is the node's **fallback identity**. If the new multi-document config ever fails to load at
+boot, the node comes up as `talos02`, registers as a **NEW Node object**, and the **15
+local-path PVs pinned to `talos02-gpu` by nodeAffinity become unschedulable** — books, dagster,
+postgres-knowledge and manyfold databases among them.
+
+Low probability. Ugly blast radius. And a reboot cycle is precisely when a config-load failure
+would occur.
+
+Optional pre-mitigation, **a write — decide deliberately**:
+
+```bash
+talosctl -n 192.168.1.144 meta delete 0x0a
+```
+
+Deleting it means the node falls back to DHCP/platform defaults for hostname if config ever
+fails to load, rather than to a wrong hardcoded name. Either choice is defensible; making it
+by accident is not.
+
+### ⚠️ SNAPSHOT EACH NODE'S CURRENT CONFIG FIRST — there is no rollback otherwise
+
+**Talos exposes no machine-config history.** `talosctl get machineconfig` shows only the
+current version, and `talosctl rollback` reverts the BOOT PARTITION, not the config. The
+obvious fallback — `configs/nodes/*.yaml` — is stale documentation by this repo's own
+admission: those nodes were hand-patched with `talosctl patch mc` for months.
+
+So the moment a node is applied, **the only accurate copy of its previous config is gone.**
+Before touching each node:
+
+```bash
+talosctl -n <ip> get machineconfig -o yaml > /tmp/pre-apply-<node>.yaml
+```
+
+Keep those until the cluster has been healthy for a week. Note that rolling back costs a
+second reboot — re-adding `stableHostname` is the same reboot-classified transition in reverse.
+
+### Between each node
 
 ```bash
 task talos:health
-kubectl get nodes                    # the node is Ready again
+kubectl get nodes                       # the node is Ready again
 talosctl -n 192.168.1.54 etcd members   # quorum intact before the next control plane
+
+# ⚠️ CNPG — THIS GATE IS NOT OPTIONAL, and the placement makes it concrete
+kubectl get cluster.postgresql.cnpg.io -A
+# EVERY row must read "Cluster in healthy state" before moving on.
 ```
+
+**Why that gate exists.** Three CNPG clusters live entirely within the first two nodes of the
+reboot order:
+
+```
+authentik-postgres   primary + replica on talos02-gpu   ·   replica on talos06
+boomtime-postgres    primary + replica on talos02-gpu   ·   replica on talos06
+bt-radar-postgres    replica on talos02-gpu             ·   primary on talos06
+```
+
+Reboot talos02-gpu, then reboot talos06 before those instances finish re-syncing, and all
+three clusters lose **every healthy instance** mid-failover. Node Ready and etcd quorum will
+both look fine while that happens — they do not know about Postgres.
+
+### Reboots are deliberately UNDRAINED — do not "improve" this with kubectl drain
+
+Talos `apply-config` reboots without consulting PodDisruptionBudgets, which is why this works.
+All 17 CNPG `*-primary` PDBs report **allowed disruptions: 0**. Adding a `kubectl drain` step
+would wedge forever on them.
+
+### Expect these to be hard-down, they are not breakage
+
+`talos02-gpu` is the first node and the most loaded (105 pods). It hosts single-instance
+databases pinned there by local-path PVs, which cannot move and will be down for the whole
+boot: **books-postgres, dagster-postgres, postgres-knowledge, manyfold-postgres**.
+
+`talos03` hosts the entire **Flux control plane** (kustomize/helm/notification controllers),
+plus single-replica **cert-manager-webhook** and **external-secrets-webhook**. During its
+reboot, Certificate and ExternalSecret admission fails cluster-wide. Transient — but do not
+sequence any other deployment during that window.
+
+`talos01` is **dual-homed** (`enp3s0`=192.168.1.177, `enp2s0`=192.168.1.178, both inside the
+kubelet `validSubnets`, and etcd already advertises both peer URLs). Pre-existing, not caused
+by this migration — but a reboot is when IP selection could flip. Check `INTERNAL-IP` after it
+returns.
 
 After the first control plane, before continuing, confirm the API cert is still right:
 
