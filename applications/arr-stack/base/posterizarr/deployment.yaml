@@ -26,6 +26,20 @@ spec:
         # Velero backup: config only
         backup.velero.io/backup-volumes: "config"
     spec:
+      # Soft-repel from talos03. Both its PVCs (posterizarr-config-nfs, kometa-config-nfs)
+      # are fatboy-nfs-appdata, so nothing binds this pod to a node — it has bounced onto
+      # talos03 twice simply because that node has the most CPU and least memory, which is
+      # what kube-scheduler's BalancedAllocation rewards for memory-heavy pods.
+      # talos03 needs its headroom for gj3n's platform DaemonSets. Preference, not a pin.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos03]
       # NFS storage - can schedule on any node
       securityContext:
         fsGroup: 1000

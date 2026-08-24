@@ -32,6 +32,19 @@ spec:
     remediation:
       retries: 3
   values:
+    # Soft-repel from talos03. gj3n's platform DaemonSets need ~1Gi/node at their measured
+    # requests, and talos03 (12.8Gi allocatable, the node that wedged) cannot pay it while
+    # also hosting singletons. Preference, not a pin.
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: kubernetes.io/hostname
+                  operator: NotIn
+                  values: [talos03]
+
     # 7d to 2026-08-24: p50 211Mi, peak 252Mi — it holds a watch on every
     # mirrored secret. The 32Mi request was 6.6x under steady state, and the
     # 256Mi limit (raised after repeated OOMKills) is only 1.02x peak, which
