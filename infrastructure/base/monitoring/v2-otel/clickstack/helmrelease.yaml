@@ -60,6 +60,41 @@ spec:
       valuesKey: CLICKSTACK_MONGO_URI
       targetPath: hyperdx.mongoUri
 
+  # Soft-repel the otel-collector from talos03, applied as a postRenderer rather than a
+  # values key. The hdx-oss-v2 1.1.1 chart is not confirmed to expose otel.affinity, and an
+  # unsupported values key is a SILENT no-op — it renders, the HelmRelease goes Ready, and
+  # nothing moves. A postRenderer patches the rendered Deployment directly, so it works
+  # regardless of what the chart chooses to expose.
+  #
+  # Strategic merge, NOT a JSON6902 `op: add`: that form fails silently when the parent
+  # path does not already exist, which is exactly the case here (the Deployment has no
+  # affinity block at all).
+  #
+  # talos03 is the 12.8Gi node that wedged; gj3n's platform DaemonSets need ~1Gi/node at
+  # their measured requests and this collector's 320Mi was in the way of the last one.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: clickstack-otel-collector
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: clickstack-otel-collector
+              spec:
+                template:
+                  spec:
+                    affinity:
+                      nodeAffinity:
+                        preferredDuringSchedulingIgnoredDuringExecution:
+                          - weight: 100
+                            preference:
+                              matchExpressions:
+                                - key: kubernetes.io/hostname
+                                  operator: NotIn
+                                  values: [talos03]
   values:
     global:
       storageClassName: local-path
