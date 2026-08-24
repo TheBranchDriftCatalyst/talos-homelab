@@ -1,0 +1,22 @@
+# talos02-gpu and talos06. Non-root access to the Intel Arc render node.
+#
+# ⚠️ THIS IS RECOVERING UNTRACKED DRIFT (TALOS-si32). These rules are ALREADY LIVE on both
+# nodes but nothing in git created them. The only occurrence in the repo was a COMMENTED-OUT
+# block in configs/nodes/, which is Talos's own generated documentation example AND is
+# gitignored. They were applied by hand and never captured.
+#
+# WHAT BREAKS WITHOUT THEM, and why it is easy to miss: /dev/dri/renderD128 defaults to
+# root-only. These rules chown it to group 44 (video) and the consumers join that group —
+# plex (fsGroup 44), jellyfin, frigate. Without them those pods still START; they simply
+# cannot open the render node, and hardware transcode silently falls back to CPU. Nothing
+# crashes, nothing alerts, and it surfaces weeks later as "Plex got slow".
+#
+# WORTH UNDERSTANDING THE LIMIT OF THIS PATTERN: it works because a DRM render node IS a
+# file, so GROUP=/MODE= has something to apply to. It does NOT generalise to Bluetooth —
+# hciN has no device node at all, only an AF_BLUETOOTH socket endpoint and a sysfs directory.
+# That case needs capabilities instead. See applications/bt-radar/base/00-namespace.yaml.
+machine:
+  udev:
+    rules:
+      - SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="44", MODE="0660"
+      - SUBSYSTEM=="drm", KERNEL=="card*", GROUP="44", MODE="0660"

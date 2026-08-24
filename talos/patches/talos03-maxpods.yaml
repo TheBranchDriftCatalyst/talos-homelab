@@ -1,0 +1,16 @@
+# talos03 ONLY. Overrides the fleet-wide maxPods: 200 down to 60.
+#
+# ⚠️ ORDER MATTERS. This must appear AFTER all-kubelet-baseline.yaml in the node's patch list
+# or the 200 wins.
+#
+# talos03 has 12.8Gi allocatable, roughly half its peers, and it wedged on memory exhaustion
+# badly enough to need a physical power cycle. 200 pods on a node that size is a number the
+# hardware cannot honour: the scheduler admits pods it has room for on paper, and the node
+# dies on real usage.
+#
+# 60 is not arbitrary — after the honest platform DaemonSet requests and the static control
+# plane, this node has room for roughly that many small pods and nothing more.
+machine:
+  kubelet:
+    extraConfig:
+      maxPods: 60

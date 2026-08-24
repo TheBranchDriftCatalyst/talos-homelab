@@ -1,0 +1,134 @@
+---
+# Talos machine configuration, declarative. TALOS-0bo8 / TALOS-dnfy.
+#
+# ⚠️ THIS IS THE NEW PATH AND IT IS NOT LIVE YET. configs/ remains the source of truth until
+# the generated output is proven to match every node. Strangler fig: build alongside, prove
+# byte-equivalence, then swap in one commit. Do not apply anything from here without reading
+# docs/05-runbooks/ and having the secrets bundle backed up.
+#
+# WHY THIS EXISTS
+#
+# Every machine-config change in this cluster has been applied by hand with `talosctl patch
+# mc`. Ten patch files live in docs/05-runbooks/ as TRACKED DOCUMENTATION of changes that were
+# applied imperatively. Nothing regenerates a node from git.
+#
+# That is not theoretical. TALOS-si32: the udev rules granting non-root access to
+# /dev/dri/renderD128 are live on both GPU nodes and exist in git ONLY as a commented-out
+# example inside a gitignored file. Rebuild either node and Plex hardware transcode dies
+# silently — the pods still start, they just cannot open the render node. TALOS-v3wy is the
+# same disease: iscsi-tools is on some nodes and not others with nothing in git explaining why.
+#
+# EVERY VALUE BELOW WAS READ OFF THE LIVE NODES, not copied from the patch files. The patches
+# document intent; the nodes are the truth, and where they disagree the node wins until someone
+# decides otherwise. That is what makes the first diff meaningful.
+clusterName: catalyst-cluster
+
+# talos00. Deliberately the endpoint AND the last node to ever be touched.
+endpoint: https://192.168.1.54:6443
+
+talosVersion: v1.13.9
+kubernetesVersion: v1.36.4
+
+# ── Cluster-wide ────────────────────────────────────────────────────────────────
+# allowSchedulingOnControlPlanes is true on every control plane. Note it does NOT
+# override machine.nodeTaints — Talos applies those unconditionally through a separate
+# code path, which cost hours to discover. See
+# docs/05-runbooks/talos-schedulable-controlplane-patch.yaml for the full story.
+allowSchedulingOnControlPlanes: true
+
+cniConfig:
+  name: none          # Cilium, deployed by Flux
+
+patches:
+  # Applied to every node. Values verified identical across all five.
+  - "@./patches/cluster-baseline.yaml"
+  - "@./patches/all-kubelet-baseline.yaml"
+  - "@./patches/network-hostentries.yaml"
+
+nodes:
+  # ── talos00 ── VM, control plane, API endpoint. 24GB RAM but RAM-limited relative to
+  # its role, hence the hard NoSchedule taint that the others deliberately do not carry.
+  - hostname: talos00
+    ipAddress: 192.168.1.54
+    controlPlane: true
+    # /dev/sda — a 248GB virtio disk. Verified with `talosctl get systemdisks`, not assumed.
+    # Declaring BOTH installDisk and installDiskSelector makes talhelper emit a selector the
+    # live node does not have; use one.
+    installDisk: /dev/sda
+    # STOCK installer, no extensions. The only node without a factory schematic.
+    talosImageURL: ghcr.io/siderolabs/installer
+    patches:
+      - "@./patches/controlplane-baseline.yaml"
+      - "@./patches/controlplane-nodelabels.yaml"
+      - "@./patches/controlplane-inlinemanifests.yaml"
+      - "@./patches/controlplane-apiserver-resources.yaml"
+      - "@./patches/talos00-controlplane-taint.yaml"
+
+  # ── talos01 ── control plane. 21GB, memory-constrained, PreferNoSchedule.
+  - hostname: talos01
+    ipAddress: 192.168.1.177
+    controlPlane: true
+    installDisk: /dev/nvme0n1
+    schematic:
+      customization:
+        systemExtensions:
+          officialExtensions:
+            - siderolabs/iscsi-tools
+    patches:
+      - "@./patches/controlplane-baseline.yaml"
+      - "@./patches/controlplane-nodelabels.yaml"
+      - "@./patches/controlplane-inlinemanifests.yaml"
+      - "@./patches/controlplane-apiserver-resources.yaml"
+      - "@./patches/memory-constrained-taint.yaml"
+
+  # ── talos02-gpu ── worker, Intel Arc. udev rules give non-root pods the render node.
+  - hostname: talos02-gpu
+    ipAddress: 192.168.1.144
+    controlPlane: false
+    installDisk: /dev/nvme0n1
+    schematic:
+      customization:
+        systemExtensions:
+          officialExtensions:
+            - siderolabs/i915
+            - siderolabs/intel-ucode
+    patches:
+      - "@./patches/gpu-udev-rules.yaml"
+
+  # ── talos03 ── control plane. 12.8GB, the smallest node in the fleet and the one that
+  # wedged on memory exhaustion. maxPods deliberately 60, not 200.
+  - hostname: talos03
+    ipAddress: 192.168.1.30
+    controlPlane: true
+    installDisk: /dev/nvme0n1
+    schematic:
+      customization:
+        systemExtensions:
+          officialExtensions:
+            - siderolabs/amd-ucode
+            - siderolabs/amdgpu
+            - siderolabs/iscsi-tools
+    patches:
+      - "@./patches/controlplane-baseline.yaml"
+      - "@./patches/controlplane-nodelabels.yaml"
+      - "@./patches/controlplane-inlinemanifests.yaml"
+      - "@./patches/controlplane-apiserver-resources.yaml"
+      - "@./patches/memory-constrained-taint.yaml"
+      - "@./patches/talos03-maxpods.yaml"
+
+  # ── talos06 ── worker, Intel Arc. Largest node. The only one with TWO Bluetooth radios.
+  - hostname: talos06
+    ipAddress: 192.168.1.19
+    controlPlane: false
+    installDisk: /dev/nvme0n1
+    schematic:
+      customization:
+        systemExtensions:
+          officialExtensions:
+            - siderolabs/intel-ucode
+            - siderolabs/i915
+            - siderolabs/mei
+    patches:
+      - "@./patches/gpu-udev-rules.yaml"
+      - "@./patches/talos06-nodelabels.yaml"
+      - "@./patches/talos06-hostentries.yaml"

@@ -1,0 +1,81 @@
+# Control-plane-only cluster settings. Split out of cluster-baseline.yaml because Talos
+# REJECTS these on workers — talhelper fails with "etcd config is only allowed on control
+# plane machines" if they are applied fleet-wide. Kept alongside the other control-plane
+# concerns rather than merged into the apiserver patch, which is about sizing specifically.
+cluster:
+  # etcd listens for metrics on all interfaces so Prometheus can scrape it, and advertises on
+  # both the LAN and the pod CIDR. Without advertisedSubnets, etcd can pick the wrong
+  # interface on a multi-homed node and peers fail to reach it.
+  etcd:
+    advertisedSubnets:
+      - 192.168.1.0/24
+      - 10.42.0.0/16
+    extraArgs:
+      listen-metrics-urls: http://0.0.0.0:2381
+
+  # bind-address 0.0.0.0 on both so their metrics are scrapable; they default to 127.0.0.1
+  # and are then invisible to Prometheus. See talos-controlplane-metrics-patch.yaml.
+  #
+  # ⚠️ THIS IS AN INTENTIONAL BEHAVIOUR CHANGE, FOUND DURING MIGRATION. Verified on the live
+  # cluster: bind-address is set on talos00 ONLY. talos01 and talos03 have neither — meaning
+  # kube-controller-manager and kube-scheduler metrics are currently unscrapable on two of
+  # three control planes, and nobody noticed because Prometheus still gets talos00's.
+  #
+  # The patch was applied to one node and never propagated. Declaring it here fixes that, so
+  # generating for talos01/talos03 will show a diff ADDING bind-address. That diff is correct
+  # and deliberate — it is the drift being closed, not the migration inventing something.
+  controllerManager:
+    extraArgs:
+      bind-address: 0.0.0.0
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 300m, memory: 512Mi}
+
+  scheduler:
+    extraArgs:
+      bind-address: 0.0.0.0
+    resources:
+      requests: {cpu: 10m, memory: 64Mi}
+      limits: {cpu: 100m, memory: 128Mi}
+
+  # ⚠️ CAPTURED AS-IS, NOT ENDORSED. The Kubernetes Dashboard is pulled straight from a
+  # GitHub raw URL at v2.7.0 — an unpinned external dependency fetched at bootstrap, and a
+  # version that is years old. Reproduced here so the migration is faithful; it should be
+  # moved into Flux like everything else, as its own change where it is visible.
+  extraManifests:
+    - https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
+
+  # PodSecurity admission. THIS IS THE CLUSTER-WIDE DEFAULT that decides what a namespace
+  # gets when it carries no pod-security label of its own.
+  #
+  # enforce: baseline is why bt-agent's DaemonSet sat at desired=4/current=0 — its pods were
+  # REJECTED AT ADMISSION for NET_ADMIN/NET_RAW/hostNetwork, not crashlooping. Namespaces
+  # that genuinely need more must label themselves privileged; see
+  # applications/bt-radar/base/00-namespace.yaml.
+  #
+  # The exemption list is hand-maintained and worth reviewing: media-prod and
+  # local-path-storage were presumably added to unblock something specific, and an exemption
+  # is permanent unless someone removes it.
+  apiServer:
+    disablePodSecurityPolicy: true
+    admissionControl:
+      - name: PodSecurity
+        configuration:
+          apiVersion: pod-security.admission.config.k8s.io/v1alpha1
+          kind: PodSecurityConfiguration
+          defaults:
+            enforce: baseline
+            enforce-version: latest
+            audit: restricted
+            audit-version: latest
+            warn: restricted
+            warn-version: latest
+          exemptions:
+            namespaces:
+              # NOTE: kube-system is NOT listed. talhelper prepends it automatically, and
+              # declaring it here produces it twice and shifts the whole list.
+              - media-prod
+              - local-path-storage
+            runtimeClasses: []
+            usernames: []
+

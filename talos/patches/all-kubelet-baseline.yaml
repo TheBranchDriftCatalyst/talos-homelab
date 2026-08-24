@@ -1,0 +1,64 @@
+# Kubelet settings common to EVERY node. Values read off the live cluster, not copied
+# from the runbook patch files — where the two disagreed, the node won.
+#
+# CONSOLIDATES four hand-applied patches that were previously separate:
+#   talos-kubelet-memory-reserve-patch.yaml   systemReserved / kubeReserved / evictionHard
+#   talos-kubelet-image-gc-patch.yaml         imageMaximumGCAge
+#   talos-kubelet-maxpods-patch.yaml          maxPods
+#   talos-kubelet-iscsi-patch.yaml            iscsi bind mounts
+#   talos-kubelet-localpath-patch.yaml        local-path bind mount
+#
+# ⚠️ FIXES DRIFT FOUND DURING MIGRATION: talos02-gpu and talos06 each had SIX extraMounts —
+# every one of the three declared TWICE — because the iscsi and local-path patches were
+# applied twice on those nodes. The control planes have three. This declares three, which
+# means generating for the GPU workers will show a diff REMOVING the duplicates. That diff
+# is intentional and correct.
+machine:
+  kubelet:
+    # Pin the node IP to the LAN subnet. On a multi-homed node kubelet can otherwise pick a
+    # CNI or bridge address and register the node with an IP nothing else can route to.
+    nodeIP:
+      validSubnets:
+        - 192.168.1.0/24
+    extraConfig:
+      # Reserve for the OS and the kubelet itself. Without this the scheduler will pack a
+      # node to the point where kubelet and containerd are competing with pods for memory,
+      # which is how talos03 wedged badly enough to need a physical power cycle.
+      systemReserved:
+        memory: 1Gi
+        cpu: 200m
+      kubeReserved:
+        memory: 1Gi
+        cpu: 200m
+      evictionHard:
+        memory.available: 500Mi
+        nodefs.available: 10%
+
+      # Talos defaults imageMaximumGCAge to 0s, which DISABLES age-based image GC entirely.
+      # Images then accumulate until the disk fills. 336h = 14 days.
+      imageMaximumGCAge: 336h
+
+      # 200, up from the kubelet default of 110. talos03 overrides this DOWN to 60 — see
+      # talos03-maxpods.yaml, and note the override must come after this in the patch list.
+      maxPods: 200
+
+    # Bind mounts. Declared ONCE each — see the drift note above.
+    #
+    # ORDER NOTE: the live nodes disagree on ordering — talos00 and talos06 have
+    # iscsi/iscsi/rancher, talos01 has it reversed. Order is functionally irrelevant for bind
+    # mounts, so this declares one canonical order and the resulting diffs on the odd node
+    # out are cosmetic. Not worth chasing; worth knowing so it is not mistaken for a real
+    # difference when reading the dry-run output.
+    extraMounts:
+      - destination: /etc/iscsi
+        type: bind
+        source: /etc/iscsi
+        options: [bind, rshared, rw]
+      - destination: /var/lib/iscsi
+        type: bind
+        source: /var/lib/iscsi
+        options: [bind, rshared, rw]
+      - destination: /var/lib/rancher
+        type: bind
+        source: /var/lib/rancher
+        options: [bind, rshared, rw]

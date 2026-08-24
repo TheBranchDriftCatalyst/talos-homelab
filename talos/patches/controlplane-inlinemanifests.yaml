@@ -1,0 +1,15 @@
+# Inline manifests, applied by Talos at bootstrap. Captured verbatim from the live cluster.
+#
+# REPRODUCED, NOT ENDORSED. This creates a cluster-admin ServiceAccount for the Kubernetes
+# Dashboard, which is itself pulled from an unpinned GitHub raw URL at v2.7.0 (see
+# extraManifests in controlplane-baseline.yaml). A bootstrap-time cluster-admin binding is
+# exactly the kind of thing that should live in Flux where it is reviewable, rather than baked
+# into machine config where nobody looks. Captured so the migration is faithful; moving it is
+# a separate, deliberate change.
+cluster:
+  inlineManifests:
+  - name: dashboard-admin-user
+    contents: "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: admin-user\n  namespace: kubernetes-dashboard\n---\n\
+      apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: admin-user\nroleRef:\n  apiGroup:\
+      \ rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: cluster-admin\nsubjects:\n- kind: ServiceAccount\n  name:\
+      \ admin-user\n  namespace: kubernetes-dashboard"

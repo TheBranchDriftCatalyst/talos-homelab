@@ -1,0 +1,38 @@
+# Cluster-level settings shared by EVERY node, captured from the live cluster during the
+# talhelper migration. These were applied at bootstrap or by hand and existed nowhere in git
+# in a form that could regenerate them.
+#
+# Read off talos00 and cross-checked against talos02-gpu. Where they differed, the difference
+# is genuine and lives in a per-node patch instead.
+cluster:
+  # kube-proxy DISABLED — Cilium provides kube-proxy replacement. The image is still declared
+  # because Talos wants it present even when disabled.
+  proxy:
+    disabled: true
+    image: registry.k8s.io/kube-proxy:v1.36.4
+
+machine:
+  features:
+    # NOTE: stableHostname is deliberately NOT declared here. talhelper sets it itself and
+    # errors with "stable hostname is already set in v1alpha1 config" if we also declare it.
+    # It IS live on the nodes; talhelper will emit it.
+    rbac: true
+    apidCheckExtKeyUsage: true
+    diskQuotaSupport: true
+    kubePrism:
+      enabled: true
+      port: 7445
+    hostDNS:
+      enabled: true
+      forwardKubeDNSToHost: true
+
+  # Pull-through mirror for the in-cluster registry. Present and IDENTICAL on all five nodes
+  # (verified by hashing the block per node). Without it, `registry.talos00/...` image
+  # references do not resolve and every locally-built image fails to pull.
+  #
+  # http, not https — the registry is served plain inside the LAN.
+  registries:
+    mirrors:
+      registry.talos00:
+        endpoints:
+          - http://registry.talos00

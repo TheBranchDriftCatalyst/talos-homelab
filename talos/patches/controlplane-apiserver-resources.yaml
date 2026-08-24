@@ -1,0 +1,25 @@
+# kube-apiserver sizing. Applies to all three control planes.
+#
+# Measured, not guessed: steady state 4886-5299Mi, 7d peak on v1.36.4 containers
+# 6644/5758/5707Mi. Cross-checked against container_memory_rss to rule out page-cache
+# inflation — 6625/5733/5671Mi, essentially identical, so it is genuine RSS.
+#
+# The PREVIOUS limit of 6Gi sat BELOW the observed 6644Mi peak. That was a live OOMKill
+# risk, not merely an accounting error; talos01's apiserver carries a restart with reason
+# Error.
+#
+# request 5Gi = what it actually uses. Not the peak — you do not request a component at its
+# peak. limit 7Gi = above the observed peak with headroom.
+#
+# ⚠️ kube-apiserver is a STATIC pod. kubelet runs it directly, bypassing the scheduler, so
+# raising its request cannot fail to schedule — it consumes allocatable and EVICTS other
+# pods instead. Applying this to a node without the headroom does not fail loudly.
+cluster:
+  apiServer:
+    resources:
+      requests:
+        cpu: 300m
+        memory: 5Gi
+      limits:
+        cpu: "2"
+        memory: 7Gi

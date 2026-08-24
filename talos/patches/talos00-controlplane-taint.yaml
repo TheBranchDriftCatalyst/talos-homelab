@@ -1,0 +1,19 @@
+# talos00 ONLY. The hard control-plane taint.
+#
+# This node is a VM with 24GB and is the API endpoint. It is meant to run the control plane
+# and little else, so it keeps the strict NoSchedule taint that talos01 and talos03
+# deliberately do NOT carry.
+#
+# ⚠️ THE TRAP THAT COST HOURS, recorded so nobody repeats it:
+# cluster.allowSchedulingOnControlPlanes DOES NOT OVERRIDE THIS. Talos's
+# NodeTaintSpecController has two independent paths — one conditional on that flag, and one
+# that iterates machine.nodeTaints UNCONDITIONALLY. The second ignores the flag completely.
+# So a cluster can have allowSchedulingOnControlPlanes: true, as this one correctly does,
+# and still be tainted, with the config appearing to contradict itself.
+#
+# That is precisely why this lives in a PER-NODE patch and never in a shared template. It was
+# in the shared template once; talos01 and talos03 inherited it on promotion and 3 of 5 nodes
+# became unschedulable. See docs/05-runbooks/talos-schedulable-controlplane-patch.yaml.
+machine:
+  nodeTaints:
+    node-role.kubernetes.io/control-plane: "NoSchedule"

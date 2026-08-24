@@ -1,0 +1,20 @@
+# talos01 and talos03. Soft taint, deliberately NOT NoSchedule.
+#
+# PreferNoSchedule NEVER BLOCKS. It is a scoring penalty: the scheduler avoids these nodes
+# when it has a choice and uses them anyway when it does not. DaemonSets still land on every
+# node, nothing goes Pending, and no toleration is required anywhere by anything.
+#
+# WHY: memory is badly distributed and the scheduler made it worse. talos03 has the MOST CPU
+# in the fleet (15600m) and the LEAST memory (12.8Gi); kube-scheduler's
+# NodeResourcesBalancedAllocation REWARDS a node whose CPU and memory utilisation are out of
+# balance, and a memory-heavy CPU-light pod is exactly what "corrects" that imbalance. So the
+# node least able to afford memory kept winning the memory-hungry workloads. It was freed
+# twice in one day, once by ~4GiB, and refilled both times within the hour.
+#
+# Nine per-workload nodeAffinity repels were written before this taint. That was whack-a-mole,
+# and each one only relocated the queue — freeing talos03 is what pushed talos01 to 95%.
+#
+# This is the OPPOSITE of talos00's taint. Contrast deliberately.
+machine:
+  nodeTaints:
+    catalyst.io/memory-constrained: "true:PreferNoSchedule"
