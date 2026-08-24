@@ -29,6 +29,20 @@ endpoint: https://192.168.1.54:6443
 talosVersion: v1.13.9
 kubernetesVersion: v1.36.4
 
+# ⚠️ THE API SERVER'S CERTIFICATE SANs. Live on all three control planes; talhelper does NOT
+# derive this from `endpoint:` and emits an empty list without it.
+#
+# Applying without this would strip 192.168.1.54 from the kube-apiserver certificate, and
+# EVERY kubectl against https://192.168.1.54:6443 would then fail TLS verification — that is
+# the whole cluster's kubeconfig, including the one an operator would use to fix it.
+#
+# Found by an exhaustive diff after a first pass MISSED it: the earlier comparison script had
+# a skip list containing "certSANs", so it reported zero unresolved differences while hiding
+# this and the per-node worker certSANs. Nothing is skipped now; secret-looking values are
+# compared by hash instead.
+additionalApiServerCertSans:
+  - 192.168.1.54
+
 # ── Cluster-wide ────────────────────────────────────────────────────────────────
 # allowSchedulingOnControlPlanes is true on every control plane. Note it does NOT
 # override machine.nodeTaints — Talos applies those unconditionally through a separate
@@ -88,6 +102,17 @@ nodes:
   - hostname: talos02-gpu
     ipAddress: 192.168.1.144
     controlPlane: false
+    # ⚠️ PRESERVED FROM LIVE. Without this, talhelper emits certSANs: [] and applying would
+    # STRIP the node's own hostname and IP from its apid certificate — potentially breaking
+    # `talosctl -n talos02-gpu` and `-n 192.168.1.144` with TLS verification errors.
+    #
+    # Found by `talosctl apply-config --dry-run`, NOT by the offline diff — certSANs was in
+    # that comparison's skip list, so it reported zero unresolved differences while hiding
+    # this. The control planes legitimately have [] because talhelper derives theirs from
+    # the cluster endpoint; the workers do not get that treatment.
+    certSANs:
+      - talos02-gpu
+      - 192.168.1.144
     installDisk: /dev/nvme0n1
     schematic:
       customization:
@@ -127,6 +152,10 @@ nodes:
   - hostname: talos06
     ipAddress: 192.168.1.19
     controlPlane: false
+    # PRESERVED FROM LIVE — see the note on talos02-gpu.
+    certSANs:
+      - talos06
+      - 192.168.1.19
     installDisk: /dev/nvme0n1
     schematic:
       customization:
