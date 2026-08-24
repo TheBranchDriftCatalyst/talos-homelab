@@ -1,0 +1,68 @@
+# TRACKED COPY. configs/nodes/ is gitignored (machine configs carry certs and tokens),
+# so this patch lives here to stay in version control, alongside the other
+# talos-*-patch.yaml files that exist for the same reason.
+#
+# Apply ONLY to the memory-constrained nodes:
+#
+#   talosctl patch mc --endpoints 192.168.1.54 --nodes 192.168.1.177 \
+#     --patch @docs/05-runbooks/talos-memory-constrained-taint-patch.yaml   # talos01
+#   talosctl patch mc --endpoints 192.168.1.54 --nodes 192.168.1.30 \
+#     --patch @docs/05-runbooks/talos-memory-constrained-taint-patch.yaml   # talos03
+#
+# WHY THIS EXISTS
+#
+# The cluster's memory is badly distributed and the scheduler makes it worse:
+#
+#     node          allocatable   at 2026-08-24
+#     talos00          23.5 Gi     45%
+#     talos01          21.2 Gi     95%   <- tainted by this patch
+#     talos02-gpu      61.0 Gi     59%
+#     talos03          12.8 Gi     97%   <- tainted by this patch
+#     talos06          61.3 Gi     60%
+#
+# Two nodes sat at 95-97% while two others held ~25 Gi of unused headroom each.
+#
+# THE MECHANISM, which is the part worth understanding. talos03 has the MOST CPU in
+# the fleet (15600m) and the LEAST memory (12.8 Gi). kube-scheduler's default
+# NodeResourcesBalancedAllocation scoring REWARDS a node whose CPU and memory
+# utilisation are out of balance — and a memory-heavy, CPU-light pod is exactly what
+# "corrects" that imbalance. So the node least able to afford memory kept winning the
+# memory-hungry workloads. It was freed twice on 2026-08-24 (once by ~4 GiB) and
+# refilled both times within the hour.
+#
+# Nine separate per-workload nodeAffinity repels were written before this patch:
+# media-experimental, cowrie, kube-state-metrics, version-checker, mimir-distributor,
+# reflector, posterizarr, clickstack-otel-collector, crossplane. That is whack-a-mole,
+# and each one only relocated the queue — freeing talos03 is what pushed talos01 to 95%.
+#
+# WHY PreferNoSchedule AND NOT NoSchedule
+#
+# PreferNoSchedule NEVER BLOCKS. It is a soft scoring penalty: the scheduler avoids
+# these nodes when it has a choice, and uses them anyway when it does not. So:
+#   - DaemonSets still land on every node. Nothing goes Pending.
+#   - Workloads that genuinely have nowhere else to go still schedule here.
+#   - No toleration is required anywhere, by anything.
+# This is the opposite of the 2026-08-23 incident, where a hard NoSchedule inherited
+# from talos00's template made 3 of 5 nodes unusable. See
+# talos-schedulable-controlplane-patch.yaml for that story — and note the trap it
+# documents still applies: machine.nodeTaints is applied UNCONDITIONALLY by Talos's
+# NodeTaintSpecController and is NOT gated by cluster.allowSchedulingOnControlPlanes.
+# That is exactly why this patch is per-node and never goes in the shared template.
+#
+# talos00 is deliberately NOT given this taint. It already carries a hard
+# control-plane NoSchedule for the same underlying reason (severely RAM-limited), and
+# adding a second, weaker taint would be redundant.
+#
+# A taint does NOT move pods that are already running. After applying, evict the
+# freely-movable workloads so they reschedule onto talos02-gpu/talos06.
+#
+# Hot-reloadable: no reboot. Talos tracks taints it owns via the node annotation
+# talos.dev/owned-taints, so removing this patch later cleans up after itself.
+#
+# Related: TALOS-3zf9 (rebalance), TALOS-7q34 (kube-apiserver sizing, which REQUIRES
+# this headroom first — a static pod's request cannot fail to schedule, it evicts
+# other pods instead).
+- op: add
+  path: /machine/nodeTaints
+  value:
+    catalyst.io/memory-constrained: "true:PreferNoSchedule"
