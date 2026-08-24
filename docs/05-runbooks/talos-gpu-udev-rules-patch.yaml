@@ -1,0 +1,41 @@
+# TRACKED COPY. configs/nodes/ is gitignored (machine configs carry certs and tokens), so
+# this patch lives here to stay in version control, alongside the other talos-*-patch.yaml.
+#
+# Apply to the GPU nodes:
+#   talosctl patch mc --endpoints 192.168.1.54 --nodes 192.168.1.144 \
+#     --patch @docs/05-runbooks/talos-gpu-udev-rules-patch.yaml   # talos02-gpu
+#   talosctl patch mc --endpoints 192.168.1.54 --nodes 192.168.1.19 \
+#     --patch @docs/05-runbooks/talos-gpu-udev-rules-patch.yaml   # talos06
+#
+# WHY THIS EXISTS — IT IS RECOVERING UNTRACKED DRIFT, NOT ADDING SOMETHING NEW
+#
+# These two rules are ALREADY LIVE on talos02-gpu and talos06 (verified 2026-08-24: both
+# nodes report them in their running machine config). But nothing in git creates them. The
+# only occurrence in the repo is a COMMENTED-OUT block at configs/nodes/worker-base.yaml:327
+# and controlplane.yaml:326 — which is Talos's own generated documentation example, not
+# applied configuration — and configs/nodes/ is gitignored.
+#
+# So they were applied by hand at some point and never captured. Rebuild a GPU node and they
+# are gone, with no error and nothing to point at.
+#
+# WHAT BREAKS WITHOUT THEM, and why it is easy to miss: /dev/dri/renderD128 defaults to
+# root-only. The rule chowns it to group 44 (video), and the consuming pods join that group:
+#   applications/arr-stack/base/plex/deployment.yaml     fsGroup: 44
+#   applications/arr-stack/base/plex/plex-gpu-patch.yaml
+#   applications/arr-stack/base/jellyfin/jellyfin-gpu-patch.yaml
+#   applications/scratch/frigate/deployment.yaml
+# Without the rule those pods still START — they just cannot open the render node, and
+# hardware transcode silently falls back to CPU or fails per-stream. Nothing crashes, nothing
+# alerts, and the symptom is "Plex got slow" weeks later.
+#
+# This is the file-permission pattern for device access on Talos, and it is worth
+# understanding its limits: it works for /dev/dri because a render node IS a file. It does
+# NOT generalise to Bluetooth, where hciN has no device node at all — only an AF_BLUETOOTH
+# socket endpoint and a sysfs directory, so there is nothing for GROUP=/MODE= to apply to.
+# See applications/bt-radar/base/00-namespace.yaml for why that case needs capabilities
+# instead. (TALOS-hb5b)
+machine:
+  udev:
+    rules:
+      - SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="44", MODE="0660"
+      - SUBSYSTEM=="drm", KERNEL=="card*", GROUP="44", MODE="0660"
