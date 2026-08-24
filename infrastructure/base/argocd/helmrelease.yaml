@@ -51,10 +51,14 @@ spec:
     # Argo CD Server
     server:
       replicas: 1
+      # p50 47Mi, peak 159Mi (3.4x on UI/API bursts). Request unchanged --
+      # already 2.7x p50 -- but it had no ceiling at all. (TALOS-gj3n)
       resources:
         requests:
           cpu: 100m
           memory: 128Mi
+        limits:
+          memory: 384Mi
       # Allow insecure mode (we're behind Traefik)
       extraArgs:
         - --insecure
@@ -64,17 +68,28 @@ spec:
     # Repo Server
     repoServer:
       replicas: 1
+      # p50 92Mi, peak 189Mi (2.1x, manifest generation). (TALOS-gj3n)
       resources:
         requests:
           cpu: 10m
-          memory: 64Mi
+          memory: 192Mi
+        limits:
+          memory: 384Mi
     # Application Controller
     controller:
       replicas: 1
+      # The largest under-declaration in argocd. Measured 7d to 2026-08-24:
+      # p50 1028Mi, peak 1616Mi against a 512Mi request -- it holds the
+      # cached manifest tree for every Application. 1536Mi request sits just
+      # below peak on purpose (peak is a refresh spike, not steady state) and
+      # the 3072Mi limit is ~1.9x peak. The cluster's own VPA independently
+      # recommends 1751Mi here. BURSTABLE. (TALOS-gj3n)
       resources:
         requests:
           cpu: 100m
-          memory: 512Mi
+          memory: 1536Mi
+        limits:
+          memory: 3072Mi
     # ApplicationSet Controller
     applicationSet:
       enabled: true

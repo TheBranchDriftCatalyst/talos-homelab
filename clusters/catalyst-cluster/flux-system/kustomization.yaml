@@ -42,6 +42,76 @@ patches:
         name: allow-webhooks
         namespace: flux-system
 
+  # Honest memory requests for the four Flux controllers (TALOS-gj3n).
+  # Measured 7d to 2026-08-24, all against a 64Mi request:
+  #   kustomize-controller     p50 147Mi  peak 293Mi
+  #   helm-controller          p50  59Mi  peak 168Mi
+  #   source-controller        p50  57Mi  peak 147Mi
+  #   notification-controller  p50  35Mi  peak  95Mi
+  # kustomize-controller was running at 2.3x its request at steady state.
+  #
+  # REQUESTS ONLY — the 1Gi limits are deliberately left alone. gotk-components
+  # wires GOMEMLIMIT to limits.memory via the downward API, so lowering a limit
+  # silently retunes that controller's garbage collector. The ticket proposes
+  # cutting these to 512/320/256/192Mi; that is a GC change dressed as a
+  # sizing change, and limits do not affect scheduling anyway. Requests first.
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: kustomize-controller
+        namespace: flux-system
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                resources:
+                  requests:
+                    memory: 192Mi
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: helm-controller
+        namespace: flux-system
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                resources:
+                  requests:
+                    memory: 128Mi
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: source-controller
+        namespace: flux-system
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                resources:
+                  requests:
+                    memory: 128Mi
+  - patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: notification-controller
+        namespace: flux-system
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                resources:
+                  requests:
+                    memory: 96Mi
+
   # NOTE 2026-05-30: removed Flux controller throttle (--concurrent=1,
   # --kube-api-qps=10, --kube-api-burst=20). It was applied on 2026-05-29
   # under the hypothesis that the meltdown cascade was caused by ~30

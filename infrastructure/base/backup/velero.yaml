@@ -86,10 +86,17 @@ spec:
     # running state in node talos00".
     deployNodeAgent: true
     nodeAgent:
+      # Measured 7d to 2026-08-24: p50 148Mi, peak 167Mi per node. The 128Mi
+      # request sat below the p50 -- the DaemonSet that performs every
+      # PodVolumeBackup was under-declared on all five nodes. BURSTABLE with
+      # the limit at ~2x peak: a node-agent OOMKilled mid-backup leaves a
+      # partial PodVolumeBackup, which is worse than the burst. (TALOS-gj3n)
       resources:
         requests:
           cpu: 100m
-          memory: 128Mi
+          memory: 192Mi
+        limits:
+          memory: 320Mi
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -98,11 +105,21 @@ spec:
           operator: Exists
           effect: NoSchedule
 
-    # Velero server resources
+    # Velero server resources.
+    # Measured 7d to 2026-08-24: p50 196Mi, peak 481Mi (2.5x) -- it spikes
+    # while assembling and uploading backup tarballs.
+    #
+    # NOTE this goes the OPPOSITE way to TALOS-gj3n, which lists velero as an
+    # over-declarer to cut from 128Mi to 96Mi. It is under-declared: the p50
+    # alone is 1.5x the current request. Cutting it would have made the
+    # backup controller invisible to the scheduler right when it is heaviest.
+    # BURSTABLE, limit at ~1.6x peak. (TALOS-gj3n)
     resources:
       requests:
         cpu: 100m
-        memory: 128Mi
+        memory: 256Mi
+      limits:
+        memory: 768Mi
 
     # Prometheus metrics
     metrics:

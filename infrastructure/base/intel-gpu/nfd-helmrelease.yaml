@@ -40,10 +40,16 @@ spec:
 
     # Worker component (runs on all nodes as DaemonSet)
     worker:
+      # Measured 7d to 2026-08-24: p50 61Mi, peak 70Mi per node. The 32Mi
+      # request was roughly half the steady state on every node, and the
+      # chart's 512Mi limit was 7x peak -- wrong in both directions.
+      # BURSTABLE 96Mi / 192Mi. (TALOS-gj3n)
       resources:
         requests:
           cpu: 5m
-          memory: 32Mi
+          memory: 96Mi
+        limits:
+          memory: 192Mi
       config:
         sources:
           cpu:
@@ -89,6 +95,15 @@ spec:
       enable: true
       replicaCount: 1
       interval: 1h
+      # Measured 7d to 2026-08-24: p50 40Mi, peak 42Mi -- flat, and it runs
+      # hourly. 128Mi request against 42Mi peak was 86Mi reserved for nothing;
+      # the chart's 1024Mi limit was 24x peak. (TALOS-gj3n)
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
 
     # Prometheus metrics
     prometheus:
