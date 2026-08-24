@@ -27,25 +27,28 @@ spec:
       annotations:
         backup.velero.io/backup-volumes: "config"
     spec:
-      # THE SECOND HALF OF THE NODE PIN. The config PVC is local-path, so its PV
-      # carries a nodeAffinity of its own and the pod could not leave that node
-      # anyway — but a hard-coded hostname here is an INDEPENDENT pin that
-      # outlives the volume. sonarr proved the failure mode: its PVC was removed
-      # and the pod stayed welded to the node while every check reported green.
-      # So the node name is a variable, substituted by Flux from cluster-settings
-      # (MEDIA_EXPERIMENTAL_NODE, default talos03). Moving the stack after a node
-      # reset is then one ConfigMap value, and backup/cronjob-restore.yaml reads
-      # the SAME variable so the restore Job provisions the fresh local-path PVCs
-      # on the node the pods are about to be sent to. Change them together or not
-      # at all.
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values: ["${MEDIA_EXPERIMENTAL_NODE:=talos03}"]
+      # UNPINNED 2026-08-24. This used to hard-code a hostname via
+      # ${MEDIA_EXPERIMENTAL_NODE:=talos03}, which was the SECOND half of a two-part
+      # pin — the local-path config PVCs carried a nodeAffinity of their own, so the
+      # pods could not leave that node regardless of what this said.
+      #
+      # Both halves are gone. The affinity is removed here, and the node-bound PVCs
+      # were deleted so the stack reprovisions wherever the scheduler puts it. The
+      # config data was explicitly disposable — nothing in this namespace was in use —
+      # and a verified backup exists on the NFS config-backup PVC regardless: that
+      # restore path was exercised end to end earlier the same day, 12/12 archives
+      # sha256-verified with correct uid:gid ownership.
+      #
+      # WHY IT WAS PINNED, kept because the failure mode is still real: sonarr once had
+      # its PVC removed and the pod stayed welded to the node anyway while every check
+      # reported green. A hostname in a Deployment outlives the volume that justified
+      # it. If these workloads ever need node-local storage again, restore the variable
+      # AND update backup/cronjob-restore.yaml, which reads the same variable so the
+      # restore Job provisions on the node the pods are being sent to. Change them
+      # together or not at all.
+      #
+      # talos03 is the 15 GiB node that wedged on memory exhaustion today; this stack
+      # was 11 of the workloads holding it there. (TALOS-3hl8.4)
       securityContext:
         fsGroup: 1000
         supplementalGroups: [100, 1000]  # 100 = Synology 'users' for NFS write
