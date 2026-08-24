@@ -1,0 +1,59 @@
+# TRACKED COPY. configs/nodes/ is gitignored (machine configs carry certs and tokens),
+# so this patch lives here to stay in version control alongside the other
+# talos-*-patch.yaml files.
+#
+#   talosctl patch mc --endpoints 192.168.1.54 --nodes <ip> \
+#     --patch @docs/05-runbooks/talos-apiserver-resources-patch.yaml
+#
+# WHY: kube-apiserver was the largest under-declaration left in the cluster.
+#
+#     declared request   2Gi        limit  6Gi
+#     actual usage       4886-5299Mi steady state
+#     7d peak (v1.36.4)  talos00 6644Mi   talos01 5758Mi   talos03 5707Mi
+#
+# The declared request was under HALF of steady-state usage, and the 6Gi limit was
+# already BELOW the observed 6644Mi peak — so the limit was a live OOMKill risk, not
+# just an accounting error. talos01's apiserver has one restart with reason Error.
+#
+# THIS IS RSS, NOT PAGE CACHE. container_memory_working_set_bytes can be inflated by
+# reclaimable page cache, so it was cross-checked against container_memory_rss over 3d
+# on the v1.36.4 containers specifically: 6625Mi / 5733Mi / 5671Mi. Essentially
+# identical to working set. The process genuinely holds this memory.
+#
+# request 5Gi  — steady state, what it actually uses. Not the peak: you do not request
+#                a component at its peak, you request what it needs to run.
+# limit   7Gi  — above the 6644Mi observed peak with headroom. Raised from 6Gi
+#                specifically because the old limit sat BELOW the peak.
+#
+# WHY THIS IS APPLIED PER-NODE AND NOT TO ALL THREE CONTROL PLANES
+#
+# kube-apiserver is a STATIC pod. kubelet runs it directly and it never passes through
+# kube-scheduler, so raising its request cannot make it fail to schedule — instead it
+# consumes node allocatable and EVICTS other pods. Applying this to a node without the
+# headroom does not fail loudly; it quietly evicts workloads.
+#
+#     talos00  12241Mi free  -> fits
+#     talos01   3864Mi free  -> fits (after moving ~2.9Gi of workloads off)
+#     talos03   2258Mi free  -> DOES NOT FIT, short by 814Mi. NOT APPLIED.
+#
+# talos03 remains at the old 2Gi/6Gi while genuinely using 5671Mi. That is still
+# under-declared, but it is the status quo rather than a regression, and it is safer
+# than deliberately oversubscribing a 12.8Gi node that has already wedged once.
+#
+# To finish talos03, ~814Mi must be freed first. The only remaining candidates there
+# are six CNPG replicas (all confirmed role=replica on healthy 3/3 clusters), which
+# would be moved by the documented rolling migration — delete a replica's PVC, let CNPG
+# rebuild it elsewhere, one at a time. That is a destructive operation on database
+# volumes and needs explicit approval.
+#
+# Related: TALOS-7q34, TALOS-3zf9, and talos-memory-constrained-taint-patch.yaml which
+# is the prerequisite that created the headroom on talos01.
+cluster:
+  apiServer:
+    resources:
+      requests:
+        cpu: 300m
+        memory: 5Gi
+      limits:
+        cpu: "2"
+        memory: 7Gi
