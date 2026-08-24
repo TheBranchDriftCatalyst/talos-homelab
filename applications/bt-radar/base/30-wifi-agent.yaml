@@ -16,7 +16,22 @@ metadata:
   name: wifi-agent
   namespace: bt-radar
 spec:
-  replicas: 1
+  # ZERO, deliberately, 2026-08-24.
+  #
+  # Two reasons, and neither is "this does not work":
+  #  1. Bluetooth is the MVP. The purpose shifted to counter-surveillance — detecting devices
+  #     NOT associated with our network — and UniFi's stat/sta only reports ASSOCIATED
+  #     clients, which is precisely the uninteresting set. stat/rogueap returns neighbouring
+  #     ACCESS POINTS, not unassociated client devices, and probe requests are not exposed
+  #     through the API at all. So WiFi cannot answer the question that now matters without
+  #     monitor mode, which needs kernel work that is not started.
+  #  2. The UniFi credentials in 1Password are wrong. The agent was getting
+  #     "login returned 429 Too Many Requests" — a lockout from repeated failed logins, and
+  #     leaving it running makes the lockout worse rather than better.
+  #
+  # Scale back to 1 when both are addressed. The code is written, deployed and correct; it is
+  # the data source that is not useful yet.
+  replicas: 0
   selector:
     matchLabels: { app: wifi-agent }
   template:
