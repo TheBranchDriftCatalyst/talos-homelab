@@ -13,14 +13,19 @@ from the existing config into a secrets bundle and reused verbatim. Proven empir
 every field matched byte-for-byte. Regenerated configs are drop-in applicable to the live nodes.
 
 - **Adopt talhelper.** It turns `talconfig.yaml` (one git-tracked, non-secret file) into
-  per-node machine configs. It structurally fixes install-disk, extensions, patches and taints.
+  per-node machine configs. It structurally fixes extensions, patches and taints, and forces the
+  install disk to be declared per node — though only the drift check can confirm it is *correct*.
+- **Install disks are per-machine facts.** Never apply a fleet-wide disk selector. Read
+  `talosctl get disks` for the specific node first — see
+  [the correction](#correction-the-devsda-claim) for what happens when you don't.
 - **Do NOT introduce SOPS.** Keep 1Password as the single secrets mechanism. The secrets bundle
   is a bootstrap-time secret that ESO architecturally cannot deliver, and SOPS would add a
   second trust root without removing the first.
 - **talhelper does not detect live drift.** That is custom work (~a script + a task), and it is
   the part that actually stops failures 1, 3 and 4 recurring. Do not skip it.
-- **The cluster is currently drifted.** Three nodes are running something other than what git
-  says. Details in [Current State](#current-state-measured-2026-08-23).
+- **Extension drift is still open.** Three nodes lack `iscsi-tools` despite git declaring it, so
+  they cannot attach Democratic-CSI volumes (TALOS-v3wy). The `install.image` and `wipe: true`
+  findings have since been fixed live — see [Status](#status-of-the-findings-in-this-doc).
 
 ---
 
@@ -46,24 +51,56 @@ what the nodes actually have.
 
 ### Install target and installer image
 
-| Node | `install.disk` | `install.image` | Running |
-| --- | --- | --- | --- |
-| talos00 | **`/dev/sda`** | `ghcr.io/siderolabs/installer:v1.13.2` (**stock**) | v1.13.9 |
-| talos01 | `diskSelector{type: nvme, size: >= 100GB}` | `factory…c9078f94:v1.13.2` | v1.13.9 |
-| talos02-gpu | `/dev/nvme0n1` | `factory…4b3cd373:`**`v1.11.1`** | v1.13.9 |
-| talos03 | `diskSelector{type: nvme, size: >= 100GB}` | `factory…1e17720b:v1.13.2` | v1.13.9 |
-| talos06 | `/dev/nvme0n1` (**`wipe: true`**) | `factory…16be3b98:`**`v1.11.1`** | v1.13.9 |
+> **Corrected 2026-08-24.** An earlier revision of this table claimed talos00's `/dev/sda` was
+> a 1 GB USB stick and recommended "fixing" it. **That was wrong**, and acting on it would have
+> broken a working control-plane config. See [the correction below](#correction-the-devsda-claim).
+> The `install.image` and `wipe` rows have also since been remediated live.
 
-Three separate live landmines:
+| Node | `install.disk` | Actual device | `install.image` (as measured) | Running |
+| --- | --- | --- | --- | --- |
+| talos00 | `/dev/sda` — **correct** | 266 GB virtio (VM; **no NVMe present**) | `ghcr.io/siderolabs/installer:v1.13.2` (**stock**) | v1.13.9 |
+| talos01 | `diskSelector{type: nvme, size: >= 100GB}` | 500 GB NVMe | `factory…c9078f94:v1.13.2` | v1.13.9 |
+| talos02-gpu | `/dev/nvme0n1` | NVMe | `factory…4b3cd373:`**`v1.11.1`** | v1.13.9 |
+| talos03 | `diskSelector{type: nvme, size: >= 100GB}` | NVMe | `factory…1e17720b:v1.13.2` | v1.13.9 |
+| talos06 | `/dev/nvme0n1` (**`wipe: true`**) | 1.0 TB NVMe | `factory…16be3b98:`**`v1.11.1`** | v1.13.9 |
 
-1. **talos00 — the control plane — still has `install.disk: /dev/sda`.** On this hardware
-   `/dev/sda` is a 1 GB USB stick. This is the failure that previously required physically
-   pulling a drive mid-boot, and it is still armed today on the most important node in the
-   cluster.
-2. **`install.image` is stale on all five nodes**, by two different amounts. Nothing updates it;
-   `talosctl upgrade` does not write it back.
-3. **talos06 carries `wipe: true`.** Combined with a wrong disk selector that is a data-loss
-   pairing, not just a failed boot.
+Live issues found — **both since remediated**, see [Status](#status-of-the-findings-in-this-doc):
+
+1. **talos06 carried `install.wipe: true`** against a 1.0 TB NVMe. A reinstall would have erased
+   it. This was the genuine data-loss landmine.
+2. **`install.image` was stale on all five nodes**, by two different amounts (two at v1.11.1
+   while running v1.13.9). Nothing updates it; `talosctl upgrade` does not write it back. This is
+   the same root cause as the extension-stripping problem in failure 2.
+
+### Correction: the `/dev/sda` claim
+
+The original brief for this design stated that on this hardware `/dev/sda` is a 1 GB USB stick,
+and this doc repeated it as a measured finding about talos00 without checking. **It is not true
+of talos00.** `talosctl get disks` on 192.168.1.54 reports:
+
+```
+266 GB  virtio   <- the install target, and talos00's only real disk
+308 MB  ata
+ 83 MB  (transient)
+```
+
+talos00 is a **VM with no NVMe device at all**, so `install.disk: /dev/sda` is correct there —
+and the fix this doc originally recommended, `installDiskSelector: {type: nvme}`, would have
+matched **nothing**. That is worse than a no-op: it would have broken a working control-plane
+config in a way that only surfaces at the next reinstall, which is exactly when you can least
+afford it.
+
+The 1 GB USB stick was real, but it was on **talos01**, during its bare-metal rebuild — a
+different node, different hardware class. `installDiskSelector{type: nvme, size: >= 100GB}` is
+right for talos01/talos03 and wrong for talos00.
+
+**The generalisable lesson, which is the reason this section exists rather than a silent edit:**
+disk identity is per-machine and cannot be reasoned about from a config file, a fleet-wide rule,
+or an inherited premise. `/dev/sda` means "first block device the kernel enumerated" and nothing
+more — it is a 1 GB stick on one box and a 266 GB boot volume on another. **Read
+`talosctl get disks` for the specific node before changing its install target**, every time. A
+uniform selector across a heterogeneous fleet is itself the bug pattern this doc is trying to
+eliminate.
 
 ### Extensions: live vs. what git declares
 
@@ -146,7 +183,7 @@ between runs. It is a client credential, not cluster identity. Nothing on the no
 at install/upgrade time, so correcting `install.disk` and `install.image` on a running node is a
 **metadata-only change with no runtime effect** — it fixes what *would* happen on the next
 install without touching the current one. That is exactly the property that makes this migration
-safe: the highest-value fix (talos00's `/dev/sda`) is also the least disruptive one. Kubelet-only
+safe: the `install.*` corrections are also the least disruptive ones. Kubelet-only
 changes restart kubelet. Anything touching networking or certs would reboot; the migration is
 sequenced to avoid those (see [Migration](#migration-plan)).
 
@@ -164,7 +201,7 @@ Mapping it against the five failures:
 
 | # | Failure | talhelper | How |
 | --- | --- | --- | --- |
-| 1 | Wrong install disk | **Fixed** | `installDisk`/`installDiskSelector` is a **required, per-node** field. There is no shared template to inherit `/dev/sda` from — omitting it fails validation. |
+| 1 | Wrong install disk | **Partly fixed** | `installDisk`/`installDiskSelector` is a **required, per-node** field, so no node can silently inherit another's install target from a shared template. But talhelper cannot know whether the value is *right* for that machine — only the Tier 2 check against `talosctl get disks` can. |
 | 2 | Extensions lost on upgrade | **Fixed** | `schematic:` per node; `gencommand upgrade` emits the correct `--image` per node. |
 | 3 | Forgotten kubelet patches | **Fixed** | Patches are declared in `talconfig.yaml` and composed into the generated config, so they exist at apply time rather than being bolted on afterwards. |
 | 4 | Unintended taint | **Fixed** | `nodeTaints` is per node. talos00 declares it; talos01/talos03 simply do not. No inheritance path exists unless you put it under `controlPlane:`. |
@@ -197,9 +234,10 @@ optional. After this, a patch is a thing the config *contains*, and a node canno
    actively harmful here (downgrade + extension strip, above). Mitigation is procedural: wrap it
    in a task, delete the raw-upgrade paths from the Taskfile, and let the drift check catch it.
 3. **`install.image` only takes effect at install/upgrade time.** Correcting it in config does
-   not retro-fix an already-installed node — talos02-gpu and talos06 keep their v1.11.1 pin until
-   their next upgrade. This is fine, but it means the fleet stays inconsistent until the next
-   upgrade cycle and the verify check must compare against *running* version, not just config.
+   not retro-fix an already-installed node, so a stale pin survives until that node's next
+   upgrade. The verify check must therefore compare against the *running* version, not just
+   config. (The specific v1.11.1 pins on talos02-gpu and talos06 were remediated on 2026-08-24 —
+   see [Status](#status-of-the-findings-in-this-doc) — but the general property stands.)
 4. **It does not back up the secrets bundle.** That is on us (see below).
 5. **It does not flash boot media.** `genurl image` produces the right ISO URL per node; a human
    still writes it to a stick for a brand-new node.
@@ -338,8 +376,14 @@ Runs in CI/lefthook against `talconfig.yaml` alone. Fast, and catches the bad co
 can ever reach a node:
 
 - `talhelper validate talconfig` — schema correctness.
-- **No node may use a bare `installDisk` matching `/dev/sd*`.** Prefer `installDiskSelector`.
-  This is failure 1 encoded as a lint rule.
+- **Every node must pin its install target deliberately** — either `installDiskSelector`, or a
+  bare `installDisk` carrying an inline comment naming the actual device and its size as read
+  from `talosctl get disks`. Do **not** lint for "no `/dev/sd*`": talos00 legitimately installs
+  to `/dev/sda` (its only disk, 266 GB virtio), and a blanket ban would have driven exactly the
+  wrong "fix". The rule enforces *justified*, not *uniform*.
+- **A selector must not be copied between nodes without re-reading their disks.** The Tier 2
+  check below is what actually validates that a selector resolves; Tier 1 can only enforce that
+  someone wrote it down on purpose.
 - **Every node must declare a `schematic`** (explicitly empty is allowed, but must be written).
 - **`nodeTaints` may only appear on an allowlist** — currently `talos00` only. Any other node
   gaining a taint fails the check with a pointer to TALOS-obvn. This is failure 4 as a lint rule.
@@ -366,7 +410,7 @@ rather than *config*:
 | --- | --- | --- |
 | live schematic ID == talconfig-derived ID | `talosctl get extensions` | talos02-gpu / talos06 missing iscsi-tools |
 | running version == `talosVersion` | `talosctl version` | the v1.11.1/v1.13.2/v1.13.9 spread |
-| resolved install disk is NVMe ≥100 GB | `talosctl get disks` | talos00's `/dev/sda` |
+| the configured install target **resolves to exactly one device**, and it is the intended one (compare against `talosctl get disks` per node — NOT a fleet-wide NVMe rule) | `talosctl get disks` | a selector that matches nothing, or the wrong disk, on any node |
 | `kubectl` node taints == talconfig `nodeTaints` | live node objects | inherited-taint regressions |
 | `maxPods` / `systemReserved` present | node status | a rebuilt node missing patches |
 
@@ -429,7 +473,10 @@ nodes:
   - hostname: talos00
     ipAddress: 192.168.1.54
     controlPlane: true
-    installDiskSelector: { type: nvme, size: ">= 100GB" }   # was /dev/sda — a 1GB USB stick
+    # talos00 is a VM with NO NVMe device — its only disk is a 266 GB virtio.
+    # Do NOT apply the nvme selector used on talos01/talos03 here: it matches
+    # nothing and silently breaks the next reinstall. Verified via talosctl get disks.
+    installDisk: /dev/sda
     schematic:
       customization:
         systemExtensions:
@@ -518,12 +565,38 @@ config migration — but it is the thing that makes the repo's claims true.
 
 ---
 
+## Status of the findings in this doc
+
+This doc was written as a design pass on 2026-08-23. Some of what it measured has since been
+acted on. Recorded here so an executor knows what is still true.
+
+| Finding | Status |
+| --- | --- |
+| talos00 `install.disk: /dev/sda` is wrong | **RETRACTED — the claim was false.** `/dev/sda` is talos00's only disk, a 266 GB virtio. See [the correction](#correction-the-devsda-claim). |
+| talos06 `install.wipe: true` on a 1.0 TB NVMe | **FIXED live 2026-08-24.** This was the real data-loss landmine. |
+| `install.image` stale on all five nodes (two at v1.11.1) | **FIXED live 2026-08-24.** All five now carry the correct installer at v1.13.9, each with its own factory schematic where it has one. |
+| talos00 / talos02-gpu / talos06 missing `iscsi-tools` | **STILL OPEN** — TALOS-v3wy. These nodes cannot attach Democratic-CSI volumes. |
+| `talosctl upgrade` defaults to the stock installer at the *client's* version | **STILL OPEN** — TALOS-ow7w. Structural; the fix is routing upgrades through `talhelper gencommand upgrade`. |
+| No live drift detection exists | **STILL OPEN** — TALOS-xxmd (static lint) and TALOS-frvi (live check). |
+
+The last three are the durable ones. **Drift detection in particular is not optional**: it is the
+only mechanism here that stops the forgotten-patch and unintended-taint failures from recurring,
+and — as the `/dev/sda` correction above demonstrates — it is also the only thing that catches a
+wrong install target, since no amount of config-file reasoning can.
+
+---
+
 ## Open questions
 
 - **Does `installDiskSelector: {type: nvme}` validate in talhelper?** The selector is the
   upstream Talos type and `type` is a valid upstream field, but this was not executed —
   talhelper is not installed locally and installing it was out of scope for a design pass.
-  Confirm in Phase 1; the fallback (`size` + `model`, or a `busPath`) is equivalent.
+  Confirm in Phase 1; the fallback (`size` + `model`, or a `busPath`) is equivalent. Applies to
+  talos01/02/03/06 only — **talos00 has no NVMe and must keep `installDisk: /dev/sda`.**
+- **Should talos00 use a selector at all?** A bare `installDisk` is order-dependent in principle.
+  In practice talos00 is a VM with one virtio disk, so `/dev/sda` is stable and a
+  `{type: virtio}` or size-based selector would buy little. Decide when authoring talconfig;
+  either way the Tier 2 check must confirm it resolves to the 266 GB device.
 - **Are talos04/talos05 (NVIDIA) in scope?** They have schematics and configs in `configs/nodes/`
   but are not in the cluster, not in `bootstrap-talos-patches.sh`, and not reporting to the API.
   They appear decommissioned or never joined. Treated as out of scope; confirm before deleting
