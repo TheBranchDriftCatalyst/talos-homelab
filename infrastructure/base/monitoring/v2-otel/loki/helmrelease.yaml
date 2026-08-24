@@ -34,6 +34,28 @@ spec:
     # when it tries to use it. (TALOS-ri7d)
     chunksCache:
       allocatedMemory: 1024
+      # SOFT preference away from the two memory-tight nodes. Measured min free
+      # memory over 7d, straight from the kernel, no modelling:
+      #   talos03  0.61 GiB   talos01  1.21 GiB   talos00  1.61 GiB
+      #   talos06 25.44 GiB   talos02-gpu 26.57 GiB
+      # talos03 actually wedged on memory exhaustion and needed a power cycle.
+      # This cache had landed on talos01 by scheduler choice with no affinity at
+      # all, because kube-scheduler packs on REQUESTS and talos01 still had
+      # request-headroom while having barely a gigabyte genuinely free.
+      #
+      # Deliberately `preferred`, not `required`: this is a hint, not a pin. If
+      # the big nodes are full or down it still schedules rather than going
+      # Pending — a cache is exactly the workload that should yield rather than
+      # block. (TALOS-3zf9)
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos01, talos03]
       resources:
         requests:
           cpu: 100m

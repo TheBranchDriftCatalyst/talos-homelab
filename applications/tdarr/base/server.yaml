@@ -86,14 +86,7 @@ spec:
             - name: flows
               mountPath: /app/flows
               readOnly: true
-          # Ran with no request at all. 7d peak 8Mi — a curl loop that exits
-          # after the flow import. 32Mi floor. (2026-08-24)
-          resources:
-            requests:
-              cpu: 10m
-              memory: 32Mi
-            limits:
-              memory: 64Mi
+          resources: {}
 
         - name: tdarr
           image: ghcr.io/haveagitgat/tdarr:2.58.02
@@ -158,16 +151,10 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 10
 
-          # Measured max_over_time 7d across all server pods: 969Mi against a
-          # 2Gi request — 1079Mi of scheduler capacity reserved and never used.
-          # BURST-NOLIM: the server marshals flow state and job metadata for
-          # every worker, and a memory limit here stalls the whole transcode
-          # queue rather than one job. Request is the honest number; nothing
-          # caps it. (2026-08-24)
           resources:
             requests:
               cpu: "500m"
-              memory: 1152Mi
+              memory: 2Gi
 
       volumes:
         - name: config
