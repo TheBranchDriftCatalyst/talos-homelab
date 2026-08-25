@@ -1,0 +1,263 @@
+---
+# Workload-readiness alerts — the `kubernetes-apps` group we never had.
+#
+# WHY THIS EXISTS (TALOS-l407)
+#   Of 90 alert rules in this cluster, exactly ONE watched deployment readiness
+#   (GPUGatewayStuckNotReady, scoped to a single workload). We do NOT run
+#   kube-prometheus-stack, so its standard `kubernetes-apps` group — the one
+#   every other cluster gets for free — was simply absent. Nothing was broken
+#   about alerting: kube-state-metrics exports the full standard set and
+#   Alertmanager reaches Discord. Nothing was WATCHING deployments.
+#
+#   What that actually cost, MEASURED against 30d of Mimir history rather than
+#   assumed — these are outages no human noticed and no alert reported:
+#     * kasa-exporter (monitoring)   62.7 HOURS with zero available replicas
+#     * hot-ones (media-private)     10.2 hours with zero available replicas
+#     * whisparr (media-private)     restart-looping now, 3.05 restarts/hour
+#
+#   CORRECTION to the premise this ticket was filed on: homeassistant was NOT
+#   ready=0 for 15 days. kube_deployment_status_replicas_available for it reads
+#   1 across all 121 samples of the last 30 days, and it has a working HTTP
+#   readiness probe. Whatever was wrong with homeassistant for those 15 days,
+#   the Deployment was Available throughout, so NONE of the rules in this file
+#   would have caught it. An app broken behind a probe that still returns 200 is
+#   invisible to every replica-count rule by construction. That class needs
+#   blackbox/synthetic probing, and blackbox-exporter currently targets only 2
+#   endpoints (grafana, mimir-alertmanager) — homeassistant is not among them.
+#   Do not let this file create a false sense of coverage for that failure mode.
+#
+# THESE RULES ARE TUNED FOR THIS CLUSTER — do not resync from upstream blindly.
+#
+#   1. job="kube-state-metrics" IS PINNED ON EVERY SELECTOR, AND IT IS LOAD-BEARING.
+#      A dead `kubernetes-service-endpoints` scrape job also collected KSM until
+#      ~2026-08-07 and left stale series behind with a DIFFERENT label schema:
+#      the real namespace landed in `exported_namespace` while `namespace` was
+#      overwritten with "monitoring". Those series are not currently ingested, so
+#      an instant query looks clean, but any range/lookback that reaches back far
+#      enough resurrects them. Measured: an unpinned 30d duration query on whisparr
+#      returned 17.4 days from the phantom series alongside the true 4 minutes.
+#      Unpinned, these rules would report real outages in the WRONG NAMESPACE.
+#
+#   2. `spec_replicas > 0` guards every deployment rule. This cluster has 19
+#      DELIBERATELY scaled-to-zero deployments (all of catalyst-data's dagster/
+#      knowledge-graph set, boomtime-dev, boomtime-worker, crossplane-demo's two,
+#      gpu-broker, ollama-gateway, clustermesh-apiserver, wifi-agent, ...). An
+#      `available != spec` rule pasted from upstream treats "intentionally off"
+#      and "dead" identically. Every one of those 19 would have been a false page.
+#
+#   3. bt-agent is EXCLUDED from the DaemonSet and CrashLooping rules. It is
+#      4-desired/0-ready BY DESIGN: it exits on a preflight check because this
+#      kernel has no Bluetooth (CFG80211/BT ABI work, see TALOS wifi/bt tickets).
+#      It restarts ~12x/hour forever. Left in, it is a permanent false positive
+#      on day one, and an alert that cries wolf on day one is an alert that gets
+#      muted in week one. UN-EXCLUDE IT once the Bluetooth-capable kernel lands —
+#      at that point bt-agent not being ready is genuinely worth knowing.
+#
+#   4. CrashLooping keys on restart RATE, never on pod phase. Node reboots leave
+#      25-30 phantom `Error`/Failed pods behind that are NOT failures; a
+#      phase-based rule alerts on all of them after every reboot. Restart rate is
+#      structurally immune: a rescheduled pod is a NEW pod with restart count 0,
+#      so reboot churn contributes nothing. The `> 2 in 1h` threshold sits above
+#      in-place restart noise (a genuine one-off restart scores 1) and below the
+#      live crash-looper it must catch — whisparr measured 3.05 restarts/hour.
+#
+#   5. Total-outage and partial-degradation rules are kept DISJOINT (the
+#      `> 0` / `== 0` split) rather than upstream's single overlapping rule, so a
+#      fully-dead workload pages once as critical instead of also raising a
+#      warning. Alertmanager's inhibit_rule matches on equal alertname and could
+#      not have suppressed the duplicate.
+#
+# ROUTING: no new plumbing. severity=warning falls through to the top-level
+# `discord-default` receiver; severity=critical is picked up by the existing
+# `severity="critical"` route to `discord-critical`.
+#
+# DELIVERY: Alloy's `mimir.rules.kubernetes` component watches PrometheusRule
+# CRDs cluster-wide with no selector and syncs them to the Mimir ruler API
+# (tenant `anonymous`) every 30s. Mimir caps groups at 50 rules /
+# 100 groups-per-tenant; this adds 1 group of 7.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: workload-readiness-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: workload-readiness
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # Deployments
+    # ----------------------------------------------------------------
+    - name: kubernetes-apps.deployments
+      rules:
+        # THE rule of this file. Verified against history: it would have fired
+        # on kasa-exporter (62.7h at zero available) and hot-ones (10.2h), both
+        # of which passed unnoticed. Critical, because zero available replicas
+        # means the service is entirely gone, not degraded.
+        # for: 1h is deliberate — long enough that image pulls, node drains and
+        # Flux rollouts never trip it, short enough that a multi-day outage is
+        # impossible to sit through in silence.
+        - alert: KubeDeploymentNoAvailableReplicas
+          expr: |
+            kube_deployment_status_replicas_available{job="kube-state-metrics"} == 0
+            and on(namespace, deployment)
+            kube_deployment_spec_replicas{job="kube-state-metrics"} > 0
+          for: 1h
+          labels:
+            severity: critical
+            category: workload
+            component: deployment
+          annotations:
+            summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has NO available replicas'
+            description: >-
+              Deployment {{ $labels.namespace }}/{{ $labels.deployment }} wants
+              replicas but has had ZERO available for over an hour. The service is
+              completely down, not degraded. Check:
+              kubectl -n {{ $labels.namespace }} describe deploy {{ $labels.deployment }}
+              then the pod events / logs. This alert exists because nothing in
+              this cluster watched deployment readiness at all — kasa-exporter
+              spent 62.7 hours in exactly this state unnoticed (TALOS-l407).
+
+        # Partial degradation only (available > 0 but short of spec). Disjoint
+        # from the critical rule above so a dead workload pages exactly once.
+        - alert: KubeDeploymentReplicasMismatch
+          expr: |
+            (
+              kube_deployment_status_replicas_available{job="kube-state-metrics"}
+                < on(namespace, deployment)
+              kube_deployment_spec_replicas{job="kube-state-metrics"}
+            )
+            and
+            kube_deployment_status_replicas_available{job="kube-state-metrics"} > 0
+          for: 15m
+          labels:
+            severity: warning
+            category: workload
+            component: deployment
+          annotations:
+            summary: 'Deployment {{ $labels.namespace }}/{{ $labels.deployment }} is short of its desired replicas'
+            description: >-
+              Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has only
+              {{ $value }} available replica(s), fewer than desired, for over 15
+              minutes. Still serving, but with no redundancy headroom.
+
+    # ----------------------------------------------------------------
+    # StatefulSets — 27 in this cluster, incl. CNPG postgres members
+    # ----------------------------------------------------------------
+    - name: kubernetes-apps.statefulsets
+      rules:
+        - alert: KubeStatefulSetNoAvailableReplicas
+          expr: |
+            kube_statefulset_status_replicas_ready{job="kube-state-metrics"} == 0
+            and on(namespace, statefulset)
+            kube_statefulset_replicas{job="kube-state-metrics"} > 0
+          for: 1h
+          labels:
+            severity: critical
+            category: workload
+            component: statefulset
+          annotations:
+            summary: 'StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has NO ready replicas'
+            description: >-
+              StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} wants
+              replicas but none are ready, for over an hour. For a database this
+              means total unavailability — check for a stuck PVC attach or a pod
+              wedged on its ordinal predecessor (StatefulSets roll strictly in
+              order, so one stuck pod halts the whole set).
+
+        - alert: KubeStatefulSetReplicasMismatch
+          expr: |
+            (
+              kube_statefulset_status_replicas_ready{job="kube-state-metrics"}
+                < on(namespace, statefulset)
+              kube_statefulset_replicas{job="kube-state-metrics"}
+            )
+            and
+            kube_statefulset_status_replicas_ready{job="kube-state-metrics"} > 0
+          for: 15m
+          labels:
+            severity: warning
+            category: workload
+            component: statefulset
+          annotations:
+            summary: 'StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} is short of its desired replicas'
+            description: >-
+              StatefulSet {{ $labels.namespace }}/{{ $labels.statefulset }} has
+              {{ $value }} ready replica(s), fewer than desired, for over 15
+              minutes. On a CNPG cluster this is a lost postgres member — quorum
+              may be at risk if another goes.
+
+    # ----------------------------------------------------------------
+    # DaemonSets
+    # ----------------------------------------------------------------
+    - name: kubernetes-apps.daemonsets
+      rules:
+        # bt-agent excluded — permanently 4-desired/0-ready by design (no
+        # Bluetooth in this kernel). Remove the `unless` clause when the
+        # BT-capable kernel lands.
+        - alert: KubeDaemonSetNotScheduled
+          expr: |
+            (
+              kube_daemonset_status_desired_number_scheduled{job="kube-state-metrics"}
+                -
+              kube_daemonset_status_number_ready{job="kube-state-metrics"}
+              > 0
+            )
+            unless on(namespace, daemonset)
+            kube_daemonset_status_desired_number_scheduled{job="kube-state-metrics", namespace="bt-radar", daemonset="bt-agent"}
+          for: 15m
+          labels:
+            severity: warning
+            category: workload
+            component: daemonset
+          annotations:
+            summary: 'DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has pods that are not ready'
+            description: >-
+              {{ $value }} pod(s) of DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }}
+              are desired but not ready, for over 15 minutes. A DaemonSet gap
+              usually means one NODE is unhealthy or is missing a taint
+              toleration — check which node is short.
+
+        - alert: KubeDaemonSetMisScheduled
+          expr: |
+            kube_daemonset_status_number_misscheduled{job="kube-state-metrics"} > 0
+          for: 15m
+          labels:
+            severity: warning
+            category: workload
+            component: daemonset
+          annotations:
+            summary: 'DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }} has mis-scheduled pods'
+            description: >-
+              {{ $value }} pod(s) of DaemonSet {{ $labels.namespace }}/{{ $labels.daemonset }}
+              are running on nodes they should not be — usually a nodeSelector or
+              taint changed under a running DaemonSet.
+
+    # ----------------------------------------------------------------
+    # Pods
+    # ----------------------------------------------------------------
+    - name: kubernetes-apps.pods
+      rules:
+        # Restart RATE, not pod phase — see note 4 in the file header.
+        # bt-agent excluded (restarts ~12x/hour by design).
+        - alert: KubePodCrashLooping
+          expr: |
+            (
+              increase(kube_pod_container_status_restarts_total{job="kube-state-metrics"}[1h]) > 2
+            )
+            unless on(namespace, pod, container)
+            kube_pod_container_status_restarts_total{job="kube-state-metrics", namespace="bt-radar", container="bt-agent"}
+          for: 15m
+          labels:
+            severity: warning
+            category: workload
+            component: pod
+          annotations:
+            summary: 'Container {{ $labels.namespace }}/{{ $labels.pod }}/{{ $labels.container }} is restart-looping'
+            description: >-
+              Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }}
+              has restarted {{ printf "%.1f" $value }} times in the last hour.
+              Note the deployment can still report itself Available while this
+              happens — a container that recovers between crashes never trips a
+              replica-count rule, which is exactly why this rule is separate.
+              Check `kubectl -n {{ $labels.namespace }} logs {{ $labels.pod }} --previous`.
