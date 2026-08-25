@@ -51,6 +51,38 @@ spec:
       enabled: true
       mountPropagation: HostToContainer
 
+    # RAPL power metrics — node power draw in watts
+    #
+    # The `rapl` collector is ENABLED BY DEFAULT in node-exporter, so there is
+    # no --collector.rapl flag to add. It was already running on every scrape
+    # and failing silently:
+    #   node_scrape_collector_success{collector="rapl"} 0
+    #
+    # The cause is permissions, not configuration. /sys/devices/virtual/powercap/
+    # */energy_uj is mode 0400 root-only (the PLATYPUS side-channel mitigation,
+    # CVE-2020-8694) and the exporter runs as uid 65534. Kubernetes cannot grant
+    # ambient capabilities, so adding DAC_READ_SEARCH lands it in CapBnd but not
+    # CapEff and does NOT work — the only real options are running the exporter
+    # as root or relaxing the file mode. This chart-native init container does
+    # the latter: chown root:65534 + chmod g+r on energy_uj only. The files end
+    # up group-readable rather than world-readable, and the long-running,
+    # host-network exporter stays unprivileged.
+    #
+    # Image is pinned to the same node-exporter image the DaemonSet already runs
+    # (it is busybox-based and has find/chown/chmod) instead of the chart default
+    # quay.io/prometheus/busybox:latest, which would add a new :latest image to
+    # the fleet — node-dependent under IfNotPresent, and unparseable by
+    # version-checker (TALOS-zpoa). Keep this tag in step with the chart's
+    # appVersion when bumping the chart.
+    permissionInitContainer:
+      image:
+        registry: quay.io
+        repository: prometheus/node-exporter
+        tag: v1.12.1
+        pullPolicy: IfNotPresent
+      fixes:
+        rapl: true
+
     # Collectors configuration
     extraArgs:
       - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
