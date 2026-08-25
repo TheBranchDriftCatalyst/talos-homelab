@@ -79,8 +79,20 @@ spec:
             requests:
               cpu: 10m
               memory: 128Mi
-            limits:
-              memory: 512Mi
+            # NO LIMITS — arr apps are allowed to burst (user decision 2026-08-24).
+            #
+            # A CPU limit is a CFS quota: the container is hard-stopped once it burns its
+            # slice in a 100ms window, which starves the HTTP handler and makes liveness
+            # probes time out on a process that is working fine. That is exactly what was
+            # CrashLooping whisparr.
+            #
+            # A memory limit turns a transient scan spike into an OOMKill. pulsarr uses knex
+            # migrations against CNPG and sits at ~225Mi steady; a 512Mi ceiling left very
+            # little headroom for a full-library sync.
+            #
+            # Every sibling in media/ (sonarr, radarr, prowlarr, sabnzbd, jellyfin, plex,
+            # qbittorrent, tautulli, kometa) runs requests-only. Requests are what the
+            # scheduler packs against, so capacity is still accounted for.
       volumes:
         - name: data
           persistentVolumeClaim:
