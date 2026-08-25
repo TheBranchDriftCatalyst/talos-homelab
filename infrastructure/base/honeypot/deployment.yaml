@@ -22,11 +22,27 @@ spec:
         app.kubernetes.io/name: cowrie
         app.kubernetes.io/component: honeypot
     spec:
+      # NO KUBERNETES API CREDENTIAL IN A BOX WE INVITE ATTACKERS INTO.
+      # Without this the API server projects a live serviceaccount token into
+      # every container at /var/run/secrets/kubernetes.io/serviceaccount. The
+      # default SA is unprivileged and the egress policy blocks the apiserver
+      # outright (verified: 10.96.0.1:443 and node:6443 both unreachable from
+      # the pod), so this is defence in depth rather than a live hole — but a
+      # real cluster credential sitting inside the honeypot is exactly the kind
+      # of thing that becomes a hole the moment one of those other controls is
+      # relaxed. The projected volume disappears entirely with this set.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        # Pod-level so both containers inherit it. Blocks the exotic syscalls
+        # (keyctl, ptrace, userfaultfd, bpf...) that container escapes are
+        # built from. Cowrie is a Python SSH server and busybox is tail(1);
+        # neither needs anything outside the default profile.
+        seccompProfile:
+          type: RuntimeDefault
       # Moved off talos03. The node choice here was always arbitrary — the honeypot
       # Kustomization says as much ("dedicating a box is a later phase") — and cowrie
       # has no node-bound storage: its volumes are a ConfigMap and two emptyDirs.

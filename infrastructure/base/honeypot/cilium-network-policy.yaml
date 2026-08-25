@@ -12,7 +12,37 @@ spec:
   egress:
     - {}
 ---
-# Allow ingress on honeypot ports from LAN and any external source (hostPort)
+# Ingress to the honeypot ports. This is the rule that decides whether the
+# honeypot works at all once WAN:22 is forwarded to talos06:2222.
+#
+# THIS RULE USED TO LIE. Its comment claimed "LAN and any external source" while
+# the rule listed only 192.168.1.0/24 and 10.244.0.0/16. Under default-deny that
+# means Cilium drops every packet from a real attacker, and the honeypot goes on
+# reporting the same quiet numbers it reports now — indistinguishable from "no
+# attacks". Silence is this system's failure mode AND its success mode, so a gap
+# here is invisible by construction. (TALOS-u3l follow-up.)
+#
+# WHY `fromEntities: [world]` AND NOT `fromCIDR: 0.0.0.0/0`
+#   They are equivalent in effect — Cilium stamps `reserved:world` on CIDR
+#   identities, and the docs define allowing `world` as identical to allowing
+#   0.0.0.0/0. The difference is what each one SAYS and what it costs:
+#     * `world` is a single reserved identity. No prefix is allocated, no ipcache
+#       churn, and it cannot shadow the more-specific CIDR rules below. A /0 CIDR
+#       rule inserts a prefix that participates in longest-prefix identity
+#       selection alongside 192.168.1.0/24 and 10.244.0.0/16.
+#     * `world` means exactly "originated outside this cluster", which is the
+#       actual intent. `0.0.0.0/0` means "literally everything" and would make
+#       the two deliberate, documented rules below decorative.
+#   Note `world` excludes the `host` and `remote-node` identities, and this
+#   cluster runs `policy-cidr-match-mode` empty (verified in cilium-config), so
+#   fromCIDR does not match node IPs either. Neither rule form grants the nodes
+#   anything; that is intentional and unchanged.
+#
+# PURELY ADDITIVE. The LAN and pod-CIDR rules are retained deliberately:
+# 10.244.0.0/16 is in-cluster, is NOT covered by `world`, and is load-bearing —
+# it is what lets the kubelet liveness probe through. Measured: every
+# session.connect in the live log today comes from 10.244.3.223, a pod-CIDR
+# address. Remove that rule and the probe fails and the pod restart-loops.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -23,7 +53,21 @@ spec:
     matchLabels:
       app: cowrie
   ingress:
-    # Allow from LAN CIDR (192.168.1.0/24) — direct hostPort access
+    # THE INTERNET. This is the rule the honeypot exists for. Inert until the
+    # user forwards WAN:22 -> 192.168.1.19:2222 at the router; nothing in this
+    # repo creates that path.
+    - fromEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "2222"
+              protocol: TCP
+            - port: "2223"
+              protocol: TCP
+    # Allow from LAN CIDR (192.168.1.0/24) — direct hostPort access.
+    # Subsumed by `world` above (LAN hosts that are not cluster nodes carry
+    # reserved:world), but kept as the explicit statement of intent so that
+    # narrowing the world rule later does not silently sever LAN testing.
     - fromCIDR:
         - 192.168.1.0/24
       toPorts:
@@ -32,7 +76,8 @@ spec:
               protocol: TCP
             - port: "2223"
               protocol: TCP
-    # Allow from pod network (node kubelet health checks)
+    # Allow from pod network (node kubelet health checks). NOT redundant —
+    # in-cluster, so `world` does not cover it. See note above.
     - fromCIDR:
         - 10.244.0.0/16
       toPorts:
@@ -42,7 +87,23 @@ spec:
             - port: "2223"
               protocol: TCP
 ---
-# Allow egress to kube-dns only (required for pod startup)
+# Allow egress to kube-dns only (required for pod startup).
+#
+# ⚠️ DO NOT ADD EGRESS RULES HERE. An SSH honeypot is a machine you are inviting
+# attackers to log into; the threat model is that they SUCCEED. Default-deny
+# egress is the single control that makes that a non-event rather than a
+# breach — no lateral movement, no outbound scanning, no C2, no exfil, no
+# becoming someone's DDoS node.
+#
+# VERIFIED 2026-08-24 by probing from inside the pod's network namespace, not by
+# reading this file: talos06 apid/kubelet/apiserver, every other node,
+# kubernetes.default, the LAN gateway and the open internet are ALL unreachable.
+# Cilium blocks pod->own-node egress here despite enable-host-firewall=false.
+#
+# Known residual: kube-dns performs full internet recursion, so DNS is a live
+# low-bandwidth exfil and topology-oracle channel for anyone who achieves real
+# RCE in the cowrie process. Restricting it is an egress decision and therefore
+# the operator's call — see docs/05-runbooks/cowrie-public-exposure.md.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

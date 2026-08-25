@@ -16,9 +16,17 @@
 #   version   SSH client version string
 #
 # NOTE: pod-CIDR (10.244.x.x) traffic is kubelet/health-probe noise and is
-# filtered out (src_ip !~ `10.244..*`) on the attacker-IP / unique-IP panels so
-# it does not skew counts. cowrie.command.input already originates only from real
-# interactive sessions, so the command panels need no such filter.
+# filtered out (src_ip !~ `10.244..*`) on EVERY panel that counts sessions or
+# source IPs, so it does not skew counts. That now includes the two session
+# panels — "Sessions" (id 3) and "Sessions Over Time" (id 22) — which did NOT
+# filter it and therefore reported ~367 phantom "sessions" per 24h that were
+# entirely liveness-probe connects. A honeypot dashboard showing steady activity
+# that is really its own health check is the exact false-comfort reading this
+# stack exists to avoid; measured on the live pod, 100% of session.connect events
+# came from the probe address 10.244.3.223. (2026-08-24, pre-exposure audit.)
+#
+# cowrie.command.input already originates only from real interactive sessions, so
+# the command panels need no such filter.
 #
 # Datasource: Loki (uid loki-v2). Metrics datasource (mimir) is not used here.
 apiVersion: grafana.integreatly.org/v1beta1
