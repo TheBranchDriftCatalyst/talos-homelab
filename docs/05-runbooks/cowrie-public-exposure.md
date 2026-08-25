@@ -184,14 +184,32 @@ operator decision rather than changed unrequested.
    the **Mimir** ruler, and Cowrie's data is **log** data in Loki. No Loki ruler and no
    `loki.rules.kubernetes` component exists. See the follow-up ticket for the recommended
    approach (derive a counter from the log stream in Alloy, then alert on the metric in
-   Mimir) and for why simply adding a Loki ruler is hazardous here.
-3. **DNS confinement.** See "The residual hole" above.
-4. **`readOnlyRootFilesystem: true`** on the cowrie container.
+   Mimir) and for why simply adding a Loki ruler is hazardous here. — **TALOS-qmj9**
+3. **DNS confinement.** See "The residual hole" above. — **TALOS-b6ky**
+4. **`readOnlyRootFilesystem: true`** on the cowrie container, and `sizeLimit` on the two
+   emptyDirs. — **TALOS-rr8b**
 
 ---
 
 ## Related Issues
 
+- **TALOS-ezcu** — the port-forward itself. OPERATOR ACTION, deliberately not automated.
+  Its hardening gate is now met: all 14 `honeypot-security` tests pass.
+- **TALOS-ik9o** — public-exposure epic (its description was stale on the node/IP and on
+  whether the netpol admitted external traffic; corrected in comments).
+- **TALOS-qmj9** — first-contact alerting (proposed, not built).
+- **TALOS-b6ky** — DNS-tunnelling exfil pentest. The pivotal question is answered:
+  CoreDNS *does* recurse to the internet.
+- **TALOS-rr8b** — deferred hardening (readOnlyRootFilesystem, emptyDir sizeLimit).
 - TALOS-u3l — honeypot deployment and its exposure posture
 - TALOS-hg7 — honeypot epic
 - TALOS-l05 / TALOS-e9h — log shipping and CrowdSec acquisition
+
+## Verification State
+
+Everything in this runbook was measured against the live cluster on 2026-08-24, not
+inferred from manifests. Re-run the acceptance suite before and after any change here:
+
+```bash
+cd infrastructure/base/honeypot/tests && npx jest --runInBand   # expect 14/14
+```
