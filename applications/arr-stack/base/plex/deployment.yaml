@@ -45,39 +45,6 @@ spec:
               mountPath: /db-local
             - name: migration-scripts
               mountPath: /scripts
-
-        # Stage a CURRENT Intel VAAPI (iHD) driver for Plex to use instead of its own.
-        #
-        # WHY: linuxserver/plex ships an ancient bundled VAAPI stack (musl libva 2.21.0 +
-        # iHD 24.1.5). On this Meteor Lake Xe media engine (PCI 8086:7D51) that old driver
-        # decodes AV1 unreliably — it stalls mid-stream, which is the "your computer isn't
-        # powerful enough" / playback-freeze symptom on AV1 sources. The hardware is fine; the
-        # bundled driver is the problem.
-        #
-        # This image (thadamski/plex-vaapi-driver) ships intel-media-driver 26.1.6 + gmmlib,
-        # built RELR-free (-Wl,-z,nopackrelocs, static libstdc++/libgcc) so Plex's pre-2022
-        # musl loader can actually load it — a stock apt driver has RELR relocations and Plex's
-        # musl crashes the transcoder on load, which is exactly why this purpose-built image
-        # exists and a naive apt-install does NOT work. 26.1.6 carries the AV1-decode fixes
-        # from media-driver 26.1.5 that we need.
-        #
-        # It is DECOUPLED from Plex: Plex stays on :latest and updates independently — this only
-        # provides the driver via LIBVA_DRIVERS_PATH, so it cannot hold Plex back.
-        #
-        # ⚠️ FALLBACK if this project ever goes stale (single maintainer, last release v1.0.1
-        # 2026-04): replace this init container with our own that builds current
-        # github.com/intel/media-driver from source with the SAME RELR-free link flags above,
-        # copying the resulting iHD_drv_video.so into the shared /vaapi volume. Same contract,
-        # no third-party image. The env vars on the plex container do not change.
-        - name: vaapi-driver
-          # Version tag, not digest-pinned — bump this line to adopt a newer driver build
-          # (check github.com/thadamski/plex-vaapi-driver/releases). It's a versioned tag, so
-          # it's immutable and reproducible, just easy to update.
-          image: ghcr.io/thadamski/plex-vaapi-driver:1.0.1
-          command: ["sh", "-c", "cp -aP /opt/vaapi/. /vaapi/ && ls -la /vaapi"]
-          volumeMounts:
-            - name: vaapi-driver
-              mountPath: /vaapi
       containers:
         - name: plex
           image: lscr.io/linuxserver/plex:latest
@@ -98,12 +65,6 @@ spec:
               value: 'docker'
             - name: PLEX_CLAIM
               value: '' # Set this for initial setup: https://www.plex.tv/claim/
-            # Use the current iHD driver staged by the vaapi-driver init container above,
-            # NOT Plex's stale bundled one. This is what makes AV1 HW decode reliable.
-            - name: LIBVA_DRIVER_NAME
-              value: 'iHD'
-            - name: LIBVA_DRIVERS_PATH
-              value: '/vaapi'
           ports:
             - name: http
               containerPort: 32400
@@ -126,9 +87,6 @@ spec:
             # Local storage for SQLite databases (symlinked from /config)
             - name: db-local
               mountPath: /db-local
-            # Current Intel iHD VAAPI driver, staged by the vaapi-driver init container
-            - name: vaapi-driver
-              mountPath: /vaapi
           livenessProbe:
             httpGet:
               path: /web/index.html
@@ -169,10 +127,6 @@ spec:
         #   persistentVolumeClaim:
         #     claimName: synology-music
         - name: transcode
-          emptyDir: {}
-        # Current Intel iHD VAAPI driver, populated by the vaapi-driver init container and
-        # consumed by Plex via LIBVA_DRIVERS_PATH. Ephemeral: re-staged fresh on every start.
-        - name: vaapi-driver
           emptyDir: {}
         # Local storage for SQLite databases - avoids NFS locking issues
         - name: db-local
