@@ -335,116 +335,113 @@ spec:
 
               METRICS_PORT = 9091
               QBIT_URL = "http://localhost:8080"
+              GLUETUN_API = "http://localhost:8000"
               QBIT_USER = os.environ["QBIT_USER"]
               QBIT_PASS = os.environ["QBIT_PASS"]
               PORT_FILE = "/tmp/gluetun/forwarded_port"
 
-              last_synced_port = None
+              # Exposed for the metrics endpoint.
+              state = {"forwarded": 0, "qbit": 0, "up": 0}
 
-              def get_qbit_cookie():
-                  """Login to qBittorrent and get session cookie"""
+              def log(m):
+                  print(m, flush=True)
+
+              def get_cookie():
                   try:
-                      data = urllib.parse.urlencode({"username": QBIT_USER, "password": QBIT_PASS}).encode()
-                      req = urllib.request.Request(f"{QBIT_URL}/api/v2/auth/login", data=data)
-                      with urllib.request.urlopen(req, timeout=5) as r:
-                          for cookie in r.headers.get_all("Set-Cookie") or []:
-                              if "SID=" in cookie:
-                                  return cookie.split(";")[0]
+                      d = urllib.parse.urlencode({"username": QBIT_USER, "password": QBIT_PASS}).encode()
+                      r = urllib.request.urlopen(urllib.request.Request(f"{QBIT_URL}/api/v2/auth/login", data=d), timeout=5)
+                      for c in (r.headers.get_all("Set-Cookie") or []):
+                          if "SID=" in c:
+                              return c.split(";")[0]
                   except Exception as e:
-                      print(f"Login failed: {e}")
+                      log(f"login failed: {e}")
                   return None
 
-              def sync_port():
-                  """Sync forwarded port from gluetun to qBittorrent"""
-                  global last_synced_port
+              def forwarded_port():
+                  # gluetun writes the file on connect; fall back to its control API.
                   try:
-                      if not os.path.exists(PORT_FILE):
-                          return
-                      with open(PORT_FILE) as f:
-                          port = f.read().strip()
-                      if not port or port == last_synced_port:
-                          return
+                      v = open(PORT_FILE).read().strip()
+                      if v:
+                          return int(v)
+                  except Exception:
+                      pass
+                  try:
+                      r = urllib.request.urlopen(f"{GLUETUN_API}/v1/openvpn/portforwarded", timeout=5)
+                      return int(json.loads(r.read()).get("port", 0))
+                  except Exception:
+                      return 0
 
-                      cookie = get_qbit_cookie()
-                      if not cookie:
-                          return
+              def qbit_get_port(cookie):
+                  req = urllib.request.Request(f"{QBIT_URL}/api/v2/app/preferences")
+                  req.add_header("Cookie", cookie)
+                  return json.loads(urllib.request.urlopen(req, timeout=5).read()).get("listen_port")
 
-                      # Update qBittorrent listening port
-                      prefs = json.dumps({"listen_port": int(port)})
-                      data = urllib.parse.urlencode({"json": prefs}).encode()
-                      req = urllib.request.Request(f"{QBIT_URL}/api/v2/app/setPreferences", data=data)
-                      req.add_header("Cookie", cookie)
-                      with urllib.request.urlopen(req, timeout=5):
-                          print(f"Synced port {port} to qBittorrent")
-                          last_synced_port = port
-                  except Exception as e:
-                      print(f"Port sync error: {e}")
+              def qbit_set_port(cookie, port):
+                  prefs = json.dumps({"listen_port": int(port), "random_port": False})
+                  req = urllib.request.Request(f"{QBIT_URL}/api/v2/app/setPreferences",
+                                               data=urllib.parse.urlencode({"json": prefs}).encode())
+                  req.add_header("Cookie", cookie)
+                  urllib.request.urlopen(req, timeout=5)
 
-              def port_sync_loop():
-                  """Background thread to sync port every 30 seconds"""
-                  time.sleep(60)  # Wait for qBittorrent to start
-                  while True:
-                      sync_port()
-                      time.sleep(30)
-
-              # Start port sync in background
-              threading.Thread(target=port_sync_loop, daemon=True).start()
+              def reconcile():
+                  # Self-healing: compare qBittorrent's ACTUAL listen_port to gluetun's forwarded port
+                  # every cycle and correct ANY drift -- a qbit restart, a random_port flip, or a new
+                  # forwarded port after a VPN reconnect. The old sidecar only reacted when the file
+                  # changed and tracked last_synced_port, so a qbit restart onto a random port was never
+                  # corrected. This reads the real port instead.
+                  want = forwarded_port()
+                  state["forwarded"] = want
+                  if not want:
+                      return
+                  cookie = get_cookie()
+                  if not cookie:
+                      return
+                  have = qbit_get_port(cookie)
+                  state["qbit"] = have or 0
+                  if have != want:
+                      qbit_set_port(cookie, want)
+                      state["qbit"] = want
+                      log(f"corrected qbittorrent listen_port {have} -> {want}")
 
               class MetricsHandler(http.server.BaseHTTPRequestHandler):
-                  def log_message(self, format, *args):
+                  def log_message(self, fmt, *args):
                       pass
 
                   def do_GET(self):
                       if self.path != "/metrics":
-                          self.send_response(404)
-                          self.end_headers()
-                          return
-
+                          self.send_response(404); self.end_headers(); return
+                      ip = country = region = city = "unknown"
                       try:
-                          with urllib.request.urlopen("http://localhost:8000/v1/vpn/status", timeout=5) as r:
-                              status_data = json.loads(r.read())
-                          with urllib.request.urlopen("http://localhost:8000/v1/publicip/ip", timeout=5) as r:
-                              ip_data = json.loads(r.read())
+                          with urllib.request.urlopen(f"{GLUETUN_API}/v1/vpn/status", timeout=5) as r:
+                              state["up"] = 1 if json.loads(r.read()).get("status") == "running" else 0
+                          with urllib.request.urlopen(f"{GLUETUN_API}/v1/publicip/ip", timeout=5) as r:
+                              d = json.loads(r.read())
+                              ip, country, region, city = d.get("public_ip","unknown"), d.get("country","unknown"), d.get("region","unknown"), d.get("city","unknown")
+                      except Exception:
+                          state["up"] = 0
+                      m = (f'gluetun_up{{public_ip="{ip}",country="{country}",region="{region}",city="{city}"}} {state["up"]}\n'
+                           f'gluetun_forwarded_port {state["forwarded"]}\n'
+                           f'qbittorrent_listen_port {state["qbit"]}\n'
+                           f'qbittorrent_port_in_sync {1 if state["qbit"] == state["forwarded"] and state["forwarded"] else 0}\n')
+                      self.send_response(200); self.send_header("Content-Type","text/plain"); self.end_headers()
+                      self.wfile.write(m.encode())
 
-                          status = status_data.get("status", "unknown")
-                          ip = ip_data.get("public_ip", "unknown")
-                          country = ip_data.get("country", "unknown")
-                          region = ip_data.get("region", "unknown")
-                          city = ip_data.get("city", "unknown")
-                          up = 1 if status == "running" else 0
+              # Metrics server in a daemon thread. The reconcile loop is the MAIN thread on purpose:
+              # if it ever dies, the container exits and Kubernetes restarts it -- self-healing at the
+              # pod level, instead of a dead daemon thread leaving a "ready" container that syncs nothing.
+              threading.Thread(
+                  target=lambda: socketserver.TCPServer(("", METRICS_PORT), MetricsHandler).serve_forever(),
+                  daemon=True,
+              ).start()
+              log(f"port-sync + metrics up on {METRICS_PORT}")
 
-                          # Read forwarded port
-                          fwd_port = "0"
-                          try:
-                              with open(PORT_FILE) as f:
-                                  fwd_port = f.read().strip()
-                          except:
-                              pass
-
-                          metrics = f'''# HELP gluetun_up VPN connected (1=up, 0=down)
-              # TYPE gluetun_up gauge
-              gluetun_up{{public_ip="{ip}",country="{country}",region="{region}",city="{city}"}} {up}
-              # HELP gluetun_forwarded_port VPN forwarded port
-              # TYPE gluetun_forwarded_port gauge
-              gluetun_forwarded_port {fwd_port or 0}
-              # HELP qbittorrent_port_synced Last synced port (0 if not synced)
-              # TYPE qbittorrent_port_synced gauge
-              qbittorrent_port_synced {last_synced_port or 0}
-              '''
-                      except Exception as e:
-                          metrics = '''# HELP gluetun_up VPN connected (1=up, 0=down)
-              # TYPE gluetun_up gauge
-              gluetun_up 0
-              '''
-
-                      self.send_response(200)
-                      self.send_header("Content-Type", "text/plain")
-                      self.end_headers()
-                      self.wfile.write(metrics.encode())
-
-              with socketserver.TCPServer(("", METRICS_PORT), MetricsHandler) as httpd:
-                  print(f"Port sync + metrics on port {METRICS_PORT}")
-                  httpd.serve_forever()
+              time.sleep(60)  # let qBittorrent finish starting
+              while True:
+                  try:
+                      reconcile()
+                  except Exception as e:
+                      log(f"reconcile error: {e}")
+                  time.sleep(30)
           volumeMounts:
             - name: gluetun-data
               mountPath: /tmp/gluetun
