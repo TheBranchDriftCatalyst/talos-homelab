@@ -718,3 +718,86 @@ the commit gives the app an empty database. Recovery is one of:
    MinIO — the right answer for anything written after cutover.
 
 Take the unbind step only once a human has confirmed the data is correct.
+
+---
+
+## Whisparr — the ArgoCD-managed, NFS-resident variant (TALOS, 2026-08-27)
+
+The fourth migration, and the first that is **not** in this repo or under Flux. Whisparr lives
+in `talos-private` (namespace `media-private`, ArgoCD app `arr-stack-private`). It is `<Branch>v2`
+(Sonarr-v3-based) at 2.2.0.231 — and yes, v2 supports Postgres: the schema-build rollout flipped
+`databaseType` to `postgreSQL`, which is the only proof that matters, take it before assuming.
+
+Two things made it *simpler* than the public apps, and two made it *harder*. The hard ones are
+the parts that matter.
+
+### Simpler: it was never on the db-local/local-path pattern
+
+Whisparr's SQLite sits **directly on its NFS config PVC** (`whisparr-config`, `fatboy-nfs-appdata`)
+as `/config/whisparr2.db` — v2 versions the filename, it is not `whisparr.db`. There is no
+`db-local` PV, no `migration-configmap` symlink, no `nfs-backup` stale trap, and no node
+`nodeAffinity` on either the volume or the Deployment. So the entire "un-node-bind" half of this
+runbook (steps 8, the two-pins section, the host-directory reclaim) **does not apply**. The
+migration is the core path only: schema build -> delete seeded -> pgloader -> verify. The reward
+for finishing is also different — there is nothing to un-pin, the win is purely getting SQLite
+off NFS, which is what corrupted it in the first place (`logs.db` went "database disk image is
+malformed" on 2026-08-27; `whisparr2.db` survived `integrity_check`, so the library was intact).
+
+Its cluster is its own `whisparr-postgres` (2 instances, `local-path`), not the shared
+`arr-postgres` — a CNPG `Database` CR must live in its cluster's namespace, and `media-private`
+is a deliberate trust boundary. Note the storage choice is now `local-path`, not the
+`fatboy-nfs-appdata` this runbook's older "Storage choice" section landed on: putting the
+replacement database back on the filesystem that corrupted the original defeats the exercise.
+`arr-postgres` has since moved to local-path too.
+
+### Harder #1: ArgoCD `selfHeal` is not `flux suspend`
+
+`flux suspend kustomization` (step 3) has no ArgoCD equivalent that a `kubectl scale` survives.
+With `syncPolicy.automated.selfHeal: true`, **ArgoCD reverts a live `kubectl scale deploy … 0`
+back to the git-declared replicas within seconds** — and worse, removing
+`/spec/syncPolicy/automated` off the Application does NOT stick if the Application itself is
+GitOps-managed (an app-of-apps reconcile restores it). It came back mid-migration here, whisparr
+scaled to 1, and the running app wrote fresh rows into tables pgloader was about to load.
+
+The reliable stop is to make **git** say zero: commit `spec.replicas: 0` to the Deployment.
+selfHeal then *keeps* it at 0 because 0 is the desired state. Revert the commit to bring it back
+up after validation. This is the ArgoCD translation of the suspend window — and like the suspend
+window, tell anyone else in the app that it is in force.
+
+### Harder #2: the schema-build window contaminates the load if the app keeps running
+
+Step 2 (let the app start once to build the schema) is a **write window**. On an empty Postgres,
+whisparr's startup tasks wrote a handful of rows to `EpisodeFiles`, `History`, `DownloadHistory`
+and `Commands` before it was scaled down — and because selfHeal kept bringing it back (Harder #1),
+it kept doing so. pgloader then hit `duplicate key value violates unique constraint "PK_History"`
+on exactly those tables, aborting their load (23834 rows dropped to 17284, 3 tables short at
+4/4/8 — the window-write counts).
+
+The fix is Harder #1 done right (pin replicas:0 in git so the app is genuinely down), then
+`TRUNCATE <all public tables> RESTART IDENTITY CASCADE` and re-run pgloader into a provably empty
+schema. A clean load is 23834 rows / 0 errors / `Reset Sequences 0 35`, every table matching
+SQLite exactly. If pgloader reports *any* PK-violation error, the schema was not empty — do not
+paper over it, truncate and reload. Verify emptiness with exact `COUNT(*)`, not `n_live_tup`.
+
+### The per-app delete list, re-derived (as always)
+
+Whisparr seeded 7 tables: `VersionInfo`, `QualityDefinitions`, `ScheduledTasks`,
+`QualityProfiles`, `Metadata`, `Commands`, `DelayProfiles`. Two deviations from Sonarr, both the
+kind this runbook keeps warning about: **`Config` seeded 0 rows here** (Sonarr seeded 1 and it was
+a real collision) and **`NamingConfig` seeded 0** (Radarr seeded 1). The union of the previous
+lists is still not the answer. Re-derive, every time — and if you truncate-and-reload per Harder
+#2, the delete list is moot anyway because TRUNCATE clears the seed too.
+
+### What it came out at
+
+52 MB, `whisparr2.db`, **23834 rows, 0 errors, 0.8 s**, all 35 sequences `is_called = t`. Whisparr
+is Sonarr-shaped: `Episodes` 14440, `EpisodeFiles` 2721, `Commands` 2694, `History` 1961,
+`DownloadHistory` 1868, `Series` 20, `Indexers` 4, `DownloadClients` 2, `RemotePathMappings` 2,
+`RootFolders` 1. `POST /api/v3/downloadclient/testall` returned both clients valid — the encrypted
+`Config` credentials decrypt, which is the load's strongest proof. `whisparr2.db` mtime stayed
+frozen at the schema-build shutdown while writes landed in Postgres: the two halves of "it flipped".
+
+A YAML footgun worth one line: inserting `replicas: 0` above an existing `replicas: 1` gives a
+Deployment with a duplicate key, and YAML takes the **last** — so the pin silently resolves to 1
+and the app stays up. Replace the value, do not prepend a second one; `kubectl kustomize` will
+not warn you.
