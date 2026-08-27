@@ -8,9 +8,22 @@ spec:
     spec:
       containers:
         - name: qbittorrent
-          env:
-            - name: DOCKER_MODS
-              value: 'ghcr.io/themepark-dev/theme.park:qbittorrent'
+          # theme.park DOCKER_MODS commented out for qbittorrent ONLY.
+          #
+          # qbittorrent is the only arr app behind the gluetun VPN (it shares gluetun's network
+          # namespace). This DOCKER_MODS makes the container download the theme from ghcr.io at
+          # every startup — but gluetun's killswitch blocks that outbound, so the fetch hangs and
+          # BLOCKS qbittorrent from ever starting (stuck at "Downloading theme.park from ghcr.io",
+          # readiness never passes). It worked before only because the theme was fetched at an
+          # earlier start when ghcr happened to be reachable through the VPN; any restart re-runs
+          # the download and can wedge the app.
+          #
+          # The theme is purely cosmetic. Every other themed app (sonarr/radarr/prowlarr/sabnzbd/
+          # tautulli/jellyfin/plex) is NOT behind the VPN and keeps its theme. Re-enable this only
+          # if ghcr.io is allowlisted through gluetun's firewall.
+          # env:
+          #   - name: DOCKER_MODS
+          #     value: 'ghcr.io/themepark-dev/theme.park:qbittorrent'
           envFrom:
             - configMapRef:
                 name: arr-common-env
