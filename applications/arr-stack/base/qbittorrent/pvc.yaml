@@ -1,6 +1,35 @@
 ---
-# qBittorrent config storage
-# Migrated to NFS for node portability (2026-01-16)
+# qBittorrent config storage — LOCAL-PATH (2026-08-28).
+# Reverses the 2026-01-16 move to NFS: qBittorrent's runtime config is BT_backup fastresume
+# files (64+ of them) rewritten on every torrent state change. On NFS that is the same SQLite/
+# lock-on-NFS corruption class we moved CNPG and the arr apps off — a stale NFS lock can wedge
+# startup. Config is tiny (~15M) and qBittorrent is a single replica, so trading NFS node-
+# portability for local NVMe reliability is the right call. The initContainer migrate-config
+# in deployment.yaml one-time-copies the old NFS PVC into this on first start.
+# local-path is WaitForFirstConsumer, so this binds (and pins the pod) to whatever node the
+# pod schedules on; the NFS PVC below is Retain, so the pre-migration data survives as a backup.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: qbittorrent-config-local
+  labels:
+    app: qbittorrent
+    app.kubernetes.io/name: qbittorrent
+    app.kubernetes.io/part-of: arr-stack
+  annotations:
+    storage.catalyst/service: "qbittorrent"
+    storage.catalyst/purpose: "config"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+# OLD NFS config PVC — kept mounted read-only by the migrate-config initContainer as the copy
+# source (and as a Retain-backed backup). Remove this + the initContainer in a follow-up roll
+# once the local-path migration is confirmed, to drop the startup dependency on NFS entirely.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -11,7 +40,7 @@ metadata:
     app.kubernetes.io/part-of: arr-stack
   annotations:
     storage.catalyst/service: "qbittorrent"
-    storage.catalyst/purpose: "config"
+    storage.catalyst/purpose: "config-legacy-nfs"
 spec:
   accessModes:
     - ReadWriteOnce

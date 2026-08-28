@@ -52,6 +52,60 @@ spec:
               ip -6 rule del table 51820 2>/dev/null || true
               ip -6 rule del table 51820 2>/dev/null || true
               echo "Cleanup complete"
+        # One-time migration: copy the qBittorrent config from the legacy NFS PVC into the new
+        # local-path PVC on first start. Runs BEFORE seed-webui-auth so that re-asserts the WebUI
+        # keys on the MIGRATED conf, not an empty one. Idempotent: if the local config already has
+        # qBittorrent.conf it does nothing. Consistent because the Deployment uses Recreate — the
+        # old qBittorrent is fully stopped before this runs, so the fastresume files are quiescent.
+        # Skips unix sockets + the stale lockfile. Once qBittorrent is confirmed healthy on
+        # local-path, remove this initContainer + the config-nfs-source mount + the NFS PVC in a
+        # follow-up roll to drop the startup dependency on NFS entirely.
+        - name: migrate-config
+          image: python:3.11-alpine
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: config-nfs-source
+              mountPath: /config-nfs-source
+              readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+          command: ["python3", "-c"]
+          args:
+            - |
+              import os, stat, shutil, sys
+              SRC = "/config-nfs-source"
+              DST = "/config"
+              conf = os.path.join(DST, "qBittorrent", "qBittorrent.conf")
+              if os.path.exists(conf):
+                  print("local-path config already present -- skipping migration")
+                  sys.exit(0)
+              if not os.path.isdir(os.path.join(SRC, "qBittorrent")):
+                  print("no NFS source config to migrate (fresh install) -- skipping")
+                  sys.exit(0)
+              def ignore(d, names):
+                  skip = []
+                  for n in names:
+                      try:
+                          if stat.S_ISSOCK(os.lstat(os.path.join(d, n)).st_mode):
+                              skip.append(n)
+                      except OSError:
+                          skip.append(n)
+                  skip += [n for n in names if n in ("ipc-socket", "lockfile")]
+                  return skip
+              print("migrating qBittorrent config NFS -> local-path ...")
+              shutil.copytree(SRC, DST, symlinks=True, ignore=ignore, dirs_exist_ok=True)
+              if not os.path.exists(conf):
+                  print("MIGRATION FAILED: qBittorrent.conf missing after copy", file=sys.stderr)
+                  sys.exit(1)
+              bt = os.path.join(DST, "qBittorrent", "BT_backup")
+              n = len(os.listdir(bt)) if os.path.isdir(bt) else 0
+              print("migration complete: qBittorrent.conf + %d BT_backup entries" % n)
         # Seed the WebUI credentials from the ESO-generated Secret
         # `qbittorrent-webui` (see webui-credentials.yaml) BEFORE qBittorrent
         # starts. qBittorrent rewrites qBittorrent.conf on every shutdown (and
@@ -198,11 +252,15 @@ spec:
               value: "off"
             - name: SHADOWSOCKS
               value: "off"
-            # Allow cluster traffic + CDNs for Docker Mods to bypass VPN
-            # 151.101.0.0/16 = Fastly (Alpine CDN)
-            # 140.82.112.0/20 = GitHub (ghcr.io)
+            # Let cluster traffic (pod + service CIDRs) bypass the VPN so the WebUI, DNS and
+            # metrics scraping work. The Fastly (151.101.0.0/16) and GitHub (140.82.112.0/20)
+            # CIDRs used to be here so the theme.park Docker mod could pull from ghcr.io without
+            # going through the killswitch — but DOCKER_MODS is disabled for qbittorrent (it hung
+            # startup behind the VPN, see overlays/themepark/qbittorrent-patch.yaml), so those
+            # CDN allowances are dead VPN-bypass surface. Removed. Re-add them ONLY if a Docker
+            # mod is ever re-enabled on this pod.
             - name: FIREWALL_OUTBOUND_SUBNETS
-              value: "10.244.0.0/16,10.96.0.0/12,151.101.0.0/16,140.82.112.0/20"
+              value: "10.244.0.0/16,10.96.0.0/12"
             # qBittorrent WebUI + metrics exporter + gluetun control
             - name: FIREWALL_INPUT_PORTS
               value: "8000,8080,9091"
@@ -223,8 +281,9 @@ spec:
             # tunnel every 10s and did a FULL VPN restart (new server + new forwarded port) on a
             # single failed probe — so any transient blip to 1.1.1.1:443 churned the port. 60s
             # probes a healthy tunnel far less often, so a brief hiccup no longer nukes it; a
-            # genuine sustained outage is still caught within a minute, and the container-level
-            # livenessProbe below (real public IP, 4 min) restarts gluetun if it truly wedges.
+            # genuine sustained outage is still caught within a minute. VPN recovery is this
+            # internal healthcheck's job (restarts the tunnel in place); the kubelet livenessProbe
+            # below only watches the gluetun PROCESS (control server), never VPN connectivity.
             - name: HEALTH_VPN_DURATION_INITIAL
               value: "60s"  # grace for the tunnel to fully establish before the first probe
             - name: HEALTH_VPN_DURATION_ADDITION
@@ -352,8 +411,6 @@ spec:
               METRICS_PORT = 9091
               QBIT_URL = "http://localhost:8080"
               GLUETUN_API = "http://localhost:8000"
-              QBIT_URL = "http://localhost:8080"
-              GLUETUN_API = "http://localhost:8000"
               PORT_FILE = "/tmp/gluetun/forwarded_port"
 
               # Exposed for the metrics endpoint.
@@ -460,7 +517,14 @@ spec:
               cpu: "10m"
 
       volumes:
+        # Live config now on local-path NVMe (was NFS — see pvc.yaml). Pinned to the node the
+        # local-path volume provisions on.
         - name: config
+          persistentVolumeClaim:
+            claimName: qbittorrent-config-local
+        # Legacy NFS config, read-only, only as the migrate-config initContainer's copy source.
+        # Remove this + the initContainer once the local-path migration is confirmed.
+        - name: config-nfs-source
           persistentVolumeClaim:
             claimName: qbittorrent-config-nfs
         - name: downloads-complete
