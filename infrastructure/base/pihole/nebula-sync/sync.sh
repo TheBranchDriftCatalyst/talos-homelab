@@ -38,6 +38,8 @@ LAST_RUN_TS=0                 # unix time of last cycle of ANY result
 LAST_DURATION=0               # wall-seconds of the last cycle
 LAST_SYNCED=0                 # standbys restored OK in the last cycle
 LAST_FAILED=0                 # standbys that failed restore in the last cycle (0 = healthy)
+LAST_SKIPPED=0                # standbys already in sync last cycle (import skipped = NO restart)
+IMPORTS_TOTAL=0              # cumulative: teleporter imports actually sent (= FTL restarts caused)
 
 write_metrics() {
   # atomic rewrite (temp + mv on the same fs) so a scrape never reads a half-written file
@@ -61,16 +63,23 @@ write_metrics() {
     printf '# HELP nebula_sync_replicas_failed Standby replicas that failed restore in the last cycle.\n'
     printf '# TYPE nebula_sync_replicas_failed gauge\n'
     printf 'nebula_sync_replicas_failed %s\n' "$LAST_FAILED"
+    printf '# HELP nebula_sync_replicas_skipped Standby replicas already in sync last cycle (import skipped, no FTL restart).\n'
+    printf '# TYPE nebula_sync_replicas_skipped gauge\n'
+    printf 'nebula_sync_replicas_skipped %s\n' "$LAST_SKIPPED"
+    printf '# HELP nebula_sync_imports_total Teleporter imports actually sent (each forces one standby FTL restart).\n'
+    printf '# TYPE nebula_sync_imports_total counter\n'
+    printf 'nebula_sync_imports_total %s\n' "$IMPORTS_TOTAL"
   } > "$METRICS_FILE.tmp" 2> /dev/null && mv "$METRICS_FILE.tmp" "$METRICS_FILE" 2> /dev/null
 }
 
-# record a finished cycle and refresh the metrics file. args: RESULT SYNCED FAILED
+# record a finished cycle and refresh the metrics file. args: RESULT SYNCED FAILED [SKIPPED]
 # RESULT=success bumps the success counter + advances LAST_SUCCESS_TS; anything else is a
 # failure (skip / auth fail / partial restore). LAST_DURATION is set by the caller.
 record() {
   LAST_RUN_TS=$(date +%s)
   LAST_SYNCED=$2
   LAST_FAILED=$3
+  LAST_SKIPPED=${4:-0}
   if [ "$1" = success ]; then
     RUNS_SUCCESS=$((RUNS_SUCCESS + 1))
     LAST_SUCCESS_TS=$LAST_RUN_TS
@@ -85,6 +94,32 @@ auth() {
   printf '{"password":"%s"}' "$PIHOLE_PASSWORD" |
     curl -s --max-time 10 -X POST "http://$1/api/auth" -H 'Content-Type: application/json' --data @- |
     sed -n 's/.*"sid":"\([^"]*\)".*/\1/p'
+}
+
+# CHANGE-AWARENESS: a Teleporter import ALWAYS restarts FTL, so importing blindly every cycle
+# bounced every standby's FTL every $SYNC_INTERVAL (12x/hr) — brief :80/:53 blips that made the
+# exporter miss scrapes and standbys flicker off the Grafana "instances reporting" count. We now
+# fingerprint the LOGICAL config and only import to standbys whose fingerprint differs from the
+# primary's, so an unchanged standby is left alone (no restart).
+#
+# The fingerprint hashes exactly what the Teleporter carries: pihole.toml (/api/config) + the
+# gravity.db config tables (/api/{lists,domains,groups,clients}) + the gravity blocklist size
+# (/api/stats/summary .gravity.domains_being_blocked, which moves when adlists re-download). The
+# raw Teleporter zip is NOT usable as a fingerprint — it embeds timestamps and re-hashes every
+# call even when nothing changed (verified). The per-request "took" timing field is the only
+# volatile key in these JSON bodies, so we strip it; with that removed the primary and an
+# already-synced standby hash IDENTICALLY (verified across all five pods).
+#
+# args: IP SID  ->  prints a hex fingerprint, or empty string on any fetch failure (caller then
+# treats the standby as needing a sync — fail safe toward correctness, never toward staleness).
+fingerprint() {
+  _core=$(for _ep in config lists domains groups clients; do
+    curl -s --max-time 10 -H "X-FTL-SID: $2" "http://$1/api/$_ep" || return 1
+  done)
+  [ -n "$_core" ] || return 1
+  _grav=$(curl -s --max-time 10 -H "X-FTL-SID: $2" "http://$1/api/stats/summary" |
+    jq -r '.gravity.domains_being_blocked // "x"' 2> /dev/null)
+  printf '%s|%s' "$_core" "$_grav" | sed 's/"took":[0-9.eE+-]*//g' | sha256sum | cut -d' ' -f1
 }
 
 # only real StatefulSet pihole pods (excludes THIS worker + anything else)
@@ -125,8 +160,12 @@ sync_once() {
   # heartbeat: a healthy cycle reached the active primary + got its config. Liveness tracks
   # loop-alive, NOT per-replica restore success.
   date +%s > /tmp/last-sync
+  # Fingerprint the primary ONCE; each standby is compared against it. Empty = fetch failed,
+  # in which case we fall back to importing unconditionally (correctness over restart-avoidance).
+  PRIMARY_FP=$(fingerprint "$ACTIVE_IP" "$SID")
   OK=0
   FAIL=0
+  SKIP=0
   for IP in $($KUBECTL get pods -n pihole -l "$PSEL" -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2> /dev/null); do
     { [ -z "$IP" ] || [ "$IP" = "$ACTIVE_IP" ]; } && continue
     RSID=$(auth "$IP")
@@ -135,20 +174,33 @@ sync_once() {
       FAIL=$((FAIL + 1))
       continue
     }
+    # Skip the import (and its guaranteed FTL restart) when this standby already matches the
+    # primary. Only compare when we HAVE a primary fingerprint AND could compute the standby's.
+    if [ -n "$PRIMARY_FP" ]; then
+      STANDBY_FP=$(fingerprint "$IP" "$RSID")
+      if [ -n "$STANDBY_FP" ] && [ "$STANDBY_FP" = "$PRIMARY_FP" ]; then
+        SKIP=$((SKIP + 1))
+        continue
+      fi
+    fi
     CODE=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' -X POST -H "X-FTL-SID: $RSID" -F "file=@/tmp/tele.zip" "http://$IP/api/teleporter")
-    [ "$CODE" = "200" ] && OK=$((OK + 1)) || {
+    if [ "$CODE" = "200" ]; then
+      OK=$((OK + 1))
+      IMPORTS_TOTAL=$((IMPORTS_TOTAL + 1))
+      echo "  $IP config drift -> imported (FTL restart)"
+    else
       echo "  $IP restore HTTP=$CODE"
       FAIL=$((FAIL + 1))
-    }
+    fi
   done
-  echo "$(date -u +%FT%TZ) primary=$ACTIVE_POD synced=$OK failed=$FAIL"
-  # a cycle counts as success only if every standby restore returned 200; a partial failure
-  # advances LAST_RUN_TS but NOT LAST_SUCCESS_TS, so "Last sync age" climbs until it clears.
+  echo "$(date -u +%FT%TZ) primary=$ACTIVE_POD imported=$OK skipped=$SKIP failed=$FAIL"
+  # a cycle counts as success only if no standby restore FAILED; skips are healthy (in sync). A
+  # partial failure advances LAST_RUN_TS but NOT LAST_SUCCESS_TS, so "Last sync age" climbs.
   LAST_DURATION=$(($(date +%s) - START))
   if [ "$FAIL" -eq 0 ]; then
-    record success "$OK" "$FAIL"
+    record success "$OK" "$FAIL" "$SKIP"
   else
-    record failure "$OK" "$FAIL"
+    record failure "$OK" "$FAIL" "$SKIP"
   fi
 }
 
