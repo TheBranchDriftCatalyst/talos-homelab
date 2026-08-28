@@ -97,9 +97,13 @@ spec:
               CONF = CONF_DIR + "/qBittorrent.conf"
               USER_KEY = "WebUI\\Username"
               PASS_KEY = "WebUI\\Password_PBKDF2"
-              # Bypass qBt's own login for the traefik pod subnet so the
-              # Authentik forward-auth session is the ONLY login (no double
-              # login). Traefik reaches qBt from a pod IP in 10.244.0.0/16.
+              # Bypass qBt's own login for (a) the traefik pod subnet so the
+              # Authentik forward-auth session is the ONLY external login (no
+              # double login) -- Traefik reaches qBt from a pod IP in 10.244.0.0/16
+              # -- and (b) localhost (127.0.0.1/8, ::1/128) so the in-pod port-sync
+              # sidecar calls the API WITHOUT logging in. The old design logged in
+              # every 30s; qBt's newer 204 login churns sessions and intermittently
+              # stops issuing the SID cookie, silently wedging port syncing.
               WL_EN_KEY = "WebUI\\AuthSubnetWhitelistEnabled"
               WL_KEY = "WebUI\\AuthSubnetWhitelist"
 
@@ -138,7 +142,7 @@ spec:
                   USER_KEY + "=" + user,
                   PASS_KEY + '="' + value + '"',
                   WL_EN_KEY + "=true",
-                  WL_KEY + "=10.244.0.0/16",
+                  WL_KEY + "=10.244.0.0/16,127.0.0.1/8,::1/128",
               ]
               out, inserted = [], False
               for l in lines:
@@ -306,21 +310,6 @@ spec:
         # Syncs VPN forwarded port to qBittorrent and exports Prometheus metrics
         - name: port-sync
           image: python:3.11-alpine
-          env:
-            # WebUI creds from the ESO-generated Secret (webui-credentials.yaml)
-            # — the same values seed-webui-auth seeds into qBittorrent.conf.
-            # Replaces the hardcoded admin/admin that 403'd after the WebUI
-            # password was lost, leaving the forwarded VPN port unapplied.
-            - name: QBIT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: qbittorrent-webui
-                  key: username
-            - name: QBIT_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: qbittorrent-webui
-                  key: password
           command: ["python3", "-c"]
           args:
             - |
@@ -336,8 +325,8 @@ spec:
               METRICS_PORT = 9091
               QBIT_URL = "http://localhost:8080"
               GLUETUN_API = "http://localhost:8000"
-              QBIT_USER = os.environ["QBIT_USER"]
-              QBIT_PASS = os.environ["QBIT_PASS"]
+              QBIT_URL = "http://localhost:8080"
+              GLUETUN_API = "http://localhost:8000"
               PORT_FILE = "/tmp/gluetun/forwarded_port"
 
               # Exposed for the metrics endpoint.
@@ -346,16 +335,11 @@ spec:
               def log(m):
                   print(m, flush=True)
 
-              def get_cookie():
-                  try:
-                      d = urllib.parse.urlencode({"username": QBIT_USER, "password": QBIT_PASS}).encode()
-                      r = urllib.request.urlopen(urllib.request.Request(f"{QBIT_URL}/api/v2/auth/login", data=d), timeout=5)
-                      for c in (r.headers.get_all("Set-Cookie") or []):
-                          if "SID=" in c:
-                              return c.split(";")[0]
-                  except Exception as e:
-                      log(f"login failed: {e}")
-                  return None
+              # No login: qBittorrent whitelists localhost (127.0.0.1/8, ::1/128) via
+              # AuthSubnetWhitelist -- see the seed-webui-auth initContainer -- so the API is
+              # reachable from this sidecar without a SID cookie. The previous design logged in
+              # every cycle and qBt's 204 login intermittently withheld the cookie under churn,
+              # which silently stopped all port syncing.
 
               def forwarded_port():
                   # gluetun writes the file on connect; fall back to its control API.
@@ -366,40 +350,33 @@ spec:
                   except Exception:
                       pass
                   try:
-                      r = urllib.request.urlopen(f"{GLUETUN_API}/v1/openvpn/portforwarded", timeout=5)
+                      r = urllib.request.urlopen(f"{GLUETUN_API}/v1/portforward", timeout=5)
                       return int(json.loads(r.read()).get("port", 0))
                   except Exception:
                       return 0
 
-              def qbit_get_port(cookie):
-                  req = urllib.request.Request(f"{QBIT_URL}/api/v2/app/preferences")
-                  req.add_header("Cookie", cookie)
-                  return json.loads(urllib.request.urlopen(req, timeout=5).read()).get("listen_port")
+              def qbit_get_port():
+                  r = urllib.request.urlopen(f"{QBIT_URL}/api/v2/app/preferences", timeout=5)
+                  return json.loads(r.read()).get("listen_port")
 
-              def qbit_set_port(cookie, port):
+              def qbit_set_port(port):
                   prefs = json.dumps({"listen_port": int(port), "random_port": False})
                   req = urllib.request.Request(f"{QBIT_URL}/api/v2/app/setPreferences",
                                                data=urllib.parse.urlencode({"json": prefs}).encode())
-                  req.add_header("Cookie", cookie)
                   urllib.request.urlopen(req, timeout=5)
 
               def reconcile():
-                  # Self-healing: compare qBittorrent's ACTUAL listen_port to gluetun's forwarded port
-                  # every cycle and correct ANY drift -- a qbit restart, a random_port flip, or a new
-                  # forwarded port after a VPN reconnect. The old sidecar only reacted when the file
-                  # changed and tracked last_synced_port, so a qbit restart onto a random port was never
-                  # corrected. This reads the real port instead.
+                  # Self-healing: compare qBittorrent's ACTUAL listen_port to gluetun's forwarded
+                  # port every cycle and correct ANY drift -- a qbit restart, a random_port flip,
+                  # or a new forwarded port after a VPN reconnect.
                   want = forwarded_port()
                   state["forwarded"] = want
                   if not want:
                       return
-                  cookie = get_cookie()
-                  if not cookie:
-                      return
-                  have = qbit_get_port(cookie)
+                  have = qbit_get_port()
                   state["qbit"] = have or 0
                   if have != want:
-                      qbit_set_port(cookie, want)
+                      qbit_set_port(want)
                       state["qbit"] = want
                       log(f"corrected qbittorrent listen_port {have} -> {want}")
 
