@@ -243,22 +243,24 @@ spec:
               containerPort: 8000
               protocol: TCP
           livenessProbe:
-            # /v1/vpn/status returns HTTP 200 even when the tunnel is wedged in
-            # "stopping" with no connectivity, so the old httpGet passed while the
-            # VPN was dead and gluetun never restarted. Check a REAL public IP
-            # instead -- traffic actually flowing. 8 x 30s = 4min tolerates
-            # gluetun's own server-hopping reconnects (its internal healthcheck
-            # cycles in ~30-60s) but restarts the container on a genuine sustained
-            # wedge, recovering the tunnel with a fresh connection.
-            exec:
-              command:
-                - sh
-                - -c
-                - "wget -qO- http://localhost:8000/v1/publicip/ip | grep -q '\"public_ip\":\"[0-9]'"
-            initialDelaySeconds: 120
+            # Liveness = is the gluetun PROCESS alive, NOT is the VPN connected. Conflating them
+            # is a death spiral: an earlier version execed a "real public IP present" check, which
+            # FAILS during every normal VPN reconnect (public IP is briefly empty). Restarting
+            # gluetun's container then forces a fresh WireGuard session that COLLIDES with the
+            # just-killed session still registered on ProtonVPN, so the new one gets no traffic
+            # for minutes -> probe keeps failing -> killed again. Observed 33 restarts in 15h,
+            # taking the whole pod NotReady and the WebUI down. The control server on :8000 stays
+            # up across VPN reconnects and only disappears if the process truly hangs, so it is
+            # the correct liveness signal. VPN-connectivity recovery is gluetun's OWN internal
+            # healthcheck's job (restarts the tunnel in place, no session collision) — never the
+            # kubelet's.
+            httpGet:
+              path: /v1/vpn/status
+              port: 8000
+            initialDelaySeconds: 60
             periodSeconds: 30
             timeoutSeconds: 10
-            failureThreshold: 8
+            failureThreshold: 5
           volumeMounts:
             - name: gluetun-data
               mountPath: /tmp/gluetun
