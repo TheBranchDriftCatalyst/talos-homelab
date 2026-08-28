@@ -52,60 +52,6 @@ spec:
               ip -6 rule del table 51820 2>/dev/null || true
               ip -6 rule del table 51820 2>/dev/null || true
               echo "Cleanup complete"
-        # One-time migration: copy the qBittorrent config from the legacy NFS PVC into the new
-        # local-path PVC on first start. Runs BEFORE seed-webui-auth so that re-asserts the WebUI
-        # keys on the MIGRATED conf, not an empty one. Idempotent: if the local config already has
-        # qBittorrent.conf it does nothing. Consistent because the Deployment uses Recreate — the
-        # old qBittorrent is fully stopped before this runs, so the fastresume files are quiescent.
-        # Skips unix sockets + the stale lockfile. Once qBittorrent is confirmed healthy on
-        # local-path, remove this initContainer + the config-nfs-source mount + the NFS PVC in a
-        # follow-up roll to drop the startup dependency on NFS entirely.
-        - name: migrate-config
-          image: python:3.11-alpine
-          securityContext:
-            runAsUser: 1000
-            runAsGroup: 1000
-          volumeMounts:
-            - name: config
-              mountPath: /config
-            - name: config-nfs-source
-              mountPath: /config-nfs-source
-              readOnly: true
-          resources:
-            requests:
-              memory: "32Mi"
-              cpu: "10m"
-          command: ["python3", "-c"]
-          args:
-            - |
-              import os, stat, shutil, sys
-              SRC = "/config-nfs-source"
-              DST = "/config"
-              conf = os.path.join(DST, "qBittorrent", "qBittorrent.conf")
-              if os.path.exists(conf):
-                  print("local-path config already present -- skipping migration")
-                  sys.exit(0)
-              if not os.path.isdir(os.path.join(SRC, "qBittorrent")):
-                  print("no NFS source config to migrate (fresh install) -- skipping")
-                  sys.exit(0)
-              def ignore(d, names):
-                  skip = []
-                  for n in names:
-                      try:
-                          if stat.S_ISSOCK(os.lstat(os.path.join(d, n)).st_mode):
-                              skip.append(n)
-                      except OSError:
-                          skip.append(n)
-                  skip += [n for n in names if n in ("ipc-socket", "lockfile")]
-                  return skip
-              print("migrating qBittorrent config NFS -> local-path ...")
-              shutil.copytree(SRC, DST, symlinks=True, ignore=ignore, dirs_exist_ok=True)
-              if not os.path.exists(conf):
-                  print("MIGRATION FAILED: qBittorrent.conf missing after copy", file=sys.stderr)
-                  sys.exit(1)
-              bt = os.path.join(DST, "qBittorrent", "BT_backup")
-              n = len(os.listdir(bt)) if os.path.isdir(bt) else 0
-              print("migration complete: qBittorrent.conf + %d BT_backup entries" % n)
         # Seed the WebUI credentials from the ESO-generated Secret
         # `qbittorrent-webui` (see webui-credentials.yaml) BEFORE qBittorrent
         # starts. qBittorrent rewrites qBittorrent.conf on every shutdown (and
@@ -414,7 +360,18 @@ spec:
               PORT_FILE = "/tmp/gluetun/forwarded_port"
 
               # Exposed for the metrics endpoint.
-              state = {"forwarded": 0, "qbit": 0, "up": 0}
+              state = {"forwarded": 0, "qbit": 0, "up": 0, "pf_restarts": 0}
+
+              # Port-forward watchdog state. ProtonVPN's NAT-PMP sometimes fails on the initial
+              # connect ("adding UDP port mapping" error); gluetun then leaves the forwarded port
+              # at 0 and -- with the relaxed healthcheck -- never reconnects to retry it, so qbit
+              # sits firewalled on a healthy tunnel. The watchdog notices forwarded==0 on a LIVE
+              # tunnel and, after a grace period, restarts the VPN via the control API, which
+              # reconnects to a DIFFERENT pinned server (no session collision) and re-attempts PF.
+              PF_STALE_LIMIT = 180        # seconds forwarded=0 while the VPN is up before acting
+              PF_RESTART_COOLDOWN = 300   # min seconds between watchdog-triggered restarts
+              pf_zero_since = None
+              last_pf_restart = 0.0
 
               def log(m):
                   print(m, flush=True)
@@ -464,6 +421,50 @@ spec:
                       state["qbit"] = want
                       log(f"corrected qbittorrent listen_port {have} -> {want}")
 
+              def vpn_public_ip():
+                  try:
+                      r = urllib.request.urlopen(f"{GLUETUN_API}/v1/publicip/ip", timeout=5)
+                      return json.loads(r.read()).get("public_ip") or ""
+                  except Exception:
+                      return ""
+
+              def restart_vpn():
+                  # PUT stopped then running via the gluetun control API. gluetun reconnects,
+                  # usually to a DIFFERENT pinned server, and re-attempts NAT-PMP port forwarding.
+                  for st in ("stopped", "running"):
+                      try:
+                          req = urllib.request.Request(
+                              f"{GLUETUN_API}/v1/vpn/status",
+                              data=json.dumps({"status": st}).encode(),
+                              method="PUT")
+                          urllib.request.urlopen(req, timeout=10)
+                      except Exception as e:
+                          log(f"vpn {st} request failed: {e}")
+                      time.sleep(3)
+
+              def pf_watchdog():
+                  # Recover a forwarded port that failed to establish on a live tunnel.
+                  global pf_zero_since, last_pf_restart
+                  now = time.time()
+                  if forwarded_port():
+                      pf_zero_since = None
+                      return
+                  # forwarded==0 is only a problem if the VPN is actually up; during a normal
+                  # reconnect the public IP is briefly empty and we must NOT act.
+                  if not vpn_public_ip():
+                      pf_zero_since = None
+                      return
+                  if pf_zero_since is None:
+                      pf_zero_since = now
+                      return
+                  if now - pf_zero_since > PF_STALE_LIMIT and now - last_pf_restart > PF_RESTART_COOLDOWN:
+                      log(f"port forwarding stuck at 0 for {int(now - pf_zero_since)}s on a live "
+                          f"tunnel -- restarting VPN to re-attempt NAT-PMP")
+                      restart_vpn()
+                      last_pf_restart = now
+                      pf_zero_since = None
+                      state["pf_restarts"] += 1
+
               class MetricsHandler(http.server.BaseHTTPRequestHandler):
                   def log_message(self, fmt, *args):
                       pass
@@ -483,7 +484,8 @@ spec:
                       m = (f'gluetun_up{{public_ip="{ip}",country="{country}",region="{region}",city="{city}"}} {state["up"]}\n'
                            f'gluetun_forwarded_port {state["forwarded"]}\n'
                            f'qbittorrent_listen_port {state["qbit"]}\n'
-                           f'qbittorrent_port_in_sync {1 if state["qbit"] == state["forwarded"] and state["forwarded"] else 0}\n')
+                           f'qbittorrent_port_in_sync {1 if state["qbit"] == state["forwarded"] and state["forwarded"] else 0}\n'
+                           f'port_sync_pf_watchdog_restarts_total {state["pf_restarts"]}\n')
                       self.send_response(200); self.send_header("Content-Type","text/plain"); self.end_headers()
                       self.wfile.write(m.encode())
 
@@ -500,6 +502,7 @@ spec:
               while True:
                   try:
                       reconcile()
+                      pf_watchdog()
                   except Exception as e:
                       log(f"reconcile error: {e}")
                   time.sleep(30)
@@ -522,11 +525,6 @@ spec:
         - name: config
           persistentVolumeClaim:
             claimName: qbittorrent-config-local
-        # Legacy NFS config, read-only, only as the migrate-config initContainer's copy source.
-        # Remove this + the initContainer once the local-path migration is confirmed.
-        - name: config-nfs-source
-          persistentVolumeClaim:
-            claimName: qbittorrent-config-nfs
         - name: downloads-complete
           persistentVolumeClaim:
             claimName: synology-downloads-complete

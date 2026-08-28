@@ -27,9 +27,10 @@ spec:
     requests:
       storage: 2Gi
 ---
-# OLD NFS config PVC — kept mounted read-only by the migrate-config initContainer as the copy
-# source (and as a Retain-backed backup). Remove this + the initContainer in a follow-up roll
-# once the local-path migration is confirmed, to drop the startup dependency on NFS entirely.
+# OLD NFS config PVC — pre-migration backup, NO LONGER MOUNTED (the migrate-config initContainer
+# that used it as a copy source was removed once the local-path migration was confirmed). The
+# NFS storageClass is Retain, so this holds the last NFS-era config as a cold backup. Safe to
+# delete once you're confident in the local-path config; kept for now for easy rollback.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -40,7 +41,7 @@ metadata:
     app.kubernetes.io/part-of: arr-stack
   annotations:
     storage.catalyst/service: "qbittorrent"
-    storage.catalyst/purpose: "config-legacy-nfs"
+    storage.catalyst/purpose: "config-legacy-nfs-backup"
 spec:
   accessModes:
     - ReadWriteOnce
