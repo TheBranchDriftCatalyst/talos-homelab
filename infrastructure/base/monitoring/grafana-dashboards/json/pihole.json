@@ -431,13 +431,13 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Standby replicas restored OK in the last cycle (active is skipped, so expected = replicas - 1 = 4). Metric: nebula_sync_replicas_synced.",
+      "description": "Standbys that needed a Teleporter import (config drifted from the primary) in the last cycle. The worker is change-aware: 0 = every standby already in sync = steady-state healthy (NO FTL restarts); a brief spike to 1-4 = a real config change propagating. Each import forces one standby FTL restart, so 0 is the good number here. Metric: nebula_sync_replicas_synced (imports this cycle); see nebula_sync_replicas_skipped for the in-sync count.",
       "fieldConfig": {"defaults": {"color": {"mode": "fixed", "fixedColor": "green"}, "unit": "none"}},
       "gridPos": {"h": 4, "w": 4, "x": 8, "y": 81},
       "id": 32,
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "value"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_replicas_synced", "legendFormat": "Synced"}],
-      "title": "Replicas Synced (last)",
+      "targets": [{"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_replicas_synced", "legendFormat": "Imported"}],
+      "title": "Config Imports (last)",
       "type": "stat"
     },
     {
@@ -475,7 +475,7 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Sync cycles per interval, split success vs failure (increase of nebula_sync_runs_total by result). Green bars = clean cycles; red bars = skips or partial restores. Steady green cadence = healthy config propagation.",
+      "description": "Sync cycles per interval, split success vs failure (increase of nebula_sync_runs_total by result). Green bars = clean cycles (a cycle where every standby was already in sync and skipped counts as success now); red bars = a standby restore FAILED. Steady all-green cadence = healthy.",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "bars", "fillOpacity": 70, "gradientMode": "none", "lineWidth": 1, "showPoints": "never", "spanNulls": false, "stacking": {"mode": "normal", "group": "A"}}, "unit": "none"}, "overrides": [{"matcher": {"id": "byName", "options": "success"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]}, {"matcher": {"id": "byName", "options": "failure"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}]},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 85},
       "id": 36,
@@ -486,16 +486,17 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "mimir"},
-      "description": "Per-cycle sync duration (left axis, seconds) with failed-replica count overlaid (right axis). A duration spike or a non-zero failed count marks a troubled cycle — cross-reference the 'nebula-sync run' annotation on the query-rate panels above.",
-      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "auto", "spanNulls": true}, "unit": "s"}, "overrides": [{"matcher": {"id": "byName", "options": "Replicas failed"}, "properties": [{"id": "unit", "value": "none"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "custom.axisLabel", "value": "replicas failed"}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}, {"id": "custom.drawStyle", "value": "bars"}, {"id": "custom.fillOpacity", "value": 40}]}]},
+      "description": "Per-cycle sync duration (left axis, seconds) with failed-replica count and config-import count overlaid (right axis). 'Config imports' is the number of Teleporter imports the worker actually sent per interval — each one forces a standby FTL restart, so the steady state is 0 (change-aware skipping) and any bar marks a real config change propagating. A duration spike or a non-zero failed count marks a troubled cycle — cross-reference the 'nebula-sync run' annotation on the query-rate panels above.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 18, "gradientMode": "opacity", "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "auto", "spanNulls": true}, "unit": "s"}, "overrides": [{"matcher": {"id": "byName", "options": "Replicas failed"}, "properties": [{"id": "unit", "value": "none"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "custom.axisLabel", "value": "count"}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}, {"id": "custom.drawStyle", "value": "bars"}, {"id": "custom.fillOpacity", "value": 40}]}, {"matcher": {"id": "byName", "options": "Config imports"}, "properties": [{"id": "unit", "value": "none"}, {"id": "custom.axisPlacement", "value": "right"}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}, {"id": "custom.drawStyle", "value": "bars"}, {"id": "custom.fillOpacity", "value": 40}]}]},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 85},
       "id": 37,
       "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true, "calcs": ["last", "max", "mean"]}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
         {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_duration_seconds", "legendFormat": "Duration"},
-        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_replicas_failed", "legendFormat": "Replicas failed"}
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "nebula_sync_replicas_failed", "legendFormat": "Replicas failed"},
+        {"datasource": {"type": "prometheus", "uid": "mimir"}, "expr": "sum(increase(nebula_sync_imports_total[$__rate_interval]))", "legendFormat": "Config imports"}
       ],
-      "title": "Sync Duration & Failed Replicas",
+      "title": "Sync Duration, Imports & Failures",
       "type": "timeseries"
     }
   ],
