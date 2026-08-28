@@ -184,6 +184,16 @@ spec:
               value: "10.2.0.2/32"
             - name: SERVER_COUNTRIES
               value: "Netherlands"  # Good for torrenting
+            # Pin to the ONLY Netherlands servers ProtonVPN flags port-forward-capable
+            # (all Amsterdam). Random selection across all 56 NL servers kept landing on the
+            # 49 non-PF ones, where NAT-PMP fails ("adding port mapping: connection timeout")
+            # and gluetun churns the forwarded port every few minutes — which forced qBittorrent
+            # to re-announce to trackers constantly and stalled inbound connections. Restricting
+            # to this PF-capable pool removes that failure mode; gluetun still rotates among the 7
+            # if one is unhealthy. Refresh this list if ProtonVPN's server set changes (source:
+            # /gluetun/servers.json, .protonvpn.servers where .port_forward==true, country NL).
+            - name: SERVER_NAMES
+              value: "NL#316,NL#412,NL#512,NL#612,NL#712,NL#843,NL#943"
             - name: HTTPPROXY
               value: "off"
             - name: SHADOWSOCKS
@@ -209,12 +219,18 @@ spec:
             - name: DOT_IPV6
               value: "off"  # Disable IPv6 DNS to avoid routing issues
             # Healthcheck settings - more resilient to rotation
+            # Healthcheck tolerance: the old 10s success-wait meant gluetun probed a HEALTHY
+            # tunnel every 10s and did a FULL VPN restart (new server + new forwarded port) on a
+            # single failed probe — so any transient blip to 1.1.1.1:443 churned the port. 60s
+            # probes a healthy tunnel far less often, so a brief hiccup no longer nukes it; a
+            # genuine sustained outage is still caught within a minute, and the container-level
+            # livenessProbe below (real public IP, 4 min) restarts gluetun if it truly wedges.
             - name: HEALTH_VPN_DURATION_INITIAL
-              value: "30s"  # Wait 30s before first healthcheck (default 6s)
+              value: "60s"  # grace for the tunnel to fully establish before the first probe
             - name: HEALTH_VPN_DURATION_ADDITION
               value: "15s"  # Add 15s after each failure (default 5s)
             - name: HEALTH_SUCCESS_WAIT_DURATION
-              value: "10s"  # Wait between success checks
+              value: "60s"  # probe a healthy tunnel every 60s (was 10s) — tolerate transient blips
             - name: HEALTH_TARGET_ADDRESS
               value: "1.1.1.1:443"  # Use IP instead of DNS hostname
             # Port forwarding for seeding (ProtonVPN supports this)
