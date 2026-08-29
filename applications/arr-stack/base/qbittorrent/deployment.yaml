@@ -248,24 +248,29 @@ spec:
               containerPort: 8000
               protocol: TCP
           livenessProbe:
-            # Liveness = is the gluetun PROCESS alive, NOT is the VPN connected. Conflating them
-            # is a death spiral: an earlier version execed a "real public IP present" check, which
-            # FAILS during every normal VPN reconnect (public IP is briefly empty). Restarting
-            # gluetun's container then forces a fresh WireGuard session that COLLIDES with the
-            # just-killed session still registered on ProtonVPN, so the new one gets no traffic
-            # for minutes -> probe keeps failing -> killed again. Observed 33 restarts in 15h,
-            # taking the whole pod NotReady and the WebUI down. The control server on :8000 stays
-            # up across VPN reconnects and only disappears if the process truly hangs, so it is
-            # the correct liveness signal. VPN-connectivity recovery is gluetun's OWN internal
-            # healthcheck's job (restarts the tunnel in place, no session collision) — never the
-            # kubelet's.
-            httpGet:
-              path: /v1/vpn/status
-              port: 8000
-            initialDelaySeconds: 60
+            # Liveness must catch gluetun's TERMINAL states — a "crashed" VPN loop, or a hung control
+            # server — and restart the container, the only thing that recovers them, while NOT firing on
+            # transient VPN reconnects. Two earlier versions each got one half wrong: a plain httpGet
+            # /v1/vpn/status returns HTTP 200 even for {"status":"crashed"}, so a crashed-and-stuck VPN
+            # went unrecovered for hours (the control API answers "already crashed" and can't restart it;
+            # the port-sync watchdog only acts when the tunnel is UP). And an exec that checked VPN
+            # CONNECTIVITY (public IP present) death-spiraled — failing on every normal reconnect ->
+            # restart -> ProtonVPN session collision -> repeat. This checks the STATUS STRING: fail only
+            # when it is "crashed" or the control server is unreachable (process hung); pass for
+            # running/stopping/reconnecting (transient — the control server answers non-crashed).
+            exec:
+              command:
+                - sh
+                - -c
+                - |
+                  s=$(wget -qO- --timeout=8 http://localhost:8000/v1/vpn/status 2>/dev/null)
+                  [ -z "$s" ] && exit 1
+                  echo "$s" | grep -q '"status":"crashed"' && exit 1
+                  exit 0
+            initialDelaySeconds: 90
             periodSeconds: 30
             timeoutSeconds: 10
-            failureThreshold: 5
+            failureThreshold: 3
           volumeMounts:
             - name: gluetun-data
               mountPath: /tmp/gluetun
