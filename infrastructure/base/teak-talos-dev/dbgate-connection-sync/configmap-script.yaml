@@ -141,8 +141,17 @@ data:
     # A failed API call still refuses to touch anything; that is what DISCOVERY_OK is for.
     if [ -z "$CONNS" ]; then
       if [ "$DISCOVERY_OK" = "0" ]; then
-        echo "ERROR: discovery failed - refusing to modify the connection set"
-        exit 1
+        # THE INITCONTAINER MUST NEVER HARD-FAIL. A non-zero exit there means dbgate never
+        # starts at all, so a transient API blip -- or a CNPG/Dragonfly CRD not yet registered
+        # on a cold cluster -- would turn into a permanently-down UI. envFrom is optional:true,
+        # so booting with the existing (or absent) set is strictly better than not booting.
+        # The CronJob still fails loudly, which is where a real outage should surface.
+        if [ "${DO_RESTART:-true}" = "true" ]; then
+          echo "ERROR: discovery failed - refusing to modify the connection set"
+          exit 1
+        fi
+        echo "WARNING: discovery failed - starting dbgate with the existing set"
+        exit 0
       fi
       if kubectl -n "$NS" get secret dbgate-cnpg-connections >/dev/null 2>&1; then
         echo "no stores provisioned - clearing the connection set"

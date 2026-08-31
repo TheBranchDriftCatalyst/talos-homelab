@@ -14,37 +14,48 @@ task k8s:teak-verify           # prove the scoping holds
 **Setting up a second machine (incl. Tilt): [ONBOARDING.md](ONBOARDING.md).** It also answers
 whether Flux/ArgoCD need to ignore anything you deploy here — short version: ArgoCD cannot
 reach this namespace at all, and Flux prune is inventory-based so it never touches objects it
-did not apply. The only real hazard is reusing a `seed/` object's name.
+did not apply. With the demo removed, the only Flux-owned object left in the namespace is
+`dbgate` — don't name anything of yours that.
 
 | | |
 |---|---|
 | Namespace | `teak-talos-dev` |
 | Identity | ServiceAccount `teak-operator` — one namespaced Role, **zero** cluster-scoped grants |
 | API endpoint | `https://192.168.1.54:6443` (LAN direct) |
-| URLs | `http://whoami.teak.talos00`, `https://dbgate.teak.talos00` (Authentik-gated) |
+| URL | `https://dbgate.teak.talos00` (`lan-only` ipAllowList) |
 | Operators | shared: cloudnative-pg, dragonfly-operator, rabbitmq cluster + topology |
 
 ## Who owns what
 
-**Flux owns the scaffolding and the seed — via two separate Kustomizations.** The scaffolding
-(namespace, quota, RBAC, network policy, dbgate) is `teak-talos-dev`; the demo workloads under
-`seed/` are `teak-talos-dev-seed`, which `dependsOn` it. They are split so the demo has an
-off-switch (`flux suspend kustomization teak-talos-dev-seed`) that does not freeze the
-namespace scaffolding the work laptop depends on.
+**Flux owns the scaffolding plus dbgate.** Namespace, ResourceQuota + LimitRange, RBAC, Cilium
+policies, the `*.teak.talos00` certificate, and the tenant's own dbgate + its connection-sync
+CronJob. It owns **no application workloads** — the MVP demo (whoami + CNPG + Dragonfly +
+RabbitMQ) was removed once it had proven the tenant works end to end, and is recoverable from
+git history. dbgate is the only thing that actually runs in the namespace.
 
 **Flux does NOT own what the laptop applies.** Flux prune is inventory-based — it only deletes
-objects it previously applied. Anything you create under a different name is invisible to it
-and survives reconciliation.
+objects it previously applied. Anything you create is invisible to it and survives
+reconciliation.
 
-**The corollary, and the one thing that will bite you:** editing a *seeded* object live
-(`whoami`, `teak-postgres`, `teak-cache`, `teak-rabbit`, `dbgate`) gets reverted within 30
-minutes. Apply your own objects under new names, or move the seed out of git.
+**What you must NOT delete.** None of these run anything, so they are easy to mistake for
+clutter:
+
+| Object | Why |
+|---|---|
+| `ServiceAccount/teak-operator` + its Role | This is the identity your kubeconfig authenticates as. Delete it and the laptop loses all access. |
+| `CiliumNetworkPolicy` (6) | The default-deny and the egress quarantine. Delete them and the tenant can reach the whole homelab. |
+| `ResourceQuota` / `LimitRange` | The only thing bounding a runaway work workload on shared nodes. |
+| `Certificate/teak-wildcard` | TLS for every `*.teak.talos00` host you expose. |
+
+The one name to avoid reusing is `dbgate` — it is the sole Flux-owned object left that a
+Tilt-applied manifest could collide with.
 
 ## Everything here runs one replica
 
-A standing convention for this namespace, including Postgres. It is a **deliberate deviation**
-from the homelab rule "never 1 CNPG instance on local-path, scale to 3" — that rule buys
-availability a dev tenant does not need, at 3x the footprint on shared hardware.
+A standing convention for this namespace, Postgres included — apply it to what you deploy. It
+is a **deliberate deviation** from the homelab rule "never 1 CNPG instance on local-path, scale
+to 3", which buys availability a dev tenant does not need at 3x the footprint on shared
+hardware.
 
 What you are accepting: **local-path is node-local, so losing the node that holds a PVC loses
 the data.** No replica to promote, and this namespace has no Velero coverage and no barman
@@ -116,15 +127,16 @@ a run*), never per-source mutation. The reasons that matters are in
 ## Day-2
 
 ```bash
-# add a database — the tenant's dbgate picks it up within 15 min, or immediately on redeploy
+# add a database to a CNPG cluster you deployed — dbgate picks it up within 15 min,
+# or immediately on the next dbgate redeploy
 kubectl apply -f - <<'YAML'
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata: { name: my-thing, namespace: teak-talos-dev }
 spec:
   name: my_thing
-  owner: teak
-  cluster: { name: teak-postgres }
+  owner: <owner-role>
+  cluster: { name: <your-cnpg-cluster> }
 YAML
 
 # force a sync now instead of waiting
@@ -177,10 +189,9 @@ kubectl -n kube-system exec ds/cilium -- hubble observe --namespace teak-talos-d
 | `cilium-network-policy.yaml` | default-deny + the six allow rules |
 | `dbgate/` | the tenant's own DB UI |
 | `dbgate-connection-sync/` | single-writer sync → `dbgate-cnpg-connections` Secret |
-| `seed/` | MVP: whoami + CNPG (+ a Database CR) + Dragonfly + RabbitMQ + Queue — all single-replica |
 | `ONBOARDING.md` | second-machine setup, Tilt, and the Flux/ArgoCD interaction |
-| `../../../clusters/catalyst-cluster/teak-talos-dev.yaml` | Flux Kustomization — scaffolding |
-| `../../../clusters/catalyst-cluster/teak-talos-dev-seed.yaml` | Flux Kustomization — demo workloads (suspendable alone) |
+| `certificate.yaml` | `*.teak.talos00` wildcard (the shared `*.talos00` cannot match a 2nd label) |
+| `../../../clusters/catalyst-cluster/teak-talos-dev.yaml` | the Flux Kustomization |
 | `../../../scripts/developer/teak-kubeconfig.sh` | mints the laptop kubeconfig |
 
 ---

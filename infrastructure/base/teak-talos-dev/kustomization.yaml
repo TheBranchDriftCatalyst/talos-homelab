@@ -1,14 +1,20 @@
 ---
+# teak-talos-dev — an isolated work tenant.
+#
+# The only thing that RUNS here is the tenant's own dbgate (+ its connection-sync CronJob).
+# Everything else is a zero-runtime-cost guardrail. The workloads are applied by the work
+# laptop (Tilt) and are not managed by Flux at all.
+#
+# The MVP demo (whoami + CNPG + Dragonfly + RabbitMQ) lived under seed/ and was removed once
+# it had proven the tenant works end to end; it is recoverable from git history.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+
 resources:
   - namespace.yaml
-  - certificate.yaml # *.teak.talos00 wildcard (shared *.talos00 cannot match a 2nd label)
-  - quota.yaml
-  - rbac.yaml
-  - cilium-network-policy.yaml
+  - quota.yaml # blast radius on shared nodes
+  - rbac.yaml # the identity the work laptop authenticates as
+  - cilium-network-policy.yaml # default-deny + the egress quarantine
+  - certificate.yaml # *.teak.talos00 (shared *.talos00 cannot match a 2nd label)
   - dbgate/ # the tenant's own DB UI (NOT the homelab dbgate)
   - dbgate-connection-sync/ # single-writer → dbgate-cnpg-connections Secret
-# NOTE: seed/ is deliberately NOT listed here. It is a SEPARATE Flux Kustomization
-# (clusters/catalyst-cluster/teak-talos-dev-seed.yaml) so you can `flux suspend` or delete the
-# demo workloads without suspending the namespace scaffolding that the work laptop depends on.

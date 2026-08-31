@@ -21,14 +21,12 @@ spec:
   path: ./infrastructure/base/teak-talos-dev
   prune: true
   dependsOn:
-    - name: operators # Dragonfly + RabbitMQ (cluster & topology) CRDs
-    - name: databases # CloudNativePG operator + CRDs
-    - name: traefik # IngressRoute CRD
+    - name: databases # CNPG CRDs — the sync job lists Clusters/Databases
+    - name: operators # Dragonfly CRD — the sync job lists Dragonflies
+    - name: traefik # IngressRoute CRD for dbgate
     - name: cert-manager-issuers # homelab-ca-issuer ClusterIssuer for the teak wildcard
-  # wait:false + explicit healthChecks ON PURPOSE. `wait: true` ignores spec.healthChecks and
-  # blocks on EVERY applied object, which here would mean waiting out a 3-instance CNPG
-  # bootstrap and a RabbitMQ cluster formation on every reconcile. Gate on the two plain
-  # Deployments instead; the operator-owned CRs converge on their own schedule.
+  # wait:false + an explicit healthCheck ON PURPOSE. `wait: true` ignores spec.healthChecks and
+  # blocks on EVERY applied object, including the Certificate and the CronJob.
   wait: false
   healthChecks:
     - apiVersion: apps/v1

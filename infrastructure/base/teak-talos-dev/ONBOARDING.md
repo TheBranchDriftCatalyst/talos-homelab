@@ -61,7 +61,8 @@ kubectl config use-context teak-talos-dev
 Hostnames for the tenant's UIs — add to the laptop's `/etc/hosts`:
 
 ```
-192.168.1.54  dbgate.teak.talos00 whoami.teak.talos00
+192.168.1.54  dbgate.teak.talos00
+# ...plus a line per host you expose; they all live under *.teak.talos00
 ```
 
 ## 3. Verify the boundary before you trust it
@@ -166,37 +167,16 @@ only diffs objects it owns.
 
 So you can `tilt up` freely and Flux will not delete, revert, or fight your workloads.
 
-### The one real collision: name clashes with the seed
+### The one name to avoid: `dbgate`
 
-Flux **does** own the demo workloads in `seed/`. If your kustomize renders an object with the
-same kind + name + namespace as one of these:
+Flux owns no workloads in this namespace — the MVP demo was removed once it had proven the
+tenant works. The only Flux-owned object a Tilt manifest could collide with is the tenant's own
+`dbgate` Deployment/Service/PVC. If your kustomize renders something by that name, both
+controllers manage it and you get a revert loop: Tilt applies on save, Flux reverts within 30
+minutes, and field ownership churns because Tilt does a client-side apply and Flux a
+server-side one.
 
-| kind | name |
-|---|---|
-| Deployment | `whoami` |
-| Cluster (CNPG) | `teak-postgres` |
-| Database (CNPG) | `teak-app` |
-| Dragonfly | `teak-cache` |
-| RabbitmqCluster | `teak-rabbit` |
-| Queue | `teak-demo` |
-| Deployment / Service / PVC | `dbgate`, `dbgate-data` |
-
-…then Flux and Tilt both manage it, and you get a revert loop: Tilt applies on save, Flux
-reverts within 30 minutes. It also churns field ownership, because Tilt does a client-side
-apply and Flux a server-side one.
-
-Two clean fixes, in order of preference:
-
-```bash
-# 1. Just don't reuse those names. Nothing else is required.
-
-# 2. Retire the demo. The seed is a SEPARATE Flux Kustomization precisely so this is safe:
-flux suspend kustomization teak-talos-dev-seed
-# ...or delete infrastructure/base/teak-talos-dev/seed/ and its cluster file for good.
-```
-
-Do **not** suspend `teak-talos-dev` itself — that is the scaffolding (namespace, quota, RBAC,
-network policy, dbgate) your laptop depends on.
+Just don't reuse the name. Nothing else is required.
 
 ---
 
@@ -227,7 +207,7 @@ require `gethomepage.dev/enabled: "true"`, which nothing here sets.
 | Pod runs but probes fail / restart-loops | network policy | `kubectl -n kube-system exec ds/cilium -- hubble observe --namespace teak-talos-dev --verdict DROPPED` |
 | `Error from server (Forbidden)` on `tilt up` | cluster-scoped object in the rendered output | `kubectl kustomize ./k8s \| grep -E '^kind: (Namespace\|CustomResourceDefinition\|ClusterRole)'` |
 | `ImagePullBackOff` | no pull secret in this namespace (deliberate) | §4c |
-| Your change keeps reverting | name collision with a `seed/` object | §5 |
+| Your change keeps reverting | you named something `dbgate` | §5 |
 | CNPG cluster never reaches healthy | it needs the API server from inside the pod; that egress rule exists, but check quota/storage first | `kubectl describe cluster <name>` |
 | Tilt: "Stop! ... is not a dev cluster" | missing `allow_k8s_contexts` | §4a |
 
