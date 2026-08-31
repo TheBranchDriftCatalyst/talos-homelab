@@ -1,5 +1,5 @@
 ---
-# HTTPS + Authentik forward-auth. Requires a /etc/hosts entry for teak-dbgate.talos00.
+# HTTPS + Authentik forward-auth. Requires a /etc/hosts entry for dbgate.teak.talos00.
 # TLS: the default TLSStore serves the *.talos00 wildcard via SNI.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -9,16 +9,34 @@ metadata:
   annotations:
     gethomepage.dev/enabled: 'false' # tenant UI, deliberately absent from the homelab dashboard
 spec:
+  # HTTPS + `lan-only` (ipAllowList: RFC1918 + loopback).
+  #
+  # DELIBERATELY NOT THE `authentik` FORWARD-AUTH MIDDLEWARE, even though the homelab dbgate
+  # uses it. Attaching that middleware is NOT sufficient for a new hostname: authentik's
+  # outpost returns 404 for any host with no registered Application, so the route would need a
+  # proxy-provider blueprint plus an entry in the authentik HelmRelease's blueprints.configMaps
+  # — i.e. editing homelab infra on behalf of an isolated tenant, and making the tenant's UI
+  # depend on authentik being up. Verified: dbgate.talos00 (registered) -> 200, while
+  # dbgate.teak.talos00 with the same middleware -> 404.
+  #
+  # WHAT THIS TRADES AWAY, PLAINLY: any device already on the home LAN can open this UI, and
+  # this UI holds every work database credential. That is the accepted posture. If the LAN
+  # stops being trusted, the upgrade is the authentik blueprint, not a second middleware.
+  # TLS: the tenant's own *.teak.talos00 cert (../certificate.yaml), selected by SNI.
   entryPoints: [websecure]
   routes:
-    - match: Host(`teak-dbgate.talos00`)
+    - match: Host(`dbgate.teak.talos00`)
       kind: Rule
       middlewares:
-        - name: authentik
-          namespace: authentik
+        - name: lan-only
+          namespace: traefik
       services:
         - name: dbgate
           port: 3000
+  # Explicit: the tenant wildcard, NOT the shared *.talos00 (which cannot match a
+  # second label). Hand-set, so ingressroute-tls-default leaves it alone.
+  tls:
+    secretName: teak-wildcard-tls
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -28,7 +46,7 @@ metadata:
 spec:
   entryPoints: [web]
   routes:
-    - match: Host(`teak-dbgate.talos00`)
+    - match: Host(`dbgate.teak.talos00`)
       kind: Rule
       middlewares:
         - name: redirect-https

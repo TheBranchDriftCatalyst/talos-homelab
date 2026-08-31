@@ -61,7 +61,7 @@ kubectl config use-context teak-talos-dev
 Hostnames for the tenant's UIs — add to the laptop's `/etc/hosts`:
 
 ```
-192.168.1.54  teak-dbgate.talos00 teak-whoami.talos00
+192.168.1.54  dbgate.teak.talos00 whoami.teak.talos00
 ```
 
 ## 3. Verify the boundary before you trust it

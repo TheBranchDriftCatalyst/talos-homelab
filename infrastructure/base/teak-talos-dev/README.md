@@ -21,7 +21,7 @@ did not apply. The only real hazard is reusing a `seed/` object's name.
 | Namespace | `teak-talos-dev` |
 | Identity | ServiceAccount `teak-operator` — one namespaced Role, **zero** cluster-scoped grants |
 | API endpoint | `https://192.168.1.54:6443` (LAN direct) |
-| URLs | `http://teak-whoami.talos00`, `https://teak-dbgate.talos00` (Authentik-gated) |
+| URLs | `http://whoami.teak.talos00`, `https://dbgate.teak.talos00` (Authentik-gated) |
 | Operators | shared: cloudnative-pg, dragonfly-operator, rabbitmq cluster + topology |
 
 ## Who owns what

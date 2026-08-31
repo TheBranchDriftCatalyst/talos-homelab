@@ -1,5 +1,5 @@
 ---
-# MVP smoke test. If this answers on http://teak-whoami.talos00 the tenant's ingress path,
+# MVP smoke test. If this answers on http://whoami.teak.talos00 the tenant's ingress path,
 # scheduling, quota defaults and PSA level are all working.
 apiVersion: apps/v1
 kind: Deployment
@@ -90,11 +90,15 @@ metadata:
 spec:
   entryPoints: [websecure]
   routes:
-    - match: Host(`teak-whoami.talos00`)
+    - match: Host(`whoami.teak.talos00`)
       kind: Rule
       services:
         - name: whoami
           port: 80
+  # Explicit: the tenant wildcard, NOT the shared *.talos00 (which cannot match a
+  # second label). Hand-set, so ingressroute-tls-default leaves it alone.
+  tls:
+    secretName: teak-wildcard-tls
 ---
 # HTTP→HTTPS redirect, matching the dbgate pair.
 apiVersion: traefik.io/v1alpha1
@@ -105,7 +109,7 @@ metadata:
 spec:
   entryPoints: [web]
   routes:
-    - match: Host(`teak-whoami.talos00`)
+    - match: Host(`whoami.teak.talos00`)
       kind: Rule
       middlewares:
         - name: redirect-https

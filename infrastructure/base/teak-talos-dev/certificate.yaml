@@ -1,0 +1,32 @@
+---
+# Wildcard TLS for the tenant's own subdomain space, `*.teak.talos00`.
+#
+# WHY THIS EXISTS: the homelab's shared `*.talos00` wildcard does NOT cover
+# `dbgate.teak.talos00`. A DNS wildcard matches exactly ONE label, so `*.talos00` covers
+# `dbgate.talos00` but not anything with a further dot in it. Without this cert Traefik finds
+# no SNI match and falls back to the TLSStore default (`*.knowledgedump.space`), and every
+# browser hit on a teak host throws a hostname-mismatch warning.
+#
+# Deliberately a SEPARATE cert in the tenant's own namespace rather than extra SANs bolted
+# onto the shared talos00 wildcard: the tenant does not modify homelab infra, and the cert
+# lives and dies with the namespace. `homelab-ca-issuer` is a ClusterIssuer, so it issues into
+# any namespace.
+#
+# The IngressRoutes reference this explicitly via `tls.secretName`. That is also what stops
+# the `ingressroute-tls-default` Kyverno policy from filling in a bare `tls: {}` — its guard
+# is key-presence (`contains(keys(spec),'tls')`), so a hand-set value always wins.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: teak-wildcard
+  namespace: teak-talos-dev
+spec:
+  secretName: teak-wildcard-tls
+  issuerRef:
+    name: homelab-ca-issuer
+    kind: ClusterIssuer
+  dnsNames:
+    - "*.teak.talos00"
+    - "teak.talos00"
+  duration: 8760h # 1 year
+  renewBefore: 720h # 30 days before expiry
