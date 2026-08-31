@@ -68,20 +68,48 @@ spec:
       targetPort: http
       protocol: TCP
 ---
-# Unauthenticated on purpose: this is the connectivity probe, and `curl -H Host:` against it
-# is the fastest way to prove the tenant's ingress works. It reveals nothing but request
+# Unauthenticated on purpose: this is the connectivity probe, and `curl -k -H Host:` against
+# it is the fastest way to prove the tenant's ingress works. It reveals nothing but request
 # headers and is only reachable from the LAN. Add the authentik middleware (see
 # ../dbgate/ingressroute.yaml) if you would rather gate it.
+#
+# SPLIT INTO TWO INGRESSROUTES, web AND websecure, LIKE EVERY OTHER ROUTE IN THIS REPO.
+# Do NOT collapse them into one `entryPoints: [web, websecure]` route — that was the first
+# attempt and it 404s on plain HTTP. The `ingressroute-tls-default` Kyverno policy injects
+# `tls: {}` into any IngressRoute naming `websecure`, which makes the ENTIRE router
+# TLS-terminated; the `web` (port 80) entrypoint then no longer matches and Traefik falls
+# through to its default 404. The mutation is invisible in git and does not show as Flux
+# drift, so the manifest looks correct while the route is dead. Symptom: `curl -H Host:`
+# over http returns Traefik's plain-text "404 page not found" while the Service answers 200
+# in-cluster.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: whoami
   namespace: teak-talos-dev
 spec:
-  entryPoints: [web, websecure]
+  entryPoints: [websecure]
   routes:
     - match: Host(`teak-whoami.talos00`)
       kind: Rule
+      services:
+        - name: whoami
+          port: 80
+---
+# HTTP→HTTPS redirect, matching the dbgate pair.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: whoami-http
+  namespace: teak-talos-dev
+spec:
+  entryPoints: [web]
+  routes:
+    - match: Host(`teak-whoami.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: whoami
           port: 80
