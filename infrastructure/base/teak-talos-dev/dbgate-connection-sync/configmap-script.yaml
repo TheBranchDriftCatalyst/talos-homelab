@@ -32,9 +32,20 @@ data:
     NS=teak-talos-dev
     TMP=$(mktemp -d)
     # Namespace-scoped discovery (no -A): this job has no cluster-scoped read at all.
-    kubectl -n "$NS" get clusters.postgresql.cnpg.io \
+    #
+    # DISCOVERY_OK distinguishes "the API said there are none" from "the API did not answer".
+    # Those look identical downstream (both yield zero connections) but mean opposite things:
+    # an empty tenant is a legitimate steady state that should CLEAR the set, while a failed
+    # call must never be allowed to blank a working dbgate. Collapsing them is what makes an
+    # empty namespace either error forever or silently wipe itself.
+    DISCOVERY_OK=1
+    if ! kubectl -n "$NS" get clusters.postgresql.cnpg.io \
       -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.bootstrap.initdb.database}{"\n"}{end}' \
-      > "$TMP/clusters" 2>/dev/null || : > "$TMP/clusters"
+      > "$TMP/clusters" 2>/dev/null; then
+      echo "WARNING: cannot list CNPG Clusters"
+      DISCOVERY_OK=0
+      : > "$TMP/clusters"
+    fi
     # Declarative tenant databases. Tolerated failure so a missing CRD or an RBAC gap degrades
     # to initdb-only instead of resolving zero databases.
     if ! kubectl -n "$NS" get databases.postgresql.cnpg.io \
@@ -97,8 +108,13 @@ data:
     # file. (Do NOT pipe it through a `while read ... done > file || : > file` guard — the
     # loop's exit status is that of its LAST iteration, so a trailing blank line makes the
     # fallback fire and silently truncate every dragonfly that was just discovered.)
-    if kubectl -n "$NS" get dragonflies.dragonflydb.io \
+    if ! kubectl -n "$NS" get dragonflies.dragonflydb.io \
       -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' > "$TMP/dfs" 2>/dev/null; then
+      echo "WARNING: cannot list Dragonflies"
+      DISCOVERY_OK=0
+      : > "$TMP/dfs"
+    fi
+    if [ -s "$TMP/dfs" ]; then
       while read -r dfn; do
         [ -z "$dfn" ] && continue
         cid="df_$(printf '%s' "$dfn" | sed -e 's/[^A-Za-z0-9]/_/g')"
@@ -112,18 +128,33 @@ data:
       done < "$TMP/dfs"
     fi
 
-    # Empty-set handling.
-    # The homelab version hard-fails here so a transient API error cannot blank a working
-    # dbgate. That guard would DEADLOCK THIS TENANT ON FIRST BOOT: the initContainer runs
-    # before anything exists, resolves zero connections, exits non-zero, and dbgate never
-    # starts to begin with. So: refuse to OVERWRITE an existing set with nothing, but let a
-    # first run with nothing to publish pass cleanly.
+    # Empty-set handling. Keyed on DISCOVERY_OK, not on whether a set already exists.
+    #
+    # An EMPTY TENANT IS A NORMAL STEADY STATE here: this namespace is a deploy target that
+    # spends most of its life holding whatever the work laptop last pushed, which may be
+    # nothing at all. So zero-stores-found must clear the set and exit clean, or every
+    # 15-minute CronJob run fails and -- worse -- the dbgate initContainer exits non-zero and
+    # dbgate never starts.
+    #
+    # The original guard here keyed on "does a set already exist", which conflated the two
+    # cases and would have error-looped the moment the demo workloads were removed.
+    # A failed API call still refuses to touch anything; that is what DISCOVERY_OK is for.
     if [ -z "$CONNS" ]; then
-      if kubectl -n "$NS" get secret dbgate-cnpg-connections >/dev/null 2>&1; then
-        echo "ERROR: resolved zero connections but a set already exists - refusing to blank it"
+      if [ "$DISCOVERY_OK" = "0" ]; then
+        echo "ERROR: discovery failed - refusing to modify the connection set"
         exit 1
       fi
-      echo "no connections yet (nothing provisioned) - nothing to publish, exiting clean"
+      if kubectl -n "$NS" get secret dbgate-cnpg-connections >/dev/null 2>&1; then
+        echo "no stores provisioned - clearing the connection set"
+        kubectl -n "$NS" delete secret dbgate-cnpg-connections
+        # envFrom is optional:true, so dbgate boots fine without it; roll it so a running
+        # instance stops offering connections to stores that no longer exist.
+        if [ "${DO_RESTART:-true}" = "true" ]; then
+          kubectl -n "$NS" rollout restart deploy/dbgate
+        fi
+      else
+        echo "no stores provisioned - nothing to publish"
+      fi
       exit 0
     fi
     HASH=$(md5sum < "$TMP/data" | cut -d' ' -f1)
