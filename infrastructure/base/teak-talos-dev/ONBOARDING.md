@@ -109,9 +109,14 @@ kubectl kustomize ./k8s | grep -E '^kind: (Namespace|CustomResourceDefinition|Cl
 # should print nothing
 ```
 
-**c. Images must be pullable, and this namespace has no pull secret.** It is deliberately not
-opted into the homelab's shared GHCR credential. Either use public images, or create your own
-secret with your own work credentials — you have `secrets` write in the namespace:
+**c. Images must be pullable, and this namespace has no pull secret.** It carries
+`ghcr-pull-secret: disabled`, which opts it out of the homelab's shared *personal* GHCR
+credential. Note that selector is **opt-out** — every namespace gets the credential unless it
+carries that label — so do not "re-enable" it by deleting the label unless you actually want a
+personal token readable by anyone holding this kubeconfig.
+
+Either use public images, or create your own secret with your own work credentials — you have
+`secrets` write in the namespace:
 
 ```bash
 kubectl create secret docker-registry work-pull \

@@ -174,8 +174,11 @@ kubectl -n kube-system exec ds/cilium -- hubble observe --namespace teak-talos-d
 - **Back up work data** → drop the `velero.io/exclude-from-backup` label *and* give the CNPG
   cluster a barman `ObjectStore` + `ScheduledBackup`. Velero is never the restore path for
   Postgres.
-- **Private image pulls** → add the `ghcr-pull-secret: enabled` label to `namespace.yaml`
-  (this mirrors a personal GHCR credential into the tenant — left off on purpose).
+- **Private image pulls** → create a pull secret with *work* credentials in the namespace
+  (ONBOARDING §4c); the tenant has `secrets` write. The namespace carries
+  `ghcr-pull-secret: disabled`, opting it out of the cluster-wide *personal* GHCR credential.
+  That selector is **opt-out**: deleting the label takes the shared credential back rather
+  than keeping it out.
 - **Stricter pods** → promote `pod-security.kubernetes.io/enforce` from `baseline` to
   `restricted` once you've confirmed the RabbitMQ operator's PodSpec passes the warnings.
 
