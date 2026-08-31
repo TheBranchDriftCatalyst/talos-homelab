@@ -20,7 +20,7 @@ did not apply. With the demo removed, the only Flux-owned object left in the nam
 | | |
 |---|---|
 | Namespace | `teak-talos-dev` |
-| Identity | ServiceAccount `teak-operator` — one namespaced Role, **zero** cluster-scoped grants |
+| Identity | ServiceAccount `teak-operator` — a namespaced Role, plus **read-only** cluster access to `namespaces` + `nodes` (nothing else) |
 | API endpoint | `https://192.168.1.54:6443` (LAN direct) |
 | URL | `https://dbgate.teak.talos00` (`lan-only` ipAllowList) |
 | Operators | shared: cloudnative-pg, dragonfly-operator, rabbitmq cluster + topology |
@@ -76,10 +76,25 @@ Enforced in four places, each independently verifiable:
 
 | Boundary | File | Effect |
 |---|---|---|
-| Authorization | `rbac.yaml` | Namespaced Role only. No ClusterRole, no ClusterRoleBinding. |
+| Authorization | `rbac.yaml` | Namespaced Role for everything that touches objects, plus one read-only ClusterRole over `namespaces` + `nodes` (see below). |
 | Blast radius | `quota.yaml` | ≤6 CPU / 16Gi requested, 50 pods, 100Gi storage, ≤5 CNPG clusters. |
 | Network | `cilium-network-policy.yaml` | Default-deny. No egress to any other namespace or to the LAN. |
 | Credentials | the Kyverno exclusion (below) | Work DB creds never reach the homelab dbgate. |
+
+**The one cluster-scoped grant.** Tooling that renders a cluster/env picker calls
+`GET /api/v1/namespaces` and `GET /api/v1/nodes`. Both are collection reads over cluster-scoped
+resources, which a Role cannot express at all — there is no namespaced way to satisfy them. So
+`teak-operator` also holds a read-only ClusterRole over exactly those two resources.
+
+What that exposes: the **names** of every namespace in the homelab, and full node objects
+(hostnames, internal IPs, labels, capacity, kernel/OS versions). Cluster topology and
+inventory — metadata only. No pod, secret, configmap or other object outside `teak-talos-dev`
+becomes readable, and nothing becomes writable.
+
+`nodes/proxy` is deliberately **excluded** and must stay that way: it is the kubelet API, and
+it permits reading logs from and exec'ing into any pod on any node. That is a full cluster
+compromise, not a picker. Same for `nodes/stats`, `nodes/metrics` and `nodes/log`. If more
+403s appear, batch them and decide once rather than widening this per-error.
 
 **Two deliberate non-obvious choices:**
 

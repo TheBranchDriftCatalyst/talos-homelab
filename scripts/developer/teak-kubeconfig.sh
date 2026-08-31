@@ -4,8 +4,10 @@
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 #
 # Emits a standalone kubeconfig authenticating as the `teak-operator` ServiceAccount.
-# That identity holds ONE namespaced Role in teak-talos-dev and nothing else — no
-# ClusterRole, no ClusterRoleBinding. It cannot read, list or touch any other namespace.
+# That identity holds a namespaced Role in teak-talos-dev, plus a read-only ClusterRole over
+# `namespaces` and `nodes` (cluster/env pickers need to list both, and a Role cannot express a
+# collection read over a cluster-scoped resource). It cannot read or modify any OBJECT outside
+# teak-talos-dev.
 #
 # The credential comes from the TokenRequest API (`kubectl create token`), NOT a legacy
 # service-account-token Secret: auto-population of those is deprecated and this cluster has

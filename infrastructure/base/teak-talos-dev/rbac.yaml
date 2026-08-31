@@ -1,9 +1,13 @@
 ---
-# The identity the work laptop authenticates as. NAMESPACED ONLY — there is deliberately no
-# ClusterRole and no ClusterRoleBinding anywhere in this file. The token cannot see, let alone
-# touch, anything outside teak-talos-dev. (Cluster-scoped API *discovery* still works; that is
-# granted to system:authenticated by the built-in system:discovery binding and is what makes
-# `kubectl api-resources` / client-side validation work.)
+# The identity the work laptop authenticates as.
+#
+# Everything below is namespace-scoped EXCEPT one deliberate, enumerated exception: a read-only
+# ClusterRole over `namespaces` and `nodes` (see the bottom of this file). Tooling that renders
+# a cluster/env picker calls GET /api/v1/namespaces and GET /api/v1/nodes, and both are
+# collection reads over cluster-scoped resources — a Role cannot express them at all, so there
+# is no namespaced way to satisfy them.
+#
+# The token still cannot read or touch any OBJECT outside teak-talos-dev.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -113,6 +117,45 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: teak-operator
+subjects:
+  - kind: ServiceAccount
+    name: teak-operator
+    namespace: teak-talos-dev
+---
+# ── THE ONE CLUSTER-SCOPED GRANT ────────────────────────────────────────────────────────────
+# Read-only, and limited to the two resources a cluster picker needs to enumerate.
+#
+# WHAT THIS EXPOSES, STATED PLAINLY: anyone holding the work kubeconfig can list the NAMES of
+# every namespace in the homelab (media-private, honeypot, authentik, …) and read full node
+# objects — hostnames, internal IPs, labels, capacity, kernel/OS versions, conditions. That is
+# cluster topology and inventory. It is metadata only: no pods, secrets, configmaps or any
+# other object in any other namespace becomes readable, and nothing becomes writable.
+#
+# DELIBERATELY EXCLUDED — do not add these when the next 403 appears:
+#   * nodes/proxy   — this is the kubelet API. It permits reading logs from and exec'ing into
+#                     ANY pod on ANY node, which is a full cluster compromise, not a picker.
+#   * nodes/stats, nodes/metrics, nodes/log — same surface, same reason.
+#   * any write verb on either resource.
+#
+# If more 403s appear, batch them and decide once rather than widening this per-error; each
+# addition is a permanent hole in the boundary this namespace exists to maintain.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: teak-operator-cluster-discovery
+rules:
+  - apiGroups: ['']
+    resources: [namespaces, nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: teak-operator-cluster-discovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: teak-operator-cluster-discovery
 subjects:
   - kind: ServiceAccount
     name: teak-operator

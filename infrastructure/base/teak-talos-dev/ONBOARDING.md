@@ -16,8 +16,10 @@ task k8s:teak-kubeconfig          # → .output/teak-talos-dev.kubeconfig
 ```
 
 This mints a token via the TokenRequest API and writes a standalone kubeconfig with the cluster
-CA embedded. The identity holds **one namespaced Role and nothing else** — no ClusterRole, no
-ClusterRoleBinding.
+CA embedded. The identity holds a **namespaced Role** for everything that touches objects, plus
+a single **read-only** ClusterRole over `namespaces` and `nodes` so cluster/env pickers can
+enumerate them (see README, "The one cluster-scoped grant"). It cannot read or modify any
+object outside `teak-talos-dev`.
 
 **The token is valid for 365 days** and the script prints the exact expiry date. Re-run it to
 mint a fresh one at any time.
@@ -75,6 +77,9 @@ kubectl auth can-i list pods -n kube-system              # no
 kubectl auth can-i list secrets --all-namespaces         # no
 kubectl auth can-i create namespaces                     # no
 kubectl auth can-i create networkpolicies                # no  ← see note below
+kubectl auth can-i list namespaces                       # YES — read-only, picker support
+kubectl auth can-i list nodes                            # YES — read-only, picker support
+kubectl auth can-i get --raw /api/v1/nodes/talos00/proxy/ # no  ← kubelet API stays closed
 ```
 
 `task k8s:teak-verify` runs all of these from the homelab side.
