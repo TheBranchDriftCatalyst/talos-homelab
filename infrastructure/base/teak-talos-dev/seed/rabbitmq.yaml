@@ -1,0 +1,35 @@
+---
+# RabbitMQ — reconciled by the shared rabbitmq-cluster-operator in `rabbitmq-system`.
+# The operator creates a `teak-rabbit` Service and a `teak-rabbit-default-user` Secret
+# (keys: username, password, host, port) for apps to consume via secretKeyRef.
+#
+# RabbitMQ's peer-discovery plugin talks to the Kubernetes API from inside the pod — that is
+# why cilium-network-policy.yaml allows egress to the `kube-apiserver` entity. Without it the
+# node never boots its cluster and the symptom looks nothing like a network policy problem.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: teak-rabbit
+  namespace: teak-talos-dev
+spec:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  persistence:
+    storageClassName: local-path
+    storage: 1Gi
+---
+# Declaratively provisioned by the messaging-topology-operator — proves the second RabbitMQ
+# operator is reaching into this namespace too, not just the cluster operator.
+apiVersion: rabbitmq.com/v1beta1
+kind: Queue
+metadata:
+  name: teak-demo
+  namespace: teak-talos-dev
+spec:
+  name: teak-demo
+  durable: true
+  autoDelete: false
+  rabbitmqClusterReference:
+    name: teak-rabbit

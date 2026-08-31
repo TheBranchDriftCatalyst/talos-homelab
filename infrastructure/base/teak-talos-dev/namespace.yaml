@@ -1,0 +1,42 @@
+---
+# teak-talos-dev — an isolated work tenant on the homelab cluster.
+#
+# WHAT THIS IS: a namespace the work laptop can `kubectl apply` into directly, using the
+# cluster's existing CNPG / Dragonfly / RabbitMQ operators, without any ability to reach or
+# disturb the homelab. Scaffolding (this namespace, quota, RBAC, network policy, the tenant's
+# own dbgate) is Flux-managed; the WORKLOADS inside are deliberately NOT — see README.md.
+#
+# ISOLATION SUMMARY (each enforced by a file in this directory):
+#   blast radius   → quota.yaml         ResourceQuota + LimitRange
+#   authorization  → rbac.yaml          namespaced Role only; no cluster-scoped grant at all
+#   network        → cilium-network-policy.yaml   default-deny; NO egress to other namespaces
+#   backups        → the velero label below
+#   credentials    → this namespace is EXCLUDED from the homelab's reflect-cnpg-app-secrets
+#                    Kyverno policy, so work DB creds never reach the homelab dbgate.
+#                    That exclusion lives in
+#                    infrastructure/base/kyverno-policies/reflect-cnpg-app-secrets.yaml
+#                    and this tenant runs its OWN dbgate instead (./dbgate).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: teak-talos-dev
+  labels:
+    app.kubernetes.io/part-of: teak-talos-dev
+    # Quarantined from homelab backups (operator's choice — work data is not the homelab's
+    # problem). NOTE: this label is inherited by objects Velero evaluates in this namespace;
+    # if you later want work data backed up, remove this AND give the CNPG cluster a
+    # barman ObjectStore — Velero must never be the restore path for Postgres.
+    velero.io/exclude-from-backup: 'true'
+    # Resource recommendations (read-only, safe).
+    goldilocks.fairwinds.com/enabled: 'true'
+    goldilocks.fairwinds.com/vpa-update-mode: 'off'
+    # DELIBERATELY STRICTER THAN THE REST OF THIS CLUSTER. Everything else here runs
+    # `privileged` because of GPU/hostPath workloads. A work tenant has no such need, so it
+    # gets `baseline` enforced. `restricted` is warn/audit rather than enforce because the
+    # RabbitMQ cluster-operator does not reliably emit a restricted-compliant PodSpec; if
+    # your workloads pass the warnings, promote enforce to `restricted`.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    # NOT opted into the cluster-wide `ghcr-pull-secret: enabled` label — that would mirror a
+    # personal GHCR credential into the work tenant. Add it if you need private image pulls.

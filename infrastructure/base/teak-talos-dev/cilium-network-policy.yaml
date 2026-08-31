@@ -1,0 +1,144 @@
+---
+# Default deny, both directions, every endpoint in the tenant. Everything below is additive
+# allow-listing on top of this. Same shape as infrastructure/base/{honeypot,iocaine}.
+#
+# THE TENANT CANNOT REACH ANY OTHER NAMESPACE. That is the whole point and it is achieved by
+# OMISSION — there is no cross-namespace egress rule anywhere in this file. If you ever need
+# work code to reach a homelab service, add the rule here consciously; do not grant the tenant
+# NetworkPolicy write (see the note in rbac.yaml about why `edit` is not bound).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: teak-talos-dev
+spec:
+  endpointSelector: {}
+  ingress:
+    - {}
+  egress:
+    - {}
+---
+# Free traffic WITHIN the tenant. An empty endpoint selector in from/toEndpoints means "the
+# same namespace as this policy" — this does not open anything cross-namespace. This is what
+# lets the app talk to Postgres/Dragonfly/RabbitMQ and lets CNPG instances replicate.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-intra-namespace
+  namespace: teak-talos-dev
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+  egress:
+    - toEndpoints:
+        - {}
+---
+# Cluster plumbing the pods cannot run without.
+#   DNS           — nothing resolves otherwise.
+#   kube-apiserver— NOT optional: the CNPG instance manager and RabbitMQ's k8s peer-discovery
+#                   plugin both call the API server from inside the pod. Omit this and the
+#                   Postgres cluster never forms a quorum and RabbitMQ never discovers peers,
+#                   with confusing symptoms that look like storage or image problems.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cluster-plumbing-egress
+  namespace: teak-talos-dev
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: '53', protocol: UDP }
+            - { port: '53', protocol: TCP }
+          rules:
+            dns:
+              - matchPattern: '*'
+    - toEntities:
+        - kube-apiserver
+---
+# Internet egress, MINUS the home LAN and every other private range.
+#
+# `toEntities: [world]` would have been the obvious rule, and it is WRONG here: Cilium stamps
+# reserved:world on any non-cluster address, which includes 192.168.1.x — so the NAS, the
+# router, and every other box on the home network would be reachable from the work tenant.
+# A CIDR rule with explicit exceptions is what actually delivers "cut off from the homelab".
+#
+# Cluster nodes are not covered by CIDR rules at all (this cluster runs an empty
+# policy-cidr-match-mode, so node traffic carries the host/remote-node identity, not a CIDR
+# identity). Nodes are therefore denied egress by omission — deliberate.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-internet-egress
+  namespace: teak-talos-dev
+spec:
+  endpointSelector: {}
+  egress:
+    - toCIDRSet:
+        - cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8 # RFC1918 + the 10.244.0.0/16 pod CIDR
+            - 172.16.0.0/12 # RFC1918
+            - 192.168.0.0/16 # RFC1918 — the home LAN lives at 192.168.1.0/24
+            - 169.254.0.0/16 # link-local / cloud metadata
+            - 100.64.0.0/10 # CGNAT (Tailscale et al)
+            - 127.0.0.0/8
+---
+# Ingress from the shared operators that reconcile this tenant's CRs.
+# Scoped to the operators' own pod labels where possible rather than whole namespaces — in
+# particular `databases` is NOT opened wholesale, so the homelab's dbgate cannot reach work
+# Postgres even though it shares that namespace with the CNPG operator.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-operators-ingress
+  namespace: teak-talos-dev
+spec:
+  endpointSelector: {}
+  ingress:
+    # CloudNativePG operator → instance manager (:8000) and Postgres (:5432).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: databases
+            app.kubernetes.io/name: cloudnative-pg
+    # RabbitMQ cluster-operator + messaging-topology-operator → management API (:15672) etc.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: rabbitmq-system
+    # Dragonfly operator → dragonfly (:6379) + its admin port.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: dragonfly-operator-system
+---
+# Ingress from Traefik (the tenant's IngressRoutes) and from the metrics scrapers.
+# Also `host` / `remote-node` / `health`: kubelet liveness+readiness probes originate from the
+# node, not from a pod. WITHOUT THIS EVERY POD IN THE TENANT FAILS ITS PROBES AND RESTART-LOOPS
+# — the single most common way a default-deny namespace looks "broken for no reason".
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-platform-ingress
+  namespace: teak-talos-dev
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+        - host
+        - remote-node
+        - health
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: traefik
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability

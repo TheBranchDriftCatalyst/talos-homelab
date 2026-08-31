@@ -1,0 +1,38 @@
+---
+# HTTPS + Authentik forward-auth. Requires a /etc/hosts entry for teak-dbgate.talos00.
+# TLS: the default TLSStore serves the *.talos00 wildcard via SNI.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: dbgate
+  namespace: teak-talos-dev
+  annotations:
+    gethomepage.dev/enabled: 'false' # tenant UI, deliberately absent from the homelab dashboard
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`teak-dbgate.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: dbgate
+          port: 3000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: dbgate-http
+  namespace: teak-talos-dev
+spec:
+  entryPoints: [web]
+  routes:
+    - match: Host(`teak-dbgate.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: dbgate
+          port: 3000

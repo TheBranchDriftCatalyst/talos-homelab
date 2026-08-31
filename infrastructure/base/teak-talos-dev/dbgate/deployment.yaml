@@ -1,0 +1,98 @@
+---
+# The tenant's OWN dbgate. Deliberately a second, separate instance rather than a second set
+# of connections on the homelab's dbgate (infrastructure/base/databases/dbgate): work database
+# credentials never enter the homelab admin UI, and this namespace is excluded from the
+# reflect-cnpg-app-secrets Kyverno policy so they never leave the namespace at all.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dbgate
+  namespace: teak-talos-dev
+  labels:
+    app.kubernetes.io/name: dbgate
+    app.kubernetes.io/component: database-ui
+spec:
+  replicas: 1
+  strategy:
+    # RWO PVC + a single replica: the new pod cannot attach while the old one holds the
+    # volume, so a rolling update would deadlock until the surge pod times out.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dbgate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dbgate
+    spec:
+      serviceAccountName: dbgate-connection-sync
+      initContainers:
+        # "a deploy = a run": regenerate the connections Secret BEFORE dbgate starts, so a
+        # fresh pod is never empty and never lags the CronJob. DO_RESTART=false — the main
+        # container envFroms the freshly-written Secret on start.
+        - name: sync-connections
+          image: alpine/k8s:1.31.7
+          command: [sh, /scripts/sync.sh]
+          env:
+            - { name: DO_RESTART, value: 'false' }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+          volumeMounts:
+            - { name: sync-script, mountPath: /scripts }
+            - { name: sync-tmp, mountPath: /tmp }
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: dbgate
+          image: dbgate/dbgate:7.2.4
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            # BASE ENV ONLY. A key here would OVERRIDE the same key from envFrom, which is how
+            # the homelab version originally ended up serving stale connections.
+            - name: WEB_ROOT
+              value: '/'
+            # No dbgate-level login; access is gated by Authentik forward-auth at the
+            # IngressRoute and by the default-deny network policy.
+            - name: LOGINS
+              value: ''
+          envFrom:
+            - secretRef:
+                name: dbgate-cnpg-connections
+                optional: true # dbgate must boot before the first sync run
+          volumeMounts:
+            - name: data
+              mountPath: /root/.dbgate
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: dbgate-data
+        - name: sync-script
+          configMap:
+            name: dbgate-connection-sync-script
+        - name: sync-tmp
+          emptyDir: {}

@@ -1,0 +1,156 @@
+---
+# The tenant's OWN connection sync. Same pattern as the homelab's
+# infrastructure/base/databases/dbgate-connection-sync, with one large simplification:
+#
+#   EVERYTHING IS IN ONE NAMESPACE, SO THE REFLECTION LAYER DISAPPEARS.
+#   The homelab version needs a Kyverno ClusterPolicy to annotate <cluster>-app secrets and
+#   emberstack/reflector to mirror them into `databases`, because the consumer lives in a
+#   different namespace from the producers. Here the CNPG clusters and dbgate are namespace
+#   siblings, so the job reads the -app secrets directly. No Kyverno rule, no reflector, and
+#   critically NO ClusterRole — see rbac.yaml, every grant is namespace-scoped.
+#
+# What survives from the homelab version, because each was a real production failure:
+#   * ONE CONNECTION PER DATABASE, NOT PER CLUSTER. Keying on
+#     Cluster.spec.bootstrap.initdb.database alone silently misses every tenant declared as a
+#     Database CR — dbgate connects fine and shows an empty schema, which reads to a user as
+#     "dbgate is broken". The list is the UNION of the initdb database and every Database CR
+#     pointing at that cluster.
+#   * SINGLE WRITER. Each run rebuilds the COMPLETE set, so overlapping runs converge.
+#   * `data:` NOT `stringData:` — kubectl apply can only prune a key it can see in the live
+#     object, and the API server rewrites stringData into data on write, so removed keys
+#     (including stale passwords) would accumulate forever.
+#   * Hash-gated restart, so a 15-minute CronJob doesn't roll dbgate 96 times a day.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dbgate-connection-sync-script
+  namespace: teak-talos-dev
+data:
+  sync.sh: |
+    #!/bin/sh
+    set -eu
+    NS=teak-talos-dev
+    TMP=$(mktemp -d)
+    # Namespace-scoped discovery (no -A): this job has no cluster-scoped read at all.
+    kubectl -n "$NS" get clusters.postgresql.cnpg.io \
+      -o jsonpath='{range .items[*]}{.metadata.name}|{.spec.bootstrap.initdb.database}{"\n"}{end}' \
+      > "$TMP/clusters" 2>/dev/null || : > "$TMP/clusters"
+    # Declarative tenant databases. Tolerated failure so a missing CRD or an RBAC gap degrades
+    # to initdb-only instead of resolving zero databases.
+    if ! kubectl -n "$NS" get databases.postgresql.cnpg.io \
+      -o jsonpath='{range .items[*]}{.spec.cluster.name}|{.spec.name}|{.spec.ensure}{"\n"}{end}' \
+      > "$TMP/dbcrs" 2>/dev/null; then
+      echo "WARNING: cannot list Database CRs - falling back to initdb databases only"
+      : > "$TMP/dbcrs"
+    fi
+    CONNS=""
+    : > "$TMP/data"
+    while IFS='|' read -r name db; do
+      [ -z "$name" ] && continue
+      id=$(printf '%s' "$name" | sed -e 's/-postgres$//' -e 's/-db$//' -e 's/[^A-Za-z0-9]/_/g')
+      sec="${name}-app"
+      user=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d 2>/dev/null || true)
+      pass=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+      if [ -z "$user" ]; then echo "skip $name (no $sec yet - cluster still bootstrapping?)"; continue; fi
+      [ -z "$db" ] && db=$(kubectl -n "$NS" get secret "$sec" -o jsonpath='{.data.dbname}' 2>/dev/null | base64 -d 2>/dev/null || true)
+      [ -z "$db" ] && db="$user"
+      # union: initdb database first, then this cluster's Database CRs; awk dedups, keeps order
+      {
+        [ -n "$db" ] && echo "$db"
+        grep "^${name}|" "$TMP/dbcrs" 2>/dev/null | while IFS='|' read -r _c d ens; do
+          [ "$ens" = "absent" ] && continue
+          [ -n "$d" ] && echo "$d"
+        done
+      } | awk 'NF && !seen[$0]++' > "$TMP/dbs"
+      ndb=$(wc -l < "$TMP/dbs" | tr -d ' ')
+      while read -r d; do
+        [ -z "$d" ] && continue
+        # Single-database clusters keep their bare id so saved dbgate state is not renamed out
+        # from under the user; only multi-database clusters get a db suffix.
+        if [ "$ndb" -gt 1 ]; then
+          slug=$(printf '%s' "$d" | sed -e 's/[^A-Za-z0-9]/_/g')
+          cid="${id}_${slug}"
+        else
+          cid="$id"
+        fi
+        CONNS="${CONNS:+$CONNS,}$cid"
+        {
+          echo "ENGINE_$cid=postgres@dbgate-plugin-postgres"
+          echo "SERVER_$cid=${name}-rw.${NS}.svc.cluster.local"
+          echo "PORT_$cid=5432"
+          echo "USER_$cid=$user"
+          echo "PASSWORD_$cid=$pass"
+          echo "DATABASE_$cid=$d"
+          echo "LABEL_$cid=$name/$d"
+        } >> "$TMP/data"
+      done < "$TMP/dbs"
+    done < "$TMP/clusters"
+
+    # Dragonfly (Redis wire-compatible) — an ADDITION over the homelab version, because this
+    # tenant provisions Dragonfly as a first-class store and a DB UI that ignores half the
+    # data stores is not much of a DB UI. Assumes NO auth (the default-deny network policy is
+    # what protects it). If you set spec.authentication.passwordFromSecret on a Dragonfly,
+    # extend this loop to read that secret, or the connection will fail to authenticate.
+    # If dbgate ever ships without the bundled redis plugin, delete this block — nothing else
+    # depends on it.
+    # Same tolerated-failure shape as the Database CRs above: write jsonpath straight to the
+    # file. (Do NOT pipe it through a `while read ... done > file || : > file` guard — the
+    # loop's exit status is that of its LAST iteration, so a trailing blank line makes the
+    # fallback fire and silently truncate every dragonfly that was just discovered.)
+    if kubectl -n "$NS" get dragonflies.dragonflydb.io \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' > "$TMP/dfs" 2>/dev/null; then
+      while read -r dfn; do
+        [ -z "$dfn" ] && continue
+        cid="df_$(printf '%s' "$dfn" | sed -e 's/[^A-Za-z0-9]/_/g')"
+        CONNS="${CONNS:+$CONNS,}$cid"
+        {
+          echo "ENGINE_$cid=redis@dbgate-plugin-redis"
+          echo "SERVER_$cid=${dfn}.${NS}.svc.cluster.local"
+          echo "PORT_$cid=6379"
+          echo "LABEL_$cid=$dfn (dragonfly)"
+        } >> "$TMP/data"
+      done < "$TMP/dfs"
+    fi
+
+    # Empty-set handling.
+    # The homelab version hard-fails here so a transient API error cannot blank a working
+    # dbgate. That guard would DEADLOCK THIS TENANT ON FIRST BOOT: the initContainer runs
+    # before anything exists, resolves zero connections, exits non-zero, and dbgate never
+    # starts to begin with. So: refuse to OVERWRITE an existing set with nothing, but let a
+    # first run with nothing to publish pass cleanly.
+    if [ -z "$CONNS" ]; then
+      if kubectl -n "$NS" get secret dbgate-cnpg-connections >/dev/null 2>&1; then
+        echo "ERROR: resolved zero connections but a set already exists - refusing to blank it"
+        exit 1
+      fi
+      echo "no connections yet (nothing provisioned) - nothing to publish, exiting clean"
+      exit 0
+    fi
+    HASH=$(md5sum < "$TMP/data" | cut -d' ' -f1)
+    OLD=$(kubectl -n "$NS" get secret dbgate-cnpg-connections -o jsonpath='{.metadata.annotations.dbgate\.sync/hash}' 2>/dev/null || true)
+    {
+      echo "apiVersion: v1"
+      echo "kind: Secret"
+      echo "metadata:"
+      echo "  name: dbgate-cnpg-connections"
+      echo "  namespace: $NS"
+      echo "  annotations: { dbgate.sync/hash: \"$HASH\" }"
+      echo "data:"
+      echo "  CONNECTIONS: $(printf '%s' "$CONNS" | base64 | tr -d '\n')"
+      while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        k=${line%%=*}
+        v=${line#*=}
+        echo "  $k: $(printf '%s' "$v" | base64 | tr -d '\n')"
+      done < "$TMP/data"
+    } > "$TMP/secret.yaml"
+    kubectl apply -f "$TMP/secret.yaml"
+    echo "connections: [$CONNS]"
+    # DO_RESTART=true (CronJob): roll dbgate when the set changed. The initContainer sets
+    # false - the main container envFroms the freshly-written Secret when it starts.
+    if [ "${DO_RESTART:-true}" = "true" ] && [ "$HASH" != "$OLD" ]; then
+      echo "connection set changed -> rolling dbgate"
+      kubectl -n "$NS" rollout restart deploy/dbgate
+    else
+      echo "no restart (DO_RESTART=${DO_RESTART:-true})"
+    fi

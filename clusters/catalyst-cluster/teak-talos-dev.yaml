@@ -1,0 +1,36 @@
+---
+# teak-talos-dev — isolated work tenant.
+#
+# Flux owns the SCAFFOLDING (namespace, quota, RBAC, network policy, the tenant's dbgate) and
+# the MVP seed workloads. It does NOT own whatever the work laptop applies afterwards: Flux
+# prune is inventory-based, so objects created outside this Kustomization are never touched.
+# The corollary is that editing a SEEDED object live (whoami, teak-postgres, teak-cache,
+# teak-rabbit) WILL be reverted on the next reconcile — apply your own objects under new names.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: teak-talos-dev
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/teak-talos-dev
+  prune: true
+  dependsOn:
+    - name: operators # Dragonfly + RabbitMQ (cluster & topology) CRDs
+    - name: databases # CloudNativePG operator + CRDs
+    - name: traefik # IngressRoute CRD
+  # wait:false + explicit healthChecks ON PURPOSE. `wait: true` ignores spec.healthChecks and
+  # blocks on EVERY applied object, which here would mean waiting out a 3-instance CNPG
+  # bootstrap and a RabbitMQ cluster formation on every reconcile. Gate on the two plain
+  # Deployments instead; the operator-owned CRs converge on their own schedule.
+  wait: false
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: dbgate
+      namespace: teak-talos-dev

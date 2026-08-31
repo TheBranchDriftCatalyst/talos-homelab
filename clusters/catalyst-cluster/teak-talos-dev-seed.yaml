@@ -1,0 +1,37 @@
+---
+# teak-talos-dev MVP seed workloads — SPLIT FROM THE SCAFFOLDING ON PURPOSE.
+#
+# The work laptop applies into this namespace with Tilt, which re-runs `kubectl apply` on every
+# file save. Flux and Tilt only ever fight over an object they BOTH manage — i.e. one with the
+# same kind+name+namespace. Keeping the demo workloads in their own Kustomization means you can
+#
+#     flux suspend kustomization teak-talos-dev-seed
+#
+# the moment a name collides (or the demo stops being useful), WITHOUT freezing the namespace,
+# quota, RBAC, network policy or dbgate that the laptop depends on. Suspending the scaffolding
+# instead would be the wrong lever, and merging the two would leave you no lever at all.
+#
+# To retire the demo permanently: delete infrastructure/base/teak-talos-dev/seed/ and this
+# file. prune:true removes the objects on the next reconcile.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: teak-talos-dev-seed
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/teak-talos-dev/seed
+  prune: true
+  dependsOn:
+    - name: teak-talos-dev # namespace, quota, RBAC and network policy must exist first
+  wait: false
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: whoami
+      namespace: teak-talos-dev

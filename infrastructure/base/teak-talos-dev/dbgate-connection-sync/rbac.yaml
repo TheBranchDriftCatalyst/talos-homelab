@@ -1,0 +1,45 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dbgate-connection-sync
+  namespace: teak-talos-dev
+---
+# NOTE THE ABSENCE OF A ClusterRole. The homelab's equivalent needs cluster-wide read on the
+# CNPG CRDs because it aggregates every namespace; this tenant's dbgate only ever shows this
+# tenant's own stores, so every grant here is namespace-scoped. That is the isolation
+# property — nothing in teak-talos-dev holds a cluster-scoped permission.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dbgate-connection-sync
+  namespace: teak-talos-dev
+rules:
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, databases]
+    verbs: [get, list]
+  - apiGroups: [dragonflydb.io]
+    resources: [dragonflies]
+    verbs: [get, list]
+  # Read the CNPG-generated -app secrets; write the generated connections secret.
+  - apiGroups: ['']
+    resources: [secrets]
+    verbs: [get, list, create, update, patch]
+  # Roll dbgate when the connection set changes.
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [get, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dbgate-connection-sync
+  namespace: teak-talos-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dbgate-connection-sync
+subjects:
+  - kind: ServiceAccount
+    name: dbgate-connection-sync
+    namespace: teak-talos-dev

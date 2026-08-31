@@ -35,6 +35,42 @@ tasks:
       - echo "  export KUBECONFIG={{.KUBECONFIG}}"
 
   # ============================================
+  # teak-talos-dev (isolated work tenant)
+  # ============================================
+
+  teak-kubeconfig:
+    desc: Mint the namespace-scoped kubeconfig for the work laptop (.output/teak-talos-dev.kubeconfig)
+    cmds:
+      - ./scripts/developer/teak-kubeconfig.sh
+
+  teak-rotate-token:
+    desc: Rotate the teak-operator token and re-mint its kubeconfig
+    cmds:
+      - ./scripts/developer/teak-kubeconfig.sh --rotate
+
+  teak-verify:
+    desc: Prove the teak-talos-dev tenant is scoped and isolated (RBAC + quota + connections)
+    cmds:
+      - |
+        KC=.output/teak-talos-dev.kubeconfig
+        [ -f "$KC" ] || { echo "run 'task k8s:teak-kubeconfig' first"; exit 1; }
+        echo "--- must be YES (the tenant's own namespace) ---"
+        KUBECONFIG=$KC kubectl auth can-i create clusters.postgresql.cnpg.io -n teak-talos-dev
+        KUBECONFIG=$KC kubectl auth can-i create rabbitmqclusters.rabbitmq.com -n teak-talos-dev
+        KUBECONFIG=$KC kubectl auth can-i create dragonflies.dragonflydb.io -n teak-talos-dev
+        echo "--- must be NO (isolation) ---"
+        KUBECONFIG=$KC kubectl auth can-i list pods -n kube-system
+        KUBECONFIG=$KC kubectl auth can-i list secrets -A
+        KUBECONFIG=$KC kubectl auth can-i create networkpolicies -n teak-talos-dev
+        KUBECONFIG=$KC kubectl auth can-i create nodes
+        echo "--- quota ---"
+        kubectl -n teak-talos-dev get resourcequota teak-talos-dev
+        echo "--- dbgate auto-registered connections ---"
+        kubectl -n teak-talos-dev get secret dbgate-cnpg-connections \
+          -o jsonpath='{.data.CONNECTIONS}' 2>/dev/null | base64 -d || echo "(not generated yet)"
+        echo
+
+  # ============================================
   # Cluster Resources
   # ============================================
 

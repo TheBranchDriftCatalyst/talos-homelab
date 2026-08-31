@@ -1,0 +1,69 @@
+---
+# CNPG Postgres for the tenant. Reconciled by the SHARED cloudnative-pg operator in the
+# `databases` namespace — nothing extra is installed for this tenant.
+#
+# instances: 1 — A DELIBERATE DEVIATION FROM THE HOMELAB RULE, and the tenant-wide convention:
+# EVERYTHING IN THIS NAMESPACE RUNS ONE REPLICA. The homelab rule is "never 1 CNPG instance on
+# local-path, scale to 3", because local-path is node-local and a single instance dies with its
+# node. That rule buys availability this tenant does not need and pays for it with 3x the
+# footprint on shared hardware.
+#
+# THE CONSEQUENCE, STATED PLAINLY: if the node holding this PVC is lost, the database is gone.
+# There is no replica to promote and (see below) no backup to restore from. Treat anything in
+# teak-talos-dev as reproducible-from-scratch. If a work project ever holds data you would be
+# upset to lose, that is the signal to give it an ObjectStore + ScheduledBackup, or to raise it
+# to instances: 3 — not to hope.
+#
+# NO backup configuration here: this namespace is excluded from Velero and has no barman
+# ObjectStore. That is a deliberate "work data is not the homelab's problem" call. If you want
+# backups, add an ObjectStore + ScheduledBackup — never restore Postgres via Velero.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: teak-postgres
+  namespace: teak-talos-dev
+spec:
+  instances: 1
+  # -standard- (not -minimal-, which has no pgvector; not -system-, which is deprecated).
+  # Matches what the rest of this cluster already runs, so the image is warm on every node.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-standard-trixie
+  # Keeps CNPG's child objects (PVCs, pods) out of Velero even if the namespace label is
+  # ever removed. Cheap belt-and-braces on a documented footgun.
+  inheritedMetadata:
+    labels:
+      velero.io/exclude-from-backup: 'true'
+  bootstrap:
+    initdb:
+      database: teak
+      owner: teak
+      # Pin collation explicitly — CNPG's initdb otherwise defaults to the C collation, and
+      # that silently changes text ORDER BY. initdb only ever runs once, so this cannot be
+      # fixed after the fact without a rebuild.
+      localeCollate: en_US.utf8
+      localeCType: en_US.utf8
+  storage:
+    size: 2Gi
+    storageClass: local-path
+  monitoring:
+    # Covered by the cluster-wide cnpg-clusters PodMonitor; a per-cluster one double-scrapes.
+    enablePodMonitor: false
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+---
+# A second, declarative tenant database. This is not decoration: it exercises the UNION path
+# in the dbgate sync (initdb database `teak` + this one), which is the exact case that was
+# silently broken in the homelab implementation. After this applies you should see TWO
+# Postgres connections in the tenant's dbgate — `teak_postgres_teak` and
+# `teak_postgres_teak_app` — not one.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: teak-app
+  namespace: teak-talos-dev
+spec:
+  name: teak_app
+  owner: teak
+  ensure: present
+  cluster:
+    name: teak-postgres

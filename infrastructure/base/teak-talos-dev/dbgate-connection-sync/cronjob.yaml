@@ -1,0 +1,54 @@
+---
+# Periodic catch-up for stores provisioned between dbgate deploys. The dbgate initContainer
+# runs the same script on every (re)deploy ("a deploy = a run"), so this only covers the gap
+# where the work laptop applies a new CNPG/Dragonfly CR and does not touch dbgate.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dbgate-connection-sync
+  namespace: teak-talos-dev
+spec:
+  schedule: '*/15 * * * *'
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 120
+      ttlSecondsAfterFinished: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: dbgate-connection-sync
+        spec:
+          serviceAccountName: dbgate-connection-sync
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: sync
+              image: alpine/k8s:1.31.7
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              command: [sh, /scripts/sync.sh]
+              env:
+                - { name: DO_RESTART, value: 'true' }
+              resources:
+                requests: { cpu: 10m, memory: 64Mi }
+                limits: { cpu: 200m, memory: 128Mi }
+              volumeMounts:
+                - { name: script, mountPath: /scripts }
+                # required: readOnlyRootFilesystem + the script's mktemp
+                - { name: tmp, mountPath: /tmp }
+          volumes:
+            - name: script
+              configMap: { name: dbgate-connection-sync-script }
+            - { name: tmp, emptyDir: {} }

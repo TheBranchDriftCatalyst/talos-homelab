@@ -1,0 +1,119 @@
+---
+# The identity the work laptop authenticates as. NAMESPACED ONLY — there is deliberately no
+# ClusterRole and no ClusterRoleBinding anywhere in this file. The token cannot see, let alone
+# touch, anything outside teak-talos-dev. (Cluster-scoped API *discovery* still works; that is
+# granted to system:authenticated by the built-in system:discovery binding and is what makes
+# `kubectl api-resources` / client-side validation work.)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: teak-operator
+  namespace: teak-talos-dev
+#
+# THERE IS DELIBERATELY NO TOKEN SECRET HERE. The obvious move is a legacy
+# `kubernetes.io/service-account-token` Secret, which never expires — but auto-population of
+# those is deprecated and this cluster has ZERO of them cluster-wide (verified), so relying on
+# the token-controller to fill one in would be betting the laptop's access on a controller
+# nothing else here exercises.
+#
+# Credentials come from the TokenRequest API instead:
+#     kubectl -n teak-talos-dev create token teak-operator --duration=8760h
+# This apiserver grants the full 365 days requested (verified). `task k8s:teak-kubeconfig`
+# wraps it; `task k8s:teak-rotate-token` deletes and recreates the ServiceAccount, which
+# invalidates every previously issued token because they are bound to the SA's UID.
+---
+# Workload permissions.
+#
+# THIS IS DELIBERATELY NOT A BINDING TO THE BUILT-IN `edit` ClusterRole. `edit` grants
+# create/update on networking.k8s.io/networkpolicies (verified on this cluster), and Cilium
+# evaluates NetworkPolicy and CiliumNetworkPolicy ADDITIVELY — so a tenant holding `edit`
+# could apply one permissive NetworkPolicy and walk straight through the egress quarantine in
+# cilium-network-policy.yaml. This Role is `edit` minus that hole (and minus
+# serviceaccounts/token + serviceaccounts impersonate, which are lateral-movement primitives).
+#
+# Also absent, on purpose: resourcequotas/limitranges (read-only below), roles/rolebindings
+# (no self-escalation), ciliumnetworkpolicies.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: teak-operator
+  namespace: teak-talos-dev
+rules:
+  # --- core workloads ---
+  # `secrets` write is included because you cannot run a real app without it. It is scoped to
+  # this namespace, and the only privileged Secret here is the tenant's own SA token.
+  - apiGroups: ['']
+    resources:
+      [pods, pods/log, pods/exec, pods/attach, pods/portforward, services, endpoints,
+       configmaps, secrets, persistentvolumeclaims, serviceaccounts, replicationcontrollers]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: ['']
+    resources: [events, limitranges, resourcequotas, resourcequotas/status, pods/status, bindings]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources:
+      [deployments, deployments/scale, deployments/status, replicasets, replicasets/scale,
+       statefulsets, statefulsets/scale, statefulsets/status, daemonsets, controllerrevisions]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, list, watch]
+  - apiGroups: [metrics.k8s.io]
+    resources: [pods]
+    verbs: [get, list]
+
+  # --- the three operator CRD families this tenant exists for ---
+  # CNPG. `databases` is the tenant-database CR; the tenant's dbgate keys off the UNION of
+  # initdb databases and these (see dbgate-connection-sync/configmap-script.yaml).
+  - apiGroups: [postgresql.cnpg.io]
+    resources:
+      [clusters, databases, poolers, backups, scheduledbackups, databaseroles,
+       publications, subscriptions, imagecatalogs, failoverquorums]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Barman object stores, so the tenant can opt INTO its own backups later. Nothing is
+  # configured by default — this namespace is excluded from Velero and has no ObjectStore.
+  - apiGroups: [barmancloud.cnpg.io]
+    resources: [objectstores]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [dragonflydb.io]
+    resources: [dragonflies]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # RabbitMQ cluster-operator + messaging-topology-operator, full CRD set.
+  - apiGroups: [rabbitmq.com]
+    resources:
+      [rabbitmqclusters, queues, exchanges, bindings, users, permissions, topicpermissions,
+       policies, operatorpolicies, vhosts, federations, shovels, superstreams, schemareplications]
+    verbs: [get, list, watch, create, update, patch, delete]
+
+  # --- exposure + observability the tenant is allowed to declare for itself ---
+  # IngressRoutes only (no Traefik Middleware — middlewares are cross-namespace-referencable
+  # and are how auth is enforced on the homelab's routes).
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes, ingressroutetcps, ingressrouteudps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [servicemonitors, podmonitors, prometheusrules]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: teak-operator
+  namespace: teak-talos-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: teak-operator
+subjects:
+  - kind: ServiceAccount
+    name: teak-operator
+    namespace: teak-talos-dev
