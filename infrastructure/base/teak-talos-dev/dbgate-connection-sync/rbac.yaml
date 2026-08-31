@@ -25,6 +25,19 @@ rules:
   - apiGroups: ['']
     resources: [secrets]
     verbs: [get, list, create, update, patch]
+  # DELETE, scoped by resourceNames to the one Secret this job owns.
+  # Required by the empty-tenant path: when discovery succeeds and finds no stores, the job
+  # clears the connection set by deleting this Secret (dbgate's envFrom is optional:true, so it
+  # then boots with no connections -- the same known-good state it had before the first sync).
+  # Without this verb the job fails on RBAC and the CronJob error-loops; that is exactly what
+  # happened the first time the tenant was emptied.
+  # resourceNames rather than a blanket delete: this is not a real privilege increase either
+  # way (the SA can already overwrite any secret in the namespace via update/patch), but it
+  # keeps the grant describing precisely what the job does.
+  - apiGroups: ['']
+    resources: [secrets]
+    resourceNames: [dbgate-cnpg-connections]
+    verbs: [delete]
   # Roll dbgate when the connection set changes.
   - apiGroups: [apps]
     resources: [deployments]
