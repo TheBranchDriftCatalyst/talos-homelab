@@ -38,5 +38,20 @@ metadata:
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted
-    # NOT opted into the cluster-wide `ghcr-pull-secret: enabled` label — that would mirror a
-    # personal GHCR credential into the work tenant. Add it if you need private image pulls.
+    # OPT OUT of the cluster-wide GHCR pull credential.
+    #
+    # READ THE SELECTOR BEFORE CHANGING THIS. The ghcr-secret ClusterExternalSecret is
+    # OPT-OUT, not opt-in: its namespaceSelectors distribute to EVERY namespace except
+    # kube-system/kube-public/kube-node-lease/flux-system and those labelled
+    # `ghcr-pull-secret: disabled`. Omitting the label does NOT keep the credential out — it
+    # lets it in. (The `ghcr-pull-secret: enabled` label on the `scratch` namespace is inert
+    # under this selector and is easy to mistake for an opt-in mechanism. It was.)
+    #
+    # WHY THIS MATTERS HERE SPECIFICALLY: the tenant Role grants `secrets` get/list in this
+    # namespace, so anyone holding the work kubeconfig — or any pod running in it — could read
+    # the personal GHCR token. That is a real credential exposure across exactly the boundary
+    # this namespace exists to maintain.
+    #
+    # For private image pulls, create a pull secret with WORK credentials instead; the tenant
+    # has secrets write. See ONBOARDING.md §4c. To take the shared one back, delete this label.
+    ghcr-pull-secret: disabled
