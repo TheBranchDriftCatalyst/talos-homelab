@@ -1,0 +1,39 @@
+---
+# Scrape Zot's Prometheus endpoint.
+#
+# BASIC AUTH IS REQUIRED, and this is the part that is easy to get wrong. Zot serves /metrics
+# on the SAME port as the registry, behind the SAME authn. There is no anonymousPolicy, so an
+# unauthenticated scrape gets 401. Being authenticated is also not sufficient: authorization
+# for /metrics comes from `http.accessControl.metrics.users`, which adminPolicy does NOT imply
+# — measured 403 as `panda` until that allowlist was added in externalsecret.yaml.
+#
+# Credentials come from the ESO-templated zot-secrets (metrics-username / metrics-password).
+# The Secret must live in the SAME namespace as this ServiceMonitor, which is why this sits in
+# `registry` rather than `monitoring`.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: zot
+  namespace: registry
+  labels:
+    app.kubernetes.io/name: zot
+    prometheus: kube-prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - registry
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: zot
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 60s
+      scrapeTimeout: 30s
+      basicAuth:
+        username:
+          name: zot-secrets
+          key: metrics-username
+        password:
+          name: zot-secrets
+          key: metrics-password
