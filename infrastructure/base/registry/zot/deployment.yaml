@@ -22,7 +22,17 @@ spec:
       labels:
         app.kubernetes.io/name: zot
       annotations:
-        # Roll the pod when the templated config/htpasswd changes.
+        # Intent: roll the pod when the templated config/htpasswd changes.
+        #
+        # CURRENTLY INERT — Stakater Reloader is NOT installed in this cluster (no deployment,
+        # no CRD; this annotation is the only reference to it in the entire repo). Kept because
+        # it is the right declaration if Reloader is ever added, but do not rely on it.
+        #
+        # So: config.json is mounted with subPath, which never updates in place, AND nothing
+        # watches the Secret. A config change therefore requires an explicit
+        #     kubectl -n registry rollout restart deploy/zot
+        # after ESO re-renders zot-secrets. Without that the pod keeps serving the old config
+        # indefinitely and the change looks like it silently did nothing.
         reloader.stakater.com/auto: "true"
     spec:
       # OIDC discovery to auth.talos00 works in-cluster via the CoreDNS rewrite
