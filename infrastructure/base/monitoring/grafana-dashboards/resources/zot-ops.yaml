@@ -1,0 +1,39 @@
+---
+# GrafanaDashboard CR: "Zot Registry Ops".
+#
+# Every query in this dashboard was written against metrics VERIFIED PRESENT in Mimir, not
+# against zot's documentation. That distinction matters here because zot registers most of its
+# counters LAZILY — a raw scrape of a freshly-started zot exposes only zot_info, zot_gc_* and
+# zot_scheduler_*, and the HTTP/download counters appear only after the corresponding code path
+# runs. Panels can therefore be legitimately empty on a quiet registry; that is not a broken
+# query. The confirmed metric set is:
+#   zot_info, zot_repo_storage_bytes{repo}, zot_repo_downloads_total{repo},
+#   zot_http_requests_total{code,method}, zot_http_method_latency_seconds_bucket,
+#   zot_http_repo_latency_seconds_{count,sum}, zot_storage_lock_latency_seconds_bucket,
+#   zot_gc_runs_total{error}, zot_gc_duration_seconds_{count,sum},
+#   zot_scheduler_{workers,workers_total,generators_total,tasksqueue_length,generators_status},
+#   zot_scheduler_workers_tasks_duration_seconds_bucket{name}
+#
+# JOB LABEL IS `zot`, not `registry/zot`. Most ServiceMonitor-derived jobs on this cluster carry
+# `<namespace>/<name>`, so the obvious guess is wrong — verified against live series.
+#
+# GC rate and GC duration are deliberately TWO panels rather than one dual-axis panel.
+#
+# JSON at ../json/zot-ops.json -> ConfigMap dashboard-zot-ops (configMapGenerator,
+# disableNameSuffixHash). uid "zot-ops" is stable.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: zot-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folderRef: ops-storage
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-zot-ops
+    key: zot-ops.json
