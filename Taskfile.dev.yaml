@@ -233,3 +233,45 @@ tasks:
       - task: lint
       - task: validate
       - echo "✅ CI pipeline passed!"
+
+  # ============================================
+  # Worktree Hygiene
+  # ============================================
+  # Claude Code agent/workflow worktrees live at .claude/worktrees/ — full repo
+  # checkouts nested INSIDE the repo. They auto-clean only when left pristine, so
+  # any repo-wide sed/find that touches them makes them permanently dirty and they
+  # accumulate (21 stale worktrees / 358 MB before the first sweep).
+
+  worktree:list:
+    desc: Show agent/workflow worktrees with disk usage
+    cmds:
+      - |
+        n=$(ls -1 .claude/worktrees 2>/dev/null | wc -l | tr -d ' ')
+        echo "worktrees: ${n:-0}   disk: $(du -sh .claude/worktrees 2>/dev/null | cut -f1 || echo 0)"
+        echo "note: 'git worktree list' shows n+1 rows — the extra is the main checkout."
+        git worktree list
+
+  worktree:audit:
+    desc: Check whether each worktree's work is already merged into main (read-only)
+    cmds:
+      - ./scripts/worktree-audit.sh
+
+  worktree:clean:
+    desc: "DESTRUCTIVE: remove merged worktrees + delete their branches (audits first)"
+    cmds:
+      - ./scripts/worktree-audit.sh
+      - ./scripts/worktree-cleanup.sh
+
+  worktree:guard:
+    desc: Find repo-wide tool configs that do NOT exclude .claude/ (the sed-leak class)
+    cmds:
+      - |
+        echo "Configs that must exclude .claude/ (worktrees are full repo copies):"
+        for f in .prettierignore .markdownlint-cli2.yaml .gitignore; do
+          [ -f "$f" ] || continue
+          if grep -q '\.claude' "$f"; then echo "  ✓ $f"; else echo "  ✗ $f  <-- MISSING .claude exclusion"; fi
+        done
+        echo
+        echo "Habit for ad-hoc sweeps — always scope them:"
+        echo "  grep -r ... --exclude-dir=.claude --exclude-dir=node_modules"
+        echo "  find . -path ./.claude -prune -o -name '*.yaml' -print"
