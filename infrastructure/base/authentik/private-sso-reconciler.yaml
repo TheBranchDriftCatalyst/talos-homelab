@@ -1,0 +1,37 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: private-sso-reconciler
+  namespace: authentik
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [authentik-immich-oidc, authentik-zipline-oidc, private-app-sso-credentials]
+    verbs: [get, patch, update]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [authentik-worker]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: private-sso-reconciler
+  namespace: authentik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: private-sso-reconciler
+subjects:
+  - kind: ServiceAccount
+    name: private-sso-reconciler
+    namespace: media-private
