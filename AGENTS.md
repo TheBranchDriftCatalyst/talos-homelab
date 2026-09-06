@@ -82,3 +82,9 @@ bd close <id>         # Complete work
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
+
+<!-- bd-doctor-divergence: ok -->
+<!-- AGENTS.md and CLAUDE.md are deliberately distinct documents for different
+     audiences; both carry unique content. Verified 2026-09-06. If you ever want
+     them unified, merge deliberately (see workspace/BEADS.md) rather than
+     symlinking, which would discard one side. -->
