@@ -36,7 +36,7 @@
         "iconColor": "rgba(255,161,71,1)",
         "name": "Orphan prune run",
         "target": {
-          "expr": "{namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-prune\"} |= \"action=DELETE\" != \"type=TXT\"",
+          "expr": "{namespace=\"external-dns\", pod=~\"(external-dns-orphan-prune|edns-prune)-.*\"} |= \"action=DELETE\" != \"type=TXT\"",
           "refId": "Anno"
         }
       }
@@ -961,7 +961,7 @@
             "type": "loki",
             "uid": "loki-v2"
           },
-          "expr": "sum(count_over_time({namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
+          "expr": "sum(count_over_time({namespace=\"external-dns\", pod=~\"(external-dns-orphan-report|edns-report)-.*\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
           "queryType": "range",
           "legendFormat": "Orphans (hourly dry-run)"
         }
@@ -1223,10 +1223,10 @@
         "type": "loki",
         "uid": "loki-v2"
       },
-      "description": "Live external-dns controller log, with the steady-state 'All records are already up to date' heartbeat filtered out so only meaningful activity (startup, record changes, warnings, errors) shows. Remove the `!=` filter in the query to see everything.",
+      "description": "Raw external-dns output, heartbeat lines filtered out. Selects on container= rather than app_kubernetes_io_name=: alloy does not attach the app_* pod labels to this namespace's streams, so the old selector matched nothing.",
       "gridPos": {
         "h": 9,
-        "w": 24,
+        "w": 13,
         "x": 0,
         "y": 36
       },
@@ -1247,7 +1247,7 @@
             "type": "loki",
             "uid": "loki-v2"
           },
-          "expr": "{namespace=\"external-dns\", app_kubernetes_io_name=\"external-dns\"} != `All records are already up to date`",
+          "expr": "{namespace=\"external-dns\", container=\"external-dns\"} != `All records are already up to date`",
           "refId": "A",
           "queryType": "range",
           "maxLines": 1000
@@ -1693,7 +1693,7 @@
             "uid": "loki-v2"
           },
           "queryType": "instant",
-          "expr": "sum(count_over_time({namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [70m]))"
+          "expr": "sum(count_over_time({namespace=\"external-dns\", pod=~\"(external-dns-orphan-report|edns-report)-.*\"} |= \"action=DELETE\" != \"type=TXT\" [70m]))"
         }
       ],
       "options": {
@@ -1768,7 +1768,7 @@
             "uid": "loki-v2"
           },
           "queryType": "range",
-          "expr": "sum(count_over_time({namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
+          "expr": "sum(count_over_time({namespace=\"external-dns\", pod=~\"(external-dns-orphan-report|edns-report)-.*\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
           "legendFormat": "orphans"
         }
       ],
@@ -1833,7 +1833,7 @@
             "type": "loki",
             "uid": "loki-v2"
           },
-          "expr": "{namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-report\"} |= \"action=DELETE\" != \"type=TXT\"",
+          "expr": "{namespace=\"external-dns\", pod=~\"(external-dns-orphan-report|edns-report)-.*\"} |= \"action=DELETE\" != \"type=TXT\"",
           "queryType": "range"
         }
       ],
@@ -1844,6 +1844,70 @@
         "enableLogDetails": true,
         "dedupStrategy": "exact",
         "prettifyLogMessage": false
+      }
+    },
+    {
+      "id": 33,
+      "type": "status-history",
+      "title": "What Changed, When",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 11,
+        "x": 13,
+        "y": 36
+      },
+      "description": "Every DNS mutation external-dns made, bucketed by time and split by action. One band per CREATE / UPDATE / DELETE; cell colour is how many records that action touched in the bucket. Reading the raw Activity Log beside it tells you WHICH records. Empty means a quiet period, which is the normal state.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "queryType": "range",
+          "expr": "sum by (action) (count_over_time({namespace=\"external-dns\", container=\"external-dns\"} | logfmt | action=~\"CREATE|UPDATE|DELETE\" | type!=\"TXT\" [$__interval]))",
+          "legendFormat": "{{action}}"
+        }
+      ],
+      "options": {
+        "showValue": "auto",
+        "rowHeight": 0.9,
+        "colWidth": 0.9,
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 1
+          },
+          "color": {
+            "mode": "continuous-YlOrRd"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
       }
     }
   ],
