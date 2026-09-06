@@ -130,6 +130,9 @@ spec:
     services:
     - name: authentik-server
       port: 80
+    middlewares:
+    - name: private-portal
+      namespace: authentik
   tls: {}
 ---
 apiVersion: traefik.io/v1alpha1
@@ -144,8 +147,20 @@ spec:
   - match: Host(`auth.priv.knowledgedump.space`)
     kind: Rule
     middlewares:
-    - name: redirect-https
-      namespace: traefik
+    - name: private-portal
+      namespace: authentik
     services:
     - name: authentik-server
       port: 80
+---
+# One IdP hostname keeps portal and outpost logins on the same browser session.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: private-portal
+  namespace: authentik
+spec:
+  redirectRegex:
+    regex: '^https?://auth\.priv\.knowledgedump\.space(.*)$'
+    replacement: 'https://auth.knowledgedump.space$${1}'
+    permanent: false
