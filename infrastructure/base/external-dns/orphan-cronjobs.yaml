@@ -36,8 +36,11 @@ metadata:
     app.kubernetes.io/name: external-dns
     app.kubernetes.io/component: orphan-report
 spec:
-  schedule: "0 5 * * 1"   # never fires — suspend: true
-  suspend: true
+  # Runs HOURLY in dry-run mode. It only ever logs, never deletes, so a schedule
+  # is safe here — and the log lines are what the "Orphan Detection" row of the
+  # External DNS dashboard (uid eea5u_I7z) reads out of Loki.
+  schedule: "0 * * * *"
+  suspend: false
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -46,6 +49,16 @@ spec:
       ttlSecondsAfterFinished: 86400
       backoffLimit: 0
       template:
+        # These labels are load-bearing, not decoration: alloy promotes
+        # app.kubernetes.io/{name,component} into Loki stream labels, and both the
+        # existing "Activity Log" panel ({app_kubernetes_io_name=...}) and the
+        # Orphan Detection panels ({app_kubernetes_io_component=...}) select on
+        # them. Without them these pods log into Loki unlabelled and no panel can
+        # find them.
+        metadata:
+          labels:
+            app.kubernetes.io/name: external-dns
+            app.kubernetes.io/component: orphan-report
         spec:
           restartPolicy: Never
           serviceAccountName: external-dns
@@ -101,7 +114,7 @@ metadata:
     app.kubernetes.io/name: external-dns
     app.kubernetes.io/component: orphan-prune
 spec:
-  schedule: "0 5 * * 1"   # never fires — suspend: true
+  schedule: "0 5 * * 1"   # never fires — suspend: true, trigger by hand only
   suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -111,6 +124,10 @@ spec:
       ttlSecondsAfterFinished: 86400
       backoffLimit: 0
       template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: external-dns
+            app.kubernetes.io/component: orphan-prune
         spec:
           restartPolicy: Never
           serviceAccountName: external-dns

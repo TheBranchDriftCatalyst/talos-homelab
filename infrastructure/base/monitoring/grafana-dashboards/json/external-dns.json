@@ -25,6 +25,20 @@
         "expr": "changes(external_dns_registry_endpoints_total{job=\"external-dns\"}[2m]) != 0",
         "step": "60s",
         "titleFormat": "endpoints changed"
+      },
+      {
+        "datasource": {
+          "type": "loki",
+          "uid": "loki-v2"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "rgba(255,161,71,1)",
+        "name": "Orphan prune run",
+        "target": {
+          "expr": "{namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-prune\"} |= \"action=DELETE\" != \"type=TXT\"",
+          "refId": "Anno"
+        }
       }
     ]
   },
@@ -769,7 +783,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-        "expr": "max(external_dns_registry_records{job=~\"$instance\",record_type=\"a\"})",
+          "expr": "max(external_dns_registry_records{job=~\"$instance\",record_type=\"a\"})",
           "legendFormat": "A records",
           "refId": "A"
         },
@@ -778,7 +792,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-        "expr": "max(external_dns_registry_records{job=~\"$instance\",record_type=\"aaaa\"})",
+          "expr": "max(external_dns_registry_records{job=~\"$instance\",record_type=\"aaaa\"})",
           "legendFormat": "AAAA records",
           "refId": "B"
         },
@@ -787,7 +801,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-        "expr": "sum(external_dns_registry_records{job=~\"$instance\",record_type!~\"a|aaaa\"})",
+          "expr": "sum(external_dns_registry_records{job=~\"$instance\",record_type!~\"a|aaaa\"})",
           "legendFormat": "CNAME / TXT / other",
           "refId": "C"
         },
@@ -819,8 +833,8 @@
     },
     {
       "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
+        "type": "datasource",
+        "uid": "-- Mixed --"
       },
       "description": "Desired (from sources) vs Managed (in the Cloudflare registry) endpoint counts over time. When the two lines diverge, external-dns has records it wants to create/delete but hasn't reconciled \u2014 the gap is the drift stat above, shown historically.",
       "fieldConfig": {
@@ -870,6 +884,35 @@
                 }
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Orphans (hourly dry-run)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 18
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    8,
+                    4
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
@@ -911,9 +954,19 @@
           },
           "expr": "max(external_dns_registry_endpoints_total{job=~\"$instance\"})",
           "legendFormat": "Managed (registry)"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
+          "queryType": "range",
+          "legendFormat": "Orphans (hourly dry-run)"
         }
       ],
-      "title": "Desired vs Managed Endpoints",
+      "title": "Desired vs Managed Endpoints (+ orphans)",
       "type": "timeseries"
     },
     {
@@ -971,7 +1024,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-        "expr": "max(external_dns_registry_records{job=~\"$instance\",record_type=\"a\"})",
+          "expr": "max(external_dns_registry_records{job=~\"$instance\",record_type=\"a\"})",
           "legendFormat": "A",
           "refId": "A"
         },
@@ -980,7 +1033,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-        "expr": "max(external_dns_registry_records{job=~\"$instance\",record_type=\"aaaa\"})",
+          "expr": "max(external_dns_registry_records{job=~\"$instance\",record_type=\"aaaa\"})",
           "legendFormat": "AAAA",
           "refId": "B"
         },
@@ -989,7 +1042,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-        "expr": "sum(external_dns_registry_records{job=~\"$instance\",record_type!~\"a|aaaa\"})",
+          "expr": "sum(external_dns_registry_records{job=~\"$instance\",record_type!~\"a|aaaa\"})",
           "legendFormat": "CNAME / TXT / other",
           "refId": "C"
         }
@@ -1603,6 +1656,195 @@
       ],
       "title": "Records by Status (now)",
       "type": "bargauge"
+    },
+    {
+      "id": 105,
+      "type": "row",
+      "title": "Orphan Detection (hourly dry-run)",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 59
+      },
+      "panels": []
+    },
+    {
+      "id": 30,
+      "type": "stat",
+      "title": "Orphans Right Now",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 5,
+        "x": 0,
+        "y": 60
+      },
+      "description": "DNS records external-dns still owns in Cloudflare with no live source. Counted from the last hourly --dry-run pass; TXT registry twins excluded so this is real records, not rows. 0 is the healthy state.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "queryType": "instant",
+          "expr": "sum(count_over_time({namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [70m]))"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "0",
+                  "color": "green",
+                  "index": 0
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Orphans Detected Over Time",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 9,
+        "x": 5,
+        "y": 60
+      },
+      "description": "One point per hourly dry-run. A step up means something was deleted from git without its DNS record being reclaimed; it stays flat until someone runs the prune CronJob.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "queryType": "range",
+          "expr": "sum(count_over_time({namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
+          "legendFormat": "orphans"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 18,
+            "showPoints": "always",
+            "pointSize": 5,
+            "lineInterpolation": "stepAfter"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 32,
+      "type": "logs",
+      "title": "Orphan Records \u2014 which ones",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 10,
+        "x": 14,
+        "y": 60
+      },
+      "description": "The actual record names the dry-run would delete. This is the review step before triggering external-dns-orphan-prune: kubectl -n external-dns create job edns-prune-$(date +%s) --from=cronjob/external-dns-orphan-prune",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "{namespace=\"external-dns\", app_kubernetes_io_component=\"orphan-report\"} |= \"action=DELETE\" != \"type=TXT\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true,
+        "dedupStrategy": "exact",
+        "prettifyLogMessage": false
+      }
     }
   ],
   "refresh": "30s",
