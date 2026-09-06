@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # network-layer-tests.sh - Comprehensive network layer validation for Talos homelab
-#
+# convert to jest test framework???
 # Tests:
 #   - Cilium status and health
-#   - SPIRE/mTLS authentication
+#   - SPIRE/mTLS authentication also isnt this gone now deprecated??
 #   - Inter-node communication (with and without mTLS)
 #   - Nebula overlay status
 #   - Grafana dashboards availability
