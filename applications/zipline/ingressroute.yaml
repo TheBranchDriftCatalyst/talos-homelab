@@ -27,8 +27,6 @@ spec:
         - name: zipline
           port: 3000
 ---
-# SSO route — zipline.priv.talos00 behind Authentik forward-auth (talos-private group).
-# (TALOS-xgrl.13). The xzip.talos00 lan-only route above is kept for now.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -37,16 +35,16 @@ metadata:
     app: zipline
 spec:
   entryPoints:
-    - websecure
+  - websecure
   routes:
-    - match: Host(`zipline.priv.talos00`)
-      kind: Rule
-      middlewares:
-        - name: authentik
-          namespace: authentik
-      services:
-        - name: zipline
-          port: 3000
+  - match: Host(`zipline.priv.talos00`)
+    kind: Rule
+    middlewares:
+    - name: private-domain-redirect
+      namespace: traefik
+    services:
+    - name: zipline
+      port: 3000
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -56,13 +54,58 @@ metadata:
     app: zipline
 spec:
   entryPoints:
-    - web
+  - web
   routes:
-    - match: Host(`zipline.priv.talos00`)
-      kind: Rule
-      middlewares:
-        - name: redirect-https
-          namespace: traefik
-      services:
-        - name: zipline
-          port: 3000
+  - match: Host(`zipline.priv.talos00`)
+    kind: Rule
+    middlewares:
+    - name: private-domain-redirect
+      namespace: traefik
+    services:
+    - name: zipline
+      port: 3000
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zipline-priv-domain
+  labels:
+    app: zipline
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: zipline.priv.knowledgedump.space
+    external-dns.alpha.kubernetes.io/target: knowledgedump.space
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: 'false'
+spec:
+  entryPoints:
+  - websecure
+  routes:
+  - match: Host(`zipline.priv.knowledgedump.space`)
+    kind: Rule
+    middlewares:
+    - name: security-headers
+      namespace: traefik
+    - name: authentik
+      namespace: authentik
+    services:
+    - name: zipline
+      port: 3000
+  tls: {}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: zipline-priv-http-domain
+  labels:
+    app: zipline
+spec:
+  entryPoints:
+  - web
+  routes:
+  - match: Host(`zipline.priv.knowledgedump.space`)
+    kind: Rule
+    middlewares:
+    - name: redirect-https
+      namespace: traefik
+    services:
+    - name: zipline
+      port: 3000
