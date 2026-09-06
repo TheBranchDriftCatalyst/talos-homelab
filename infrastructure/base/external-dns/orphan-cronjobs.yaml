@@ -1,0 +1,152 @@
+---
+# On-demand orphan cleanup for external-dns.
+#
+# WHY THIS EXISTS: the Deployment runs --policy=upsert-only, so external-dns
+# creates and updates records but never deletes them. Removing an IngressRoute
+# therefore leaves its Cloudflare record (and its _externaldns. TXT registry
+# companion) behind forever. Flipping the Deployment to --policy=sync would fix
+# that, but it also means any transient disappearance of a source -- Traefik CRDs
+# mid-upgrade, Flux part-way through a reconcile -- becomes a real DNS deletion
+# within the 1m sync interval. These CronJobs get the cleanup without that
+# standing risk: same binary, same credentials, same TXT ownership, but only when
+# a human runs them.
+#
+# BOTH ARE SUSPENDED. They never fire on a schedule; the schedule field is only
+# there because CronJob requires one. Trigger on demand:
+#
+#   # 1. see what WOULD be deleted (safe, changes nothing)
+#   kubectl -n external-dns create job edns-report-$(date +%s) \
+#     --from=cronjob/external-dns-orphan-report
+#   kubectl -n external-dns logs -l job-name=edns-report-... | grep DELETE
+#
+#   # 2. actually delete them
+#   kubectl -n external-dns create job edns-prune-$(date +%s) \
+#     --from=cronjob/external-dns-orphan-prune
+#
+# SAFETY: --txt-owner-id=talos-homelab means only records this cluster registered
+# in the TXT registry are ever candidates. Manually-created Cloudflare records
+# have no matching _externaldns. TXT and are invisible to it. ALWAYS run the
+# report first and read the DELETE lines -- that output is the whole review step.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: external-dns-orphan-report
+  namespace: external-dns
+  labels:
+    app.kubernetes.io/name: external-dns
+    app.kubernetes.io/component: orphan-report
+spec:
+  schedule: "0 5 * * 1"   # never fires — suspend: true
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: external-dns
+          securityContext:
+            fsGroup: 65534
+            runAsNonRoot: true
+            runAsUser: 65534
+          containers:
+            - name: external-dns
+              image: registry.k8s.io/external-dns/external-dns:v0.21.0
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+              env:
+                - name: CF_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: cloudflare-api-token
+                      key: CF_API_TOKEN
+              args:
+                # Identical to the Deployment's source/provider/registry config.
+                # Any drift here produces a WRONG answer: a source this misses
+                # looks like an orphan and would be reported for deletion.
+                - --source=ingress
+                - --source=traefik-proxy
+                - --source=crd
+                - --crd-source-apiversion=externaldns.k8s.io/v1alpha1
+                - --crd-source-kind=DNSEndpoint
+                - --provider=cloudflare
+                - --domain-filter=knowledgedump.space
+                - --annotation-filter=external-dns.alpha.kubernetes.io/hostname
+                - --txt-owner-id=talos-homelab
+                - --txt-prefix=_externaldns.
+                - --registry=txt
+                - --log-format=text
+                # The differences from the Deployment:
+                - --policy=sync    # consider deletions...
+                - --dry-run        # ...but make none
+                - --once           # single pass, then exit
+              resources:
+                requests: {cpu: 10m, memory: 50Mi}
+                limits: {cpu: 200m, memory: 256Mi}
+---
+# Same as above WITHOUT --dry-run. This one really deletes.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: external-dns-orphan-prune
+  namespace: external-dns
+  labels:
+    app.kubernetes.io/name: external-dns
+    app.kubernetes.io/component: orphan-prune
+spec:
+  schedule: "0 5 * * 1"   # never fires — suspend: true
+  suspend: true
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: external-dns
+          securityContext:
+            fsGroup: 65534
+            runAsNonRoot: true
+            runAsUser: 65534
+          containers:
+            - name: external-dns
+              image: registry.k8s.io/external-dns/external-dns:v0.21.0
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+              env:
+                - name: CF_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: cloudflare-api-token
+                      key: CF_API_TOKEN
+              args:
+                - --source=ingress
+                - --source=traefik-proxy
+                - --source=crd
+                - --crd-source-apiversion=externaldns.k8s.io/v1alpha1
+                - --crd-source-kind=DNSEndpoint
+                - --provider=cloudflare
+                - --domain-filter=knowledgedump.space
+                - --annotation-filter=external-dns.alpha.kubernetes.io/hostname
+                - --txt-owner-id=talos-homelab
+                - --txt-prefix=_externaldns.
+                - --registry=txt
+                - --log-format=text
+                - --policy=sync
+                - --once
+              resources:
+                requests: {cpu: 10m, memory: 50Mi}
+                limits: {cpu: 200m, memory: 256Mi}
