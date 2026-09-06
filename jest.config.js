@@ -24,7 +24,7 @@ module.exports = {
     "<rootDir>/infrastructure/base/honeypot/tests", // Cowrie honeypot security posture — guards the controls that make deliberate internet exposure survivable (TALOS-hg7) // Cilium LB-IPAM / L2 VIP failover DR (TALOS-23l.3)
     "<rootDir>/infrastructure/base/authentik/tests", // Authentik SSO SPOF recovery DR (TALOS-23l.4)
     "<rootDir>/infrastructure/base/databases/tests", // CloudNativePG primary failover DR (TALOS-23l.5)
-    "<rootDir>/infrastructure/base/talos-dr/tests", // etcd snapshot freshness + integrity DR (TALOS-23l.6)
+    "<rootDir>/tests/etcd-dr", // etcd snapshot freshness + integrity DR (TALOS-23l.6)
     "<rootDir>/infrastructure/base/storage/tests", // NFS/local-path PVC reuse lifecycle DR (TALOS-23l.7)
     "<rootDir>/infrastructure/base/traefik/tests", // Traefik ingress SPOF failover DR (TALOS-23l.8)
   ],
