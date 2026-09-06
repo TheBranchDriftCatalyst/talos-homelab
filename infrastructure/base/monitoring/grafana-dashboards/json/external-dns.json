@@ -25,6 +25,22 @@
         "expr": "changes(external_dns_registry_endpoints_total{job=\"external-dns\"}[2m]) != 0",
         "step": "60s",
         "titleFormat": "endpoints changed"
+      },
+      {
+        "datasource": {
+          "type": "loki",
+          "uid": "loki-v2"
+        },
+        "enable": false,
+        "hide": false,
+        "iconColor": "rgba(255,161,71,1)",
+        "name": "Orphan prune run",
+        "iconSize": 12,
+        "target": {
+          "refId": "Anno",
+          "queryType": "range",
+          "expr": "{namespace=\"external-dns\", app=\"external-dns-orphan-prune\"} |= \"action=DELETE\" != \"type=TXT\""
+        }
       }
     ]
   },
@@ -356,7 +372,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Desired \u2212 Managed. Records the sources want that external-dns does not (yet) own. A small non-zero value is expected (policy is upsert-only, and the root A record is owned by the separate cloudflare-ddns deployment, not this registry). A growing value means reconciliation is failing to keep up.",
+      "description": "source_endpoints_total minus registry_endpoints_total. NOTE these two are not directly comparable -- the registry counts each _externaldns. TXT ownership record as a separate endpoint -- so this sits at a permanent non-zero offset (currently around -8) even when nothing is actually adrift. For a true orphan count use the Orphan Detection row, which comes from the hourly dry-run.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -819,10 +835,10 @@
     },
     {
       "datasource": {
-        "type": "prometheus",
-        "uid": "mimir"
+        "type": "datasource",
+        "uid": "-- Mixed --"
       },
-      "description": "Desired = records k8s sources want. Managed = records external-dns owns in Cloudflare. Orphans = Managed minus Desired, clamped at 0: records still owned with no live source. The hourly dry-run CronJob names them in the Orphan Detection row below.",
+      "description": "Desired = records k8s sources want; Managed = records external-dns owns in Cloudflare. These two are NOT directly comparable -- the registry counts each _externaldns. TXT ownership record separately -- so do not read their gap as orphans. The orange series is the real orphan count, from the hourly --dry-run CronJob, which resolves sources the same way a real sync would.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -946,11 +962,12 @@
         {
           "refId": "C",
           "datasource": {
-            "type": "prometheus",
-            "uid": "mimir"
+            "type": "loki",
+            "uid": "loki-v2"
           },
-          "legendFormat": "Orphans (registry-only)",
-          "expr": "clamp_min(max(external_dns_registry_endpoints_total{job=~\"$instance\"}) - max(external_dns_source_endpoints_total{job=~\"$instance\"}), 0)"
+          "queryType": "range",
+          "legendFormat": "Orphans (hourly dry-run)",
+          "expr": "sum(count_over_time({namespace=\"external-dns\", app=\"external-dns-orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))"
         }
       ],
       "title": "Desired vs Managed Endpoints (+ orphans)",
@@ -1234,7 +1251,7 @@
             "type": "loki",
             "uid": "loki-v2"
           },
-          "expr": "{namespace=\"external-dns\", container=\"external-dns\"} != `All records are already up to date`",
+          "expr": "{namespace=\"external-dns\", container=\"external-dns\"} != `All records are already up to date` != `config:`",
           "refId": "A",
           "queryType": "range",
           "maxLines": 1000
@@ -1680,7 +1697,7 @@
             "uid": "loki-v2"
           },
           "queryType": "instant",
-          "expr": "sum(count_over_time({namespace=\"external-dns\", pod=~\"(external-dns-orphan-report|edns-report)-.*\"} |= \"action=DELETE\" != \"type=TXT\" [70m]))"
+          "expr": "sum(count_over_time({namespace=\"external-dns\", app=\"external-dns-orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [70m]))"
         }
       ],
       "options": {
@@ -1755,7 +1772,7 @@
             "uid": "loki-v2"
           },
           "queryType": "range",
-          "expr": "sum(count_over_time({namespace=\"external-dns\", pod=~\"(external-dns-orphan-report|edns-report)-.*\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
+          "expr": "sum(count_over_time({namespace=\"external-dns\", app=\"external-dns-orphan-report\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
           "legendFormat": "orphans"
         }
       ],
@@ -1820,7 +1837,7 @@
             "type": "loki",
             "uid": "loki-v2"
           },
-          "expr": "{namespace=\"external-dns\", pod=~\"(external-dns-orphan-report|edns-report)-.*\"} |= \"action=DELETE\" != \"type=TXT\"",
+          "expr": "{namespace=\"external-dns\", app=\"external-dns-orphan-report\"} |= \"action=DELETE\" != \"type=TXT\"",
           "queryType": "range"
         }
       ],

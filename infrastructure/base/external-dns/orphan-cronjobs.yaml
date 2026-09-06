@@ -49,17 +49,19 @@ spec:
       ttlSecondsAfterFinished: 86400
       backoffLimit: 0
       template:
-        # Conventional labels, kept for kubectl selectors and consistency.
+        # Load-bearing. alloy promotes exactly three pod labels into Loki stream
+        # labels -- app, app.kubernetes.io/name and k8s_app (monitoring/alloy
+        # ConfigMap); app.kubernetes.io/component is NOT promoted, so never query
+        # on it. Verified against the live datasource:
+        #   app                    -> the discriminator the Orphan Detection panels
+        #                             select on to separate report from prune runs
+        #   app.kubernetes.io/name -> groups these runs with the main Deployment
+        # Jobs created with `kubectl create job --from=cronjob/...` inherit this pod
+        # template, so manual runs carry the labels too and appear on the dashboard
+        # regardless of what you name the Job.
         #
-        # Do NOT build Grafana queries on them. alloy has relabel rules for app,
-        # app.kubernetes.io/name and k8s_app, but they are not landing on THIS
-        # namespace's Loki streams -- verified against the live datasource, where
-        # external-dns streams carry only cluster/container/instance/job/namespace/
-        # node/pod/service_name. That is also why the dashboard's pre-existing
-        # Activity Log panel was silently empty. The Orphan Detection panels
-        # therefore select on pod=~"(external-dns-orphan-report|edns-report)-.*",
-        # which is why the manual trigger command below uses the edns-report- /
-        # edns-prune- prefixes -- renaming them breaks the dashboard.
+        # The external-dns Deployment itself sets no `app` label, which is why the
+        # dashboard's all-activity panels select on container= instead.
         metadata:
           labels:
             app: external-dns-orphan-report
