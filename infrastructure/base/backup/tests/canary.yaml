@@ -9,6 +9,11 @@
 # up the PVC exactly the way the production `daily-all` schedule discovers volumes (annotation-
 # driven) — the DR test therefore exercises the ACTUAL backup path, not a weaker stand-in. The
 # Backup CR the test creates also sets defaultVolumesToFsBackup:true as a belt-and-suspenders.
+#
+# NOTE: Velero and CNPG/barman are two mutually exclusive backup systems. The rule is that
+# Velero must NOT back up Postgres data — barman owns it. Postgres runs on local NVMe with a
+# replica set, which is what lets it use fast local storage while still being able to move
+# between nodes; the container is not node-pinned and barman handles the backups.
 ---
 apiVersion: v1
 kind: Namespace
