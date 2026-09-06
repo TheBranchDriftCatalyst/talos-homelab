@@ -53,6 +53,64 @@ spec:
         - name: authentik-server
           port: 80
 ---
+# Authentik portal — amber.knowledgedump.space (talos-private app library).
+#
+# Same authentik-server as auth.knowledgedump.space, just a second hostname. The
+# point is the BRAND: authentik matches brands by case-insensitive host-endswith,
+# and authentik-talos-private-brand-blueprint claims domain
+# "amber.knowledgedump.space", so this host renders the talos-private branding
+# (Afterdark Barbie palette, talos-private title) instead of the global "Catalyst"
+# default that auth.knowledgedump.space gets.
+#
+# `/` lands on authentik's user interface, i.e. the app library, showing the apps
+# the signed-in user may access grouped by each application's `group` attribute
+# (talos-private currently: hot-ones, immich, stash, whisparr, whisparr-eros,
+# whoami, zipline). NOTE authentik does not filter the library per brand — a user
+# in other groups still sees their other apps here; the brand changes the look,
+# not the list.
+#
+# TLS: covered by the existing traefik/knowledgedump-wildcard cert
+# (*.knowledgedump.space + knowledgedump.space) — amber is a single label, so no
+# new certificate is needed. That wildcard does NOT cover *.amber.knowledgedump.space.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-amber
+  namespace: authentik
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: amber.knowledgedump.space
+    external-dns.alpha.kubernetes.io/target: knowledgedump.space
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`amber.knowledgedump.space`)
+      kind: Rule
+      services:
+        - name: authentik-server
+          port: 80
+  tls: {}
+---
+# HTTP redirect to HTTPS
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-amber-http
+  namespace: authentik
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`amber.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: authentik-server
+          port: 80
+---
 # talos-private SSO endpoint — auth.priv.talos00 (HTTPS, LAN-only).
 # This is the external_host of the talos-private forward_domain proxy provider:
 # serving Authentik here scopes the SSO session cookie to .priv.talos00 (a valid
