@@ -100,6 +100,8 @@ spec:
       # `blueprints.configMaps` value above (TALOS-xgrl.16). Only non-blueprint
       # assets (custom CSS, brand SVGs served from /web/dist) remain manual.
       volumes:
+        - name: private-app-sso
+          secret: {secretName: private-app-sso-credentials, optional: true}
         - name: custom-css
           configMap:
             name: authentik-custom-css
@@ -107,6 +109,9 @@ spec:
           configMap:
             name: authentik-catalyst-brand-assets
       volumeMounts:
+        - name: private-app-sso
+          mountPath: /private-app-sso
+          readOnly: true
         - name: custom-css
           mountPath: /web/dist/custom.css
           subPath: custom.css
@@ -118,6 +123,13 @@ spec:
           subPath: catalyst-brand-favicon.svg
 
     worker:
+      volumes:
+        - name: private-app-sso
+          secret: {secretName: private-app-sso-credentials, optional: true}
+      volumeMounts:
+        - name: private-app-sso
+          mountPath: /private-app-sso
+          readOnly: true
       replicas: 1
       resources:
         requests:
