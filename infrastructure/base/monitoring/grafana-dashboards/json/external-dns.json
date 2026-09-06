@@ -25,20 +25,6 @@
         "expr": "changes(external_dns_registry_endpoints_total{job=\"external-dns\"}[2m]) != 0",
         "step": "60s",
         "titleFormat": "endpoints changed"
-      },
-      {
-        "datasource": {
-          "type": "loki",
-          "uid": "loki-v2"
-        },
-        "enable": true,
-        "hide": false,
-        "iconColor": "rgba(255,161,71,1)",
-        "name": "Orphan prune run",
-        "target": {
-          "expr": "{namespace=\"external-dns\", pod=~\"(external-dns-orphan-prune|edns-prune)-.*\"} |= \"action=DELETE\" != \"type=TXT\"",
-          "refId": "Anno"
-        }
       }
     ]
   },
@@ -833,10 +819,10 @@
     },
     {
       "datasource": {
-        "type": "datasource",
-        "uid": "-- Mixed --"
+        "type": "prometheus",
+        "uid": "mimir"
       },
-      "description": "Desired (from sources) vs Managed (in the Cloudflare registry) endpoint counts over time. When the two lines diverge, external-dns has records it wants to create/delete but hasn't reconciled \u2014 the gap is the drift stat above, shown historically.",
+      "description": "Desired = records k8s sources want. Managed = records external-dns owns in Cloudflare. Orphans = Managed minus Desired, clamped at 0: records still owned with no live source. The hourly dry-run CronJob names them in the Orphan Detection row below.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -940,30 +926,31 @@
       },
       "targets": [
         {
+          "refId": "A",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "max(external_dns_source_endpoints_total{job=~\"$instance\"})",
-          "legendFormat": "Desired (sources)"
+          "legendFormat": "Desired (sources)",
+          "expr": "max(external_dns_source_endpoints_total{job=~\"$instance\"})"
         },
         {
+          "refId": "B",
           "datasource": {
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "max(external_dns_registry_endpoints_total{job=~\"$instance\"})",
-          "legendFormat": "Managed (registry)"
+          "legendFormat": "Managed (registry)",
+          "expr": "max(external_dns_registry_endpoints_total{job=~\"$instance\"})"
         },
         {
           "refId": "C",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "prometheus",
+            "uid": "mimir"
           },
-          "expr": "sum(count_over_time({namespace=\"external-dns\", pod=~\"(external-dns-orphan-report|edns-report)-.*\"} |= \"action=DELETE\" != \"type=TXT\" [1h]))",
-          "queryType": "range",
-          "legendFormat": "Orphans (hourly dry-run)"
+          "legendFormat": "Orphans (registry-only)",
+          "expr": "clamp_min(max(external_dns_registry_endpoints_total{job=~\"$instance\"}) - max(external_dns_source_endpoints_total{job=~\"$instance\"}), 0)"
         }
       ],
       "title": "Desired vs Managed Endpoints (+ orphans)",
@@ -1889,13 +1876,12 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
           "custom": {
             "fillOpacity": 85,
             "lineWidth": 1
           },
           "color": {
-            "mode": "continuous-YlOrRd"
+            "mode": "thresholds"
           },
           "thresholds": {
             "mode": "absolute",
@@ -1903,6 +1889,18 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 1
+              },
+              {
+                "color": "orange",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 10
               }
             ]
           }
