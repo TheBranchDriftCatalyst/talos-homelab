@@ -42,10 +42,13 @@ spec:
         fsGroup: 1000
       containers:
         - name: web-ui
-          image: ghcr.io/theduffman85/crowdsec-web-ui:latest
+          image: ghcr.io/theduffman85/crowdsec-web-ui@sha256:bfadbab9a72c21bf906eca0bb9bfb894c28ab31d1aed5bc25d9d9c153903ef89
           ports:
             - {name: http, containerPort: 3000}
           env:
+            # Authentik forward-auth owns login; do not require a second local account.
+            # webui-network-policy.yaml permits only Traefik to reach the backend.
+            - {name: CONFIG_AUTH_ENABLED, value: "false"}
             - {name: CONFIG_INSTANCE_LAPI_URL, value: "http://crowdsec-service.crowdsec.svc.cluster.local:8080"}
             - {name: CONFIG_INSTANCE_LAPI_AUTH_USERNAME, value: "crowdsec-web-ui"}
             - name: CONFIG_INSTANCE_LAPI_AUTH_PASSWORD
@@ -99,8 +102,8 @@ spec:
 # LAN-only + Authentik forward-auth SSO: https://crowdsec.talos00 (TALOS-xgrl.14).
 # lan-only restricts to the LAN; the `authentik` forward-auth middleware then gates on the
 # talos-admin (or cluster-admin) group. TLS: default TLSStore serves the *.talos00 wildcard
-# via SNI. DOUBLE-LOGIN: crowdsec-web-ui has its OWN LAPI machine console login — SSO gates
-# the page, but the web-ui still presents its own login (inherent, no declarative suppression).
+# via SNI. Authentik is the login gate; native UI auth is explicitly disabled.
+# Direct backend access is restricted to Traefik by webui-network-policy.yaml.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
