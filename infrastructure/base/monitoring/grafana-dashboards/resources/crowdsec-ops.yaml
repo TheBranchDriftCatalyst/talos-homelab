@@ -1,30 +1,7 @@
 ---
-# Security Ops — CrowdSec dashboard
-#
-# Engine / bouncer / AppSec observability for the CrowdSec IPS deployed in front
-# of Traefik (TALOS-pbn). All series come from the CrowdSec security engine's
-# Prometheus endpoint on :6060 (cs_* metrics) — verified against
-# https://docs.crowdsec.net/docs/observability/prometheus/.
-#
-# Metric families used:
-#   cs_active_decisions            (gauge)   labels: reason, origin, action
-#   cs_alerts                      (gauge)   labels: reason
-#   cs_bucket_overflowed_total     (counter) labels: name          -> bans / alerts / decisions-added proxy
-#   cs_bucket_poured_total         (counter) labels: source, type, name
-#   cs_parser_hits_total           (counter) labels: source, type  -> lines parsed
-#   cs_node_hits_ko_total          (counter) labels: source, ...   -> parse failures
-#   cs_lapi_bouncer_requests_total (counter) labels: bouncer, route, method
-#   cs_lapi_decisions_ok/ko_total  (counter) labels: bouncer
-#   cs_appsec_reqs_total           (counter) labels: source, appsec_engine
-#   cs_appsec_block_total          (counter) labels: source, appsec_engine
-#   cs_appsec_rule_hits            (counter) labels: rule_name, type, appsec_engine, source
-#   cs_info                        (info)                          -> engine up / version
-#
-# EMPTY-until conditions (documented in panel descriptions): AppSec panels need an
-# AppSec engine + traffic; overflow/scenario panels need real attacks; per-IP
-# "top blocked IPs" is intentionally NOT in Prometheus (cardinality) — use cscli.
-# The Health scrape panels use job=~".*crowdsec.*" — adjust to your ServiceMonitor
-# / PodMonitor job name once the scrape target exists.
+# CrowdSec enforcement, detection and pipeline health. Native shared LAPI gauges
+# are deduplicated; the bounded read-only decision exporter supplies local IP/expiry
+# rows. Loki supplies observation history. Scenario overflows include simulation.
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:

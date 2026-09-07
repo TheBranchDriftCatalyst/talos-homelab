@@ -1,0 +1,118 @@
+---
+# Read-only LAPI bouncer credentials. No watcher credentials, database access,
+# Kubernetes API permissions, or public route. Enforcement does not depend on this.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crowdsec-decision-exporter
+  namespace: crowdsec
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: crowdsec-decision-exporter
+  template:
+    metadata:
+      labels:
+        app: crowdsec-decision-exporter
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: exporter
+          image: python:3.12.12-alpine3.22
+          command: [python, -B, /app/exporter.py]
+          env:
+            - name: LAPI_URL
+              value: http://crowdsec-service.crowdsec.svc.cluster.local:8080
+            - name: API_KEY_FILE
+              value: /keys/BOUNCER_KEY_traefik
+          ports:
+            - name: metrics
+              containerPort: 9108
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          readinessProbe:
+            httpGet: {path: /healthz, port: metrics}
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+          volumeMounts:
+            - {name: code, mountPath: /app, readOnly: true}
+            - {name: keys, mountPath: /keys, readOnly: true}
+      volumes:
+        - name: code
+          configMap:
+            name: crowdsec-decision-exporter
+        - name: keys
+          secret:
+            secretName: crowdsec-keys
+            defaultMode: 0440
+            items:
+              - key: BOUNCER_KEY_traefik
+                path: BOUNCER_KEY_traefik
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: crowdsec-decisions
+  namespace: crowdsec
+spec:
+  selector:
+    matchLabels:
+      app: crowdsec-decision-exporter
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: crowdsec-decision-exporter
+  namespace: crowdsec
+spec:
+  podSelector:
+    matchLabels:
+      app: crowdsec-decision-exporter
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - {protocol: TCP, port: 9108}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              k8s-app: crowdsec
+              type: lapi
+      ports:
+        - {protocol: TCP, port: 8080}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
