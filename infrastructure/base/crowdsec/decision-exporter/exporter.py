@@ -65,7 +65,7 @@ class Inventory:
         try:
             key = Path(os.environ['API_KEY_FILE']).read_text().strip()
             request = Request(os.environ['LAPI_URL'] + '/v1/decisions?origins=crowdsec,cscli,cscli-import',
-                              headers={'X-Api-Key': key, 'User-Agent': 'crowdsec-decision-inventory'})
+                              headers={'X-Api-Key': key, 'User-Agent': 'crowdsec-decision-inventory/1.0.0'})
             with urlopen(request, timeout=10) as response:
                 raw = response.read(MAX_BYTES + 1)
             if len(raw) > MAX_BYTES:
