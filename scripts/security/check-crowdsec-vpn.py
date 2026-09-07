@@ -2,7 +2,7 @@
 """External enforcement regression: disposable VPN -> baseline -> manual ban -> unblock.
 
 Requires kubectl access, PyYAML, and an unused ProtonVPN canary key. Creates only
-its own Pod and a 5-minute manual decision. Does not trigger an attack scenario.
+its own Pod and a 5-minute manual decision (10 minutes with --ha). Does not trigger an attack scenario.
 """
 import argparse
 import ipaddress
@@ -53,6 +53,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', default='https://registry.knowledgedump.space/v2/',
                         help='Owned, protected public HTTPS endpoint with a stable 200 or 401 baseline')
+    parser.add_argument('--ha', action='store_true', help='Also replace one LAPI replica while banned and one AppSec replica after unban; requires two Ready replicas of each')
     parser.add_argument('--report', type=Path, help='Write non-secret JSON results')
     args = parser.parse_args()
     target = urlsplit(args.url)
@@ -75,10 +76,10 @@ def main():
         return public_ip(probe('curl', '-q', '-4', '--noproxy', '*', '--fail', '--silent',
                                '--show-error', '--max-time', '12', 'https://api.ipify.org'))
 
-    def request():
+    def request(headers=()):
         raw = probe('curl', '-q', '-4', '--noproxy', '*', '--silent', '--show-error',
                     '--max-time', '15', '--output', '/dev/null', '--write-out',
-                    '%{http_code} %{remote_ip}', args.url)
+                    '%{http_code} %{remote_ip}', *[arg for h in headers for arg in ('--header', h)], args.url)
         status, remote = raw.split()
         public_ip(remote)  # Reject split-DNS/LAN bypass paths.
         return int(status), remote
@@ -101,6 +102,37 @@ def main():
             last = status
             time.sleep(5)
         raise RuntimeError(f'Expected HTTP {wanted}; last response was HTTP {last}')
+
+    def replace_replica(component, expected_status):
+        pods = json.loads(kubectl('-n', 'crowdsec', 'get', 'pods', '-l',
+                                 f'k8s-app=crowdsec,type={component}', '-o', 'json').stdout)['items']
+        ready = [p for p in pods if not p['metadata'].get('deletionTimestamp') and
+                 any(c['type'] == 'Ready' and c['status'] == 'True' for c in p['status'].get('conditions', []))]
+        if len(ready) < 2 or len({p['spec']['nodeName'] for p in ready}) < 2:
+            raise RuntimeError(f'{component} has insufficient redundancy for replacement test')
+        victim = ready[0]['metadata']['name']
+        kubectl('-n', 'crowdsec', 'delete', 'pod', victim, '--wait=false')
+        # Sample throughout replacement, not just after the deployment recovers.
+        samples = 0
+        deadline = time.monotonic() + 120
+        recovered = False
+        while time.monotonic() < deadline:
+            if exit_ip() != vpn_ip or request() != (expected_status, report['origin_ip']):
+                raise RuntimeError(f'Unexpected HTTP response during {component} replacement')
+            samples += 1
+            state = json.loads(kubectl('-n', 'crowdsec', 'get', 'pods', '-l',
+                                      f'k8s-app=crowdsec,type={component}', '-o', 'json').stdout)['items']
+            replacements = [p for p in state if p['metadata']['name'] != victim and
+                            not p['metadata'].get('deletionTimestamp') and
+                            any(c['type'] == 'Ready' and c['status'] == 'True' for c in p['status'].get('conditions', []))]
+            if len(replacements) >= 2 and samples >= 3:
+                recovered = True
+                break
+            time.sleep(3)
+        if not recovered:
+            raise RuntimeError(f'{component} redundancy did not recover within 120 seconds')
+        stage(f'{component} replacement preserved HTTP {expected_status}', samples=samples)
+
 
     def interrupted(signum, _frame):
         raise KeyboardInterrupt(f'signal {signum}')
@@ -155,13 +187,21 @@ def main():
         report['origin_ip'] = origin
         stage('unbanned baseline', status=baseline, origin=origin)
         ban_attempted = True
-        cscli('decisions', 'add', '--ip', vpn_ip, '--duration', '5m', '--reason', reason)
+        cscli('decisions', 'add', '--ip', vpn_ip, '--duration', '10m' if args.ha else '5m', '--reason', reason)
         wait_status(403, vpn_ip)
         stage('external request blocked', status=403)
+        for header in ('X-Forwarded-For: 192.168.1.1', 'X-Real-IP: 192.168.1.1', 'CF-Connecting-IP: 192.168.1.1'):
+            if exit_ip() != vpn_ip or request([header]) != (403, report['origin_ip']):
+                raise RuntimeError('Forwarded-header spoofing changed the blocked response')
+        stage('untrusted IP headers cannot bypass ban')
+        if args.ha:
+            replace_replica('lapi', 403)
         cscli('decisions', 'delete', '--origin', 'cscli', '--scenario', reason)
         ban_attempted = False
         wait_status(baseline, vpn_ip)
         stage('access restored after scoped unban', status=baseline)
+        if args.ha:
+            replace_replica('appsec', baseline)
         report['passed'] = True
     except (Exception, KeyboardInterrupt) as exc:
         report['error'] = str(exc)
@@ -172,7 +212,7 @@ def main():
                 cscli('decisions', 'delete', '--origin', 'cscli', '--scenario', reason)
             except Exception:
                 cleaned = False
-                print(f'CLEANUP FAILED: decision {reason}; five-minute TTL is the backstop', file=sys.stderr)
+                print(f'CLEANUP FAILED: decision {reason}; test decision TTL is the backstop', file=sys.stderr)
         if created:
             try:
                 kubectl('-n', 'vpn-gateway', 'delete', 'pod', name, '--ignore-not-found', '--wait=false')

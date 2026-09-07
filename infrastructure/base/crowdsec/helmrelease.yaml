@@ -304,7 +304,8 @@ spec:
           # until proven otherwise.
           - crowdsecurity/http-dos-bypass-cache
           - crowdsecurity/http-dos-random-uri
-          - crowdsecurity/http-dos-switching-ua
+          # Runtime scenario name in upstream v0.5 contains this typo.
+          - crowdsecurity/http-dos-swithcing-ua
           - crowdsecurity/http-dos-invalid-http-versions
           # NOTE: gauth-fr/immich and LearningSpot/litellm ship NO scenarios
           # (parsers only) — nothing to simulate. crowdsecurity/http-cve is
@@ -661,8 +662,8 @@ spec:
       configs:
         appsec-detect.yaml: |
           name: homelab/appsec-detect
-          # DETECT-ONLY: log matches but never block. Flip to `ban` after observing no false
-          # positives (TALOS-pbn). CRS stays out-of-band permanently (low false-positive risk).
+          # Default inline remediation is allow; rules may override it, and out-of-band
+          # events can still create enforcing decisions through scenarios/profiles.
           default_remediation: allow
           default_pass_action: allow
           blocked_http_code: 403
@@ -672,6 +673,7 @@ spec:
           outofband_rules:
             - crowdsecurity/crs
           # ---- boomtime telemetry exclusion (2026-08-14) ----
+          # Scope to Boomtime hosts; identical paths on other services remain inspected.
           # Coding-telemetry ingest bodies inherently contain file paths, shell
           # commands, and code fragments — CRS 932260 (unix-shell RCE) fired on
           # a legit heartbeats.bulk payload and the appsec-outofband scenario
@@ -684,14 +686,14 @@ spec:
             # skips inband vpatch BODY checks there — accepted: vpatch CVE
             # signatures are overwhelmingly path/query based, and these routes
             # are API-key-gated).
-            - filter: req.URL.Path startsWith "/api/v1/users/current/heartbeats" || req.URL.Path startsWith "/api/v1/users/current/import" || req.URL.Path startsWith "/api/v1/users/current/db/import"
+            - filter: req.Host in ["boomtime.knowledgedump.space", "dev.boomtime.knowledgedump.space", "boomtime.talos00"] && (req.URL.Path startsWith "/api/v1/users/current/heartbeats" || req.URL.Path startsWith "/api/v1/users/current/import" || req.URL.Path startsWith "/api/v1/users/current/db/import")
               apply:
                 - DisableBodyInspection()
           on_match:
             # Belt for anything that still matches (headers/query): never let an
             # out-of-band CRS hit on these routes become an event that feeds the
             # ban scenario, and drop the alert noise.
-            - filter: IsOutBand && (req.URL.Path startsWith "/api/v1/users/current/heartbeats" || req.URL.Path startsWith "/api/v1/users/current/import" || req.URL.Path startsWith "/api/v1/users/current/db/import")
+            - filter: IsOutBand && req.Host in ["boomtime.knowledgedump.space", "dev.boomtime.knowledgedump.space", "boomtime.talos00"] && (req.URL.Path startsWith "/api/v1/users/current/heartbeats" || req.URL.Path startsWith "/api/v1/users/current/import" || req.URL.Path startsWith "/api/v1/users/current/db/import")
               apply:
                 - CancelAlert()
                 - CancelEvent()

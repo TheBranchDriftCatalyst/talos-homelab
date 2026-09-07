@@ -38,7 +38,13 @@ The VPN test creates a disposable Gluetun canary from the existing VPN test temp
 
 Use `--url https://YOUR-OWN-PROTECTED-HOST/path` for another stable owned endpoint. Redirects, VPN exit changes, destination address changes, pre-existing enforced decisions, and private destinations fail the test. Do not point it at a route that triggers an automatic attack scenario: the test is intentionally a manual local decision, not a community attack report. It does not disable simulation, alter allowlists, reconfigure production VPN workloads, or change login settings.
 
-A passing HTTP test does **not** prove public Cowrie reachability, Cowrie-to-decision creation over WAN, coverage of every ingress node, or enforcement during a complete security-service outage. Cowrie's parser/scenario tests cover event processing separately; public router forwarding is staged in [the Cowrie exposure runbook](cowrie-public-exposure.md).
+Add `--ha` to use a ten-minute test decision and replace one Ready LAPI replica
+while verifying HTTP 403, then one AppSec replica after unban while verifying the
+normal response. Each replacement requires two Ready replicas on separate nodes;
+the test waits for redundancy to recover. All runs also try forged X-Forwarded-For,
+X-Real-IP and CF-Connecting-IP headers while banned.
+
+A passing HTTP test does **not** prove public Cowrie reachability, Cowrie-to-decision creation over WAN, coverage of every ingress node, or enforcement during a complete security-service outage. The HA option samples one-replica replacement; it does not test database promotion or a complete node outage. Cowrie's parser/scenario tests cover event processing separately; public router forwarding is staged in [the Cowrie exposure runbook](cowrie-public-exposure.md).
 
 ## Verified on 2026-09-07
 

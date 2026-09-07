@@ -3,14 +3,9 @@
 # door: anything hitting this host is served iocaine's infinite garbage maze.
 # Modeled on the Zot public-HTTPS route.
 #
-# cloudflare-proxied=FALSE (DNS-only, like the registry): when proxied, browsers
-# coalescing HTTP/2 connections across Cloudflare's shared *.knowledgedump.space
-# edge get intermittent 421 Misdirected Request on the trap host (the origin is
-# healthy — curl direct to the home IP returns 200 every time; the 421 is a
-# CF-edge coalescing artifact). DNS-only points trap straight at the home IP ->
-# Traefik terminates the *.knowledgedump.space wildcard and serves the maze
-# reliably (same path registry/forge already use). Home IP is already exposed via
-# those DNS-only hosts, and a tarpit WANTS to be directly reachable anyway.
+# DNS-only routes to the origin. The bundled iocaine handler can itself return
+# 421 for ordinary browser user agents; a recognized crawler such as GPTBot
+# receives the maze. A 421 alone is not evidence of Cloudflare or ingress failure.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
