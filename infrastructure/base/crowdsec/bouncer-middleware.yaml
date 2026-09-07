@@ -2,7 +2,7 @@
 # CrowdSec bouncer Traefik middleware (TALOS-pbn). Lives in ns `traefik`; referenced globally as
 # traefik-bouncer@kubernetescrd once the entrypoint bind is added to the Traefik helmrelease.
 # Requires experimental.plugins.bouncer in the Traefik helmrelease + the crowdsec-bouncer-key secret
-# mounted at /etc/traefik/crowdsec. FAIL-OPEN: a LAPI/AppSec outage can never take ingress down.
+# mounted at /etc/traefik/crowdsec. Fail closed for external traffic; LAN bypass remains available for recovery.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -18,10 +18,10 @@ spec:
       crowdsecLapiScheme: http
       crowdsecLapiHost: crowdsec-service.crowdsec.svc.cluster.local:8080
       crowdsecLapiKeyFile: /etc/traefik/crowdsec/lapi-key
-      # --- FAIL-OPEN: never block on LAPI trouble (there is NO crowdsecLapiUnreachableBlock key) ---
+      # Keep cached decisions through short interruptions; close after five failed refreshes.
       updateIntervalSeconds: "60"
-      updateMaxFailure: "-1" # never start blocking regardless of how long LAPI is unreachable
-      streamStartupBlock: "false" # if LAPI is down at Traefik boot, serve traffic (don't wedge)
+      updateMaxFailure: "5" # fail closed after repeated failed decision refreshes
+      streamStartupBlock: "true" # no unprotected startup before initial decisions arrive
       httpTimeoutSeconds: "10"
       defaultDecisionSeconds: "60"
       remediationStatusCode: "403"
@@ -54,9 +54,9 @@ spec:
       clientTrustedIPs:
         - "192.168.0.0/16"
         - "10.0.0.0/8"
-      # --- AppSec / WAF (detect-only server-side; keep ingress up if AppSec dies) ---
+      # --- AppSec / WAF (existing detection policy; fail closed on unavailability) ---
       crowdsecAppsecEnabled: "true"
       crowdsecAppsecHost: crowdsec-appsec-service.crowdsec.svc.cluster.local:7422
       crowdsecAppsecFailureBlock: "true" # AppSec internal 500 → block (present-but-erroring is suspicious)
-      crowdsecAppsecUnreachableBlock: "false" # AppSec pod down → pass (never take ingress down)
+      crowdsecAppsecUnreachableBlock: "true" # no uninspected external requests during an outage
       crowdsecAppsecBodyLimit: "10485760"

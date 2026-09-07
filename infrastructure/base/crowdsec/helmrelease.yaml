@@ -18,6 +18,79 @@ spec:
       interval: 12h
   upgrade:
     cleanupOnFail: true
+  # Chart 0.20.0 re-registers the same pod name after node reboot (HTTP 403).
+  # Reuse the emptyDir credentials; if lost/invalid, use a collision-free identity.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: DaemonSet
+              name: crowdsec-agent
+            patch: |
+              apiVersion: apps/v1
+              kind: DaemonSet
+              metadata:
+                name: crowdsec-agent
+              spec:
+                template:
+                  spec:
+                    initContainers:
+                      - name: wait-for-lapi-and-register
+                        command:
+                          - sh
+                          - -c
+                          - |
+                              set -eu
+                              umask 077
+                              until nc "$LAPI_HOST" "$LAPI_PORT" -z; do sleep 5; done
+                              ln -s /staging/etc/crowdsec /etc/crowdsec
+                              if [ -s /tmp_config/local_api_credentials.yaml ]; then
+                                cp /tmp_config/local_api_credentials.yaml /etc/crowdsec/local_api_credentials.yaml
+                                if cscli lapi status >/dev/null 2>&1; then
+                                  echo "Reusing registered LAPI credentials"
+                                  exit 0
+                                fi
+                              fi
+                              # A new boot identity also recovers missing credentials without deleting a machine
+                              # that another process might still use. Never print tokens or credential contents.
+                              identity="$USERNAME-$(cat /proc/sys/kernel/random/uuid)"
+                              cscli lapi register --machine "$identity" -u "$LAPI_URL" --token "$REGISTRATION_TOKEN"
+                              cp /etc/crowdsec/local_api_credentials.yaml /tmp_config/local_api_credentials.yaml.new
+                              mv -f /tmp_config/local_api_credentials.yaml.new /tmp_config/local_api_credentials.yaml
+          - target:
+              kind: Deployment
+              name: crowdsec-appsec
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: crowdsec-appsec
+              spec:
+                template:
+                  spec:
+                    initContainers:
+                      - name: wait-for-lapi-and-register
+                        command:
+                          - sh
+                          - -c
+                          - |
+                              set -eu
+                              umask 077
+                              until nc "$LAPI_HOST" "$LAPI_PORT" -z; do sleep 5; done
+                              ln -s /staging/etc/crowdsec /etc/crowdsec
+                              if [ -s /tmp_config/local_api_credentials.yaml ]; then
+                                cp /tmp_config/local_api_credentials.yaml /etc/crowdsec/local_api_credentials.yaml
+                                if cscli lapi status >/dev/null 2>&1; then
+                                  echo "Reusing registered LAPI credentials"
+                                  exit 0
+                                fi
+                              fi
+                              # A new boot identity also recovers missing credentials without deleting a machine
+                              # that another process might still use. Never print tokens or credential contents.
+                              identity="$USERNAME-$(cat /proc/sys/kernel/random/uuid)"
+                              cscli lapi register --machine "$identity" -u "$LAPI_URL" --token "$REGISTRATION_TOKEN"
+                              cp /etc/crowdsec/local_api_credentials.yaml /tmp_config/local_api_credentials.yaml.new
+                              mv -f /tmp_config/local_api_credentials.yaml.new /tmp_config/local_api_credentials.yaml
   values:
     # Talos runs containerd, not docker — the agent must read CRI-format container logs.
     container_runtime: containerd
@@ -40,18 +113,11 @@ spec:
           cowrie-logs.yaml: |
             onsuccess: next_stage
             # Only Cowrie stdout JSON (program set by the k8s acquisition; guard on a leading '{').
-            filter: "evt.Parsed.program == 'cowrie' && evt.Parsed.message startsWith '{'"
+            filter: "evt.Parsed.program == 'cowrie' && evt.Parsed.message startsWith '{' && JsonExtract(evt.Parsed.message, 'src_ip') != '' && JsonExtract(evt.Parsed.message, 'eventid') startsWith 'cowrie.'"
             name: homelab/cowrie-logs
             description: "Parse Cowrie SSH/Telnet honeypot JSON events → source_ip for CrowdSec"
-            # Belt-and-suspenders: drop pod-CIDR sources (kubelet tcpSocket liveness probe on :2222
-            # shows as cowrie.session.connect from 10.244.x — NOT an attacker). RFC1918 is already
-            # covered by homelab/whitelist (s02-enrich, 10.0.0.0/8), but whitelisting at parse time
-            # avoids even bucketing probe noise. Public attackers (post :22 exposure) are non-RFC1918
-            # → pass through → alert + CTI share. (coordinator item 2)
-            whitelist:
-              reason: "internal pod/probe traffic to the honeypot — not an attacker"
-              cidr:
-                - "10.244.0.0/16" # Cilium pod CIDR (kubelet probes, in-cluster health checks)
+            # Whitelist nodes short-circuit statics in CrowdSec. Extract metadata here;
+            # s02 homelab/whitelist excludes internal sources after extraction.
             statics:
               - meta: service
                 value: ssh
@@ -341,6 +407,22 @@ spec:
 
     # ---- LAPI: Local API + decisions DB + Console enrollment + bouncer registration ----
     lapi:
+      storeCAPICredentialsInSecret: true
+      # Separate nodes, shared CNPG/CAPI state, and no all-at-once upgrades.
+      replicas: 2
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 0
+          maxSurge: 1
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  k8s-app: crowdsec
+                  type: lapi
+              topologyKey: kubernetes.io/hostname
       env:
         # Auto-registers a bouncer named "traefik" with this key (same value the plugin uses).
         # optional:true → the engine boots + detects NOW without the key; when the 1Password
@@ -418,6 +500,7 @@ spec:
         - namespace: traefik
           podName: "traefik-*"
           program: traefik # → crowdsecurity/traefik parser
+          poll_without_inotify: true
         # Cowrie honeypot events (the `logship` sidecar emits Cowrie JSON on
         # stdout). Pipes honeypot activity into CrowdSec for visibility/signals.
         # NOTE: there is NO crowdsecurity/cowrie hub collection — a custom parser
@@ -428,6 +511,7 @@ spec:
         - namespace: honeypot
           podName: "cowrie-*"
           program: cowrie
+          poll_without_inotify: true
         # ---- APP-LEVEL ACQUISITION (TALOS-y260 follow-up) ----
         # Until now CrowdSec only saw Traefik's edge logs, so anything that got
         # PAST the reverse proxy and brute-forced an app directly was invisible.
@@ -444,6 +528,7 @@ spec:
         - namespace: authentik
           podName: "authentik-server-*"
           program: authentik
+          poll_without_inotify: true
         # FORGEJO: DELIBERATELY ABSENT. Verified 2026-08-21 by triggering a real
         # failed login — Forgejo emits
         #   "router: completed GET /api/v1/user for <ip>:<port>, 401 Unauthorized"
@@ -458,14 +543,17 @@ spec:
         - namespace: media
           podName: "jellyfin-*"
           program: jellyfin
+          poll_without_inotify: true
         - namespace: media
           podName: "plex-*"
           program: plex
+          poll_without_inotify: true
         # grafana-deployment-* — NOT grafana-operator-*, which is the operator and
         # emits no auth logs.
         - namespace: monitoring
           podName: "grafana-deployment-*"
           program: grafana
+          poll_without_inotify: true
         # ---- WAVE 2 (TALOS-y260): the rest of the exposed stack ----
         # program values copied EXACTLY from each hub parser's filter. The *arr
         # apps are CAPITALISED in their filters ('Sonarr'/'Radarr'/'Prowlarr') —
@@ -473,38 +561,48 @@ spec:
         - namespace: media
           podName: "sonarr-*"
           program: Sonarr
+          poll_without_inotify: true
         - namespace: media
           podName: "radarr-*"
           program: Radarr
+          poll_without_inotify: true
         - namespace: media
           podName: "prowlarr-*"
           program: Prowlarr
+          poll_without_inotify: true
         - namespace: media
           podName: "sabnzbd-*"
           program: sabnzbd
+          poll_without_inotify: true
         - namespace: media
           podName: "qbittorrent-*"
           program: qbittorrent
+          poll_without_inotify: true
         - namespace: media-experimental
           podName: "audiobookshelf-*"
           program: audiobookshelf
+          poll_without_inotify: true
         # immich-* would also catch immich-machine-learning / -postgres; the
         # server pod is the one that authenticates.
         - namespace: media-private
           podName: "immich-5*"
           program: immich
+          poll_without_inotify: true
         # homeassistant-7* not homeassistant-*: the broad glob also matched
         # homeassistant-postgres-N (CNPG), whose logs were being read and dropped
         # as unparsed noise. Confirmed in the acquisition metrics audit.
         - namespace: home-automation
           podName: "homeassistant-7*"
           program: home-assistant
+          poll_without_inotify: true
         - namespace: catalyst-llm
           podName: "litellm-*"
           program: litellm
+          poll_without_inotify: true
         - namespace: monitoring
           podName: "clickstack-mongodb-*"
           program: mongodb
+          poll_without_inotify: true
       # k8s API-server audit log (Metadata policy already enabled on Talos). File source — the agent
       # already host-mounts /var/log, so no extra mount. Only talos00 (single control-plane) has the
       # file; on worker nodes it's absent and harmlessly skipped. crowdsecurity/k8s-audit detects
@@ -537,6 +635,21 @@ spec:
 
     # ---- APPSEC / WAF on :7422 — DETECT-ONLY first (default_remediation: allow) ----
     appsec:
+      # Separate nodes, shared CNPG/CAPI state, and no all-at-once upgrades.
+      replicas: 2
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 0
+          maxSurge: 1
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  k8s-app: crowdsec
+                  type: appsec
+              topologyKey: kubernetes.io/hostname
       enabled: true
       acquisitions:
         - source: appsec

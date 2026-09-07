@@ -1,0 +1,56 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: crowdsec-availability
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: crowdsec
+spec:
+  groups:
+    - name: crowdsec.availability
+      rules:
+        - alert: CrowdSecAgentMissing
+          expr: |
+            kube_daemonset_status_number_ready{job="kube-state-metrics",namespace="crowdsec",daemonset="crowdsec-agent"}
+            < kube_daemonset_status_desired_number_scheduled{job="kube-state-metrics",namespace="crowdsec",daemonset="crowdsec-agent"}
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CrowdSec log collection is missing from a node"
+            description: "Check agent init logs for registration errors. A healthy HelmRelease does not prove agent availability."
+        - alert: CrowdSecRedundancyLost
+          expr: |
+            kube_deployment_status_replicas_available{job="kube-state-metrics",namespace="crowdsec",deployment=~"crowdsec-(lapi|appsec)"} < 2
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CrowdSec {{ $labels.deployment }} has fewer than two available replicas"
+            description: "External ingress fails closed on security-service outages; restore redundancy before maintenance."
+        - alert: CrowdSecMonitoringMissing
+          expr: absent(up{job="crowdsec/crowdsec"})
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CrowdSec PodMonitor targets are missing"
+            description: "Verify Alloy discovery and the CrowdSec PodMonitor."
+        - alert: CrowdSecScrapeFailed
+          expr: up{job="crowdsec/crowdsec"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CrowdSec metrics unavailable for {{ $labels.pod }}"
+            description: "The engine may be stopped even if its pod still exists."
+        - alert: CowrieCrowdSecIngestionStalled
+          expr: |
+            (sum(increase(cs_parser_hits_total{job="crowdsec/crowdsec",source=~".*cowrie-.*_honeypot_logship-.*"}[15m])) or vector(0)) == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CrowdSec has received no Cowrie logs for at least 15 minutes"
+            description: "Cowrie generates probe events every five minutes even without attackers. Check logship, acquisition, and the node agent."
