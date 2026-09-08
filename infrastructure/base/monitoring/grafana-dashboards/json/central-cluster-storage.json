@@ -15,7 +15,7 @@
       }
     ]
   },
-  "description": "ONE view of ALL storage across the cluster: node physical disks, PersistentVolumes/PVCs (by storage class), MinIO object storage (per-bucket S3 footprint for Loki/Mimir/Tempo/Dagster), CloudNativePG database sizes, Velero backups, and NAS/NFS free space. Fully label-driven (by node/namespace/storageclass/bucket) so it adapts as nodes, PVCs and buckets come and go. Metrics from Mimir (uid: mimir).",
+  "description": "Storage by node, namespace, storage class and PVC; pod-to-PVC references and explicitly global backend totals. Claim allocation and shared filesystem usage are distinct.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -34,7 +34,7 @@
       },
       "id": 1,
       "panels": [],
-      "title": "Summary \u2014 cluster-wide storage at a glance",
+      "title": "Summary — cluster-wide storage at a glance",
       "type": "row"
     },
     {
@@ -42,7 +42,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Sum of all writable local-disk filesystems across every node (node-exporter). Excludes tmpfs/overlay/NFS to avoid double-counting.",
+      "description": "Sum of all writable local-disk filesystems across every node (node-exporter). Excludes tmpfs/overlay/NFS to avoid double-counting. Node filter applies; these are physical filesystems, not per-namespace quotas.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -92,7 +92,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"})",
+          "expr": "sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"})",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -107,7 +107,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Physical bytes in use across all node local disks = size - avail.",
+      "description": "Physical bytes in use across all node local disks = size - avail. Node filter applies; these are physical filesystems, not per-namespace quotas.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -157,7 +157,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}) - sum(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"})",
+          "expr": "sum(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}) - sum(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"})",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -222,14 +222,14 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(kube_persistentvolume_capacity_bytes{job=\"kube-state-metrics\"})",
+          "expr": "sum((max by(persistentvolume)(kube_persistentvolume_capacity_bytes{job=\"kube-state-metrics\"}) and on(persistentvolume) max by(persistentvolume)(label_replace(((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))),\"persistentvolume\",\"$1\",\"volumename\",\"(.+)\"))))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
           "range": false
         }
       ],
-      "title": "PV Capacity (provisioned)",
+      "title": "PV capacity · selected claims",
       "type": "stat"
     },
     {
@@ -287,7 +287,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"})",
+          "expr": "sum((max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -302,7 +302,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Object bytes stored in MinIO (S3 backend for Loki/Mimir/Tempo/Dagster). Requires the minio scrape enabled in this change.",
+      "description": "Object bytes stored in MinIO (S3 backend for Loki/Mimir/Tempo/Dagster). Requires the minio scrape enabled in this change. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -359,7 +359,7 @@
           "range": false
         }
       ],
-      "title": "MinIO Used",
+      "title": "MinIO Used · global",
       "type": "stat"
     },
     {
@@ -367,7 +367,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Free space on the NAS volume backing the NFS storage classes (df via the nfs-storage-exporter probe).",
+      "description": "Free space on the NAS volume backing the NFS storage classes (df via the nfs-storage-exporter probe). Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -432,7 +432,7 @@
           "range": false
         }
       ],
-      "title": "NAS Free (NFS backend)",
+      "title": "NAS Free (NFS backend) · global",
       "type": "stat"
     },
     {
@@ -490,7 +490,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "max(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"})",
+          "expr": "max((max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -505,7 +505,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Sum of all CloudNativePG database sizes (excludes template DBs).",
+      "description": "Filtered to databases on pods referencing selected claims/nodes. Max across CNPG replicas per cluster/database prevents counting replicas as separate storage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -555,7 +555,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "expr": "sum(max by(namespace,pg_cluster,datname)(label_replace((cnpg_pg_database_size_bytes{namespace=~\"${namespace:regex}\",datname!~\"template.*\"} and on(namespace,pod) ((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}))),\"pg_cluster\",\"$1\",\"pod\",\"(.+)-[0-9]+\")))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -575,7 +575,7 @@
       },
       "id": 10,
       "panels": [],
-      "title": "Cluster Physical Capacity \u2014 node disks",
+      "title": "Cluster Physical Capacity — node disks",
       "type": "row"
     },
     {
@@ -583,7 +583,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Percent used of each node's writable local disks (aggregated per node).",
+      "description": "Percent used of each node's writable local disks (aggregated per node). Node filter applies; these are physical filesystems, not per-namespace quotas.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -640,7 +640,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "100 * (1 - sum by(node)(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}) / sum by(node)(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}))",
+          "expr": "100 * (1 - sum by(node)(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}) / sum by(node)(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}))",
           "refId": "A",
           "format": "time_series",
           "legendFormat": "{{node}}",
@@ -656,7 +656,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Used bytes per node over time, stacked to show total physical consumption growth.",
+      "description": "Used bytes per node over time, stacked to show total physical consumption growth. Node filter applies; these are physical filesystems, not per-namespace quotas.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -732,7 +732,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum by(node)(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}) - sum by(node)(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"})",
+          "expr": "sum by(node)(node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}) - sum by(node)(node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"})",
           "refId": "A",
           "format": "time_series",
           "legendFormat": "{{node}}",
@@ -747,7 +747,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Every writable local filesystem per node: device, mount, fstype, size, used, avail, %used. Excludes tmpfs/overlay/NFS.",
+      "description": "Every writable local filesystem per node: device, mount, fstype, size, used, avail, %used. Excludes tmpfs/overlay/NFS. Node filter applies; these are physical filesystems, not per-namespace quotas.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -836,7 +836,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}",
+          "expr": "node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}",
           "refId": "A",
           "format": "table",
           "instant": true,
@@ -848,7 +848,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}",
+          "expr": "node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}",
           "refId": "B",
           "format": "table",
           "instant": true,
@@ -860,7 +860,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"} - on(node,device,mountpoint,fstype) node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}",
+          "expr": "node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"} - on(node,device,mountpoint,fstype) node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}",
           "refId": "C",
           "format": "table",
           "instant": true,
@@ -872,7 +872,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "100 * (1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"} / on(node,device,mountpoint,fstype) node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"})",
+          "expr": "100 * (1 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"} / on(node,device,mountpoint,fstype) node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"})",
           "refId": "D",
           "format": "table",
           "instant": true,
@@ -938,7 +938,7 @@
       },
       "id": 14,
       "panels": [],
-      "title": "Persistent Volumes \u2014 PVCs",
+      "title": "Persistent Volumes — PVCs",
       "type": "row"
     },
     {
@@ -996,7 +996,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "count(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"})",
+          "expr": "count(((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -1061,7 +1061,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"})",
+          "expr": "sum((max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -1126,14 +1126,14 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(kube_persistentvolume_capacity_bytes{job=\"kube-state-metrics\"})",
+          "expr": "sum((max by(persistentvolume)(kube_persistentvolume_capacity_bytes{job=\"kube-state-metrics\"}) and on(persistentvolume) max by(persistentvolume)(label_replace(((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))),\"persistentvolume\",\"$1\",\"volumename\",\"(.+)\"))))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
           "range": false
         }
       ],
-      "title": "PV Capacity total",
+      "title": "PV capacity · selected claims",
       "type": "stat"
     },
     {
@@ -1189,7 +1189,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum by(storageclass)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"} * on(namespace,persistentvolumeclaim) group_left(storageclass) kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"})",
+          "expr": "sum by(storageclass)((max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))))",
           "refId": "A",
           "format": "time_series",
           "legendFormat": "{{storageclass}}",
@@ -1253,7 +1253,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "topk(15, sum by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"}))",
+          "expr": "topk(15,(max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))))",
           "refId": "A",
           "format": "time_series",
           "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
@@ -1345,7 +1345,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum by(namespace)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"})",
+          "expr": "sum by(namespace)((max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))))",
           "refId": "A",
           "format": "time_series",
           "legendFormat": "{{namespace}}",
@@ -1360,7 +1360,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Every PVC with namespace, storage class, backing PV, and requested size. Sorted by requested size. NOTE: live 'used' bytes are unavailable (kubelet_volume_stats not scraped \u2014 see Follow-ups panel).",
+      "description": "Node, namespace, storage class and PVC filters apply. All nodes includes claims without current pod consumers. A specific node scopes to pod references on that node. Requested bytes are allocation, not usage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1421,14 +1421,14 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\"} * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"}",
+          "expr": "(max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
           "refId": "A",
           "format": "table",
           "instant": true,
           "range": false
         }
       ],
-      "title": "All PVCs",
+      "title": "PVC inventory · selected claims",
       "transformations": [
         {
           "id": "organize",
@@ -1474,7 +1474,7 @@
       },
       "id": 22,
       "panels": [],
-      "title": "Object Storage \u2014 MinIO (S3 backend for Loki/Mimir/Tempo/Dagster)",
+      "title": "Object Storage — global MinIO backend",
       "type": "row"
     },
     {
@@ -1482,7 +1482,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Percent of MinIO usable capacity consumed.",
+      "description": "Percent of MinIO usable capacity consumed. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1547,7 +1547,7 @@
           "range": false
         }
       ],
-      "title": "MinIO usable %used",
+      "title": "MinIO usable %used · global",
       "type": "gauge"
     },
     {
@@ -1555,7 +1555,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "MinIO usable total capacity (after erasure coding).",
+      "description": "MinIO usable total capacity (after erasure coding). Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1612,7 +1612,7 @@
           "range": false
         }
       ],
-      "title": "Usable capacity",
+      "title": "Usable capacity · global",
       "type": "stat"
     },
     {
@@ -1620,7 +1620,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "MinIO usable free capacity.",
+      "description": "MinIO usable free capacity. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1677,7 +1677,7 @@
           "range": false
         }
       ],
-      "title": "Usable free",
+      "title": "Usable free · global",
       "type": "stat"
     },
     {
@@ -1685,7 +1685,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "MinIO object bytes stored.",
+      "description": "MinIO object bytes stored. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1742,7 +1742,7 @@
           "range": false
         }
       ],
-      "title": "Used",
+      "title": "Used · global",
       "type": "stat"
     },
     {
@@ -1750,7 +1750,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Total object count across all buckets.",
+      "description": "Total object count across all buckets. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1807,7 +1807,7 @@
           "range": false
         }
       ],
-      "title": "Objects",
+      "title": "Objects · global",
       "type": "stat"
     },
     {
@@ -1815,7 +1815,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Per-bucket object storage usage \u2014 where the Loki/Mimir/Tempo/Dagster footprints live.",
+      "description": "Per-bucket object storage usage — where the Loki/Mimir/Tempo/Dagster footprints live. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1863,15 +1863,15 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-        "expr": "sum(minio_cluster_usage_total_bytes)",
+          "expr": "sum(minio_cluster_usage_total_bytes)",
           "refId": "A",
           "format": "time_series",
-        "legendFormat": "cluster total",
+          "legendFormat": "cluster total",
           "instant": true,
           "range": false
         }
       ],
-      "title": "MinIO cluster usage",
+      "title": "MinIO cluster usage · global",
       "type": "bargauge"
     },
     {
@@ -1879,7 +1879,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Per-bucket usage growth (observability + datalake object footprint).",
+      "description": "Per-bucket usage growth (observability + datalake object footprint). Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1955,14 +1955,14 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-        "expr": "sum(minio_cluster_usage_total_bytes)",
+          "expr": "sum(minio_cluster_usage_total_bytes)",
           "refId": "A",
           "format": "time_series",
-        "legendFormat": "cluster total",
+          "legendFormat": "cluster total",
           "range": true
         }
       ],
-      "title": "MinIO cluster usage over time",
+      "title": "MinIO cluster usage over time · global",
       "type": "timeseries"
     },
     {
@@ -1970,7 +1970,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Per-bucket object counts over time.",
+      "description": "Per-bucket object counts over time. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2046,14 +2046,14 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-        "expr": "sum(minio_cluster_usage_object_total)",
+          "expr": "sum(minio_cluster_usage_object_total)",
           "refId": "A",
           "format": "time_series",
-        "legendFormat": "cluster total",
+          "legendFormat": "cluster total",
           "range": true
         }
       ],
-      "title": "MinIO objects over time",
+      "title": "MinIO objects over time · global",
       "type": "timeseries"
     },
     {
@@ -2066,7 +2066,7 @@
       },
       "id": 31,
       "panels": [],
-      "title": "Databases \u2014 CloudNativePG",
+      "title": "Databases — CloudNativePG",
       "type": "row"
     },
     {
@@ -2074,7 +2074,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Sum of all CloudNativePG database sizes (excludes template DBs).",
+      "description": "Filtered to databases on pods referencing selected claims/nodes. Max across CNPG replicas per cluster/database prevents counting replicas as separate storage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2124,7 +2124,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "expr": "sum(max by(namespace,pg_cluster,datname)(label_replace((cnpg_pg_database_size_bytes{namespace=~\"${namespace:regex}\",datname!~\"template.*\"} and on(namespace,pod) ((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}))),\"pg_cluster\",\"$1\",\"pod\",\"(.+)-[0-9]+\")))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -2139,7 +2139,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Number of CloudNativePG databases reporting a size (excludes template DBs).",
+      "description": "Filtered to databases on pods referencing selected claims/nodes. Max across CNPG replicas per cluster/database prevents counting replicas as separate storage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2189,7 +2189,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "count(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "expr": "count(max by(namespace,pg_cluster,datname)(label_replace((cnpg_pg_database_size_bytes{namespace=~\"${namespace:regex}\",datname!~\"template.*\"} and on(namespace,pod) ((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}))),\"pg_cluster\",\"$1\",\"pod\",\"(.+)-[0-9]+\")))",
           "refId": "A",
           "format": "time_series",
           "instant": true,
@@ -2204,7 +2204,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Each CloudNativePG database by on-disk size.",
+      "description": "Filtered to databases on pods referencing selected claims/nodes. Max across CNPG replicas per cluster/database prevents counting replicas as separate storage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2252,10 +2252,10 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum by(namespace,datname)(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "expr": "sum by(namespace,pg_cluster,datname)(max by(namespace,pg_cluster,datname)(label_replace((cnpg_pg_database_size_bytes{namespace=~\"${namespace:regex}\",datname!~\"template.*\"} and on(namespace,pod) ((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}))),\"pg_cluster\",\"$1\",\"pod\",\"(.+)-[0-9]+\")))",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{namespace}}/{{datname}}",
+          "legendFormat": "{{namespace}} / {{pg_cluster}} / {{datname}}",
           "instant": true,
           "range": false
         }
@@ -2268,7 +2268,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Per-database on-disk size over time.",
+      "description": "Filtered to databases on pods referencing selected claims/nodes. Max across CNPG replicas per cluster/database prevents counting replicas as separate storage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2344,10 +2344,10 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "sum by(namespace,pod,datname)(cnpg_pg_database_size_bytes{datname!~\"template.*\"})",
+          "expr": "max by(namespace,pg_cluster,datname)(label_replace((cnpg_pg_database_size_bytes{namespace=~\"${namespace:regex}\",datname!~\"template.*\"} and on(namespace,pod) ((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}))),\"pg_cluster\",\"$1\",\"pod\",\"(.+)-[0-9]+\"))",
           "refId": "A",
           "format": "time_series",
-          "legendFormat": "{{namespace}}/{{datname}}",
+          "legendFormat": "{{namespace}} / {{pg_cluster}} / {{datname}}",
           "range": true
         }
       ],
@@ -2359,7 +2359,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Every CloudNativePG database: cluster namespace, instance pod, database name, size. Sorted by size.",
+      "description": "Filtered to databases on pods referencing selected claims/nodes. Max across CNPG replicas per cluster/database prevents counting replicas as separate storage.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2420,7 +2420,7 @@
             "uid": "mimir"
           },
           "editorMode": "code",
-          "expr": "cnpg_pg_database_size_bytes{datname!~\"template.*\"}",
+          "expr": "max by(namespace,pg_cluster,datname)(label_replace((cnpg_pg_database_size_bytes{namespace=~\"${namespace:regex}\",datname!~\"template.*\"} and on(namespace,pod) ((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}))),\"pg_cluster\",\"$1\",\"pod\",\"(.+)-[0-9]+\"))",
           "refId": "A",
           "format": "table",
           "instant": true,
@@ -2432,28 +2432,17 @@
         {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "cluster": true,
-              "instance": true,
-              "job": true,
-              "container": true,
-              "endpoint": true,
-              "service": true,
-              "prometheus": true
+            "includeByName": {
+              "namespace": true,
+              "pg_cluster": true,
+              "datname": true,
+              "Value": true
             },
             "renameByName": {
               "namespace": "Namespace",
-              "pod": "Pod",
+              "pg_cluster": "Database cluster",
               "datname": "Database",
               "Value": "Size"
-            },
-            "indexByName": {
-              "namespace": 0,
-              "pod": 1,
-              "datname": 2,
-              "Value": 3
             }
           }
         }
@@ -2470,7 +2459,7 @@
       },
       "id": 37,
       "panels": [],
-      "title": "Backups (Velero), NAS & Control-plane",
+      "title": "Backups and NAS — global backend measurements",
       "type": "row"
     },
     {
@@ -2478,7 +2467,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Time since the most recent successful Velero backup across all schedules.",
+      "description": "Time since the most recent successful Velero backup across all schedules. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2543,7 +2532,7 @@
           "range": false
         }
       ],
-      "title": "Last backup age",
+      "title": "Last backup age · global",
       "type": "stat"
     },
     {
@@ -2551,7 +2540,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Total size of the most recent tarball across Velero schedules.",
+      "description": "Total size of the most recent tarball across Velero schedules. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2608,7 +2597,7 @@
           "range": false
         }
       ],
-      "title": "Backup data (last)",
+      "title": "Backup data (last) · global",
       "type": "stat"
     },
     {
@@ -2616,7 +2605,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Most recent backup tarball size per Velero schedule.",
+      "description": "Most recent backup tarball size per Velero schedule. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2672,7 +2661,7 @@
           "range": false
         }
       ],
-      "title": "Velero backup size by schedule",
+      "title": "Velero backup size by schedule · global",
       "type": "bargauge"
     },
     {
@@ -2680,7 +2669,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Total size of the NAS filesystem backing the NFS storage classes (df via nfs-storage-exporter).",
+      "description": "Total size of the NAS filesystem backing the NFS storage classes (df via nfs-storage-exporter). Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2737,7 +2726,7 @@
           "range": false
         }
       ],
-      "title": "NAS volume size",
+      "title": "NAS volume size · global",
       "type": "stat"
     },
     {
@@ -2745,7 +2734,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Used bytes on the NAS NFS backend.",
+      "description": "Used bytes on the NAS NFS backend. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2802,7 +2791,7 @@
           "range": false
         }
       ],
-      "title": "NAS used",
+      "title": "NAS used · global",
       "type": "stat"
     },
     {
@@ -2810,7 +2799,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Free bytes on the NAS NFS backend.",
+      "description": "Free bytes on the NAS NFS backend. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2875,7 +2864,7 @@
           "range": false
         }
       ],
-      "title": "NAS free",
+      "title": "NAS free · global",
       "type": "stat"
     },
     {
@@ -2883,7 +2872,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "Percent used of the NAS NFS backend volume.",
+      "description": "Percent used of the NAS NFS backend volume. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2948,7 +2937,7 @@
           "range": false
         }
       ],
-      "title": "NAS %used",
+      "title": "NAS %used · global",
       "type": "gauge"
     },
     {
@@ -2956,7 +2945,7 @@
         "type": "prometheus",
         "uid": "mimir"
       },
-      "description": "NAS NFS backend free space over time (per server/export).",
+      "description": "NAS NFS backend free space over time (per server/export). Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3039,7 +3028,7 @@
           "range": true
         }
       ],
-      "title": "NAS free over time",
+      "title": "NAS free over time · global",
       "type": "timeseries"
     },
     {
@@ -3061,11 +3050,11 @@
           "showLineNumbers": false,
           "showMiniMap": false
         },
-        "content": "**These require new scrape targets/exporters (not built here to avoid broken panels):**\n\n- **PVC *used* bytes** \u2014 `kubelet_volume_stats_*` is not scraped. This dashboard shows PVC *requested* size only. Fix: add a kubelet metrics scrape (`/metrics` volume stats) to Alloy so `kubelet_volume_stats_used_bytes` / `_capacity_bytes` appear.\n- **etcd DB size** \u2014 `etcd_mvcc_db_total_size_in_bytes` is not scraped (Talos control-plane etcd metrics endpoint not wired). Fix: expose + scrape etcd metrics, then add a panel with a quota threshold.\n\n**Gaps filled in this change:** MinIO object/bucket usage (native PodMonitor + public metrics), and NAS/NFS free space (`nfs-storage-exporter` df probe). CloudNativePG per-database sizes already existed (`cnpg_pg_database_size_bytes`).",
+        "content": "**Node** filters physical filesystems and pod-backed claims. **Namespace, StorageClass and PVC** filter claims and their pod/database consumers. Selecting all nodes retains unmounted claims in the inventory; selecting one node limits claims to pods scheduled there.\n\nPanels marked **global** describe shared MinIO, NAS or backup systems and deliberately retain backend totals. PVC requests are allocations. NFS filesystem statistics often describe the shared NAS, not the contents of an individual claim.",
         "mode": "markdown"
       },
       "pluginVersion": "11.0.0",
-      "title": "Follow-ups \u2014 storage gaps not yet metricized",
+      "title": "Filter scope and measurement limits",
       "type": "text"
     },
     {
@@ -3137,7 +3126,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "count(kube_persistentvolumeclaim_status_phase{phase=~\"Pending|Lost\"}==1) or vector(0)",
+              "expr": "count((max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_status_phase{job=\"kube-state-metrics\",phase=~\"Pending|Lost\"} == 1)) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))) or vector(0)",
               "refId": "A",
               "format": "time_series",
               "instant": true,
@@ -3152,7 +3141,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "PersistentVolumes in Failed or Released phase \u2014 orphaned volumes needing reclaim. GROUNDED: 10 Released now.",
+          "description": "Only PVs associated with selected claims. Unclaimed released PVs are outside the claim scope.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3206,14 +3195,14 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "count(kube_persistentvolume_status_phase{phase=~\"Failed|Released\"}==1) or vector(0)",
+              "expr": "count((max by(persistentvolume)(kube_persistentvolume_status_phase{job=\"kube-state-metrics\",phase=~\"Failed|Released\"} == 1)) and on(persistentvolume) max by(persistentvolume)(label_replace(((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))),\"persistentvolume\",\"$1\",\"volumename\",\"(.+)\"))) or vector(0)",
               "refId": "A",
               "format": "time_series",
               "instant": true,
               "range": false
             }
           ],
-          "title": "PVs Failed / Released",
+          "title": "Selected PVs Failed / Released",
           "type": "stat"
         },
         {
@@ -3221,7 +3210,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Writable local filesystems remounted read-only (danger). Excludes squashfs/overlay/tmpfs. GROUNDED: 0.",
+          "description": "Writable local filesystems remounted read-only (danger). Excludes squashfs/overlay/tmpfs. GROUNDED: 0. Node filter applies; these are physical filesystems, not per-namespace quotas.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3275,7 +3264,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "count(node_filesystem_readonly{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\"}==1) or vector(0)",
+              "expr": "count(node_filesystem_readonly{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node=~\"${node:regex}\"}==1) or vector(0)",
               "refId": "A",
               "format": "time_series",
               "instant": true,
@@ -3290,7 +3279,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Filesystems reporting a device error (danger). Excludes squashfs/overlay/tmpfs. GROUNDED: 0.",
+          "description": "Filesystems reporting a device error (danger). Excludes squashfs/overlay/tmpfs. GROUNDED: 0. Node filter applies; these are physical filesystems, not per-namespace quotas.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3344,7 +3333,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "count(node_filesystem_device_error{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\"}==1) or vector(0)",
+              "expr": "count(node_filesystem_device_error{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node=~\"${node:regex}\"}==1) or vector(0)",
               "refId": "A",
               "format": "time_series",
               "instant": true,
@@ -3359,7 +3348,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "nfs-storage-exporter df-probe scrape success (1=up). GROUNDED: 1 (storageclass fatboy-nfs-appdata).",
+          "description": "nfs-storage-exporter df-probe scrape success (1=up). GROUNDED: 1 (storageclass fatboy-nfs-appdata). Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3436,7 +3425,7 @@
               "range": false
             }
           ],
-          "title": "NFS exporter up",
+          "title": "NFS exporter up · global",
           "type": "stat"
         },
         {
@@ -3444,7 +3433,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "minio_cluster_health_status (1=healthy). Deduped across scrape jobs. GROUNDED: 1.",
+          "description": "minio_cluster_health_status (1=healthy). Deduped across scrape jobs. GROUNDED: 1. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3521,7 +3510,7 @@
               "range": false
             }
           ],
-          "title": "MinIO cluster health",
+          "title": "MinIO cluster health · global",
           "type": "stat"
         },
         {
@@ -3529,7 +3518,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "minio_cluster_drive_online_total (deduped). GROUNDED: 1.",
+          "description": "minio_cluster_drive_online_total (deduped). GROUNDED: 1. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3586,7 +3575,7 @@
               "range": false
             }
           ],
-          "title": "MinIO drives online",
+          "title": "MinIO drives online · global",
           "type": "stat"
         },
         {
@@ -3594,7 +3583,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "minio_cluster_drive_offline_total (deduped). 0 = all drives up. GROUNDED: 0.",
+          "description": "minio_cluster_drive_offline_total (deduped). 0 = all drives up. GROUNDED: 0. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3655,7 +3644,7 @@
               "range": false
             }
           ],
-          "title": "MinIO drives offline",
+          "title": "MinIO drives offline · global",
           "type": "stat"
         },
         {
@@ -3663,7 +3652,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "minio_cluster_nodes_online_total (deduped). GROUNDED: 1.",
+          "description": "minio_cluster_nodes_online_total (deduped). GROUNDED: 1. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3720,7 +3709,7 @@
               "range": false
             }
           ],
-          "title": "MinIO nodes online",
+          "title": "MinIO nodes online · global",
           "type": "stat"
         },
         {
@@ -3728,7 +3717,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Inode table utilisation per node = 100*(1 - files_free/files). Excludes tmpfs/overlay. GROUNDED: 0.05\u20134.2%.",
+          "description": "Inode table utilisation per node = 100*(1 - files_free/files). Excludes tmpfs/overlay. GROUNDED: 0.05–4.2%. Node filter applies; these are physical filesystems, not per-namespace quotas.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3785,7 +3774,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "max by(node)(100*(1 - node_filesystem_files_free{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}/node_filesystem_files{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\"}))",
+              "expr": "max by(node)(100*(1 - node_filesystem_files_free{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}/node_filesystem_files{fstype!~\"tmpfs|overlay|ramfs|squashfs|iso9660|rootfs|autofs|fuse.*|nfs.*|cifs|devtmpfs|mqueue|tracefs|debugfs|bpf|cgroup.*|configfs|securityfs|pstore|efivarfs\",node!=\"\",node=~\"${node:regex}\"}))",
               "refId": "A",
               "format": "time_series",
               "instant": true,
@@ -3801,7 +3790,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Last backup status per Velero schedule. NOTE (grounded vs Velero source): velero_backup_last_status 1=SUCCESS, 0=FAILURE \u2014 opposite of some docs. GROUNDED: 3 schedules, all 1/OK.",
+          "description": "Last backup status per Velero schedule. NOTE (grounded vs Velero source): velero_backup_last_status 1=SUCCESS, 0=FAILURE — opposite of some docs. GROUNDED: 3 schedules, all 1/OK. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3904,7 +3893,7 @@
               "range": false
             }
           ],
-          "title": "Velero backup status by schedule",
+          "title": "Velero backup status by schedule · global",
           "transformations": [
             {
               "id": "organize",
@@ -3940,7 +3929,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Per-schedule rate of velero_backup_failure_total. Sustained >0 = failing schedule.",
+          "description": "Per-schedule rate of velero_backup_failure_total. Sustained >0 = failing schedule. Global backend/backup measurement: node, namespace, storage-class and PVC filters do not partition this shared resource.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4024,7 +4013,7 @@
               "legendFormat": "{{schedule}}"
             }
           ],
-          "title": "Velero backup failure rate",
+          "title": "Velero backup failure rate · global",
           "type": "timeseries"
         },
         {
@@ -4032,7 +4021,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "rate(node_nfs_rpc_retransmissions_total) \u2014 client-side NFS mount health (retransmits signal a struggling server/network). GROUNDED: 0.",
+          "description": "rate(node_nfs_rpc_retransmissions_total) — client-side NFS mount health (retransmits signal a struggling server/network). GROUNDED: 0.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4108,7 +4097,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "sum by(instance)(rate(node_nfs_rpc_retransmissions_total[$__rate_interval]))",
+              "expr": "sum by(instance)(rate(node_nfs_rpc_retransmissions_total{node=~\"${node:regex}\"}[$__rate_interval]))",
               "refId": "A",
               "format": "time_series",
               "instant": false,
@@ -4185,7 +4174,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "kube_persistentvolumeclaim_status_phase{phase=~\"Pending|Lost\"}==1",
+              "expr": "(max by(namespace,persistentvolumeclaim,phase)(kube_persistentvolumeclaim_status_phase{job=\"kube-state-metrics\",phase=~\"Pending|Lost\"} == 1)) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))",
               "refId": "A",
               "format": "table",
               "instant": true,
@@ -4248,7 +4237,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "SCOPE: kubelet_volume_stats_* is only emitted for PVCs whose volume plugin has a stats provider \u2014 on this cluster that means NFS-backed PVCs ONLY (fatboy-nfs-appdata, synology-nfs, tdarr-*). The ~52 local-path/hostPath PVCs will NEVER appear here (by design, not a bug). Do not read these panels as all-PVC coverage.",
+          "description": "SCOPE: kubelet_volume_stats_* is only emitted for PVCs whose volume plugin has a stats provider — on this cluster that means NFS-backed PVCs ONLY (fatboy-nfs-appdata, synology-nfs, tdarr-*). The ~52 local-path/hostPath PVCs will NEVER appear here (by design, not a bug). Do not read these panels as all-PVC coverage.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -4266,7 +4255,7 @@
               "showLineNumbers": false,
               "showMiniMap": false
             },
-            "content": "**Scope \u2014 NFS-backed PVCs only.** `kubelet_volume_stats_*` is only emitted for PVCs whose volume plugin has a stats provider \u2014 on this cluster that is the **NFS-backed PVCs only** (fatboy-nfs-appdata, synology-nfs, tdarr-*). The ~52 local-path/hostPath PVCs will **never** appear here (by design, not a bug) \u2014 do **not** read these panels as all-PVC coverage.\n\nNotes: most NFS PVCs share the same NAS backend, so used% is the backend filesystem fill and moves in lockstep. RWX PVCs mounted on multiple nodes are deduplicated with `max by (namespace, persistentvolumeclaim)`. Inode panels are omitted: `kubelet_volume_stats_inodes*` exists but NFS reports 0 inodes, so inode-% is undefined here.",
+            "content": "**Filesystem statistics are not per-PVC disk usage.** On this cluster kubelet statistics cover NFS mounts; local-path claims can have no statistics. Multiple NFS claims can report the same backend filesystem capacity and fill. Do not sum those values.\n\nAll four filters apply to these panels. The bottom table includes **all PVC storage classes referenced by active or pending pods**, with requested allocation even when no filesystem statistics exist. A dash means unavailable, not zero bytes.",
             "mode": "markdown"
           },
           "pluginVersion": "11.0.0",
@@ -4278,7 +4267,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Count of NFS-backed PVCs whose filesystem is more than 85% full. NFS-backed PVCs only \u2014 local-path PVCs never emit kubelet_volume_stats_* (see scope note).",
+          "description": "Count of NFS-backed PVCs whose filesystem is more than 85% full. NFS-backed PVCs only — local-path PVCs never emit kubelet_volume_stats_* (see scope note).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4333,7 +4322,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "count(max by (namespace, persistentvolumeclaim) (100 * kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) > 85) or vector(0)",
+              "expr": "count((100 * (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_used_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))) / (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_capacity_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))) > 85) or vector(0)",
               "instant": true,
               "range": false,
               "refId": "A"
@@ -4402,7 +4391,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "count(max by (namespace, persistentvolumeclaim) (predict_linear(kubelet_volume_stats_available_bytes[24h], 7*86400)) < 0) or vector(0)",
+              "expr": "count((max by(namespace,persistentvolumeclaim)(predict_linear(kubelet_volume_stats_available_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}[24h],7*86400)) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))) < 0) or vector(0)",
               "instant": true,
               "range": false,
               "refId": "A"
@@ -4416,7 +4405,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Live filesystem fill per NFS-backed PVC from kubelet volume stats: capacity, used, available and used-%. Deduplicated across nodes (RWX PVCs mount on several nodes) with max by (namespace, persistentvolumeclaim). NFS-backed PVCs only \u2014 local-path PVCs never appear here (see scope note). Most rows share the same NAS backend so used-% is near-identical by design.",
+          "description": "Live filesystem fill per NFS-backed PVC from kubelet volume stats: capacity, used, available and used-%. Deduplicated across nodes (RWX PVCs mount on several nodes) with max by (namespace, persistentvolumeclaim). NFS-backed PVCs only — local-path PVCs never appear here (see scope note). Most rows share the same NAS backend so used-% is near-identical by design.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4525,7 +4514,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "expr": "(max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_capacity_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
               "format": "table",
               "instant": true,
               "range": false,
@@ -4537,7 +4526,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "expr": "(max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_used_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
               "format": "table",
               "instant": true,
               "range": false,
@@ -4549,7 +4538,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "expr": "(max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_available_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
               "format": "table",
               "instant": true,
               "range": false,
@@ -4561,14 +4550,14 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "max by (namespace, persistentvolumeclaim) (100 * kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$pvc\"} / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "expr": "(100 * (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_used_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))) / (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_capacity_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))))",
               "format": "table",
               "instant": true,
               "range": false,
               "refId": "D"
             }
           ],
-          "title": "NFS PVC fill \u2014 capacity / used / available / used-%",
+          "title": "Filesystem capacity / fill reported through selected PVCs",
           "transformations": [
             {
               "id": "merge",
@@ -4606,7 +4595,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Available bytes per NFS-backed PVC over time \u2014 the fill trend. Deduplicated with max by (namespace, persistentvolumeclaim). Because most PVCs share the same NAS backend the lines largely overlap; divergent lines are dedicated exports. NFS-backed PVCs only (see scope note).",
+          "description": "Available bytes per NFS-backed PVC over time — the fill trend. Deduplicated with max by (namespace, persistentvolumeclaim). Because most PVCs share the same NAS backend the lines largely overlap; divergent lines are dedicated exports. NFS-backed PVCs only (see scope note).",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4688,7 +4677,7 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\"$pvc\"})",
+              "expr": "(max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_available_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
               "legendFormat": "{{namespace}}/{{persistentvolumeclaim}}",
               "range": true,
               "refId": "A"
@@ -4702,7 +4691,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "description": "Naive linear forecast: available_bytes / deriv(used_bytes[6h]) in days, only for PVCs actively filling (deriv > 0). clamp_min guards divide-by-zero. May be sparse or empty when nothing is filling \u2014 that is fine. Since most PVCs share one NAS backend, their days-to-full converge on the backend's number. NFS-backed PVCs only (see scope note).",
+          "description": "Available divided by positive observed growth rate. Shared NFS filesystem forecasts repeat per claim; not isolated per-PVC usage. All four filters apply.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -4807,14 +4796,14 @@
                 "uid": "mimir"
               },
               "editorMode": "code",
-              "expr": "(max by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes{persistentvolumeclaim=~\"$pvc\"}) / max by (namespace, persistentvolumeclaim) (clamp_min(deriv(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$pvc\"}[6h]), 1)) / 86400) and max by (namespace, persistentvolumeclaim) (deriv(kubelet_volume_stats_used_bytes{persistentvolumeclaim=~\"$pvc\"}[6h])) > 0",
+              "expr": "((max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_available_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))) / max by(namespace,persistentvolumeclaim)(deriv(kubelet_volume_stats_used_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}[6h])) / 86400) and (max by(namespace,persistentvolumeclaim)(deriv(kubelet_volume_stats_used_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}[6h])) > 0)",
               "format": "table",
               "instant": true,
               "range": false,
               "refId": "A"
             }
           ],
-          "title": "Fill forecast \u2014 days to full (actively filling PVCs)",
+          "title": "Filesystem forecast · days to full",
           "transformations": [
             {
               "id": "organize",
@@ -4836,9 +4825,287 @@
             }
           ],
           "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "description": "One row per pod/volume/PVC reference for Running, Pending or Unknown pods. All four filters apply. Shared PVCs repeat for each consumer; do not sum rows. Requested allocation is available for all claims. Filesystem values can be shared NAS totals; a dash means the kubelet exposes no statistics.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "custom": {
+                "align": "auto",
+                "cellOptions": {
+                  "type": "auto"
+                },
+                "filterable": true,
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "bytes",
+              "noValue": "—"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Namespace"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Pod"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Node"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "PVC"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Volume mount name"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Storage class"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "PV"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "none"
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Filesystem used %"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percent"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 1
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 147,
+            "w": 24,
+            "h": 12
+          },
+          "id": 69,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "countRows": false,
+              "fields": "",
+              "reducer": [
+                "sum"
+              ],
+              "show": false
+            },
+            "showHeader": true,
+            "sortBy": [
+              {
+                "displayName": "Namespace",
+                "desc": false
+              },
+              {
+                "displayName": "Pod",
+                "desc": false
+              }
+            ]
+          },
+          "pluginVersion": "11.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "expr": "((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"})) * on(namespace,persistentvolumeclaim) group_left() max by(namespace,persistentvolumeclaim)(kube_persistentvolumeclaim_resource_requests_storage_bytes{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"})",
+              "refId": "A",
+              "format": "table",
+              "instant": true,
+              "range": false
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "expr": "((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"})) * on(namespace,persistentvolumeclaim) group_left() (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_capacity_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
+              "refId": "B",
+              "format": "table",
+              "instant": true,
+              "range": false
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "expr": "((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"})) * on(namespace,persistentvolumeclaim) group_left() (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_used_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
+              "refId": "C",
+              "format": "table",
+              "instant": true,
+              "range": false
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "expr": "((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"})) * on(namespace,persistentvolumeclaim) group_left() (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_available_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"})))))",
+              "refId": "D",
+              "format": "table",
+              "instant": true,
+              "range": false
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "mimir"
+              },
+              "expr": "((max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1))) * on(namespace,persistentvolumeclaim) group_left(storageclass,volumename) max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"})) * on(namespace,persistentvolumeclaim) group_left() (100 * (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_used_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))) / (max by(namespace,persistentvolumeclaim)(kubelet_volume_stats_capacity_bytes{job=\"kubelet\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",node=~\"${node:regex}\"}) and on(namespace,persistentvolumeclaim) ((max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on(namespace,persistentvolumeclaim) (max by(namespace,pod,persistentvolumeclaim,volume)(kube_pod_spec_volumes_persistentvolumeclaims_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\"}) * on(namespace,pod) group_left(node) (max by(namespace,pod,node)(kube_pod_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",node=~\"${node:regex}\"}) and on(namespace,pod) max by(namespace,pod)(kube_pod_status_phase{job=\"kube-state-metrics\",phase=~\"Running|Pending|Unknown\"} == 1)))) or (max by(namespace,persistentvolumeclaim,storageclass,volumename)(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",persistentvolumeclaim=~\"${pvc:regex}\",storageclass=~\"${storageclass:regex}\"}) and on() (count(kube_node_info{job=\"kube-state-metrics\",node=~\"${node:regex}\"}) == count(kube_node_info{job=\"kube-state-metrics\"}))))))",
+              "refId": "E",
+              "format": "table",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "title": "PVCs per pod · allocation and observed filesystem",
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "includeByName": {
+                  "namespace": true,
+                  "pod": true,
+                  "node": true,
+                  "persistentvolumeclaim": true,
+                  "volume": true,
+                  "storageclass": true,
+                  "volumename": true,
+                  "Value #A": true,
+                  "Value #B": true,
+                  "Value #C": true,
+                  "Value #D": true,
+                  "Value #E": true
+                },
+                "renameByName": {
+                  "namespace": "Namespace",
+                  "pod": "Pod",
+                  "node": "Node",
+                  "persistentvolumeclaim": "PVC",
+                  "volume": "Volume mount name",
+                  "storageclass": "Storage class",
+                  "volumename": "PV",
+                  "Value #A": "Requested",
+                  "Value #B": "Filesystem capacity",
+                  "Value #C": "Filesystem used",
+                  "Value #D": "Filesystem available",
+                  "Value #E": "Filesystem used %"
+                },
+                "indexByName": {
+                  "namespace": 0,
+                  "pod": 1,
+                  "node": 2,
+                  "persistentvolumeclaim": 3,
+                  "volume": 4,
+                  "storageclass": 5,
+                  "volumename": 6,
+                  "Value #A": 7,
+                  "Value #B": 8,
+                  "Value #C": 9,
+                  "Value #D": 10,
+                  "Value #E": 11
+                }
+              }
+            }
+          ],
+          "type": "table"
         }
       ],
-      "title": "PVC Capacity & Fill \u2014 NFS (kubelet volume-stats)",
+      "title": "PVC filesystem statistics and pod references",
       "type": "row"
     }
   ],
@@ -4860,7 +5127,7 @@
           "uid": "mimir"
         },
         "query": {
-          "query": "label_values(node_filesystem_size_bytes, node)",
+          "query": "label_values(kube_node_info{job=\"kube-state-metrics\"}, node)",
           "refId": "node"
         },
         "refresh": 2,
@@ -4871,7 +5138,9 @@
           "text": "All",
           "value": "$__all"
         },
-        "sort": 1
+        "sort": 1,
+        "definition": "label_values(kube_node_info{job=\"kube-state-metrics\"}, node)",
+        "description": "Node disks and pods using PVCs. All nodes includes unmounted claims; a specific node includes its pod-referenced claims."
       },
       {
         "name": "namespace",
@@ -4893,7 +5162,9 @@
           "text": "All",
           "value": "$__all"
         },
-        "sort": 1
+        "sort": 1,
+        "definition": "label_values(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"}, namespace)",
+        "description": "Scope PVCs, pod references and databases."
       },
       {
         "name": "storageclass",
@@ -4904,7 +5175,7 @@
           "uid": "mimir"
         },
         "query": {
-          "query": "label_values(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\"}, storageclass)",
+          "query": "label_values(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\"}, storageclass)",
           "refId": "storageclass"
         },
         "refresh": 2,
@@ -4915,18 +5186,20 @@
           "text": "All",
           "value": "$__all"
         },
-        "sort": 1
+        "sort": 1,
+        "definition": "label_values(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\"}, storageclass)",
+        "description": "Scope claims and their pod/database consumers; choices follow Namespace."
       },
       {
         "name": "pvc",
-        "label": "PVC (NFS-stats)",
+        "label": "PVC",
         "type": "query",
         "datasource": {
           "type": "prometheus",
           "uid": "mimir"
         },
         "query": {
-          "query": "label_values(kubelet_volume_stats_capacity_bytes, persistentvolumeclaim)",
+          "query": "label_values(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",storageclass=~\"${storageclass:regex}\"}, persistentvolumeclaim)",
           "refId": "pvc"
         },
         "refresh": 2,
@@ -4937,7 +5210,9 @@
           "text": "All",
           "value": "$__all"
         },
-        "sort": 1
+        "sort": 1,
+        "definition": "label_values(kube_persistentvolumeclaim_info{job=\"kube-state-metrics\",namespace=~\"${namespace:regex}\",storageclass=~\"${storageclass:regex}\"}, persistentvolumeclaim)",
+        "description": "All PVC types, including local-path. Choices follow Namespace and StorageClass."
       }
     ]
   },
@@ -4949,6 +5224,6 @@
   "timezone": "browser",
   "title": "Central Cluster Storage",
   "uid": "central-cluster-storage",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
