@@ -504,11 +504,8 @@ spec:
           poll_without_inotify: true
         # Cowrie honeypot events (the `logship` sidecar emits Cowrie JSON on
         # stdout). Pipes honeypot activity into CrowdSec for visibility/signals.
-        # NOTE: there is NO crowdsecurity/cowrie hub collection — a custom parser
-        # + ssh-bf mapping is a follow-up (TALOS-e9h). AND while the honeypot is
-        # internal-only, its source IPs are RFC1918 -> matched by the homelab
-        # whitelist parser above -> no auto-ban (by design; bans will fire once
-        # the honeypot is publicly exposed). Unparsed lines are dropped harmlessly.
+        # Custom Cowrie metadata parser and immediate scenario are configured above.
+        # Internal/probe sources are excluded after parsing; public sources enforce.
         - namespace: honeypot
           podName: "cowrie-*"
           program: cowrie
@@ -583,19 +580,8 @@ spec:
           podName: "audiobookshelf-*"
           program: audiobookshelf
           poll_without_inotify: true
-        # immich-* would also catch immich-machine-learning / -postgres; the
-        # server pod is the one that authenticates.
-        - namespace: media-private
-          podName: "immich-5*"
-          program: immich
-          poll_without_inotify: true
-        # homeassistant-7* not homeassistant-*: the broad glob also matched
-        # homeassistant-postgres-N (CNPG), whose logs were being read and dropped
-        # as unparsed noise. Confirmed in the acquisition metrics audit.
-        - namespace: home-automation
-          podName: "homeassistant-7*"
-          program: home-assistant
-          poll_without_inotify: true
+        # Immich/Home Assistant use explicit container filename matches below;
+        # ReplicaSet hash prefixes change on rollout and are not stable selectors.
         - namespace: catalyst-llm
           podName: "litellm-*"
           program: litellm
@@ -609,6 +595,22 @@ spec:
       # file; on worker nodes it's absent and harmlessly skipped. crowdsecurity/k8s-audit detects
       # sensitive events (secret reads, exec, RBAC/priv-esc, anonymous access). (TALOS-pbn)
       additionalAcquisition:
+        - source: file
+          filenames:
+            - /var/log/containers/immich-*_media-private_immich-server-*.log
+          force_inotify: true
+          poll_without_inotify: true
+          labels:
+            type: containerd
+            program: immich
+        - source: file
+          filenames:
+            - /var/log/containers/homeassistant-*_home-automation_homeassistant-*.log
+          force_inotify: true
+          poll_without_inotify: true
+          labels:
+            type: containerd
+            program: home-assistant
         - source: file
           filenames:
             - /var/log/audit/kube/kube-apiserver.log

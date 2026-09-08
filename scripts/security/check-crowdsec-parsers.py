@@ -5,6 +5,7 @@ Requires kubectl and PyYAML. Uses a private copy of configuration inside an agen
 import json
 import subprocess
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 import yaml
 
@@ -15,7 +16,7 @@ def kube(*args, data=None):
                           text=True, capture_output=True, check=True).stdout
 
 pods = json.loads(kube('get', 'pods', '-l', 'type=agent', '-o', 'json'))['items']
-pod = next(p['metadata']['name'] for p in pods if any(
+pod = next(p['metadata']['name'] for p in pods if not p['metadata'].get('deletionTimestamp') and any(
     c['type'] == 'Ready' and c['status'] == 'True' for c in p['status']['conditions']))
 work = '/tmp/crowdsec-parser-audit-' + uuid.uuid4().hex
 
@@ -29,10 +30,11 @@ try:
     parser = values['config']['parsers']['s01-parse']['cowrie-logs.yaml']
     # The custom parser is a mounted regular file, not a symlink to hub content.
     remote('sh', '-c', 'cat > "$1"', 'audit', work + '/parsers/s01-parse/cowrie-logs.yaml', data=parser)
-    stamp = '2026-09-07T17:15:00Z'
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     cases = []
-    for event in ['session.connect', 'login.failed', 'login.success', 'command.input', 'session.closed']:
-        cases.append(({'eventid': 'cowrie.' + event, 'src_ip': '198.51.100.42', 'timestamp': stamp}, True))
+    # Independent IPs prevent trigger blackhole state coupling the fixtures.
+    for index, event in enumerate(['session.connect', 'login.failed', 'login.success', 'command.input', 'session.closed']):
+        cases.append(({'eventid': 'cowrie.' + event, 'src_ip': f'198.51.100.{42 + index}', 'timestamp': stamp}, True))
     for ip in ['10.244.3.223', '192.168.1.33', 'fd00::1']:
         cases.append(({'eventid': 'cowrie.session.connect', 'src_ip': ip, 'timestamp': stamp}, False))
     cases.append(({'eventid': 'cowrie.session.connect', 'timestamp': stamp}, False))

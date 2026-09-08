@@ -26,7 +26,8 @@ def kubectl(*args, stdin=None, timeout=45, check=True):
                             capture_output=True, text=True, timeout=timeout)
     if check and result.returncode:
         # Do not dump container output/headers or secrets on failure.
-        raise RuntimeError(f'kubectl {args[0]} failed (exit {result.returncode})')
+        detail = next((line for line in result.stderr.splitlines() if line.startswith('curl:')), '')
+        raise RuntimeError(f'kubectl {" ".join(args[:6])} failed (exit {result.returncode}) {detail}')
     return result
 
 

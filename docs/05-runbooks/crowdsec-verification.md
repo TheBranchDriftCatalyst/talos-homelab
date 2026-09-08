@@ -18,6 +18,41 @@ IP cells link to CrowdSec IP intelligence.
 
 The observer uses only the read-only bouncer API, has no Kubernetes API access, and is independent of enforcement. Its endpoint has no public route and ingress is limited to monitoring namespaces. The existing Traefik bouncer key is mounted read-only; Grafana never receives it.
 
+## Unified security posture suite
+
+```sh
+# Repository contracts; live checks explicitly report SKIPPED.
+python3 scripts/security/test_security_posture.py
+
+# Also assert the running system. Missing evidence fails; it is never a pass.
+python3 scripts/security/test_security_posture.py --live
+```
+
+Requires Python 3 and PyYAML (`python3 -m pip install PyYAML==6.0.2`). The GitHub
+`security posture` workflow runs offline contracts on relevant pull requests and
+main-branch pushes without cluster credentials.
+
+The suite explicitly checks that sensitive access-log headers, honeypot/tarpit
+API-token projections, unbounded fail-open configuration, single-replica HA,
+wrong-host telemetry exceptions and the invalid exporter User-Agent are **not
+present**. Positive assertions require preserved CrowdSec log fields, current
+inventory data, full agent coverage and successful native AppSec configuration
+validation. Boolean host/path regression cases cover the supported expression
+subset; native compilation is a separate live assertion.
+
+Live mode sends one registry GET containing **synthetic** cookie/authorization/API
+key headers and correlates the retained unique User-Agent with its actual Traefik
+access log. It fails if no matching log is found, if secret header fields are
+present, or if required parser fields are missing. It reads pod volume projections
+and token-mount configuration; this is not an exploit test for arbitrary files
+inside a compromised process.
+
+Parser fixtures use separate public test IPs to avoid coupling through the
+scenario's blackhole timer. Fixtures run in a temporary copy of engine config and
+do not post alerts to LAPI. Live mode does not change login, allowlists, simulation
+or production configuration. VPN bans and replica replacement require the separate
+`check-crowdsec-vpn.py --ha` command above.
+
 ## Repeatable checks
 
 From the repository root, with Python 3, PyYAML and the intended kubectl context:
