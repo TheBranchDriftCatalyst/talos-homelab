@@ -1,14 +1,13 @@
 ---
 # The BLE sensor. One per node with a radio.
 #
-# ⚠️ THIS CANNOT WORK YET AND THAT IS EXPECTED. Bluetooth is compiled out of the Talos
-# kernel — CONFIG_BT is unset, /sys/class/bluetooth does not exist, and the radios sit bound
-# to the generic `usb` driver. The agent's preflight check (internal/scanner/preflight.go)
-# detects exactly this and exits with an actionable message rather than a panic or a silent
-# empty scan. It is deployed now so the wiring is proven and the day the kernel work lands
-# it starts working with no manifest change.
+# Bluetooth host support is not installed yet. USB discovery alone does not imply a
+# usable HCI adapter. Wait explicitly in Init:0/1 until the host exposes hciN instead
+# of repeatedly launching the scanner's failing preflight. The pod remains unready;
+# this gate does not claim scanning works or substitute simulated observations.
+# Host enablement remains tracked in TALOS-1mog; see docs/05-runbooks/bluetooth-enablement.md.
 #
-# Until then, wifi-agent is the live data source.
+# wifi-agent is also deliberately scaled to zero; see 30-wifi-agent.yaml.
 #
 # replicas are governed by the DaemonSet + nodeSelector: only nodes with a radio. talos00
 # is a VM with no Bluetooth hardware and is excluded by the label selector below.
@@ -28,6 +27,7 @@ spec:
         app.kubernetes.io/name: bt-agent
         app.kubernetes.io/part-of: bt-radar
     spec:
+      automountServiceAccountToken: false
       # Only nodes that physically have a Bluetooth radio — discovered automatically.
       #
       # NFD labels this from the USB device class: e0 is "wireless controller", which is
@@ -52,6 +52,51 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       imagePullSecrets:
         - name: nexus-pull-dockercfg
+      initContainers:
+        - name: wait-for-bluetooth
+          image: docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              trap 'exit 143' TERM INT
+              sysfs="${SYSFS_ROOT:-/host/sys}"
+              while :; do
+                for adapter in "$sysfs"/class/bluetooth/hci[0-9]*; do
+                  if [ -d "$adapter" ]; then
+                    echo "Bluetooth adapter ${adapter##*/} is present; starting scanner preflight."
+                    exit 0
+                  fi
+                done
+                if [ -d "$sysfs/class/bluetooth" ]; then
+                  echo "Waiting for Bluetooth: subsystem present but no HCI adapter; check radio driver and firmware."
+                else
+                  echo "Waiting for Bluetooth: host subsystem absent; Talos Bluetooth kernel support is required."
+                fi
+                sleep "${POLL_SECONDS:-60}" &
+                wait "$!"
+              done
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            seccompProfile: { type: RuntimeDefault }
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 1m, memory: 4Mi }
+            limits: { cpu: 10m, memory: 16Mi }
+          volumeMounts:
+            - name: host-sys
+              mountPath: /host/sys
+              readOnly: true
+      volumes:
+        - name: host-sys
+          hostPath:
+            path: /sys
+            type: Directory
       containers:
         - name: bt-agent
           image: registry.talos00/talos00-registry/bt-agent:latest
