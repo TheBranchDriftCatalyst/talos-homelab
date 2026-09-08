@@ -11,6 +11,13 @@ Zot registry (~22 GB), Windows ISO (~10 GB), and LiteLLM PostgreSQL (~9.6 GB).
 These are logical sizes, potentially sparse, and must not be added directly to
 physical filesystem usage. PVC data is not an image garbage-collection target.
 
+After applying the policy, the first observed cleanup cycle reduced used space to
+568.94 GiB (61.2%) and raised available space to 359.96 GiB: about **175 GiB
+reclaimed**. Runtime image/snapshot usage fell to 394.43 GiB. No image-GC failure
+events were reported. All 135 previously running pods retained their identities;
+the GPU device plugin restarted and recovered, while the Bluetooth agent continued
+its pre-existing crash loop. All 16 live security-posture checks passed afterward.
+
 ## Policy
 
 `configs/patches/talos06-image-gc.yaml`, included only by talos06 in
