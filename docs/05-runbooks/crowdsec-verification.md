@@ -71,7 +71,7 @@ The VPN test creates a disposable Gluetun canary from the existing VPN test temp
 3. Removing only that test decision restores the original response.
 4. The test deletes its own canary, including on failure or interruption. The decision TTL provides a backstop if cleanup loses cluster access.
 
-Use `--url https://YOUR-OWN-PROTECTED-HOST/path` for another stable owned endpoint. Redirects, VPN exit changes, destination address changes, pre-existing enforced decisions, and private destinations fail the test. Do not point it at a route that triggers an automatic attack scenario: the test is intentionally a manual local decision, not a community attack report. It does not disable simulation, alter allowlists, reconfigure production VPN workloads, or change login settings.
+Use `--url https://YOUR-OWN-PROTECTED-HOST/path` for another stable owned endpoint. Redirects, VPN exit changes, unexpected destination addresses, pre-existing enforced decisions, and private destinations fail the test. After initial successful resolution, the test pins the public registry and IP-check addresses using curl --resolve, retaining HTTPS certificate validation. This isolates enforcement checks from intermittent VPN DNS failures; it does not test DNS availability. Do not point it at a route that triggers an automatic attack scenario: the test is intentionally a manual local decision, not a community attack report. It does not disable simulation, alter allowlists, reconfigure production VPN workloads, or change login settings.
 
 Add `--ha` to use a ten-minute test decision and replace one Ready LAPI replica
 while verifying HTTP 403, then one AppSec replica after unban while verifying the

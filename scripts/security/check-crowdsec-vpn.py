@@ -74,11 +74,19 @@ def main():
         return kubectl('-n', 'vpn-gateway', 'exec', name, '-c', 'probe', '--', *cmd).stdout.strip()
 
     def exit_ip():
-        return public_ip(probe('curl', '-q', '-4', '--noproxy', '*', '--fail', '--silent',
-                               '--show-error', '--max-time', '12', 'https://api.ipify.org'))
+        report["last_probe"] = "external IP verification"
+        pinned = ['--resolve', 'api.ipify.org:443:' + report['ip_check_server']] if 'ip_check_server' in report else []
+        raw = probe('curl', '-q', '-4', '--noproxy', '*', '--fail', '--silent',
+                    '--show-error', '--max-time', '12', *pinned, '--write-out',
+                    '\n%{remote_ip}', 'https://api.ipify.org')
+        value, server = raw.splitlines()
+        report['ip_check_server'] = public_ip(server)
+        return public_ip(value)
 
     def request(headers=()):
-        raw = probe('curl', '-q', '-4', '--noproxy', '*', '--silent', '--show-error',
+        report["last_probe"] = "protected endpoint" + (" with " + ", ".join(h.split(":")[0] for h in headers) if headers else "")
+        pinned = ['--resolve', f'{target.hostname}:{target.port or 443}:' + report['origin_ip']] if 'origin_ip' in report else []
+        raw = probe('curl', '-q', '-4', '--noproxy', '*', '--silent', '--show-error', *pinned,
                     '--max-time', '15', '--output', '/dev/null', '--write-out',
                     '%{http_code} %{remote_ip}', *[arg for h in headers for arg in ('--header', h)], args.url)
         status, remote = raw.split()
@@ -105,6 +113,12 @@ def main():
         raise RuntimeError(f'Expected HTTP {wanted}; last response was HTTP {last}')
 
     def replace_replica(component, expected_status):
+        deployment = json.loads(kubectl('-n', 'crowdsec', 'get', 'deploy', f'crowdsec-{component}', '-o', 'json').stdout)
+        desired = deployment['spec']['replicas']
+        status = deployment['status']
+        if (status.get('observedGeneration') != deployment['metadata']['generation'] or
+                status.get('updatedReplicas') != desired or status.get('replicas') != desired):
+            raise RuntimeError(f'{component} rollout is in progress; refusing concurrent fault injection')
         pods = json.loads(kubectl('-n', 'crowdsec', 'get', 'pods', '-l',
                                  f'k8s-app=crowdsec,type={component}', '-o', 'json').stdout)['items']
         ready = [p for p in pods if not p['metadata'].get('deletionTimestamp') and
@@ -206,7 +220,7 @@ def main():
         report['passed'] = True
     except (Exception, KeyboardInterrupt) as exc:
         report['error'] = str(exc)
-        print(f'FAIL: {exc}', file=sys.stderr, flush=True)
+        print(f'FAIL during {report.get("last_probe", "setup")}: {exc}', file=sys.stderr, flush=True)
     finally:
         if ban_attempted:
             try:
