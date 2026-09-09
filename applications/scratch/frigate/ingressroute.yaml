@@ -1,10 +1,25 @@
 ---
 # Frigate Web UI — HTTPS + Authentik forward-auth SSO (TALOS-xgrl.14).
-# The high-priority /api route has NO auth middleware so the Home Assistant Frigate
+# The high-priority /api route has NO forward-auth so the Home Assistant Frigate
 # integration (and other API clients) keep working; the default route is gated by the
 # `authentik` forward-auth middleware on the talos-home (or cluster-admin) group. Frigate
 # itself trusts the X-authentik-username proxy header (proxy.header_map in configmap.yaml)
 # → single SSO, no double login. TLS: default TLSStore serves the *.talos00 wildcard via SNI.
+#
+# SECURITY (TALOS-lxz5.2 / 5.2.1): the /api route previously had NO middleware at all, so
+# `curl -H 'X-authentik-username: admin' https://frigate.talos00/api/config` returned 200
+# from the internet and leaked camera rtsp:// creds — Frigate maps that header to a user
+# (configmap proxy.header_map) and the route never authenticated. Two defences now apply:
+#   1. `lan-only` (ns traefik, RFC1918 sources) restricts /api to the LAN + in-cluster pod
+#      CIDR (10.0.0.0/8 covers 10.244.x), so the internet can no longer reach /api. Home
+#      Assistant runs in-cluster (home-automation ns) / on the LAN, so its Frigate
+#      integration keeps working.
+#   2. The `traefik-strip-authentik-headers` default entrypoint middleware (helmrelease
+#      ports.web/websecure) clears any client-supplied X-authentik-* BEFORE routing, so the
+#      identity header can no longer be forged on this un-gated route even from the LAN.
+# HA implication: HA never sent X-authentik-username (it uses Frigate's own API), so the
+# strip does not affect it. If HA is ever pointed at Frigate from OUTSIDE the LAN, switch it
+# to a Frigate API key and gate /api with forward-auth instead of lan-only.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -26,6 +41,11 @@ spec:
     - match: Host(`frigate.talos00`) && PathPrefix(`/api`)
       kind: Rule
       priority: 100
+      middlewares:
+        # Restrict the un-authenticated /api carve-out to the LAN + in-cluster
+        # pod CIDR so it is unreachable from the internet (TALOS-lxz5.2 / 5.2.1).
+        - name: lan-only
+          namespace: traefik
       services:
         - name: frigate
           port: 5000

@@ -209,8 +209,18 @@ spec:
       # /etc/traefik/crowdsec/lapi-key (64 bytes) + bouncer "traefik" registered with
       # LAPI. FAIL-OPEN (bouncer-middleware.yaml); LAN/pods in clientTrustedIPs bypass.
       # TALOS-e9h / TALOS-pbn.
-      - --entrypoints.web.http.middlewares=traefik-bouncer@kubernetescrd
-      - --entrypoints.websecure.http.middlewares=traefik-bouncer@kubernetescrd
+      #
+      # TALOS-lxz5.2 / 5.2.3: `traefik-strip-authentik-headers` runs FIRST on both
+      # entrypoints so every inbound request has its client-supplied X-authentik-*
+      # identity headers cleared BEFORE routing and BEFORE any forward-auth. This
+      # stops a client forging `X-authentik-username: admin` to a backend that trusts
+      # the header (Frigate proxy.header_map, etc.), including on un-gated routes. The
+      # `authentik` forward-auth middleware re-adds the real values from the outpost
+      # (authResponseHeaders) on gated routes, so SSO is unaffected. NOTE: these two
+      # CLI flags are authoritative for entrypoint middlewares and override any
+      # `ports.<ep>.middlewares` chart value — keep the full ordered list here.
+      - --entrypoints.web.http.middlewares=traefik-strip-authentik-headers@kubernetescrd,traefik-bouncer@kubernetescrd
+      - --entrypoints.websecure.http.middlewares=traefik-strip-authentik-headers@kubernetescrd,traefik-bouncer@kubernetescrd
 
     # Security context - needed for hostPort
     securityContext:

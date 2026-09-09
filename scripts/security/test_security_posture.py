@@ -38,6 +38,23 @@ def traefik_values():
     return next(d for d in docs if d and d.get('kind') == 'HelmRelease')['spec']['values']
 
 
+def documents(path):
+    return [d for d in yaml.safe_load_all((ROOT / path).read_text()) if d]
+
+
+def ingressroute(path, name):
+    for doc in documents(path):
+        if doc.get('kind') == 'IngressRoute' and doc['metadata']['name'] == name:
+            return doc
+    raise AssertionError(f'IngressRoute {name} not found in {path}')
+
+
+def route_middleware_names(route):
+    """Set of (namespace, name) middleware refs on an IngressRoute route."""
+    return {(m.get('namespace'), m['name']) for m in route.get('middlewares', [])}
+
+
+
 def run(*args, timeout=45):
     result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
     if result.returncode:
@@ -200,6 +217,57 @@ class RepositoryPosture(unittest.TestCase):
             self.assertTrue(any(fnmatch.fnmatch('/var/log/containers/' + good, g) for g in globs))
             self.assertFalse(any(fnmatch.fnmatch('/var/log/containers/' + bad, g) for g in globs))
 
+    def test_frigate_api_route_is_ip_restricted(self):
+        # TALOS-lxz5.2 (5.2.1): the priority-100 `/api` route on frigate.talos00 had NO
+        # middleware, so `curl -H 'X-authentik-username: admin' .../api/config` returned
+        # 200 from the internet with camera rtsp creds (Frigate maps that header to a
+        # user). The un-authenticated carve-out must now be source-restricted so the
+        # internet cannot reach it; HA (in-cluster / LAN) still can via `lan-only`.
+        route = next((r for r in ingressroute('applications/scratch/frigate/ingressroute.yaml', 'frigate')['spec']['routes']
+                      if 'PathPrefix(`/api`)' in r['match']), None)
+        self.assertIsNotNone(route, 'frigate /api route missing')
+        mw = route_middleware_names(route)
+        self.assertTrue(('traefik', 'lan-only') in mw or ('authentik', 'authentik') in mw,
+                        'frigate /api carve-out has NO lan-only/forward-auth middleware — internet-reachable header injection')
+
+    def test_inbound_authentik_headers_are_stripped_at_entrypoint(self):
+        # TALOS-lxz5.2 (5.2.3): a headers middleware must CLEAR inbound X-authentik-* so a
+        # client cannot forge identity to a header-trusting backend, and it must be wired
+        # as a default entrypoint middleware on BOTH web and websecure (runs before any
+        # forward-auth / un-gated route).
+        mw = next((d for d in documents('infrastructure/base/traefik/middlewares.yaml')
+                   if d.get('kind') == 'Middleware' and d['metadata']['name'] == 'strip-authentik-headers'), None)
+        self.assertIsNotNone(mw, 'strip-authentik-headers Middleware is MISSING')
+        cleared = mw['spec']['headers']['customRequestHeaders']
+        for header in ('X-Authentik-Username', 'X-Authentik-Groups', 'X-Authentik-Email',
+                       'X-Authentik-Name', 'X-Authentik-Uid', 'X-Authentik-Jwt'):
+            self.assertEqual(cleared.get(header, 'MISSING'), '', f'{header} inbound copy is NOT cleared')
+        # Only REQUEST headers are touched — must not strip response headers.
+        self.assertNotIn('customResponseHeaders', mw['spec']['headers'],
+                         'strip middleware must not alter response headers')
+        # Wired as a default entrypoint middleware, ordered before the crowdsec bouncer,
+        # on both entrypoints (authoritative CLI args override ports.<ep>.middlewares).
+        args = traefik_values()['additionalArguments']
+        for ep in ('web', 'websecure'):
+            flag = next((a for a in args if a.startswith(f'--entrypoints.{ep}.http.middlewares=')), None)
+            self.assertIsNotNone(flag, f'entrypoint {ep} has no default middleware chain')
+            chain = flag.split('=', 1)[1].split(',')
+            self.assertIn('traefik-strip-authentik-headers@kubernetescrd', chain,
+                          f'inbound authentik-header strip MISSING on entrypoint {ep}')
+            self.assertLess(chain.index('traefik-strip-authentik-headers@kubernetescrd'),
+                            chain.index('traefik-bouncer@kubernetescrd') if 'traefik-bouncer@kubernetescrd' in chain else len(chain),
+                            'strip must run before the bouncer')
+
+    def test_forward_auth_still_reissues_identity_headers(self):
+        # The inbound strip is only safe because the authentik forward-auth middleware
+        # re-adds the authenticated identity from the OUTPOST response. That contract must
+        # remain intact (TALOS-lxz5.2 / 5.2.3) or gated apps lose their SSO identity.
+        mw = next(d for d in documents('infrastructure/base/authentik/middleware.yaml')
+                  if d.get('kind') == 'Middleware' and d['metadata']['name'] == 'authentik')
+        resp = mw['spec']['forwardAuth']['authResponseHeaders']
+        for header in ('X-authentik-username', 'X-authentik-groups', 'X-authentik-email'):
+            self.assertIn(header, resp, f'{header} no longer re-issued by forward-auth — SSO identity broken')
+
     def test_registration_and_inventory_regressions(self):
         for script in ('check-crowdsec-registration.py', 'test-crowdsec-decision-exporter.py', 'test-crowdsec-vpn.py'):
             with self.subTest(script=script):
@@ -257,6 +325,33 @@ class RunningSystemPosture(unittest.TestCase):
             self.skipTest('traefik.talos00 unreachable from here (LAN-only)')
         self.assertNotEqual(status, 404, 'Dashboard host not registered in authentik (outpost 404) — login cannot complete')
         self.assertIn(status, (302, 200), f'Expected auth redirect/app, got {status}')
+
+    def _status(self, url, headers=None):
+        # Read-only GET returning the HTTP status (or None if unreachable, e.g. LAN-only).
+        import ssl
+        ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        request = Request(url, headers={'User-Agent': 'crowdsec-posture-test', **(headers or {})})
+        opener = build_opener(HTTPSHandler(context=ctx), ProxyHandler({}))
+        try:
+            with opener.open(request, timeout=15) as response:
+                return response.status
+        except HTTPError as error:
+            return error.code
+        except OSError:
+            return None
+
+    def test_live_frigate_forged_identity_header_does_not_bypass_auth(self):
+        # TALOS-lxz5.2 (5.2.1/5.2.3): a forged X-authentik-username must NOT authenticate.
+        # On the gated default route it must redirect to Authentik (not 200). On the /api
+        # carve-out the entrypoint strip removes the forged header so Frigate cannot map it
+        # to a user — the request must not come back as an impersonated 200.
+        gated = self._status('https://frigate.talos00/', {'X-authentik-username': 'admin'})
+        if gated is not None:
+            self.assertNotEqual(gated, 200, 'Forged identity header bypassed Frigate forward-auth on the default route')
+            self.assertIn(gated, (301, 302, 401, 403), f'Unexpected status {gated} on frigate default route')
+        api = self._status('https://frigate.talos00/api/config', {'X-authentik-username': 'admin'})
+        if api is not None:
+            self.assertNotEqual(api, 200, 'Forged X-authentik-username still yields 200 on frigate /api (impersonation)')
 
     def test_api_tokens_not_present_in_live_honeypot_or_tarpit(self):
         for namespace, app in (('honeypot', 'cowrie'), ('iocaine', 'iocaine')):

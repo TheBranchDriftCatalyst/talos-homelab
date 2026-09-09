@@ -62,6 +62,46 @@ spec:
       setNoArchiveHeader: "true"
 
 ---
+# Strip inbound Authentik identity headers (TALOS-lxz5.2 / 5.2.3).
+#
+# The `authentik` forward-auth middleware runs with trustForwardHeader: true and
+# re-injects X-authentik-* onto the request from the OUTPOST's auth response
+# (authResponseHeaders). Backends that trust those headers as identity (Frigate's
+# proxy.header_map, Grafana auth.proxy, etc.) must NEVER see a value a *client*
+# supplied — otherwise any un-gated route (e.g. a priority /api carve-out) lets an
+# attacker forge `X-authentik-username: admin` and impersonate a user.
+#
+# This middleware CLEARS the inbound client copy of every X-authentik-* request
+# header. In Traefik an empty customRequestHeaders value deletes the header. It is
+# attached as a DEFAULT entrypoint middleware on web + websecure via the traefik
+# helmrelease `additionalArguments`
+# (--entrypoints.<ep>.http.middlewares=traefik-strip-authentik-headers@kubernetescrd,...)
+# so it runs FIRST, before routing and before any forward-auth. The outpost's
+# authResponseHeaders re-add the authenticated values afterwards on gated routes, so
+# SSO is unaffected — only the forgeable client-supplied copy is removed. Does NOT
+# touch RESPONSE headers.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-authentik-headers
+  namespace: traefik
+spec:
+  headers:
+    customRequestHeaders:
+      # Empty value = delete the header on the way in. Covers the identity
+      # headers the outpost issues via authResponseHeaders plus the JWT/meta set.
+      X-Authentik-Username: ""
+      X-Authentik-Groups: ""
+      X-Authentik-Email: ""
+      X-Authentik-Name: ""
+      X-Authentik-Uid: ""
+      X-Authentik-Jwt: ""
+      X-Authentik-Meta-Jwks: ""
+      X-Authentik-Meta-Outpost: ""
+      X-Authentik-Meta-Provider: ""
+      X-Authentik-Meta-App: ""
+      X-Authentik-Meta-Version: ""
+---
 # Keep private LAN bookmarks working while Authentik uses the canonical domain.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
