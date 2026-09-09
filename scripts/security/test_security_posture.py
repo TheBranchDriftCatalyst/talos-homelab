@@ -238,6 +238,26 @@ class RunningSystemPosture(unittest.TestCase):
             self.assertIn(status, (301, 302, 401, 403, 404), f'Unexpected status {status} at {url}')
         self.assertGreater(checked, 0, 'Traefik endpoint unreachable; evidence cannot be generated')
 
+    def test_live_traefik_dashboard_login_reachable(self):
+        # TALOS-lxz5.1.5: after gating the dashboard behind authentik, the outpost must
+        # actually recognize traefik.talos00 (an app/provider exists) so login redirects
+        # (302) rather than 404ing. Pairs with the lockdown test above.
+        if not LIVE:
+            self.skipTest('requires --live; NOT asserted against running system')
+        import ssl
+        ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+        request = Request('https://traefik.talos00/', headers={'User-Agent': 'crowdsec-posture-test'})
+        opener = build_opener(HTTPSHandler(context=ctx), ProxyHandler({}))
+        try:
+            with opener.open(request, timeout=15) as response:
+                status = response.status
+        except HTTPError as error:
+            status = error.code
+        except OSError:
+            self.skipTest('traefik.talos00 unreachable from here (LAN-only)')
+        self.assertNotEqual(status, 404, 'Dashboard host not registered in authentik (outpost 404) — login cannot complete')
+        self.assertIn(status, (302, 200), f'Expected auth redirect/app, got {status}')
+
     def test_api_tokens_not_present_in_live_honeypot_or_tarpit(self):
         for namespace, app in (('honeypot', 'cowrie'), ('iocaine', 'iocaine')):
             for pod in pod_list(namespace, f'app={app}'):
