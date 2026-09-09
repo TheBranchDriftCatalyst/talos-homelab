@@ -337,6 +337,17 @@ class RepositoryPosture(unittest.TestCase):
         self.assertNotRegex(joined, r'10\.244\.', 'A pod-CIDR range is STILL whitelisted for qBittorrent auth bypass')
         self.assertIn('127.0.0.1', joined, 'localhost bypass for the in-pod port-sync sidecar is missing')
 
+    def test_ingressroute_combined_entrypoints_denied(self):
+        # TALOS-lxz5.6.2 (finding 014): a validating policy must deny web+websecure on one router
+        # (the tls-default mutate would then break the plaintext :80 path silently).
+        pol = clusterpolicy('infrastructure/base/kyverno-policies/ingressroute-no-combined-entrypoints.yaml', 'ingressroute-no-combined-entrypoints')
+        self.assertEqual(pol['spec'].get('failurePolicy'), 'Ignore', 'guardrail must fail-open, not block all IngressRoute admission')
+        rule = pol['spec']['rules'][0]
+        self.assertEqual(rule['validate'].get('failureAction'), 'Enforce', 'policy must Enforce (prevent the broken state)')
+        conds = rule['validate']['deny']['conditions']['all']
+        keys = ' '.join(c['key'] for c in conds)
+        self.assertIn("'web'", keys); self.assertIn("'websecure'", keys)
+
     def test_boomtime_exemption_absent_on_other_hosts(self):
         assert_scope(self, yaml.safe_load(crowdsec_values()['appsec']['configs']['appsec-detect.yaml']))
 

@@ -1,0 +1,58 @@
+# Deny IngressRoutes that combine `web` + `websecure` on one router (TALOS-lxz5.6.2 / finding 014).
+#
+# THE GAP: ingressroute-tls-default.yaml MUTATES `tls: {}` onto any IngressRoute whose
+# entryPoints include `websecure` and which lacks a `tls` block. Its precondition checks only
+# that `websecure` is present — NOT that `web` is absent. So a router listing BOTH `web` and
+# `websecure` gets `tls: {}` injected, which makes Traefik terminate TLS on the router for the
+# `web` (:80) entrypoint too — plain-HTTP requests then fail the TLS handshake and the route
+# breaks SILENTLY (the mutation "succeeded", no drift, no policy report). Given the repo's whole
+# convention is a router PAIR (a websecure router + a separate `web` router doing redirect-https),
+# the next "obvious" combined router is one refactor away.
+#
+# THIS POLICY: reject at admission any traefik.io IngressRoute whose entryPoints include BOTH
+# `web` and `websecure`. The correct pattern is two separate IngressRoute objects (see any of the
+# *-http companion routes). Enforce (prevent the broken state); failurePolicy Ignore so a wedged
+# Kyverno webhook never blocks ALL IngressRoute admission cluster-wide (this is a guardrail, not a
+# gate — same posture as the sibling IngressRoute policies).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: ingressroute-no-combined-entrypoints
+  annotations:
+    policies.kyverno.io/title: Deny web+websecure on one IngressRoute
+    policies.kyverno.io/category: Ingress hardening
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      A single Traefik IngressRoute must not list both `web` and `websecure` entryPoints:
+      the tls-default mutate injects tls:{} which then breaks the plaintext :80 path silently.
+      Split into a websecure router + a separate web (redirect-https) router.
+spec:
+  # Ignore (not Fail): a Kyverno outage must never block ALL IngressRoute admission cluster-wide.
+  # This guardrail prevents a latent misconfig; it is not a security gate. Mirrors
+  # ingressroute-tls-default.yaml's posture.
+  failurePolicy: Ignore
+  background: true
+  rules:
+    - name: no-web-and-websecure-on-one-router
+      match:
+        any:
+          # Fully qualified — traefik.io is the only group serving IngressRoute in this repo.
+          - resources:
+              kinds:
+                - traefik.io/v1alpha1/IngressRoute
+      validate:
+        failureAction: Enforce
+        message: >-
+          IngressRoute '{{ request.object.metadata.name }}' lists BOTH `web` and `websecure`
+          entryPoints. That triggers tls:{} injection which breaks the plaintext :80 route
+          silently. Use two IngressRoutes instead: one on `websecure` (TLS) and a separate one
+          on `web` with the redirect-https middleware. (TALOS-lxz5.6.2 / finding 014)
+        deny:
+          conditions:
+            all:
+              - key: "{{ contains(request.object.spec.entryPoints || `[]`, 'web') }}"
+                operator: Equals
+                value: true
+              - key: "{{ contains(request.object.spec.entryPoints || `[]`, 'websecure') }}"
+                operator: Equals
+                value: true
