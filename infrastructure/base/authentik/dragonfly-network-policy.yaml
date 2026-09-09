@@ -1,0 +1,106 @@
+---
+# East-west lockdown for the Authentik Dragonfly cache (TALOS-lxz5.3.3, finding 017).
+#
+# THE HOLE: dragonfly.yaml runs the `authentik-cache` Dragonfly with NO password
+# (deliberately — see that file: in-cluster ClusterIP only, cache-only/ephemeral,
+# sessions are DB-backed). Without a password, ANY pod that can open a TCP
+# connection to `authentik-cache.authentik.svc:6379` can read/write the cache
+# (RESP is unauthenticated). This CiliumNetworkPolicy is the network half of the
+# fix: restrict who may reach :6379 to the only things that legitimately use it —
+# the Authentik server and worker, plus the monitoring exporter.
+#
+# WHY THIS IS THE NETWORK CONTROL AND THE PASSWORD IS DEFERRED: setting a
+# password is a coordinated two-sided change (Dragonfly `spec.authentication.
+# passwordFromSecret` AND Authentik's AUTHENTIK_REDIS__PASSWORD) that cannot be
+# half-applied without a cache-auth outage window. Per the hardening scope it is
+# deferred to a coordinated operator rollout — see the runbook block at the
+# bottom of this file. This NetworkPolicy stands alone as defense-in-depth.
+#
+# SELECTOR: the dragonfly-operator labels every Dragonfly pod `app: <cr-name>`
+# (verified in kyverno-policies/dragonfly-allow-monitoring.yaml), so the cache
+# pod carries `app: authentik-cache`.
+#
+# IMPORTANT — UNION SEMANTICS / OPERATOR NETPOL (read before assuming this
+# tightens on its own): the dragonfly-operator renders its own per-Dragonfly k8s
+# NetworkPolicy that already allows :6379 from same-namespace peers, and Kyverno
+# (kyverno-policies/dragonfly-allow-monitoring.yaml) generates
+# `allow-monitoring-to-authentik-cache` allowing :6379 from the monitoring ns.
+# Cilium UNIONS all NetworkPolicies (k8s + Cilium) selecting a pod — allows only
+# ever add, never subtract. So while the operator's same-namespace-allow policy
+# exists, the EFFECTIVE ingress floor is "same authentik namespace + monitoring",
+# and this policy is the explicit, auditable statement of the INTENDED floor
+# (server + worker + monitoring). To make server/worker-ONLY the effective floor,
+# the operator's same-namespace NetworkPolicy must be removed/disabled — an
+# operator action (see runbook). This policy is safe and additive either way: it
+# never removes the server/worker/monitoring paths the cache needs.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: authentik-cache
+  namespace: authentik
+spec:
+  endpointSelector:
+    matchLabels:
+      app: authentik-cache
+  ingress:
+    # Authentik server — the web/API frontends that use the cache.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: authentik
+            app.kubernetes.io/name: authentik
+            app.kubernetes.io/component: server
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+    # Authentik worker — task/blueprint reconciler, also a cache client.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: authentik
+            app.kubernetes.io/name: authentik
+            app.kubernetes.io/component: worker
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+    # The oliver006/redis_exporter for this cache actually runs in the
+    # `monitoring` namespace (the v2-otel build overrides its namespace), so it
+    # needs cross-namespace ingress to keep redis_up=1. Kyverno already generates
+    # an identical k8s NetworkPolicy; this is the Cilium-side twin so the intent
+    # survives even if that generator is ever removed.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "6379"
+              protocol: TCP
+    # Node-originated kubelet probes + Cilium health checks for the Dragonfly pod.
+    - fromEntities:
+        - host
+        - remote-node
+        - health
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# DEFERRED OPERATOR ACTION — add a cache password (finding 017, part a):
+#
+#   1. Generate a password Secret in the `authentik` namespace via ESO (mirror
+#      the repo's other generated secrets), e.g. key `password` in Secret
+#      `authentik-cache-auth`.
+#   2. Point the Dragonfly at it (dragonfly.yaml):
+#        spec:
+#          authentication:
+#            passwordFromSecret:
+#              name: authentik-cache-auth
+#              key: password
+#   3. Wire Authentik to send AUTH by exposing the same secret as
+#      AUTHENTIK_REDIS__PASSWORD on server+worker (helmrelease.yaml `env:` /
+#      envFrom — the chart's `authentik.redis` block only sets host, not a
+#      secret-backed password). Land steps 2 and 3 in the SAME Flux reconcile so
+#      the cache and its clients flip together; a brief cache-auth mismatch only
+#      drops the (rebuildable, DB-backed-session) cache, it does not log anyone
+#      out, but keep the window minimal.
+#   4. OPTIONAL to make this NetworkPolicy the server/worker-ONLY floor: remove
+#      the dragonfly-operator's same-namespace NetworkPolicy (union semantics
+#      note above).
+# ─────────────────────────────────────────────────────────────────────────────

@@ -54,6 +54,41 @@ def route_middleware_names(route):
     return {(m.get('namespace'), m['name']) for m in route.get('middlewares', [])}
 
 
+def cilium_policy(path, name):
+    for doc in documents(path):
+        if doc.get('kind') == 'CiliumNetworkPolicy' and doc['metadata']['name'] == name:
+            return doc
+    raise AssertionError(f'CiliumNetworkPolicy {name} not found in {path}')
+
+
+def ingress_pod_namespaces(policy):
+    """Namespaces of every fromEndpoints (pod) source across all ingress rules."""
+    namespaces = set()
+    for rule in policy['spec'].get('ingress', []):
+        for selector in rule.get('fromEndpoints', []):
+            namespaces.add(selector.get('matchLabels', {}).get('k8s:io.kubernetes.pod.namespace'))
+    return namespaces
+
+
+def ingress_entities(policy):
+    """Union of every fromEntities entity across all ingress rules."""
+    entities = set()
+    for rule in policy['spec'].get('ingress', []):
+        entities.update(rule.get('fromEntities', []))
+    return entities
+
+
+def assert_no_wan_or_cidr_ingress(test, policy):
+    """No ingress rule may admit the internet (`world`) or a raw CIDR block."""
+    for rule in policy['spec'].get('ingress', []):
+        test.assertNotIn('fromCIDR', rule, 'raw-CIDR ingress opens an east-west hole')
+        test.assertNotIn('fromCIDRSet', rule, 'raw-CIDR ingress opens an east-west hole')
+    test.assertNotIn('world', ingress_entities(policy), 'internet (world) ingress must NOT be allowed')
+    # Only node-level entities are acceptable (kubelet probes / cilium health).
+    test.assertTrue(ingress_entities(policy) <= {'host', 'remote-node', 'health'},
+                    'only host/remote-node/health entities may be admitted')
+
+
 
 def qbit_seed_conf_args():
     """The seed-webui-auth initContainer python source that writes qBittorrent.conf."""
@@ -315,6 +350,69 @@ class RepositoryPosture(unittest.TestCase):
         resp = mw['spec']['forwardAuth']['authResponseHeaders']
         for header in ('X-authentik-username', 'X-authentik-groups', 'X-authentik-email'):
             self.assertIn(header, resp, f'{header} no longer re-issued by forward-auth — SSO identity broken')
+
+    def test_guacamole_ingress_restricted_to_traefik(self):
+        # TALOS-lxz5.3.2 (finding 003): guacamole trusts X-authentik-username for
+        # auto-login, so any pod could POST to guacamole.gaming.svc:8080 with a
+        # forged header. A CiliumNetworkPolicy must select the guacamole webapp and
+        # admit :8080 ingress ONLY from Traefik (the ingress path) — no other pod
+        # namespace, no world, no raw CIDR. The guacd/postgres/DNS egress the app
+        # needs must remain, so the lockdown does not break the RDP/VNC stack.
+        policy = cilium_policy('applications/gaming/base/kubevirt/guacamole-network-policy.yaml', 'guacamole')
+        self.assertEqual(policy['spec']['endpointSelector']['matchLabels'], {'app': 'guacamole'},
+                         'policy must select the guacamole webapp endpoints')
+        self.assertEqual(ingress_pod_namespaces(policy), {'traefik'},
+                         'only Traefik pods may reach guacamole east-west (found other/forgeable sources)')
+        assert_no_wan_or_cidr_ingress(self, policy)
+        # The one pod-ingress rule must be scoped to :8080/TCP.
+        traefik_rule = next(r for r in policy['spec']['ingress'] if r.get('fromEndpoints'))
+        ports = {(p['port'], p['protocol']) for tp in traefik_rule['toPorts'] for p in tp['ports']}
+        self.assertEqual(ports, {('8080', 'TCP')}, 'Traefik ingress must be limited to :8080/TCP')
+        # Egress the webapp legitimately needs must remain (guacd, postgres, DNS) —
+        # otherwise the lockdown would sever the working remote-desktop path.
+        egress = policy['spec'].get('egress', [])
+        selectors = [s.get('matchLabels', {}) for rule in egress for s in rule.get('toEndpoints', [])]
+        self.assertTrue(any(s.get('app') == 'guacd' for s in selectors), 'guacd egress (:4822) MISSING')
+        self.assertTrue(any(s.get('cnpg.io/cluster') == 'guacamole-postgres' for s in selectors),
+                        'postgres egress (:5432) MISSING')
+        self.assertTrue(any(s.get('k8s-app') == 'kube-dns' for s in selectors), 'DNS egress MISSING')
+
+    def test_authentik_cache_ingress_restricted_to_authentik(self):
+        # TALOS-lxz5.3.3 (finding 017): the authentik-cache Dragonfly runs with no
+        # password, so anything that can reach :6379 can use the cache. A
+        # CiliumNetworkPolicy must select the cache and admit :6379 ingress from the
+        # Authentik server + worker (its clients) and the monitoring exporter only —
+        # no world, no raw CIDR.
+        policy = cilium_policy('infrastructure/base/authentik/dragonfly-network-policy.yaml', 'authentik-cache')
+        self.assertEqual(policy['spec']['endpointSelector']['matchLabels'], {'app': 'authentik-cache'},
+                         'policy must select the authentik-cache Dragonfly endpoints')
+        assert_no_wan_or_cidr_ingress(self, policy)
+        self.assertEqual(ingress_pod_namespaces(policy), {'authentik', 'monitoring'},
+                         'cache ingress must come only from authentik (server/worker) + monitoring')
+        # Server and worker must each be admitted on :6379.
+        wanted = {'server', 'worker'}
+        found = set()
+        for rule in policy['spec'].get('ingress', []):
+            for selector in rule.get('fromEndpoints', []):
+                labels = selector.get('matchLabels', {})
+                if labels.get('app.kubernetes.io/name') == 'authentik':
+                    ports = {(p['port'], p['protocol']) for tp in rule.get('toPorts', []) for p in tp['ports']}
+                    self.assertEqual(ports, {('6379', 'TCP')}, 'authentik client ingress must be :6379/TCP')
+                    found.add(labels.get('app.kubernetes.io/component'))
+        self.assertEqual(found, wanted, 'both authentik server and worker must be admitted to the cache')
+
+    def test_authentik_cache_password_status_is_documented(self):
+        # TALOS-lxz5.3.3 part (a): the Dragonfly password is a coordinated two-sided
+        # rollout and was intentionally DEFERRED (documented, not half-applied). This
+        # asserts the state stays coherent: either dragonfly.yaml still carries the
+        # explicit passwordless rationale (deferred), or a real password is wired via
+        # spec.authentication. It fails only if the file goes silently inconsistent.
+        dragonfly = document('infrastructure/base/authentik/dragonfly.yaml')
+        has_auth = 'authentication' in dragonfly['spec']
+        text = (ROOT / 'infrastructure/base/authentik/dragonfly.yaml').read_text()
+        documented = 'NO password' in text or 'no-auth' in text
+        self.assertTrue(has_auth or documented,
+                        'cache password is neither configured nor its deferral documented')
 
     def test_registration_and_inventory_regressions(self):
         for script in ('check-crowdsec-registration.py', 'test-crowdsec-decision-exporter.py', 'test-crowdsec-vpn.py'):

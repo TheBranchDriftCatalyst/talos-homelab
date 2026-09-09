@@ -1,0 +1,99 @@
+---
+# East-west lockdown for Apache Guacamole (TALOS-lxz5.3.2, finding 003).
+#
+# THE HOLE THIS CLOSES: guacamole trusts HTTP_AUTH_HEADER=X-authentik-username
+# for auto-login (guacamole.yaml SECURITY INVARIANT). The inbound perimeter is
+# handled — Traefik's `strip-authentik-headers` entrypoint middleware clears any
+# client-supplied X-authentik-* before routing, and the `authentik` forward-auth
+# middleware re-issues the real identity from the outpost response. But NOTHING
+# stopped a pod ANYWHERE in the cluster from talking straight to the ClusterIP
+# `guacamole.gaming.svc:8080` with a hand-forged `X-authentik-username: Panda`
+# header and getting an authenticated session — the strip only runs on traffic
+# that enters through Traefik, not on direct east-west pod traffic. There were
+# ZERO CiliumNetworkPolicies in the `gaming` namespace before this file.
+#
+# WHY SCOPED, NOT A NAMESPACE-WIDE default-deny (honeypot/iocaine shape): the
+# `gaming` namespace is multi-tenant — it also holds the Windows KubeVirt VM
+# (RDP/Conan NodePorts open to the LAN/world), the noVNC console (which talks to
+# the kube-apiserver and pulls virtctl from GitHub), and OpenSim. An
+# `endpointSelector: {}` default-deny would black-hole all of those. Cilium makes
+# an endpoint default-deny for a direction as soon as ANY policy with a rule in
+# that direction selects it, and leaves unselected endpoints in default-allow.
+# So we select ONLY the guacamole webapp: guacamole becomes default-deny both
+# ways, everything else in `gaming` is untouched. guacd, postgres and the VM are
+# never selected here, so guacamole->guacd, guacamole->postgres and guacd->VM:RDP
+# all keep working (they are default-allow ingress; guacamole's egress to them is
+# explicitly permitted below).
+#
+# NOTE: matchLabels {app: guacamole} also selects the one-shot guacamole-dbinit
+# Job pods (they carry app: guacamole). That is fine and intended — they need the
+# same postgres + DNS egress and no ingress, all covered below.
+#
+# KNOWN COSMETIC SIDE EFFECT: the homepage dashboard's `siteMonitor` ping to
+# guacamole:8080 (from the `homepage` namespace) is no longer allowed, so the
+# status dot for Guacamole may read down. This is a health indicator only, not a
+# functional path — real user traffic always arrives via Traefik.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: guacamole
+  namespace: gaming
+spec:
+  endpointSelector:
+    matchLabels:
+      app: guacamole
+  ingress:
+    # THE ONLY LEGITIMATE INGRESS to :8080 — the Traefik ingress path. This is
+    # what makes header forgery from an arbitrary pod impossible: only Traefik
+    # (which has already stripped inbound X-authentik-* and re-issued the real
+    # identity via forward-auth) may reach the webapp.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # Node-originated kubelet liveness/readiness probes + Cilium health checks.
+    # guacamole defines no probes today, but this is the documented default-deny
+    # safety rule (see teak-talos-dev) so adding a probe later cannot silently
+    # trigger a restart loop. host traffic is already permitted (host firewall is
+    # off) — stated here explicitly rather than relied upon implicitly.
+    - fromEntities:
+        - host
+        - remote-node
+        - health
+  egress:
+    # DNS — nothing resolves guacd/postgres hostnames otherwise.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # guacd (the rendering daemon) on :4822, same namespace. Guacamole cannot
+    # render any RDP/VNC session without this.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: gaming
+            app: guacd
+      toPorts:
+        - ports:
+            - port: "4822"
+              protocol: TCP
+    # Guacamole's Postgres (CatalystCNPGAppDB `guacamole-postgres`) on :5432. The
+    # JDBC connection store — auth/connection data lives here. cnpg.io/cluster
+    # matches every instance behind the -rw service. Also used by the wait-for-
+    # schema initContainer and the guacamole-dbinit Job.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: gaming
+            cnpg.io/cluster: guacamole-postgres
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
