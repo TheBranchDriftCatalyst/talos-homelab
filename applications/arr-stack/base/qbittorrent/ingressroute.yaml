@@ -1,10 +1,26 @@
 ---
 # qBittorrent — HTTPS + Authentik forward-auth SSO on qbittorrent.talos00 (TALOS-xgrl.14).
-# High-priority /api route (no auth mw) keeps the WebUI API (/api/v2) reachable for
-# nzb360 / the port-sync sidecar; default route gated by `authentik`. In-app WebUI login
-# is bypassed for the traefik pod subnet via WebUI\AuthSubnetWhitelist (seeded into
-# qBittorrent.conf by the seed-webui-auth init-container) → single SSO, no double login.
+# ALL routes are now gated by the `authentik` forward-auth middleware.
 # TLS: default TLSStore serves the *.talos00 wildcard via SNI.
+#
+# SECURITY (TALOS-lxz5.2 / 5.2.2): a priority-100 `/api` route used to bypass forward-auth
+# entirely. Combined with the WebUI\AuthSubnetWhitelist covering the WHOLE pod CIDR
+# (10.244.0.0/16 — which includes Traefik's own pod IP), any request Traefik forwarded to
+# /api was treated as pre-authenticated, so `GET /api/v2/torrents/info` returned 200 from
+# the internet with NO auth. Fixes: (1) the /api carve-out is REMOVED — every external
+# request must pass Authentik; (2) the subnet whitelist is narrowed to localhost only (see
+# deployment.yaml seed-webui-auth) so a compromised in-cluster pod can no longer pre-auth
+# either. The in-pod port-sync sidecar still bypasses login via 127.0.0.1.
+#
+# Functionality implications:
+#  - External API clients (e.g. nzb360) can no longer hit /api/v2 unauthenticated through
+#    Traefik; route them through Authentik or the in-cluster service with WebUI credentials.
+#  - *arr download clients (sonarr/radarr/prowlarr) reach qBit via the in-cluster service
+#    with the WebUI username/password (secret `qbittorrent-webui`), NOT the subnet bypass —
+#    verify each app's download-client has credentials configured (they did per the arr
+#    postgres MIGRATION-RUNBOOK: DownloadClients present + testall passing).
+#  - The WebUI in a browser may now show qBit's own login after Authentik (the pod-subnet
+#    no-double-login bypass is gone). Credentials are in secret `qbittorrent-webui`.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -31,12 +47,8 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`qbittorrent.talos00`) && PathPrefix(`/api`)
-      kind: Rule
-      priority: 100
-      services:
-        - name: qbittorrent
-          port: 8080
+    # Single route: EVERYTHING (incl. /api/v2) goes through Authentik forward-auth.
+    # The old priority-100 /api bypass was removed (TALOS-lxz5.2 / 5.2.2).
     - match: Host(`qbittorrent.talos00`)
       kind: Rule
       middlewares:

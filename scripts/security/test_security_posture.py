@@ -55,6 +55,15 @@ def route_middleware_names(route):
 
 
 
+def qbit_seed_conf_args():
+    """The seed-webui-auth initContainer python source that writes qBittorrent.conf."""
+    spec = document('applications/arr-stack/base/qbittorrent/deployment.yaml')['spec']['template']['spec']
+    for container in spec['initContainers']:
+        if container['name'] == 'seed-webui-auth':
+            return '\n'.join(container['args'])
+    raise AssertionError('seed-webui-auth initContainer not found')
+
+
 def run(*args, timeout=45):
     result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
     if result.returncode:
@@ -183,6 +192,30 @@ class RepositoryPosture(unittest.TestCase):
         self.assertNotIn('10.0.0.0/8', plugin['clientTrustedIPs'])
         self.assertIn('192.168.0.0/16', plugin['clientTrustedIPs'],
                       'LAN admin range must remain so operators are never locked out')
+
+    def test_qbittorrent_has_no_unauthenticated_api_carveout(self):
+        # TALOS-lxz5.2 (5.2.2): a priority /api route bypassed forward-auth; combined with
+        # the pod-CIDR subnet whitelist that made /api/v2 unauth from the internet. EVERY
+        # route on the qbittorrent IngressRoute must now carry the authentik forward-auth
+        # middleware (no un-gated carve-out remains).
+        routes = ingressroute('applications/arr-stack/base/qbittorrent/ingressroute.yaml', 'qbittorrent')['spec']['routes']
+        self.assertTrue(routes)
+        for route in routes:
+            with self.subTest(match=route['match']):
+                self.assertIn(('authentik', 'authentik'), route_middleware_names(route),
+                              f'qbittorrent route {route["match"]!r} is NOT gated by authentik forward-auth')
+
+    def test_qbittorrent_subnet_whitelist_is_not_pod_cidr(self):
+        # TALOS-lxz5.2 (5.2.2): WebUI\AuthSubnetWhitelist must NOT contain the whole pod
+        # CIDR (10.244.0.0/16) — that pre-authenticated any Traefik-forwarded request.
+        # Only in-pod localhost may bypass qBittorrent's own login.
+        src = qbit_seed_conf_args()
+        wl_lines = [l for l in src.splitlines() if 'WL_KEY +' in l and '=' in l]
+        self.assertTrue(wl_lines, 'AuthSubnetWhitelist assignment not found in seed script')
+        joined = '\n'.join(wl_lines)
+        self.assertNotIn('10.244.0.0/16', joined, 'Pod CIDR is STILL whitelisted for qBittorrent auth bypass')
+        self.assertNotRegex(joined, r'10\.244\.', 'A pod-CIDR range is STILL whitelisted for qBittorrent auth bypass')
+        self.assertIn('127.0.0.1', joined, 'localhost bypass for the in-pod port-sync sidecar is missing')
 
     def test_boomtime_exemption_absent_on_other_hosts(self):
         assert_scope(self, yaml.safe_load(crowdsec_values()['appsec']['configs']['appsec-detect.yaml']))
@@ -367,6 +400,20 @@ class RunningSystemPosture(unittest.TestCase):
         api = self._status('https://frigate.talos00/api/config', {'X-authentik-username': 'admin'})
         if api is not None:
             self.assertNotEqual(api, 200, 'Forged X-authentik-username still yields 200 on frigate /api (impersonation)')
+
+    def test_live_qbittorrent_api_not_unauthenticated(self):
+        # TALOS-lxz5.2 (5.2.2): the confirmed exploit was GET /api/v2/torrents/info -> 200
+        # with NO auth (unauth /api carve-out + pod-CIDR subnet bypass). It must now be
+        # forward-auth gated — including when a client forges the identity header.
+        checked = 0
+        for headers in (None, {'X-authentik-username': 'admin'}):
+            status = self._status('https://qbittorrent.talos00/api/v2/torrents/info', headers)
+            if status is None:
+                continue
+            checked += 1
+            self.assertNotEqual(status, 200, f'qBittorrent API served unauthenticated (headers={headers})')
+            self.assertIn(status, (301, 302, 401, 403, 404), f'Unexpected status {status} on qBittorrent /api/v2')
+        self.assertGreater(checked, 0, 'qbittorrent.talos00 unreachable; evidence cannot be generated')
 
     def test_api_tokens_not_present_in_live_honeypot_or_tarpit(self):
         for namespace, app in (('honeypot', 'cowrie'), ('iocaine', 'iocaine')):

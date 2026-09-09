@@ -63,6 +63,12 @@ spec:
         # Idempotent: only the four WebUI keys we own are touched, everything
         # else in the conf is preserved byte-for-byte; a missing conf (true
         # first run) gets a minimal [Preferences] section.
+        #
+        # TALOS-lxz5.2 / 5.2.2: the subnet whitelist is now LOCALHOST ONLY. It used
+        # to include the whole pod CIDR (10.244.0.0/16) for a no-double-login SSO,
+        # but that pre-authenticated any request Traefik forwarded — including the
+        # (now removed) unauth /api route — so the API was reachable unauth from the
+        # internet. Only 127.0.0.1/8,::1/128 remains, for the in-pod port-sync sidecar.
         - name: seed-webui-auth
           image: python:3.11-alpine
           # Run as the qbittorrent user (PUID/PGID 1000, arr-common-env) so
@@ -97,13 +103,15 @@ spec:
               CONF = CONF_DIR + "/qBittorrent.conf"
               USER_KEY = "WebUI\\Username"
               PASS_KEY = "WebUI\\Password_PBKDF2"
-              # Bypass qBt's own login for (a) the traefik pod subnet so the
-              # Authentik forward-auth session is the ONLY external login (no
-              # double login) -- Traefik reaches qBt from a pod IP in 10.244.0.0/16
-              # -- and (b) localhost (127.0.0.1/8, ::1/128) so the in-pod port-sync
-              # sidecar calls the API WITHOUT logging in. The old design logged in
-              # every 30s; qBt's newer 204 login churns sessions and intermittently
-              # stops issuing the SID cookie, silently wedging port syncing.
+              # Bypass qBt's own login for localhost (127.0.0.1/8, ::1/128) ONLY, so
+              # the in-pod port-sync sidecar calls the API WITHOUT logging in. The old
+              # design logged in every 30s; qBt's newer 204 login churns sessions and
+              # intermittently stops issuing the SID cookie, silently wedging port
+              # syncing. NOTE (TALOS-lxz5.2 / 5.2.2): the traefik pod subnet
+              # (10.244.0.0/16) was REMOVED from the whitelist — it made every
+              # Traefik-forwarded request pre-authenticated and, with the old unauth
+              # /api route, exposed the API to the internet. External access now always
+              # goes through Authentik forward-auth.
               WL_EN_KEY = "WebUI\\AuthSubnetWhitelistEnabled"
               WL_KEY = "WebUI\\AuthSubnetWhitelist"
 
@@ -142,7 +150,14 @@ spec:
                   USER_KEY + "=" + user,
                   PASS_KEY + '="' + value + '"',
                   WL_EN_KEY + "=true",
-                  WL_KEY + "=10.244.0.0/16,127.0.0.1/8,::1/128",
+                  # TALOS-lxz5.2 / 5.2.2: LOCALHOST ONLY. The pod CIDR (10.244.0.0/16)
+                  # was removed — it whitelisted Traefik's pod IP, so once the /api
+                  # forward-auth carve-out let a request in it was treated as
+                  # pre-authenticated (unauth API from the internet). Only the in-pod
+                  # port-sync sidecar (127.0.0.1) may bypass login now; every external
+                  # request authenticates via Authentik, and *arr clients use the WebUI
+                  # credentials in secret `qbittorrent-webui`.
+                  WL_KEY + "=127.0.0.1/8,::1/128",
               ]
               out, inserted = [], False
               for l in lines:
