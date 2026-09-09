@@ -28,7 +28,7 @@ metadata:
     external-dns.alpha.kubernetes.io/hostname: myservice.knowledgedump.space
     # Required: CNAME target (use root domain)
     external-dns.alpha.kubernetes.io/target: knowledgedump.space
-    # Optional: Enable Cloudflare proxy (default: false/DNS-only)
+    # Optional: Enable Cloudflare proxy (default: true)
     external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
 spec:
   routes:
@@ -42,7 +42,7 @@ spec:
 |------------|----------|---------|-------------|
 | `external-dns.alpha.kubernetes.io/hostname` | Yes | - | DNS hostname to create |
 | `external-dns.alpha.kubernetes.io/target` | Yes | - | CNAME target (use `knowledgedump.space`) |
-| `external-dns.alpha.kubernetes.io/cloudflare-proxied` | No | `false` | Enable Cloudflare proxy (orange cloud) |
+| `external-dns.alpha.kubernetes.io/cloudflare-proxied` | No | `true` | Enable Cloudflare proxy (orange cloud) |
 | `external-dns.alpha.kubernetes.io/ttl` | No | `auto` | TTL for the record (1 = auto) |
 
 ## Cloudflare Proxy Decision Guide
@@ -78,3 +78,5 @@ Check Cloudflare dashboard for the CNAME record.
 ## Secrets
 
 Uses the same Cloudflare API token as cert-manager and cloudflare-ddns, pulled from 1Password via ExternalSecret.
+
+Both zone controllers default to proxying. Explicit DNS-only exceptions remain for OBS, VPN, container registry uploads, and legacy nested hostnames without Cloudflare edge certificate coverage. Amberdark uses `origin.amberdark.net` as its DNS-only WAN target; its apex website is proxied.
