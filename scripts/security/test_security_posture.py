@@ -118,6 +118,72 @@ def zipline_container_image():
     return next(c['image'] for c in spec['containers'] if c['name'] == 'zipline')
 
 
+class AuthentikTag:
+    """Opaque stand-in for authentik's blueprint tags (!Env/!Find/!KeyOf).
+
+    The blueprint YAML embedded in the authentik ConfigMaps uses application
+    custom tags that PyYAML's SafeLoader cannot resolve. We register them as
+    opaque so the surrounding structure (providers, redirect_uris, flows) still
+    parses; `.tag` is the suffix ('Env'/'Find'/'KeyOf'), `.value` the raw arg.
+    """
+
+    def __init__(self, tag, value):
+        self.tag = tag
+        self.value = value
+
+    def __repr__(self):
+        return f'AuthentikTag({self.tag!r}, {self.value!r})'
+
+
+def _blueprint_loader():
+    class Loader(yaml.SafeLoader):
+        pass
+
+    def opaque(loader, tag_suffix, node):
+        if isinstance(node, yaml.ScalarNode):
+            return AuthentikTag(tag_suffix, loader.construct_scalar(node))
+        if isinstance(node, yaml.SequenceNode):
+            return AuthentikTag(tag_suffix, loader.construct_sequence(node, deep=True))
+        return AuthentikTag(tag_suffix, loader.construct_mapping(node, deep=True))
+
+    Loader.add_multi_constructor('!', opaque)
+    return Loader
+
+
+def blueprint_entries(path):
+    """Every blueprint entry across all embedded data values of a blueprint ConfigMap."""
+    cm = document(path)
+    loader = _blueprint_loader()
+    entries = []
+    for value in (cm.get('data') or {}).values():
+        parsed = yaml.load(value, Loader=loader)
+        if isinstance(parsed, dict):
+            entries.extend(parsed.get('entries') or [])
+    return entries
+
+
+def oauth2_providers(path):
+    return [e for e in blueprint_entries(path)
+            if e.get('model') == 'authentik_providers_oauth2.oauth2provider']
+
+
+def oauth2_provider(path, name):
+    for provider in oauth2_providers(path):
+        if provider.get('attrs', {}).get('name') == name:
+            return provider
+    raise AssertionError(f'OAuth2Provider {name} not found in {path}')
+
+
+def authorization_flow_slug(provider):
+    """The slug of a provider's authorization_flow !Find tag."""
+    flow = provider['attrs']['authorization_flow']
+    # !Find [authentik_flows.flow, [slug, <slug>]] -> value == ['authentik_flows.flow', ['slug', <slug>]]
+    return flow.value[1][1] if isinstance(flow, AuthentikTag) else flow
+
+
+ALL_BLUEPRINTS = sorted((ROOT / 'infrastructure/base/authentik').glob('*-blueprint.yaml'))
+
+
 def run(*args, timeout=45):
     result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
     if result.returncode:
@@ -492,6 +558,86 @@ class RepositoryPosture(unittest.TestCase):
         ns_cond = next(c for c in conditions if str(c.get('key', '')).strip() == '{{ request.namespace }}')
         self.assertIn(ns_cond['operator'], ('AnyNotIn', 'NotIn'), 'namespace guard must be a not-in-allowlist check')
         self.assertIn('media-private', ns_cond['value'], 'zipline namespace must stay allowlisted (no self-lockout)')
+
+    def test_no_oidc_provider_defaults_to_empty_client_secret(self):
+        # TALOS-lxz5.5.2 (finding 013): a two-arg `client_secret: !Env [VAR, ""]` default
+        # mints a CONFIDENTIAL OAuth2 client with an EMPTY secret whenever the env var is
+        # unset (the worker envs are optional:true) — anyone who learns client_id could
+        # then complete the confidential flow. Bare `!Env VAR` instead resolves to null
+        # when unset and the serializer REJECTS the entry, so a missing secret fails
+        # loudly. No provider in any blueprint may keep the empty-string fallback.
+        offenders = []
+        for path in ALL_BLUEPRINTS:
+            rel = path.relative_to(ROOT)
+            for provider in oauth2_providers(rel):
+                secret = provider['attrs'].get('client_secret')
+                if (isinstance(secret, AuthentikTag) and secret.tag == 'Env'
+                        and isinstance(secret.value, list) and len(secret.value) > 1
+                        and secret.value[1] == ''):
+                    offenders.append(f"{rel}:{provider['attrs'].get('name')}")
+        self.assertEqual(offenders, [],
+                         f'client_secret with an empty !Env default remains: {offenders}')
+
+    def test_https_capable_oidc_providers_have_no_http_redirect(self):
+        # TALOS-lxz5.5.3 (finding 015): a confidential OIDC client that registers an
+        # http:// redirect_uri accepts the authorization code / token over plaintext. Every
+        # provider that IS reachable over HTTPS (it registers a public https:// callback)
+        # must register ONLY https:// redirect_uris. The three below were audited against
+        # their IngressRoutes as HTTPS-capable and had their stale http:// LAN variants
+        # dropped.
+        #
+        # Deliberately NOT asserted (documented http-only exceptions, verified against
+        # their IngressRoutes): grafana + minio serve ONLY the plaintext `web` entrypoint
+        # (no TLS/websecure route exists to redirect to); litellm's route lives in the
+        # catalyst-llm SISTER repo and cannot be verified offline (its http/https variants
+        # are the same host, so http isn't redundant to a public HTTPS host). Switching
+        # those to https:// would break login — see the blueprint comments.
+        for name, blueprint in (
+            ('zot', 'infrastructure/base/authentik/zot-blueprint.yaml'),
+            ('forgejo', 'infrastructure/base/authentik/forgejo-blueprint.yaml'),
+            ('boomtime', 'infrastructure/base/authentik/boomtime-blueprint.yaml'),
+        ):
+            with self.subTest(provider=name):
+                provider = oauth2_provider(blueprint, name)
+                urls = [r['url'] for r in provider['attrs']['redirect_uris']]
+                self.assertTrue(urls, f'{name} has no redirect_uris')
+                for url in urls:
+                    self.assertTrue(url.startswith('https://'),
+                                    f'{name} still registers a non-HTTPS redirect_uri: {url}')
+
+    def test_minio_scope_mapping_has_no_blanket_readonly(self):
+        # TALOS-lxz5.5.4 (finding 016): the MinIO `policy` ScopeMapping ended with a
+        # blanket `return {"policy": "readonly"}`, so EVERY authenticated authentik user
+        # was granted read access to all MinIO buckets (only the app PolicyBinding gated
+        # it). Admins must still get consoleAdmin; everyone else must get NO policy claim
+        # (MinIO then grants no access) so access requires explicit group membership.
+        mapping = next((e for e in blueprint_entries('infrastructure/base/authentik/minio-blueprint.yaml')
+                        if e.get('model') == 'authentik_providers_oauth2.scopemapping'
+                        and e.get('identifiers', {}).get('scope_name') == 'minio'), None)
+        self.assertIsNotNone(mapping, 'minio policy ScopeMapping not found')
+        expression = mapping['attrs']['expression']
+        # Assert on executable code only — the rationale comment legitimately names the
+        # retired blanket default.
+        code = '\n'.join(l for l in expression.splitlines() if not l.strip().startswith('#'))
+        self.assertIn('consoleAdmin', code, 'admin consoleAdmin path must remain')
+        self.assertNotIn('readonly', code,
+                         'blanket readonly policy default is STILL present — every authenticated user gets read access')
+
+    def test_high_value_oidc_providers_require_explicit_consent(self):
+        # TALOS-lxz5.5.5 (finding 018): providers on the implicit-consent authorization
+        # flow complete silently, so a replayed/stolen authorization request never surfaces
+        # to the user. The higher-value providers must use the explicit-consent flow so the
+        # user has to approve each authorization. (Low-value first-party apps stay implicit.)
+        explicit = 'default-provider-authorization-explicit-consent'
+        for name, blueprint in (
+            ('grafana', 'infrastructure/base/authentik/grafana-blueprint.yaml'),
+            ('minio', 'infrastructure/base/authentik/minio-blueprint.yaml'),
+            ('forgejo', 'infrastructure/base/authentik/forgejo-blueprint.yaml'),
+        ):
+            with self.subTest(provider=name):
+                slug = authorization_flow_slug(oauth2_provider(blueprint, name))
+                self.assertEqual(slug, explicit,
+                                 f'{name} must use the explicit-consent authorization flow (got {slug})')
 
     def test_registration_and_inventory_regressions(self):
         for script in ('check-crowdsec-registration.py', 'test-crowdsec-decision-exporter.py', 'test-crowdsec-vpn.py'):

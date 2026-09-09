@@ -129,7 +129,9 @@ data:
           name: zipline-oidc
           client_type: confidential
           client_id: zipline
-          client_secret: !Env [ZIPLINE_OIDC_CLIENT_SECRET, ""]
+          # Bare !Env (no "" fallback) so a missing secret fails LOUDLY, never an empty
+          # confidential secret (TALOS-lxz5.5.2 / finding 013).
+          client_secret: !Env ZIPLINE_OIDC_CLIENT_SECRET
           authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]

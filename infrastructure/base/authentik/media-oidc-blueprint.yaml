@@ -81,11 +81,12 @@ data:
           name: audiobookshelf
           client_type: confidential
           client_id: audiobookshelf
-          # Default "" so the provider applies BEFORE the ESO secret exists (env unset →
-          # !Env would be null → serializer rejects). Created with an empty secret
-          # (harmless — nothing points at it yet); the ESO generator populates the real
-          # value, then restart authentik-worker so !Env re-evaluates.
-          client_secret: !Env [AUDIOBOOKSHELF_OIDC_CLIENT_SECRET, ""]
+          # NO "" fallback (TALOS-lxz5.5.2 / finding 013): a two-arg !Env default of ""
+          # mints a CONFIDENTIAL client with an EMPTY client_secret when the env var is
+          # unset. Bare !Env resolves to null when unset → the serializer REJECTS the entry
+          # so a missing secret fails LOUDLY. The ESO generator populates the real value;
+          # restart authentik-worker so !Env re-evaluates.
+          client_secret: !Env AUDIOBOOKSHELF_OIDC_CLIENT_SECRET
           authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
@@ -138,7 +139,9 @@ data:
           name: komga
           client_type: confidential
           client_id: komga
-          client_secret: !Env [KOMGA_OIDC_CLIENT_SECRET, ""]
+          # Bare !Env (no "" fallback) so a missing secret fails LOUDLY, never an empty
+          # confidential secret (TALOS-lxz5.5.2 / finding 013).
+          client_secret: !Env KOMGA_OIDC_CLIENT_SECRET
           authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
@@ -188,7 +191,9 @@ data:
           name: kavita
           client_type: confidential
           client_id: kavita
-          client_secret: !Env [KAVITA_OIDC_CLIENT_SECRET, ""]
+          # Bare !Env (no "" fallback) so a missing secret fails LOUDLY, never an empty
+          # confidential secret (TALOS-lxz5.5.2 / finding 013).
+          client_secret: !Env KAVITA_OIDC_CLIENT_SECRET
           authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]

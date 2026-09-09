@@ -96,7 +96,10 @@ data:
           client_type: confidential
           client_id: grafana
           client_secret: !Env GRAFANA_OIDC_CLIENT_SECRET
-          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          # Explicit consent (TALOS-lxz5.5.5 / finding 018): a higher-value provider, so the
+          # user must approve each authorization — a replayed/stolen authorization request
+          # surfaces a consent screen instead of silently completing.
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
           access_code_validity: minutes=1
@@ -105,6 +108,11 @@ data:
           include_claims_in_id_token: true
           sub_mode: hashed_user_id
           issuer_mode: per_provider
+          # http:// RETAINED (TALOS-lxz5.5.3 / finding 015): Grafana is genuinely HTTP-only
+          # on the LAN — its only IngressRoute (monitoring/grafana-instances) serves
+          # grafana.talos00 on the plaintext `web` entrypoint with NO TLS/websecure route.
+          # There is no HTTPS endpoint to redirect to, so switching this to https:// would
+          # break login. Left as-is until Grafana gets a websecure route + valid cert.
           redirect_uris:
             - matching_mode: strict
               url: http://grafana.talos00/login/generic_oauth

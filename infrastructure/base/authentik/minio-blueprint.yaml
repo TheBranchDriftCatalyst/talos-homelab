@@ -84,7 +84,7 @@ data:
         attrs:
           name: "MinIO Policy"
           scope_name: minio
-          description: "Returns the MinIO policy for the user (consoleAdmin or readonly)"
+          description: "Returns the MinIO policy for the user (consoleAdmin for admins; no policy otherwise)"
           expression: |
             # Superusers always get consoleAdmin
             if request.user.is_superuser:
@@ -94,8 +94,13 @@ data:
             user_groups = [g.name for g in request.user.ak_groups.all()]
             if any(g in user_groups for g in admin_groups):
                 return {"policy": "consoleAdmin"}
-            # Everyone else gets read-only access (tighten/remove to deny)
-            return {"policy": "readonly"}
+            # Everyone else: NO policy claim (TALOS-lxz5.5.4 / finding 016). The former
+            # blanket `{"policy": "readonly"}` default granted EVERY authenticated
+            # authentik user read access to all MinIO buckets — the app PolicyBinding was
+            # the only gate. Emitting no `policy` claim means MinIO's STS
+            # AssumeRoleWithWebIdentity finds no policy and grants NO access, so MinIO now
+            # requires explicit group membership (minio-admins / Catalyst Admins).
+            return {}
 
       # ---------------------------------------------------------------------
       # 3. OAuth2Provider: minio
@@ -111,12 +116,20 @@ data:
           client_type: confidential
           client_id: minio
           client_secret: !Env MINIO_OIDC_CLIENT_SECRET
-          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          # Explicit consent (TALOS-lxz5.5.5 / finding 018): object storage is high-value, so
+          # the user must approve each authorization — a replayed/stolen authorization
+          # request surfaces a consent screen instead of silently completing.
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
           include_claims_in_id_token: true
           sub_mode: hashed_user_id
           issuer_mode: per_provider
+          # http:// RETAINED (TALOS-lxz5.5.3 / finding 015): the MinIO Console is genuinely
+          # HTTP-only on the LAN — its IngressRoute (minio/minio-console) serves
+          # minio.talos00 on the plaintext `web` entrypoint with NO TLS/websecure route.
+          # There is no HTTPS endpoint to redirect to, so switching this to https:// would
+          # break Console login. Left as-is until MinIO Console gets a websecure route.
           redirect_uris:
             - matching_mode: strict
               url: http://minio.talos00/oauth_callback

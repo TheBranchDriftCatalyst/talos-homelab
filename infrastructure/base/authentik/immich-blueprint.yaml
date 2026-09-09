@@ -70,11 +70,13 @@ data:
           name: immich
           client_type: confidential
           client_id: immich
-          # Default "" so the provider applies cleanly BEFORE the 1Password secret is
-          # provisioned (env unset → !Env would be null → serializer rejects). Created with
-          # an empty secret (harmless — nothing points at it yet); operator provisions the
-          # 1Password immich.oidc-client-secret then restarts the worker to load the real value.
-          client_secret: !Env [IMMICH_OIDC_CLIENT_SECRET, ""]
+          # NO "" fallback (TALOS-lxz5.5.2 / finding 013): a two-arg !Env default of ""
+          # would mint a CONFIDENTIAL client with an EMPTY client_secret when the env var
+          # is unset — anyone who knows client_id could then complete the confidential flow.
+          # Bare !Env resolves to null when unset → the serializer REJECTS the entry, so a
+          # missing secret fails LOUDLY instead. Operator must provision the 1Password
+          # immich.oidc-client-secret and restart authentik-worker so !Env loads the value.
+          client_secret: !Env IMMICH_OIDC_CLIENT_SECRET
           authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
           invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
           signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
