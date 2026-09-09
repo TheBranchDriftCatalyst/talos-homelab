@@ -86,8 +86,11 @@ spec:
         # Trust Cloudflare + pod proxies' X-Forwarded-For so ClientHost = the real visitor IP
         # (feeds the CrowdSec traefik parser + the bouncer plugin). (TALOS-pbn)
         forwardedHeaders:
+          # TALOS-lxz5.1.4: 10.0.0.0/8 REMOVED — trusting the whole pod/service CIDR let any
+          # pod forge X-Forwarded-For and impersonate an arbitrary client IP (poisoning
+          # CrowdSec ClientHost + arr DisabledForLocalAddresses). Only Cloudflare ranges are
+          # trusted now; real ingress transits Cloudflare. In-cluster XFF is no longer honored.
           trustedIPs: &cfTrustedIPs
-            - "10.0.0.0/8" # pods/services (Cilium, svc 10.96/12)
             - "173.245.48.0/20"
             - "103.21.244.0/22"
             - "103.22.200.0/22"

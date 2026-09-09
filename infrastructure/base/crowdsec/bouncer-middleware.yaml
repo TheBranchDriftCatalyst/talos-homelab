@@ -25,9 +25,11 @@ spec:
       httpTimeoutSeconds: "10"
       defaultDecisionSeconds: "60"
       remediationStatusCode: "403"
-      # --- real client IP behind Cloudflare + pods (trust CF/pod proxies' X-Forwarded-For) ---
+      # --- real client IP behind Cloudflare (trust CF proxies' X-Forwarded-For) ---
+      # TALOS-lxz5.1 (5.1.4b): 10.0.0.0/8 REMOVED. Trusting the pod/service CIDR let
+      # any pod forge X-Forwarded-For and spoof the client IP the bouncer evaluates.
+      # Only Cloudflare's published ranges are trusted; real ingress transits CF.
       forwardedHeadersTrustedIPs:
-        - "10.0.0.0/8" # pods/services
         - "173.245.48.0/20"
         - "103.21.244.0/22"
         - "103.22.200.0/22"
@@ -51,9 +53,12 @@ spec:
         - "2a06:98c0::/29"
         - "2c0f:f248::/32"
       # --- plugin-side allowlist: these bypass ALL bouncer checks (LAN never locked out) ---
+      # TALOS-lxz5.1 (5.1.4b): 10.0.0.0/8 REMOVED. It whitelisted the entire pod/service
+      # CIDR, so any workload (or a spoofed source that resolved into that range) bypassed
+      # CrowdSec entirely. Kept 192.168.0.0/16 so LAN admins retain recovery access and are
+      # never locked out by a bad decision; tighten to specific admin hosts if desired.
       clientTrustedIPs:
         - "192.168.0.0/16"
-        - "10.0.0.0/8"
       # --- AppSec / WAF (existing detection policy; fail closed on unavailability) ---
       crowdsecAppsecEnabled: "true"
       crowdsecAppsecHost: crowdsec-appsec-service.crowdsec.svc.cluster.local:7422

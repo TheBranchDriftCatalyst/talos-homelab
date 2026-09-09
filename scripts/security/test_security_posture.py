@@ -169,6 +169,21 @@ class RepositoryPosture(unittest.TestCase):
         self.assertIn(('authentik', 'authentik'), mw, 'Authentik forward-auth middleware MISSING on dashboard')
         self.assertIn(('traefik', 'lan-only'), mw, 'lan-only middleware MISSING on dashboard')
 
+    def test_traefik_forwarded_trusted_ips_exclude_pod_cidr(self):
+        # TALOS-lxz5.1.4: trusting 10.0.0.0/8 let any pod forge X-Forwarded-For.
+        trusted = traefik_values()['ports']['web']['forwardedHeaders']['trustedIPs']
+        self.assertNotIn('10.0.0.0/8', trusted, 'Pod/service CIDR must NOT be a trusted XFF source')
+        self.assertIn('173.245.48.0/20', trusted, 'Cloudflare ranges must remain trusted')
+        self.assertNotIn('10.0.0.0/8', traefik_values()['ports']['websecure']['forwardedHeaders']['trustedIPs'])
+
+    def test_crowdsec_bouncer_trusted_ips_exclude_pod_cidr(self):
+        # TALOS-lxz5.1.4b: pod CIDR must not spoof client IP nor bypass the bouncer.
+        plugin = document('infrastructure/base/crowdsec/bouncer-middleware.yaml')['spec']['plugin']['bouncer']
+        self.assertNotIn('10.0.0.0/8', plugin['forwardedHeadersTrustedIPs'])
+        self.assertNotIn('10.0.0.0/8', plugin['clientTrustedIPs'])
+        self.assertIn('192.168.0.0/16', plugin['clientTrustedIPs'],
+                      'LAN admin range must remain so operators are never locked out')
+
     def test_boomtime_exemption_absent_on_other_hosts(self):
         assert_scope(self, yaml.safe_load(crowdsec_values()['appsec']['configs']['appsec-detect.yaml']))
 
