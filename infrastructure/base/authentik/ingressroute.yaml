@@ -31,6 +31,12 @@ spec:
   routes:
     - match: Host(`auth.knowledgedump.space`)
       kind: Rule
+      middlewares:
+        # Per-client rate limit on the public login surface (TALOS-lxz5.4.2 /
+        # finding 009). Defense-in-depth in front of CrowdSec/AppSec; generous
+        # enough never to throttle a real login flow.
+        - name: rate-limit
+          namespace: traefik
       services:
         - name: authentik-server
           port: 80

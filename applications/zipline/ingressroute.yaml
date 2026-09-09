@@ -82,7 +82,16 @@ spec:
   - match: Host(`zipline.amberdark.net`)
     kind: Rule
     middlewares:
+    # security-headers: unchanged (HSTS/nosniff/frame-options).
     - name: security-headers
+      namespace: traefik
+    # rate-limit + request-body-limit: TALOS-lxz5.4.1 / findings 009 & 007. This
+    # was the ONLY routed public amberdark app and carried no throttle/body-cap.
+    # Zipline enforces its own /api auth (401 without token) — these are
+    # defense-in-depth for the unauthenticated upload/proxy surface.
+    - name: rate-limit
+      namespace: traefik
+    - name: request-body-limit
       namespace: traefik
     services:
     - name: zipline

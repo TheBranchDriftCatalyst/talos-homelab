@@ -1,0 +1,89 @@
+---
+# Restrict who may claim *.amberdark.net public hostnames (TALOS-lxz5.4.3 / finding 012).
+#
+# THE GAP: amberdark.net is a pre-trusted public domain — it holds a valid
+# wildcard *.amberdark.net Let's Encrypt cert and its DNS/edge posture is
+# established (apex + zipline Cloudflare-proxied, origin grey-cloud on the home
+# WAN). auth.amberdark.net is referenced as a redirect TARGET in three places
+# (authentik `private-portal` + traefik `private-domain-redirect` middlewares,
+# and the oidc-hostalias hostAlias) but has NO IngressRoute anywhere. That makes
+# it a DANGLING, pre-trusted hostname.
+#
+# Traefik in this cluster runs with allowCrossNamespace=true, so an IngressRoute
+# in ANY namespace can attach a route for ANY host — including a dangling,
+# pre-trusted one. A workload compromised in some unrelated namespace could
+# create `Host(`auth.amberdark.net`)` (or any other *.amberdark.net) and serve
+# it under the trusted wildcard cert: a cross-namespace hostname claim.
+#
+# THE SAFE FIX (chosen over blindly creating the route, or deleting the
+# redirects): leave the redirect references intact and instead make the claim
+# itself governable. This ValidatingPolicy DENIES creation/update of any
+# Traefik IngressRoute whose route match references an *.amberdark.net host
+# UNLESS it lives in an allowlisted namespace. Today the only legitimate
+# amberdark.net route is `zipline.amberdark.net` in `media-private`; `authentik`
+# is allowlisted as the rightful owner of `auth.amberdark.net` should that route
+# ever be intentionally created. Everything else is blocked.
+#
+# Enforce (not Audit): the whole point is PREVENTION of the claim. The allowlist
+# is built from the current live state, so existing routes and Flux
+# reconciliation are unaffected — only a new, out-of-namespace claim is refused.
+# This is a VALIDATE rule (no mutation), so it does not interact with the
+# kube-system mutation limitation and is visible as a normal admission denial.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-public-hostname-claims
+  labels:
+    app.kubernetes.io/part-of: kyverno
+  annotations:
+    policies.kyverno.io/title: Restrict *.amberdark.net IngressRoute claims
+    policies.kyverno.io/category: Ingress
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: IngressRoute
+    policies.kyverno.io/description: >-
+      Only allowlisted namespaces (media-private, authentik) may create a Traefik
+      IngressRoute whose route match references an *.amberdark.net host.
+      amberdark.net is a pre-trusted public domain with a valid wildcard cert;
+      with allowCrossNamespace=true any namespace could otherwise claim a
+      pre-trusted public hostname such as the dangling auth.amberdark.net
+      (TALOS-lxz5.4.3 / finding 012).
+spec:
+  # Ignore (not Fail): a Kyverno outage must not block ALL IngressRoute admission
+  # cluster-wide. This is defense-in-depth — the primary control is that cross-namespace
+  # IngressRoute create is itself privileged. Matches the repo's other IngressRoute policy.
+  failurePolicy: Ignore
+  background: true
+  rules:
+    - name: amberdark-hosts-allowlisted-namespaces-only
+      match:
+        any:
+          # Fully qualified — mirrors ingressroute-tls-default.yaml. traefik.io is
+          # the only group serving IngressRoute today; pinning the version keeps
+          # the match stable if the legacy traefik.containo.us CRDs reappear.
+          - resources:
+              kinds:
+                - traefik.io/v1alpha1/IngressRoute
+      validate:
+        failureAction: Enforce
+        message: >-
+          IngressRoute '{{ request.object.metadata.name }}' in namespace
+          '{{ request.namespace }}' claims an *.amberdark.net host, but only the
+          allowlisted namespaces (media-private, authentik) may serve
+          amberdark.net. amberdark.net is a pre-trusted public domain (valid
+          *.amberdark.net cert); cross-namespace claims of a pre-trusted public
+          hostname are blocked (TALOS-lxz5.4.3 / finding 012).
+        deny:
+          conditions:
+            all:
+              # At least one route on this IngressRoute references amberdark.net.
+              # `|| ``[]`` ` keeps the check total for an IngressRoute with no
+              # routes (projects to null otherwise).
+              - key: "{{ request.object.spec.routes[?contains(match, 'amberdark.net')] || `[]` | length(@) }}"
+                operator: GreaterThan
+                value: 0
+              # ...and the namespace is NOT one that is allowed to own them.
+              - key: "{{ request.namespace }}"
+                operator: AnyNotIn
+                value:
+                  - media-private
+                  - authentik

@@ -99,6 +99,25 @@ def qbit_seed_conf_args():
     raise AssertionError('seed-webui-auth initContainer not found')
 
 
+def middleware(path, name):
+    for doc in documents(path):
+        if doc.get('kind') == 'Middleware' and doc['metadata']['name'] == name:
+            return doc
+    raise AssertionError(f'Middleware {name} not found in {path}')
+
+
+def clusterpolicy(path, name):
+    for doc in documents(path):
+        if doc.get('kind') == 'ClusterPolicy' and doc['metadata']['name'] == name:
+            return doc
+    raise AssertionError(f'ClusterPolicy {name} not found in {path}')
+
+
+def zipline_container_image():
+    spec = document('applications/zipline/deployment.yaml')['spec']['template']['spec']
+    return next(c['image'] for c in spec['containers'] if c['name'] == 'zipline')
+
+
 def run(*args, timeout=45):
     result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, cwd=ROOT)
     if result.returncode:
@@ -413,6 +432,66 @@ class RepositoryPosture(unittest.TestCase):
         documented = 'NO password' in text or 'no-auth' in text
         self.assertTrue(has_auth or documented,
                         'cache password is neither configured nor its deferral documented')
+
+    def test_public_rate_limit_and_body_cap_middlewares_exist(self):
+        # TALOS-lxz5.4.2 (finding 009): there was NO rateLimit / inFlightReq /
+        # body-cap Middleware anywhere in the repo, so every public route was
+        # unthrottled at the proxy. A conservative per-source rateLimit and a
+        # request body-size cap must now exist in the traefik namespace.
+        path = 'infrastructure/base/traefik/middlewares.yaml'
+        rl = middleware(path, 'rate-limit')['spec']['rateLimit']
+        self.assertGreater(int(rl['average']), 0, 'rateLimit average must throttle')
+        self.assertGreaterEqual(int(rl['burst']), int(rl['average']), 'burst should be >= average')
+        buf = middleware(path, 'request-body-limit')['spec']['buffering']
+        self.assertGreater(int(buf['maxRequestBodyBytes']), 0, 'body cap must be bounded')
+
+    def test_zipline_public_route_is_rate_limited_body_capped_and_pinned(self):
+        # TALOS-lxz5.4.1 (findings 009 & 007): zipline.amberdark.net was the ONLY
+        # routed public amberdark app and carried ONLY security-headers — no
+        # throttle, no body cap — on a mutable :latest image. It must now keep
+        # security-headers AND carry the rate-limit + body-cap middlewares, and
+        # the image must be pinned to an immutable digest (not the floating tag).
+        route = next(r for r in ingressroute('applications/zipline/ingressroute.yaml', 'zipline-priv-domain')['spec']['routes']
+                     if 'zipline.amberdark.net' in r['match'])
+        mw = route_middleware_names(route)
+        for name in ('security-headers', 'rate-limit', 'request-body-limit'):
+            self.assertIn(('traefik', name), mw, f'zipline public route missing {name} middleware')
+        image = zipline_container_image()
+        self.assertIn('@sha256:', image, 'zipline image is NOT pinned to an immutable digest')
+        self.assertNotRegex(image, r':latest(@|$)', 'zipline image still rides the mutable :latest tag')
+
+    def test_public_routes_carry_rate_limit(self):
+        # TALOS-lxz5.4.2 (finding 009): the unthrottled public login/upload/clone
+        # surfaces (auth, forge, registry) must each carry the rate-limit
+        # middleware on their public IngressRoute route.
+        for path, name, host in (
+            ('infrastructure/base/authentik/ingressroute.yaml', 'authentik', 'auth.knowledgedump.space'),
+            ('infrastructure/base/forgejo/ingressroute.yaml', 'forgejo-public', 'forge.knowledgedump.space'),
+            ('infrastructure/base/registry/zot/ingressroute.yaml', 'zot-public', 'registry.knowledgedump.space'),
+        ):
+            with self.subTest(host=host):
+                route = next(r for r in ingressroute(path, name)['spec']['routes'] if host in r['match'])
+                self.assertIn(('traefik', 'rate-limit'), route_middleware_names(route),
+                              f'{host} public route is NOT rate-limited')
+
+    def test_amberdark_hostname_claim_policy_restricts_namespaces(self):
+        # TALOS-lxz5.4.3 (finding 012): auth.amberdark.net is a dangling,
+        # pre-trusted hostname and allowCrossNamespace=true lets any namespace
+        # claim it (or any *.amberdark.net) under the valid wildcard cert. A
+        # validating Kyverno policy must ENFORCE that only allowlisted namespaces
+        # may create an IngressRoute referencing an amberdark.net host.
+        policy = clusterpolicy('infrastructure/base/kyverno-policies/restrict-public-hostname-claims.yaml',
+                               'restrict-public-hostname-claims')
+        rule = next(r for r in policy['spec']['rules'] if 'validate' in r)
+        self.assertEqual(rule['validate']['failureAction'], 'Enforce',
+                         'hostname-claim policy must ENFORCE, not merely Audit')
+        conditions = rule['validate']['deny']['conditions']['all']
+        # One condition keys on amberdark.net; one restricts the namespace.
+        self.assertTrue(any('amberdark.net' in str(c.get('key', '')) for c in conditions),
+                        'policy does not key on amberdark.net hosts')
+        ns_cond = next(c for c in conditions if str(c.get('key', '')).strip() == '{{ request.namespace }}')
+        self.assertIn(ns_cond['operator'], ('AnyNotIn', 'NotIn'), 'namespace guard must be a not-in-allowlist check')
+        self.assertIn('media-private', ns_cond['value'], 'zipline namespace must stay allowlisted (no self-lockout)')
 
     def test_registration_and_inventory_regressions(self):
         for script in ('check-crowdsec-registration.py', 'test-crowdsec-decision-exporter.py', 'test-crowdsec-vpn.py'):

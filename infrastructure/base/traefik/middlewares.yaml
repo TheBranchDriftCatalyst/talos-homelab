@@ -113,3 +113,59 @@ spec:
     regex: '^https?://([a-z0-9-]+)\.(?:priv\.)?talos00(?::[0-9]+)?(.*)$'
     replacement: 'https://$${1}.amberdark.net$${2}'
     permanent: false
+---
+# Per-source request rate limit for PUBLIC (internet-facing) routes
+# (TALOS-lxz5.4.2 / finding 009).
+#
+# There was NO rateLimit / inFlightReq / body-cap middleware anywhere in the
+# repo — every public route (zipline uploads, auth.knowledgedump.space login,
+# forge, registry) was unthrottled at the proxy. This adds a conservative,
+# per-client token bucket as defense-in-depth in front of CrowdSec/AppSec.
+#
+# VALUES ARE DELIBERATELY GENEROUS so legit clients are never throttled:
+#   average 100 r/s sustained, burst 200 — a personal homelab never approaches
+#   this in normal use, but it caps trivial floods/scrapers.
+#
+# SOURCE = the real client IP. Traefik resolves the client from the entrypoint
+# `forwardedHeaders.trustedIPs` (Cloudflare ranges are trusted — see the traefik
+# helmrelease + test_traefik_forwarded_trusted_ips_exclude_pod_cidr), so BOTH
+# grey-cloud hosts (forge/registry/origin) and Cloudflare-proxied hosts
+# (zipline.amberdark.net) are limited per real client, not per Cloudflare edge.
+#
+# ATTACHED PER-ROUTE on the public IngressRoutes (NOT as a global entrypoint
+# default): a blanket entrypoint rate-limit is high-risk — it would also govern
+# LAN/in-cluster traffic and could interact badly with the existing entrypoint
+# middleware chain (strip-authentik-headers,traefik-bouncer). Per-route keeps the
+# blast radius to the internet-facing hosts only.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit
+  namespace: traefik
+spec:
+  rateLimit:
+    average: 100
+    period: 1s
+    burst: 200
+---
+# Request body size cap for upload-accepting PUBLIC routes
+# (TALOS-lxz5.4.2 / finding 009).
+#
+# maxRequestBodyBytes rejects (413) any request body over the cap BEFORE it
+# reaches the backend, bounding memory/disk abuse from unauthenticated upload
+# floods. Traefik buffers the body (spilling past memRequestBodyBytes to a temp
+# file) — so keep this OFF routes that legitimately stream multi-GB bodies with
+# no natural ceiling (the OCI registry `docker push`, forge package uploads);
+# capping those would break large pushes. It is attached to the zipline route,
+# whose 8 GiB ceiling is far above any real image/file share upload.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: request-body-limit
+  namespace: traefik
+spec:
+  buffering:
+    # 8 GiB — generous headroom for zipline image/file uploads.
+    maxRequestBodyBytes: 8589934592
+    # Keep up to 2 MiB in memory; larger bodies spill to a temp file.
+    memRequestBodyBytes: 2097152
