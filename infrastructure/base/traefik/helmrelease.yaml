@@ -151,12 +151,23 @@ spec:
         expose:
           default: true
       # Cowrie honeypot — removed from Traefik, using hostPort on deployment directly
-    # Enable dashboard
+    # Enable dashboard. TALOS-lxz5.1 (5.1.1): the dashboard + api@internal were
+    # previously served unauthenticated on the plaintext `web` (:80) entrypoint and
+    # reachable from the internet (GET /api/rawdata -> 200). It is now HTTPS-only on
+    # `websecure` and gated by defense-in-depth middleware: `lan-only` (RFC1918 source
+    # ranges, ns traefik) restricts to the LAN, then the `authentik` forward-auth
+    # middleware (ns authentik) requires SSO login. Mirrors the crowdsec.talos00 admin
+    # UI pattern. --api.insecure was also removed (see additionalArguments).
     ingressRoute:
       dashboard:
         enabled: true
         matchRule: Host(`traefik.${DOMAIN}`)
-        entryPoints: ['web']
+        entryPoints: ['websecure']
+        middlewares:
+          - name: lan-only
+            namespace: traefik
+          - name: authentik
+            namespace: authentik
 
     # Enable access logs. JSON format + kept fields so the CrowdSec `crowdsecurity/traefik`
     # parser can read `ClientHost` (the real visitor IP). Still writes to stdout → Loki. (TALOS-pbn)
@@ -189,7 +200,9 @@ spec:
     # Additional arguments
     additionalArguments:
       - --serversTransport.insecureSkipVerify=true # For self-signed certs
-      - --api.insecure=true # Enable insecure API (homelab only)
+      # TALOS-lxz5.1 (5.1.1): --api.insecure removed. It exposed the full Traefik
+      # API (incl. /api/rawdata) unauthenticated. The dashboard is now served only via
+      # the authenticated websecure IngressRoute above; api@internal still backs it.
       - --api.dashboard=true
       # Bind the CrowdSec bouncer on both entrypoints — ALL ingress checked against
       # CrowdSec decisions before reaching services. Key verified mounted at

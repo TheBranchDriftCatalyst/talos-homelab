@@ -17,7 +17,7 @@ import unittest
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import ProxyHandler, Request, build_opener
+from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
 import yaml
 
@@ -31,6 +31,11 @@ def document(path):
 
 def crowdsec_values():
     return document('infrastructure/base/crowdsec/helmrelease.yaml')['spec']['values']
+
+
+def traefik_values():
+    docs = yaml.safe_load_all((ROOT / 'infrastructure/base/traefik/helmrelease.yaml').read_text())
+    return next(d for d in docs if d and d.get('kind') == 'HelmRelease')['spec']['values']
 
 
 def run(*args, timeout=45):
@@ -126,6 +131,27 @@ class RepositoryPosture(unittest.TestCase):
         for key in ('Cookie', 'Set-Cookie', 'Authorization', 'Proxy-Authorization', 'X-Api-Key'):
             self.assertEqual(headers['names'].get(key, headers['defaultMode']), 'drop', f'{key} logging is PRESENT')
 
+    def test_traefik_api_insecure_disabled(self):
+        # TALOS-lxz5.1 (5.1.1): --api.insecure exposed the full Traefik API
+        # (incl. /api/rawdata) unauthenticated. It must not be present.
+        args = traefik_values()['additionalArguments']
+        self.assertFalse(any(a.split('=')[0].strip() == '--api.insecure' for a in args),
+                         '--api.insecure must NOT be enabled')
+        self.assertTrue(any(a.strip() == '--api.dashboard=true' for a in args),
+                        '--api.dashboard should remain enabled')
+
+    def test_traefik_dashboard_off_plaintext_and_authenticated(self):
+        # TALOS-lxz5.1 (5.1.1): dashboard must not sit on plaintext `web` and must be
+        # gated by forward-auth / lan-only.
+        dashboard = traefik_values()['ingressRoute']['dashboard']
+        self.assertTrue(dashboard.get('enabled'))
+        entrypoints = dashboard['entryPoints']
+        self.assertNotIn('web', entrypoints, 'Dashboard must NOT be on the plaintext web entrypoint')
+        self.assertEqual(entrypoints, ['websecure'], 'Dashboard must be HTTPS-only on websecure')
+        mw = {(m['namespace'], m['name']) for m in dashboard.get('middlewares', [])}
+        self.assertIn(('authentik', 'authentik'), mw, 'Authentik forward-auth middleware MISSING on dashboard')
+        self.assertIn(('traefik', 'lan-only'), mw, 'lan-only middleware MISSING on dashboard')
+
     def test_boomtime_exemption_absent_on_other_hosts(self):
         assert_scope(self, yaml.safe_load(crowdsec_values()['appsec']['configs']['appsec-detect.yaml']))
 
@@ -184,6 +210,33 @@ class RunningSystemPosture(unittest.TestCase):
     def setUp(self):
         if not LIVE:
             self.skipTest('requires --live; NOT asserted against running system')
+
+    def test_live_traefik_dashboard_api_not_unauthenticated(self):
+        # TALOS-lxz5.1 (5.1.1): the confirmed exploit was unauthenticated GET /api/rawdata
+        # -> 200 on plaintext web. Assert it is no longer reachable unauthenticated.
+        if not LIVE:
+            self.skipTest('requires --live; NOT asserted against running system')
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        checked = 0
+        for url in ('http://traefik.talos00/api/rawdata',
+                    'https://traefik.talos00/api/rawdata',
+                    'https://traefik.talos00/dashboard/'):
+            request = Request(url, headers={'User-Agent': 'crowdsec-posture-test'})
+            opener = build_opener(HTTPSHandler(context=ctx), ProxyHandler({}))
+            try:
+                with opener.open(request, timeout=15) as response:
+                    status = response.status
+            except HTTPError as error:
+                status = error.code
+            except OSError:
+                continue
+            checked += 1
+            self.assertNotEqual(status, 200, f'Traefik API/dashboard served unauthenticated at {url}')
+            self.assertIn(status, (301, 302, 401, 403, 404), f'Unexpected status {status} at {url}')
+        self.assertGreater(checked, 0, 'Traefik endpoint unreachable; evidence cannot be generated')
 
     def test_api_tokens_not_present_in_live_honeypot_or_tarpit(self):
         for namespace, app in (('honeypot', 'cowrie'), ('iocaine', 'iocaine')):
