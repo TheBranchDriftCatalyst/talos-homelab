@@ -351,8 +351,12 @@ spec:
           # K8s" behavior (91 ghosts -> ~70 Console seats). TALOS-3pdz.
           flush:
             agents_autodelete:
-              login_password: 2h  # token/password agents (current mode)
-              cert: 2h            # TLS/cert agents (after the TLS migration)
+              # NOTE: crowdsec 1.7.8 uses the shared AuthGCCfg yaml tags (cert / api_key) for BOTH
+              # agents and bouncers — the documented `login_password` key is IGNORED (verified via
+              # `cscli config show`: it left AgentsGC.Api nil). api_key here = the non-cert (password)
+              # GC slot, which is what token-mode agents use today; cert covers the post-TLS mode.
+              cert: 2h
+              api_key: 2h
             bouncers_autodelete:
               api_key: 720h       # 30d — generous; only reaps a truly-dead bouncer
 
