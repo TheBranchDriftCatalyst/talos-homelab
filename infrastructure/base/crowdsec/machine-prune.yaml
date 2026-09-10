@@ -1,0 +1,99 @@
+---
+# CrowdSec machine-prune CronJob — bounds the registered-machine (Console "Security Engine")
+# count so we never get billed for phantom seats.
+#
+# ROOT CAUSE (2026-09-10): the agent/appsec init container caches its LAPI credentials in the
+# `crowdsec-config` volume at /tmp_config — but that volume is an emptyDir, so every pod restart
+# loses the creds, falls through the "reuse" branch, and RE-REGISTERS a brand-new machine named
+# `<pod-name>-<random-uuid>`. Now that the LAPI runs on persistent CNPG Postgres, those ghosts
+# accumulate forever instead of vanishing with the old SQLite. We found 99 machines for a 5-node
+# cluster (91 ghosts) → the Console demanded ~70 seats. Live agents heartbeat every ~10s, so a
+# machine idle >1h is definitively a dead pod and safe to prune; this keeps the count ≈ live engines.
+#
+# A zero-churn fix (persist the creds cache on a per-node hostPath so restarts reuse the machine)
+# is tracked separately — this CronJob is the safe backstop that also covers the appsec Deployment
+# (which can't use a per-node hostPath) and node re-images.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crowdsec-machine-pruner
+  namespace: crowdsec
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crowdsec-machine-pruner
+  namespace: crowdsec
+rules:
+  # exec `cscli machines prune` inside the LAPI pod (which holds admin access to the decisions DB).
+  - apiGroups: ['']
+    resources: ['pods']
+    verbs: ['get', 'list']
+  - apiGroups: ['']
+    resources: ['pods/exec']
+    verbs: ['create']
+  - apiGroups: ['apps']
+    resources: ['deployments']
+    verbs: ['get']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crowdsec-machine-pruner
+  namespace: crowdsec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crowdsec-machine-pruner
+subjects:
+  - kind: ServiceAccount
+    name: crowdsec-machine-pruner
+    namespace: crowdsec
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crowdsec-machine-prune
+  namespace: crowdsec
+  labels:
+    app.kubernetes.io/name: crowdsec
+    app.kubernetes.io/component: maintenance
+spec:
+  # Every 6h — bounds ghost lifetime to ~6h even across a full agent rollout.
+  schedule: "23 */6 * * *"
+  timeZone: "Etc/UTC"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 2
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      activeDeadlineSeconds: 300
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: crowdsec
+            app.kubernetes.io/component: maintenance
+        spec:
+          serviceAccountName: crowdsec-machine-pruner
+          restartPolicy: OnFailure
+          containers:
+            - name: prune
+              image: bitnami/kubectl:latest
+              resources:
+                requests: {cpu: 20m, memory: 32Mi}
+                limits: {memory: 128Mi}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  echo "== $(date -u) crowdsec machines prune (idle >1h) =="
+                  # prune stale machines from ONE lapi pod; both replicas share the CNPG DB.
+                  kubectl -n crowdsec exec deploy/crowdsec-lapi -- \
+                    cscli machines prune --duration 1h --force
+                  echo "== $(date -u) machines remaining =="
+                  kubectl -n crowdsec exec deploy/crowdsec-lapi -- \
+                    cscli machines list -o raw | tail -n +2 | wc -l
