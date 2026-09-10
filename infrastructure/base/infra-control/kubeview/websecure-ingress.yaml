@@ -1,0 +1,21 @@
+---
+# KubeView exposed via CatalystWebSecureIngress (TALOS-l2sm.10 MVP; re-homed off .priv.talos00
+# to the infra domain, TALOS-hbba). One claim renders the websecure + web-redirect IngressRoute
+# pair AND a NetworkPolicy locking ingress to Traefik — kubeview had NO NetworkPolicy before
+# (east-west finding 003: forward-auth was perimeter-only). SSO: forward-auth via the shared
+# authentik middleware; the Authentik Application (group talos-admin) is registered separately
+# in authentik/talos-private-blueprint.yaml (external_host re-homed to kubeview.talos00).
+apiVersion: net.catalyst.io/v1alpha1
+kind: CatalystWebSecureIngress
+metadata:
+  name: kubeview
+  namespace: infra-control
+  annotations:
+    catalyst.io/replaced-loc: "39"
+spec:
+  host: kubeview.talos00
+  backend:
+    service: kubeview
+    port: 80
+    selector:
+      app: kubeview
