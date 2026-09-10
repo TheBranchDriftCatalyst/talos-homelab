@@ -749,6 +749,33 @@ class RunningSystemPosture(unittest.TestCase):
             self.assertIn(status, (301, 302, 401, 403, 404), f'Unexpected status {status} on qBittorrent /api/v2')
         self.assertGreater(checked, 0, 'qbittorrent.talos00 unreachable; evidence cannot be generated')
 
+    def test_live_cnpg_db_netpols_allow_dbgate(self):
+        # Recurrence guard for the dbgate-connectivity incident (hot-ones/scene-engine DB
+        # netpols allowed the `databases` ns only on :8000, not :5432, so dbgate could not
+        # connect). For every CNPG cluster in media-private that HAS an ingress-restricting
+        # NetworkPolicy, that policy MUST allow the `databases` namespace on 5432.
+        if not LIVE:
+            self.skipTest('requires --live; NOT asserted against running system')
+        clusters = json.loads(kube('get', 'cluster.postgresql.cnpg.io', '-n', 'media-private', '-o', 'json'))['items']
+        nps = json.loads(kube('get', 'networkpolicy', '-n', 'media-private', '-o', 'json'))['items']
+        for c in clusters:
+            name = c['metadata']['name']
+            # policies whose podSelector targets this cluster AND declare ingress rules
+            restricting = [p for p in nps
+                           if p['spec'].get('podSelector', {}).get('matchLabels', {}).get('cnpg.io/cluster') == name
+                           and p['spec'].get('ingress')]
+            if not restricting:
+                continue  # wide-open DB — tracked separately (needs Hubble-first restrict), not this guard
+            allows_dbgate = any(
+                p == 5432
+                for pol in restricting for r in pol['spec']['ingress']
+                for fr in r.get('from', [])
+                if fr.get('namespaceSelector', {}).get('matchLabels', {}).get('kubernetes.io/metadata.name') == 'databases'
+                for p in [pt.get('port') for pt in r.get('ports', [])]
+            )
+            self.assertTrue(allows_dbgate,
+                            f'{name} has a restricting NetworkPolicy but does NOT allow databases ns on :5432 — dbgate cannot connect')
+
     def test_api_tokens_not_present_in_live_honeypot_or_tarpit(self):
         for namespace, app in (('honeypot', 'cowrie'), ('iocaine', 'iocaine')):
             for pod in pod_list(namespace, f'app={app}'):
