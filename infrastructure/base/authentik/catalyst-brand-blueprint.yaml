@@ -126,6 +126,165 @@ data:
               display: none !important;
             }
             a[href*="goauthentik.io"] { display: none !important; }
+
+            /* =================================================================
+               CATALYST FLOW-CARD THEME  (migrated from the custom-css ConfigMap)
+               These element selectors target elements that render INSIDE the
+               ak-flow-executor shadow root (.pf-c-login__main / .ak-stage, the
+               form controls, titles, alerts). The globally-mounted
+               /web/dist/custom.css is LIGHT-DOM only and can never reach them,
+               so the login card used to render as a plain WHITE box. Authentik
+               ADOPTS this brand CSS into each component's shadow root, so the
+               rules below finally apply. (The page background +
+               .pf-c-background-image gradient stay in the ConfigMap — that is the
+               portal/light-DOM shell, not the flow card.)
+               ================================================================= */
+            /* Catalyst palette tokens — element selectors below reference these;
+               custom properties inherit across the shadow boundary, but we also
+               define them here so the flow shadow root resolves them standalone. */
+            :root {
+              --cat-bg:          #08080c;
+              --cat-bg-2:        #0d0d16;
+              --cat-surface:     #14141f;
+              --cat-surface-2:   #1b1b2b;
+              --cat-border:      #2a2140;
+              --cat-border-2:    #3a2f57;
+              --cat-text:        #e9e7f3;
+              --cat-muted:       #a6a2bf;
+              --cat-magenta:     #ff2e97;
+              --cat-pink:        #ff6ec7;
+              --cat-purple:      #b14bff;
+              --cat-indigo:      #7c4dff;
+              --cat-cyan:        #00e5ff;
+              --cat-teal:        #21e6c1;
+              --cat-danger:      #ff2975;
+              --cat-grad: linear-gradient(135deg, #ff2e97 0%, #b14bff 50%, #00e5ff 100%);
+              --cat-glow-magenta: 0 0 24px rgba(255,46,151,.35);
+              --cat-glow-cyan:    0 0 24px rgba(0,229,255,.30);
+              --cat-font-display: 'Orbitron','Rajdhani',ui-sans-serif,system-ui,'Segoe UI',Roboto,sans-serif;
+              --cat-font-body:    'Rajdhani',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
+              --cat-font-mono:    ui-monospace,'JetBrains Mono','Cascadia Code','SF Mono','Space Mono',Menlo,monospace;
+            }
+            /* Login / flow card — glassmorphism panel + gradient-glow ring */
+            .pf-c-login__main,
+            .ak-stage {
+              background: linear-gradient(180deg, rgba(20,20,31,.94), rgba(13,13,22,.94)) !important;
+              -webkit-backdrop-filter: blur(18px) saturate(140%);
+                      backdrop-filter: blur(18px) saturate(140%);
+              border: 1px solid var(--cat-border) !important;
+              border-radius: 16px !important;
+              box-shadow:
+                0 0 0 1px rgba(255,46,151,.18),
+                0 24px 70px rgba(0,0,0,.62),
+                0 0 46px rgba(124,77,255,.16) !important;
+              position: relative;
+              overflow: visible;
+            }
+            .pf-c-login__main::before {
+              content: "";
+              position: absolute;
+              inset: -1px;
+              border-radius: 17px;
+              padding: 1px;
+              background: var(--cat-grad);
+              -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+                      mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+              -webkit-mask-composite: xor;
+                      mask-composite: exclude;
+              opacity: .65;
+              pointer-events: none;
+            }
+            .pf-c-login__main-header,
+            .pf-c-login__header {
+              background: transparent !important;
+            }
+            .pf-c-brand,
+            .pf-c-login__main-header img,
+            img.pf-c-brand {
+              max-height: 92px !important;
+              height: auto !important;
+              filter: drop-shadow(0 0 14px rgba(255,46,151,.35));
+            }
+            /* Titles / headings inside the stage (the gradient-text treatment for
+               the main header title is applied by the block just below, which
+               follows this one so it wins on the shared title selectors). */
+            h1, h2, h3, h4, h5, h6,
+            .pf-c-title,
+            .pf-c-login__main-header-title,
+            .pf-c-login__main-header .pf-c-title {
+              font-family: var(--cat-font-display) !important;
+              font-weight: 700 !important;
+              letter-spacing: 0.045em !important;
+              color: var(--cat-text) !important;
+              text-shadow: 0 0 14px rgba(255,46,151,.25);
+            }
+            /* Body copy / labels / helper text inside the stage */
+            p, span, div, label, li,
+            .pf-c-form__label-text,
+            .pf-c-login__main-footer-links,
+            .pf-c-content {
+              font-family: var(--cat-font-body) !important;
+              color: var(--cat-text);
+            }
+            small, .pf-c-form__helper-text, .pf-u-color-200 { color: var(--cat-muted) !important; }
+            code, pre, .pf-c-code-block, kbd { font-family: var(--cat-font-mono) !important; }
+            /* Secondary / link buttons (primary handled by the block above) */
+            .pf-c-button.pf-m-secondary {
+              background: transparent !important;
+              border: 1.5px solid var(--cat-cyan) !important;
+              color: var(--cat-cyan) !important;
+              font-family: var(--cat-font-display) !important;
+              letter-spacing: 0.06em !important;
+              border-radius: 9px !important;
+              transition: all .2s ease !important;
+            }
+            .pf-c-button.pf-m-secondary:hover {
+              background: rgba(0,229,255,.12) !important;
+              box-shadow: var(--cat-glow-cyan) !important;
+            }
+            .pf-c-button.pf-m-link { color: var(--cat-cyan) !important; }
+            .pf-c-button.pf-m-link:hover { color: var(--cat-pink) !important; }
+            /* Form controls — identification / password / recovery / enrollment */
+            .pf-c-form-control,
+            .pf-c-text-input-group__text-input,
+            input[type="text"], input[type="password"],
+            input[type="email"], input[type="number"], select, textarea {
+              background: var(--cat-surface-2) !important;
+              border: 1px solid var(--cat-border) !important;
+              color: var(--cat-text) !important;
+              font-family: var(--cat-font-body) !important;
+              border-radius: 8px !important;
+              transition: border-color .18s ease, box-shadow .18s ease !important;
+            }
+            .pf-c-form-control:focus, input:focus, select:focus, textarea:focus {
+              border-color: var(--cat-magenta) !important;
+              box-shadow: 0 0 0 3px rgba(255,46,151,.22) !important;
+              outline: none !important;
+            }
+            .pf-c-form-control::placeholder { color: var(--cat-muted) !important; }
+            *:focus-visible { outline: 2px solid var(--cat-cyan) !important; outline-offset: 2px !important; }
+            .pf-c-check__input, .pf-c-radio__input, input[type="checkbox"], input[type="radio"] {
+              accent-color: var(--cat-magenta) !important;
+            }
+            /* Links inside the stage */
+            a { color: var(--cat-cyan) !important; transition: color .18s ease, text-shadow .18s ease !important; }
+            a:hover { color: var(--cat-pink) !important; text-shadow: 0 0 10px rgba(255,110,199,.5) !important; }
+            /* Alerts / stage messages (denied / invalid / recovery success) */
+            .pf-c-alert.pf-m-danger,
+            .pf-c-alert.pf-m-warning {
+              background: rgba(255,41,117,.10) !important;
+              border: 1px solid var(--cat-danger) !important;
+              border-radius: 10px !important;
+              color: var(--cat-text) !important;
+            }
+            .pf-c-alert.pf-m-success,
+            .pf-c-alert.pf-m-info {
+              background: rgba(0,229,255,.09) !important;
+              border: 1px solid var(--cat-cyan) !important;
+              border-radius: 10px !important;
+              color: var(--cat-text) !important;
+            }
+
             /* Give the (now "Welcome to Catalyst") stage heading the neon
                gradient-text treatment inside the shadow root too. */
             .pf-c-login__main-header-title,
