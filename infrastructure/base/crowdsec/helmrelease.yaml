@@ -26,16 +26,14 @@ spec:
           - target:
               kind: DaemonSet
               name: crowdsec-agent
-            patch: |
-              apiVersion: apps/v1
-              kind: DaemonSet
-              metadata:
-                name: crowdsec-agent
               spec:
                 template:
                   spec:
                     initContainers:
                       - name: wait-for-lapi-and-register
+                        volumeMounts:
+                          - name: agent-cred-cache
+                            mountPath: /cred-cache
                         command:
                           - sh
                           - -c
@@ -44,19 +42,33 @@ spec:
                               umask 077
                               until nc "$LAPI_HOST" "$LAPI_PORT" -z; do sleep 5; done
                               ln -s /staging/etc/crowdsec /etc/crowdsec
-                              if [ -s /tmp_config/local_api_credentials.yaml ]; then
-                                cp /tmp_config/local_api_credentials.yaml /etc/crowdsec/local_api_credentials.yaml
+                              # PERSISTENT per-node creds cache (hostPath /var/lib/crowdsec/agent-creds).
+                              # Reusing it across pod restarts is what stops machine-registration churn:
+                              # the machine registered on first boot is reused forever instead of a new
+                              # <pod>-<uuid> being minted every restart (which piled up 91 ghost engines
+                              # and a ~70-seat Console bill). TALOS-3pdz.
+                              if [ -s /cred-cache/local_api_credentials.yaml ]; then
+                                cp /cred-cache/local_api_credentials.yaml /etc/crowdsec/local_api_credentials.yaml
                                 if cscli lapi status >/dev/null 2>&1; then
-                                  echo "Reusing registered LAPI credentials"
+                                  echo "Reusing registered LAPI credentials (persistent cache)"
                                   exit 0
                                 fi
                               fi
-                              # A new boot identity also recovers missing credentials without deleting a machine
-                              # that another process might still use. Never print tokens or credential contents.
+                              # Cache miss/invalid = first boot on this node OR a node re-image. Register a
+                              # fresh unique identity; any stale machine is idle and the prune CronJob reaps it.
                               identity="$USERNAME-$(cat /proc/sys/kernel/random/uuid)"
                               cscli lapi register --machine "$identity" -u "$LAPI_URL" --token "$REGISTRATION_TOKEN"
-                              cp /etc/crowdsec/local_api_credentials.yaml /tmp_config/local_api_credentials.yaml.new
-                              mv -f /tmp_config/local_api_credentials.yaml.new /tmp_config/local_api_credentials.yaml
+                              cp /etc/crowdsec/local_api_credentials.yaml /cred-cache/local_api_credentials.yaml.new
+                              mv -f /cred-cache/local_api_credentials.yaml.new /cred-cache/local_api_credentials.yaml
+                    volumes:
+                      # Per-node hostPath so the creds cache survives pod restarts (Talos /var is
+                      # writable; agent runs as root so the kubelet-created dir is writable). DaemonSet
+                      # pins one pod per node, so this reliably persists — unlike the appsec Deployment,
+                      # which can reschedule across nodes and therefore still relies on the prune CronJob.
+                      - name: agent-cred-cache
+                        hostPath:
+                          path: /var/lib/crowdsec/agent-creds
+                          type: DirectoryOrCreate
           - target:
               kind: Deployment
               name: crowdsec-appsec
