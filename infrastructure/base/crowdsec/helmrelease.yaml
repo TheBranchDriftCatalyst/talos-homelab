@@ -36,9 +36,6 @@ spec:
                   spec:
                     initContainers:
                       - name: wait-for-lapi-and-register
-                        volumeMounts:
-                          - name: agent-cred-cache
-                            mountPath: /cred-cache
                         command:
                           - sh
                           - -c
@@ -47,35 +44,19 @@ spec:
                               umask 077
                               until nc "$LAPI_HOST" "$LAPI_PORT" -z; do sleep 5; done
                               ln -s /staging/etc/crowdsec /etc/crowdsec
-                              # PERSISTENT per-node creds cache (hostPath /var/lib/crowdsec/agent-creds).
-                              # Reusing it across pod restarts is what stops machine-registration churn:
-                              # the machine registered on first boot is reused forever instead of a new
-                              # <pod>-<uuid> being minted every restart (which piled up 91 ghost engines
-                              # and a ~70-seat Console bill). TALOS-3pdz.
-                              if [ -s /cred-cache/local_api_credentials.yaml ]; then
-                                cp /cred-cache/local_api_credentials.yaml /etc/crowdsec/local_api_credentials.yaml
+                              if [ -s /tmp_config/local_api_credentials.yaml ]; then
+                                cp /tmp_config/local_api_credentials.yaml /etc/crowdsec/local_api_credentials.yaml
                                 if cscli lapi status >/dev/null 2>&1; then
-                                  echo "Reusing registered LAPI credentials (persistent cache)"
-                                  cp /etc/crowdsec/local_api_credentials.yaml /tmp_config/local_api_credentials.yaml
+                                  echo "Reusing registered LAPI credentials"
                                   exit 0
                                 fi
                               fi
-                              # Cache miss/invalid = first boot on this node OR a node re-image. Register a
-                              # fresh unique identity; any stale machine is idle and the prune CronJob reaps it.
+                              # A new boot identity also recovers missing credentials without deleting a machine
+                              # that another process might still use. Never print tokens or credential contents.
                               identity="$USERNAME-$(cat /proc/sys/kernel/random/uuid)"
                               cscli lapi register --machine "$identity" -u "$LAPI_URL" --token "$REGISTRATION_TOKEN"
-                              cp /etc/crowdsec/local_api_credentials.yaml /cred-cache/local_api_credentials.yaml.new
-                              mv -f /cred-cache/local_api_credentials.yaml.new /cred-cache/local_api_credentials.yaml
-                              cp /etc/crowdsec/local_api_credentials.yaml /tmp_config/local_api_credentials.yaml
-                    volumes:
-                      # Per-node hostPath so the creds cache survives pod restarts (Talos /var is
-                      # writable; agent runs as root so the kubelet-created dir is writable). DaemonSet
-                      # pins one pod per node, so this reliably persists — unlike the appsec Deployment,
-                      # which can reschedule across nodes and therefore still relies on the prune CronJob.
-                      - name: agent-cred-cache
-                        hostPath:
-                          path: /var/lib/crowdsec/agent-creds
-                          type: DirectoryOrCreate
+                              cp /etc/crowdsec/local_api_credentials.yaml /tmp_config/local_api_credentials.yaml.new
+                              mv -f /tmp_config/local_api_credentials.yaml.new /tmp_config/local_api_credentials.yaml
           - target:
               kind: Deployment
               name: crowdsec-appsec
@@ -363,6 +344,17 @@ spec:
           port: 5432
           sslmode: require # CNPG serves TLS; encrypt without client-cert verification
           use_wal: true # sqlite-only knob; ignored for pgx (harmless) — silences the WAL warning
+          # Native stale-machine cleanup (replaces external prune Jobs). A live agent pushes every
+          # ~10s and a live bouncer pulls constantly, so neither is ever idle long enough to be
+          # deleted; only ghost registrations from restarts (token mode) or dead nodes get reaped.
+          # This is CrowdSec's own db_config.flush — the fix for the "machine list grows forever in
+          # K8s" behavior (91 ghosts -> ~70 Console seats). TALOS-3pdz.
+          flush:
+            agents_autodelete:
+              login_password: 2h  # token/password agents (current mode)
+              cert: 2h            # TLS/cert agents (after the TLS migration)
+            bouncers_autodelete:
+              api_key: 720h       # 30d — generous; only reaps a truly-dead bouncer
 
       # ---- Console sharing options (LAPI-only, rec #5) — enable CONTEXT forwarding ----
       # Overrides the chart-default console.yaml (was share_context: false). Forwarding context
