@@ -1,0 +1,38 @@
+---
+# RBAC for provider-kubernetes's InjectedIdentity to manage the kinds THIS composition
+# renders. Crossplane grants provider-kubernetes broad rights over core kinds but NOT
+# arbitrary CRDs, so without this every composed Object sits in ReconcileError:
+#   observe failed: ingressroutes.traefik.io ... is forbidden: User
+#   "system:serviceaccount:crossplane-system:provider-kubernetes" cannot get ...
+# The ClusterProviderConfig `default` for the namespaced group is already defined by
+# catalyst-cnpg-appdb/provider-wiring.yaml — only the RBAC is added here.
+#
+# Scoped to exactly the two kinds this composition manages. Deliberately NOT a blanket
+# grant on either API group — provider-kubernetes applies any manifest it is handed, so a
+# wide grant is effectively a wide grant to anyone who can write a Composition.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:provider-kubernetes:websecure-ingress
+  labels:
+    app.kubernetes.io/part-of: crossplane
+rules:
+  - apiGroups: [traefik.io]
+    resources: [ingressroutes]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crossplane:provider-kubernetes:websecure-ingress
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crossplane:provider-kubernetes:websecure-ingress
+subjects:
+  - kind: ServiceAccount
+    name: provider-kubernetes
+    namespace: crossplane-system
