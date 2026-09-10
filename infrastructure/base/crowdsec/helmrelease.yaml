@@ -273,6 +273,16 @@ spec:
           # Revisit if it ever alerts on an IP that is not ours.
           - LePresidente/http-generic-403-bf
           # ---- NEW APP-LEVEL SCENARIOS: DETECT-ONLY ON ARRIVAL ----
+          # PROMOTED TO ENFORCING 2026-09-10 (operator: "real-time mode, no simulation"):
+          # the 11 app-login brute-force scenarios (authentik/jellyfin/grafana/sonarr/radarr/
+          # prowlarr/sabnzbd/qbittorrent/audiobookshelf/home-assistant/mongodb-bf) now BAN.
+          # They fire on repeated FAILED LOGINS to a specific app — attacker-focused, low
+          # operator false-positive risk, and LAN (192.168/16) is bouncer-exempt anyway.
+          # DELIBERATELY STILL EXCLUDED (documented operator-hostile — promote only on explicit ack):
+          #   http-generic-403-bf   -> banned the operator 6x / 32h SSO lockout (see above)
+          #   http-dos-*            -> rate-based; catches OUR OWN tooling (dashboards, kubectl loops)
+          #   impossible-travel*    -> operator VPN/hotspot use trips it (false geo-jumps)
+          #   iocaine-tarpit        -> intentional honeypot exposure, not a pending-evidence sim
           # These are fed by app logs CrowdSec has never parsed before, so their
           # false-positive behaviour here is unknown. After http-generic-403-bf
           # banned the operator six times in four hours (32h SSO lockout), nothing
@@ -285,20 +295,9 @@ spec:
           #
           # NOTE crowdsecurity/plex ships NO scenario — only plex-allowlist, a
           # parser that PREVENTS bans. Nothing to simulate, safe as-is.
-          - firix/authentik-bf
-          - LePresidente/jellyfin-bf
-          - LePresidente/grafana-bf
           - crowdsecurity/impossible-travel
           - crowdsecurity/impossible-travel-user
           # wave 2 — app brute-force scenarios, same detect-only rule
-          - schiz0phr3ne/sonarr-bf
-          - schiz0phr3ne/radarr-bf
-          - schiz0phr3ne/prowlarr-bf
-          - crowdsecurity/sabnzbd-bf
-          - gilbsgilbs/qbittorrent-bf
-          - plague-doctor/audiobookshelf-bf
-          - crowdsecurity/home-assistant-bf
-          - timokoessler/mongodb-bf
           # http-dos: rate-based, and the single most likely thing to catch our
           # own tooling (dashboards polling, scrapers, kubectl loops). Simulated
           # until proven otherwise.
