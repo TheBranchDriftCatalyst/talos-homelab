@@ -401,3 +401,73 @@ spec:
                   labelsFromPath:
                     exported_namespace: [metadata, namespace]
                     composition: [metadata, labels, catalyst.io/composition]
+            # ---- CatalystWebSecureIngress adoption (TALOS-l2sm.10) --------------
+            - groupVersionKind:
+                group: net.catalyst.io
+                version: v1alpha1
+                kind: CatalystWebSecureIngress
+              metricNamePrefix: catalyst
+              metrics:
+                - name: 'composite_info'
+                  help: 'A CatalystWebSecureIngress composite claim.'
+                  commonLabels:
+                    composition: catalyst-websecure-ingress
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    synced: [status, conditions, '[type=Synced]', status]
+                - name: 'composite_replaced_loc'
+                  help: 'Lines of hand-written YAML this composite replaced (catalyst.io/replaced-loc annotation).'
+                  commonLabels:
+                    composition: catalyst-websecure-ingress
+                  labelsFromPath:
+                    name: [metadata, name]
+                    exported_namespace: [metadata, namespace]
+                  each:
+                    type: Gauge
+                    gauge:
+                      path: [metadata, annotations, catalyst.io/replaced-loc]
+                      nilIsZero: true
+            # Real composed kinds for CatalystWebSecureIngress. composition label ABSENT on
+            # an IngressRoute/NetworkPolicy => hand-written look-alike = drying-up candidate.
+            - groupVersionKind:
+                group: traefik.io
+                version: v1alpha1
+                kind: IngressRoute
+              metricNamePrefix: catalyst
+              metrics:
+                - name: 'managed_resource_info'
+                  help: 'A Traefik IngressRoute. composition label present => composition-managed; absent => drying-up candidate.'
+                  commonLabels:
+                    kind: IngressRoute
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    composition: [metadata, labels, catalyst.io/composition]
+            - groupVersionKind:
+                group: networking.k8s.io
+                version: v1
+                kind: NetworkPolicy
+              metricNamePrefix: catalyst
+              metrics:
+                - name: 'managed_resource_info'
+                  help: 'A NetworkPolicy. composition label present => composition-managed; absent => hand-written.'
+                  commonLabels:
+                    kind: NetworkPolicy
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    composition: [metadata, labels, catalyst.io/composition]
