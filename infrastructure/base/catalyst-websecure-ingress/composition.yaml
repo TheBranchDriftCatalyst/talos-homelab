@@ -1,0 +1,156 @@
+---
+# Composition for CatalystWebSecureIngress. Renders three objects through provider-kubernetes
+# (kubernetes.m.crossplane.io/v1alpha1 Object — the NAMESPACED group, required because a v2
+# namespaced composite may only compose namespaced resources):
+#   - the websecure IngressRoute (TLS + forward-auth)
+#   - the web IngressRoute (:80 -> HTTPS redirect)
+#   - the NetworkPolicy (ingress locked to Traefik)
+# Every composed resource carries catalyst.io/composition + managed-by so the adoption
+# dashboard counts it (and finds hand-written look-alikes that lack the label). TLS is left
+# to the cluster's ingressroute-tls-default Kyverno mutation (injects tls:{} on websecure),
+# same as every hand-written route here.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: catalyst-websecure-ingress
+  labels:
+    catalyst.io/provider: kubernetes
+spec:
+  compositeTypeRef:
+    apiVersion: net.catalyst.io/v1alpha1
+    kind: CatalystWebSecureIngress
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+
+          # ---- 1. websecure IngressRoute (TLS + forward-auth) ----------------------
+          - name: ir-websecure
+            base:
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: traefik.io/v1alpha1
+                    kind: IngressRoute
+                    metadata:
+                      labels:
+                        catalyst.io/composition: catalyst-websecure-ingress
+                        catalyst.io/managed-by: crossplane
+                    spec:
+                      entryPoints: [websecure]
+                      routes:
+                        - kind: Rule
+                          match: "PLACEHOLDER"
+                          middlewares:
+                            - name: authentik
+                              namespace: authentik
+                          services:
+                            - name: PLACEHOLDER
+                              port: 80
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-ir-websecure"}}]
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - fromFieldPath: spec.host
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].match
+                transforms: [{type: string, string: {type: Format, fmt: "Host(`%s`)"}}]
+              - fromFieldPath: spec.backend.service
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].services[0].name
+              - fromFieldPath: spec.backend.port
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].services[0].port
+              - fromFieldPath: spec.authMiddleware.name
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].middlewares[0].name
+              - fromFieldPath: spec.authMiddleware.namespace
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].middlewares[0].namespace
+
+          # ---- 2. web IngressRoute (:80 -> HTTPS redirect) -------------------------
+          - name: ir-web
+            base:
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: traefik.io/v1alpha1
+                    kind: IngressRoute
+                    metadata:
+                      labels:
+                        catalyst.io/composition: catalyst-websecure-ingress
+                        catalyst.io/managed-by: crossplane
+                    spec:
+                      entryPoints: [web]
+                      routes:
+                        - kind: Rule
+                          match: "PLACEHOLDER"
+                          middlewares:
+                            - name: redirect-https
+                              namespace: traefik
+                          services:
+                            - name: PLACEHOLDER
+                              port: 80
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-ir-web"}}]
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-http"}}]
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - fromFieldPath: spec.host
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].match
+                transforms: [{type: string, string: {type: Format, fmt: "Host(`%s`)"}}]
+              - fromFieldPath: spec.backend.service
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].services[0].name
+              - fromFieldPath: spec.backend.port
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].services[0].port
+              - fromFieldPath: spec.redirectMiddleware.name
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].middlewares[0].name
+              - fromFieldPath: spec.redirectMiddleware.namespace
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].middlewares[0].namespace
+
+          # ---- 3. NetworkPolicy (ingress locked to Traefik) -----------------------
+          - name: netpol
+            base:
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: networking.k8s.io/v1
+                    kind: NetworkPolicy
+                    metadata:
+                      labels:
+                        catalyst.io/composition: catalyst-websecure-ingress
+                        catalyst.io/managed-by: crossplane
+                    spec:
+                      podSelector: {}
+                      policyTypes: [Ingress]
+                      ingress:
+                        # Only Traefik may reach the backend. Everything else (any pod in
+                        # any namespace) is default-denied for ingress once this selects the pod.
+                        - from:
+                            - namespaceSelector:
+                                matchLabels:
+                                  kubernetes.io/metadata.name: traefik
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-netpol"}}]
+              - fromFieldPath: metadata.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - fromFieldPath: spec.backend.selector
+                toFieldPath: spec.forProvider.manifest.spec.podSelector.matchLabels

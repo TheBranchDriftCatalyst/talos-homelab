@@ -1,0 +1,93 @@
+---
+# CatalystWebSecureIngress — the house abstraction for "expose this app behind Traefik,
+# SSO-gated, and locked down east-west". One CR yields what every web app in this cluster
+# hand-copies today:
+#   - traefik.io/IngressRoute (websecure)  the TLS route + forward-auth middleware
+#   - traefik.io/IngressRoute (web)        the plain-:80 -> HTTPS redirect companion
+#   - networking.k8s.io/NetworkPolicy      ingress locked to Traefik (+ declared clients)
+#
+# WHY THIS EXISTS. The websecure+web IngressRoute PAIR is boilerplate — identical apart
+# from host, backend and the redirect vs auth middleware, all derivable from the app's
+# identity. More importantly, the NetworkPolicy is SILENTLY OMITTED: the 2026-09 east-west
+# sweep found forward-auth is perimeter-only — a compromised pod reaches these backends
+# directly, bypassing SSO entirely (finding 003). kubeview/headlamp had NO NetworkPolicy at
+# all. Like CatalystCNPGAppDB refusing `backup: false`, there is no `networkPolicy: false`
+# here — an app this platform exposes is an app it locks down.
+#
+# WHAT THIS DELIBERATELY DOES NOT (yet) DO: generate the Authentik proxyprovider/application
+# blueprint. Authentik loads blueprints from a FIXED helm blueprints.configMaps list (no
+# directory discovery), so a composition-generated ConfigMap would never mount. SSO
+# registration stays a hand-written blueprint until that discovery gap is solved
+# (TALOS-lxz5.5.6). The composition references the shared `authentik` forward-auth
+# middleware by name; the app's Authentik Application is wired separately.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: catalystwebsecureingresses.net.catalyst.io
+spec:
+  group: net.catalyst.io
+  scope: Namespaced
+  names:
+    kind: CatalystWebSecureIngress
+    plural: catalystwebsecureingresses
+  defaultCompositionRef:
+    name: catalyst-websecure-ingress
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [host, backend]
+              properties:
+                host:
+                  type: string
+                  description: FQDN the app is served on, e.g. kubeview.talos00. Becomes the Host() match.
+                backend:
+                  type: object
+                  required: [service, selector]
+                  properties:
+                    service:
+                      type: string
+                      description: Name of the backend Service (same namespace as the XR).
+                    port:
+                      type: integer
+                      default: 80
+                      description: Service port Traefik routes to.
+                    selector:
+                      type: object
+                      additionalProperties:
+                        type: string
+                      description: >-
+                        REQUIRED. Pod label selector the NetworkPolicy protects. Must match the
+                        backend Deployment's pod labels EXACTLY — an empty/wrong selector would
+                        select every pod in the namespace and restrict unrelated apps. e.g. {app: kubeview}.
+                authMiddleware:
+                  type: object
+                  description: Forward-auth middleware applied to the websecure route.
+                  properties:
+                    name:
+                      type: string
+                      default: authentik
+                    namespace:
+                      type: string
+                      default: authentik
+                redirectMiddleware:
+                  type: object
+                  description: Middleware on the :80 companion route (HTTPS redirect).
+                  properties:
+                    name:
+                      type: string
+                      default: redirect-https
+                    namespace:
+                      type: string
+                      default: traefik
+            status:
+              type: object
+              properties:
+                url:
+                  type: string
