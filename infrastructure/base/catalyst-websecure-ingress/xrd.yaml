@@ -66,16 +66,21 @@ spec:
                         REQUIRED. Pod label selector the NetworkPolicy protects. Must match the
                         backend Deployment's pod labels EXACTLY — an empty/wrong selector would
                         select every pod in the namespace and restrict unrelated apps. e.g. {app: kubeview}.
-                authMiddleware:
-                  type: object
-                  description: Forward-auth middleware applied to the websecure route.
-                  properties:
-                    name:
-                      type: string
-                      default: authentik
-                    namespace:
-                      type: string
-                      default: authentik
+                middlewares:
+                  type: array
+                  description: >-
+                    Ordered middleware chain for the websecure route. Defaults to
+                    [authentik] (forward-auth SSO) when unset. MUST include the forward-auth
+                    middleware for SSO — order matters (e.g. lan-only BEFORE authentik so the
+                    IP allowlist is checked first). For infra/admin tools use
+                    [{name: lan-only, namespace: traefik}, {name: authentik, namespace: authentik}]
+                    so they are reachable only from the LAN, never external ingress.
+                  items:
+                    type: object
+                    required: [name, namespace]
+                    properties:
+                      name: {type: string}
+                      namespace: {type: string}
                 redirectMiddleware:
                   type: object
                   description: Middleware on the :80 companion route (HTTPS redirect).

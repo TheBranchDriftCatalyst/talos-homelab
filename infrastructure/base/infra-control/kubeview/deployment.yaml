@@ -8,9 +8,16 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: kubeview
-# SEV-1 fix (TALOS-xgrl.1): was apiGroups/resources ['*'] which INCLUDED secrets
-# cluster-wide — an unauthenticated UI reading every Secret. Scoped to exactly the
-# kinds KubeView renders in its topology; secrets are deliberately excluded.
+# CLUSTER-WIDE READER — deliberate, compensated exception (not the default).
+# History: TALOS-xgrl.1 scoped this down from ['*'] to exclude secrets, because back then
+# KubeView was an UNAUTHENTICATED, pod-reachable UI reading every Secret. That threat model
+# no longer holds: KubeView is now (a) SSO-gated behind Authentik forward-auth and (b)
+# NetworkPolicy-locked so ONLY Traefik can reach it (both via its CatalystWebSecureIngress,
+# TALOS-l2sm.10). kubeview v2.2.0 additionally BLOCKS HTTP serving until its Secrets informer
+# cache-syncs, so denying secrets = permanent 502. Operator decision (2026-09-10): grant the
+# broad READ-ONLY access it needs, made safe by SSO + netpol + read-only verbs. Some services
+# genuinely need cluster-wide read; the rule is that it is an explicit, documented, access-
+# controlled exception like this one — never the silent default.
 rules:
   - apiGroups: ['']
     resources:
@@ -24,6 +31,7 @@ rules:
       - persistentvolumes
       - replicationcontrollers
       - events
+      - secrets  # cluster-wide READ ONLY — see the header note (SSO + netpol compensate)
     verbs: ['get', 'list', 'watch']
   - apiGroups: ['apps']
     resources: ['deployments', 'replicasets', 'statefulsets', 'daemonsets']
