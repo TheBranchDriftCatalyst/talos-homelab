@@ -147,6 +147,21 @@ spec:
             - providers
             - receivers
           verbs: ['get', 'list', 'watch']
+        # Crossplane composition-adoption metrics (TALOS-l2sm.11): the composite claim
+        # kinds + the real composed kinds we count managed-vs-lookalike for.
+        - apiGroups:
+            - db.catalyst.io
+            - net.catalyst.io
+            - postgresql.cnpg.io
+            - traefik.io
+            - networking.k8s.io
+          resources:
+            - catalystcnpgappdbs
+            - catalystwebsecureingresses
+            - clusters
+            - ingressroutes
+            - networkpolicies
+          verbs: ['get', 'list', 'watch']
 
     customResourceState:
       enabled: true
@@ -332,3 +347,55 @@ spec:
                     url: [spec, url]
                 - *gotk_reconcile_condition
                 - *gotk_suspend_status
+            # ---- Crossplane composition adoption (TALOS-l2sm.11) ----------------
+            # One series per composite claim: adoption + the LOC it dried up. Add a new
+            # groupVersionKind here for each composition kind as it is created.
+            - groupVersionKind:
+                group: db.catalyst.io
+                version: v1alpha1
+                kind: CatalystCNPGAppDB
+              metricNamePrefix: catalyst
+              metrics: &catalyst_composite_metrics
+                - name: 'composite_info'
+                  help: 'A Crossplane composite claim managed by a catalyst composition.'
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    composition: [spec, compositionRef, name]
+                    ready: [status, conditions, '[type=Ready]', status]
+                    synced: [status, conditions, '[type=Synced]', status]
+                - name: 'composite_replaced_loc'
+                  help: 'Lines of hand-written YAML this composite replaced (catalyst.io/replaced-loc annotation).'
+                  labelsFromPath:
+                    name: [metadata, name]
+                    exported_namespace: [metadata, namespace]
+                    composition: [spec, compositionRef, name]
+                  each:
+                    type: Gauge
+                    gauge:
+                      path: [metadata, annotations, catalyst.io/replaced-loc]
+                      nilIsZero: true
+            # Real composed kinds, cluster-wide. composition label ABSENT => a hand-written
+            # look-alike = drying-up candidate; PRESENT => already composed. PromQL diffs them.
+            - groupVersionKind:
+                group: postgresql.cnpg.io
+                version: v1
+                kind: Cluster
+              metricNamePrefix: catalyst
+              metrics:
+                - name: 'managed_resource_info'
+                  help: 'A CNPG Cluster. composition label present => composition-managed; absent => drying-up candidate.'
+                  commonLabels:
+                    kind: Cluster
+                  each:
+                    type: Info
+                    info:
+                      labelsFromPath:
+                        name: [metadata, name]
+                  labelsFromPath:
+                    exported_namespace: [metadata, namespace]
+                    composition: [metadata, labels, catalyst.io/composition]
