@@ -20,80 +20,27 @@ spec:
     cleanupOnFail: true
   # Chart 0.20.0 re-registers the same pod name after node reboot (HTTP 403).
   # Reuse the emptyDir credentials; if lost/invalid, use a collision-free identity.
-  postRenderers:
-    - kustomize:
-        patches:
-          - target:
-              kind: DaemonSet
-              name: crowdsec-agent
-            patch: |
-              apiVersion: apps/v1
-              kind: DaemonSet
-              metadata:
-                name: crowdsec-agent
-              spec:
-                template:
-                  spec:
-                    initContainers:
-                      - name: wait-for-lapi-and-register
-                        command:
-                          - sh
-                          - -c
-                          - |
-                              set -eu
-                              umask 077
-                              until nc "$LAPI_HOST" "$LAPI_PORT" -z; do sleep 5; done
-                              ln -s /staging/etc/crowdsec /etc/crowdsec
-                              if [ -s /tmp_config/local_api_credentials.yaml ]; then
-                                cp /tmp_config/local_api_credentials.yaml /etc/crowdsec/local_api_credentials.yaml
-                                if cscli lapi status >/dev/null 2>&1; then
-                                  echo "Reusing registered LAPI credentials"
-                                  exit 0
-                                fi
-                              fi
-                              # A new boot identity also recovers missing credentials without deleting a machine
-                              # that another process might still use. Never print tokens or credential contents.
-                              identity="$USERNAME-$(cat /proc/sys/kernel/random/uuid)"
-                              cscli lapi register --machine "$identity" -u "$LAPI_URL" --token "$REGISTRATION_TOKEN"
-                              cp /etc/crowdsec/local_api_credentials.yaml /tmp_config/local_api_credentials.yaml.new
-                              mv -f /tmp_config/local_api_credentials.yaml.new /tmp_config/local_api_credentials.yaml
-          - target:
-              kind: Deployment
-              name: crowdsec-appsec
-            patch: |
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: crowdsec-appsec
-              spec:
-                template:
-                  spec:
-                    initContainers:
-                      - name: wait-for-lapi-and-register
-                        command:
-                          - sh
-                          - -c
-                          - |
-                              set -eu
-                              umask 077
-                              until nc "$LAPI_HOST" "$LAPI_PORT" -z; do sleep 5; done
-                              ln -s /staging/etc/crowdsec /etc/crowdsec
-                              if [ -s /tmp_config/local_api_credentials.yaml ]; then
-                                cp /tmp_config/local_api_credentials.yaml /etc/crowdsec/local_api_credentials.yaml
-                                if cscli lapi status >/dev/null 2>&1; then
-                                  echo "Reusing registered LAPI credentials"
-                                  exit 0
-                                fi
-                              fi
-                              # A new boot identity also recovers missing credentials without deleting a machine
-                              # that another process might still use. Never print tokens or credential contents.
-                              identity="$USERNAME-$(cat /proc/sys/kernel/random/uuid)"
-                              cscli lapi register --machine "$identity" -u "$LAPI_URL" --token "$REGISTRATION_TOKEN"
-                              cp /etc/crowdsec/local_api_credentials.yaml /tmp_config/local_api_credentials.yaml.new
-                              mv -f /tmp_config/local_api_credentials.yaml.new /tmp_config/local_api_credentials.yaml
   values:
     # Talos runs containerd, not docker — the agent must read CRI-format container logs.
     container_runtime: containerd
+    # ---- TLS: agents authenticate to LAPI by CLIENT CERT, not token registration ----
+    # Fungible, node-independent identity with NO per-restart machine churn (TALOS-3pdz). The chart
+    # + cert-manager auto-issue a self-signed CA (crowdsec-root-secret), the LAPI server cert
+    # (crowdsec-lapi-tls) and the agent client cert (crowdsec-agent-tls); the chart's native
+    # entrypoint wires cert_path/key_path/ca_cert_path into local_api_credentials.yaml. This replaces
+    # the removed token-register initContainers. db_config.flush.AgentsGC.Cert=2h reaps dead nodes.
+    tls:
+      enabled: true
+      caBundle: true
+      certManager:
+        enabled: true   # empty issuerRef => chart generates a self-signed Issuer + CA
+      agent:
+        tlsClientAuth: true
+      appsec:
+        # Keep AppSec on password auth: helm-charts #309 (TLS + mutual-TLS on a Deployment-type
+        # agent has an init-container env bug). AppSec still reaches the HTTPS LAPI via the CA bundle;
+        # its per-pod machines are reaped by db_config.flush + the prune CronJob.
+        tlsClientAuth: false
     image:
       repository: crowdsecurity/crowdsec
       tag: v1.7.8
