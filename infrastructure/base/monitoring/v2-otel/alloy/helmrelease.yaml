@@ -764,6 +764,23 @@ spec:
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://traefik-internal.traefik:9000/ping", "instance" = "traefik" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://argocd-server.argocd:80", "instance" = "argocd" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://hubble-ui.kube-system:80", "instance" = "hubble-ui" },
+              // ── INGRESS-PATH probes (TALOS-65i2) ────────────────────────
+              // Every target above is a DIRECT service URL, so none of them
+              // traverse Traefik's websecure entrypoint or its middleware chain
+              // — and traefik-internal:9000/ping is Traefik's own health
+              // endpoint, which middlewares never touch. That is why all of them
+              // stayed green through a 100-minute total outage: the CrowdSec
+              // bouncer was 403ing every request through the middleware chain,
+              // which nothing probed.
+              //
+              // These two go through the REAL path a pod takes: cluster DNS
+              // resolves these hostnames to Traefik's ClusterIP, so the probe
+              // crosses entrypoint -> middlewares -> service, exactly like the
+              // boomtime pod's failing OIDC discovery call did. A fleet-wide
+              // block turns these red in ~1 scrape interval.
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "https://boomtime.knowledgedump.space/", "instance" = "ingress-boomtime" },
+              // The exact URL whose 403 crash-looped boomtime. Public, unauthenticated.
+              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "https://auth.knowledgedump.space/application/o/boomtime/.well-known/openid-configuration", "instance" = "ingress-authentik-oidc" },
             ]
 
             rule {

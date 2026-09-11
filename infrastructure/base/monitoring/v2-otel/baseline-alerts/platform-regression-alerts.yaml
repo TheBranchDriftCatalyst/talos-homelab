@@ -154,6 +154,32 @@ spec:
               If nothing consumes it, delete the ExternalSecret: a permanently-firing
               alert is what hid the boomtime one.
 
+    - name: platform-regressions.ingress-path
+      rules:
+        # The blackbox exporter has probed service URLs directly for months, and
+        # NOTHING alerted on probe_success — there was a dashboard and no alarm.
+        # Worse, no target crossed Traefik's middleware chain, so a fleet-wide
+        # 403 from the CrowdSec bouncer left every probe green for 100 minutes
+        # while the cluster was unreachable. These probes (instance=ingress-*)
+        # go through the real pod -> Traefik -> service path. See TALOS-65i2.
+        - alert: IngressPathDown
+          expr: |
+            probe_success{instance=~"ingress-.*"} == 0
+          for: 5m
+          labels:
+            severity: critical
+            component: ingress
+          annotations:
+            summary: "Ingress path {{ $labels.instance }} unreachable from inside the cluster"
+            description: >-
+              An in-cluster probe through Traefik's entrypoint and middleware chain
+              has failed for 5m. This is the signal that was missing during the
+              CrowdSec AppSec fail-closed outage: check `kubectl logs -n traefik`
+              for `appsecQuery:unreachable` or a 403 with OriginStatus 0 (request
+              never forwarded = a middleware rejected it), before suspecting the
+              backend. External probes can stay GREEN during this because they
+              reach the edge at 192.168.1.54 and never touch this path.
+
     - name: platform-regressions.cnpg-backups
       rules:
         # Plugin-based CNPG backups: barman sidecar exports last-available
