@@ -1,0 +1,56 @@
+---
+# GrafanaDashboard CR: "Reconciliation Health — declared vs actual".
+#
+# One dashboard for every GitOps/operator-managed resource in the cluster, split
+# by the distinction that actually changes what you do about it:
+#
+#   NEVER reconciled  — Ready has not been true at any point in the lookback
+#                       window. Nobody ever finished wiring it. If an object of
+#                       that name already exists it was made by hand, is
+#                       unbacked, and the cluster holds the ONLY copy.
+#   REGRESSED         — was Ready within the window and is not now. A previous
+#                       good state exists; usually a live incident, lower risk.
+#
+# That split is the whole point. boomtime/boomtime-encryption-key sat in the
+# first category for ~7 weeks: the generic "not ready" alert fired the entire
+# time, indistinguishable from ~30 other chronic warnings, while the cluster
+# held the only copy of the key protecting every stored credential.
+#
+# Sources unioned here, all grounded against live Mimir before writing:
+#   gotk_reconcile_condition            507 series  (Flux: HelmRelease,
+#                                       Kustomization, GitRepository, ... via
+#                                       kube-state-metrics customresource_kind)
+#   externalsecret_status_condition     283 series
+#   certmanager_certificate_ready_status 78 series
+#   certmanager_clusterissuer_ready_status 15 series
+#   argocd_app_info                      16 series  (sync_status + health_status)
+#
+# Each source is normalised with label_replace into a common
+# (source, exported_namespace, name) shape so one table covers all of them.
+# ClusterIssuer is cluster-scoped and carries `namespace` rather than
+# `exported_namespace`, which is why its subquery groups on a different label.
+#
+# NOT COVERED, deliberately: Crossplane exposes no equivalent condition metric
+# via kube-state-metrics here, so a managed resource stuck SYNCED=False (there
+# is one, 18d old) will NOT appear. Flux has no orphan metric either, so the
+# "in cluster, not declared" stat is ArgoCD-only and is a floor, not a total.
+#
+# JSON lives at ../json/reconciliation-health.json, packaged into the
+# `dashboard-reconciliation-health` ConfigMap by the kustomization
+# configMapGenerator (disableNameSuffixHash: true). uid is stable.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: reconciliation-health
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: observability
+spec:
+  folderRef: ops-observability
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-reconciliation-health
+    key: reconciliation-health.json

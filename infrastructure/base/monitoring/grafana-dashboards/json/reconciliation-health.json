@@ -1,0 +1,702 @@
+{
+  "uid": "reconciliation-health",
+  "title": "Reconciliation Health \u2014 declared vs actual",
+  "description": "Every GitOps/operator-managed resource in the cluster, split by the distinction that matters: NEVER reconciled (never worked, often an unbacked hand-made object) vs REGRESSED (worked, then broke). Built after a 7-week silent ExternalSecret failure and a 100-minute outage.",
+  "tags": [
+    "ops",
+    "gitops",
+    "reconciliation",
+    "external-secrets",
+    "flux",
+    "argocd"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "editable": true,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Declared vs actual \u2014 is anything unreconciled?",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "NEVER reconciled",
+      "description": "Resources whose Ready condition has NOT been true at any point in the last 7 days. Nobody ever finished wiring these. If a hand-made object of the same name already exists, GitOps believes it is managed when it is not \u2014 that is how boomtime-encryption-key ended up as the cluster's ONLY copy of an encryption key for 7 weeks.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(\nlabel_replace(max by (exported_namespace, name) (gotk_reconcile_condition{type=\"Ready\", status=\"False\"} == 1) unless on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(gotk_reconcile_condition{type=\"Ready\", status=\"True\"}[7d])) == 1), \"source\", \"Flux\", \"\", \"\")\n  or\nlabel_replace(max by (exported_namespace, name) (externalsecret_status_condition{condition=\"Ready\", status=\"False\"} == 1) unless on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(externalsecret_status_condition{condition=\"Ready\", status=\"True\"}[7d])) == 1), \"source\", \"ExternalSecret\", \"\", \"\")\n  or\nlabel_replace(max by (exported_namespace, name) (certmanager_certificate_ready_status{condition=\"False\"} == 1) unless on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(certmanager_certificate_ready_status{condition=\"True\"}[7d])) == 1), \"source\", \"Certificate\", \"\", \"\")\n  or\nlabel_replace(max by (namespace, name) (certmanager_clusterissuer_ready_status{condition=\"False\"} == 1) unless on (namespace, name) (max by (namespace, name) (max_over_time(certmanager_clusterissuer_ready_status{condition=\"True\"}[7d])) == 1), \"source\", \"ClusterIssuer\", \"\", \"\")\n) or vector(0)",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Regressed",
+      "description": "Was Ready within the last 7 days and is not now. Something that worked, broke. Usually a real incident, but recoverable \u2014 the previous good state existed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(\nlabel_replace(max by (exported_namespace, name) (gotk_reconcile_condition{type=\"Ready\", status=\"False\"} == 1) and on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(gotk_reconcile_condition{type=\"Ready\", status=\"True\"}[7d])) == 1), \"source\", \"Flux\", \"\", \"\")\n  or\nlabel_replace(max by (exported_namespace, name) (externalsecret_status_condition{condition=\"Ready\", status=\"False\"} == 1) and on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(externalsecret_status_condition{condition=\"Ready\", status=\"True\"}[7d])) == 1), \"source\", \"ExternalSecret\", \"\", \"\")\n  or\nlabel_replace(max by (exported_namespace, name) (certmanager_certificate_ready_status{condition=\"False\"} == 1) and on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(certmanager_certificate_ready_status{condition=\"True\"}[7d])) == 1), \"source\", \"Certificate\", \"\", \"\")\n  or\nlabel_replace(max by (namespace, name) (certmanager_clusterissuer_ready_status{condition=\"False\"} == 1) and on (namespace, name) (max by (namespace, name) (max_over_time(certmanager_clusterissuer_ready_status{condition=\"True\"}[7d])) == 1), \"source\", \"ClusterIssuer\", \"\", \"\")\n) or vector(0)",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "ArgoCD orphans (in cluster, not declared)",
+      "description": "Live objects inside an ArgoCD Application's scope that no manifest declares. The inverse failure: declared-but-absent is above, this is present-but-undeclared. Only covers ArgoCD-managed namespaces \u2014 Flux has no equivalent orphan metric, so this is a floor, not a total.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "sum(argocd_app_orphaned_resources_count) or vector(0)",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Reconcilers healthy",
+      "description": "Denominator: everything currently reconciling cleanly across Flux, ESO and cert-manager.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "graphMode": "none",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(gotk_reconcile_condition{type=\"Ready\", status=\"True\"} == 1) + (count(externalsecret_status_condition{condition=\"Ready\", status=\"True\"} == 1) or vector(0)) + (count(certmanager_certificate_ready_status{condition=\"True\"} == 1) or vector(0))",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "NEVER reconciled \u2014 never worked since the day it was declared",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Never reconciled (all sources)",
+      "description": "The dangerous class. For each row ask: does an object of this name already exist? `kubectl get <kind> <name> -n <ns> -o jsonpath='{.metadata.ownerReferences}'` \u2014 empty ownerReferences means it was hand-made, is unbacked, and the cluster holds the only copy. Back it into the provider BEFORE anything deletes or recreates it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "source"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "label_replace(max by (exported_namespace, name) (gotk_reconcile_condition{type=\"Ready\", status=\"False\"} == 1) unless on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(gotk_reconcile_condition{type=\"Ready\", status=\"True\"}[7d])) == 1), \"source\", \"Flux\", \"\", \"\")\n  or\nlabel_replace(max by (exported_namespace, name) (externalsecret_status_condition{condition=\"Ready\", status=\"False\"} == 1) unless on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(externalsecret_status_condition{condition=\"Ready\", status=\"True\"}[7d])) == 1), \"source\", \"ExternalSecret\", \"\", \"\")\n  or\nlabel_replace(max by (exported_namespace, name) (certmanager_certificate_ready_status{condition=\"False\"} == 1) unless on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(certmanager_certificate_ready_status{condition=\"True\"}[7d])) == 1), \"source\", \"Certificate\", \"\", \"\")\n  or\nlabel_replace(max by (namespace, name) (certmanager_clusterissuer_ready_status{condition=\"False\"} == 1) unless on (namespace, name) (max by (namespace, name) (max_over_time(certmanager_clusterissuer_ready_status{condition=\"True\"}[7d])) == 1), \"source\", \"ClusterIssuer\", \"\", \"\")",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "cluster": true,
+              "instance": true,
+              "job": true,
+              "container": true,
+              "endpoint": true,
+              "pod": true,
+              "service": true,
+              "customresource_group": true,
+              "customresource_version": true,
+              "condition": true,
+              "status": true,
+              "type": true,
+              "issuer_group": true,
+              "issuer_kind": true,
+              "issuer_name": true,
+              "namespace": true
+            },
+            "renameByName": {
+              "source": "Source",
+              "exported_namespace": "Namespace",
+              "name": "Name",
+              "customresource_kind": "Kind",
+              "dest_namespace": "Namespace",
+              "sync_status": "Sync",
+              "health_status": "Health",
+              "repo": "Repo",
+              "autosync_enabled": "AutoSync",
+              "project": "Project"
+            },
+            "indexByName": {}
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Regressed \u2014 worked before, broken now",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 15
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Regressed (all sources)",
+      "description": "These had a working state within the lookback window, so a previous good value exists somewhere. Lower blast radius than the table above, but usually a live incident.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "source"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "label_replace(max by (exported_namespace, name) (gotk_reconcile_condition{type=\"Ready\", status=\"False\"} == 1) and on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(gotk_reconcile_condition{type=\"Ready\", status=\"True\"}[7d])) == 1), \"source\", \"Flux\", \"\", \"\")\n  or\nlabel_replace(max by (exported_namespace, name) (externalsecret_status_condition{condition=\"Ready\", status=\"False\"} == 1) and on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(externalsecret_status_condition{condition=\"Ready\", status=\"True\"}[7d])) == 1), \"source\", \"ExternalSecret\", \"\", \"\")\n  or\nlabel_replace(max by (exported_namespace, name) (certmanager_certificate_ready_status{condition=\"False\"} == 1) and on (exported_namespace, name) (max by (exported_namespace, name) (max_over_time(certmanager_certificate_ready_status{condition=\"True\"}[7d])) == 1), \"source\", \"Certificate\", \"\", \"\")\n  or\nlabel_replace(max by (namespace, name) (certmanager_clusterissuer_ready_status{condition=\"False\"} == 1) and on (namespace, name) (max by (namespace, name) (max_over_time(certmanager_clusterissuer_ready_status{condition=\"True\"}[7d])) == 1), \"source\", \"ClusterIssuer\", \"\", \"\")",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "cluster": true,
+              "instance": true,
+              "job": true,
+              "container": true,
+              "endpoint": true,
+              "pod": true,
+              "service": true,
+              "customresource_group": true,
+              "customresource_version": true,
+              "condition": true,
+              "status": true,
+              "type": true,
+              "issuer_group": true,
+              "issuer_kind": true,
+              "issuer_name": true,
+              "namespace": true
+            },
+            "renameByName": {
+              "source": "Source",
+              "exported_namespace": "Namespace",
+              "name": "Name",
+              "customresource_kind": "Kind",
+              "dest_namespace": "Namespace",
+              "sync_status": "Sync",
+              "health_status": "Health",
+              "repo": "Repo",
+              "autosync_enabled": "AutoSync",
+              "project": "Project"
+            },
+            "indexByName": {}
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "ArgoCD applications",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "panels": []
+    },
+    {
+      "type": "table",
+      "title": "Apps not Synced / not Healthy",
+      "description": "ArgoCD is tracked separately because it reports two independent axes \u2014 sync_status (does the cluster match git) and health_status (is the result working). An app can be perfectly Synced and completely unhealthy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "source"
+          }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "argocd_app_info{sync_status!=\"Synced\"} or argocd_app_info{health_status!~\"Healthy|Progressing\"}",
+          "instant": true,
+          "range": false,
+          "refId": "A",
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true,
+              "__name__": true,
+              "cluster": true,
+              "instance": true,
+              "job": true,
+              "container": true,
+              "endpoint": true,
+              "pod": true,
+              "service": true,
+              "customresource_group": true,
+              "customresource_version": true,
+              "condition": true,
+              "status": true,
+              "type": true,
+              "issuer_group": true,
+              "issuer_kind": true,
+              "issuer_name": true,
+              "namespace": true
+            },
+            "renameByName": {
+              "source": "Source",
+              "exported_namespace": "Namespace",
+              "name": "Name",
+              "customresource_kind": "Kind",
+              "dest_namespace": "Namespace",
+              "sync_status": "Sync",
+              "health_status": "Health",
+              "repo": "Repo",
+              "autosync_enabled": "AutoSync",
+              "project": "Project"
+            },
+            "indexByName": {}
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Trend",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Unreconciled resources over time, by source",
+      "description": "Rising steps that never come down are the never-reconciled class \u2014 they do not self-heal and will sit here until someone acts. Spikes that recover are ordinary reconcile churn.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(gotk_reconcile_condition{type=\"Ready\", status=\"False\"} == 1) or vector(0)",
+          "instant": false,
+          "range": true,
+          "refId": "A",
+          "format": "time_series",
+          "legendFormat": "Flux"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(externalsecret_status_condition{condition=\"Ready\", status=\"False\"} == 1) or vector(0)",
+          "instant": false,
+          "range": true,
+          "refId": "B",
+          "format": "time_series",
+          "legendFormat": "ExternalSecret"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(certmanager_certificate_ready_status{condition=\"False\"} == 1) or vector(0)",
+          "instant": false,
+          "range": true,
+          "refId": "C",
+          "format": "time_series",
+          "legendFormat": "Certificate"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "editorMode": "code",
+          "expr": "count(argocd_app_info{sync_status!=\"Synced\"}) or vector(0)",
+          "instant": false,
+          "range": true,
+          "refId": "D",
+          "format": "time_series",
+          "legendFormat": "ArgoCD (unsynced)"
+        }
+      ]
+    }
+  ]
+}
