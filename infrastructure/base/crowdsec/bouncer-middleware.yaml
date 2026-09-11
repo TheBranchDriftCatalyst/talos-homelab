@@ -63,6 +63,14 @@ spec:
       # --- AppSec / WAF (existing detection policy; fail closed on unavailability) ---
       crowdsecAppsecEnabled: "true"
       crowdsecAppsecHost: crowdsec-appsec-service.crowdsec.svc.cluster.local:7422
+      # MUST be set explicitly. The plugin defaults crowdsecAppsecScheme to
+      # crowdsecLapiScheme when it is empty (bouncer.go: `if config.CrowdsecAppsecScheme
+      # == "" { config.CrowdsecAppsecScheme = config.CrowdsecLapiScheme }`), so moving
+      # the LAPI to https (TALOS-3pdz) silently dragged AppSec to https too. AppSec's
+      # inbound :7422 listener is plain HTTP — appsec.tlsClientAuth governs AppSec's
+      # OUTBOUND leg to the LAPI, not this one — so every query failed at the transport
+      # and, with UnreachableBlock below, 403'd every request through Traefik fleet-wide.
+      crowdsecAppsecScheme: http
       crowdsecAppsecFailureBlock: "true" # AppSec internal 500 → block (present-but-erroring is suspicious)
       crowdsecAppsecUnreachableBlock: "true" # no uninspected external requests during an outage
       crowdsecAppsecBodyLimit: "10485760"
