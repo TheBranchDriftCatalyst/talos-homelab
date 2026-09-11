@@ -39,7 +39,7 @@ const TENANT_SELECTOR = process.env.MINIO_TENANT_LABEL || "v1.min.io/tenant=mini
 const CORE_BUCKETS = (process.env.MINIO_CORE_BUCKETS || "mimir,loki,tempo,velero,cnpg-backups")
   .split(",").map((s) => s.trim()).filter(Boolean);
 const CANARY_BUCKET = process.env.MINIO_CANARY_BUCKET || "minio-dr-canary"; // THROWAWAY — never a real bucket
-const MC_IMAGE = process.env.MINIO_MC_IMAGE || "minio/mc:latest";
+const MC_IMAGE = process.env.MINIO_MC_IMAGE || "minio/mc:RELEASE.2024-11-21T17-21-54Z";
 const DESTRUCTIVE = process.env.MINIO_DR_DESTRUCTIVE === "1";
 const MAX_RECOVERY_S = parseFloat(process.env.MINIO_MAX_RECOVERY_S || "180"); // pod reschedule + NFS remount + minio start
 
