@@ -147,33 +147,25 @@ spec:
                 secretKeyRef:
                   name: pihole-admin
                   key: password
-          # MEASURED 2026-09-11: /metrics returns HTTP 200 but takes ~10s
-          # (samples: 0.5s, 2.9s, 9.5s, 9.9s, 10.1s, 10.5s). The exporter makes
-          # upstream calls to Pi-hole's v6 API on every scrape and is simply
-          # SLOW — it is not hung, and it is not refusing connections.
+          # NO readiness/liveness probe here, deliberately.
           #
-          # That is why `up` flapped: the PodMonitor had no scrapeTimeout, so it
-          # used the 10s default against a ~10s response — a coin flip, which is
-          # why the set of "down" replicas kept changing. See podmonitor.yaml.
+          # Probes were added on 2026-09-11 to contain a "wedged exporter" that,
+          # on measurement, did not exist: /metrics answers HTTP 200 every time,
+          # it just takes ~10s. The only real defect was a missing scrapeTimeout
+          # (see podmonitor.yaml); `up` was flapping on the 10s Prometheus
+          # default, not on a broken process.
           #
-          # These probes therefore need a timeout that FITS that response, not
-          # the 1s default. A 1s probe against a healthy 10s endpoint fails
-          # every time and would restart-loop a working exporter — strictly
-          # worse than the no-probe state it replaced. failureThreshold 3 at
-          # 60s means a genuine hang is caught in ~3min without ever punishing
-          # the normal slow path. Root cause of the slowness: TALOS-5292.
-          livenessProbe:
-            httpGet: {path: /metrics, port: 9617}
-            initialDelaySeconds: 60
-            periodSeconds: 60
-            timeoutSeconds: 20
-            failureThreshold: 3
-          readinessProbe:
-            httpGet: {path: /metrics, port: 9617}
-            initialDelaySeconds: 20
-            periodSeconds: 60
-            timeoutSeconds: 20
-            failureThreshold: 3
+          # A readiness probe here would be actively HARMFUL. Readiness is
+          # evaluated per container but applied to the POD, and this pod's
+          # Service serves DNS for the whole network — so a slow METRICS sidecar
+          # would evict a perfectly healthy Pi-hole from DNS rotation. A
+          # monitoring sidecar must never be able to do that.
+          #
+          # A liveness probe would only restart the exporter, but there is no
+          # hang to recover from, and at ~10s per response any probe tight
+          # enough to be useful is tight enough to kill the normal slow path.
+          # If a genuine hang is ever observed, revisit under TALOS-5292 — with
+          # an explicit timeoutSeconds well above the measured response time.
           resources:
             limits: {memory: 128Mi}
   # Per-pod persistent storage. local-path = node-bound RWO, SQLite-safe (the repo
