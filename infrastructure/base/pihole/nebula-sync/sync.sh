@@ -39,7 +39,7 @@ LAST_DURATION=0               # wall-seconds of the last cycle
 LAST_SYNCED=0                 # standbys restored OK in the last cycle
 LAST_FAILED=0                 # standbys that failed restore in the last cycle (0 = healthy)
 LAST_SKIPPED=0                # standbys already in sync last cycle (import skipped = NO restart)
-IMPORTS_TOTAL=0              # cumulative: teleporter imports actually sent (= FTL restarts caused)
+IMPORTS_TOTAL=0               # cumulative: teleporter imports actually sent (= FTL restarts caused)
 
 write_metrics() {
   # atomic rewrite (temp + mv on the same fs) so a scrape never reads a half-written file
@@ -96,6 +96,30 @@ auth() {
     sed -n 's/.*"sid":"\([^"]*\)".*/\1/p'
 }
 
+# RELEASE THE API SEAT. Pi-hole v6 caps concurrent sessions at webserver.api.max_sessions
+# (16) and a session lives webserver.session.timeout (1800 s). This script logs in once per
+# replica per cycle and, before TALOS-kl2c, never logged out — so at SYNC_INTERVAL=300 s each
+# replica carried 1800/300 = 6 abandoned nebula-sync sessions at all times, 38% of the pool,
+# measured on every pod. Seats then had to be reclaimed by eviction, which is what starves the
+# exporter and any human admin login.
+#
+# auth() is consumed via command substitution, i.e. a SUBSHELL, so it cannot register its own
+# SID — the caller must. release_sids runs from the main loop AFTER sync_once returns, which is
+# what makes it cover sync_once's several early-return paths without touching any of them.
+SIDS=""
+remember_sid() {
+  [ -n "$2" ] && SIDS="$SIDS $1:$2"
+  return 0
+}
+release_sids() {
+  for _pair in $SIDS; do
+    _ip=${_pair%%:*}
+    _sid=${_pair#*:}
+    curl -s --max-time 5 -o /dev/null -X DELETE -H "X-FTL-SID: $_sid" "http://$_ip/api/auth" 2> /dev/null || true
+  done
+  SIDS=""
+}
+
 # CHANGE-AWARENESS: a Teleporter import ALWAYS restarts FTL, so importing blindly every cycle
 # bounced every standby's FTL every $SYNC_INTERVAL (12x/hr) — brief :80/:53 blips that made the
 # exporter miss scrapes and standbys flicker off the Grafana "instances reporting" count. We now
@@ -143,6 +167,7 @@ sync_once() {
     return 0
   }
   SID=$(auth "$ACTIVE_IP")
+  remember_sid "$ACTIVE_IP" "$SID"
   [ -n "$SID" ] || {
     echo "auth to active $ACTIVE_POD failed; skip"
     LAST_DURATION=$(($(date +%s) - START))
@@ -169,6 +194,7 @@ sync_once() {
   for IP in $($KUBECTL get pods -n pihole -l "$PSEL" -o jsonpath='{range .items[*]}{.status.podIP}{"\n"}{end}' 2> /dev/null); do
     { [ -z "$IP" ] || [ "$IP" = "$ACTIVE_IP" ]; } && continue
     RSID=$(auth "$IP")
+    remember_sid "$IP" "$RSID"
     [ -n "$RSID" ] || {
       echo "  $IP auth failed"
       FAIL=$((FAIL + 1))
@@ -213,5 +239,6 @@ LAST_RUN_TS=$LAST_SUCCESS_TS
 write_metrics # seed so the endpoint is scrapable before the first cycle finishes
 while true; do
   sync_once
+  release_sids # hand back every API seat this cycle took (TALOS-kl2c)
   sleep "$SYNC_INTERVAL"
 done
