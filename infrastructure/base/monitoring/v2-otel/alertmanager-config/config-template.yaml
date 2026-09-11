@@ -64,6 +64,25 @@ data:
           repeat_interval: 168h
           continue: false
 
+        # bt-radar KubePodNotReady — STRUCTURAL, muted 2026-09-11.
+        # The bt-agent DaemonSet cannot start and that is CORRECT: its
+        # wait-for-bluetooth init container polls /sys/class/bluetooth and Talos
+        # ships no Bluetooth kernel subsystem, so the directory does not exist.
+        # NFD labels the nodes usb-e0.present (the dongles ARE detected), but
+        # there is no kernel side for them to bind to. The workload is parked by
+        # design, waiting for TALOS-1mog (bluetooth/btusb as a Talos system
+        # extension), and is deliberately left DEPLOYED so it starts by itself
+        # the moment that lands.
+        # Four permanently-Pending pods were most of what remained of the
+        # KubePodNotReady noise after the tombstone fix (edf9c14c).
+        # Un-mute when TALOS-1mog ships.
+        - matchers:
+            - alertname="KubePodNotReady"
+            - namespace="bt-radar"
+          receiver: muted
+          repeat_interval: 168h
+          continue: false
+
         # Critical alerts get their own group so pages aren't merged
         # with warnings on the same 5m group_interval window.
         - matchers:

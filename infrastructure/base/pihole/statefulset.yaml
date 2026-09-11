@@ -147,6 +147,30 @@ spec:
                 secretKeyRef:
                   name: pihole-admin
                   key: password
+          # CONTAINMENT, not a root-cause fix. On 2026-09-09 three of five
+          # replicas wedged: the exporter logged "starting pihole-exporter",
+          # then bound nothing, served nothing and never exited. With no probe,
+          # kubelet reported 2/2 Ready while the port refused connections, so
+          # nothing restarted them and ServiceDown fired for two days.
+          #
+          # Ruled out at the time: a Pi-hole v6 API break (the two healthy
+          # replicas return real data against pihole 2026.07.2), a startup race
+          # (pihole-2 started BEFORE pihole-1 and survived), and the local web
+          # server being down (all replicas answer 302 on :80). The hang is
+          # inside the exporter binary and is still unexplained — see the bead.
+          #
+          # Liveness turns a permanent silent failure into a ~90s self-correcting
+          # one. Readiness stops the Ready count from lying about it.
+          livenessProbe:
+            httpGet: {path: /metrics, port: 9617}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /metrics, port: 9617}
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
           resources:
             limits: {memory: 128Mi}
   # Per-pod persistent storage. local-path = node-bound RWO, SQLite-safe (the repo
