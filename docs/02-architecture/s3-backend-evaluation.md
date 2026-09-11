@@ -144,3 +144,24 @@ alternative) precisely for the backup role.
 - **TALOS-9aw8** — Migrate off MinIO CE (this epic)
 - **TALOS-9aw8.1** — This comparative analysis
 - **TALOS-0xb3** — No Docker Hub pull-through mirror (related supply-chain gap)
+
+---
+
+## Bucket inventory (TALOS-9aw8.2 — the decision gate, resolved)
+
+Live audit of the running MinIO tenant, 2026-09-11:
+
+| Bucket | Versioning | Object-lock | Consumer |
+|---|---|---|---|
+| **dagster** | **✅ enabled** | ❌ | Dagster |
+| backups | ❌ | ❌ | (general) |
+| cnpg-backups | ❌ | ❌ | CNPG barman-cloud |
+| velero | ❌ | ❌ | Velero |
+| loki / mimir / tempo | ❌ | ❌ | observability |
+| catalyst-data / catalyst-bgs / boomtime-cards | ❌ | ❌ | apps |
+| lobechat | ❌ | ❌ | LobeChat |
+
+**Result: 10 of 11 un-versioned, none object-locked → Garage covers everything except `dagster`.**
+Open question before we can call it 100% Garage: does Dagster actually *rely* on versioning, or was
+it just enabled by default? (Dagster's S3 IO manager does not require it.) If not relied upon → Garage
+for all 11. If it is → that one bucket goes to a versioned store (versitygw), everything else to Garage.
