@@ -147,29 +147,32 @@ spec:
                 secretKeyRef:
                   name: pihole-admin
                   key: password
-          # CONTAINMENT, not a root-cause fix. On 2026-09-09 three of five
-          # replicas wedged: the exporter logged "starting pihole-exporter",
-          # then bound nothing, served nothing and never exited. With no probe,
-          # kubelet reported 2/2 Ready while the port refused connections, so
-          # nothing restarted them and ServiceDown fired for two days.
+          # MEASURED 2026-09-11: /metrics returns HTTP 200 but takes ~10s
+          # (samples: 0.5s, 2.9s, 9.5s, 9.9s, 10.1s, 10.5s). The exporter makes
+          # upstream calls to Pi-hole's v6 API on every scrape and is simply
+          # SLOW — it is not hung, and it is not refusing connections.
           #
-          # Ruled out at the time: a Pi-hole v6 API break (the two healthy
-          # replicas return real data against pihole 2026.07.2), a startup race
-          # (pihole-2 started BEFORE pihole-1 and survived), and the local web
-          # server being down (all replicas answer 302 on :80). The hang is
-          # inside the exporter binary and is still unexplained — see the bead.
+          # That is why `up` flapped: the PodMonitor had no scrapeTimeout, so it
+          # used the 10s default against a ~10s response — a coin flip, which is
+          # why the set of "down" replicas kept changing. See podmonitor.yaml.
           #
-          # Liveness turns a permanent silent failure into a ~90s self-correcting
-          # one. Readiness stops the Ready count from lying about it.
+          # These probes therefore need a timeout that FITS that response, not
+          # the 1s default. A 1s probe against a healthy 10s endpoint fails
+          # every time and would restart-loop a working exporter — strictly
+          # worse than the no-probe state it replaced. failureThreshold 3 at
+          # 60s means a genuine hang is caught in ~3min without ever punishing
+          # the normal slow path. Root cause of the slowness: TALOS-5292.
           livenessProbe:
             httpGet: {path: /metrics, port: 9617}
-            initialDelaySeconds: 30
-            periodSeconds: 30
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            timeoutSeconds: 20
             failureThreshold: 3
           readinessProbe:
             httpGet: {path: /metrics, port: 9617}
-            initialDelaySeconds: 10
-            periodSeconds: 20
+            initialDelaySeconds: 20
+            periodSeconds: 60
+            timeoutSeconds: 20
             failureThreshold: 3
           resources:
             limits: {memory: 128Mi}

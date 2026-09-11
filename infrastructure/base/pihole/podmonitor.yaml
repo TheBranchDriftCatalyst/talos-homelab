@@ -38,3 +38,9 @@ spec:
     - port: prometheus # sidecar containerPort name (monitoring.sidecar.port=9617)
       path: /metrics
       interval: 30s
+      # MEASURED: /metrics takes ~10s (200 every time — slow, not broken).
+      # With no scrapeTimeout Prometheus uses its 10s default, so the scrape
+      # raced the response and `up` flapped between 0 and 1 across replicas;
+      # ServiceDown fired for days against a working exporter. Must stay BELOW
+      # interval. Fix the slowness itself in TALOS-5292 and this can come back down.
+      scrapeTimeout: 25s
