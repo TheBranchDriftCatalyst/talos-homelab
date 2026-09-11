@@ -115,7 +115,12 @@ spec:
             rate(kube_pod_container_status_restarts_total[15m]) * 60 * 15 > 3
           for: 15m
           labels:
-            severity: warning
+            # CRITICAL, not warning. A container restarting >3x in 15m and still
+            # doing it 15 minutes later is not degraded, it is DOWN — this is the
+            # alert that watched boomtime CrashLoopBackOff for 100 minutes (24
+            # restarts) while reading exactly like Dagster using a lot of RAM.
+            # Severity here means blast radius, not how alarming the metric looks.
+            severity: critical
             category: baseline
           annotations:
             summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} crash-looping"
@@ -127,16 +132,26 @@ spec:
         - alert: KubePodNotReady
           expr: |
             sum by(namespace, pod) (
-              kube_pod_status_phase{phase=~"Pending|Unknown|Failed"}
+              kube_pod_status_phase{phase=~"Pending|Unknown"}
             ) > 0
           for: 15m
           labels:
             severity: warning
             category: baseline
           annotations:
-            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} not Ready for 15m"
+            summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} cannot start (15m)"
             description: >-
-              Pod has been in Pending, Unknown, or Failed for 15+ minutes.
+              Pod has been Pending or Unknown for 15+ minutes — it cannot be
+              scheduled or its node is unreachable.
+              NOTE: "Failed" is deliberately NOT matched. A Failed pod is a
+              TOMBSTONE, not an incident: the object lingers after an eviction
+              or node drain while its controller has already replaced it, so
+              the workload is healthy and the alert never clears on its own.
+              Twelve of these fired permanently (vpa-recommender, cilium-operator,
+              nfs-subdir-provisioner, netconsole-receiver — all
+              phase=Failed reason=Terminated), which is most of the chronic
+              warning noise this alert class drowned in. If you want "the
+              workload is degraded", alert on unavailable REPLICAS, not on pods.
 
     # ----------------------------------------------------------------
     # 4. Targets / scrape health
@@ -144,7 +159,13 @@ spec:
     - name: cluster.scrape
       rules:
         - alert: ServiceDown
-          expr: up == 0
+          # `up == 0` alone also fires for every pod that legitimately FINISHED:
+          # a CronJob pod that exits 0 takes its scrape target with it, and the
+          # alert then never clears (external-dns-orphan-report fired this way).
+          # Excluding Succeeded pods keeps "the target is really down" meaningful.
+          expr: |
+            up == 0
+            unless on(namespace, pod) (kube_pod_status_phase{phase="Succeeded"} == 1)
           for: 10m
           labels:
             severity: warning
