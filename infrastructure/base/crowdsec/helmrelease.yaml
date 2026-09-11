@@ -53,10 +53,12 @@ spec:
       agent:
         tlsClientAuth: true
       appsec:
-        # Keep AppSec on password auth: helm-charts #309 (TLS + mutual-TLS on a Deployment-type
-        # agent has an init-container env bug). AppSec still reaches the HTTPS LAPI via the CA bundle;
-        # its per-pod machines are reaped by db_config.flush + the prune CronJob.
-        tlsClientAuth: false
+        # AppSec -> LAPI via CLIENT CERT too (fungible, no password machines). helm-charts #309
+        # (Deployment-type agent init missing TLS env) does NOT bite us: the appsec wait-for-lapi
+        # init is only `nc -z` (a TCP check, no TLS needed), the main container gets USE_TLS + the
+        # appsec-client cert, and the LAPI's agents_allowed_ou includes appsec-ou so the cert is
+        # trusted. The Traefik->appsec WAF server path (:7422) is separate and unaffected.
+        tlsClientAuth: true
     image:
       repository: crowdsecurity/crowdsec
       tag: v1.7.8
