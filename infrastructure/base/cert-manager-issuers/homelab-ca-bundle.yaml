@@ -1,0 +1,19 @@
+---
+# trust-manager Bundle distributing the internal CA (homelab-ca) to every namespace as a
+# ConfigMap, so in-cluster workloads can verify TLS signed by homelab-ca-issuer without
+# per-app CA plumbing. Prereq for internal service TLS (TLS shore-up long tail, TALOS-hacu:
+# CNPG verify-full, per-backend ServersTransport, etc.). Source is homelab-ca-secret in the
+# cert-manager (trust) namespace; target is the `homelab-ca-bundle` ConfigMap everywhere.
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: homelab-ca-bundle
+spec:
+  sources:
+    - secret:
+        name: homelab-ca-secret
+        key: tls.crt   # the self-signed CA root cert (what consumers verify against)
+  target:
+    configMap:
+      key: ca.crt
+    # no namespaceSelector => distributed to ALL namespaces
