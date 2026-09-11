@@ -27,12 +27,13 @@ spec:
           annotations:
             summary: "Cilium cross-node p99 connectivity latency high ({{ $value | printf \"%.3f\" }}s)"
             description: "Node-to-node latency elevated — WireGuard overhead spike or datapath issue."
-        - alert: CiliumWireGuardPeersIncomplete
-          # Only meaningful once WireGuard is enabled: every node should peer with all others.
-          # Absent metric (WG off) => vector empty => no alert.
-          expr: (max(cilium_wireguard_peers) > 0) and (min(cilium_wireguard_peers) < (count(count by (instance)(cilium_drop_count_total)) - 1))
+        - alert: CiliumTransparentEncryptionOff
+          # cilium 1.20 exports no wireguard peer-count metric; use the feature gauge. Once WireGuard
+          # is enabled cluster-wide this is 1 on every node — a node reporting 0 means its pod traffic
+          # is NOT being encrypted. (Runtime datapath breakage is caught by the drop/latency alerts.)
+          expr: min(cilium_feature_adv_connect_and_lb_transparent_encryption) == 0
           for: 15m
           labels: {severity: warning, area: network}
           annotations:
-            summary: "Cilium WireGuard peering incomplete — some node-to-node traffic is falling back to PLAINTEXT"
-            description: "A node has fewer WG peers than (nodes-1); traffic to un-peered nodes is unencrypted."
+            summary: "Cilium transparent encryption OFF on at least one node — pod traffic there is PLAINTEXT"
+            description: "A node reports encryption feature=0; WireGuard is not covering its pod traffic."
