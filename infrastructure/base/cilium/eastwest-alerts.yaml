@@ -1,0 +1,38 @@
+---
+# East-West (Cilium datapath) degradation alerts — the safety net for the WireGuard rollout
+# (TALOS-dw2p #1) and ongoing pod-network health. Auto-synced to the Mimir ruler.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cilium-eastwest
+  namespace: kube-system
+  labels: {app.kubernetes.io/part-of: cilium, release: monitoring}
+spec:
+  groups:
+    - name: cilium-eastwest
+      rules:
+        - alert: CiliumDropRateHigh
+          # baseline is ~0.2 pkt/s (benign stale-IP); a sustained spike signals a datapath
+          # regression (e.g. a bad WireGuard rollout / MTU fragmentation).
+          expr: sum(rate(cilium_drop_count_total[5m])) > 50
+          for: 10m
+          labels: {severity: warning, area: network}
+          annotations:
+            summary: "Cilium east-west drop rate high ({{ $value | printf \"%.1f\" }} pkt/s)"
+            description: "Sustained pod-network packet drops — check for MTU/fragmentation after any CNI change."
+        - alert: CiliumNodeConnectivityLatencyHigh
+          expr: histogram_quantile(0.99, sum by (le) (rate(cilium_node_health_connectivity_latency_seconds_bucket[5m]))) > 0.25
+          for: 10m
+          labels: {severity: warning, area: network}
+          annotations:
+            summary: "Cilium cross-node p99 connectivity latency high ({{ $value | printf \"%.3f\" }}s)"
+            description: "Node-to-node latency elevated — WireGuard overhead spike or datapath issue."
+        - alert: CiliumWireGuardPeersIncomplete
+          # Only meaningful once WireGuard is enabled: every node should peer with all others.
+          # Absent metric (WG off) => vector empty => no alert.
+          expr: (max(cilium_wireguard_peers) > 0) and (min(cilium_wireguard_peers) < (count(count by (instance)(cilium_drop_count_total)) - 1))
+          for: 15m
+          labels: {severity: warning, area: network}
+          annotations:
+            summary: "Cilium WireGuard peering incomplete — some node-to-node traffic is falling back to PLAINTEXT"
+            description: "A node has fewer WG peers than (nodes-1); traffic to un-peered nodes is unencrypted."
