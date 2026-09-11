@@ -111,6 +111,49 @@ spec:
               template-function signature changes (e.g. ESO 2.x htpasswd) look like
               'could not execute template'.
 
+        # A DIFFERENT failure from the one above, and a far worse one: an
+        # ExternalSecret that has NEVER successfully synced. boomtime-encryption-key
+        # sat in this state for ~7 weeks — the commit that added it also hand-created
+        # the target Secret (no ownerReferences) to unblock a deploy, and the
+        # 1Password field was never created. GitOps believed the secret was managed;
+        # it was not, and the cluster held the ONLY copy of the AES-256 key
+        # protecting every stored Wakatime and Amazon credential. Any
+        # `kubectl delete secret`, namespace rebuild, or restore-from-scratch would
+        # have destroyed it permanently and silently.
+        #
+        # The generic warning above DID fire for it, the entire time, indistinguishable
+        # from ~30 other chronic warnings. Hence critical and a separate alert: "never
+        # worked" is a data-loss risk, while "stopped working" (above) still has a
+        # vault copy and only threatens the next rotation.
+        #
+        # `unless` on a 7d lookback of Ready=True is what separates the two: an ES
+        # that synced at any point in the last week is merely stale, not unbacked.
+        - alert: ExternalSecretNeverSynced
+          expr: |
+            max by (exported_namespace, name) (
+              externalsecret_status_condition{condition="Ready", status="False"} == 1
+            )
+            unless on(exported_namespace, name) (
+              max by (exported_namespace, name) (
+                max_over_time(externalsecret_status_condition{condition="Ready", status="True"}[7d])
+              ) == 1
+            )
+          for: 1h
+          labels:
+            severity: critical
+            component: external-secrets
+          annotations:
+            summary: "ExternalSecret {{ $labels.exported_namespace }}/{{ $labels.name }} has NEVER synced"
+            description: >-
+              This ExternalSecret has not been Ready at any point in the last 7 days.
+              Check whether a Secret named in its target already exists: if it does
+              and has no ownerReferences, it was created by hand and the cluster holds
+              the only copy — back the value into the provider BEFORE anything deletes
+              or recreates it. `kubectl get secret <target> -n
+              {{ $labels.exported_namespace }} -o jsonpath='{.metadata.ownerReferences}'`.
+              If nothing consumes it, delete the ExternalSecret: a permanently-firing
+              alert is what hid the boomtime one.
+
     - name: platform-regressions.cnpg-backups
       rules:
         # Plugin-based CNPG backups: barman sidecar exports last-available
