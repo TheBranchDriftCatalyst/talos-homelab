@@ -133,7 +133,7 @@ spec:
         # v6 REST API on 127.0.0.1 and re-exposes metrics on :9617 (name "prometheus",
         # scraped by podmonitor.yaml). Auths with the same pihole-admin secret.
         - name: exporter
-          image: ekofr/pihole-exporter:v1.2.0
+          image: ghcr.io/tomoconnor/pihole-exporter:1.3.1@sha256:32212fd221c95ed1caaae29fc05156a97406f259ad1e3ae082da3c859b5beeab
           imagePullPolicy: IfNotPresent
           ports:
             - {name: prometheus, containerPort: 9617, protocol: TCP}
@@ -147,40 +147,15 @@ spec:
                 secretKeyRef:
                   name: pihole-admin
                   key: password
-          # LIVENESS ONLY — never readiness. See the reasoning below before changing.
+          # NO probe here, and no need for one — see the image pin above.
           #
-          # A readiness probe here would be actively HARMFUL and must never be
-          # added. Readiness is evaluated per container but applied to the POD,
-          # and this pod's Service serves DNS for the whole network — so a slow
-          # METRICS sidecar would evict a perfectly healthy Pi-hole from DNS
-          # rotation. A monitoring sidecar must never be able to do that.
-          # Liveness restarts only this container, which is what we want.
-          #
-          # This probe replaces a 2026-09-11 comment that argued against ANY
-          # probe on the premise that ~10s was the exporter's normal response
-          # time. That premise was wrong. Measured the same day by A/B against
-          # the SAME Pi-hole (TALOS-5292):
-          #     fresh exporter process  : 0.14 s
-          #     3-hour-old sidecar      : 2.4 - 30.1 s
-          # ekofr/pihole-exporter v1.2.0 degrades with PROCESS UPTIME. Pi-hole
-          # itself was exonerated — every v6 API endpoint was timed FASTER on
-          # the stalling pod than on a healthy one. So "slow" is not a normal
-          # path to protect; it is the defect, and restarting the container is
-          # a correct recovery rather than a thing to avoid.
-          #
-          # timeoutSeconds 10 sits ~70x above a healthy response (0.14s) and
-          # well below the degraded range (12-30s), so it cannot fire on a
-          # healthy process. failureThreshold 3 at periodSeconds 60 means three
-          # consecutive slow minutes before a restart — no flapping.
-          #
-          # This is containment, not the fix. The fix is replacing the exporter
-          # (TALOS-du1q); remove this probe when that lands.
-          livenessProbe:
-            httpGet: {path: /metrics, port: prometheus}
-            initialDelaySeconds: 30
-            periodSeconds: 60
-            timeoutSeconds: 10
-            failureThreshold: 3
+          # A liveness probe lived here briefly on 2026-09-11 to restart the
+          # exporter when it wedged. That was containment for a bug this image
+          # does not have, so it is gone with the bug. If a probe is ever
+          # reintroduced: LIVENESS ONLY, never readiness. Readiness is evaluated
+          # per container but applied to the POD, and this pod's Service serves
+          # DNS for the whole network — a slow METRICS sidecar must never be able
+          # to evict a healthy Pi-hole from DNS rotation.
           resources:
             limits: {memory: 128Mi}
   # Per-pod persistent storage. local-path = node-bound RWO, SQLite-safe (the repo

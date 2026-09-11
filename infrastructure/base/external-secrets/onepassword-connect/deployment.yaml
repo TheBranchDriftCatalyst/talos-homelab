@@ -21,6 +21,8 @@ spec:
           ports:
             - containerPort: 8080
               name: http
+            - containerPort: 8443
+              name: https
           env:
             - name: OP_BUS_PORT
               value: '11220'
@@ -33,9 +35,19 @@ spec:
                 secretKeyRef:
                   name: onepassword-connect-secret
                   key: 1password-credentials.json
+            # TLS: serve HTTPS on 8443 alongside HTTP:8080 (parallel, for a safe ESO cutover). TALOS-dw2p #2.
+            - name: OP_HTTPS_PORT
+              value: '8443'
+            - name: OP_TLS_CERT_FILE
+              value: /op-tls/tls.crt
+            - name: OP_TLS_KEY_FILE
+              value: /op-tls/tls.key
           volumeMounts:
             - name: shared-data
               mountPath: /home/opuser/.op/data
+            - name: op-tls
+              mountPath: /op-tls
+              readOnly: true
           resources:
             requests:
               cpu: 10m
@@ -43,13 +55,15 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8443
+              scheme: HTTPS
             initialDelaySeconds: 15
             periodSeconds: 30
           readinessProbe:
             httpGet:
               path: /health
-              port: 8080
+              port: 8443
+              scheme: HTTPS
             initialDelaySeconds: 10
             periodSeconds: 10
 
@@ -93,3 +107,6 @@ spec:
       volumes:
         - name: shared-data
           emptyDir: {}
+        - name: op-tls
+          secret:
+            secretName: onepassword-connect-tls
