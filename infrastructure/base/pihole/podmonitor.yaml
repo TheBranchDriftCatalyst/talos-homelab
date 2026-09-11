@@ -38,9 +38,15 @@ spec:
     - port: prometheus # sidecar containerPort name (monitoring.sidecar.port=9617)
       path: /metrics
       interval: 30s
-      # MEASURED: /metrics takes ~10s (200 every time — slow, not broken).
-      # With no scrapeTimeout Prometheus uses its 10s default, so the scrape
-      # raced the response and `up` flapped between 0 and 1 across replicas;
-      # ServiceDown fired for days against a working exporter. Must stay BELOW
-      # interval. Fix the slowness itself in TALOS-5292 and this can come back down.
-      scrapeTimeout: 25s
+      # A healthy exporter answers /metrics in ~0.14s (measured against a fresh
+      # process, TALOS-5292), so 10s is ~70x headroom and cannot race a working
+      # scrape. This was briefly raised to 25s on 2026-09-11 to stop `up` from
+      # flapping, on the since-disproven premise that a ~10s response was the
+      # exporter's normal speed. It is not — it is the defect: ekofr
+      # pihole-exporter v1.2.0 degrades with process uptime.
+      #
+      # Holding the timeout at 25s would hide that degradation behind a green
+      # `up`. Keeping it at 10s means `up` goes 0 at the same threshold the
+      # sidecar's livenessProbe fires on, so the alert and the restart agree.
+      # Must stay BELOW interval.
+      scrapeTimeout: 10s
