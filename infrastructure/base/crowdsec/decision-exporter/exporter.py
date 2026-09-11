@@ -6,11 +6,14 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+import ssl
 from urllib.request import Request, urlopen
 
 LIMIT = 1000
 MAX_BYTES = 8 * 1024 * 1024
 ORIGINS = {'crowdsec', 'cscli', 'cscli-import'}
+# LAPI is TLS (self-signed, in-cluster); skip verify for this hop (TALOS-3pdz/dw2p).
+_TLS_CTX = ssl._create_unverified_context()
 DURATION = re.compile(r'(\d+(?:\.\d+)?)(h|ms|us|µs|ns|m|s)')
 UNITS = {'h': 3600, 'm': 60, 's': 1, 'ms': .001, 'us': .000001, 'µs': .000001, 'ns': .000000001}
 
@@ -66,7 +69,7 @@ class Inventory:
             key = Path(os.environ['API_KEY_FILE']).read_text().strip()
             request = Request(os.environ['LAPI_URL'] + '/v1/decisions?origins=crowdsec,cscli,cscli-import',
                               headers={'X-Api-Key': key, 'User-Agent': 'crowdsec-decision-inventory/1.0.0'})
-            with urlopen(request, timeout=10) as response:
+            with urlopen(request, timeout=10, context=_TLS_CTX) as response:
                 raw = response.read(MAX_BYTES + 1)
             if len(raw) > MAX_BYTES:
                 raise ValueError('decision response exceeds limit')
