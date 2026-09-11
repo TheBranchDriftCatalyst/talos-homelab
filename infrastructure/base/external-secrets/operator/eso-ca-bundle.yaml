@@ -1,0 +1,22 @@
+---
+# Full CA bundle (public default CAs + internal homelab-ca) for the external-secrets controller,
+# so it can verify the 1Password Connect TLS cert (signed by homelab-ca). The ESO onepassword
+# provider has NO caBundle/caProvider field, so trust must be at the process level via SSL_CERT_FILE.
+# useDefaultCAs keeps public trust intact for any other ESO provider. Scoped to external-secrets ns.
+# TALOS-dw2p #2.
+apiVersion: trust.cert-manager.io/v1alpha1
+kind: Bundle
+metadata:
+  name: eso-ca-bundle
+spec:
+  sources:
+    - useDefaultCAs: true
+    - secret:
+        name: homelab-ca-secret
+        key: tls.crt
+  target:
+    configMap:
+      key: ca-certificates.crt
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: external-secrets

@@ -30,6 +30,21 @@ spec:
     # External Secrets Operator configuration
     installCRDs: true
 
+    # Trust the internal homelab CA so ESO can verify 1Password Connect's TLS cert. The onepassword
+    # provider has no caBundle field, so this is done at the process level via SSL_CERT_FILE pointing
+    # at a trust-manager bundle (public CAs + homelab-ca). TALOS-dw2p #2.
+    extraVolumes:
+      - name: ca-trust
+        configMap:
+          name: eso-ca-bundle
+    extraVolumeMounts:
+      - name: ca-trust
+        mountPath: /etc/ssl/certs-custom
+        readOnly: true
+    extraEnv:
+      - name: SSL_CERT_FILE
+        value: /etc/ssl/certs-custom/ca-certificates.crt
+
     # Webhook configuration
     webhook:
       port: 9443
