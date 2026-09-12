@@ -1,15 +1,16 @@
 # Unified test system — one interface over every suite (see TESTING.md).
-# Suites are pytest markers (security_posture, ingress_accessibility) + the Jest DR projects.
-# Location: co-located with code where possible (DR under infrastructure/base/*/tests), bubbling to
-# the central tests/ root for cross-namespace suites (security-posture, ingress-accessibility).
+# Suites are pytest MARKERS: security_posture, ingress_accessibility, disaster_recovery.
+# Location: co-located with code where possible (DR under infrastructure/base/*/tests + tests/etcd-dr),
+# bubbling to the central tests/ root for cross-namespace suites (security-posture, ingress-accessibility).
+# pytest.ini's testpaths span both tests/ and infrastructure/base, so `pytest -m <suite>` finds a
+# suite wherever its tests live. A couple of DR suites (traefik/vpn) are still Jest — see test:dr-jest.
 version: "3"
 
 tasks:
   default:
-    desc: "Run ALL suites (offline/read-only) — Python (pytest) + DR (Jest)"
+    desc: "Run ALL pytest suites (offline/read-only; suite-grouped dashboard)"
     cmds:
       - task: python
-      - task: dr
 
   all:
     desc: "Alias for the default: every suite, safe mode"
@@ -17,49 +18,54 @@ tasks:
       - task: default
 
   python:
-    desc: "All Python suites via pytest (offline; suite-grouped dashboard)"
+    desc: "All Python suites via pytest — security + ingress + disaster_recovery (offline)"
     cmds:
-      - python3 -m pytest tests/ {{.CLI_ARGS}}
+      - python3 -m pytest {{.CLI_ARGS}}
 
   security:
     desc: "Security Posture suite (offline manifest contracts)"
     cmds:
-      - python3 -m pytest tests/ -m security_posture {{.CLI_ARGS}}
+      - python3 -m pytest -m security_posture {{.CLI_ARGS}}
 
   security-live:
     desc: "Security Posture suite + --live running-cluster assertions"
     cmds:
-      - python3 -m pytest tests/ -m security_posture --live {{.CLI_ARGS}}
+      - python3 -m pytest -m security_posture --live {{.CLI_ARGS}}
 
   ingress:
     desc: "Ingress Accessibility suite (offline; renders the Flux tree)"
     cmds:
-      - python3 -m pytest tests/ -m ingress_accessibility {{.CLI_ARGS}}
+      - python3 -m pytest -m ingress_accessibility {{.CLI_ARGS}}
 
   ingress-live:
     desc: "Ingress Accessibility suite + --live LAN/in-cluster probe (read-only)"
     cmds:
-      - python3 -m pytest tests/ -m ingress_accessibility --live {{.CLI_ARGS}}
+      - python3 -m pytest -m ingress_accessibility --live {{.CLI_ARGS}}
 
   live:
     desc: "ALL Python suites + --live (read-only cluster/LAN probes; operator-run)"
     cmds:
-      - python3 -m pytest tests/ --live {{.CLI_ARGS}}
+      - python3 -m pytest --live {{.CLI_ARGS}}
 
   dr:
-    desc: "Disaster Recovery suite (Jest, read-only; arm chaos with npm run test:dr)"
+    desc: "Disaster Recovery suite (pytest, read-only; skips cleanly with no cluster)"
     cmds:
-      - npm test
+      - python3 -m pytest -m disaster_recovery {{.CLI_ARGS}}
 
   dr-armed:
-    desc: "Disaster Recovery suite ARMED — destructive chaos (homelab only)"
+    desc: "Disaster Recovery suite ARMED — destructive chaos on throwaway canaries (homelab only)"
     cmds:
-      - npm run test:dr
+      - python3 -m pytest -m disaster_recovery --destructive {{.CLI_ARGS}}
+
+  dr-jest:
+    desc: "Not-yet-ported DR suites still on Jest (traefik/vpn); arm chaos with `npm run test:dr`"
+    cmds:
+      - npm test
 
   list:
     desc: "List every test by suite (the catalog)"
     cmds:
-      - 'echo "── Python suites (pytest markers) ──"'
-      - python3 -m pytest tests/ --co -q {{.CLI_ARGS}}
-      - 'echo ""; echo "── Disaster Recovery suite (Jest projects) ──"'
+      - 'echo "── Python suites (pytest markers: security_posture, ingress_accessibility, disaster_recovery) ──"'
+      - python3 -m pytest --co -q {{.CLI_ARGS}}
+      - 'echo ""; echo "── Remaining Jest suites (traefik/vpn DR + non-DR integration) ──"'
       - "grep -oE '\"<rootDir>/[^\"]+\"' jest.config.js | tr -d '\"' | sed 's|<rootDir>|.|'"

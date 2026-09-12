@@ -19,6 +19,9 @@ from lib import helpers  # noqa: E402
 def pytest_addoption(parser):
     parser.addoption("--live", action="store_true", default=False,
                      help="run read-only live probes against the running cluster/LAN")
+    parser.addoption("--destructive", action="store_true", default=False,
+                     help="arm destructive Disaster-Recovery chaos scenarios (mutates the live "
+                          "cluster on throwaway canaries); off by default = CI-safe")
 
 
 def pytest_configure(config):
@@ -27,10 +30,15 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "ingress_accessibility: Ingress Accessibility suite — what is reachable, from where, with what auth")
     config.addinivalue_line("markers", "disaster_recovery: Disaster Recovery suite — recovery machinery + fault injection")
     config.addinivalue_line("markers", "live: requires --live (running cluster/LAN)")
+    config.addinivalue_line("markers", "destructive: destructive DR chaos — only runs with --destructive (or the per-suite <SUITE>_DR_DESTRUCTIVE=1)")
     # propagate --live to the env flag the suites + helpers read
     if config.getoption("--live"):
         os.environ["POSTURE_LIVE"] = "1"
         helpers.LIVE = True
+    # propagate --destructive to the env flag the DR suites read (mirrors --live). The DR suites
+    # skip destructive scenarios unless armed here OR via their per-suite <SUITE>_DR_DESTRUCTIVE=1.
+    if config.getoption("--destructive"):
+        os.environ["DR_DESTRUCTIVE"] = "1"
 
 
 # ---- shared fixtures (utils / auth / corpus) ----
@@ -43,6 +51,12 @@ def repo_root():
 def live(request):
     """True when --live was passed; tests can `if not live: pytest.skip(...)`."""
     return request.config.getoption("--live")
+
+
+@pytest.fixture(scope="session")
+def destructive(request):
+    """True when --destructive was passed; DR tests gate chaos on this (or a per-suite env var)."""
+    return request.config.getoption("--destructive")
 
 
 @pytest.fixture(scope="session")
