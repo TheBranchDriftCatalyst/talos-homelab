@@ -5,8 +5,9 @@
 This repo tests infrastructure four ways, and all follow the same discipline —
 **safe/offline by default, destructive/live behind an explicit flag**:
 
-1. **DR / resilience layer** (Jest) — per-component `*-dr.test.js` suites that prove
-   the recovery machinery exists and, when armed, inject faults and measure recovery.
+1. **DR / resilience layer** (Python/pytest) — per-component `test_<c>_dr.py` suites (marker
+   `disaster_recovery`) that prove the recovery machinery exists and, when armed with
+   `--destructive`, inject faults and measure recovery.
 2. **Security-posture layer** (Python) — `tests/security-posture/test_security_posture.py`
    asserts *per-fix* security contracts against the manifests (offline) and against the
    running cluster (`--live`) — proves each fixed finding **stays fixed**.
@@ -21,24 +22,29 @@ This repo tests infrastructure four ways, and all follow the same discipline —
    `tests/ingress-accessibility/ingress_allowlists.py` (the review surface).
 
 ```bash
-# DR layer (Jest)
-npm test                       # read-only: every DR suite's non-destructive checks
-npm run test:dr                # ARMED: destructive chaos (homelab only)
-npx jest --selectProjects traefik-dr    # one suite
-
-# Unified runner (pytest + Jest) — suites are pytest markers
+# Unified runner (pytest) — suites are pytest markers
 task test                 # ALL suites, offline/read-only (suite-grouped dashboard)
 task test:security        # Security Posture only         (pytest -m security_posture)
 task test:ingress         # Ingress Accessibility only    (pytest -m ingress_accessibility; needs kustomize)
+task test:dr              # Disaster Recovery only        (pytest -m disaster_recovery; read-only)
+task test:dr-armed        # Disaster Recovery ARMED        (pytest -m disaster_recovery --destructive)
 task test:live            # ALL Python suites + --live running-cluster/LAN probes (operator-run)
-task test:dr              # Disaster Recovery (Jest)      ; task test:dr-armed for chaos
 task test:list            # the catalog: every test by suite
+pytest -m disaster_recovery infrastructure/base/pihole/tests   # one suite
 ```
 
->**Unified runner:** all Python suites run under **pytest**, tagged by **suite marker**
-(`security_posture`, `ingress_accessibility`) so `pytest -m <suite>` runs that suite wherever its
-tests live. Shared utils/fixtures live in `tests/conftest.py` + `tests/lib/helpers.py`; a suite-grouped
-terminal reporter prints a per-suite pass/fail dashboard. `task test` runs everything (pytest + Jest DR).
+>**Unified runner:** every suite runs under **pytest**, tagged by **suite marker**
+(`security_posture`, `ingress_accessibility`, `disaster_recovery`) so `pytest -m <suite>` runs that
+suite wherever its tests live — `pytest.ini` `testpaths` spans both `tests/` and `infrastructure/base`
+so the co-located DR suites are collected. Shared utils/fixtures live in `tests/conftest.py` +
+`tests/lib/helpers.py` (+ `tests/lib/dr.py` for the DR machinery); a suite-grouped terminal reporter
+prints a per-suite pass/fail dashboard. `--live` opts into read-only running-cluster probes;
+`--destructive` arms DR chaos. `task test` runs everything offline.
+>
+>*Not-yet-migrated:* two DR suites (`traefik-dr`, `vpn-dr`) plus a handful of non-DR integration
+suites (discord-webhook, mail-relay, crossplane provisioning, honeypot-security) remain on **Jest**
+(`npm test` / `task test:dr-jest`). The traefik/vpn DR ports are deferred (their dirs are owned by
+another work-stream); once they land, Jest can be removed entirely.
 
 **Rule going forward:** every security fix ships with a paired posture test — an
 **offline contract** (the manifest is fixed) and, where feasible, a **`--live` assertion**
@@ -51,12 +57,12 @@ terminal reporter prints a per-suite pass/fail dashboard. `task test` runs every
 | | **DR / resilience** | **Security posture** | **Ingress accessibility** |
 |---|---|---|---|
 | Question | "When X fails, does it recover?" | "Does each fixed finding stay fixed?" | "What is reachable, from where, with what auth?" |
-| Runner | Jest (Node) | pytest (`-m security_posture`) | pytest (`-m ingress_accessibility`) |
-| Location | `infrastructure/base/<c>/tests/*-dr.test.js`, `tests/etcd-dr/` | `tests/security-posture/test_security_posture.py` | `tests/ingress-accessibility/test_ingress_accessibility.py` (+ `ingress_corpus.py`, `ingress_allowlists.py`) |
+| Runner | pytest (`-m disaster_recovery`) | pytest (`-m security_posture`) | pytest (`-m ingress_accessibility`) |
+| Location | `infrastructure/base/<c>/tests/test_<c>_dr.py`, `tests/etcd-dr/` | `tests/security-posture/test_security_posture.py` | `tests/ingress-accessibility/test_ingress_accessibility.py` (+ `ingress_corpus.py`, `ingress_allowlists.py`) |
 | Corpus | one component | per-fix manifest paths | **rendered** whole Flux tree (`kustomize build`) |
-| Aggregator | root `jest.config.js` `projects[]` | `pytest` marker + `tests/conftest.py` | `pytest` marker + `tests/conftest.py` |
-| Safe default | read-only observation | offline manifest contracts | offline rendered-corpus contracts |
-| Guarded mode | `*_DESTRUCTIVE=1` env → fault injection | `--live` → running-system checks | `--live` → read-only LAN + in-cluster probe |
+| Aggregator | `pytest` marker + `tests/conftest.py` (+ `tests/lib/dr.py`) | `pytest` marker + `tests/conftest.py` | `pytest` marker + `tests/conftest.py` |
+| Safe default | read-only observation (skips when cluster unreachable) | offline manifest contracts | offline rendered-corpus contracts |
+| Guarded mode | `--destructive` (or `<SUITE>_DR_DESTRUCTIVE=1`) → fault injection | `--live` → running-system checks | `--live` → read-only LAN + in-cluster probe |
 | CI | (local / on-demand) | `security-posture.yaml` job `contracts` | `security-posture.yaml` job `ingress-surface` |
 | Needs | `kubectl` | PyYAML; `kubectl`+LAN for `--live` | PyYAML + **`kustomize`**; `kubectl`+LAN for `--live` |
 
@@ -74,26 +80,32 @@ silently-passing test.
 
 ---
 
-## Layer 1 — DR / resilience (Jest)
+## Layer 1 — DR / resilience (pytest, marker `disaster_recovery`)
 
-Each deployable component with a failure mode carries a `tests/` suite proving its DR
-story. Suites are registered in `jest.config.js` `projects[]` so one command runs them all.
+Each deployable component with a failure mode carries a co-located `tests/test_<c>_dr.py` suite
+proving its DR story. Suites carry `pytestmark = pytest.mark.disaster_recovery`, so
+`pytest -m disaster_recovery` runs them all wherever they live (pytest.ini `testpaths` spans
+`tests/` + `infrastructure/base`). Shared machinery lives in `tests/lib/dr.py` (kubectl/shell
+runner, `wait_until`, background `Probe`, `Metrics`, and the two skip gates).
 
-- **Pattern:** read-only health/wiring checks always run; destructive scenarios (kill the
-  serving pod, delete a PVC consumer, sever the primary) run **only** when the suite's
-  `*_DESTRUCTIVE=1` flag is set, then measure recovery (e.g. ingress downtime, failover time).
-- **Examples:** `traefik-dr` (kill serving Traefik pod, measure :80/:443 downtime — arm with
-  `TRAEFIK_DR_DESTRUCTIVE=1`), `cnpg-dr` (Postgres primary failover), `velero-dr`
-  (backup+restore), `etcd-dr` (snapshot freshness/integrity), `pihole-dr`, `vpn-dr`,
-  `minio-dr`, `nfs-lifecycle-dr`, `lbipam-dr`, `authentik-dr`.
-- **Run:** `npm test` (safe, via `scripts/jest-select.js`) · `npm run test:dr` (armed) ·
-  `npx jest --selectProjects <name>` (one suite).
-- **Add a suite:** create `infrastructure/base/<c>/tests/<c>-dr.test.js`, gate destruction
-  behind a `<C>_DR_DESTRUCTIVE=1` env, and add the path to `jest.config.js` `projects[]`.
+- **Pattern:** read-only health/wiring checks always run, but **skip cleanly** when the cluster is
+  unreachable (`dr.require_cluster()`) so the suite is CI-safe/offline. Destructive scenarios (kill
+  the serving pod, delete a PVC consumer, sever the primary) run **only** when armed with
+  `--destructive` (or the per-suite `<SUITE>_DR_DESTRUCTIVE=1` env), then measure recovery
+  (ingress downtime, failover time, restore wall-time, …).
+- **Suites:** `cnpg-dr` (Postgres primary failover), `velero-dr` (backup+restore), `etcd-dr`
+  (snapshot freshness/integrity), `pihole-dr`, `minio-dr`, `nfs-lifecycle-dr`, `lbipam-dr`,
+  `authentik-dr`. **Still on Jest** (port deferred — dirs owned by another work-stream): `traefik-dr`,
+  `vpn-dr`, run via `npm test` / `task test:dr-jest`.
+- **Run:** `task test:dr` (safe) · `task test:dr-armed` (armed) ·
+  `pytest -m disaster_recovery <path-to-one-suite>` (one suite).
+- **Add a suite:** create `infrastructure/base/<c>/tests/test_<c>_dr.py`, set
+  `pytestmark = pytest.mark.disaster_recovery`, import `from lib import dr`, wrap kubectl checks so
+  they skip when the cluster is down (`dr.require_cluster()`), and gate destruction behind
+  `dr.require_destructive("<SUITE>_DR_DESTRUCTIVE")`.
 
-> Note: the per-suite `package.json` files were removed — the root is the single dependency
-> root and Jest aggregates the suites as projects. `tests/etcd-dr/` lives at repo root
-> because `talos-dr` was never a deployable component (test-only).
+> Note: `tests/etcd-dr/` lives at repo root because `talos-dr` was never a deployable component
+> (test-only). The `--destructive` flag + `destructive` marker are defined in `tests/conftest.py`.
 
 ---
 
