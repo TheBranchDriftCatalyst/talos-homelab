@@ -89,8 +89,20 @@ spec:
               value: "on"
             - name: SHADOWSOCKS
               value: "off"
+            # TALOS-a8vo P0-1: killswitch tightened. This previously allowed the
+            # gluetun pod to route DIRECTLY (bypassing the VPN tunnel) to the pod CIDR
+            # (10.244.0.0/16) and service CIDR (10.96.0.0/12) — which is exactly what
+            # let a proxy client pivot to in-cluster services (authentik-postgres:5432,
+            # argocd, authentik) instead of egressing to the internet. Cleared: only the
+            # VPN tunnel (internet egress) and the pod's own gateway subnet (auto-allowed
+            # by gluetun for tunnel establishment) are now reachable. The proxy's
+            # legitimate function (anonymous INTERNET egress via tun0) is unaffected;
+            # only the east-west pivot is removed. In-cluster reachability of the proxy
+            # itself is inbound (FIREWALL_INPUT_PORTS below) + established/related, so it
+            # does not depend on this. VERIFY LIVE: proxy still reaches ifconfig.me but
+            # can NO LONGER reach a ClusterIP:5432. Was: "10.244.0.0/16,10.96.0.0/12".
             - name: FIREWALL_OUTBOUND_SUBNETS
-              value: "10.244.0.0/16,10.96.0.0/12"
+              value: ""
             - name: FIREWALL_INPUT_PORTS
               value: "8888,9999,8000,1080,9091"
             - name: HEALTH_SERVER_ADDRESS
