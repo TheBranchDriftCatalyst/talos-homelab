@@ -15,7 +15,8 @@ WHY EACH ASSERTION EXISTS — read before "fixing" a failure by relaxing a test:
                                 (2026-08-24); Cowrie has no need for the API.
   egress default-deny           THE most important control — stops a compromised honeypot doing
                                 lateral movement / scanning / C2 / exfil. kube-dns:53 is the only
-                                intended exception.
+                                intended exception; the sample-fetch rule (public 80/443,
+#                                all private ranges excepted) is the second sanctioned shape (#5).
   ingress reaches world         The inverse failure: if Cilium silently drops attacker traffic the
                                 dashboard reads zero, indistinguishable from "no attacks".
   not-yet-exposed               Nothing in git should make this reachable before the operator
@@ -124,19 +125,60 @@ def test_default_deny_egress_policy_exists(cnps):
     assert len(deny) > 0, "no default-deny-all egress policy present"
 
 
-def test_only_egress_permitted_is_kube_dns(cnps):
-    allowed = []
+# Sanctioned egress shapes: (1) kube-dns:53; (2) public-only 0.0.0.0/0 on 80/443 with ALL private
+# ranges excepted — the sample-fetch rule that lets cowrie capture the payloads attackers wget
+# (#5). The invariant is NOT "no egress" but "egress that can never reach anything of ours".
+_PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.3",
+                     "192.168.", "127.", "169.254.")
+_SANCTIONED_PORTS = {"53", "80", "443"}
+_REQUIRED_EXCEPTS = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
+
+
+def test_egress_is_dns_or_public_only_80_443():
+    """Every permitted egress is kube-dns:53 OR public-only 80/443 with every private range excepted.
+    Mutation check: drop an `except` CIDR from the sample-fetch rule (or add 10.0.0.0/8 to the allowed
+    set) and this MUST go red — otherwise the honeypot can reach the LAN/API. (ported from the peer's
+    egress-isolation test when honeypot tests moved Jest->pytest).
+
+    OFFLINE by design: reads the CNP manifest directly so CI enforces the egress shape on every PR
+    (a live-only check would be skipped in CI, where the regression is most likely to slip in)."""
+    import glob
+    import yaml
+    cnps = []
+    for path in glob.glob("infrastructure/base/honeypot/*.yaml"):
+        with open(path) as fh:
+            for doc in yaml.safe_load_all(fh):
+                if isinstance(doc, dict) and doc.get("kind") == "CiliumNetworkPolicy":
+                    cnps.append(doc)
+    assert cnps, "no CiliumNetworkPolicy manifest found under infrastructure/base/honeypot/"
+    violations = []
     for p in cnps:
+        name = p["metadata"]["name"]
         for e in p.get("spec", {}).get("egress", []) or []:
             if len(e) == 0:
                 continue  # the default-deny rule itself
-            to_dns = any(
-                t.get("matchLabels", {}).get("k8s-app") == "kube-dns"
-                for t in e.get("toEndpoints", []))
+            to_dns = any(t.get("matchLabels", {}).get("k8s-app") == "kube-dns"
+                         for t in e.get("toEndpoints", []))
             if to_dns:
                 continue
-            allowed.append(f"{p['metadata']['name']}: {json.dumps(e)[:120]}")
-    assert allowed == [], f"egress beyond kube-dns permitted (pivot point): {allowed}"
+            cidr_sets = e.get("toCIDRSet", [])
+            ports = [str(x.get("port")) for tp in e.get("toPorts", []) for x in tp.get("ports", [])]
+            bad = [pt for pt in ports if pt not in _SANCTIONED_PORTS]
+            if bad:
+                violations.append(f"{name}: egress on non-sanctioned port(s) {bad}")
+            for cset in cidr_sets:
+                cidr = cset.get("cidr", "")
+                excepts = set(cset.get("except", []))
+                if any(cidr.startswith(r) for r in _PRIVATE_PREFIXES):
+                    violations.append(f"{name}: egress toCIDR {cidr} is a PRIVATE range")
+                    continue
+                if cidr == "0.0.0.0/0":
+                    missing = _REQUIRED_EXCEPTS - excepts
+                    if missing:
+                        violations.append(f"{name}: 0.0.0.0/0 egress MISSING excepts {sorted(missing)} — reaches our networks")
+            if not cidr_sets and not to_dns:
+                violations.append(f"{name}: unclassified egress rule {json.dumps(e)[:140]}")
+    assert violations == [], "egress can reach our own networks (pivot risk): " + "; ".join(violations)
 
 
 def test_no_egress_grants_access_to_apiserver(cnps):
