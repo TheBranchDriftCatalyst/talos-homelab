@@ -429,18 +429,12 @@ spec:
         # -> the appsec pod crashloops "OU [appsec-ou] doesn't match expected OU [agent-ou]".
         - name: AGENTS_ALLOWED_OU
           value: "agent-ou,appsec-ou"
-        # ---- Local cscli over the now-TLS LAPI (TALOS-i85t) ----
-        # tls.enabled makes the LAPI serve HTTPS, but the entrypoint still wrote the local cscli
-        # credential url as http:// -> every API-based cscli command in this pod failed with
-        # "Client sent an HTTP request to an HTTPS server" (decisions/alerts/allowlists list; only
-        # DB-direct commands like `machines` worked, which is why machine-prune survived). The
-        # entrypoint honors LOCAL_API_URL (-> local_api_credentials.yaml .url) and INSECURE_SKIP_VERIFY
-        # (-> api.client.insecure_skip_verify). The LAPI cert is self-signed by the chart CA with no
-        # 127.0.0.1 SAN, so skip-verify is required on this localhost hop (still TLS-encrypted).
-        - name: LOCAL_API_URL
-          value: "https://127.0.0.1:8080"
-        - name: INSECURE_SKIP_VERIFY
-          value: "true"
+        # NOTE (TALOS-i85t): the chart FORCES LOCAL_API_URL=https://localhost:8080 +
+        # INSECURE_SKIP_VERIFY=false when tls.enabled (its own env wins over any lapi.env override),
+        # and the LAPI cert carries a `localhost` SAN so cscli verifies cleanly. If local cscli ever
+        # again errors "Client sent an HTTP request to an HTTPS server", it's a STALE
+        # local_api_credentials.yaml (an emptyDir file persisting a pre-TLS http:// url) — a
+        # `kubectl rollout restart deploy/crowdsec-lapi` regenerates it correctly. No env override needed.
         # Discord webhook for ban notifications (rec #6). ${DISCORD_WEBHOOK_URL} is referenced by
         # config.notifications.discord.yaml above. optional:true → LAPI boots even before the
         # crowdsec-discord ExternalSecret lands (externalsecret.yaml); notifier no-ops until present.
