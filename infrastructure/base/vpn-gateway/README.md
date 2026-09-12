@@ -1,6 +1,15 @@
 # VPN Gateway
 
-Pod-based VPN gateway using gluetun with ProtonVPN WireGuard. Provides anonymous egress for pods and external clients via multiple proxy protocols.
+Pod-based VPN gateway using gluetun with ProtonVPN WireGuard. Provides anonymous egress for **in-cluster** pods via multiple proxy protocols.
+
+> **SECURITY (TALOS-a8vo P0-1):** the proxy is **no longer exposed to the LAN**. The `socks`/`httpproxy`
+> Traefik entrypoints and their `HostSNI(*)` IngressRouteTCPs were removed — they were an open,
+> unauthenticated LAN→cluster pivot (a LAN client could reach in-cluster backends like
+> `authentik-postgres:5432`, argocd, authentik, bypassing forward-auth). The proxy is now
+> **in-cluster only** via the ClusterIP Service (`gluetun.vpn-gateway.svc:1080/:8080`), and the
+> killswitch (`FIREWALL_OUTBOUND_SUBNETS`) drops the pod/service CIDRs so a proxy client cannot
+> pivot east-west. The `192.168.1.54:8080` / `:1080` external-access instructions below are
+> **obsolete**; to reach the proxy from a workstation, `kubectl port-forward` to the Service.
 
 ## TODO
 

@@ -77,17 +77,13 @@ PUBLIC_CHAIN_ALLOWLIST = {
 }
 
 # --- raw TCP entrypoint routers accepted as open (hostPort, HostSNI(*)) ---
-# The gluetun SOCKS/HTTP proxy is a live unauthenticated cluster pivot (TALOS-a8vo P0). Tracked as
-# UNREVIEWED-P0 pending the fix decision (drop the entrypoints / source-restrict + tighten killswitch);
-# the --live L9 probe verifies reachability directly so this allowlist entry can't hide a regression.
-OPEN_PROXY_ACCEPTED = {
-    ("vpn-gateway", "gluetun-socks"): Accepted(
-        "UNREVIEWED-P0 — open unauth SOCKS pivot; fix pending (drop entrypoint / source-restrict). "
-        "Live L9 probe verifies.", "TALOS-a8vo", "2026-09-12"),
-    ("vpn-gateway", "gluetun-http-proxy"): Accepted(
-        "UNREVIEWED-P0 — open unauth HTTP-CONNECT pivot; fix pending. Live L9 probe verifies.",
-        "TALOS-a8vo", "2026-09-12"),
-}
+# EMPTY (TALOS-a8vo P0-1 FIXED): the gluetun SOCKS/HTTP-proxy IngressRouteTCPs were the only open
+# unauthenticated TCP proxy routers. They have been removed (ingressroute-tcp.yaml deleted + the
+# socks/httpproxy Traefik entrypoints dropped from the traefik helmrelease), and the gluetun
+# killswitch tightened to drop the pod/service CIDRs. With no route on the socks/httpproxy
+# entrypoints, A12 (test_tcp_proxy_routes_are_restricted_or_accepted) finds no offenders and this
+# registry stays empty. Any future socks/httpproxy TCP router must be re-justified here.
+OPEN_PROXY_ACCEPTED = {}
 
 # --- lan-only: routes relying on it ALONE while it still admits the pod CIDR (10.0.0.0/8) ---
 # frigate is the known case (finding 002 east-west residue, TALOS-a8vo P1). Documented, not silent.

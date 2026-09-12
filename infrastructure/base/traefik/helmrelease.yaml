@@ -128,21 +128,39 @@ spec:
         port: 9100
         exposedPort: 9100
         protocol: TCP
-      # VPN proxy entrypoints
-      socks:
-        port: 1080
-        exposedPort: 1080
+      # TALOS-a8vo P0-1: the `socks` (:1080) and `httpproxy` (:8080) VPN-proxy
+      # entrypoints were REMOVED. They fronted the vpn-gateway gluetun proxy
+      # (IngressRouteTCP HostSNI(*), unauthenticated) on node hostPorts, giving any
+      # LAN client an open, un-authed pivot INTO the cluster (proved: LAN ->
+      # authentik-postgres:5432 + argocd/authentik backends, bypassing forward-auth).
+      # No in-cluster workload consumed the proxy Service (repo-grep verified; only
+      # homepage's siteMonitor hits the :8000 control API, which is unaffected).
+      # gluetun stays consumable in-cluster via `gluetun.vpn-gateway.svc:1080/:8080`
+      # (ClusterIP Service retained). The killswitch (FIREWALL_OUTBOUND_SUBNETS) was
+      # also tightened to DROP the pod/service CIDRs so even an in-cluster proxy user
+      # cannot pivot east-west. See infrastructure/base/vpn-gateway/.
+      #
+      # TALOS-a8vo P0-4: dedicated LAN-only ingress entrypoints. `web`/`websecure`
+      # (:80/:443) stay WAN-facing for the ~11 genuinely-public routes; the internal
+      # *.talos00 / *.priv.talos00 routes migrate onto weblan (:8081) / websecurelan
+      # (:8443). Isolation = (a) these hostPorts are NOT forwarded by the edge router,
+      # so WAN cannot reach them, and (b) a default `lan-only` middleware bound below
+      # via additionalArguments. NOTE: per-port hostIP binding is NOT usable here —
+      # this is a 5-node DaemonSet and each node has its own LAN IP, so there is no
+      # single hostIP; the unforwarded-port + lan-only default is the isolation.
+      # These entrypoints are INERT until routes declare them (no router => 404); the
+      # route migration is a live, batched cutover run by the main session post-merge.
+      # See docs/02-architecture/p0-4-lan-entrypoint-design.md.
+      weblan:
+        port: 8081
+        exposedPort: 8081
         protocol: TCP
-        hostPort: 1080
-        expose:
-          default: true
-      httpproxy:
-        port: 8080
-        exposedPort: 8080
+        hostPort: 8081
+      websecurelan:
+        port: 8443
+        exposedPort: 8443
         protocol: TCP
-        hostPort: 8080
-        expose:
-          default: true
+        hostPort: 8443
       # Neo4j Bolt entrypoint — terminates raw Bolt TCP at 7687 for
       # catalyst-data's Neo4j Browser ingress (IngressRouteTCP). Without this,
       # http://neo4j.talos00 can load the browser SPA but queries over Bolt fail.
@@ -224,6 +242,17 @@ spec:
       # `ports.<ep>.middlewares` chart value — keep the full ordered list here.
       - --entrypoints.web.http.middlewares=traefik-strip-authentik-headers@kubernetescrd,traefik-bouncer@kubernetescrd
       - --entrypoints.websecure.http.middlewares=traefik-strip-authentik-headers@kubernetescrd,traefik-bouncer@kubernetescrd
+      # TALOS-a8vo P0-4: the LAN entrypoints (weblan/websecurelan) carry the same
+      # strip+bouncer chain PLUS a default `lan-only` (RFC1918 source ranges). Because
+      # an entrypoint-default middleware applies to EVERY router on the entrypoint and
+      # cannot be opted out per-router, this is safe ONLY here where every route is an
+      # internal *.talos00 route — the ~11 genuinely-public routes stay on web/websecure
+      # (which must NOT carry lan-only, or Cloudflare/WAN clients would be blocked).
+      # This is why a dedicated entrypoint is used instead of inverting the web/websecure
+      # default to lan-only. lan-only still admits the pod CIDR (10.0.0.0/8) — east-west
+      # residue tracked as the P1 pod-CIDR-exclusion follow-up.
+      - --entrypoints.weblan.http.middlewares=traefik-strip-authentik-headers@kubernetescrd,traefik-bouncer@kubernetescrd,traefik-lan-only@kubernetescrd
+      - --entrypoints.websecurelan.http.middlewares=traefik-strip-authentik-headers@kubernetescrd,traefik-bouncer@kubernetescrd,traefik-lan-only@kubernetescrd
 
     # Security context - needed for hostPort
     securityContext:
