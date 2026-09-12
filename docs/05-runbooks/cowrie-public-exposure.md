@@ -266,5 +266,5 @@ Everything in this runbook was measured against the live cluster on 2026-08-24, 
 inferred from manifests. Re-run the acceptance suite before and after any change here:
 
 ```bash
-cd infrastructure/base/honeypot/tests && npx jest --runInBand   # expect 14/14
+pytest -m security_posture infrastructure/base/honeypot/tests   # honeypot posture suite
 ```

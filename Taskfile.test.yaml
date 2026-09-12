@@ -1,9 +1,10 @@
 # Unified test system — one interface over every suite (see TESTING.md).
-# Suites are pytest MARKERS: security_posture, ingress_accessibility, disaster_recovery.
-# Location: co-located with code where possible (DR under infrastructure/base/*/tests + tests/etcd-dr),
-# bubbling to the central tests/ root for cross-namespace suites (security-posture, ingress-accessibility).
-# pytest.ini's testpaths span both tests/ and infrastructure/base, so `pytest -m <suite>` finds a
-# suite wherever its tests live. A couple of DR suites (traefik/vpn) are still Jest — see test:dr-jest.
+# Suites are pytest MARKERS: security_posture, ingress_accessibility, telemetry, disaster_recovery,
+# integration. Everything runs under pytest — Jest has been removed entirely.
+# Location: co-located with code where possible (DR + integration under infrastructure/base/*/tests
+# and applications/*/tests + tests/etcd-dr), bubbling to the central tests/ root for cross-namespace
+# suites (security-posture, ingress-accessibility). pytest.ini's testpaths span both tests/ and
+# infrastructure/base, so `pytest -m <suite>` finds a suite wherever its tests live.
 version: "3"
 
 tasks:
@@ -67,15 +68,13 @@ tasks:
     cmds:
       - python3 -m pytest -m disaster_recovery --destructive {{.CLI_ARGS}}
 
-  dr-jest:
-    desc: "Not-yet-ported DR suites still on Jest (traefik/vpn); arm chaos with `npm run test:dr`"
+  integration:
+    desc: "Integration suite — end-to-end subsystem wiring (pytest, read-only; skips with no cluster)"
     cmds:
-      - npm test
+      - python3 -m pytest -m integration {{.CLI_ARGS}}
 
   list:
     desc: "List every test by suite (the catalog)"
     cmds:
-      - 'echo "── Python suites (pytest markers: security_posture, ingress_accessibility, disaster_recovery) ──"'
+      - 'echo "── Python suites (pytest markers: security_posture, ingress_accessibility, telemetry, disaster_recovery, integration) ──"'
       - python3 -m pytest --co -q {{.CLI_ARGS}}
-      - 'echo ""; echo "── Remaining Jest suites (traefik/vpn DR + non-DR integration) ──"'
-      - "grep -oE '\"<rootDir>/[^\"]+\"' jest.config.js | tr -d '\"' | sed 's|<rootDir>|.|'"

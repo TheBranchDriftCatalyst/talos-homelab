@@ -19,7 +19,7 @@ task deps:install
 This installs:
 
 - ✅ Homebrew packages from `Brewfile` (lefthook, gitleaks, yamllint, shellcheck, shfmt, kubectl, kustomize, helm, flux, talosctl, etc.)
-- ✅ Yarn packages from `package.json` (markdownlint-cli2, prettier, jest)
+- ✅ Yarn packages from `package.json` (markdownlint-cli2, prettier)
 - ✅ Tilt (local development)
 - ✅ Git hooks (automatic linting on commit)
 

@@ -28,23 +28,22 @@ task test:security        # Security Posture only         (pytest -m security_po
 task test:ingress         # Ingress Accessibility only    (pytest -m ingress_accessibility; needs kustomize)
 task test:dr              # Disaster Recovery only        (pytest -m disaster_recovery; read-only)
 task test:dr-armed        # Disaster Recovery ARMED        (pytest -m disaster_recovery --destructive)
+task test:integration     # Integration only              (pytest -m integration; read-only)
 task test:live            # ALL Python suites + --live running-cluster/LAN probes (operator-run)
 task test:list            # the catalog: every test by suite
 pytest -m disaster_recovery infrastructure/base/pihole/tests   # one suite
 ```
 
 >**Unified runner:** every suite runs under **pytest**, tagged by **suite marker**
-(`security_posture`, `ingress_accessibility`, `disaster_recovery`) so `pytest -m <suite>` runs that
-suite wherever its tests live — `pytest.ini` `testpaths` spans both `tests/` and `infrastructure/base`
-so the co-located DR suites are collected. Shared utils/fixtures live in `tests/conftest.py` +
-`tests/lib/helpers.py` (+ `tests/lib/dr.py` for the DR machinery); a suite-grouped terminal reporter
-prints a per-suite pass/fail dashboard. `--live` opts into read-only running-cluster probes;
-`--destructive` arms DR chaos. `task test` runs everything offline.
->
->*Not-yet-migrated:* two DR suites (`traefik-dr`, `vpn-dr`) plus a handful of non-DR integration
-suites (discord-webhook, mail-relay, crossplane provisioning, honeypot-security) remain on **Jest**
-(`npm test` / `task test:dr-jest`). The traefik/vpn DR ports are deferred (their dirs are owned by
-another work-stream); once they land, Jest can be removed entirely.
+(`security_posture`, `ingress_accessibility`, `telemetry`, `disaster_recovery`, `integration`) so
+`pytest -m <suite>` runs that suite wherever its tests live — `pytest.ini` `testpaths` spans
+`tests/`, `infrastructure/base`, and `applications` so the co-located DR + integration suites are
+collected. Shared utils/fixtures live in `tests/conftest.py` + `tests/lib/helpers.py` (+
+`tests/lib/dr.py` for the DR machinery); a suite-grouped terminal reporter prints a per-suite
+pass/fail dashboard. `--live` opts into read-only running-cluster probes; `--destructive` arms DR
+chaos. `task test` runs everything offline. **Jest has been fully removed** — there is no `npm test`
+path any more; the traefik/vpn DR suites and the discord-webhook / mail-relay / crossplane-demo
+provisioning integration suites are all pytest now.
 
 **Rule going forward:** every security fix ships with a paired posture test — an
 **offline contract** (the manifest is fixed) and, where feasible, a **`--live` assertion**
@@ -95,8 +94,8 @@ runner, `wait_until`, background `Probe`, `Metrics`, and the two skip gates).
   (ingress downtime, failover time, restore wall-time, …).
 - **Suites:** `cnpg-dr` (Postgres primary failover), `velero-dr` (backup+restore), `etcd-dr`
   (snapshot freshness/integrity), `pihole-dr`, `minio-dr`, `nfs-lifecycle-dr`, `lbipam-dr`,
-  `authentik-dr`. **Still on Jest** (port deferred — dirs owned by another work-stream): `traefik-dr`,
-  `vpn-dr`, run via `npm test` / `task test:dr-jest`.
+  `authentik-dr`, `traefik-dr` (ingress SPOF failover), `vpn-dr` (WireGuard rotate/kill-switch) —
+  all pytest now (Jest fully removed).
 - **Run:** `task test:dr` (safe) · `task test:dr-armed` (armed) ·
   `pytest -m disaster_recovery <path-to-one-suite>` (one suite).
 - **Add a suite:** create `infrastructure/base/<c>/tests/test_<c>_dr.py`, set

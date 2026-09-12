@@ -78,7 +78,7 @@ open http://localhost:8080/status                                 # HTML status 
 | `celery/` | Celery worker + KEDA ScaledObject — *ScaledObject paused at 0* |
 | `flex/` | Go service that exercises every backend above, plus the MinIO tenant in ns `minio` (see `flex/README.md`) — *paused at `replicas: 0`* |
 | `plausible/` | Plausible Analytics (`TALOS-4gg`) — CNPG Postgres + Altinity ClickHouse + app, plus a sites registry + reconciler CronJob, a Stats-API Prometheus exporter, and a CNPG barman-cloud ObjectStore + ScheduledBackup |
-| `tests/` | Jest integration test (dev tooling, **not** part of the Flux build) |
+| `tests/` | pytest integration suite (dev tooling, **not** part of the Flux build) |
 
 ### The Flux split (why `object/` is separate)
 
@@ -90,7 +90,7 @@ health check for the `provider-kubernetes` Deployment in `crossplane-system`. Th
 
 The parent `crossplane-demo` Kustomization (`clusters/catalyst-cluster/crossplane-demo.yaml`)
 `dependsOn` `operators`, `databases` and `storage`, and runs with **`wait: false`** on purpose —
-it only needs to *apply* the CRs; the operators provision asynchronously and the Jest suite
+it only needs to *apply* the CRs; the operators provision asynchronously and the pytest suite
 verifies behaviour. (Gating Flux readiness on the `demo-flex` Deployment made a registry hiccup
 cascade-block `crossplane-demo-object`.) Both Kustomizations **are** registered in
 `clusters/catalyst-cluster/flux-system/kustomization.yaml` and reconcile Ready.
