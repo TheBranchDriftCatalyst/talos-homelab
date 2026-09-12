@@ -36,7 +36,7 @@ volumeBindingMode: Immediate
 allowVolumeExpansion: true
 parameters:
   archiveOnDelete: "true"
-  pathPattern: ${.PVC.namespace}/${.PVC.name}
+  pathPattern: $${.PVC.namespace}/$${.PVC.name}
 mountOptions:
   - noexec # <- the important one: nothing executes off this volume
   - nosuid
@@ -105,52 +105,52 @@ spec:
                   # Everything this job creates is owner-read-only. Archives of live
                   # malware should not be group- or world-readable on shared storage.
                   umask 0077
-                  STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  STAMP=$$(date -u +%Y%m%dT%H%M%SZ)
                   SRC=/source
                   DST=/archive
-                  mkdir -p "$DST/samples"
+                  mkdir -p "$$DST/samples"
 
                   # Nothing captured yet is a normal state, not a failure.
-                  if [ ! -d "$SRC/downloads" ] && [ ! -d "$SRC/tty" ]; then
+                  if [ ! -d "$$SRC/downloads" ] && [ ! -d "$$SRC/tty" ]; then
                     echo "no downloads/ or tty/ yet — nothing to archive"
                     exit 0
                   fi
 
-                  OUT="$DST/samples/cowrie-$STAMP.tar.gz"
+                  OUT="$$DST/samples/cowrie-$$STAMP.tar.gz"
                   # -C so paths are relative; no glob, no eval, no filename interpolation.
-                  tar -czf "$OUT" -C "$SRC" downloads tty 2>/dev/null || \
-                    tar -czf "$OUT" -C "$SRC" downloads 2>/dev/null || \
-                    tar -czf "$OUT" -C "$SRC" tty
-                  sha256sum "$OUT" > "$OUT.sha256"
+                  tar -czf "$$OUT" -C "$$SRC" downloads tty 2>/dev/null || \
+                    tar -czf "$$OUT" -C "$$SRC" downloads 2>/dev/null || \
+                    tar -czf "$$OUT" -C "$$SRC" tty
+                  sha256sum "$$OUT" > "$$OUT.sha256"
                   # 0400: read-only even to the owner. Nothing should ever need to write
                   # to a sealed archive, and it cannot be executed regardless (noexec).
-                  chmod 0400 "$OUT" "$OUT.sha256"
-                  echo "archived $(wc -c < "$OUT") bytes -> $OUT"
+                  chmod 0400 "$$OUT" "$$OUT.sha256"
+                  echo "archived $$(wc -c < "$$OUT") bytes -> $$OUT"
 
                   # Report any sample carrying an exec bit. The source is mounted
                   # read-only so this job CANNOT chmod it — surfacing it is the point,
                   # because it means cowrie's download path changed and wants fixing.
                   # Containment does not depend on this: the archive volume is noexec.
-                  if [ -d "$SRC/downloads" ]; then
-                    EXECBIT=$(find "$SRC/downloads" -type f -perm -u+x 2>/dev/null | wc -l)
-                    [ "$EXECBIT" -gt 0 ] && echo "WARNING: $EXECBIT captured sample(s) carry the exec bit" || true
+                  if [ -d "$$SRC/downloads" ]; then
+                    EXECBIT=$$(find "$$SRC/downloads" -type f -perm -u+x 2>/dev/null | wc -l)
+                    [ "$$EXECBIT" -gt 0 ] && echo "WARNING: $$EXECBIT captured sample(s) carry the exec bit" || true
                   fi
 
                   # Inventory: what samples exist, by hash. cowrie names downloads after
                   # their SHA-256, so this doubles as a dedup view across days.
-                  if [ -d "$SRC/downloads" ]; then
-                    find "$SRC/downloads" -type f -exec basename {} \; | sort -u > "$DST/sample-hashes.txt" || true
-                    echo "distinct samples to date: $(wc -l < "$DST/sample-hashes.txt")"
+                  if [ -d "$$SRC/downloads" ]; then
+                    find "$$SRC/downloads" -type f -exec basename {} \; | sort -u > "$$DST/sample-hashes.txt" || true
+                    echo "distinct samples to date: $$(wc -l < "$$DST/sample-hashes.txt")"
                   fi
 
                   # Retention: keep 30 archives. Sample data is small; this is a guard
                   # against unbounded growth, not a storage optimisation.
-                  ls -1t "$DST/samples"/cowrie-*.tar.gz 2>/dev/null | tail -n +31 | while read -r old; do
-                    echo "pruning $old"; rm -f "$old" "$old.sha256"
+                  ls -1t "$$DST/samples"/cowrie-*.tar.gz 2>/dev/null | tail -n +31 | while read -r old; do
+                    echo "pruning $$old"; rm -f "$$old" "$$old.sha256"
                   done
 
                   # A plain-language warning beside the data, for whoever finds it later.
-                  cat > "$DST/README.txt" <<'EOF'
+                  cat > "$$DST/README.txt" <<'EOF'
                   These archives contain LIVE MALWARE captured by the cowrie honeypot.
                   Files under downloads/ are samples fetched by real attackers and are
                   named by their SHA-256. Do not extract or execute them on a workstation.
