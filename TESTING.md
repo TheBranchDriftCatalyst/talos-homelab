@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-This repo tests infrastructure three ways, and all follow the same discipline —
+This repo tests infrastructure four ways, and all follow the same discipline —
 **safe/offline by default, destructive/live behind an explicit flag**:
 
 1. **DR / resilience layer** (Jest) — per-component `*-dr.test.js` suites that prove
@@ -10,7 +10,11 @@ This repo tests infrastructure three ways, and all follow the same discipline �
 2. **Security-posture layer** (Python) — `tests/security-posture/test_security_posture.py`
    asserts *per-fix* security contracts against the manifests (offline) and against the
    running cluster (`--live`) — proves each fixed finding **stays fixed**.
-3. **Ingress-accessibility layer** (Python) — `tests/ingress-accessibility/test_ingress_accessibility.py`
+3. **Telemetry / observability layer** (Python) — `tests/telemetry/test_dashboards.py`
+   audits every Grafana dashboard **panel-by-panel**: offline it checks each panel has a resolvable
+   datasource + query; `--live` it executes every panel's query and asserts data returns (or the panel
+   is a justified `EXPECTED_EMPTY`). Add a dashboard in `tests/telemetry/dashboards.py`.
+4. **Ingress-accessibility layer** (Python) — `tests/ingress-accessibility/test_ingress_accessibility.py`
    renders the whole Flux tree and asserts *fleet-wide* ingress invariants ("what is
    reachable, from where, with what auth") offline, plus a `--live` accessibility probe —
    proves **no new route reintroduces a finding's shape**. Accepted risks live in
@@ -42,7 +46,7 @@ terminal reporter prints a per-suite pass/fail dashboard. `task test` runs every
 
 ---
 
-## The three layers
+## The four layers
 
 | | **DR / resilience** | **Security posture** | **Ingress accessibility** |
 |---|---|---|---|

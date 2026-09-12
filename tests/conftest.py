@@ -25,6 +25,7 @@ def pytest_configure(config):
     # register suite markers (the 'tag' mechanism) so `pytest -m <suite>` is first-class + strict
     config.addinivalue_line("markers", "security_posture: Security Posture suite — each fixed finding stays fixed")
     config.addinivalue_line("markers", "ingress_accessibility: Ingress Accessibility suite — what is reachable, from where, with what auth")
+    config.addinivalue_line("markers", "telemetry: Telemetry/Observability suite — audit Grafana dashboards panel-by-panel")
     config.addinivalue_line("markers", "disaster_recovery: Disaster Recovery suite — recovery machinery + fault injection")
     config.addinivalue_line("markers", "live: requires --live (running cluster/LAN)")
     # propagate --live to the env flag the suites + helpers read
@@ -68,8 +69,9 @@ def rendered_corpus():
 
 
 # ───────────────────────── suite-aware terminal reporter ─────────────────────────
-_SUITES = ("security_posture", "ingress_accessibility", "disaster_recovery")
+_SUITES = ("security_posture", "ingress_accessibility", "telemetry", "disaster_recovery")
 _LABEL = {"security_posture": "Security Posture", "ingress_accessibility": "Ingress Accessibility",
+          "telemetry": "Telemetry / Observability",
           "disaster_recovery": "Disaster Recovery", "_other": "Other / integration"}
 _C = {"reset": "\033[0m", "bold": "\033[1m", "dim": "\033[2m", "green": "\033[32m",
       "red": "\033[31m", "yellow": "\033[33m", "cyan": "\033[36m"}
