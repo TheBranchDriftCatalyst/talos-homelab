@@ -22,9 +22,14 @@ pre-commit:
         - rebase
 
     # YAML linting and validation
+    # Scoped to {staged_files} like every other job here. `yamllint .` walked the
+    # ENTIRE tree -- including git-ignored .claude/worktrees/ agent checkouts --
+    # so the hook failed on files that were not staged, not tracked, and not the
+    # committer's. yamllint still applies .yamllint.yaml's `ignore:` list to
+    # explicitly-passed paths, so the curated exclusions below remain in force.
     yamllint:
       tags: linting yaml
-      run: yamllint .
+      run: yamllint {staged_files}
       glob: '*.{yaml,yml}'
       skip:
         - merge
