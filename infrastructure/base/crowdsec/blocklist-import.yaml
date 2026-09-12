@@ -1,0 +1,138 @@
+---
+# CrowdSec external-blocklist importer (TALOS-51rx). Imports 5 curated, low-FP reputation feeds
+# into the LAPI as `ban` decisions so the Traefik bouncer blocks known-bad IPs pre-emptively —
+# complementing behavioural detection + the community blocklist.
+#
+# DESIGN: no third-party image with LAPI write-access, and no new machine credential. A kubectl
+# CronJob fetches the feeds and pipes them into `cscli decisions import` via `kubectl exec` in a
+# crowdsec AGENT pod — reusing the agent's existing TLS cert-auth to the (HTTPS) LAPI. A
+# `homelab-infra` allowlist protects our own CIDRs so an imported feed can never ban our infra.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crowdsec-blocklist-import
+  namespace: crowdsec
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crowdsec-blocklist-import
+  namespace: crowdsec
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crowdsec-blocklist-import
+  namespace: crowdsec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crowdsec-blocklist-import
+subjects:
+  - kind: ServiceAccount
+    name: crowdsec-blocklist-import
+    namespace: crowdsec
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crowdsec-blocklist-import-script
+  namespace: crowdsec
+data:
+  import.sh: |
+    #!/bin/sh
+    set -eu
+    NS=crowdsec
+    DUR="${DECISION_DURATION:-26h}"
+    DRY_RUN="${DRY_RUN:-false}"
+    # name|url — URLs contain no spaces, so a space/newline-separated list is safe to iterate.
+    FEEDS="firehol-level1|https://iplists.firehol.org/files/firehol_level1.netset
+    spamhaus-drop|https://www.spamhaus.org/drop/drop.txt
+    blocklist-de-ssh|https://lists.blocklist.de/lists/ssh.txt
+    blocklist-de-apache|https://lists.blocklist.de/lists/apache.txt
+    feodo-c2|https://feodotracker.abuse.ch/downloads/ipblocklist.txt"
+
+    # decisions import needs a machine with API write-access -> a crowdsec AGENT (cert-auth, HTTPS).
+    AG=$(kubectl get pods -n "$NS" -o name | grep 'crowdsec-agent-' | head -1 | sed 's|pod/||')
+    [ -z "$AG" ] && { echo "FATAL: no crowdsec-agent pod found"; exit 1; }
+    # allowlist management is DB-direct and must run on the LAPI machine, not an agent.
+    LP=$(kubectl get pods -n "$NS" -o name | grep 'crowdsec-lapi-' | head -1 | sed 's|pod/||')
+    echo "agent=$AG  lapi=$LP  dry_run=$DRY_RUN  duration=$DUR"
+    csc() { kubectl exec -i -n "$NS" "$AG" -c crowdsec-agent -- "$@"; }
+    csc_lapi() { [ -n "$LP" ] && kubectl exec -i -n "$NS" "$LP" -c crowdsec-lapi -- "$@"; }
+
+    # Safety rail: our own CIDRs must never be bannable, even if a feed lists one (idempotent, DB-direct).
+    csc_lapi cscli allowlists create homelab-infra -d "homelab infra CIDRs — never ban (blocklist-import)" >/dev/null 2>&1 || true
+    csc_lapi cscli allowlists add homelab-infra 192.168.1.0/24 10.244.0.0/16 10.100.0.0/16 >/dev/null 2>&1 || true
+
+    for entry in $FEEDS; do
+      name="${entry%%|*}"; url="${entry##*|}"
+      [ -z "$name" ] && continue
+      body=$(curl -fsS --max-time 45 "$url" 2>/dev/null | grep -vE '^[#;]|^[[:space:]]*$' | awk '{print $1}' | grep -E '^[0-9]+\.' || true)
+      if [ -z "$body" ]; then echo "WARN $name: empty/unreachable, skipping"; continue; fi
+      ips=$(echo "$body" | grep -v '/' || true)
+      ranges=$(echo "$body" | grep '/' || true)
+      ni=$(echo "$ips" | grep -c . || true); nr=$(echo "$ranges" | grep -c . || true)
+      # skip our own CIDRs defensively (allowlist is the real guard; this avoids noisy imports)
+      ips=$(echo "$ips" | grep -vE '^(192\.168\.1\.|10\.244\.|10\.100\.)' || true)
+      if [ "$DRY_RUN" = "true" ]; then
+        echo "DRY $name: would import $ni ip + $nr range"; continue
+      fi
+      [ "$ni" -gt 0 ] && echo "$ips"    | csc cscli decisions import -i - --format values --scope ip    -R "blocklist/$name" -d "$DUR" -t ban --batch 5000 >/dev/null 2>&1 || true
+      [ "$nr" -gt 0 ] && echo "$ranges" | csc cscli decisions import -i - --format values --scope range -R "blocklist/$name" -d "$DUR" -t ban --batch 5000 >/dev/null 2>&1 || true
+      echo "OK  $name: imported $ni ip + $nr range"
+    done
+    echo "blocklist-import done"
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crowdsec-blocklist-import
+  namespace: crowdsec
+spec:
+  schedule: "41 4 * * *"            # daily, off-peak; feeds refresh well within the 26h TTL
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 900
+      backoffLimit: 1
+      template:
+        metadata:
+          labels: {app.kubernetes.io/part-of: crowdsec, app.kubernetes.io/component: blocklist-import}
+        spec:
+          serviceAccountName: crowdsec-blocklist-import
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: import
+              # bitnami/kubectl pinned by digest (Bitnami deprecated its free :latest track in 2025).
+              image: bitnami/kubectl@sha256:b29d8c1665b70817259ceecaea16ab27aab6368b48daf485d19436c809067492
+              command: ["/bin/sh", "/script/import.sh"]
+              env:
+                - {name: DRY_RUN, value: "false"}
+                - {name: DECISION_DURATION, value: "26h"}
+              volumeMounts:
+                - {name: script, mountPath: /script}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              resources:
+                requests: {cpu: 25m, memory: 64Mi}
+                limits: {memory: 256Mi}
+          volumes:
+            - name: script
+              configMap: {name: crowdsec-blocklist-import-script}
