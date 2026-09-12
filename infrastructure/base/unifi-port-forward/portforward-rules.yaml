@@ -1,0 +1,101 @@
+---
+# ⚠️ REVIEW BEFORE WIRING IN. These CRs were transcribed from the UDM port-forward
+# UI (phone screenshots, 2026-09-12). On first sync the controller ADOPTS a matching
+# live forward — it takes ownership by WAN port, renames it, and applies the CR's
+# forward port. So a wrong value here MUTATES the network edge. Verify every
+# externalPort/destinationIP/destinationPort against the live table, then add
+# `- portforward-rules.yaml` to kustomization.yaml.
+#
+# SECURITY-POSTURE CLEANUPS already applied here vs the raw table:
+#   - The stale catalyst-cluster ports 6789 + 8883 (nothing listens) are OMITTED.
+#     Adopting the bundle without them drops those dead forwards. Delete them in the
+#     UI too if you prefer not to route the adoption through this.
+#   - conan-rdp / conan-rcon carry a commented sourceIPRestriction. RDP/RCON to
+#     Source:Any is the real risk (TALOS-a8vo.11). Set it to your management IP to
+#     lock them down — but ONLY once you are sure of that IP, or you lock yourself out.
+#   - PS5 forwards are intentionally omitted (device off; operator will handle later).
+#
+# protocol enum: tcp | udp | both.  sourceIPRestriction is a SINGLE ipv4 (empty = Any).
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: cowrie-honeypot, namespace: unifi-port-forward}
+spec:
+  externalPort: 22            # WAN 22 -> honeypot. Keep OPEN — this is the bait.
+  destinationIP: "192.168.1.144"
+  destinationPort: 2222
+  protocol: both
+  enabled: true
+  description: "Cowrie SSH honeypot (intentional WAN exposure)"
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: conan-game, namespace: unifi-port-forward}
+spec: {externalPort: 7777, destinationIP: "192.168.1.19", destinationPort: 30777, protocol: udp, enabled: true, description: "Conan Exiles game"}
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: conan-raw, namespace: unifi-port-forward}
+spec: {externalPort: 7778, destinationIP: "192.168.1.19", destinationPort: 30778, protocol: udp, enabled: true, description: "Conan Exiles raw"}
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: conan-query, namespace: unifi-port-forward}
+spec: {externalPort: 27015, destinationIP: "192.168.1.19", destinationPort: 30015, protocol: udp, enabled: true, description: "Conan Exiles query"}
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: conan-rdp, namespace: unifi-port-forward}
+spec:
+  externalPort: 3389
+  destinationIP: "192.168.1.19"
+  destinationPort: 30389
+  protocol: tcp
+  enabled: true
+  description: "conan RDP — HIGH RISK to Source:Any (TALOS-a8vo.11)"
+  # sourceIPRestriction: "REPLACE_WITH_YOUR_MGMT_IP"   # <-- uncomment to lock RDP to one IP
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: conan-rcon, namespace: unifi-port-forward}
+spec:
+  externalPort: 25575
+  destinationIP: "192.168.1.19"
+  destinationPort: 30575
+  protocol: tcp
+  enabled: true
+  description: "conan RCON — RCE if weak pw; consider a source restriction"
+  # sourceIPRestriction: "REPLACE_WITH_YOUR_MGMT_IP"
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: opensim-tcp, namespace: unifi-port-forward}
+spec: {externalPort: 9000, destinationIP: "192.168.1.54", destinationPort: 30900, protocol: tcp, enabled: true, description: "OpenSim TCP"}
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: opensim-udp, namespace: unifi-port-forward}
+spec: {externalPort: 9000, destinationIP: "192.168.1.54", destinationPort: 30901, protocol: udp, enabled: true, description: "OpenSim UDP"}
+---
+# catalyst-cluster bundle SPLIT into intent-named rules. 6789 + 8883 OMITTED (stale).
+# WAN==forward port for these (no NAT translation in the UI).
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: cluster-web, namespace: unifi-port-forward}
+spec:
+  externalPort: "80,443,8443"   # Traefik entrypoints (CrowdSec-protected)
+  destinationIP: "192.168.1.54"
+  destinationPort: "80,443,8443"
+  protocol: both
+  enabled: true
+  description: "Traefik web/websecure/websecurelan -> talos00"
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: cluster-plex, namespace: unifi-port-forward}
+spec: {externalPort: 32400, destinationIP: "192.168.1.54", destinationPort: 32400, protocol: both, enabled: true, description: "Plex (direct, not behind Traefik)"}
+---
+apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
+kind: PortForwardRule
+metadata: {name: cluster-amber-cam, namespace: unifi-port-forward}
+spec: {externalPort: 4242, destinationIP: "192.168.1.54", destinationPort: 4242, protocol: both, enabled: true, description: "amber-cam-ingest camera feed"}

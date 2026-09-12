@@ -1,0 +1,56 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unifi-port-forward
+  namespace: unifi-port-forward
+  labels: {app: unifi-port-forward}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: unifi-port-forward}
+  template:
+    metadata:
+      labels: {app: unifi-port-forward}
+    spec:
+      serviceAccountName: unifi-port-forward
+      # hostNetwork so the controller reaches the gateway's controller API at
+      # UNIFI_ROUTER_IP directly. Note this SIDESTEPS CiliumNetworkPolicy — the
+      # trade-off for it Just Working against the LAN gateway. Revisit whether a
+      # normal pod + an explicit egress policy to 192.168.1.1:443 also works
+      # (would restore east-west policy coverage) — tracked in TALOS-8wum.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: unifi-port-forward
+          # Pinned to an immutable dated tag, not :latest — this drives the network edge.
+          image: ghcr.io/fiskhest/unifi-port-forward:2026-08-27-6187918
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          env:
+            - name: UNIFI_ROUTER_IP
+              value: "192.168.1.1"
+            - name: UNIFI_SITE      # config.go rejects an empty site
+              value: "default"
+            - name: UNIFI_API_KEY
+              valueFrom:
+                secretKeyRef: {name: unifi-port-forward, key: api-key, optional: true}
+            # Username/password fallback for pre-9.0.108 firmware — add these keys to
+            # the 1Password `unifi` item + ExternalSecret if the API-key path is unavailable.
+            - name: UNIFI_USERNAME
+              valueFrom:
+                secretKeyRef: {name: unifi-port-forward, key: username, optional: true}
+            - name: UNIFI_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: unifi-port-forward, key: password, optional: true}
+            - name: DEBUG
+              value: "false"
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}

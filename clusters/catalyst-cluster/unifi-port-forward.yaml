@@ -1,0 +1,30 @@
+---
+# UniFi port-forward operator (infrastructure/base/unifi-port-forward/) — manages UDM SE
+# port-forward rules as PortForwardRule CRDs (TALOS-8wum). dependsOn external-secrets for
+# the UniFi API-key credential. prune:true so a removed CR reconciles the forward away.
+#
+# STAGED GO-LIVE, mirroring the crowdsec pattern: the engine (operator + CRD + RBAC) ships
+# first and does NOTHING until a credential lands and portforward-rules.yaml is wired into
+# the base kustomization. The CRs adopt LIVE forwards on sync, so they stay out until
+# verified against the real table. Do not wire them before the round-trip test in TALOS-8wum.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unifi-port-forward
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/unifi-port-forward
+  prune: true
+  wait: false
+  # NO dependsOn external-secrets: that Kustomization is currently stuck READY:False
+  # on its own dependency (external-secrets-operator), which would block this module
+  # from ever applying. The engine does not need it at apply time — the deployment's
+  # UNIFI_* secret refs are optional:true, so the pod boots without the credential and
+  # simply cannot reach UniFi until the ExternalSecret populates. The ESO controller
+  # (pods healthy) reconciles the ExternalSecret independently of that stuck Kustomization.
