@@ -75,17 +75,23 @@ Python process, i.e. the attacker has real network access from inside the pod.
 | Every other node (talos00/01/02/03) | **blocked** |
 | `kubernetes.default` `10.96.0.1:443` | **blocked** |
 | LAN gateway `192.168.1.1:80/443` | **blocked** |
-| Open internet (`1.1.1.1:443`, `8.8.8.8:53`) | **blocked** |
-| kube-dns resolution | **REACHABLE — the only egress** |
+| Open internet, arbitrary port (e.g. `1.1.1.1:22`, C2 on `:4444`) | **blocked** |
+| Open internet **:80 / :443** (public IPs only) | **REACHABLE — sample-fetch egress** |
+| Any RFC1918 / LAN / pod-CIDR on :80/:443 | **blocked** (excluded from the egress rule) |
+| kube-dns resolution | **REACHABLE** |
 
 Cilium blocks pod→own-node egress here even though `enable-host-firewall=false`, which is
 worth knowing because it is not the behaviour people assume from that flag.
 
-There is no lateral movement, no outbound scanning, no C2 callback, no bulk exfil and no
-using this box as a DDoS reflector. That is the entire point of the default-deny egress
-policy and it is why it must not be relaxed.
+There is no lateral movement into our networks, no outbound scanning of arbitrary
+ports, no C2 callback on a non-web port, and no using this box against our own estate.
+Egress is deliberately NOT zero — it permits 80/443 to **public** IPs so cowrie can fetch
+the malware an attacker `wget`s (see *Sample Capture* below) — but every RFC1918 range,
+the pod CIDR and link-local are excluded, so outbound reach stops at the public internet
+and never touches anything of ours. That exclusion is the load-bearing control and is
+mutation-tested; it must not be relaxed.
 
-### The residual hole: DNS
+### Deliberate egress, and its residual channels
 
 kube-DNS is the one permitted egress and it is **not** confined to cluster names:
 
@@ -98,10 +104,21 @@ kube-DNS is the one permitted egress and it is **not** confined to cluster names
 - Bulk enumeration is not available — the `any.any.svc.cluster.local` wildcard SRV trick
   returns NXDOMAIN on this CoreDNS.
 
-**This is an accepted risk, not an oversight.** Closing it means an L7 DNS policy
-restricting `matchPattern` to `*.cluster.local`, which is a change to the egress rule and
-therefore an operator decision. Tracked separately; do not implement it as a side effect
-of other work.
+Egress now also permits **80/443 to public IPs** so cowrie can retrieve the payloads
+attackers instruct it to download — this is how malware SAMPLES are captured (see below).
+The residual channels are therefore:
+
+- **DNS exfil** (as above) — unchanged, still an accepted low-bandwidth channel.
+- **Web egress to public hosts** — an attacker with RCE could use cowrie's outbound
+  80/443 to fetch second-stage tooling or beacon over HTTP to a public C2. This is the
+  cost of sample capture and is bounded to two ports and public IPs only; it can reach
+  the internet but nothing of ours.
+
+**These are accepted risks, not oversights.** Tightening either — an L7 DNS policy
+restricting `matchPattern`, or dropping the web egress to give up sample capture — is a
+change to the egress rule and therefore an operator decision. Do not implement as a side
+effect of other work. Note the whole honeypot is slated to move to a physically isolated
+Raspberry Pi (TALOS-1m1n), which retires this trade entirely.
 
 ### hostPort exposure
 
@@ -126,6 +143,7 @@ Consequences:
 | `readOnlyRootFilesystem` (cowrie) | **false** — see below |
 | `readOnlyRootFilesystem` (logship) | true |
 | Namespace PSS | `enforce: privileged` (required for hostPort) |
+| `var/lib/cowrie` storage | **retained PVC** (was emptyDir) — holds captured samples + tty logs |
 
 `readOnlyRootFilesystem: false` on the cowrie container is the weakest control here.
 Cowrie writes SSH host keys and a PID file into its working tree, so making the root
@@ -148,6 +166,43 @@ a liability:
 - No real secret, token or internal DNS name is mounted into the pod.
 
 ---
+
+## Sample Capture and Archival
+
+The honeypot **keeps** what it captures. This was added after observing that egress was
+DNS-only (so attacker `wget`s silently failed and no samples were ever collected) and that
+`var/lib/cowrie` was an `emptyDir` (so downloads and session recordings were lost on every
+pod restart).
+
+**What is captured.** `var/lib/cowrie/downloads/` holds the actual malware samples an
+attacker fetched, named by their **SHA-256**. `var/lib/cowrie/tty/` holds full interactive
+session recordings, replayable with `cowrie playlog`. Neither is a log line, so the
+`jsonlog` → Loki pipeline does not carry them — they need real storage.
+
+**Where it lives, and why local.** `cowrie-var-lib` is a `honeypot-samples-retain`
+StorageClass PVC — node-local (`local-path`), `Retain` reclaim. It is deliberately **not**
+on the shared NFS export: this volume holds live malware, and NFS is mounted by a dozen
+unrelated workloads. Node-local keeps the samples on one node, reachable from nothing else.
+The old objection to a PVC (node-pinning vs the hostPort nodeSelector) no longer applies —
+the deployment is hard-pinned to its node because the router forwards WAN:22 there.
+
+**Off-node durability, via a job — the separation is the point.** A daily `cowrie-archive`
+CronJob (`35 4 * * *`) tars the samples to NFS. cowrie itself has NO route to shared
+storage; the job mounts the honeypot volume **read-only** and is the only thing that writes
+to NFS. A cowrie RCE therefore stops at the local PVC instead of gaining write access to
+storage other services read. The job carries no service-account token and is pinned to the
+same node as the RWO capture volume.
+
+**Nothing executes from the archive.** The archive PVC uses a dedicated
+`honeypot-archive-nfs` StorageClass mounted `noexec,nosuid,nodev`; archives are written
+`0400` under `umask 0077`; a `README.txt` lands beside them warning that the contents are
+live malware and to extract with `--no-same-permissions --no-same-owner`. The job also
+reports any captured sample that carries an exec bit (it cannot fix one — the source is
+read-only by design — but the condition means cowrie's download path changed).
+
+> **Handling rule:** every archive is live malware. Analyse only in an isolated VM. Never
+> extract or execute on a workstation. The `noexec` mount and `0400` perms are a safety net,
+> not permission to be careless.
 
 ## Log Volume and Retention
 

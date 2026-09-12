@@ -65,6 +65,12 @@ app brute-force scenarios (TALOS-wdwm).
   idle >24h.
 - **Bouncer** (`crowdsec-bouncer-traefik-plugin` in Traefik): **fail-open** (a CrowdSec outage can't take
   ingress down); real client IP resolved via Traefik `forwardedHeaders.trustedIPs` (Cloudflare).
+  **Remediation status code is `429`, not `403`** (2026-09-12): a banned IP was served 403, the exact
+  status nine installed scenarios (http-probing, http-*-probing, http-generic-403-bf, several CVEs)
+  treat as attack evidence — so a ban manufactured proof of its own renewal and never expired — the mechanism behind the 32h SSO
+  lockout (`http-generic-403-bf`), and a latent renewal loop for every OTHER enforcing 403-keying
+  scenario too. 429 matches no scenario filter, so a blocked request now feeds nothing and bans
+  self-expire. Any future change must confirm the code appears in no scenario filter.
 
 ### Cowrie (SSH honeypot / bait)
 A fake, fully-emulated SSH/Telnet server. Any connection = a confirmed attacker (nobody legit SSHes a
@@ -72,9 +78,17 @@ decoy). It logs every login + command. There is no `crowdsecurity/cowrie` hub it
 custom: the `logship` sidecar tails `cowrie.json` to stdout → `homelab/cowrie-logs` parser →
 `homelab/cowrie-activity` trigger scenario (bans on the first event; `share_custom: true` forwards it
 to CAPI as a max-confidence CTI signal). It is **not** in `simulation.yaml`, so it enforces.
-Reached on hostPort 2222/2223 on talos03 (bypasses Traefik), so a ban never stops engagement.
-Still internal-only, so in practice its RFC1918 sources are whitelisted and nothing gets banned until
-it's exposed publicly (TALOS-ik9o).
+Reached on hostPort 2222/2223 (bypasses Traefik), so a ban never stops engagement — the honeypot stays
+open to banned attackers by design while they are blocked everywhere behind Traefik. Pinned to
+`talos02-gpu` because the router forwards `WAN:22` to that node.
+
+**Now publicly exposed and capturing samples** (2026-09-12). Egress is 80/443 to public IPs only (every
+RFC1918 range + link-local excluded), so cowrie can fetch the malware an attacker `wget`s while reaching
+nothing of ours. Samples (`downloads/`, SHA-256-named) and session recordings (`tty/`) persist to a
+node-local `Retain` PVC and are archived daily to NFS by a read-only `cowrie-archive` CronJob; the
+archive volume is mounted `noexec,nosuid,nodev`. Full detail + blast-radius in
+`docs/05-runbooks/cowrie-public-exposure.md`. The whole honeypot is slated to move to a physically
+isolated Raspberry Pi (TALOS-1m1n).
 
 ### iocaine (AI-crawler tarpit) + Bot Wrangler
 `trap.knowledgedump.space` serves an **infinite procedurally-generated garbage maze** that wastes crawler
@@ -98,8 +112,8 @@ today; delete the `simulation.yaml` exclusion in `infrastructure/base/crowdsec/h
 | AppSec/WAF (virtual patching, CRS) | ✅ | ❌ detect-only (`default_remediation: allow`) — TALOS-t1w/db26 |
 | k8s API audit | ✅ | ✅ (bouncer) |
 | App brute-force scenarios (Authentik, *arr, Jellyfin, Grafana, …) | ✅ | ❌ **detect-only** on arrival — promotion review TALOS-wdwm |
-| `LePresidente/http-generic-403-bf` | ✅ | ❌ **demoted to detect-only** — self-reinforcing, only ever caught the operator (TALOS-y260) |
-| Cowrie honeypot | ✅ `homelab/cowrie-activity` | ✅ enforcing, but sources are RFC1918-whitelisted until public exposure (TALOS-ik9o) |
+| `LePresidente/http-generic-403-bf` | ✅ | ❌ still detect-only (`simulation.yaml`) — but the self-reinforcing loop that demoted it is now fixed at the bouncer (429 remediation, not 403), so it is a **promotion candidate**: the other 8 enforcing 403-keying scenarios (http-probing, http-admin-interface-probing, CVEs) no longer feed a renewal loop either (TALOS-y260 / crowdsec-selfban) |
+| Cowrie honeypot | ✅ `homelab/cowrie-activity` | ✅ enforcing + **publicly exposed**, capturing malware samples (TALOS-ik9o done; move to isolated Pi TALOS-1m1n) |
 | iocaine tarpit hits | ✅ | ❌ **detect-only** (simulation) — by design for now |
 | Crowd blocklists (CAPI) | ✅ enrolled (COMMUNITY) | ✅ pulled + enforced (tens of thousands of live CAPI decisions) |
 

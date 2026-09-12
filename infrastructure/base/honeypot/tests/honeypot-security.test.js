@@ -26,12 +26,22 @@
  *                                  what their stolen credential can do. Cowrie has no need for
  *                                  the API. Neither does a sidecar that tails a file.
  *
- *   egress default-deny            THE most important control here. It is what stops a
- *                                  compromised honeypot doing lateral movement, outbound
- *                                  scanning, C2, exfil, or becoming someone's DDoS node.
- *                                  kube-dns:53 is the only intended exception.
- *                                  ⚠️ If you are adding an egress rule, stop and think about
- *                                  what you are handing to a machine you invited attackers into.
+ *   egress is TIGHT, not zero    THE most important control here. It is what stops a
+ *                                  compromised honeypot doing LATERAL MOVEMENT into the LAN,
+ *                                  reaching our own services, or hitting the cluster API.
+ *                                  Two exceptions are intended and ONLY two:
+ *                                    - kube-dns:53 (name resolution)
+ *                                    - 80/443 to the PUBLIC internet, with every RFC1918
+ *                                      range + link-local EXCLUDED, so cowrie can fetch the
+ *                                      malware samples an attacker wgets (TALOS honeypot
+ *                                      sample capture) but can never reach anything of ours.
+ *                                  The load-bearing invariant is the EXCLUSION, not the
+ *                                  absence of egress. A rule that reaches a private range,
+ *                                  the pod CIDR, the API, or a port other than 53/80/443 is
+ *                                  a regression and these tests fail on it.
+ *                                  ⚠️ Widening this (new port, a private range slipping back
+ *                                  into the allowed set, toEntities:world without excepts) is
+ *                                  handing reach to a machine you invited attackers into.
  *
  *   ingress reaches world          The inverse failure: if Cilium silently drops attacker
  *                                  traffic the dashboard reads zero, which is indistinguishable
@@ -172,23 +182,84 @@ describe("Egress lockdown — the control that prevents lateral movement", () =>
     expect(deny.length).toBeGreaterThan(0);
   });
 
-  test("the ONLY egress permitted is kube-dns:53", () => {
+  // Egress is intentionally NON-ZERO: cowrie must fetch the payloads attackers wget, or
+  // downloads/ stays empty and no samples are ever captured. The invariant is therefore
+  // not "no egress" but "egress that can never reach anything of ours". Each permitted
+  // rule is classified and anything outside the two sanctioned shapes fails.
+  //
+  // ⚠️ Mutation check for this test: delete any `except` CIDR from the sample-fetch rule,
+  // or add "10.0.0.0/8" to the allowed set, and this MUST go red. If it stays green the
+  // test has stopped protecting the LAN.
+  const PRIVATE_RANGES = ["10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.30.", "172.31.", "192.168.", "169.254.", "127."];
+  const SANCTIONED_PORTS = new Set(["53", "80", "443"]);
+
+  test("every permitted egress rule is either kube-dns:53 or public-only 80/443", () => {
     requireCluster();
-    const allowed = [];
+    const violations = [];
     for (const p of cnps) {
       for (const e of p.spec?.egress || []) {
         if (Object.keys(e).length === 0) continue; // the default-deny rule itself
-        const toDNS = (e.toEndpoints || []).some(
-          (t) => t.matchLabels && t.matchLabels["k8s-app"] === "kube-dns"
-        );
+
+        // Shape 1: kube-dns.
+        const toDNS = (e.toEndpoints || []).some((t) => t.matchLabels && t.matchLabels["k8s-app"] === "kube-dns");
         if (toDNS) continue;
-        allowed.push(`${p.metadata.name}: ${JSON.stringify(e).slice(0, 120)}`);
+
+        // Shape 2: CIDR-set egress. Must be public-only (0.0.0.0/0 WITH private excepts)
+        // and restricted to sanctioned ports.
+        const cidrSets = e.toCIDRSet || [];
+        const ports = (e.toPorts || []).flatMap((tp) => (tp.ports || []).map((x) => String(x.port)));
+        const badPort = ports.filter((pt) => !SANCTIONED_PORTS.has(pt));
+        if (badPort.length) violations.push(`${p.metadata.name}: egress on non-sanctioned port(s) ${badPort.join(",")}`);
+
+        for (const set of cidrSets) {
+          const cidr = set.cidr || "";
+          const excepts = set.except || [];
+          // A CIDR that is itself private is a direct LAN/API reach — never allowed.
+          if (PRIVATE_RANGES.some((r) => cidr.startsWith(r))) {
+            violations.push(`${p.metadata.name}: egress toCIDR ${cidr} is a PRIVATE range`);
+            continue;
+          }
+          // 0.0.0.0/0 is only safe if every private range is excepted out of it.
+          if (cidr === "0.0.0.0/0") {
+            const required = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"];
+            const missing = required.filter((req) => !excepts.includes(req));
+            if (missing.length) violations.push(`${p.metadata.name}: 0.0.0.0/0 egress is MISSING excepts ${missing.join(", ")} — reaches our own networks`);
+          }
+        }
+
+        // Anything that is neither DNS nor a bounded CIDR-set rule (e.g. toEntities:world,
+        // toEndpoints to arbitrary namespaces, toServices) is unclassified and denied here.
+        if (!cidrSets.length && !toDNS) {
+          violations.push(`${p.metadata.name}: unclassified egress rule ${JSON.stringify(e).slice(0, 140)}`);
+        }
       }
     }
-    for (const a of allowed) warn(a);
-    check("no egress beyond kube-dns", allowed.length === 0,
-      allowed.length ? "⚠️ a public honeypot with outbound reach is a pivot point" : "");
-    expect(allowed).toEqual([]);
+    for (const v of violations) warn(v);
+    check("all egress is DNS or public-only 80/443 with private ranges excluded", violations.length === 0,
+      violations.length ? "⚠️ an egress rule can reach our own networks — pivot risk" : "DNS + public sample-fetch only");
+    expect(violations).toEqual([]);
+  });
+
+  test("the sample-fetch egress rule exists and excludes every private range", () => {
+    requireCluster();
+    // The positive assertion: sample capture depends on this rule being PRESENT. If it is
+    // silently dropped, downloads/ goes empty again and this catches the regression the
+    // same way the ingress test catches silently-dropped attacker traffic.
+    let found = null;
+    for (const p of cnps) {
+      for (const e of p.spec?.egress || []) {
+        const set = (e.toCIDRSet || []).find((c) => c.cidr === "0.0.0.0/0");
+        const ports = (e.toPorts || []).flatMap((tp) => (tp.ports || []).map((x) => String(x.port)));
+        if (set && (ports.includes("80") || ports.includes("443"))) found = { policy: p.metadata.name, set, ports };
+      }
+    }
+    check("sample-fetch egress (public 80/443) present", !!found,
+      found ? `${found.policy} ports ${found.ports.join("/")}` : "cowrie cannot fetch samples — downloads/ will stay empty");
+    expect(found).not.toBeNull();
+    for (const req of ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"]) {
+      check(`excludes ${req}`, found.set.except.includes(req));
+      expect(found.set.except).toContain(req);
+    }
   });
 
   test("no egress rule grants access to the Kubernetes API server", () => {
@@ -298,6 +369,73 @@ describe("Ingress must actually reach the honeypot once exposed", () => {
     );
     check("pod-CIDR ingress retained (liveness probes)", podCidr);
     expect(podCidr).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+describe("Sample capture — persistence and safe archival", () => {
+  /**
+   * The honeypot now KEEPS what it captures. var/lib/cowrie holds downloads/ (real malware
+   * samples, named by SHA-256) and tty/ (replayable sessions) — binary artifacts no log
+   * pipeline carries. These were on an emptyDir and lost on every restart. The invariant
+   * here: the capture volume is durable, and the copy that reaches SHARED storage does so
+   * safely (read-only source, non-executable destination).
+   */
+  test("cowrie var/lib is a PersistentVolumeClaim, not an emptyDir", () => {
+    requireCluster();
+    step("Sample persistence");
+    const vols = podSpec.volumes || [];
+    const varlib = vols.find((v) => v.name === "cowrie-var-lib");
+    info(`cowrie-var-lib -> ${varlib ? Object.keys(varlib).filter((k) => k !== "name")[0] : "MISSING"}`);
+    check("cowrie-var-lib is a PVC", !!varlib?.persistentVolumeClaim,
+      varlib?.emptyDir ? "still an emptyDir — captured samples and tty logs are lost on every restart" : "");
+    expect(varlib?.persistentVolumeClaim).toBeTruthy();
+  });
+
+  test("an off-node archive CronJob exists and mounts the capture volume READ-ONLY", async () => {
+    requireCluster();
+    const cj = await getJSON(["get", "cronjob", "-n", NS]);
+    const jobs = cj?.items || [];
+    const archive = jobs.find((j) => /archive|backup/i.test(j.metadata.name));
+    check("archive CronJob present", !!archive, archive ? archive.metadata.name : "no CronJob backs the samples off-node");
+    expect(archive).toBeTruthy();
+
+    const jspec = archive.spec.jobTemplate.spec.template.spec;
+    // The source (honeypot volume) must be mounted read-only — the job must not be able to
+    // write back into a volume an attacker can influence.
+    const srcVol = (jspec.volumes || []).find((v) => v.persistentVolumeClaim?.claimName === "cowrie-var-lib");
+    check("archive mounts cowrie-var-lib read-only", srcVol?.persistentVolumeClaim?.readOnly === true,
+      "the job writing back into the honeypot volume would break the separation of privilege");
+    expect(srcVol?.persistentVolumeClaim?.readOnly).toBe(true);
+
+    // The archive job must itself hold no cluster credential.
+    check("archive job has no service-account token", jspec.automountServiceAccountToken === false);
+    expect(jspec.automountServiceAccountToken).toBe(false);
+
+    // And it must be pinned to the same node as the RWO capture volume, or it silently
+    // fails to mount and backs nothing up.
+    const nodePin = jspec.nodeSelector?.["kubernetes.io/hostname"];
+    const cowriePin = podSpec.nodeSelector?.["kubernetes.io/hostname"];
+    check("archive job pinned to the cowrie node", !!nodePin && nodePin === cowriePin,
+      `job=${nodePin} cowrie=${cowriePin} — a mismatch means the RWO volume never mounts`);
+    expect(nodePin).toBe(cowriePin);
+  });
+
+  test("the archive StorageClass is mounted noexec/nosuid/nodev", async () => {
+    requireCluster();
+    // Samples are live malware. Whatever the archive PVC binds to must refuse execution.
+    const pvcs = await getJSON(["get", "pvc", "-n", NS]);
+    const archivePvc = (pvcs?.items || []).find((c) => /archive/i.test(c.metadata.name));
+    if (!archivePvc) throw new Error("no archive PVC found — cannot verify mount hardening");
+    const scName = archivePvc.spec.storageClassName;
+    const sc = await getJSON(["get", "storageclass", scName]);
+    const opts = sc?.mountOptions || [];
+    info(`archive StorageClass ${scName} mountOptions: ${opts.join(",") || "none"}`);
+    for (const req of ["noexec", "nosuid", "nodev"]) {
+      check(`mountOption ${req}`, opts.includes(req),
+        req === "noexec" ? "malware could be executed straight off the archive volume" : "");
+      expect(opts).toContain(req);
+    }
   });
 });
 
