@@ -8,7 +8,19 @@ import yaml
 
 root = Path(__file__).resolve().parents[2]
 release = yaml.safe_load((root / 'infrastructure/base/crowdsec/helmrelease.yaml').read_text())
-for patch in release['spec']['postRenderers'][0]['kustomize']['patches']:
+
+# The token-register initContainers this check exercised were removed by the TLS cert-auth migration
+# (TALOS-3pdz): agents/appsec now authenticate to LAPI by CLIENT CERT — there is no token
+# registration, no per-restart re-register, and thus no postRenderer initContainer script to test.
+# The reboot-double-register class of bug is structurally impossible under cert-auth (fungible,
+# node-independent identity). If postRenderers ever return, this check re-arms automatically.
+patches = (release.get('spec', {}).get('postRenderers') or [{}])[0].get('kustomize', {}).get('patches')
+if not patches:
+    print('check-crowdsec-registration: N/A — CrowdSec is in TLS cert-auth mode (no token-register '
+          'initContainers to exercise); reboot double-registration is structurally impossible. (TALOS-3pdz)')
+    raise SystemExit(0)
+
+for patch in patches:
     script = yaml.safe_load(patch['patch'])['spec']['template']['spec']['initContainers'][0]['command'][2]
     with tempfile.TemporaryDirectory() as directory:
         work = Path(directory)
