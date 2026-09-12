@@ -44,6 +44,10 @@ spec:
         host: authentik-postgres-rw
         name: authentik
         user: authentik
+        # request conns reused up to 60s then closed so idle backends don't pin the pool
+        # (2026-09-12 exhaustion incident); paired with max_connections=200 (appdb.yaml).
+        # Not 0 (avoid reconnect churn on login bursts); not persistent (that filled the pool).
+        conn_max_age: 60
       redis:
         # Points at the Dragonfly cache `authentik-cache` (dragonfly.yaml,
         # TALOS-5aop). This chart value becomes AUTHENTIK_REDIS__HOST in the
