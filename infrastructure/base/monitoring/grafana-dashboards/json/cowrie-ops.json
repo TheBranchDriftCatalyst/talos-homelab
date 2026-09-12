@@ -884,6 +884,150 @@
           "legendFormat": "{{eventid}}"
         }
       ]
+    },
+    {
+      "id": 43,
+      "type": "row",
+      "title": "Honeypot Fidelity \u2014 Detection & Recon",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 50
+      },
+      "panels": []
+    },
+    {
+      "id": 44,
+      "type": "stat",
+      "title": "Honeypot-Detection Attempts (24h)",
+      "description": "Bots running anti-honeypot recon (write+chmod+execute canary, error-string fingerprinting).",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 51
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `SHELL_BEHAVIOR|filter_output|===DONE===` [$__range]))",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 45,
+      "type": "stat",
+      "title": "Distinct Recon Source IPs (24h)",
+      "description": "External IPs that ran the fingerprinting recon.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 51
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `SHELL_BEHAVIOR` | src_ip!~`10\\..*|192\\.168\\..*` [$__range])))",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "text"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 46,
+      "type": "logs",
+      "title": "Recon / Detection Commands (live)",
+      "description": "The actual recon commands attackers run to fingerprint the box.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 51
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "{namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `SHELL_BEHAVIOR|uname|/proc/cpuinfo|lspci` | line_format \"{{.src_ip}} $ {{.input}}\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
     }
   ]
 }
