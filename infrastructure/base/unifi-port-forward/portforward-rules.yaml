@@ -8,6 +8,13 @@
 # Service to reference).
 #
 # RDP IS DELIBERATELY ABSENT — its WAN forward is removed (LAN + WireGuard only).
+#
+# PROTOCOL NOTE: the hostPort forwards use protocol: tcp, not the UI's "TCP/UDP". The
+# operator (2026-08-27) has a bug — the CRD accepts protocol: both but passes it straight to
+# the UniFi API, which only accepts tcp_udp, so "both" fails validation. These services are
+# all TCP in practice (SSH, HTTP/HTTPS, Plex 32400, camera 4242), so tcp is correct and the
+# UI's UDP half was superfluous. The one thing to revisit if ever enabled: HTTP/3 (QUIC) on
+# 443/udp — add a separate udp rule for 443 then. Upstream issue worth filing.
 ---
 apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
 kind: PortForwardRule
@@ -48,21 +55,21 @@ spec: {externalPort: 9000, protocol: udp, serviceRef: {name: opensim-external, n
 apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
 kind: PortForwardRule
 metadata: {name: cowrie-honeypot, namespace: unifi-port-forward}
-spec: {externalPort: 22, destinationIP: "192.168.1.144", destinationPort: 2222, protocol: both, enabled: true, description: "Cowrie SSH honeypot (intentional WAN exposure)"}
+spec: {externalPort: 22, destinationIP: "192.168.1.144", destinationPort: 2222, protocol: tcp, enabled: true, description: "Cowrie SSH honeypot (intentional WAN exposure)"}
 ---
 apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
 kind: PortForwardRule
 metadata: {name: cluster-web, namespace: unifi-port-forward}
-spec: {externalPort: "80,443,8443", destinationIP: "192.168.1.54", destinationPort: "80,443,8443", protocol: both, enabled: true, description: "Traefik web/websecure/websecurelan (CrowdSec-protected)"}
+spec: {externalPort: "80,443,8443", destinationIP: "192.168.1.54", destinationPort: "80,443,8443", protocol: tcp, enabled: true, description: "Traefik web/websecure/websecurelan (CrowdSec-protected)"}
 ---
 apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
 kind: PortForwardRule
 metadata: {name: cluster-plex, namespace: unifi-port-forward}
-spec: {externalPort: 32400, destinationIP: "192.168.1.54", destinationPort: 32400, protocol: both, enabled: true, description: "Plex (direct hostPort, not behind Traefik)"}
+spec: {externalPort: 32400, destinationIP: "192.168.1.54", destinationPort: 32400, protocol: tcp, enabled: true, description: "Plex (direct hostPort, not behind Traefik)"}
 ---
 apiVersion: unifi-port-forward.fiskhe.st/v1alpha1
 kind: PortForwardRule
 metadata: {name: cluster-amber-cam, namespace: unifi-port-forward}
-spec: {externalPort: 4242, destinationIP: "192.168.1.54", destinationPort: 4242, protocol: both, enabled: true, description: "amber-cam-ingest camera feed"}
+spec: {externalPort: 4242, destinationIP: "192.168.1.54", destinationPort: 4242, protocol: tcp, enabled: true, description: "amber-cam-ingest camera feed"}
 # DELIBERATELY OMITTED: conan-rdp (WAN 3389 removed -> LAN+WireGuard only); catalyst-cluster
 # 6789+8883 (stale, nothing listens); PS5 (device off).
