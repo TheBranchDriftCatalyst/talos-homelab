@@ -30,6 +30,13 @@ spec:
   # 02:15 daily — the slot this cluster already had. The fleet is staggered across
   # 02:00-04:15 so fifteen databases do not all hit MinIO in the same minute.
   backupSchedule: "0 15 2 * * *"
+  # max_connections bumped 100 (CNPG default) -> 200 after the 2026-09-12 connection-exhaustion
+  # incident (authentik's persistent conns + LISTEN/advisory-lock sessions filled the default pool,
+  # crash-looping authentik-server). Paired with a session-mode Pooler (pooler.yaml) + lower
+  # CONN_MAX_AGE. Memory raised so the extra backends have headroom (~2MB/conn + shared_buffers).
+  parameters:
+    max_connections: "200"
   resources:
     requestsCpu: 50m
-    requestsMemory: 256Mi
+    requestsMemory: 512Mi
+    limitsMemory: 1Gi
