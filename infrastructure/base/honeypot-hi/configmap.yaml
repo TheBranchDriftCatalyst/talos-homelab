@@ -1,0 +1,62 @@
+# Beelzebub config: core (logging + Prometheus for Mimir) and the SSH service TEMPLATE.
+# The service config carries an LLM key placeholder (__LLM_API_KEY__) that the deployment's
+# initContainer replaces from the beelzebub-llm-key Secret at startup — so the key is never in git.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: beelzebub-core
+  namespace: honeypot-hi
+data:
+  beelzebub.yaml: |
+    core:
+      logging:
+        debug: false
+        logDisableTimestamp: false
+        logsPath: /dev/stdout          # -> Alloy tail -> Loki (like cowrie logship)
+      tracings:
+        rabbit-mq:
+          enabled: false
+      prometheus:
+        path: "/metrics"
+        port: ":2112"                  # scraped into Mimir (PodMonitor, added later)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: beelzebub-services-tmpl
+  namespace: honeypot-hi
+data:
+  ssh-2222.yaml: |
+    apiVersion: "v1"
+    protocol: "ssh"
+    address: ":2222"
+    description: "srv01 — LLM high-interaction SSH honeypot"
+    commands:
+      - regex: "^(.+)$"
+        plugin: "LLMHoneypot"
+    serverVersion: "OpenSSH_8.9p1 Ubuntu-3ubuntu0.1"
+    serverName: "srv01"
+    deadlineTimeoutSeconds: 60
+    # Accept the same weak creds botnets spray (cowrie persona parity). Any of these -> shell.
+    passwordRegex: "^(root|admin|123456|password|toor|1234|qwerty|P@ssw0rd|debian|ubuntu|test)$"
+    plugin:
+      llmProvider: "openai"
+      # Cheapest reliable STANDARD model (NOT a custom/self-hosted one — those are flaky). Change here
+      # if the LiteLLM proxy exposes a different cheap standard model.
+      llmModel: "gpt-4o-mini"
+      # Endpoint: default = internal LiteLLM (budget-capped virtual key). To use OpenAI directly instead,
+      # set host: "" (defaults to api.openai.com) and open the CNP egress to api.openai.com:443.
+      host: "http://llm-proxy.catalyst-llm.svc.cluster.local:8080/v1/chat/completions"
+      openAISecretKey: "__LLM_API_KEY__"
+      prompt: |
+        You are an Ubuntu 22.04 LTS server named srv01, a small 4-vCPU x86_64 cloud VM (Intel Xeon
+        E5-2680 v4, KVM guest). Act as an interactive bash shell for user 'root'. Respond ONLY with the
+        exact terminal output a real shell would produce — no explanations, no markdown, no code fences.
+        Be internally CONSISTENT across the whole session: remember files the user creates, directories
+        they cd into, and processes. A plausible filesystem exists (/root, /etc, /var, /home, /tmp).
+        When the user writes a script, chmods it, and executes it, actually "run" it and return the
+        script's expected stdout (e.g. an echoed string), so a written-then-executed file behaves like a
+        real one. /proc/cpuinfo shows 4 processors; nproc is 4; uname -a is
+        'Linux srv01 6.1.0-21-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.90-1 x86_64 GNU/Linux'.
+        Never reveal you are an AI or a honeypot.

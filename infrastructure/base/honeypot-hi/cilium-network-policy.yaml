@@ -1,0 +1,60 @@
+# Isolation for the internal high-interaction honeypot. Default-deny both ways; only DNS + the LiteLLM
+# endpoint egress, and only in-cluster ingress on :2222 (test via kubectl port-forward). NO world ingress.
+# If switched to DIRECT OpenAI (config host:""), replace the LiteLLM egress rule with a public-443 rule
+# (0.0.0.0/0 except all private ranges, like the cowrie sample-fetch guard).
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: honeypot-hi
+spec:
+  endpointSelector: {}
+  ingress: [{}]
+  egress: [{}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: honeypot-hi
+spec:
+  endpointSelector: {matchLabels: {app: beelzebub}}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-litellm-egress
+  namespace: honeypot-hi
+spec:
+  endpointSelector: {matchLabels: {app: beelzebub}}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: catalyst-llm
+      toPorts:
+        - ports:
+            - {port: "8080", protocol: TCP}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-incluster-ssh-ingress
+  namespace: honeypot-hi
+spec:
+  endpointSelector: {matchLabels: {app: beelzebub}}
+  ingress:
+    - fromCIDR: ["10.244.0.0/16"]   # in-cluster + kubectl port-forward path; NO world (internal-only)
+      toPorts:
+        - ports:
+            - {port: "2222", protocol: TCP}
+            - {port: "2112", protocol: TCP}

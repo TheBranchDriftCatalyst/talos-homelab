@@ -1,0 +1,21 @@
+# High-interaction honeypot (Beelzebub LLM SSH) — Phase 2a, INTERNAL-ONLY (TALOS-ztch).
+# NOTE: intentionally NO postBuild.substituteFrom — this stack needs no cluster-settings vars, and
+# omitting envsubst keeps the initContainer's `$LLM_API_KEY` shell var literal (the backup-cronjob trap).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: honeypot-hi
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/honeypot-hi
+  prune: true
+  wait: false
+  dependsOn:
+    - name: cilium                    # base ships default-deny CNP -> Cilium CRDs must exist
+    - name: external-secrets-operator # ESO provides the LLM key
