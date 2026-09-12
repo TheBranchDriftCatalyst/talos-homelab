@@ -25,6 +25,12 @@ spec:
     - match: Host(`maintainerr.talos00`) && PathPrefix(`/api`)
       kind: Rule
       priority: 100
+      # Maintainerr has NO built-in auth, so an un-gated /api carve-out is a full unauth API that
+      # leaks the app's API key (TALOS-a8vo P0). lan-only blocks off-LAN/WAN Host-spoof (matches the
+      # frigate 002 fix); the pod-CIDR residue closes with the lan-only-excludes-pod-CIDR fix (P1).
+      middlewares:
+        - name: lan-only
+          namespace: traefik
       services:
         - name: maintainerr
           port: 6246

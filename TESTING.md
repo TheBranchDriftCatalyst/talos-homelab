@@ -2,14 +2,19 @@
 
 ## TL;DR
 
-This repo tests infrastructure two ways, and both follow the same discipline —
+This repo tests infrastructure three ways, and all follow the same discipline —
 **safe/offline by default, destructive/live behind an explicit flag**:
 
 1. **DR / resilience layer** (Jest) — per-component `*-dr.test.js` suites that prove
    the recovery machinery exists and, when armed, inject faults and measure recovery.
 2. **Security-posture layer** (Python) — `scripts/security/test_security_posture.py`
-   asserts security contracts against the manifests (offline) and against the running
-   cluster (`--live`).
+   asserts *per-fix* security contracts against the manifests (offline) and against the
+   running cluster (`--live`) — proves each fixed finding **stays fixed**.
+3. **Ingress-accessibility layer** (Python) — `scripts/security/test_ingress_accessibility.py`
+   renders the whole Flux tree and asserts *fleet-wide* ingress invariants ("what is
+   reachable, from where, with what auth") offline, plus a `--live` accessibility probe —
+   proves **no new route reintroduces a finding's shape**. Accepted risks live in
+   `scripts/security/ingress_allowlists.py` (the review surface).
 
 ```bash
 # DR layer (Jest)
@@ -20,6 +25,10 @@ npx jest --selectProjects traefik-dr    # one suite
 # Security-posture layer (Python)
 python scripts/security/test_security_posture.py          # offline manifest contracts
 python scripts/security/test_security_posture.py --live   # + running-system assertions
+
+# Ingress-accessibility layer (Python) — needs `kustomize` on PATH
+task security:ingress-audit         # offline: render tree + assert ingress invariants
+task security:ingress-audit-live    # + read-only LAN/in-cluster accessibility probe
 ```
 
 **Rule going forward:** every security fix ships with a paired posture test — an
@@ -28,22 +37,31 @@ python scripts/security/test_security_posture.py --live   # + running-system ass
 
 ---
 
-## The two layers
+## The three layers
 
-| | **DR / resilience** | **Security posture** |
-|---|---|---|
-| Question | "When X fails, does it recover?" | "Is X configured and behaving securely?" |
-| Runner | Jest (Node) | Python `unittest` |
-| Location | `infrastructure/base/<c>/tests/*-dr.test.js`, `tests/etcd-dr/` | `scripts/security/test_security_posture.py` (+ `scripts/security/check-*.py`) |
-| Aggregator | root `jest.config.js` `projects[]` | one script, two `TestCase` classes |
-| Safe default | read-only observation | offline manifest contracts |
-| Guarded mode | `*_DESTRUCTIVE=1` env → fault injection | `--live` → running-system checks |
-| CI | (local / on-demand) | `.github/workflows/security-posture.yaml` |
-| Needs | `kubectl` (cluster context) | PyYAML always; `kubectl` + LAN for `--live` |
+| | **DR / resilience** | **Security posture** | **Ingress accessibility** |
+|---|---|---|---|
+| Question | "When X fails, does it recover?" | "Does each fixed finding stay fixed?" | "What is reachable, from where, with what auth?" |
+| Runner | Jest (Node) | Python `unittest` | Python `unittest` |
+| Location | `infrastructure/base/<c>/tests/*-dr.test.js`, `tests/etcd-dr/` | `scripts/security/test_security_posture.py` | `scripts/security/test_ingress_accessibility.py` (+ `ingress_corpus.py`, `ingress_allowlists.py`) |
+| Corpus | one component | per-fix manifest paths | **rendered** whole Flux tree (`kustomize build`) |
+| Aggregator | root `jest.config.js` `projects[]` | one script, two `TestCase` classes | one script, two `TestCase` classes |
+| Safe default | read-only observation | offline manifest contracts | offline rendered-corpus contracts |
+| Guarded mode | `*_DESTRUCTIVE=1` env → fault injection | `--live` → running-system checks | `--live` → read-only LAN + in-cluster probe |
+| CI | (local / on-demand) | `security-posture.yaml` job `contracts` | `security-posture.yaml` job `ingress-surface` |
+| Needs | `kubectl` | PyYAML; `kubectl`+LAN for `--live` | PyYAML + **`kustomize`**; `kubectl`+LAN for `--live` |
 
-Both layers **never mutate real data or black-hole a real route by accident** — chaos
-only ever targets throwaway routes and self-healing infra pods; the live security checks
-are read-only bar one harmless synthetic-header GET.
+All three layers **never mutate real data or black-hole a real route by accident** — chaos
+only ever targets throwaway routes and self-healing infra pods; the live security + accessibility
+checks are read-only bar one harmless synthetic-header GET.
+
+**Division of labour (posture vs accessibility):** the security-posture layer pins each specific
+remediation (`--api.insecure` absent, qBittorrent has no carve-out); the ingress-accessibility layer
+enumerates the *whole surface* so a NEW route that reintroduces a finding's shape (an un-gated `/api`
+carve-out on a different app, a dangling middleware ref, a raw-TCP proxy) is caught even though the
+original fix is untouched. Each accepted exception is a reviewed entry in `ingress_allowlists.py`
+carrying a rationale + a `TALOS-` issue id — so relaxing a contract is a visible PR diff, not a
+silently-passing test.
 
 ---
 
