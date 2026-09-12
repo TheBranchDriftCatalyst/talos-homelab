@@ -25,7 +25,33 @@ spec:
       streamStartupBlock: "true" # no unprotected startup before initial decisions arrive
       httpTimeoutSeconds: "10"
       defaultDecisionSeconds: "60"
-      remediationStatusCode: "403"
+      # 429, NOT 403 — this breaks a self-reinforcing ban loop (TALOS-crowdsec-selfban).
+      #
+      # The bouncer answers every request from a banned IP with this code. When it was
+      # 403, that answer was itself evidence for the scenarios that issue bans, so a ban
+      # manufactured the proof of its own necessity and renewed forever. That is the
+      # documented 2026-08-20 incident: a few 403s out of an SSO flow tripped
+      # LePresidente/http-generic-403-bf, the resulting 403-to-everything refilled the
+      # same bucket, and the operator stayed locked out of Authentik for 32 hours. The
+      # only escape was pinning a home IP in homelab/whitelist, which treats one address
+      # rather than the loop.
+      #
+      # NINE installed scenarios count 403 as evidence, so the feedback was never limited
+      # to the 403-bf scenario: LePresidente/http-generic-403-bf, crowdsecurity/http-probing
+      # (400/403/404), http-admin-interface-probing, http-cve-probing,
+      # http-technology-probing, http-wordpress-scan, and CVE-2024-0012 / CVE-2024-38475 /
+      # CVE-2024-9474 (all 403/404).
+      #
+      # NO installed scenario matches 429 (verified by grepping every file under
+      # /etc/crowdsec/scenarios), so a blocked request no longer feeds anything: the
+      # leaky bucket drains and the ban expires on its own schedule. 429 is also the
+      # honest semantic for "you are being rate-limited/remediated".
+      #
+      # BEFORE CHANGING THIS BACK: any status you pick must not appear in a scenario
+      # filter, or the loop returns. Re-run:
+      #   kubectl -n crowdsec exec <agent> -c crowdsec-agent -- \
+      #     grep -rn "http_status" /etc/crowdsec/scenarios/
+      remediationStatusCode: "429"
       # --- real client IP behind Cloudflare (trust CF proxies' X-Forwarded-For) ---
       # TALOS-lxz5.1 (5.1.4b): 10.0.0.0/8 REMOVED. Trusting the pod/service CIDR let
       # any pod forge X-Forwarded-For and spoof the client IP the bouncer evaluates.
