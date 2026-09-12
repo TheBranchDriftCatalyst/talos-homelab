@@ -37,7 +37,7 @@ TENANT_SELECTOR = os.environ.get("MINIO_TENANT_LABEL", "v1.min.io/tenant=minio")
 CORE_BUCKETS = [b.strip() for b in os.environ.get(
     "MINIO_CORE_BUCKETS", "mimir,loki,tempo,velero,cnpg-backups").split(",") if b.strip()]
 CANARY_BUCKET = os.environ.get("MINIO_CANARY_BUCKET", "minio-dr-canary")
-MC_IMAGE = os.environ.get("MINIO_MC_IMAGE", "minio/mc:RELEASE.2024-11-21T17-21-54Z")
+MC_IMAGE = os.environ.get("MINIO_MC_IMAGE", "quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z")
 MAX_RECOVERY_S = float(os.environ.get("MINIO_MAX_RECOVERY_S", "180"))
 DESTRUCTIVE_ENV = "MINIO_DR_DESTRUCTIVE"
 
