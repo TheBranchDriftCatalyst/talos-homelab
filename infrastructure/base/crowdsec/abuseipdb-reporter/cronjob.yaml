@@ -1,0 +1,54 @@
+# Reports Cowrie honeypot attackers to AbuseIPDB, once daily. Sources the last 24h from Loki so each
+# report is policy-compliant (detailed: ports/creds/commands/timestamps; handshake-completers only).
+# Lives in crowdsec ns (no NetworkPolicy) so it can reach BOTH Loki (in-cluster) and AbuseIPDB (public).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: abuseipdb-reporter
+  namespace: crowdsec
+  labels: {app: abuseipdb-reporter}
+spec:
+  schedule: "17 4 * * *"          # daily 04:17 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 2
+      template:
+        metadata:
+          labels: {app: abuseipdb-reporter}
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: reporter
+              image: python:3.12-alpine
+              command: ["python3", "/script/reporter.py"]
+              env:
+                - name: DRY_RUN
+                  value: "0"                      # LIVE — reports real attackers to AbuseIPDB daily
+                - name: LOKI_URL
+                  value: "http://loki.monitoring.svc:3100"
+                - name: WINDOW_HOURS
+                  value: "24"
+                - name: ABUSEIPDB_API_KEY
+                  valueFrom:
+                    secretKeyRef: {name: abuseipdb-key, key: ABUSEIPDB_API_KEY}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              resources:
+                requests: {cpu: 20m, memory: 64Mi}
+                limits: {memory: 128Mi}
+              volumeMounts:
+                - {name: script, mountPath: /script, readOnly: true}
+          volumes:
+            - name: script
+              configMap: {name: abuseipdb-reporter-script}
