@@ -14,13 +14,11 @@ spec:
       labels: {app: unifi-port-forward}
     spec:
       serviceAccountName: unifi-port-forward
-      # hostNetwork so the controller reaches the gateway's controller API at
-      # UNIFI_ROUTER_IP directly. Note this SIDESTEPS CiliumNetworkPolicy — the
-      # trade-off for it Just Working against the LAN gateway. Revisit whether a
-      # normal pod + an explicit egress policy to 192.168.1.1:443 also works
-      # (would restore east-west policy coverage) — tracked in TALOS-8wum.
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      # NO hostNetwork: the cluster's Kyverno baseline policy forbids it, and a normal
+      # pod reaches the gateway's controller API at UNIFI_ROUTER_IP via ordinary egress
+      # (same as pihole/the blocklist-mirror reach the LAN). This also keeps the workload
+      # under CiliumNetworkPolicy. If the operator ever cannot reach the controller,
+      # add a scoped egress policy to 192.168.1.1:443 rather than reintroducing hostNetwork.
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
