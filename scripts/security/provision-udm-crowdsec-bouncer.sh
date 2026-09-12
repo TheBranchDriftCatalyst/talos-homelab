@@ -10,7 +10,7 @@
 # manually editing files on the UDM. You run this once; it does the rest and is safe to
 # re-run (idempotent).
 #
-# The UDM pulls a FILTERED blocklist from the in-cluster mirror (192.168.1.242:41412),
+# The UDM pulls a FILTERED blocklist from the in-cluster mirror (192.168.1.243:41412),
 # which already excludes cowrie (keeps the honeypot alive) and the 30k static import list.
 # See infrastructure/base/crowdsec/blocklist-mirror.yaml.
 #
@@ -21,7 +21,7 @@
 #   2. Know the UDM's LAN IP (usually 192.168.1.1).
 #
 # ── PREREQUISITES (cluster side, GitOps) ─────────────────────────────────────────────────
-#   - infrastructure/base/crowdsec/blocklist-mirror.yaml deployed (LB on 192.168.1.242).
+#   - infrastructure/base/crowdsec/blocklist-mirror.yaml deployed (LB on 192.168.1.243).
 #   - 1Password `crowdsec` item has field `bouncer-api-key-unifimirror` (openssl rand -hex 32);
 #     ESO syncs it and LAPI registers the "unifimirror" bouncer. (The mirror serves the list
 #     with auth:none, so the UDM does NOT need that key — this note is for the cluster side.)
@@ -29,7 +29,7 @@
 # ── USAGE ────────────────────────────────────────────────────────────────────────────────
 #   UDM_HOST=192.168.1.1 ./provision-udm-crowdsec-bouncer.sh
 #   # optional overrides:
-#   UDM_HOST=192.168.1.1 UDM_USER=root MIRROR_URL=http://192.168.1.242:41412/security.txt \
+#   UDM_HOST=192.168.1.1 UDM_USER=root MIRROR_URL=http://192.168.1.243:41412/security.txt \
 #     INSTALLER_REF=v1.4.0 ./provision-udm-crowdsec-bouncer.sh
 #
 #   Dry run (prints what it WOULD do on the device, changes nothing):
@@ -40,7 +40,7 @@ set -euo pipefail
 # ── config (env-overridable) ─────────────────────────────────────────────────────────────
 UDM_HOST="${UDM_HOST:?set UDM_HOST, e.g. UDM_HOST=192.168.1.1}"
 UDM_USER="${UDM_USER:-root}"
-MIRROR_URL="${MIRROR_URL:-http://192.168.1.242:41412/security.txt}"
+MIRROR_URL="${MIRROR_URL:-http://192.168.1.243:41412/security.txt}"
 # Pin the installer to a specific ref rather than tracking main — this runs on your firewall.
 INSTALLER_REPO="${INSTALLER_REPO:-wolffcatskyy/crowdsec-unifi-bouncer}"
 INSTALLER_REF="${INSTALLER_REF:-main}"
@@ -72,6 +72,7 @@ if [ "$DRY_RUN" != "1" ]; then
     die "cannot SSH to ${UDM_USER}@${UDM_HOST}. Enable SSH in the UniFi UI and confirm the host/key/password."
   ok "SSH to ${UDM_USER}@${UDM_HOST} works"
 
+  # shellcheck disable=SC2029
   MODEL="$(remote 'cat /proc/ubnthal/system.info 2>/dev/null | sed -n "s/^systemid=//p;s/^shortname=//p" | head -1' || true)"
   UNIFIOS="$(remote 'test -d /data && test -f /etc/os-release && echo yes || echo no')"
   [ "$UNIFIOS" = "yes" ] || die "this does not look like a UniFi OS device (no /data). Aborting rather than touching the wrong host."
@@ -83,7 +84,7 @@ if [ "$DRY_RUN" != "1" ]; then
     ok "mirror reachable from the UDM — serving ${COUNT:-?} IPs"
   else
     warn "the UDM cannot reach ${MIRROR_URL}."
-    warn "Deploy infrastructure/base/crowdsec/blocklist-mirror.yaml and confirm 192.168.1.242 is up,"
+    warn "Deploy infrastructure/base/crowdsec/blocklist-mirror.yaml and confirm 192.168.1.243 is up,"
     warn "then re-run. (Continuing would install a bouncer with an empty blocklist.)"
     die "mirror unreachable — fix the source before provisioning the edge."
   fi
@@ -126,8 +127,17 @@ nftables:
 blocklists:
   - url: ${MIRROR_URL}
     method: GET
+# Expose Prometheus metrics on the LAN so the cluster's Alloy can scrape them
+# (job crowdsec-unifi-bouncer -> Mimir -> crowdsec-ops dashboard). The UDM firewall
+# must permit inbound :9101 from the pod CIDR (10.244.0.0/16). Bound to all
+# interfaces because localhost-only is unreachable from the cluster.
+prometheus:
+  enabled: true
+  listen_addr: 0.0.0.0
+  listen_port: 9101
 CFG
-remote "mkdir -p '${CONFIG_DIR}'"
+# shellcheck disable=SC2029
+  remote "mkdir -p '${CONFIG_DIR}'"
 if [ "$DRY_RUN" = "1" ]; then
   printf '    [dry-run] would write %s/crowdsec-firewall-bouncer.yaml:\n' "$CONFIG_DIR"
   printf '%s\n' "$BOUNCER_CFG" | sed 's/^/        /'
@@ -161,6 +171,10 @@ cat << DONE
   VERIFY THE HONEYPOT IS STILL ALIVE (the one check that matters):
     # a currently-cowrie-banned IP must NOT be in the edge set
     ssh ${UDM_USER}@${UDM_HOST} 'nft list set inet crowdsec crowdsec-blacklists' | grep <a-cowrie-IP>   # -> should be EMPTY
+
+  METRICS: the bouncer now serves Prometheus metrics on <UDM>:9101. For the crowdsec-ops
+  dashboard's "UDM edge bouncer" row to populate, allow inbound :9101 from 10.244.0.0/16 on
+  the UDM firewall (the cluster's Alloy scrapes it).
 
   RE-RUN this script any time to reconfigure. To REMOVE:
     ssh ${UDM_USER}@${UDM_HOST} 'systemctl disable --now crowdsec-firewall-bouncer; rm -rf /data/crowdsec-bouncer'
