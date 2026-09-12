@@ -1,0 +1,41 @@
+---
+# LOCAL ADDITIONS (not from upstream) — two RBAC grants the operator needs that upstream's
+# vendored ClusterRole omits. Without these it silently runs degraded.
+#
+# 1. customresourcedefinitions read: IsPortForwardRuleCRDAvailable check
+# (main.go) reads the CustomResourceDefinition object to decide whether to run in CRD mode
+# or fall back to annotation-only mode. Upstream's vendored ClusterRole grants no access to
+# apiextensions.k8s.io/customresourcedefinitions, so that check is FORBIDDEN and the operator
+# silently disables the PortForwardRule controller ("CRD not found") even when the CRD is
+# installed. This grants the read the detection needs. Kept separate from rbac.yaml so the
+# vendored file stays byte-identical to upstream and easy to refresh.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: unifi-port-forward-crd-read
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+  # 2. gateway.networking.k8s.io read: the operator unconditionally starts a Gateway
+  #    controller whose informer LISTs these. Gateway API CRDs are installed here, so a
+  #    forbidden LIST leaves that informer's cache permanently unsynced — and
+  #    controller-runtime blocks ALL reconcilers (incl. PortForwardRule) until every cache
+  #    syncs. Result: CRs got no status. Read access lets the informer sync (to whatever
+  #    Gateways exist, likely none) so the manager proceeds.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["gateways", "gatewayclasses", "httproutes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: unifi-port-forward-crd-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: unifi-port-forward-crd-read
+subjects:
+  - kind: ServiceAccount
+    name: unifi-port-forward
+    namespace: unifi-port-forward

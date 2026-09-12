@@ -6,7 +6,7 @@ The Cowrie SSH honeypot is **staged for internet exposure but not yet exposed**.
 manifest change is done; the only remaining step is a router port-forward the operator
 performs by hand.
 
-- **Go live:** forward `WAN:22 → 192.168.1.19:2222` (talos06). Nothing else.
+- **Go live:** forward `WAN:22 → 192.168.1.144:2222` (talos02-gpu). Nothing else.
 - **Do NOT forward telnet (2223).** Rationale below.
 - **The container can reach nothing** except kube-DNS — verified by probing, not by reading
   the policy file. This is the control that makes "attacker logs in successfully" a
@@ -25,7 +25,7 @@ performs by hand.
 #    cowrie reschedules, the forward target IP is wrong and capture goes silent.
 kubectl get pod -n honeypot -l app=cowrie -o wide
 
-# 2. Forward on the router:   WAN:22  ->  192.168.1.19:2222
+# 2. Forward on the router:   WAN:22  ->  192.168.1.144:2222  (talos02-gpu)
 #    (no manifest in this repo creates this path — that is deliberate)
 
 # 3. Confirm from OFF-network (phone hotspot, not the LAN):
@@ -69,9 +69,9 @@ Python process, i.e. the attacker has real network access from inside the pod.
 
 | Target | Result |
 | --- | --- |
-| talos06 apid `:50000` (its own node) | **blocked** |
-| talos06 kubelet `:10250` | **blocked** |
-| talos06 kube-apiserver `:6443` | **blocked** |
+| talos02-gpu apid `:50000` (its own node) | **blocked** |
+| talos02-gpu kubelet `:10250` | **blocked** |
+| talos02-gpu kube-apiserver `:6443` | **blocked** |
 | Every other node (talos00/01/02/03) | **blocked** |
 | `kubernetes.default` `10.96.0.1:443` | **blocked** |
 | LAN gateway `192.168.1.1:80/443` | **blocked** |
@@ -122,10 +122,10 @@ Raspberry Pi (TALOS-1m1n), which retires this trade entirely.
 
 ### hostPort exposure
 
-`hostPort: 2222/2223` binds the port on **talos06 itself**, bypassing Service routing.
+`hostPort: 2222/2223` binds the port on **talos02-gpu itself**, bypassing Service routing.
 Consequences:
 
-- Anyone who can reach `192.168.1.19:2222` reaches Cowrie. After the forward, that is the
+- Anyone who can reach `192.168.1.144:2222` reaches Cowrie. After the forward, that is the
   internet.
 - Only the two honeypot ports are bound. hostPort does **not** grant the container access
   to the node's other services — verified above, all blocked.

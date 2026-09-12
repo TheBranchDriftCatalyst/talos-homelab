@@ -98,6 +98,19 @@ spec:
               mountPath: /cowrie/cowrie-git/etc/cowrie.cfg
               subPath: cowrie.cfg
               readOnly: true
+            # Fingerprint hardening (TALOS-a8kx): override the stock txtcmds output for the
+            # commands botnet recon runs to detect a honeypot. Default cowrie ships a dated
+            # 2-core "Model 23" (2008-era) lscpu + nproc=2 — a tell. These replace them with a
+            # consistent modern 4-vCPU KVM guest (honest: we ARE a VM). subPath over the packaged
+            # data path; if the path ever moves, cowrie falls back to its default (no breakage).
+            - name: cowrie-fs-hardening
+              mountPath: /cowrie/cowrie-git/src/cowrie/data/txtcmds/usr/bin/lscpu
+              subPath: lscpu
+              readOnly: true
+            - name: cowrie-fs-hardening
+              mountPath: /cowrie/cowrie-git/src/cowrie/data/txtcmds/usr/bin/nproc
+              subPath: nproc
+              readOnly: true
             - name: cowrie-var-lib
               mountPath: /cowrie/cowrie-git/var/lib/cowrie
             - name: cowrie-var-log
@@ -147,6 +160,9 @@ spec:
         - name: cowrie-config
           configMap:
             name: cowrie-config
+        - name: cowrie-fs-hardening
+          configMap:
+            name: cowrie-fs-hardening
         # Honeypot state is NO LONGER ephemeral (see pvc.yaml for the full reasoning).
         # var/lib/cowrie holds downloads/ (the actual malware samples) and tty/ (replayable
         # session recordings). Neither is a log line, so the jsonlog->Loki path does not
