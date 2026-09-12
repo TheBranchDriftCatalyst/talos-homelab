@@ -1,0 +1,496 @@
+{
+  "uid": "beelzebub-ops",
+  "title": "Beelzebub Ops (LLM Honeypot)",
+  "tags": [
+    "security",
+    "honeypot"
+  ],
+  "timezone": "",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Commands Captured",
+      "description": "Commands attackers ran in the LLM shell (event_Msg=SSH Raw Command).",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot-hi\"} | json | event_Msg=`SSH Raw Command` | event_Command != `` [$__range]))",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "text"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Login Attempts",
+      "description": "SSH login attempts (any accepted password -> shell).",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 6,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot-hi\"} | json | event_Msg=`New SSH Login Attempt` [$__range]))",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "text"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Unique Attacker IPs",
+      "description": "Distinct external source IPs (pod-CIDR probe noise excluded).",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "count(sum by (event_SourceIp) (count_over_time({namespace=\"honeypot-hi\"} | json | event_SourceIp != `` | event_SourceIp !~ `10\\\\.244\\\\..*` [$__range])))",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "text"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "LLM Fallbacks (detection risk)",
+      "description": "Commands that fell back to 'command not found' \u2014 an LLM failure the attacker could fingerprint. Should stay LOW.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot-hi\"} | json | event_CommandOutput=`command not found` [$__range]))",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "continuous-GrYlRd"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Activity",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      }
+    },
+    {
+      "id": 11,
+      "type": "logs",
+      "title": "Captured Commands (live)",
+      "description": "Live attacker commands + the LLM-generated output.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "{namespace=\"honeypot-hi\"} | json | event_Msg=`SSH Raw Command` | line_format \"{{.event_SourceIp}}  $ {{.event_Command}}  =>  {{.event_CommandOutput}}\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Login Attempts / Commands over time",
+      "description": "Attacker activity rate.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot-hi\"} | json | event_Msg=`New SSH Login Attempt` [5m]))",
+          "legendFormat": "logins"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot-hi\"} | json | event_Msg=`SSH Raw Command` [5m]))",
+          "legendFormat": "commands"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "piechart",
+      "title": "Event Breakdown",
+      "description": "Distribution of event types.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum by (event_Msg) (count_over_time({namespace=\"honeypot-hi\"} | json | event_Msg != `` [$__range]))",
+          "queryType": "instant"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "pieType": "donut",
+        "legend": {
+          "displayMode": "list",
+          "placement": "right"
+        }
+      }
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Attackers",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      }
+    },
+    {
+      "id": 31,
+      "type": "table",
+      "title": "Top Attacker IPs",
+      "description": "Most active external source IPs.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "topk(10, sum by (event_SourceIp) (count_over_time({namespace=\"honeypot-hi\"} | json | event_SourceIp != `` | event_SourceIp !~ `10\\\\.244\\\\..*` [$__range])))",
+          "queryType": "instant",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "table",
+      "title": "Top Commands",
+      "description": "Most-run commands.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "topk(15, sum by (event_Command) (count_over_time({namespace=\"honeypot-hi\"} | json | event_Command != `` [$__range])))",
+          "queryType": "instant",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "table",
+      "title": "Captured Credentials",
+      "description": "Username/password pairs sprayed at the honeypot.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 26
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "topk(20, sum by (event_User, event_Password) (count_over_time({namespace=\"honeypot-hi\"} | json | event_Msg=`New SSH Login Attempt` | event_User != `` [$__range])))",
+          "queryType": "instant",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {}
+        }
+      ]
+    }
+  ]
+}
