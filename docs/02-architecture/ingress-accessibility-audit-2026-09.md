@@ -2,7 +2,7 @@
 
 > Epic **TALOS-a8vo**. Full L3→L7 audit of the ingress + network surface, diffed against the
 > 2026-09-09 pentest (**TALOS-lxz5**, findings 001–019). 4 parallel auditors + live in-cluster
-> probing. Companion: the new **ingress-accessibility test layer** (`scripts/security/test_ingress_accessibility.py`) turns this audit into a standing regression net.
+> probing. Companion: the new **ingress-accessibility test layer** (`tests/ingress-accessibility/test_ingress_accessibility.py`) turns this audit into a standing regression net.
 
 ## TL;DR
 
@@ -74,12 +74,12 @@ HTTP→HTTPS redirect · gate the inference plane · header-strip allowlist gap 
 
 ## The standing regression net (Layer 3)
 
-This audit is now codified in `scripts/security/test_ingress_accessibility.py` — the third test
+This audit is now codified in `tests/ingress-accessibility/test_ingress_accessibility.py` — the third test
 layer (alongside DR + security-posture, see [TESTING.md](../../TESTING.md)). It renders the whole
 Flux tree and asserts fleet-wide ingress invariants offline (middleware-ref-resolves, no-combined-EP,
 `/api`-carveouts-gated, `lan-only`-not-pod-CIDR, tcp-proxy-restricted, flux-paths-exist), with a
 `--live` read-only probe (admin-not-open, forged-identity-stripped). Accepted risks are reviewed
-entries in `ingress_allowlists.py`, each carrying a rationale + a `TALOS-` id — so relaxing a
+entries in `tests/ingress-accessibility/ingress_allowlists.py`, each carrying a rationale + a `TALOS-` id — so relaxing a
 contract is a visible PR diff. Two fixes fell out of building it: maintainerr (P0) and a dangling
 `redirect-to-https` middleware ref that was silently dropping 2 routes.
 

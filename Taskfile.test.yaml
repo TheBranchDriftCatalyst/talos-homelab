@@ -1,0 +1,65 @@
+# Unified test system — one interface over every suite (see TESTING.md).
+# Suites are pytest markers (security_posture, ingress_accessibility) + the Jest DR projects.
+# Location: co-located with code where possible (DR under infrastructure/base/*/tests), bubbling to
+# the central tests/ root for cross-namespace suites (security-posture, ingress-accessibility).
+version: "3"
+
+tasks:
+  default:
+    desc: "Run ALL suites (offline/read-only) — Python (pytest) + DR (Jest)"
+    cmds:
+      - task: python
+      - task: dr
+
+  all:
+    desc: "Alias for the default: every suite, safe mode"
+    cmds:
+      - task: default
+
+  python:
+    desc: "All Python suites via pytest (offline; suite-grouped dashboard)"
+    cmds:
+      - python3 -m pytest tests/ {{.CLI_ARGS}}
+
+  security:
+    desc: "Security Posture suite (offline manifest contracts)"
+    cmds:
+      - python3 -m pytest tests/ -m security_posture {{.CLI_ARGS}}
+
+  security-live:
+    desc: "Security Posture suite + --live running-cluster assertions"
+    cmds:
+      - python3 -m pytest tests/ -m security_posture --live {{.CLI_ARGS}}
+
+  ingress:
+    desc: "Ingress Accessibility suite (offline; renders the Flux tree)"
+    cmds:
+      - python3 -m pytest tests/ -m ingress_accessibility {{.CLI_ARGS}}
+
+  ingress-live:
+    desc: "Ingress Accessibility suite + --live LAN/in-cluster probe (read-only)"
+    cmds:
+      - python3 -m pytest tests/ -m ingress_accessibility --live {{.CLI_ARGS}}
+
+  live:
+    desc: "ALL Python suites + --live (read-only cluster/LAN probes; operator-run)"
+    cmds:
+      - python3 -m pytest tests/ --live {{.CLI_ARGS}}
+
+  dr:
+    desc: "Disaster Recovery suite (Jest, read-only; arm chaos with npm run test:dr)"
+    cmds:
+      - npm test
+
+  dr-armed:
+    desc: "Disaster Recovery suite ARMED — destructive chaos (homelab only)"
+    cmds:
+      - npm run test:dr
+
+  list:
+    desc: "List every test by suite (the catalog)"
+    cmds:
+      - 'echo "── Python suites (pytest markers) ──"'
+      - python3 -m pytest tests/ --co -q {{.CLI_ARGS}}
+      - 'echo ""; echo "── Disaster Recovery suite (Jest projects) ──"'
+      - "grep -oE '\"<rootDir>/[^\"]+\"' jest.config.js | tr -d '\"' | sed 's|<rootDir>|.|'"

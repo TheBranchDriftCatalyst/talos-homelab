@@ -7,6 +7,7 @@ VPN/HA fault injection remains an explicit separate command.
 """
 import argparse
 import ast
+import os
 import fnmatch
 import json
 import re
@@ -22,7 +23,9 @@ from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-LIVE = False
+import pytest
+pytestmark = pytest.mark.security_posture  # suite tag
+LIVE = os.environ.get('POSTURE_LIVE') == '1'
 
 
 def document(path):
@@ -653,7 +656,7 @@ class RepositoryPosture(unittest.TestCase):
     def test_registration_and_inventory_regressions(self):
         for script in ('check-crowdsec-registration.py', 'test-crowdsec-decision-exporter.py', 'test-crowdsec-vpn.py'):
             with self.subTest(script=script):
-                run(sys.executable, str(ROOT / 'scripts/security' / script))
+                run(sys.executable, str(ROOT / 'tests/security-posture' / script))
 
 
 class RunningSystemPosture(unittest.TestCase):
@@ -858,12 +861,12 @@ class RunningSystemPosture(unittest.TestCase):
                 self.assertIn(field, entry, f'Required CrowdSec field is MISSING: {field}')
 
     def test_live_cowrie_and_tarpit_parser_regressions(self):
-        run(sys.executable, str(ROOT / 'scripts/security/check-crowdsec-parsers.py'), timeout=120)
+        run(sys.executable, str(ROOT / 'tests/security-posture/check-crowdsec-parsers.py'), timeout=120)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--live', action='store_true', help='Assert running-cluster state and emit one synthetic-header registry GET')
     args, remaining = parser.parse_known_args()
-    LIVE = args.live
+    LIVE = args.live or LIVE
     unittest.main(argv=[sys.argv[0], *remaining], verbosity=2)

@@ -7,14 +7,14 @@ This repo tests infrastructure three ways, and all follow the same discipline �
 
 1. **DR / resilience layer** (Jest) — per-component `*-dr.test.js` suites that prove
    the recovery machinery exists and, when armed, inject faults and measure recovery.
-2. **Security-posture layer** (Python) — `scripts/security/test_security_posture.py`
+2. **Security-posture layer** (Python) — `tests/security-posture/test_security_posture.py`
    asserts *per-fix* security contracts against the manifests (offline) and against the
    running cluster (`--live`) — proves each fixed finding **stays fixed**.
-3. **Ingress-accessibility layer** (Python) — `scripts/security/test_ingress_accessibility.py`
+3. **Ingress-accessibility layer** (Python) — `tests/ingress-accessibility/test_ingress_accessibility.py`
    renders the whole Flux tree and asserts *fleet-wide* ingress invariants ("what is
    reachable, from where, with what auth") offline, plus a `--live` accessibility probe —
    proves **no new route reintroduces a finding's shape**. Accepted risks live in
-   `scripts/security/ingress_allowlists.py` (the review surface).
+   `tests/ingress-accessibility/ingress_allowlists.py` (the review surface).
 
 ```bash
 # DR layer (Jest)
@@ -22,14 +22,19 @@ npm test                       # read-only: every DR suite's non-destructive che
 npm run test:dr                # ARMED: destructive chaos (homelab only)
 npx jest --selectProjects traefik-dr    # one suite
 
-# Security-posture layer (Python)
-python scripts/security/test_security_posture.py          # offline manifest contracts
-python scripts/security/test_security_posture.py --live   # + running-system assertions
-
-# Ingress-accessibility layer (Python) — needs `kustomize` on PATH
-task security:ingress-audit         # offline: render tree + assert ingress invariants
-task security:ingress-audit-live    # + read-only LAN/in-cluster accessibility probe
+# Unified runner (pytest + Jest) — suites are pytest markers
+task test                 # ALL suites, offline/read-only (suite-grouped dashboard)
+task test:security        # Security Posture only         (pytest -m security_posture)
+task test:ingress         # Ingress Accessibility only    (pytest -m ingress_accessibility; needs kustomize)
+task test:live            # ALL Python suites + --live running-cluster/LAN probes (operator-run)
+task test:dr              # Disaster Recovery (Jest)      ; task test:dr-armed for chaos
+task test:list            # the catalog: every test by suite
 ```
+
+>**Unified runner:** all Python suites run under **pytest**, tagged by **suite marker**
+(`security_posture`, `ingress_accessibility`) so `pytest -m <suite>` runs that suite wherever its
+tests live. Shared utils/fixtures live in `tests/conftest.py` + `tests/lib/helpers.py`; a suite-grouped
+terminal reporter prints a per-suite pass/fail dashboard. `task test` runs everything (pytest + Jest DR).
 
 **Rule going forward:** every security fix ships with a paired posture test — an
 **offline contract** (the manifest is fixed) and, where feasible, a **`--live` assertion**
@@ -42,10 +47,10 @@ task security:ingress-audit-live    # + read-only LAN/in-cluster accessibility p
 | | **DR / resilience** | **Security posture** | **Ingress accessibility** |
 |---|---|---|---|
 | Question | "When X fails, does it recover?" | "Does each fixed finding stay fixed?" | "What is reachable, from where, with what auth?" |
-| Runner | Jest (Node) | Python `unittest` | Python `unittest` |
-| Location | `infrastructure/base/<c>/tests/*-dr.test.js`, `tests/etcd-dr/` | `scripts/security/test_security_posture.py` | `scripts/security/test_ingress_accessibility.py` (+ `ingress_corpus.py`, `ingress_allowlists.py`) |
+| Runner | Jest (Node) | pytest (`-m security_posture`) | pytest (`-m ingress_accessibility`) |
+| Location | `infrastructure/base/<c>/tests/*-dr.test.js`, `tests/etcd-dr/` | `tests/security-posture/test_security_posture.py` | `tests/ingress-accessibility/test_ingress_accessibility.py` (+ `ingress_corpus.py`, `ingress_allowlists.py`) |
 | Corpus | one component | per-fix manifest paths | **rendered** whole Flux tree (`kustomize build`) |
-| Aggregator | root `jest.config.js` `projects[]` | one script, two `TestCase` classes | one script, two `TestCase` classes |
+| Aggregator | root `jest.config.js` `projects[]` | `pytest` marker + `tests/conftest.py` | `pytest` marker + `tests/conftest.py` |
 | Safe default | read-only observation | offline manifest contracts | offline rendered-corpus contracts |
 | Guarded mode | `*_DESTRUCTIVE=1` env → fault injection | `--live` → running-system checks | `--live` → read-only LAN + in-cluster probe |
 | CI | (local / on-demand) | `security-posture.yaml` job `contracts` | `security-posture.yaml` job `ingress-surface` |
@@ -90,7 +95,7 @@ story. Suites are registered in `jest.config.js` `projects[]` so one command run
 
 ## Layer 2 — security posture (Python)
 
-`scripts/security/test_security_posture.py` — two `unittest.TestCase` classes:
+`tests/security-posture/test_security_posture.py` — two `unittest.TestCase` classes:
 
 - **`RepositoryPosture`** (offline, always runs): asserts security contracts against the
   GitOps manifests — e.g. sensitive headers not retained, CrowdSec enforcement has no
@@ -101,7 +106,7 @@ story. Suites are registered in `jest.config.js` `projects[]` so one command run
   cluster — live AppSec exemptions are host-scoped, native config compiles, simulation name
   matches runtime, sensitive headers absent from the actual access log, etc.
 
-Companion scripts (`scripts/security/check-crowdsec-*.py`, `test-crowdsec-*.py`,
+Companion scripts (`tests/security-posture/check-crowdsec-*.py`, `test-crowdsec-*.py`,
 `test-bt-agent-preflight.py`) cover CrowdSec parser/registration/VPN specifics and the
 bt-radar agent preflight. CI runs the offline contracts on every PR touching security paths
 (`.github/workflows/security-posture.yaml`); `--live` is operator-run (needs cluster+LAN).

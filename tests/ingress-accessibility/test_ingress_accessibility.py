@@ -14,6 +14,7 @@ header set per probed host; no POST/PUT/DELETE; no rate-limit/body-cap exercise;
   python3 scripts/security/test_ingress_accessibility.py --live    # + in-cluster + LAN probe
 """
 import argparse
+import os
 import ssl
 import sys
 import unittest
@@ -26,7 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ingress_corpus as corpus
 import ingress_allowlists as al
 
-LIVE = False
+try:
+    import pytest
+    pytestmark = pytest.mark.ingress_accessibility  # suite tag
+except ImportError:
+    pass
+LIVE = os.environ.get('POSTURE_LIVE') == '1'
 
 # Admin / infra surfaces that must always be gated (auth or lan-only) on websecure, redirect-only on web.
 SENSITIVE_HOSTS = {

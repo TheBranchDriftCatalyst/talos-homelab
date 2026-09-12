@@ -22,10 +22,10 @@ The observer uses only the read-only bouncer API, has no Kubernetes API access, 
 
 ```sh
 # Repository contracts; live checks explicitly report SKIPPED.
-python3 scripts/security/test_security_posture.py
+python3 tests/security-posture/test_security_posture.py
 
 # Also assert the running system. Missing evidence fails; it is never a pass.
-python3 scripts/security/test_security_posture.py --live
+python3 tests/security-posture/test_security_posture.py --live
 ```
 
 Requires Python 3 and PyYAML (`python3 -m pip install PyYAML==6.0.2`). The GitHub
@@ -58,10 +58,10 @@ or production configuration. VPN bans and replica replacement require the separa
 From the repository root, with Python 3, PyYAML and the intended kubectl context:
 
 ```sh
-python3 scripts/security/check-crowdsec-registration.py
-python3 scripts/security/check-crowdsec-parsers.py
-python3 scripts/security/test-crowdsec-decision-exporter.py
-python3 scripts/security/check-crowdsec-vpn.py --report .output/crowdsec-vpn-test.json
+python3 tests/security-posture/check-crowdsec-registration.py
+python3 tests/security-posture/check-crowdsec-parsers.py
+python3 tests/security-posture/test-crowdsec-decision-exporter.py
+python3 tests/security-posture/check-crowdsec-vpn.py --report .output/crowdsec-vpn-test.json
 ```
 
 The VPN test creates a disposable Gluetun canary from the existing VPN test template. It refuses to use a canary credential already referenced by a running pod and requires manual-decision sharing to be disabled. It verifies an independent public IPv4 exit and a public destination, then tests:
