@@ -29,6 +29,18 @@
 #   for both ExternalSecrets to refresh, then restart authentik-worker
 #   (so !Env is re-evaluated) and the litellm pod.
 #
+# CONSUMER-SIDE CONTRACT (the non-obvious half -- see TALOS litellm SSO fix):
+#   Binding the litellm_role ScopeMapping to the provider below is NOT enough. A
+#   custom Authentik scope is only emitted if the CLIENT actually requests it.
+#   LiteLLM defaults GENERIC_SCOPE to "openid email profile", so litellm_role was
+#   never requested, Authentik correctly omitted the claim from /userinfo, and
+#   EVERY SSO user silently landed on internal_user_viewer -- regardless of
+#   superuser status or litellm-admins membership. The sister repo
+#   (catalyst-llm, k8s/base/litellm/deployment.yaml) must therefore set:
+#       GENERIC_SCOPE = "openid email profile litellm_role"
+#   alongside GENERIC_USER_ROLE_ATTRIBUTE. Setting only the latter is a silent
+#   no-op. Generalises to ANY app consuming a custom ScopeMapping here.
+#
 # MANUAL POST-INSTALL STEPS (one-time, per user):
 #   1. Log into Authentik as akadmin
 #   2. Directory > Groups > "litellm-admins" > Add the user(s) who should be proxy_admin
