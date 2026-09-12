@@ -56,15 +56,15 @@ spec:
       # those ports are free on all four other nodes (verified). This just says
       # "anywhere but the tight one" rather than trading one arbitrary hostname for
       # another. (TALOS-3hl8.5)
-      affinity:
-        nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              preference:
-                matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: NotIn
-                    values: [talos03]
+        # HARD-pinned to talos02-gpu. The honeypot is internet-exposed (WAN:22 -> hostPort 2222), so
+        # placement must be deterministic (the router forward targets this node's IP, 192.168.1.144)
+        # AND off the highest-risk nodes: never a control-plane node (talos00/01/03 — a container
+        # escape there reaches etcd/apiserver) and never talos06 (co-located with every database,
+        # MinIO, and the ESO secrets broker). talos02-gpu is the only worker with no local datastores.
+        # Escape blast-radius is the driver — the pod netpol (default-deny) does NOT protect the node.
+        # (TALOS-a8vo / cowrie-public-exposure)
+        nodeSelector:
+          kubernetes.io/hostname: talos02-gpu
       containers:
         - name: cowrie
           image: cowrie/cowrie:latest
