@@ -10,6 +10,12 @@ resources:
   - deployment.yaml
   - service.yaml
   - cilium-network-policy.yaml
-  # pvc.yaml removed — honeypot state is ephemeral, durable data goes
-  # out via the jsonlog output plugin and Mimir/Loki scraping.
+  # pvc.yaml is BACK: var/lib/cowrie holds malware samples and tty session
+  # recordings, which are binary artifacts no log pipeline carries. On an
+  # emptyDir every restart destroyed them. See pvc.yaml for why local-path
+  # (node-local, siloed) rather than the shared NFS export.
+  - pvc.yaml
+  # Off-node durability for those artifacts. Mounts the cowrie volume
+  # READ-ONLY and is the only thing here that touches shared storage.
+  - backup-cronjob.yaml
   # IngressRouteTCP removed — using hostPort for raw TCP (SSH/Telnet)

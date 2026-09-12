@@ -147,12 +147,17 @@ spec:
         - name: cowrie-config
           configMap:
             name: cowrie-config
-        # Honeypot state (downloads, snapshots, tty captures, instance
-        # UUID) is intentionally ephemeral. Cowrie auto-creates its
-        # subdirs on startup, and ship-to-Mimir/Graylog via output plugins
-        # is the durable record. Avoids the local-path PVC getting pinned
-        # to a node that doesn't match the hostPort nodeSelector.
+        # Honeypot state is NO LONGER ephemeral (see pvc.yaml for the full reasoning).
+        # var/lib/cowrie holds downloads/ (the actual malware samples) and tty/ (replayable
+        # session recordings). Neither is a log line, so the jsonlog->Loki path does not
+        # carry them, and on an emptyDir every restart destroyed them.
+        #
+        # The old note here said a PVC would risk getting pinned to a node that does not
+        # match the hostPort nodeSelector. That is no longer a risk: this deployment is
+        # hard-pinned to talos02-gpu because the router's WAN:22 forward targets that
+        # node, so placement is already deterministic.
         - name: cowrie-var-lib
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: cowrie-var-lib
         - name: cowrie-var-log
           emptyDir: {}

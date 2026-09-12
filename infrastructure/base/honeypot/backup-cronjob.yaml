@@ -1,0 +1,182 @@
+---
+# Durability for captured honeypot artifacts, WITHOUT letting the honeypot reach shared
+# storage.
+#
+# THE SEPARATION IS THE POINT. cowrie is the one process in this cluster an attacker is
+# deliberately allowed to interact with, so it is the one most likely to be exploited. It
+# therefore mounts ONLY its node-local PVC and has no route to, and no credential for,
+# NFS. This job — which no attacker has execution inside — mounts that PVC READ-ONLY and
+# is the only thing that writes to the shared export. A cowrie RCE stops at the local
+# volume instead of gaining write access to storage other workloads read.
+#
+# Residual surface is input-driven: hostile filenames reaching tar. Two things blunt it —
+# cowrie names downloads by their SHA-256 (so filenames are cowrie-controlled, not
+# attacker-controlled), and tar is invoked on a directory with no shell globbing or eval.
+#
+# Samples land as a dated .tar.gz rather than loose files, so nothing that walks the NFS
+# export meets a bare executable. Treat every archive as live malware.
+# A DEDICATED NFS class, not the shared fatboy-nfs-appdata one, purely so the mount
+# options can be tightened for a volume that holds live malware:
+#
+#   noexec  the kernel refuses to execute anything from this mount, full stop. Even a
+#           sample that somehow carries the exec bit cannot be run from here by anyone.
+#   nosuid  setuid/setgid bits on files in this mount are ignored — no privilege gain.
+#   nodev   device nodes in this mount are not honoured.
+#
+# Everything else mirrors fatboy-nfs-appdata (same provisioner, same server, Retain,
+# archiveOnDelete) so it lands on the same NFS box without altering the shared class
+# that a dozen other workloads mount.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: honeypot-archive-nfs
+provisioner: cluster.local/nfs-subdir-external-provisioner
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+parameters:
+  archiveOnDelete: "true"
+  pathPattern: ${.PVC.namespace}/${.PVC.name}
+mountOptions:
+  - noexec # <- the important one: nothing executes off this volume
+  - nosuid
+  - nodev
+  - vers=4.1
+  - nolock
+  - tcp
+  - hard
+  - timeo=600
+  - retrans=2
+  - noatime
+  - nodiratime
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cowrie-archive
+  namespace: honeypot
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: honeypot-archive-nfs # noexec/nosuid/nodev, Retain
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cowrie-archive
+  namespace: honeypot
+spec:
+  schedule: "35 4 * * *" # daily, off the backup-heavy 02:00-04:30 CNPG window
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          automountServiceAccountToken: false # needs no API access; do not hand it a token
+          # MUST match the cowrie deployment's pin. cowrie-var-lib is a ReadWriteOnce
+          # local-path volume, so it can only be mounted from the node that physically
+          # holds it. Without this the CronJob can land on any node, fail to mount, and
+          # the backup silently never runs — the worst failure mode for a backup.
+          nodeSelector:
+            kubernetes.io/hostname: talos02-gpu
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: archive
+              image: busybox:1.36 # tar + find + sha256sum, nothing else
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # Everything this job creates is owner-read-only. Archives of live
+                  # malware should not be group- or world-readable on shared storage.
+                  umask 0077
+                  STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+                  SRC=/source
+                  DST=/archive
+                  mkdir -p "$DST/samples"
+
+                  # Nothing captured yet is a normal state, not a failure.
+                  if [ ! -d "$SRC/downloads" ] && [ ! -d "$SRC/tty" ]; then
+                    echo "no downloads/ or tty/ yet — nothing to archive"
+                    exit 0
+                  fi
+
+                  OUT="$DST/samples/cowrie-$STAMP.tar.gz"
+                  # -C so paths are relative; no glob, no eval, no filename interpolation.
+                  tar -czf "$OUT" -C "$SRC" downloads tty 2>/dev/null || \
+                    tar -czf "$OUT" -C "$SRC" downloads 2>/dev/null || \
+                    tar -czf "$OUT" -C "$SRC" tty
+                  sha256sum "$OUT" > "$OUT.sha256"
+                  # 0400: read-only even to the owner. Nothing should ever need to write
+                  # to a sealed archive, and it cannot be executed regardless (noexec).
+                  chmod 0400 "$OUT" "$OUT.sha256"
+                  echo "archived $(wc -c < "$OUT") bytes -> $OUT"
+
+                  # Report any sample carrying an exec bit. The source is mounted
+                  # read-only so this job CANNOT chmod it — surfacing it is the point,
+                  # because it means cowrie's download path changed and wants fixing.
+                  # Containment does not depend on this: the archive volume is noexec.
+                  if [ -d "$SRC/downloads" ]; then
+                    EXECBIT=$(find "$SRC/downloads" -type f -perm -u+x 2>/dev/null | wc -l)
+                    [ "$EXECBIT" -gt 0 ] && echo "WARNING: $EXECBIT captured sample(s) carry the exec bit" || true
+                  fi
+
+                  # Inventory: what samples exist, by hash. cowrie names downloads after
+                  # their SHA-256, so this doubles as a dedup view across days.
+                  if [ -d "$SRC/downloads" ]; then
+                    find "$SRC/downloads" -type f -exec basename {} \; | sort -u > "$DST/sample-hashes.txt" || true
+                    echo "distinct samples to date: $(wc -l < "$DST/sample-hashes.txt")"
+                  fi
+
+                  # Retention: keep 30 archives. Sample data is small; this is a guard
+                  # against unbounded growth, not a storage optimisation.
+                  ls -1t "$DST/samples"/cowrie-*.tar.gz 2>/dev/null | tail -n +31 | while read -r old; do
+                    echo "pruning $old"; rm -f "$old" "$old.sha256"
+                  done
+
+                  # A plain-language warning beside the data, for whoever finds it later.
+                  cat > "$DST/README.txt" <<'EOF'
+                  These archives contain LIVE MALWARE captured by the cowrie honeypot.
+                  Files under downloads/ are samples fetched by real attackers and are
+                  named by their SHA-256. Do not extract or execute them on a workstation.
+                  Analyse only in an isolated VM. tty/ holds session recordings, replayable
+                  with `cowrie playlog`. Written by the cowrie-archive CronJob (honeypot ns).
+
+                  This volume is mounted noexec,nosuid,nodev — nothing runs from here.
+                  If you copy an archive elsewhere you LEAVE that protection behind, so
+                  extract with:  tar -xzf <archive> --no-same-permissions --no-same-owner
+                  Archives are written 0400 and named by UTC timestamp; each has a
+                  .sha256 beside it. sample-hashes.txt lists every distinct sample seen.
+                  EOF
+              volumeMounts:
+                - name: source
+                  mountPath: /source
+                  readOnly: true # the honeypot volume is READ-ONLY to this job
+                - name: archive
+                  mountPath: /archive
+              resources:
+                requests: {cpu: 20m, memory: 32Mi}
+                limits: {memory: 128Mi}
+          volumes:
+            - name: source
+              persistentVolumeClaim:
+                claimName: cowrie-var-lib
+                readOnly: true
+            - name: archive
+              persistentVolumeClaim:
+                claimName: cowrie-archive

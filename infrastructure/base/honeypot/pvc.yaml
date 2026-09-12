@@ -1,0 +1,50 @@
+---
+# Dedicated, node-local, RETAINED storage for cowrie's captured artifacts.
+#
+# WHY THIS EXISTS AGAIN. A pvc.yaml was removed from this kustomization once, on the
+# reasoning that "honeypot state is ephemeral, durable data goes out via the jsonlog
+# output plugin". That is true for cowrie.json — logship tails it to Loki — but it is
+# NOT true for everything under var/lib/cowrie:
+#
+#   downloads/  the actual malware SAMPLES an attacker fetched (binary, never in a log)
+#   tty/        full interactive session recordings, replayable with `cowrie playlog`
+#
+# Those are binary artifacts that no log pipeline carries, and on an emptyDir every pod
+# restart destroyed them. The pod had restarted 19 minutes before this was written, so
+# the preceding captures were already gone.
+#
+# WHY local-path AND NOT NFS. This volume holds live malware by design. local-path is
+# node-bound, so the samples exist on exactly one node and are reachable from nothing
+# else. An NFS export (fatboy-nfs-appdata) is mounted by many other workloads, which
+# would put attacker-supplied binaries on shared storage that unrelated services walk.
+# Siloed beats convenient here.
+#
+# The old objection to a PVC — "avoids the local-path PVC getting pinned to a node that
+# doesn't match the hostPort nodeSelector" — no longer applies: the deployment is now
+# HARD-pinned to talos02-gpu because the router's WAN:22 forward targets that node's IP.
+# Placement is already deterministic, so node-bound storage costs nothing.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: honeypot-samples-retain
+# Same provisioner as the default local-path, but reclaimPolicy Retain: captured samples
+# are evidence. Deleting the PVC must not garbage-collect them. Mirrors the existing
+# scene-engine-postgres-retain / stash-box-postgres-retain classes.
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cowrie-var-lib
+  namespace: honeypot
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: honeypot-samples-retain
+  resources:
+    requests:
+      # Samples are small (droppers/scripts, typically KB-MB). 5Gi is generous and
+      # bounded — a honeypot must not be able to fill a node's disk, which is why this
+      # is a sized PVC rather than a hostPath.
+      storage: 5Gi
