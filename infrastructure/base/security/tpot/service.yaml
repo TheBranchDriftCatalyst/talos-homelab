@@ -1,28 +1,46 @@
-# Stable ClusterIPs for the T-Pot guest ports (masquerade forwards these to the guest). The proxies
-# target these; nothing here is world-exposed by itself.
+# Stable ClusterIPs for the T-Pot guest ports (masquerade forwards these to each guest).
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: tpot-ssh
-  namespace: honeypot-vm
-  labels: { app: tpot }
+metadata: { name: tpot-sensor-ssh, namespace: honeypot-vm, labels: { app: tpot-sensor } }
 spec:
   type: ClusterIP
-  selector:
-    kubevirt.io/domain: tpot
+  selector: { kubevirt.io/domain: tpot-sensor }
   ports:
-    - { name: ssh, port: 22, targetPort: 22, protocol: TCP }
+    - { name: ssh, port: 22, targetPort: 22, protocol: TCP } # SSH honeypot (WAN front target)
 ---
 apiVersion: v1
 kind: Service
-metadata:
-  name: tpot-mgmt
-  namespace: honeypot-vm
-  labels: { app: tpot }
+metadata: { name: tpot-sensor-mgmt, namespace: honeypot-vm, labels: { app: tpot-sensor } }
 spec:
   type: ClusterIP
-  selector:
-    kubevirt.io/domain: tpot
+  selector: { kubevirt.io/domain: tpot-sensor }
   ports:
-    - { name: webui, port: 64297, targetPort: 64297, protocol: TCP }
+    - { name: mgmtssh, port: 64295, targetPort: 64295, protocol: TCP } # deploy.sh enrollment (Hive -> Sensor)
+---
+apiVersion: v1
+kind: Service
+metadata: { name: tpot-hive-mgmt, namespace: honeypot-vm, labels: { app: tpot-hive } }
+spec:
+  type: ClusterIP
+  selector: { kubevirt.io/domain: tpot-hive }
+  ports:
+    - { name: webui, port: 64297, targetPort: 64297, protocol: TCP } # Kibana/attack-map (Authentik front)
+---
+apiVersion: v1
+kind: Service
+metadata: { name: tpot-hive-logstash, namespace: honeypot-vm, labels: { app: tpot-hive } }
+spec:
+  type: ClusterIP
+  selector: { kubevirt.io/domain: tpot-hive }
+  ports:
+    - { name: logstash, port: 64294, targetPort: 64294, protocol: TCP } # Sensor -> Hive log shipping
+---
+apiVersion: v1
+kind: Service
+metadata: { name: tpot-hive-mgmtssh, namespace: honeypot-vm, labels: { app: tpot-hive } }
+spec:
+  type: ClusterIP
+  selector: { kubevirt.io/domain: tpot-hive }
+  ports:
+    - { name: mgmtssh, port: 64295, targetPort: 64295, protocol: TCP } # operator SSH for enrollment (port-forward)

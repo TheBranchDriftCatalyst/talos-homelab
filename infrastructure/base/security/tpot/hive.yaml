@@ -1,0 +1,70 @@
+# T-Pot HIVE — the data plane: Elastic + Kibana + Logstash + the attack map. Receives events from the
+# Sensor on :64294. INTERNAL ONLY (never attacked) — so it sits on talos06 (roomy) even though that node
+# hosts datastores: the datastore-node rule is about attacker escape, and nothing attacks the Hive.
+# 10Gi/4c on a 128Gi local-path disk (ELK data). Deployed Halted for a clean CDI import, then flipped.
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: tpot-hive
+  namespace: honeypot-vm
+  labels:
+    app: tpot-hive
+spec:
+  runStrategy: Halted # HALTED for clean disk import (avoids virt-launcher-vs-importer RWO race); flip to Always once tpot-hive-disk DV = Succeeded
+  dataVolumeTemplates:
+    - metadata:
+        name: tpot-hive-disk
+        annotations:
+          volume.kubernetes.io/selected-node: talos06
+          cdi.kubevirt.io/storage.bind.immediate.requested: "true"
+      spec:
+        storage:
+          accessModes: [ReadWriteOnce]
+          storageClassName: local-path
+          resources:
+            requests:
+              storage: 128Gi
+        source:
+          http:
+            url: https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
+  template:
+    metadata:
+      labels:
+        app: tpot-hive
+        kubevirt.io/domain: tpot-hive
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: talos06 # roomy node; Hive is internal-only (never attacked)
+      domain:
+        cpu:
+          cores: 4
+        memory:
+          guest: 10Gi
+        resources:
+          requests:
+            memory: 10Gi
+        devices:
+          disks:
+            - name: root
+              disk: { bus: virtio }
+            - name: cloudinit
+              disk: { bus: virtio }
+          interfaces:
+            - name: default
+              masquerade: {}
+              ports:
+                - { name: webui, port: 64297, protocol: TCP } # Kibana/attack-map (LAN via Authentik front)
+                - { name: logstash, port: 64294, protocol: TCP } # Sensor -> Hive log shipping
+                - { name: mgmtssh, port: 64295, protocol: TCP } # T-Pot mgmt SSH (enrollment handshake)
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: root
+          dataVolume:
+            name: tpot-hive-disk
+        - name: cloudinit
+          cloudInitNoCloud:
+            secretRef:
+              name: tpot-hive-cloudinit
