@@ -1,0 +1,18 @@
+---
+# falcosidekick exposes Prometheus metrics (alert counts by priority/rule/output) on the
+# http-notls port. Alloy's cluster PodMonitor discovery scrapes this into Mimir so the Falco
+# dashboard can chart alert rates alongside the Loki event stream.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: falcosidekick
+  namespace: falco
+  labels: {app.kubernetes.io/name: falcosidekick}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: falcosidekick
+  podMetricsEndpoints:
+    - port: http-notls
+      path: /metrics
+      interval: 30s
