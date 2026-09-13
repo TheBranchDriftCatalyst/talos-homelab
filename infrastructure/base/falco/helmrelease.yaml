@@ -1,0 +1,73 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: falco
+  namespace: falco
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: falco
+      version: "9.1.0"
+      sourceRef:
+        kind: HelmRepository
+        name: falcosecurity
+        namespace: falco
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  values:
+    # Talos is immutable — no kernel-module builds. Modern eBPF (CO-RE) ships in the Falco
+    # binary, needs kernel >= 5.8 (Talos is fine), no init container, no driver-loader.
+    driver:
+      kind: modern_ebpf
+    tty: true
+    # Keep default rules (cluster-wide baseline: shell-in-container, sensitive reads, etc.),
+    # plus our honeypot-breach tripwires below.
+    falco:
+      rules_files:
+        - /etc/falco/falco_rules.yaml
+        - /etc/falco/rules.d
+      json_output: true
+      priority: notice
+    # falcosidekick fans alerts out; route to Loki so they're queryable in Grafana alongside the
+    # honeypot logs. (enabling it auto-wires Falco's HTTP+JSON output to sidekick.)
+    falcosidekick:
+      enabled: true
+      webui:
+        enabled: true
+      config:
+        loki:
+          hostport: "http://loki.monitoring.svc:3100"
+          apiendpoint: "/loki/api/v1/push"
+          tenant: ""
+          minimumpriority: "notice"
+    # Honeypot-breach tripwires: Cowrie + Beelzebub EMULATE the shell, so any real process exec,
+    # shell spawn, sensitive-file read, or unexpected outbound in those pods = a containment breach
+    # (someone escaped the emulation into the real container). CRITICAL. Also the runtime-detection
+    # net for the future KubeVirt VM detonation backend.
+    customRules:
+      honeypot-breach.yaml: |-
+        - macro: honeypot_ns
+          condition: (k8s.ns.name in ("honeypot", "honeypot-hi"))
+        - list: honeypot_expected_procs
+          items: [twistd, python3, python, beelzebub, busybox, sh, tail, touch, sed, pause]
+        - rule: Honeypot Container Breach - Unexpected Process
+          desc: >
+            A process was executed inside a honeypot emulator container. Cowrie (python/twistd) and
+            Beelzebub (go binary) emulate the shell in-process, so a real exec here beyond the known
+            entrypoint indicates an attacker broke OUT of the emulation into the actual container.
+          condition: spawned_process and container and honeypot_ns and not proc.name in (honeypot_expected_procs)
+          output: >
+            HONEYPOT BREACH unexpected process (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            proc=%proc.cmdline parent=%proc.pname user=%user.name)
+          priority: CRITICAL
+          tags: [honeypot, container_escape, mitre_execution]
+        - rule: Honeypot Container Breach - Sensitive File Read
+          desc: A honeypot emulator container read a sensitive host/credential file — real fs access = breach.
+          condition: open_read and container and honeypot_ns and fd.name in (/etc/shadow, /etc/sudoers, /root/.ssh/id_rsa, /var/run/secrets/kubernetes.io/serviceaccount/token)
+          output: >
+            HONEYPOT BREACH sensitive read (ns=%k8s.ns.name pod=%k8s.pod.name file=%fd.name proc=%proc.cmdline)
+          priority: CRITICAL
+          tags: [honeypot, container_escape, mitre_credential_access]
