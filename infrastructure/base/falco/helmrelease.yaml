@@ -43,31 +43,628 @@ spec:
           apiendpoint: "/loki/api/v1/push"
           tenant: ""
           minimumpriority: "notice"
-    # Honeypot-breach tripwires: Cowrie + Beelzebub EMULATE the shell, so any real process exec,
-    # shell spawn, sensitive-file read, or unexpected outbound in those pods = a containment breach
-    # (someone escaped the emulation into the real container). CRITICAL. Also the runtime-detection
-    # net for the future KubeVirt VM detonation backend.
+    # `customRules` is a map of filename -> rules YAML. The chart renders it into a ConfigMap
+    # mounted at /etc/falco/rules.d, which is the second entry in falco.rules_files above — so
+    # these files load AFTER /etc/falco/falco_rules.yaml and can override/append to the upstream
+    # macros and rules defined there. (Verified: the honeypot rules below are live and firing.)
     customRules:
-      honeypot-breach.yaml: |-
+      # Honeypot containment tripwires. A honeypot exists to be attacked, so in-sandbox
+      # attacker activity is the system working, not an incident. These rules alert on
+      # CONTAINMENT FAILURE only -- the attacker leaving the sandbox for the container,
+      # pod, node or cluster. Full rationale, including why the previous version of this
+      # block misfired four times on our own infrastructure, is inside the file itself.
+      honeypot-containment.yaml: |-
+        # ====================================================================
+        # HONEYPOT CONTAINMENT ALERTING
+        # ====================================================================
+        # A honeypot exists to be attacked. Attacker activity INSIDE the sandbox is
+        # the system WORKING and must never page. What must page is CONTAINMENT
+        # FAILURE: the attacker leaving the sandbox for the container, the pod, the
+        # node, or the cluster.
+        #
+        # WHY THE PREVIOUS RULESET WAS MISCALIBRATED. It fired on
+        #     spawned_process and container and k8s.ns.name in (honeypot, honeypot-hi)
+        #     and not proc.name in (twistd, python3, python, beelzebub, busybox, sh,
+        #                           tail, touch, sed, pause)
+        # That is a NAMESPACE-wide condition, but the containment boundary is a
+        # CONTAINER boundary, and a process-NAME allow-list is the wrong instrument
+        # for expressing it. All four of its firings were our own infrastructure:
+        #
+        #   2x  cowrie-archive CronJob running "date -u +%Y%m%dT%H%M%SZ" and
+        #       "mkdir -p /archive/samples" at 04:35, which are lines 1-3 of our own
+        #       backup script (backup-cronjob.yaml, schedule "35 4 * * *"), in a
+        #       busybox container that mounts the honeypot volume READ-ONLY and that
+        #       no attacker has any path to.
+        #   2x  beelzebub's OWN ENTRYPOINT: "main run" with parent containerd-shim,
+        #       i.e. vpid 1 at container start. The allow-list said "beelzebub" but
+        #       the Go binary on disk is named "main", so every rollout paged CRITICAL.
+        #
+        # Zero were attacker activity, let alone an escape. Worse, both deployments it
+        # named are now replicas: 0 -- the live WAN honeypot is the KubeVirt VM in
+        # honeypot-vm, which the old macro did not cover at all. The rule was loud in
+        # two empty namespaces and silent in the occupied one.
+        #
+        # THE PROPERTY THAT MAKES HIGH-FIDELITY ALERTING POSSIBLE HERE. In all three
+        # honeypot generations, in-sandbox attacker activity is INVISIBLE to Falco by
+        # construction:
+        #
+        #   honeypot     cowrie     Python/twistd emulates the shell IN-PROCESS. An
+        #                           attacker typing "wget http://evil/x" never produces
+        #                           an execve; cowrie fetches the URL itself and stores
+        #                           it under var/lib/cowrie/downloads.
+        #   honeypot-hi  beelzebub  Go + an LLM emulate the shell IN-PROCESS. Same
+        #                           property: the shell is generated, never executed.
+        #   honeypot-vm  tpot       A REAL Debian guest where malware genuinely runs --
+        #                           but guest syscalls execute in the GUEST kernel,
+        #                           which host eBPF cannot observe. The VM is the
+        #                           sandbox and qemu is the boundary.
+        #
+        # So there is no attacker-generated Falco noise to suppress. Every syscall
+        # Falco can see in these namespaces is produced by OUR OWN code -- which is
+        # exactly what the old rule alerted on. A syscall from anywhere else means the
+        # boundary broke. That is the entire signal, and it is why every rule below is
+        # scoped by CONTAINER and by position in the process tree rather than by
+        # process name.
+
+        # --------------------------------------------------------------------
+        # SCOPE MACROS -- these encode the containment boundary itself.
+        # --------------------------------------------------------------------
+
+        # All three honeypot generations. honeypot-vm was missing before and is where
+        # the only live honeypot now runs.
         - macro: honeypot_ns
-          condition: (k8s.ns.name in ("honeypot", "honeypot-hi"))
-        - list: honeypot_expected_procs
-          items: [twistd, python3, python, beelzebub, busybox, sh, tail, touch, sed, pause]
-        - rule: Honeypot Container Breach - Unexpected Process
+          condition: (k8s.ns.name in ("honeypot", "honeypot-hi", "honeypot-vm"))
+
+        # THE SANDBOX ITSELF: the attacker-facing emulators. Because both emulate the
+        # shell in-process, these containers execute exactly ONE program for their
+        # entire lifetime -- their own entrypoint, at vpid 1. There is no second exec
+        # in normal operation, which is what makes "any exec here" a clean signal.
+        - macro: honeypot_emulator_container
+          condition: (honeypot_ns and container.name in ("cowrie", "beelzebub"))
+
+        # THE HYPERVISOR BOUNDARY: the virt-launcher pod caging the T-Pot VM. Guest
+        # activity cannot reach this pod's syscall stream, so everything Falco sees
+        # here is already on the host side of the virtualisation boundary.
+        - macro: honeypot_vm_pod
+          condition: (k8s.ns.name = "honeypot-vm" and k8s.pod.name startswith "virt-launcher-")
+
+        # The normal hypervisor process tree. NOTE proc.name is TRUNCATED AT 16 CHARS
+        # by the kernel (task->comm): "virt-launcher-monitor" arrives as
+        # "virt-launcher-mo" and "qemu-system-x86_64" as "qemu-system-x86_". These are
+        # therefore prefix matches, never equality -- getting this wrong is how the old
+        # rule turned "beelzebub" into a permanent false positive.
+        - macro: hypervisor_process
+          condition: >
+            (proc.name startswith "virt" or proc.name startswith "qemu" or
+             proc.name startswith "libvirt" or proc.name startswith "container-disk")
+
+        # Mirrors the "except:" list in every honeypot CiliumNetworkPolicy egress rule
+        # (honeypot/cilium-network-policy.yaml allow-sample-fetch-egress,
+        # security/tpot/cilium-network-policy.yaml tpot-public-egress). Kept local
+        # rather than reusing the default rules' rfc_1918_addresses so the alerting and
+        # the network policy can only drift together, deliberately, in one place.
+        - list: honeypot_internal_networks
+          items: ['"10.0.0.0/8"', '"172.16.0.0/12"', '"192.168.0.0/16"', '"169.254.0.0/16"']
+
+        # Fixed-command support containers. Each runs a one-liner pinned in a manifest,
+        # so a tight allow-list for THESE is precise rather than brittle.
+        # logship:       sh -c 'touch /var/log/cowrie/cowrie.json; exec tail -n+1 -F ...'
+        # render-config: sh -c 'sed "s|__LLM_API_KEY__|$LLM_API_KEY|" ... > ...'
+        # socat:         the two tpot proxies exec socat and nothing else.
+        - list: logship_expected_procs
+          items: [sh, touch, tail]
+        - list: render_config_expected_procs
+          items: [sh, sed]
+        - list: socat_expected_procs
+          items: [socat]
+
+        # Escape / lateral-movement / exfil primitives. Used as a DENY-list, because
+        # the cowrie-archive backup script legitimately runs a dozen busybox applets
+        # (date, mkdir, tar, sha256sum, find, basename, ls, wc, rm, chmod, cat, sort)
+        # and will keep changing -- an allow-list over a shell script is precisely the
+        # brittleness that produced the "date" and "mkdir" false positives. A deny-list
+        # of things a backup, a log tail or a TCP proxy could never legitimately need
+        # does not rot as those scripts evolve.
+        - list: containment_escape_primitives
+          items: [
+            nsenter, unshare, setns, chroot, pivot_root, mount, umount,
+            insmod, modprobe, rmmod,
+            crictl, ctr, runc, docker, containerd, kubectl,
+            nc, ncat, netcat, telnet, ssh, scp, sftp, rsync, curl, wget,
+            python, python3, perl, ruby, php, node, bash,
+          ]
+
+        # --------------------------------------------------------------------
+        # ESCAPE RULES -- each one names the boundary it guards and what a
+        # breach of that boundary looks like.
+        # --------------------------------------------------------------------
+
+        - rule: Honeypot Sandbox Escape - Process Spawned Inside Emulator
           desc: >
-            A process was executed inside a honeypot emulator container. Cowrie (python/twistd) and
-            Beelzebub (go binary) emulate the shell in-process, so a real exec here beyond the known
-            entrypoint indicates an attacker broke OUT of the emulation into the actual container.
-          condition: spawned_process and container and honeypot_ns and not proc.name in (honeypot_expected_procs)
+            CONTAINMENT BOUNDARY: the emulator process. Cowrie and Beelzebub answer the
+            attacker's shell in-process, so the container execs exactly once -- its own
+            entrypoint at vpid 1 -- and an attacker's commands never become execve
+            calls. WHAT AN ESCAPE LOOKS LIKE: this rule firing at all. A second exec
+            means code the emulator did not generate is running in the real container,
+            i.e. the attacker is out of the emulation. This is the rule the old
+            "Unexpected Process" rule was trying to be; the difference is that it is
+            scoped to the emulator CONTAINER and excludes vpid 1, instead of matching a
+            whole namespace and guessing at process names. VERIFIED AGAINST THE IMAGE,
+            not assumed: cowrie/cowrie declares Entrypoint
+            ["/cowrie/cowrie-env/bin/python3"] with Cmd "twistd -n ...", and the image
+            carries no shell at all, so cowrie's python IS vpid 1 and there is no startup
+            fork here to false-positive on. Beelzebub's "main run" was observed at vpid 1
+            (parent containerd-shim). Note vpid 1 is a TIGHTER exclusion than
+            parent=containerd-shim, which also matches a kubectl exec -- so an operator
+            or an attacker exec'ing into a honeypot still fires this rule.
+          condition: >
+            spawned_process and container and honeypot_emulator_container
+            and proc.vpid != 1
           output: >
-            HONEYPOT BREACH unexpected process (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
-            proc=%proc.cmdline parent=%proc.pname user=%user.name)
+            HONEYPOT ESCAPE emulator container executed a process
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            proc=%proc.cmdline exe=%proc.exepath parent=%proc.pname vpid=%proc.vpid
+            image=%container.image.repository user=%user.name)
           priority: CRITICAL
-          tags: [honeypot, container_escape, mitre_execution]
-        - rule: Honeypot Container Breach - Sensitive File Read
-          desc: A honeypot emulator container read a sensitive host/credential file — real fs access = breach.
-          condition: open_read and container and honeypot_ns and fd.name in (/etc/shadow, /etc/sudoers, /root/.ssh/id_rsa, /var/run/secrets/kubernetes.io/serviceaccount/token)
+          tags: [honeypot, containment_breach, container_escape, mitre_execution, T1611]
+
+        - rule: Honeypot VM Escape - Unexpected Process In Hypervisor Pod
+          desc: >
+            CONTAINMENT BOUNDARY: qemu/KVM. The T-Pot guest is a real Debian box where
+            captured malware genuinely executes -- that is the point of it -- but guest
+            syscalls run in the guest kernel and are invisible to host eBPF, so nothing
+            an attacker does inside the VM can reach this rule. WHAT AN ESCAPE LOOKS
+            LIKE: a shell, interpreter or tool appearing beside qemu in the
+            virt-launcher pod, meaning guest code is now executing on the host side of
+            the virtualisation boundary. This pod is the live honeypot's cage and had
+            no coverage whatsoever under the previous ruleset.
+          condition: >
+            spawned_process and container and honeypot_vm_pod
+            and proc.vpid != 1
+            and not hypervisor_process
           output: >
-            HONEYPOT BREACH sensitive read (ns=%k8s.ns.name pod=%k8s.pod.name file=%fd.name proc=%proc.cmdline)
+            HONEYPOT VM ESCAPE unexpected process in hypervisor pod
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            proc=%proc.cmdline exe=%proc.exepath parent=%proc.pname vpid=%proc.vpid
+            user=%user.name)
           priority: CRITICAL
-          tags: [honeypot, container_escape, mitre_credential_access]
+          tags: [honeypot, containment_breach, vm_escape, mitre_execution, T1611]
+
+        - rule: Honeypot VM Escape - QEMU Spawned A Child Process
+          desc: >
+            CONTAINMENT BOUNDARY: qemu/KVM, guarded a second way. In steady state the
+            qemu process running the T-Pot guest spawns no children at all -- it runs
+            vCPU threads, not subprocesses. WHAT AN ESCAPE LOOKS LIKE: a child of qemu,
+            which is the classic shape of a hypervisor breakout (a device-emulation bug
+            turned into host code execution). Deliberately independent of the
+            allow-list in the rule above: an incomplete list of hypervisor process
+            names must not be able to hide the single most serious event this cluster
+            can produce.
+          condition: >
+            spawned_process and container and honeypot_vm_pod
+            and proc.pname startswith "qemu"
+          output: >
+            HONEYPOT VM ESCAPE qemu spawned a child process
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            proc=%proc.cmdline exe=%proc.exepath parent=%proc.pname user=%user.name)
+          priority: CRITICAL
+          tags: [honeypot, containment_breach, vm_escape, mitre_execution, T1611]
+
+        - rule: Honeypot Containment Breach - Support Container Ran Unexpected Program
+          desc: >
+            CONTAINMENT BOUNDARY: the support containers sit ADJACENT to the honeypot
+            but hold no attacker input -- logship tails cowrie's JSON log out of a
+            shared emptyDir, render-config renders beelzebub's config once at startup,
+            and the two socat proxies front the VM's ports. Each runs a one-liner
+            pinned in its manifest, so an allow-list here is exact rather than a guess.
+            WHAT AN ESCAPE LOOKS LIKE: the attacker pivoting out of the honeypot into
+            the sidecar that reads its output, or popping the socat front that every
+            WAN connection passes through. Note this is the one place a name allow-list
+            is appropriate, because the command is fixed in git rather than chosen at
+            runtime.
+          condition: >
+            spawned_process and container and honeypot_ns and proc.vpid != 1
+            and ((container.name = "logship" and not proc.name in (logship_expected_procs))
+              or (container.name = "render-config" and not proc.name in (render_config_expected_procs))
+              or (container.name = "socat" and not proc.name in (socat_expected_procs)))
+          output: >
+            HONEYPOT BREACH support container ran an unexpected program
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            proc=%proc.cmdline exe=%proc.exepath parent=%proc.pname user=%user.name)
+          priority: CRITICAL
+          tags: [honeypot, containment_breach, mitre_lateral_movement]
+
+        - rule: Honeypot Containment Breach - Escape Primitive Executed
+          desc: >
+            CONTAINMENT BOUNDARY: the honeypot namespaces reach exactly the resources
+            their manifests grant them and nothing more. This is the catch-all backstop
+            for the workloads that are ours rather than the attacker's -- above all the
+            cowrie-archive CronJob, which mounts the honeypot's sample PVC READ-ONLY
+            and is the ONLY thing in this namespace that writes to shared NFS storage.
+            That asymmetry IS the containment design (see backup-cronjob.yaml), which
+            makes this job the one component whose compromise would bridge the honeypot
+            to storage other workloads read. WHAT AN ESCAPE LOOKS LIKE: any of these
+            programs running anywhere in a honeypot namespace -- a backup job reaching
+            the network, a log tail calling nsenter, an interpreter appearing in a
+            busybox image. Overlaps the rules above on purpose; on a real escape both
+            firing is the correct outcome. The hypervisor pod is excluded because
+            virt-launcher legitimately mounts hotplug volumes and is already covered
+            completely by the two VM Escape rules. The EMULATOR containers are excluded
+            for the same reason: the Sandbox Escape rule above already fires on ANY exec
+            there, which strictly supersets this deny-list. Leaving them in would also
+            double-fire on cowrie, whose entrypoint is literally python3 and whose
+            interpreter names appear in this list.
+          condition: >
+            spawned_process and container and honeypot_ns and proc.vpid != 1
+            and not honeypot_vm_pod
+            and not honeypot_emulator_container
+            and proc.name in (containment_escape_primitives)
+          output: >
+            HONEYPOT BREACH escape primitive executed
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            proc=%proc.cmdline exe=%proc.exepath parent=%proc.pname user=%user.name)
+          priority: CRITICAL
+          tags: [honeypot, containment_breach, container_escape, mitre_privilege_escalation]
+
+        - rule: Honeypot Containment Breach - Kubernetes Credential Access
+          desc: >
+            CONTAINMENT BOUNDARY: no cluster credential inside a box we invite
+            attackers into. Every workload in these namespaces sets
+            automountServiceAccountToken: false -- cowrie, beelzebub, the cowrie-archive
+            CronJob and both tpot proxies -- so the projected volume does not exist and
+            this path cannot be read under the intended configuration. WHAT AN ESCAPE
+            LOOKS LIKE: this firing at all. Either a manifest regressed and handed the
+            honeypot a live API credential, or an attacker located/forged one. The
+            virt-launcher pod is excluded because KubeVirt genuinely requires a token
+            there; that pod's coverage is the two VM Escape rules above, which fire on
+            any non-hypervisor process regardless of what it then reads.
+          condition: >
+            open_read and container and honeypot_ns
+            and not honeypot_vm_pod
+            and fd.name startswith "/var/run/secrets/kubernetes.io/serviceaccount"
+          output: >
+            HONEYPOT BREACH kubernetes service-account token read
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            file=%fd.name proc=%proc.cmdline parent=%proc.pname user=%user.name)
+          priority: CRITICAL
+          tags: [honeypot, containment_breach, mitre_credential_access, T1552.001]
+
+        - rule: Honeypot Containment Breach - Outbound Connection To Internal Network
+          desc: >
+            CONTAINMENT BOUNDARY: the honeypot may reach the internet, never anything
+            of ours. Cilium permits these pods exactly two destinations -- kube-dns:53,
+            and public 80/443 with 10/8, 172.16/12, 192.168/16, 169.254/16 and 127/8
+            explicitly EXCEPTed (allow-sample-fetch-egress) -- plus, for beelzebub only,
+            litellm:4000 in catalyst-llm. So an internal connection here is not merely
+            suspicious: it is something the network policy is supposed to have dropped.
+            WHAT AN ESCAPE LOOKS LIKE: a connection to the LAN, to another pod, to a
+            node, or to the API server -- lateral movement, with the CiliumNetworkPolicy
+            having failed, been deleted, or been bypassed. Scoped to the emulator
+            containers because they are the only ones whose policy forbids private
+            ranges: the socat proxies and virt-launcher connect in-cluster by design.
+          condition: >
+            evt.type = connect and container
+            and honeypot_emulator_container
+            and fd.l4proto = tcp
+            and fd.snet in (honeypot_internal_networks)
+            and not fd.sport in (53, 4000)
+          output: >
+            HONEYPOT BREACH outbound connection to internal network
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            dest=%fd.sip:%fd.sport proc=%proc.cmdline parent=%proc.pname user=%user.name)
+          priority: CRITICAL
+          tags: [honeypot, containment_breach, mitre_lateral_movement, T1210]
+
+        - rule: Honeypot Containment Breach - Filesystem Mount Attempted
+          desc: >
+            CONTAINMENT BOUNDARY: the honeypot reaches exactly the one volume it was
+            given. Cowrie mounts ONLY its node-local PVC and has no NFS route and no NFS
+            credential; the archive CronJob receives its mounts from the kubelet and
+            never calls mount(2) itself. Every container here drops ALL capabilities, so
+            CAP_SYS_ADMIN is absent and mount(2) cannot even succeed -- which makes an
+            ATTEMPT unambiguous rather than ambiguous. WHAT AN ESCAPE LOOKS LIKE: an
+            attempt to attach shared storage, the host filesystem, or a fresh
+            procfs/sysfs view from inside the cage, which is the opening move of most
+            container escapes. virt-launcher is excluded: it mounts hotplug volumes as
+            part of normal KubeVirt operation.
+          condition: >
+            evt.type in (mount, umount, umount2) and container
+            and honeypot_ns and not honeypot_vm_pod
+          output: >
+            HONEYPOT BREACH mount syscall attempted
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            proc=%proc.cmdline parent=%proc.pname res=%evt.res user=%user.name)
+          priority: CRITICAL
+          tags: [honeypot, containment_breach, container_escape, mitre_privilege_escalation]
+
+        - rule: Honeypot Containment Breach - Sensitive File Read
+          desc: >
+            CONTAINMENT BOUNDARY: the honeypot containers run as an unprivileged uid
+            (1000 for cowrie, 65532 for beelzebub) with ALL capabilities dropped, so
+            these files are unreadable to them. WHAT AN ESCAPE LOOKS LIKE: a SUCCESSFUL
+            read, which means privileges were escalated first -- this matches only
+            opens that returned a valid fd, so a failed probe does not page. Retained
+            from the previous ruleset with the file list widened to host SSH keys and
+            the hypervisor pod excluded.
+          condition: >
+            open_read and container and honeypot_ns and not honeypot_vm_pod
+            and fd.name in (/etc/shadow, /etc/sudoers, /root/.ssh/id_rsa,
+                            /root/.ssh/authorized_keys, /etc/ssh/ssh_host_rsa_key,
+                            /etc/ssh/ssh_host_ed25519_key)
+          output: >
+            HONEYPOT BREACH sensitive file read
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            file=%fd.name proc=%proc.cmdline parent=%proc.pname user=%user.name)
+          priority: CRITICAL
+          tags: [honeypot, containment_breach, mitre_credential_access]
+
+        - rule: Honeypot Namespace - Unrecognised Workload
+          desc: >
+            CONTAINMENT BOUNDARY: these namespaces hold a small, fixed, known set of
+            pods, all declared in infrastructure/base/honeypot, .../honeypot-hi and
+            .../security/tpot. WHAT AN ESCAPE LOOKS LIKE: an attacker who reached the
+            API server scheduling something here, or a miner/implant landing in the
+            namespaces with the loosest PodSecurity -- all three enforce "privileged"
+            because hostPort and KubeVirt require it, which makes them the most
+            attractive place in the cluster to land a pod. WARNING, not CRITICAL:
+            legitimately adding a workload also trips this, so it is a "look at this",
+            not a "wake up". When you add a honeypot component, add its pod prefix here
+            rather than widening the rule -- an allow-list that is maintained is the
+            point of this tripwire. Gated to vpid 1 so it fires ONCE per unrecognised
+            container START rather than once per execve: an implant running a shell loop
+            would otherwise emit one alert per command it runs.
+          condition: >
+            spawned_process and container and honeypot_ns
+            and proc.vpid = 1
+            and not k8s.pod.name startswith "cowrie-"
+            and not k8s.pod.name startswith "beelzebub-"
+            and not k8s.pod.name startswith "tpot-wan-proxy-"
+            and not k8s.pod.name startswith "tpot-mgmt-proxy-"
+            and not k8s.pod.name startswith "virt-launcher-tpot-"
+            and not k8s.pod.name startswith "importer-tpot-"
+            and not k8s.pod.name startswith "prime-"
+          output: >
+            HONEYPOT unrecognised workload running in a honeypot namespace
+            (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
+            image=%container.image.repository proc=%proc.cmdline parent=%proc.pname user=%user.name)
+          priority: WARNING
+          tags: [honeypot, containment_breach, mitre_persistence]
+
+      # ---------------------------------------------------------------------------------------
+      # Noise tuning for the upstream stable ruleset.
+      #
+      # Method: every exception is applied through the tuning macro/list that falco_rules.yaml
+      # already exposes for that rule (`known_drop_and_execute_activities`,
+      # `user_known_stand_streams_redirect_activities`, `postgres_running_cnpg`,
+      # `user_known_read_sensitive_files_activities`), using `override: {condition: append}`.
+      # The upstream rule bodies are never rewritten, so a falco-rules bump cannot silently
+      # discard the tuning — and Falco hard-fails to load if an append target stops existing
+      # (verified: appending to a non-existent macro returns LOAD_ERR_VALIDATE).
+      #
+      # No rule is disabled and no namespace is excluded. Every exception is pinned to a
+      # (container image + container name + proc.exepath + parent) tuple taken from the actual
+      # events, and each block records what an attacker doing the same thing would still trip.
+      #
+      # Syntax validated against the running binary:
+      #   falco --validate /etc/falco/falco_rules.yaml --validate <this file>   # Falco 0.44.1
+      # ---------------------------------------------------------------------------------------
+      tuning-exceptions.yaml: |-
+        ###################################################################################
+        # Rule: "Drop and execute new binary in container"  (CRITICAL)
+        # Fires on proc.is_exe_upper_layer=true — i.e. the executable lives in a writable
+        # overlay layer rather than the image's read-only layers.
+        ###################################################################################
+
+        # 1186 events. containerd invokes the Cilium CNI plugin on every pod sandbox
+        # create/delete. cilium-agent's `install-cni-binaries` init container copies the plugin
+        # onto the node at /opt/cni/bin/cilium-cni (hostPath), so it is by definition in the
+        # node's writable layer (exe_flags=EXE_WRITABLE|EXE_UPPER_LAYER) and every pod churn on
+        # every node emits a CRITICAL. container.id="runtime" is the container plugin's marker
+        # for the runtime's own process tree — this is not a workload container at all.
+        # ATTACKER STILL CAUGHT: pinned to exactly /opt/cni/bin/cilium-cni, exec'd by containerd,
+        # in the runtime context. A dropped binary anywhere else in /opt/cni/bin, cilium-cni
+        # exec'd by any other parent, or the same path exec'd from inside a real pod all still
+        # fire. The one thing given up — someone overwriting the plugin binary in place and
+        # waiting for containerd to run it — is covered by the compensating rule
+        # "Untrusted write to CNI plugin directory" at the bottom of this file, and requires
+        # node-root or a hostPath-writable privileged pod to reach in the first place.
+        - macro: cilium_cni_plugin_invoked_by_containerd
+          condition: >
+            (proc.exepath = /opt/cni/bin/cilium-cni
+             and proc.pname = containerd
+             and container.id = runtime)
+
+        # 152 events, pihole-0..4. The pihole entrypoint installs/updates pihole-FTL into the
+        # container's writable layer at startup, so every later self-invocation is "not part of
+        # the base image". All observed invocations are pihole's own gravity blocklist rebuild
+        # (`pihole-FTL sqlite3 ...`, `pihole-FTL gravity parseList ...`) and the DNS daemon
+        # itself (`pihole-FTL no-daemon`) — it is a multi-call binary, like busybox.
+        # ATTACKER STILL CAUGHT: pinned to proc.exepath (kernel-resolved, not spoofable via
+        # argv[0]) = /usr/bin/pihole-FTL inside the `pihole` container of the official image.
+        # Any OTHER binary dropped into that container — a downloaded miner, a webshell helper,
+        # a renamed busybox — has a different exepath and still fires CRITICAL. Note this does
+        # NOT use the upstream `known_drop_and_execute_containers` list, which would have
+        # allowlisted the entire pihole image to execute anything.
+        - macro: pihole_ftl_self_invocation
+          condition: >
+            (container.image.repository = docker.io/pihole/pihole
+             and container.name = pihole
+             and proc.exepath = /usr/bin/pihole-FTL)
+
+        # 18 events. Tdarr ships a stub image and downloads its own Node runtime and ffmpeg
+        # bundle into /app/Tdarr_Server/{runtime,assets} on first start; those then live in the
+        # writable layer. Observed: Tdarr_Server_Runtime (the Node binary) and the bundled
+        # ffprobe.
+        # ATTACKER STILL CAUGHT: restricted to the three vendor bundle directories inside the
+        # tdarr container. A binary dropped in /tmp, /config, /app/anything-else, or into the
+        # media PVCs still fires. Tdarr's real risk — it executes user-supplied transcode
+        # plugins — runs through the Node runtime, and plugin-driven RCE would exec something
+        # outside these paths.
+        - macro: tdarr_bundled_runtime_exec
+          condition: >
+            (container.image.repository = ghcr.io/haveagitgat/tdarr
+             and container.name = tdarr
+             and (proc.exepath startswith /app/Tdarr_Server/runtime/
+                  or proc.exepath startswith /app/Tdarr_Server/assets/app/ffmpeg/
+                  or proc.exepath startswith /app/Tdarr_Node/))
+
+        - macro: known_drop_and_execute_activities
+          condition: >
+            or cilium_cni_plugin_invoked_by_containerd
+            or pihole_ftl_self_invocation
+            or tdarr_bundled_runtime_exec
+          override:
+            condition: append
+
+        ###################################################################################
+        # Rule: "Redirect STDOUT/STDIN to Network Connection in Container"  (NOTICE)
+        # Fires on dup/dup2/dup3 of an ipv4/ipv6 fd onto fd 0/1/2 — the classic reverse-shell
+        # primitive.
+        ###################################################################################
+
+        # 1222 events — the single largest source in the `monitoring` namespace (1190) plus
+        # `pihole` (32). This is NOT Grafana Alloy or any exporter binary: it is our own
+        # busybox metrics sidecar pattern. `nfs-storage-exporter` (monitoring) and
+        # `nebula-sync` (pihole) each pair a writer container that emits Prometheus exposition
+        # text into a shared emptyDir with a `metrics` sidecar running
+        # `busybox httpd -f -p 9092 -h /metrics`. busybox httpd forks per connection and dup2()s
+        # the accepted client socket onto the child's stdin/stdout — that IS the syscall the
+        # rule matches, so every single Prometheus scrape emits an alert. There is no CGI
+        # directory configured; the document root holds only the static exposition file.
+        # ATTACKER STILL CAUGHT: pinned to the busybox image, the container literally named
+        # `metrics`, exepath /bin/httpd, parent httpd, and local port 9092. A reverse shell
+        # anywhere else in those pods (including the `probe`/`sync` sidecar that actually has a
+        # shell and NFS mounts), on any other port, or from any non-busybox image, still fires.
+        # To abuse this an attacker would already need code execution inside the metrics
+        # sidecar — which "Terminal shell in container" and "Drop and execute new binary in
+        # container" both still cover there.
+        - macro: busybox_httpd_metrics_sidecar
+          condition: >
+            (container.image.repository = docker.io/library/busybox
+             and container.name = metrics
+             and proc.exepath = /bin/httpd
+             and proc.pname = httpd
+             and fd.lport = 9092)
+
+        - macro: user_known_stand_streams_redirect_activities
+          condition: or busybox_httpd_metrics_sidecar
+          override:
+            condition: append
+
+        ###################################################################################
+        # Rule: "Run shell untrusted"  (NOTICE)
+        ###################################################################################
+
+        # 261 events, 100% of them, across every CNPG cluster in the fleet (media-private,
+        # media-experimental, media, catalyst-llm, home-automation, catalyst-data, forgejo,
+        # crossplane-demo). CloudNativePG sets Postgres' restore_command to
+        # `/controller/manager wal-restore ...`; the postmaster runs it through /bin/sh, so
+        # every WAL segment a replica fetches spawns a shell under postgres.
+        #
+        # Upstream ALREADY blesses the identical mechanism for the other direction — the
+        # `postgres_running_cnpg` macro covers `sh -c /controller/manager wal-archive`. It
+        # simply never got the wal-restore counterpart, and it does not match the
+        # `sh -c -- ...` form that the PG18 operand images emit. This append closes both gaps
+        # and adds a constraint upstream does not have: the container image must be a CNPG
+        # operand image.
+        # ATTACKER STILL CAUGHT: any other shell under postgres — psql `COPY ... PROGRAM`,
+        # an archive_command rewritten to something else, a PL/sh payload, an RCE in a
+        # postgres extension — has a different cmdline prefix and still fires. Reaching even
+        # this exception requires already being Postgres superuser inside a CNPG operand
+        # container, and CNPG continuously reconciles restore_command back to its own value.
+        - macro: postgres_running_cnpg
+          condition: >
+            or (container.image.repository startswith "ghcr.io/cloudnative-pg/postgresql"
+                and proc.pname = postgres
+                and (proc.cmdline startswith "sh -c /controller/manager wal-"
+                     or proc.cmdline startswith "sh -c -- /controller/manager wal-"))
+          override:
+            condition: append
+
+        ###################################################################################
+        # Rule: "Read sensitive file untrusted"  (WARNING)
+        ###################################################################################
+
+        # 195 events, all from one pod: dungeon-library/postgres-0 (docker.io/pgvector/pgvector:pg16).
+        # Its liveness AND readiness probes are `exec: [pg_isready, -U, postgres]` on a 5s/10s
+        # period. On Debian-based Postgres images /usr/bin/pg_isready is a symlink to
+        # postgresql-common's pg_wrapper, which is a Perl script — hence proc.exepath=/usr/bin/perl
+        # with proc.name=pg_isready. pg_wrapper resolves the invoking user via getpwuid(), and
+        # glibc NSS running as uid 0 opens /etc/shadow as part of the `files` lookup. Pure
+        # side effect of a health check; nothing reads the contents for credentials.
+        # ATTACKER STILL CAUGHT: proc.pname=containerd-shim is the load-bearing constraint —
+        # only the kubelet CRI exec path (probes, or an API-audited `kubectl exec`) produces
+        # that parent. A process inside the container is a descendant of postgres or of a
+        # shell, never of containerd-shim, so `cat /etc/shadow`, a renamed binary claiming to
+        # be pg_isready, or pg_isready reading any file other than /etc/shadow all still fire.
+        # Note this macro is also consulted by "Read sensitive file trusted after startup";
+        # that rule only applies to binaries in read_sensitive_file_binaries, which pg_isready
+        # is not, so nothing extra is suppressed there.
+        - macro: pg_isready_exec_probe_nss_lookup
+          condition: >
+            (fd.name = /etc/shadow
+             and proc.name = pg_isready
+             and proc.exepath = /usr/bin/perl
+             and proc.pname = containerd-shim
+             and proc.cmdline startswith "pg_isready /usr/bin/pg_isready")
+
+        - macro: user_known_read_sensitive_files_activities
+          condition: or pg_isready_exec_probe_nss_lookup
+          override:
+            condition: append
+
+        ###################################################################################
+        # Rule: "Packet socket created in container"  (NOTICE)
+        ###################################################################################
+
+        # 10 events, all cilium-agent in kube-system. Cilium opens AF_PACKET sockets as part of
+        # normal datapath/device management. This rule's only upstream tuning hook is the
+        # `user_known_packet_socket_binaries` list, which matches on proc.name alone — an
+        # attacker could bypass that by naming their binary `cilium-agent`. Appending a negated
+        # macro to the rule condition instead lets the exception carry image, container name,
+        # namespace and kernel-resolved exepath. The rule body is otherwise untouched.
+        # ATTACKER STILL CAUGHT: AF_PACKET from any other pod, any other image, any other
+        # namespace, or from a different binary inside the cilium pod still fires — which is
+        # the case that matters, since AF_PACKET needs CAP_NET_RAW and almost nothing else in
+        # this cluster has it.
+        - macro: cilium_agent_packet_socket
+          condition: >
+            (k8s.ns.name = kube-system
+             and container.image.repository = quay.io/cilium/cilium
+             and container.name = cilium-agent
+             and proc.exepath = /usr/bin/cilium-agent)
+
+        - rule: Packet socket created in container
+          condition: and not cilium_agent_packet_socket
+          override:
+            condition: append
+
+        ###################################################################################
+        # Compensating control for the cilium-cni exception above.
+        ###################################################################################
+
+        # The default stable ruleset (25 rules) has no "write below binary dir" coverage, so
+        # excepting the cilium-cni exec would otherwise leave "replace the CNI plugin binary and
+        # let containerd run it" completely unobserved. Cilium writes the plugin exactly once
+        # per agent start, from its `install-cni-binaries` init container, at
+        # /host/opt/cni/bin/* (hostPath /opt/cni/bin) — that image is the only exclusion.
+        # LIMITATION, stated honestly: Falco reports the path as the writing process sees it,
+        # so a pod that mounts the same hostPath somewhere else (e.g. /mnt/x) would not match
+        # these prefixes. This catches the host-namespace and conventionally-mounted cases, not
+        # every possible one. It is new and has not yet been observed in production — watch it
+        # for a day before trusting the volume.
+        - rule: Untrusted write to CNI plugin directory
+          desc: >
+            A process other than the Cilium agent opened a file under the node's CNI plugin
+            directory for writing. Overwriting a CNI plugin binary is node-level persistence:
+            containerd executes it as root for every pod sandbox operation.
+          condition: >
+            open_write
+            and (fd.name startswith /opt/cni/bin/ or fd.name startswith /host/opt/cni/bin/)
+            and not container.image.repository = quay.io/cilium/cilium
+          output: >
+            CNI plugin directory written by untrusted process (file=%fd.name proc=%proc.cmdline
+            exe=%proc.exepath parent=%proc.pname image=%container.image.repository
+            ns=%k8s.ns.name pod=%k8s.pod.name user=%user.name)
+          priority: CRITICAL
+          tags: [container_escape, mitre_persistence, TA0003]
