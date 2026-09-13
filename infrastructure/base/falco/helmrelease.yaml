@@ -587,9 +587,17 @@ spec:
         # postgres extension — has a different cmdline prefix and still fires. Reaching even
         # this exception requires already being Postgres superuser inside a CNPG operand
         # container, and CNPG continuously reconciles restore_command back to its own value.
+        # Also covers locally-built CNPG operand images: stash-box-postgres is CNPG with
+        # extra extensions baked in and pushed to the in-cluster registry, so it runs the
+        # identical /controller/manager WAL hooks but never matches the upstream ghcr.io
+        # prefix. Found by measuring after rollout, not by reading. The load-bearing
+        # constraint is the /controller/manager cmdline (CNPG's own operator binary) plus
+        # proc.pname=postgres -- NOT the image, so widening the registry prefix does not
+        # let an arbitrary image in that registry run shells unnoticed.
         - macro: postgres_running_cnpg
           condition: >
-            or (container.image.repository startswith "ghcr.io/cloudnative-pg/postgresql"
+            or ((container.image.repository startswith "ghcr.io/cloudnative-pg/postgresql"
+                 or container.image.repository startswith "registry.talos00/talos00-registry/")
                 and proc.pname = postgres
                 and (proc.cmdline startswith "sh -c /controller/manager wal-"
                      or proc.cmdline startswith "sh -c -- /controller/manager wal-"))
