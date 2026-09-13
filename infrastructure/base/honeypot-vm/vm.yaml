@@ -1,0 +1,56 @@
+# Ephemeral detonation VM: containerDisk (NO persistent disk) so every reboot = pristine — an attacker
+# can trash it and a restart wipes them. Real Debian 12 + sshd (weak creds, honeypot persona). Isolation
+# is the load-bearing control (cilium-network-policy.yaml): the guest NATs through the virt-launcher pod,
+# so the CNP on that pod caps the guest's reach to DNS + public 80/443 (no LAN, no cluster, no metadata).
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: detonation-vm
+  namespace: honeypot-vm
+  labels: {app: detonation-vm}
+spec:
+  # Halted by default — flip to Always (or start on-demand) when routing an attacker/detonating a sample.
+  # Deploying Halted keeps the sandbox cold until deliberately used; validated by starting it manually.
+  runStrategy: Halted
+  template:
+    metadata:
+      labels:
+        app: detonation-vm
+        kubevirt.io/domain: detonation-vm
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: talos06   # largest worker; guest is CNP-caged regardless of node
+      domain:
+        cpu: {cores: 2}
+        memory: {guest: 2Gi}
+        devices:
+          disks:
+            - name: root
+              disk: {bus: virtio}
+            - name: cloudinit
+              disk: {bus: virtio}
+          interfaces:
+            - name: default
+              masquerade: {}    # guest NATs through the virt-launcher pod -> CNP governs its egress
+        resources:
+          requests: {memory: 2Gi}
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: root
+          containerDisk:
+            image: quay.io/containerdisks/debian:12   # ephemeral cloud image; reboot = pristine
+        - name: cloudinit
+          cloudInitNoCloud:
+            userData: |-
+              #cloud-config
+              hostname: web-prod-01
+              password: hunter2
+              chpasswd: {expire: false}
+              ssh_pwauth: true
+              disable_root: false
+              runcmd:
+                - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+                - sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+                - systemctl restart ssh || systemctl restart sshd || true

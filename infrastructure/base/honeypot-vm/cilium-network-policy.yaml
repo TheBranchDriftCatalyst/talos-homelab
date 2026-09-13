@@ -1,0 +1,53 @@
+# The load-bearing control for the detonation VM. The guest NATs through the virt-launcher pod
+# (masquerade), so this CNP on that pod caps the GUEST's reach: DNS + public 80/443 only, every private
+# range excepted (no LAN, no cluster, no metadata). Default-deny otherwise. Mutation-test parity with
+# the cowrie sample-fetch guard. NOTE: Falco (host) can't see inside the guest kernel — it watches the
+# virt-launcher/qemu, so its job here is VM-ESCAPE detection (a qemu breakout is a real syscall event).
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: honeypot-vm
+spec:
+  endpointSelector: {}
+  ingress: [{}]
+  egress: [{}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: honeypot-vm
+spec:
+  endpointSelector: {matchLabels: {kubevirt.io/domain: detonation-vm}}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-public-web-egress
+  namespace: honeypot-vm
+spec:
+  endpointSelector: {matchLabels: {kubevirt.io/domain: detonation-vm}}
+  egress:
+    - toCIDRSet:
+        - cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8        # pod/service CIDR + LAN supernet
+            - 172.16.0.0/12
+            - 192.168.0.0/16    # the home LAN
+            - 169.254.0.0/16    # link-local / cloud metadata (SSRF)
+            - 127.0.0.0/8
+      toPorts:
+        - ports:
+            - {port: "80", protocol: TCP}
+            - {port: "443", protocol: TCP}
