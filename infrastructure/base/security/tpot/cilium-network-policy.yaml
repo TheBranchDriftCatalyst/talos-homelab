@@ -17,8 +17,17 @@ metadata: { name: allow-dns-egress, namespace: honeypot-vm }
 spec:
   endpointSelector: {}
   egress:
+    # Pods (e.g. the socat proxies) resolve via the coredns pod endpoint.
     - toEndpoints:
         - matchLabels: { k8s:io.kubernetes.pod.namespace: kube-system, k8s-app: kube-dns }
+      toPorts:
+        - ports: [{ port: "53", protocol: UDP }, { port: "53", protocol: TCP }]
+    # KubeVirt guests reach DNS through the virt-launcher's resolv.conf = the kube-dns ClusterIP, which
+    # Cilium classifies as a CIDR identity (NOT the coredns pod), so the pod-label rule above misses it.
+    # This ClusterIP rule is what actually lets the VMs resolve. (10.96.0.10 is excepted from the public
+    # egress rule as a private range, so it must be allowed explicitly here.)
+    - toCIDR:
+        - 10.96.0.10/32
       toPorts:
         - ports: [{ port: "53", protocol: UDP }, { port: "53", protocol: TCP }]
 ---
