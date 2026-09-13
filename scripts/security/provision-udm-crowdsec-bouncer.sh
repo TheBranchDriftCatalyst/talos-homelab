@@ -46,7 +46,15 @@ INSTALLER_REPO="${INSTALLER_REPO:-wolffcatskyy/crowdsec-unifi-bouncer}"
 INSTALLER_REF="${INSTALLER_REF:-main}"
 DRY_RUN="${DRY_RUN:-0}"
 
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
+# Interactive-friendly: NO BatchMode, so ssh prompts for a password if you have no key.
+# ControlMaster multiplexes every ssh/scp in this script over ONE connection, so you are
+# prompted for the UDM password exactly ONCE (the first call), not per-command.
+SSH_CTL="${TMPDIR:-/tmp}/udm-cs-bouncer-%r@%h:%p"
+SSH_OPTS=(-o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new
+  -o ControlMaster=auto -o "ControlPath=${SSH_CTL}" -o ControlPersist=120s)
+# Close the shared connection on exit so no socket lingers.
+cleanup_ssh() { ssh -O exit -o "ControlPath=${SSH_CTL}" "${UDM_USER}@${UDM_HOST}" 2> /dev/null || true; }
+trap cleanup_ssh EXIT
 
 log() { printf '\033[1;36m▶ %s\033[0m\n' "$*"; }
 ok() { printf '\033[1;32m  ✓ %s\033[0m\n' "$*"; }
@@ -137,7 +145,7 @@ prometheus:
   listen_port: 9101
 CFG
 # shellcheck disable=SC2029
-  remote "mkdir -p '${CONFIG_DIR}'"
+remote "mkdir -p '${CONFIG_DIR}'"
 if [ "$DRY_RUN" = "1" ]; then
   printf '    [dry-run] would write %s/crowdsec-firewall-bouncer.yaml:\n' "$CONFIG_DIR"
   printf '%s\n' "$BOUNCER_CFG" | sed 's/^/        /'
