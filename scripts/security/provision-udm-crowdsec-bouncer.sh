@@ -86,6 +86,9 @@ if [ "$DRY_RUN" != "1" ]; then
   [ "$UNIFIOS" = "yes" ] || die "this does not look like a UniFi OS device (no /data). Aborting rather than touching the wrong host."
   ok "UniFi OS device detected${MODEL:+ (${MODEL})}"
 
+  remote "command -v bash >/dev/null 2>&1" ||
+    die "the UDM has no bash — the installer needs it. (UniFi OS normally ships bash.)"
+
   # The mirror must be reachable FROM the UDM, or the bouncer starts with an empty set.
   if remote "curl -fsS --max-time 8 -o /dev/null '${MIRROR_URL}'" 2> /dev/null; then
     COUNT="$(remote "curl -fsS --max-time 8 '${MIRROR_URL}' | grep -c . || true")"
@@ -107,7 +110,7 @@ log "Installing the CrowdSec firewall bouncer on the UDM (ref: ${INSTALLER_REF})
 INSTALL_URL="https://raw.githubusercontent.com/${INSTALLER_REPO}/${INSTALLER_REF}/bootstrap.sh"
 remote "curl -fsSL '${INSTALL_URL}' -o /tmp/cs-unifi-bootstrap.sh" ||
   die "failed to download the installer to the UDM (does it have internet?)"
-remote "sh /tmp/cs-unifi-bootstrap.sh" ||
+remote "bash /tmp/cs-unifi-bootstrap.sh" ||
   die "installer failed on the UDM — inspect /tmp/cs-unifi-bootstrap.sh output above"
 ok "bouncer installed"
 
