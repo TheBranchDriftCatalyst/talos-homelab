@@ -19,7 +19,13 @@ spec:
         kubevirt.io/domain: detonation-vm
     spec:
       nodeSelector:
-        kubernetes.io/hostname: talos06   # largest worker; guest is CNP-caged regardless of node
+        # HARD-pinned to talos02-gpu — same reasoning as cowrie (TALOS-a8vo): now that this is a
+        # WAN-exposed REAL shell, placement must avoid the highest-risk nodes. NEVER a control-plane node
+        # (talos00/01/03 — a virt-launcher/container escape there reaches etcd/apiserver) and NEVER talos06
+        # (co-located with every database, MinIO, and the ESO secrets broker). talos02-gpu is the only
+        # kubevirt-schedulable worker with no local datastores — the CNP cages guest egress, but node
+        # blast-radius on an escape is a separate axis the netpol does not cover. Co-located with wan-proxy.
+        kubernetes.io/hostname: talos02-gpu
       domain:
         cpu: {cores: 2}
         memory: {guest: 2Gi}
