@@ -32,6 +32,8 @@ spec:
           interfaces:
             - name: default
               masquerade: {}    # guest NATs through the virt-launcher pod -> CNP governs its egress
+              ports:
+                - {name: ssh, port: 22, protocol: TCP}   # virt-launcher:22 -> guest:22 (internal SSH / future routing)
         resources:
           requests: {memory: 2Gi}
       networks:
@@ -54,3 +56,11 @@ spec:
                 - sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
                 - sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
                 - systemctl restart ssh || systemctl restart sshd || true
+                # In-guest capture (host Falco can't see inside a KubeVirt guest): auditd logs every exec +
+                # outbound connect; PROMPT_COMMAND ships each shell command to syslog. Lands in the guest's
+                # /var/log (ephemeral). Shipping it OFF the VM (retain PVC + archive / CNP-safe relay) = 2c.2.
+                - apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y auditd || true
+                - auditctl -a always,exit -F arch=b64 -S execve -k exec 2>/dev/null || true
+                - auditctl -a always,exit -F arch=b64 -S connect -k net 2>/dev/null || true
+                - systemctl enable --now auditd || true
+                - echo 'export PROMPT_COMMAND="history -a; logger -t detonation-shell -- \"$(id -un): $(history 1)\""' >> /etc/profile
