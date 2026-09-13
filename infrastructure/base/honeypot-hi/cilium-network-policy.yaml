@@ -53,7 +53,11 @@ metadata:
 spec:
   endpointSelector: {matchLabels: {app: beelzebub}}
   ingress:
-    - fromCIDR: ["10.244.0.0/16"]   # in-cluster + kubectl port-forward path; NO world (internal-only)
+    - fromEntities: ["world"]       # WAN-exposed (WAN:22 -> hostPort 2222). The honeypot's whole point.
+      toPorts:
+        - ports:
+            - {port: "2222", protocol: TCP}
+    - fromCIDR: ["10.244.0.0/16", "192.168.1.0/24"]   # in-cluster + LAN (kubectl port-forward path)
       toPorts:
         - ports:
             - {port: "2222", protocol: TCP}

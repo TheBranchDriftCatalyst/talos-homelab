@@ -1,0 +1,18 @@
+---
+# Beelzebub exposes Prometheus metrics on :2112 /metrics (honeypot event/session counters).
+# The configmap always intended this ("scraped into Mimir (PodMonitor, added later)") — this is
+# that PodMonitor. Alloy's cluster discovery scrapes it into Mimir for the beelzebub-ops dashboard.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: beelzebub
+  namespace: honeypot-hi
+  labels: {app: beelzebub}
+spec:
+  selector:
+    matchLabels:
+      app: beelzebub
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

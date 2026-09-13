@@ -37,11 +37,16 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: {drop: [ALL]}
+      # HARD-pinned to talos02-gpu (.144) — the node the WAN:22 forward targets. Same pin +
+      # hostPort 2222 as cowrie, so the two HOTSWAP: scale one to 0 and the other to 1 and the
+      # WAN forward follows whoever binds .144:2222 (only one can at a time). TALOS honeypot swap.
+      nodeSelector:
+        kubernetes.io/hostname: talos02-gpu
       containers:
         - name: beelzebub
           image: m4r10/beelzebub:v3.9.1
           ports:
-            - {name: ssh, containerPort: 2222, protocol: TCP}
+            - {name: ssh, containerPort: 2222, hostPort: 2222, protocol: TCP}
             - {name: metrics, containerPort: 2112, protocol: TCP}
           volumeMounts:
             - {name: core, mountPath: /configurations/beelzebub.yaml, subPath: beelzebub.yaml, readOnly: true}
