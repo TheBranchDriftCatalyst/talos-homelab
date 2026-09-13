@@ -53,11 +53,34 @@ def _ds_uid(obj):
     return ds
 
 
+def _tmpl_subst(dash):
+    """Build a substituter for the dashboard's template variables. A panel query like
+    `origin=~"$origin"` is meaningless without the variable resolved; Grafana defaults query-vars to
+    $__all -> `.*`, so we do the same. Returns a fn(query)->query."""
+    subs = {}
+    for v in dash.get("templating", {}).get("list", []):
+        n = v.get("name")
+        if not n or n.startswith("__"):
+            continue
+        cur = v.get("current", {})
+        val = cur.get("value")
+        # $__all / multi / no concrete scalar -> match-all regex; a concrete scalar -> use it
+        rep = ".*" if (val in (None, "$__all", "") or isinstance(val, list)) else str(val)
+        subs[n] = rep
+    def apply(q):
+        for n, rep in subs.items():
+            q = q.replace("${%s}" % n, rep)
+            q = re.sub(r"\$%s(?![A-Za-z0-9_])" % re.escape(n), rep, q)
+        return q
+    return apply
+
+
 def _all_panels():
     """[(dashname, uid, panel_title, ds_uid, [queries])] across every registered dashboard."""
     rows = []
     for name, path, _uid in reg.DASHBOARDS:
         dash = json.loads((helpers.ROOT / path).read_text())
+        tvar = _tmpl_subst(dash)
         for p in _panels(dash):
             pds = _ds_uid(p)
             queries = _targets(p)
@@ -65,7 +88,7 @@ def _all_panels():
             for t in p.get("targets", []):
                 if _ds_uid(t):
                     pds = _ds_uid(t)
-            rows.append((name, p.get("title", "?"), pds, [q for q in queries if q]))
+            rows.append((name, p.get("title", "?"), pds, [tvar(q) for q in queries if q]))
     return rows
 
 

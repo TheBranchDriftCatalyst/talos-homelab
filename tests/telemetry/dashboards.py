@@ -27,6 +27,13 @@ Empty = namedtuple("Empty", "reason issue")
 # "this panel shows nothing" is a reviewed decision, not a silent gap. The --live audit SKIPs these
 # (rather than failing) but still reports them, so a real regression in a data-bearing panel is caught.
 EXPECTED_EMPTY = {
+    ("cowrie-ops", "HONEYPOT BREACH (Falco) — should ALWAYS be empty"): Empty(
+        "by design — Falco breach tripwire; populated only if an attacker escapes the emulation into "
+        "the container. Empty = healthy.", "TALOS-slbn"),
+    ("cowrie-ops", "Login Attempts (success vs failed)"): Empty(
+        "0 in a quiet window — external SSH login activity on the public honeypot is sporadic", "TALOS-a8vo"),
+    ("cowrie-ops", "Sessions Over Time"): Empty(
+        "0 in a quiet window — external (non-pod-CIDR) sessions are sporadic", "TALOS-a8vo"),
     ("cowrie-ops", "Failed Logins"): Empty(
         "0 until a real SSH brute-force attempt hits the honeypot (cowrie accepts most creds, so most "
         "sessions log success not failure)", "TALOS-a8vo"),
