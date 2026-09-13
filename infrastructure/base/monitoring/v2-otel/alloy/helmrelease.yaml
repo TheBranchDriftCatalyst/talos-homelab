@@ -747,23 +747,6 @@ spec:
             forward_to      = [prometheus.relabel.add_cluster.receiver]
           }
 
-          // ── UDM SE edge CrowdSec firewall bouncer (TALOS-spov) ──────────
-          // The UniFi gateway runs the CrowdSec firewall bouncer OUTSIDE the
-          // cluster, enforcing decisions at the L3/L4 perimeter — the only
-          // CrowdSec coverage for the non-Traefik exposed ports (Plex 32400,
-          // Home Assistant 8123, game-server NodePorts, etc). Its metrics bind
-          // 0.0.0.0:9101 on the UDM (set by provision-udm-crowdsec-bouncer.sh);
-          // the UDM must permit inbound :9101 from the pod CIDR for this scrape.
-          // Static target because the device is not in Kubernetes SD.
-          prometheus.scrape "udm_crowdsec_bouncer" {
-            job_name        = "crowdsec-unifi-bouncer"
-            scrape_interval = "30s"
-            targets = [
-              { "__address__" = "192.168.1.1:9101", "instance" = "udm-se" },
-            ]
-            forward_to = [prometheus.relabel.add_cluster.receiver]
-          }
-
           // Blackbox probe targets - scrape blackbox exporter with target params
           // Uses static targets with relabeling to set probe targets
           discovery.relabel "blackbox_probes" {

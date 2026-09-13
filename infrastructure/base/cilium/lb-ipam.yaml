@@ -11,11 +11,8 @@ spec:
     - start: "192.168.1.240"
       stop: "192.168.1.250"
   serviceSelector:
-    # Explicit allow-list (NOT a broad match) so minio's LoadBalancers still stay
-    # cluster-internal. crowdsec-blocklist-mirror (TALOS-spov) added: it needs a LAN
-    # VIP (.243) the UDM firewall bouncer can pull the filtered blocklist from.
-    matchExpressions:
-      - {key: app, operator: In, values: [pihole, crowdsec-blocklist-mirror]}
+    matchLabels:
+      app: pihole
 ---
 # Announce the pool's LoadBalancer IPs on the LAN via ARP (L2). No BGP needed.
 apiVersion: cilium.io/v2alpha1
@@ -24,8 +21,8 @@ metadata:
   name: lan-pihole-l2
 spec:
   serviceSelector:
-    matchExpressions:
-      - {key: app, operator: In, values: [pihole, crowdsec-blocklist-mirror]}
+    matchLabels:
+      app: pihole
   # No nodeSelector: Pi-hole now runs on EVERY node (one-per-node HA), so whichever
   # node Cilium elects to announce the VIP has a local backend — required for
   # externalTrafficPolicy:Local (client-IP preservation). Node dies → lease + VIP
