@@ -20,6 +20,9 @@ spec:
           # local-path is node-local + WaitForFirstConsumer; pin provisioning to the VM's node so the
           # CDI importer and the VM land on the same box (else the VM can't attach the disk).
           volume.kubernetes.io/selected-node: talos02-gpu
+          # Import into the PVC BEFORE the VM consumes it. Without this, WFFC lets the VM's virt-launcher
+          # grab the PVC first (ImportTargetInUse) and CDI can never import -> the disk never populates.
+          cdi.kubevirt.io/storage.bind.immediate.requested: "true"
       spec:
         storage:
           accessModes: [ReadWriteOnce]
