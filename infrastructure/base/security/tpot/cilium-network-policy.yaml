@@ -22,12 +22,12 @@ spec:
         - matchLabels: { k8s:io.kubernetes.pod.namespace: kube-system, k8s-app: kube-dns }
       toPorts:
         - ports: [{ port: "53", protocol: UDP }, { port: "53", protocol: TCP }]
-    # KubeVirt guests reach DNS through the virt-launcher's resolv.conf = the kube-dns ClusterIP, which
-    # Cilium classifies as a CIDR identity (NOT the coredns pod), so the pod-label rule above misses it.
-    # This ClusterIP rule is what actually lets the VMs resolve. (10.96.0.10 is excepted from the public
-    # egress rule as a private range, so it must be allowed explicitly here.)
+    # KubeVirt guests resolve via PUBLIC DNS (1.1.1.1 / 1.0.0.1) — the masquerade + kube-dns ClusterIP
+    # path is unreliable for guests, and they only need public-name resolution for the install. Straight
+    # public :53 egress to Cloudflare.
     - toCIDR:
-        - 10.96.0.10/32
+        - 1.1.1.1/32
+        - 1.0.0.1/32
       toPorts:
         - ports: [{ port: "53", protocol: UDP }, { port: "53", protocol: TCP }]
 ---
