@@ -1,0 +1,153 @@
+# Two socat fronts pinned to talos02-gpu (KubeVirt VMs can't bind node hostPorts themselves).
+#   - tpot-wan-proxy: hostPort 2222 (the router's WAN:22 -> :2222 forward target) -> T-Pot SSH honeypot.
+#     WORLD ingress. socat -d -d logs peer IPs to stdout -> CrowdSec (the shared-front capture point that
+#     feeds AbuseIPDB + blocklist + bouncer regardless of which honeypot is behind it).
+#   - tpot-mgmt-proxy: hostPort 64297 -> T-Pot Kibana/attack-map. LAN-ONLY (node has no public IP and the
+#     router forwards no mgmt port; CNP additionally restricts ingress to LAN CIDRs). Browse
+#     https://192.168.1.144:64297 (T-Pot nginx does its own TLS + tpotadmin auth).
+# HOTSWAP: scale tpot-wan-proxy to 0 (or Halt the VM) to take the honeypot offline.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tpot-wan-proxy
+  namespace: honeypot-vm
+  labels:
+    app: tpot-wan-proxy
+    app.kubernetes.io/component: honeypot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tpot-wan-proxy
+  template:
+    metadata:
+      labels:
+        app: tpot-wan-proxy
+        app.kubernetes.io/component: honeypot
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: talos02-gpu
+      containers:
+        - name: socat
+          image: alpine/socat:1.8.0.0
+          args:
+            - "-d"
+            - "-d"
+            - "TCP-LISTEN:2222,fork,reuseaddr"
+            - "TCP:tpot-ssh.honeypot-vm.svc.cluster.local:22"
+          ports:
+            - { name: ssh, containerPort: 2222, hostPort: 2222, protocol: TCP }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tpot-mgmt-proxy
+  namespace: honeypot-vm
+  labels:
+    app: tpot-mgmt-proxy
+    app.kubernetes.io/component: honeypot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tpot-mgmt-proxy
+  template:
+    metadata:
+      labels:
+        app: tpot-mgmt-proxy
+        app.kubernetes.io/component: honeypot
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: talos02-gpu
+      containers:
+        - name: socat
+          image: alpine/socat:1.8.0.0
+          args:
+            - "TCP-LISTEN:64297,fork,reuseaddr"
+            - "TCP:tpot-mgmt.honeypot-vm.svc.cluster.local:64297"
+          ports:
+            - { name: webui, containerPort: 64297, hostPort: 64297, protocol: TCP }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+---
+# WAN ingress to the SSH front (:2222 from the world) + egress to the guest SSH + DNS.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tpot-wan-proxy-policy
+  namespace: honeypot-vm
+spec:
+  endpointSelector:
+    matchLabels:
+      app: tpot-wan-proxy
+  ingress:
+    - fromEntities: ["world"]
+      toPorts:
+        - ports:
+            - { port: "2222", protocol: TCP }
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            kubevirt.io/domain: tpot
+      toPorts:
+        - ports:
+            - { port: "22", protocol: TCP }
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+---
+# LAN-only ingress to the mgmt front (:64297 from LAN CIDRs) + egress to the guest Kibana + DNS.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tpot-mgmt-proxy-policy
+  namespace: honeypot-vm
+spec:
+  endpointSelector:
+    matchLabels:
+      app: tpot-mgmt-proxy
+  ingress:
+    - fromCIDR:
+        - 192.168.0.0/16
+      toPorts:
+        - ports:
+            - { port: "64297", protocol: TCP }
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            kubevirt.io/domain: tpot
+      toPorts:
+        - ports:
+            - { port: "64297", protocol: TCP }
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }

@@ -1,0 +1,76 @@
+# T-Pot 24.04 standalone honeypot in a KubeVirt VM. Real, persistent Debian box running 20+ dockerized
+# honeypots + Suricata + Elastic/Kibana + the attack map. Pinned to talos02-gpu (the only kubevirt-
+# schedulable worker that is neither control-plane nor a datastore node — see cilium-network-policy.yaml
+# for the isolation cage). Persistent 128Gi local-path disk (CDI-imported Debian cloud image) so the
+# install + captured data survive reboots. cloud-init (ESO-rendered) runs the unattended installer.
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: tpot
+  namespace: honeypot-vm
+  labels:
+    app: tpot
+spec:
+  runStrategy: Always # active WAN honeypot; hotswap: Halted = off
+  dataVolumeTemplates:
+    - metadata:
+        name: tpot-disk
+        annotations:
+          # local-path is node-local + WaitForFirstConsumer; pin provisioning to the VM's node so the
+          # CDI importer and the VM land on the same box (else the VM can't attach the disk).
+          volume.kubernetes.io/selected-node: talos02-gpu
+      spec:
+        storage:
+          accessModes: [ReadWriteOnce]
+          storageClassName: local-path
+          resources:
+            requests:
+              storage: 128Gi
+        source:
+          http:
+            url: https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2
+  template:
+    metadata:
+      labels:
+        app: tpot
+        kubevirt.io/domain: tpot
+    spec:
+      nodeSelector:
+        # HARD-pinned to talos02-gpu (TALOS-a8vo reasoning): a WAN-exposed real box must be off the
+        # control-plane nodes (talos00/01/03 -> etcd/apiserver on escape) and off talos06 (all databases/
+        # MinIO/ESO). talos02-gpu is the only kubevirt-schedulable worker with no local datastores.
+        kubernetes.io/hostname: talos02-gpu
+      domain:
+        cpu:
+          cores: 4
+        memory:
+          guest: 16Gi
+        resources:
+          requests:
+            memory: 16Gi
+        devices:
+          disks:
+            - name: root
+              disk:
+                bus: virtio
+            - name: cloudinit
+              disk:
+                bus: virtio
+          interfaces:
+            - name: default
+              masquerade: {} # guest NATs through virt-launcher -> CNP governs egress
+              ports:
+                - { name: ssh, port: 22, protocol: TCP } # SSH honeypot (WAN via wan-proxy)
+                - { name: webui, port: 64297, protocol: TCP } # T-Pot Kibana/attack-map (LAN via mgmt-proxy)
+      networks:
+        - name: default
+          pod: {}
+      volumes:
+        - name: root
+          dataVolume:
+            name: tpot-disk
+        - name: cloudinit
+          cloudInitNoCloud:
+            secretRef:
+              name: tpot-cloudinit

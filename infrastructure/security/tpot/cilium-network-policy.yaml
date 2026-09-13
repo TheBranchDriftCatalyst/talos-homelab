@@ -1,0 +1,116 @@
+# Isolation cage for the T-Pot honeypot namespace. Default-deny both ways; the VM may egress ONLY to
+# public 80/443 (+ DNS) for the install docker pulls and T-Pot CTI feeds — NEVER the LAN, cluster, or
+# node metadata. Ingress to the VM comes only from the two in-cluster socat proxies (fromEndpoints —
+# pod-to-pod must use fromEndpoints, NOT fromCIDR, which only matches cluster-external sources).
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: honeypot-vm
+spec:
+  endpointSelector: {}
+  ingress:
+    - {}
+  egress:
+    - {}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: honeypot-vm
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+---
+# The T-Pot guest: public 80/443 only, every private range excepted. Covers install (ghcr/dockerhub/
+# debian/github over 443) + CTI feeds. No LAN, no cluster, no metadata.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tpot-public-egress
+  namespace: honeypot-vm
+spec:
+  endpointSelector:
+    matchLabels:
+      kubevirt.io/domain: tpot
+  egress:
+    - toCIDRSet:
+        - cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+            - 169.254.0.0/16
+            - 127.0.0.0/8
+      toPorts:
+        - ports:
+            - { port: "80", protocol: TCP }
+            - { port: "443", protocol: TCP }
+---
+# CDI importer needs to fetch the Debian cloud image (cloud.debian.org, 443) during disk provisioning.
+# Without this the import silently hangs in the default-deny namespace and the VM never boots.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cdi-importer-egress
+  namespace: honeypot-vm
+spec:
+  endpointSelector:
+    matchLabels:
+      cdi.kubevirt.io: importer
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - { port: "53", protocol: UDP }
+            - { port: "53", protocol: TCP }
+    - toCIDRSet:
+        - cidr: 0.0.0.0/0
+          except:
+            - 10.0.0.0/8
+            - 172.16.0.0/12
+            - 192.168.0.0/16
+            - 169.254.0.0/16
+            - 127.0.0.0/8
+      toPorts:
+        - ports:
+            - { port: "80", protocol: TCP }
+            - { port: "443", protocol: TCP }
+---
+# Ingress to the guest: ONLY from the two socat proxies (fromEndpoints). SSH honeypot :22 from the WAN
+# front; Kibana/attack-map :64297 from the LAN mgmt front.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tpot-ingress-from-proxies
+  namespace: honeypot-vm
+spec:
+  endpointSelector:
+    matchLabels:
+      kubevirt.io/domain: tpot
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: tpot-wan-proxy
+      toPorts:
+        - ports:
+            - { port: "22", protocol: TCP }
+    - fromEndpoints:
+        - matchLabels:
+            app: tpot-mgmt-proxy
+      toPorts:
+        - ports:
+            - { port: "64297", protocol: TCP }

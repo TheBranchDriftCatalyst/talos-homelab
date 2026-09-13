@@ -1,0 +1,20 @@
+# T-Pot 24.04 standalone honeypot in a KubeVirt VM — WAN-exposed, CNP-caged, pinned talos02-gpu
+# (TALOS-qish). Replaces the hand-rolled detonation VM. dependsOn external-secrets-operator for the
+# ESO-rendered install cloud-init. No postBuild.substituteFrom (no cluster-settings vars; envsubst trap).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tpot
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef: {kind: GitRepository, name: flux-system}
+  path: ./infrastructure/security/tpot
+  prune: true
+  wait: false
+  dependsOn:
+    - name: cilium
+    - name: kubevirt
+    - name: external-secrets-operator
