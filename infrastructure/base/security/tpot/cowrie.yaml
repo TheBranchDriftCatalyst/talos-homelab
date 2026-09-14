@@ -1,7 +1,12 @@
-# Cowrie SSH/Telnet honeypot (T-Pot image) as a native Deployment — the WAN-facing honeypot on the
-# existing WAN:22 -> talos02-gpu:2222 router forward. hostPort preserves the real attacker source IP
-# (no masquerade double-NAT). A logship sidecar tails Cowrie's JSON to stdout -> Alloy -> Loki (and the
-# CrowdSec agent later). Ephemeral emptyDirs for now; a retain PVC for malware samples can come later.
+# Cowrie SSH/Telnet honeypot as a native Deployment — the WAN-facing honeypot on the existing
+# WAN:22 -> talos02-gpu:2222 router forward. hostPort preserves the real attacker source IP (no NAT).
+#
+# Uses the UPSTREAM cowrie/cowrie image, not ghcr.io/telekom-security/cowrie: the T-Pot repackage is
+# coupled to tpotinit (no etc/, no ckeygen, needs seeded host keys + persona config) and won't run
+# standalone. Upstream cowrie is self-contained (generates host keys, runs as the cowrie user) and is the
+# same honeypot T-Pot derives from — the right image for a plain k8s Deployment.
+#
+# A logship sidecar tails Cowrie's JSON to stdout -> Alloy -> Loki (and the CrowdSec agent later).
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,20 +30,45 @@ spec:
     spec:
       automountServiceAccountToken: false # no cluster credential in a box we invite attackers into
       nodeSelector:
-        kubernetes.io/hostname: talos02-gpu # the WAN:22 -> :2222 forward target; off control-plane + datastore nodes
+        kubernetes.io/hostname: talos02-gpu # WAN:22 -> :2222 forward target; off control-plane + datastore nodes
       securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: cowrie
-          image: ghcr.io/telekom-security/cowrie:24.04.1
-          imagePullPolicy: IfNotPresent
+          image: cowrie/cowrie:latest
+          imagePullPolicy: Always
           ports:
             - { name: ssh, containerPort: 2222, hostPort: 2222, protocol: TCP }
             - { name: telnet, containerPort: 2223, hostPort: 2223, protocol: TCP }
-          # NOTE: no drop-ALL / no allowPrivilegeEscalation:false here — the T-Pot cowrie image starts as
-          # root and setuid's down to the cowrie user internally; no_new_privs + dropped SETUID/SETGID
-          # break that ("can't execute python3: Operation not permitted"). Containment is the default-deny
-          # CNP + the isolated tpot namespace, not the container caps.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: var-lib, mountPath: /cowrie/cowrie-git/var/lib/cowrie }
+            - { name: var-log, mountPath: /cowrie/cowrie-git/var/log/cowrie }
+        # Log-shipper: stream Cowrie's JSON event log to stdout so Alloy->Loki (durable, Grafana-queryable)
+        # and the CrowdSec agent (CRI stdout -> decisions) both see it. touch first so tail -F doesn't race.
+        - name: logship
+          image: busybox:1.36
+          command: ["sh", "-c", "touch /var/log/cowrie/cowrie.json; exec tail -n+1 -F /var/log/cowrie/cowrie.json"]
+          volumeMounts:
+            - { name: var-log, mountPath: /var/log/cowrie }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+      volumes:
+        - { name: var-lib, emptyDir: {} }
+        - { name: var-log, emptyDir: {} }
