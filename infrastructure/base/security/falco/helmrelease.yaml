@@ -51,11 +51,13 @@ spec:
       honeypot-breach.yaml: |-
         - macro: honeypot_ns
           condition: (k8s.ns.name = "honeypot")
-        # The haproxy front (honeypot-lb) is REAL infrastructure, not an emulator — its normal procs
-        # (docker-entrypoint.sh, haproxy) are expected, so it must NOT trip the "escaped emulation"
-        # tripwire. Scope the breach rules to the emulator containers (cowrie/beelzebub) only.
+        # Only the EMULATOR containers (cowrie, beelzebub) emulate the shell in-process, so a real exec
+        # there = escaped emulation = breach. The honeypot ns also runs REAL infra whose normal procs are
+        # expected and must NOT trip the tripwire: haproxy (the LB front), logship (cowrie log sidecar),
+        # archive (the cowrie-archive backup CronJob: busybox date/sh/tar), render-config (beelzebub init).
+        # Allowlist the emulators explicitly rather than blocklisting each infra container (whack-a-mole).
         - macro: honeypot_emulator
-          condition: (honeypot_ns and container and container.name != "haproxy")
+          condition: (honeypot_ns and container and container.name in (cowrie, beelzebub))
         - list: honeypot_expected_procs
           items: [twistd, python3, python, beelzebub, busybox, sh, tail, touch, sed, pause]
         - rule: Honeypot Container Breach - Unexpected Process
