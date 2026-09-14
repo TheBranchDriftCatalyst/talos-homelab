@@ -66,34 +66,12 @@ spec:
     # ---- custom whitelist parser (mounted into the agent) — never ban internal/LAN/Cloudflare ----
     config:
       parsers:
-        # ---- Cowrie SSH/Telnet honeypot parser (agent side) — rec #3, the honeypot→CTI move ----
-        # No crowdsecurity/cowrie hub item exists (TALOS-e9h), so parse Cowrie's JSON here. The
-        # logship sidecar tails cowrie.json to stdout; the k8s acquisition tags it program: cowrie
-        # (helmrelease agent.acquisition below). cri-logs (s00) strips the CRI prefix into
-        # evt.Parsed.message (the JSON); this parser extracts source_ip + eventid so the
-        # honeypot/cowrie-activity scenario can fire and SHARE the signal to CAPI/community CTI.
-        # Sample event: {"eventid":"cowrie.session.connect","src_ip":"x.x.x.x","src_port":..,
-        #   "dst_port":2222,"session":"..","timestamp":"2026-..Z","message":".."}
+          # ---- Honeypot front parser — the haproxy VIP is the SINGLE ban source ----
+          # haproxy tcplog carries the REAL attacker IP for EVERY connection (cowrie+beelzebub,
+          # ssh+telnet); this parser extracts source_ip for homelab/honeypot-vip-activity. The old
+          # per-cowrie parser+scenario were removed to stop double-deciding once cowrie started
+          # seeing the real IP via PROXY protocol (both scenarios were banning the same IP).
         s01-parse:
-          cowrie-logs.yaml: |
-            onsuccess: next_stage
-            # Only Cowrie stdout JSON (program set by the k8s acquisition; guard on a leading '{').
-            filter: "evt.Parsed.program == 'cowrie' && evt.Parsed.message startsWith '{' && JsonExtract(evt.Parsed.message, 'src_ip') != '' && JsonExtract(evt.Parsed.message, 'eventid') startsWith 'cowrie.'"
-            name: homelab/cowrie-logs
-            description: "Parse Cowrie SSH/Telnet honeypot JSON events → source_ip for CrowdSec"
-            # Whitelist nodes short-circuit statics in CrowdSec. Extract metadata here;
-            # s02 homelab/whitelist excludes internal sources after extraction.
-            statics:
-              - meta: service
-                value: ssh
-              - meta: source_ip
-                expression: "JsonExtract(evt.Parsed.message, 'src_ip')"
-              - meta: cowrie_eventid
-                expression: "JsonExtract(evt.Parsed.message, 'eventid')"
-              - meta: log_type
-                expression: "'cowrie_' + JsonExtract(evt.Parsed.message, 'eventid')"
-              - target: evt.StrTime
-                expression: "JsonExtract(evt.Parsed.message, 'timestamp')"
           haproxy-honeypot-logs.yaml: |
             onsuccess: next_stage
             filter: "evt.Parsed.program == 'haproxy-honeypot'"
@@ -198,23 +176,6 @@ spec:
         # attacker keeps interacting while being blocked everywhere else. share_custom: true (console.yaml
         # below) forwards this custom-scenario alert to CAPI → contributes to the community blocklist/CTI.
         # NOT excluded in simulation.yaml → it is a REAL, shareable, enforced signal (unlike the tarpit).
-        cowrie-activity.yaml: |
-          type: trigger
-          name: homelab/cowrie-activity
-          description: "IP interacted with the Cowrie SSH/Telnet honeypot — confirmed malicious"
-          filter: "evt.Meta.log_type startsWith 'cowrie_'"
-          groupby: "evt.Meta.source_ip"
-          blackhole: 1m
-          labels:
-            remediation: true
-            type: scan
-            service: ssh
-            behavior: "ssh:bruteforce"
-            classification:
-              - "attack.T1110" # MITRE ATT&CK: Brute Force
-            confidence: 3 # honeypot interaction = maximum confidence for CTI weighting
-            spoofable: 0 # TCP session established → source IP not spoofable
-            label: "SSH/Telnet honeypot interaction"
         honeypot-vip-activity.yaml: |
           type: trigger
           name: homelab/honeypot-vip-activity
@@ -523,14 +484,6 @@ spec:
         - namespace: traefik
           podName: "traefik-*"
           program: traefik # → crowdsecurity/traefik parser
-          poll_without_inotify: true
-        # Cowrie honeypot events (the `logship` sidecar emits Cowrie JSON on
-        # stdout). Pipes honeypot activity into CrowdSec for visibility/signals.
-        # Custom Cowrie metadata parser and immediate scenario are configured above.
-        # Internal/probe sources are excluded after parsing; public sources enforce.
-        - namespace: honeypot
-          podName: "cowrie-*"
-          program: cowrie
           poll_without_inotify: true
         # haproxy honeypot front: the REAL attacker source IPs (cowrie/beelzebub see only the proxy IP
         # now: VIP -> haproxy -> honeypots), so bans MUST key off haproxy's tcplog.
