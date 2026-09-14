@@ -88,6 +88,10 @@ EXPECTED_EMPTY = {
         "reporter is a daily CronJob — log panel is empty between runs", "TALOS-pbn"),
     ("crowdsec-ops", "IPs Reported to AbuseIPDB (24h)"): Empty(
         "reporter is a daily CronJob — populates on its run (fix just landed)", "TALOS-pbn"),
+    ("honeypot-ops", "Failed Logins"): Empty(
+        "cowrie accepts most creds, so failed logins are sporadic", "TALOS-qish"),
+    ("honeypot-ops", "HONEYPOT BREACH (Falco) — should ALWAYS be empty"): Empty(
+        "by design — Falco breach tripwire; empty = healthy (nobody escaped the emulation)", "TALOS-slbn"),
 }
 
 # grafana dashboard-variable macros -> concrete values for a standalone query
