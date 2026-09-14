@@ -1,7 +1,12 @@
-# Weighted, sticky TCP front for the honeypot VIP. k8s Services can't weight endpoints, so this haproxy
-# does the 90/10 split: `balance source` hashes the attacker's source IP to a backend (sticky per
-# attacker for the whole session) while honoring `weight 90` (cowrie) / `weight 10` (beelzebub). The VIP
-# LoadBalancer (externalTrafficPolicy:Local) hands haproxy the real source IP, and haproxy's tcplog
+# Weighted + STICKY TCP front for the honeypot VIP. k8s Services can't weight endpoints, so this haproxy
+# does the 90/10 split AND keeps each attacker on one honeypot:
+#   - `balance roundrobin` + `weight 90/10` assigns each NEW source IP at a true 90:10 ratio (cowrie:
+#     beelzebub) — weighted round-robin distributes accurately even for small/bursty IP sets, unlike
+#     `balance source` whose IP-hash was lumpy and starved beelzebub.
+#   - `stick-table type ip` + `stick on src` remembers that assignment, so every later connection from the
+#     same attacker IP sticks to the same honeypot (consistent persona across reconnects, expire 24h).
+# Net: 90:10 of unique attackers, sticky per attacker. The VIP LoadBalancer (externalTrafficPolicy:Local)
+# hands haproxy the REAL source IP, so `stick on src` keys on the attacker (not the proxy); haproxy's tcplog
 # (source IP per connection, to stdout) is what CrowdSec tails for bans. Pinned to talos02-gpu with the
 # honeypots so the Local VIP always has a node-local backend.
 ---
@@ -25,14 +30,16 @@ data:
       bind :2222
       default_backend ssh_honeypots
     backend ssh_honeypots
-      balance source
+      balance roundrobin
+      stick-table type ip size 200k expire 24h
+      stick on src
       server cowrie cowrie.honeypot.svc.cluster.local:2222 weight 90 check send-proxy-v2 check-send-proxy
       server beelzebub beelzebub.honeypot.svc.cluster.local:2222 weight 10 check
     frontend telnet_in
       bind :2223
       default_backend telnet_honeypots
     backend telnet_honeypots
-      balance source
+      balance roundrobin
       server cowrie cowrie.honeypot.svc.cluster.local:2223 weight 100 check send-proxy-v2 check-send-proxy  # cowrie only (beelzebub has no telnet)
 ---
 apiVersion: apps/v1
