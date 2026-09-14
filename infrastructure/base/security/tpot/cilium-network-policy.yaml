@@ -1,0 +1,49 @@
+# Egress cage for the honeypots — they're the attacked surface, so lock down what they can reach.
+# Default-deny both ways; honeypots may resolve DNS (kube-dns — works fine for pods, unlike the VM
+# masquerade path) and reach public 80/443 only (every private range excepted: no LAN, cluster, or
+# node-metadata). Ingress on the honeypot ports is open to the world (that's the point).
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: default-deny-all, namespace: tpot }
+spec:
+  endpointSelector: {}
+  ingress: [{}]
+  egress: [{}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: allow-dns-egress, namespace: tpot }
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels: { k8s:io.kubernetes.pod.namespace: kube-system, k8s-app: kube-dns }
+      toPorts:
+        - ports: [{ port: "53", protocol: UDP }, { port: "53", protocol: TCP }]
+---
+# Honeypots: public 80/443 only (e.g. cowrie sample-fetch), all private ranges excepted. No LAN/cluster.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: honeypot-public-egress, namespace: tpot }
+spec:
+  endpointSelector:
+    matchLabels: { app.kubernetes.io/component: honeypot }
+  egress:
+    - toCIDRSet:
+        - cidr: 0.0.0.0/0
+          except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 127.0.0.0/8]
+      toPorts:
+        - ports: [{ port: "80", protocol: TCP }, { port: "443", protocol: TCP }]
+---
+# Ingress to the honeypots from the world on their listen ports (arrives via hostPort DNAT).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: honeypot-world-ingress, namespace: tpot }
+spec:
+  endpointSelector:
+    matchLabels: { app.kubernetes.io/component: honeypot }
+  ingress:
+    - fromEntities: ["world", "cluster"]
+      toPorts:
+        - ports: [{ port: "2222", protocol: TCP }, { port: "2223", protocol: TCP }]
