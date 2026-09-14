@@ -1,0 +1,75 @@
+# Weighted, sticky TCP front for the honeypot VIP. k8s Services can't weight endpoints, so this haproxy
+# does the 90/10 split: `balance source` hashes the attacker's source IP to a backend (sticky per
+# attacker for the whole session) while honoring `weight 90` (cowrie) / `weight 10` (beelzebub). The VIP
+# LoadBalancer (externalTrafficPolicy:Local) hands haproxy the real source IP, and haproxy's tcplog
+# (source IP per connection, to stdout) is what CrowdSec tails for bans. Pinned to talos02-gpu with the
+# honeypots so the Local VIP always has a node-local backend.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: honeypot-haproxy-cfg
+  namespace: honeypot
+data:
+  haproxy.cfg: |
+    global
+      log stdout format raw local0 info
+    defaults
+      mode tcp
+      log global
+      option tcplog
+      timeout connect 5s
+      timeout client 1h
+      timeout server 1h
+    frontend ssh_in
+      bind :2222
+      default_backend ssh_honeypots
+    backend ssh_honeypots
+      balance source
+      server cowrie cowrie.honeypot.svc.cluster.local:2222 weight 90 check
+      server beelzebub beelzebub.honeypot.svc.cluster.local:2222 weight 10 check
+    frontend telnet_in
+      bind :2223
+      default_backend telnet_honeypots
+    backend telnet_honeypots
+      balance source
+      server cowrie cowrie.honeypot.svc.cluster.local:2223 weight 100 check  # cowrie only (beelzebub has no telnet)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: honeypot-lb
+  namespace: honeypot
+  labels: { app: honeypot-lb }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: honeypot-lb }
+  template:
+    metadata:
+      labels: { app: honeypot-lb }
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: talos02-gpu # co-located with the honeypots + the Local VIP announce node
+      containers:
+        - name: haproxy
+          image: haproxy:3.0-alpine
+          ports:
+            - { name: ssh, containerPort: 2222, protocol: TCP }
+            - { name: telnet, containerPort: 2223, protocol: TCP }
+          volumeMounts:
+            - { name: cfg, mountPath: /usr/local/etc/haproxy/haproxy.cfg, subPath: haproxy.cfg, readOnly: true }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 99 # haproxy user in the official image
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { memory: 64Mi }
+      volumes:
+        - name: cfg
+          configMap: { name: honeypot-haproxy-cfg }

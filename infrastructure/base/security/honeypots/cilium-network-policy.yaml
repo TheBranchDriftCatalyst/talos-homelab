@@ -1,0 +1,76 @@
+# Cage for the honeypot namespace. Topology: world -> VIP -> haproxy (honeypot-lb) -> cowrie/beelzebub.
+# Default-deny both ways. Shared: DNS. haproxy takes world ingress on the listen ports and reaches the
+# two honeypots. Per-honeypot egress: cowrie -> public 80/443 (sample-fetch); beelzebub -> internal
+# LiteLLM only. No LAN/cluster/metadata reach from any of them.
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: default-deny-all, namespace: honeypot }
+spec:
+  endpointSelector: {}
+  ingress: [{}]
+  egress: [{}]
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: allow-dns-egress, namespace: honeypot }
+spec:
+  endpointSelector: {}
+  egress:
+    - toEndpoints:
+        - matchLabels: { k8s:io.kubernetes.pod.namespace: kube-system, k8s-app: kube-dns }
+      toPorts:
+        - ports: [{ port: "53", protocol: UDP }, { port: "53", protocol: TCP }]
+---
+# haproxy front: world/cluster in on the listen ports (via the VIP); out to the two honeypots.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: honeypot-lb, namespace: honeypot }
+spec:
+  endpointSelector:
+    matchLabels: { app: honeypot-lb }
+  ingress:
+    - fromEntities: ["world", "cluster"]
+      toPorts:
+        - ports: [{ port: "2222", protocol: TCP }, { port: "2223", protocol: TCP }]
+  egress:
+    - toEndpoints:
+        - matchExpressions:
+            - { key: app, operator: In, values: [cowrie, beelzebub] }
+      toPorts:
+        - ports: [{ port: "2222", protocol: TCP }, { port: "2223", protocol: TCP }]
+---
+# Cowrie: ingress only from haproxy; egress public 80/443 (sample-fetch), all private excepted.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: cowrie, namespace: honeypot }
+spec:
+  endpointSelector:
+    matchLabels: { app: cowrie }
+  ingress:
+    - fromEndpoints: [{ matchLabels: { app: honeypot-lb } }]
+      toPorts:
+        - ports: [{ port: "2222", protocol: TCP }, { port: "2223", protocol: TCP }]
+  egress:
+    - toCIDRSet:
+        - cidr: 0.0.0.0/0
+          except: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 127.0.0.0/8]
+      toPorts:
+        - ports: [{ port: "80", protocol: TCP }, { port: "443", protocol: TCP }]
+---
+# Beelzebub: ingress only from haproxy; egress ONLY to the internal LiteLLM plane.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata: { name: beelzebub, namespace: honeypot }
+spec:
+  endpointSelector:
+    matchLabels: { app: beelzebub }
+  ingress:
+    - fromEndpoints: [{ matchLabels: { app: honeypot-lb } }]
+      toPorts:
+        - ports: [{ port: "2222", protocol: TCP }]
+  egress:
+    - toEndpoints:
+        - matchLabels: { k8s:io.kubernetes.pod.namespace: catalyst-llm }
+      toPorts:
+        - ports: [{ port: "4000", protocol: TCP }]

@@ -1,0 +1,31 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: honeypot
+
+resources:
+  - namespace.yaml
+  - cilium-network-policy.yaml # merged cage for both honeypots
+  - vip.yaml
+  - haproxy.yaml  # weighted 90/10 sticky TCP front # the 50/50 sticky VIP LoadBalancer fronting both
+  # --- cowrie (medium-interaction SSH/telnet) ---
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+  - pvc.yaml # var/lib/cowrie: malware samples + tty recordings (binary; no log pipeline carries them)
+  - backup-cronjob.yaml # off-node durability for those artifacts (read-only mount)
+  # --- beelzebub (LLM high-interaction SSH) ---
+  - beelzebub-configmap.yaml
+  - beelzebub-externalsecret.yaml # LLM key from 1Password (ESO)
+  - beelzebub-deployment.yaml
+  - beelzebub-service.yaml
+  - beelzebub-podmonitor.yaml # Prometheus metrics :2112
+
+# Cowrie fingerprint-hardening txtcmds (TALOS-a8kx): realistic lscpu/nproc so botnet recon sees a
+# plausible modern box. Hash-suffixed so editing rolls the pod.
+configMapGenerator:
+  - name: cowrie-fs-hardening
+    files:
+      - fs-hardening/lscpu
+      - fs-hardening/nproc

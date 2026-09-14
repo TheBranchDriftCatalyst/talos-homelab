@@ -76,3 +76,31 @@ spec:
   # deliberately — flipping to Local changes client-IP preservation, which
   # CrowdSec's bouncer depends on for ban decisions. Evaluate separately.
 
+---
+# Honeypot SSH VIP (TALOS-qish). Single L2-announced LAN IP that fronts BOTH cowrie + beelzebub as a
+# 50/50 sticky pool. .238 is below the pihole pool (.240+) and verified outside DHCP. Repoint the router
+# forward WAN:22 -> 192.168.1.238:22 to send attackers here. externalTrafficPolicy:Local on the Service
+# preserves the attacker source IP (raw TCP has no X-Forwarded-For) — both backends are pinned to
+# talos02-gpu so a local backend always exists where Cilium announces the VIP.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: lan-honeypot-pool
+spec:
+  blocks:
+    - start: "192.168.1.238"
+      stop: "192.168.1.238"
+  serviceSelector:
+    matchLabels:
+      app: honeypot-vip
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: lan-honeypot-l2
+spec:
+  serviceSelector:
+    matchLabels:
+      app: honeypot-vip
+  loadBalancerIPs: true
+  externalIPs: false

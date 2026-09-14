@@ -1,0 +1,29 @@
+---
+# Honeypots — cowrie (medium) + beelzebub (LLM high-interaction) in the `honeypot` namespace, fronted by
+# one Cilium LoadBalancer VIP (192.168.1.238) with a haproxy 90/10 sticky split. Consolidated under
+# infrastructure/base/security/ (was honeypot/ + honeypot-hi/). WAN path is a manual router forward:
+#     WAN:22 -> 192.168.1.238:22   (SSH)   and   WAN:23 -> 192.168.1.238:23 (telnet)
+# Feeds CrowdSec + ships logs via the logship sidecars -> Alloy -> Loki. dependsOn cilium (default-deny
+# CNP needs the CRDs) + external-secrets-operator (beelzebub's LLM key via ESO). Epic TALOS-qish.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: honeypots
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/security/honeypots
+  prune: true
+  wait: false
+  dependsOn:
+    - name: cilium
+    - name: external-secrets-operator
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

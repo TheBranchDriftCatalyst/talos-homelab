@@ -1,0 +1,23 @@
+# The honeypot VIP — one LoadBalancer that fronts BOTH cowrie + beelzebub (pods carrying
+# honeypot.talos/vip=ssh) as a 50/50 sticky pool:
+#   - sessionAffinity: ClientIP  -> each attacker sticks to one honeypot for their session
+#   - externalTrafficPolicy: Local -> preserves the real attacker source IP (raw TCP, no XFF)
+# Cilium load-balances new client IPs across the two node-local backends (both on talos02-gpu) ~50/50.
+# Gets 192.168.1.238 from lan-honeypot-pool (see cilium/lb-ipam.yaml). Router: WAN:22 -> 192.168.1.238:22.
+apiVersion: v1
+kind: Service
+metadata:
+  name: honeypot-vip
+  namespace: honeypot
+  labels:
+    app: honeypot-vip # matched by lan-honeypot-pool + lan-honeypot-l2
+spec:
+  type: LoadBalancer
+  loadBalancerClass: io.cilium/l2-announcer
+  sessionAffinity: ClientIP
+  externalTrafficPolicy: Local
+  selector:
+    app: honeypot-lb # the haproxy weighted front (it does the 90/10 sticky split to cowrie/beelzebub)
+  ports:
+    - { name: ssh, port: 22, targetPort: 2222, protocol: TCP }
+    - { name: telnet, port: 23, targetPort: 2223, protocol: TCP } # cowrie only; beelzebub has no 2223

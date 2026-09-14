@@ -2,15 +2,15 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: beelzebub
-  namespace: honeypot-hi
+  namespace: honeypot
   labels: {app: beelzebub}
 spec:
-  replicas: 0  # SPUN DOWN — detonation-vm (honeypot-vm) is now the active WAN honeypot; hotswap by flipping
+  replicas: 1  # active in the 50/50 VIP pool with cowrie
   strategy: {type: Recreate}
   selector: {matchLabels: {app: beelzebub}}
   template:
     metadata:
-      labels: {app: beelzebub}
+      labels: {app: beelzebub, honeypot.talos/vip: ssh}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -46,7 +46,7 @@ spec:
         - name: beelzebub
           image: m4r10/beelzebub:v3.9.1
           ports:
-            - {name: ssh, containerPort: 2222, hostPort: 2222, protocol: TCP}
+            - {name: ssh, containerPort: 2222, protocol: TCP}
             - {name: metrics, containerPort: 2112, protocol: TCP}
           volumeMounts:
             - {name: core, mountPath: /configurations/beelzebub.yaml, subPath: beelzebub.yaml, readOnly: true}
