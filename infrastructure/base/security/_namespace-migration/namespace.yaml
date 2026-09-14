@@ -1,0 +1,20 @@
+# ⚠️ INERT SCAFFOLD — NOT wired into any kustomization, NOT applied by Flux. ⚠️
+#
+# Target namespace for consolidating crowdsec + falco + iocaine (TALOS-ic20). This file is a
+# placeholder for the eventual migration; it is intentionally excluded from every kustomization.yaml
+# so `kustomize build` / Flux never create it until the migration plan (see README.md) is written and
+# approved. Executing the ns move without that plan would lose the CrowdSec decisions DB (CNPG Postgres)
+# and break LAPI machine/bouncer registrations + the Traefik bouncer cross-refs.
+#
+# PSA note: falco needs `privileged` (eBPF driver), so a single shared `security` ns would be
+# privileged-enforced — OR the plan keeps per-workload PSA. To be decided in the migration plan.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security
+  labels:
+    # placeholder PSA — the migration plan finalizes this (falco eBPF may force privileged)
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
+    app.kubernetes.io/part-of: security
