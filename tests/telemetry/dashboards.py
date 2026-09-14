@@ -1,18 +1,40 @@
 """Registry + config for the telemetry test layer.
 
-Audits Grafana dashboards panel-by-panel: offline (structure) + --live (each panel's query returns
-data, or is a justified EXPECTED_EMPTY). Add a dashboard by dropping its json path here.
+Audits Grafana dashboards panel-by-panel:
+  - offline (structure): EVERY committed dashboard JSON is auto-discovered and checked (valid panels,
+    resolvable datasource, non-empty queries). No hand-maintained list — drop a json in the dir and
+    it's covered.
+  - --live (each panel's query returns data, or is a justified EXPECTED_EMPTY): runs only for the
+    curated LIVE_AUDIT set, because a per-panel data audit needs per-dashboard EXPECTED_EMPTY curation.
 """
+import json
 from collections import namedtuple
+from pathlib import Path
 
-# dashboards to audit: (name, repo json path, uid)
-# TODO: have this also run into automatic mode, i bet we can just inquire with the cluster
-# and get all of thesee dashboards automatically. any crd
-DASHBOARDS = [
-    ("honeypot-ops", "infrastructure/base/monitoring/grafana-dashboards/json/honeypot-ops.json", "honeypot-ops"),
-    ("crowdsec-ops", "infrastructure/base/monitoring/grafana-dashboards/json/crowdsec-ops.json", "crowdsec-ops"),
-    ("falco-ops", "infrastructure/base/monitoring/grafana-dashboards/json/falco-ops.json", "falco-ops"),
-]
+_ROOT = Path(__file__).resolve().parents[2]  # repo root: tests/telemetry/dashboards.py -> ../../
+_JSON_DIR = _ROOT / "infrastructure/base/monitoring/grafana-dashboards/json"
+
+
+def _discover():
+    """Auto-register every committed dashboard JSON -> (name, repo-relative path, uid). Automated so a
+    new dashboard is smoke-tested the moment it lands, with no edit here."""
+    out = []
+    for p in sorted(_JSON_DIR.glob("*.json")):
+        try:
+            uid = json.loads(p.read_text()).get("uid") or p.stem
+        except Exception:
+            uid = p.stem  # malformed JSON is caught by the offline structural test
+        out.append((p.stem, str(p.relative_to(_ROOT)), uid))
+    return out
+
+
+# dashboards to audit: (name, repo json path, uid) — AUTO-DISCOVERED from the dashboard json/ dir
+DASHBOARDS = _discover()
+
+# Dashboards whose panels must return live DATA under --live (the deep audit). Everything else that's
+# auto-discovered gets the offline structural check only: a live per-panel data audit needs curated
+# EXPECTED_EMPTY allowlists per dashboard. Add a name here once its expected-empty panels are curated.
+LIVE_AUDIT = {"honeypot-ops", "crowdsec-ops", "falco-ops"}
 
 # datasource uid -> how the --live audit reaches it (svc, port, query path, engine)
 # loki uses the LogQL query endpoint; prometheus/mimir use the promql query endpoint.

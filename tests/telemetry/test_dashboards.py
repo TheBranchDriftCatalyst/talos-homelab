@@ -103,12 +103,19 @@ class TelemetryDashboards:
 @pytest.mark.parametrize("dash,title,ds,queries", PANELS,
                          ids=[f"{r[0]}:{r[1]}" for r in PANELS])
 def test_panel_structure(dash, title, ds, queries):
-    """Every panel resolves a known datasource and carries at least one non-empty query."""
-    assert ds, f"[{dash}] panel {title!r} has no datasource"
+    """Every panel carries a non-empty query and a resolvable datasource. Concrete datasource UIDs must
+    be registered in DATASOURCES; template-picker ($datasource) and built-in (-- Mixed --/-- Grafana --/
+    -- Dashboard --) datasources are valid but not fixed UIDs; a None datasource inherits the dashboard
+    default. Auto-discovered across every committed dashboard."""
+    assert queries, f"[{dash}] panel {title!r} has no non-empty query"
+    if ds is None:
+        return  # inherits the dashboard's default datasource — valid
+    s = str(ds)
+    if s.startswith("$") or s.startswith("--"):
+        return  # template-picker / built-in datasource — valid, not a fixed UID to port-forward
     assert ds in reg.DATASOURCES, (
         f"[{dash}] panel {title!r} datasource {ds!r} is not in tests/telemetry/dashboards.py "
         f"DATASOURCES (known: {sorted(reg.DATASOURCES)})")
-    assert queries, f"[{dash}] panel {title!r} has no non-empty query"
 
 
 # ---------- LIVE query audit ----------
@@ -186,6 +193,10 @@ def test_live_every_panel_returns_data_or_is_allowlisted():
     from collections import defaultdict
     by_ds = defaultdict(list)
     for dash, title, ds, queries in PANELS:
+        # the live per-panel data audit only runs for the curated LIVE_AUDIT dashboards — the rest are
+        # covered by the offline structural test (a live data check needs per-dashboard EXPECTED_EMPTY).
+        if dash not in reg.LIVE_AUDIT:
+            continue
         by_ds[ds].append((dash, title, queries))
 
     empty, errors, checked = [], [], 0
