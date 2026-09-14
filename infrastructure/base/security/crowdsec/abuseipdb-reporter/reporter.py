@@ -105,5 +105,9 @@ for ip, a in sorted(agg.items()):
         reported += 1
     except urllib.error.HTTPError as ex:
         print(f"report {ip} FAILED {ex.code}: {ex.read().decode()[:200]}", file=sys.stderr)
+    except urllib.error.URLError as ex:
+        # transient DNS/egress blip (e.g. socket.gaierror EAI_AGAIN) — log + skip this IP, do NOT abort
+        # the whole daily batch (HTTPError is a URLError subclass, so it is still caught above first).
+        print(f"report {ip} FAILED (network): {ex.reason}", file=sys.stderr)
 print(f"done: {'would report' if DRY else 'reported'} {reported} IP(s), skipped {skipped} "
       f"(private / connect-only / no-handshake)")

@@ -50,7 +50,12 @@ spec:
     customRules:
       honeypot-breach.yaml: |-
         - macro: honeypot_ns
-          condition: (k8s.ns.name in ("honeypot", "honeypot-hi"))
+          condition: (k8s.ns.name = "honeypot")
+        # The haproxy front (honeypot-lb) is REAL infrastructure, not an emulator — its normal procs
+        # (docker-entrypoint.sh, haproxy) are expected, so it must NOT trip the "escaped emulation"
+        # tripwire. Scope the breach rules to the emulator containers (cowrie/beelzebub) only.
+        - macro: honeypot_emulator
+          condition: (honeypot_ns and container and container.name != "haproxy")
         - list: honeypot_expected_procs
           items: [twistd, python3, python, beelzebub, busybox, sh, tail, touch, sed, pause]
         - rule: Honeypot Container Breach - Unexpected Process
@@ -58,7 +63,7 @@ spec:
             A process was executed inside a honeypot emulator container. Cowrie (python/twistd) and
             Beelzebub (go binary) emulate the shell in-process, so a real exec here beyond the known
             entrypoint indicates an attacker broke OUT of the emulation into the actual container.
-          condition: spawned_process and container and honeypot_ns and not proc.name in (honeypot_expected_procs)
+          condition: spawned_process and honeypot_emulator and not proc.name in (honeypot_expected_procs)
           output: >
             HONEYPOT BREACH unexpected process (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
             proc=%proc.cmdline parent=%proc.pname user=%user.name)
@@ -66,7 +71,7 @@ spec:
           tags: [honeypot, container_escape, mitre_execution]
         - rule: Honeypot Container Breach - Sensitive File Read
           desc: A honeypot emulator container read a sensitive host/credential file — real fs access = breach.
-          condition: open_read and container and honeypot_ns and fd.name in (/etc/shadow, /etc/sudoers, /root/.ssh/id_rsa, /var/run/secrets/kubernetes.io/serviceaccount/token)
+          condition: open_read and honeypot_emulator and fd.name in (/etc/shadow, /etc/sudoers, /root/.ssh/id_rsa, /var/run/secrets/kubernetes.io/serviceaccount/token)
           output: >
             HONEYPOT BREACH sensitive read (ns=%k8s.ns.name pod=%k8s.pod.name file=%fd.name proc=%proc.cmdline)
           priority: CRITICAL
