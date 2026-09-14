@@ -94,6 +94,21 @@ spec:
                 expression: "'cowrie_' + JsonExtract(evt.Parsed.message, 'eventid')"
               - target: evt.StrTime
                 expression: "JsonExtract(evt.Parsed.message, 'timestamp')"
+          haproxy-honeypot-logs.yaml: |
+            onsuccess: next_stage
+            filter: "evt.Parsed.program == 'haproxy-honeypot'"
+            name: homelab/haproxy-honeypot-logs
+            description: "Parse the honeypot VIP haproxy tcplog -> attacker source_ip"
+            grok:
+              pattern: '^%{IPORHOST:src_ip}:%{INT:src_port} '
+              apply_on: message
+            statics:
+              - meta: service
+                value: ssh
+              - meta: source_ip
+                expression: "evt.Parsed.src_ip"
+              - meta: log_type
+                value: honeypot_vip
         s02-enrich:
           homelab-whitelist.yaml: |
             name: homelab/whitelist
@@ -200,6 +215,23 @@ spec:
             confidence: 3 # honeypot interaction = maximum confidence for CTI weighting
             spoofable: 0 # TCP session established → source IP not spoofable
             label: "SSH/Telnet honeypot interaction"
+        honeypot-vip-activity.yaml: |
+          type: trigger
+          name: homelab/honeypot-vip-activity
+          description: "IP connected to the honeypot VIP (cowrie/beelzebub via haproxy) - malicious"
+          filter: "evt.Meta.log_type == 'honeypot_vip' && evt.Meta.source_ip != ''"
+          groupby: "evt.Meta.source_ip"
+          blackhole: 1m
+          labels:
+            remediation: true
+            type: scan
+            service: ssh
+            behavior: "ssh:bruteforce"
+            classification:
+              - "attack.T1110"
+            confidence: 3
+            spoofable: 0
+            label: "Honeypot VIP interaction (cowrie/beelzebub via haproxy)"
       # DETECT-ONLY for the tarpit: exclude it from enforcement so it ALERTS but never bans yet.
       # Delete this exclusion (and flip nothing else) to turn tarpit hits into real bans.
       simulation.yaml: |
@@ -499,6 +531,12 @@ spec:
         - namespace: honeypot
           podName: "cowrie-*"
           program: cowrie
+          poll_without_inotify: true
+        # haproxy honeypot front: the REAL attacker source IPs (cowrie/beelzebub see only the proxy IP
+        # now: VIP -> haproxy -> honeypots), so bans MUST key off haproxy's tcplog.
+        - namespace: honeypot
+          podName: "honeypot-lb-*"
+          program: haproxy-honeypot
           poll_without_inotify: true
         # ---- APP-LEVEL ACQUISITION (TALOS-y260 follow-up) ----
         # Until now CrowdSec only saw Traefik's edge logs, so anything that got
