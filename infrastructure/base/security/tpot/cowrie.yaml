@@ -35,9 +35,10 @@ spec:
           ports:
             - { name: ssh, containerPort: 2222, hostPort: 2222, protocol: TCP }
             - { name: telnet, containerPort: 2223, hostPort: 2223, protocol: TCP }
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities: { drop: [ALL] }
+          # NOTE: no drop-ALL / no allowPrivilegeEscalation:false here — the T-Pot cowrie image starts as
+          # root and setuid's down to the cowrie user internally; no_new_privs + dropped SETUID/SETGID
+          # break that ("can't execute python3: Operation not permitted"). Containment is the default-deny
+          # CNP + the isolated tpot namespace, not the container caps.
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { memory: 512Mi }
