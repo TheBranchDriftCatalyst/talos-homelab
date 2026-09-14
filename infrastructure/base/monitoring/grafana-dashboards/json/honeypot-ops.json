@@ -1,0 +1,2140 @@
+{
+  "uid": "honeypot-ops",
+  "title": "Honeypot Ops (Cowrie + Beelzebub)",
+  "tags": [
+    "cowrie",
+    "ssh",
+    "honeypot",
+    "security",
+    "ops"
+  ],
+  "schemaVersion": 39,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timezone": "",
+  "templating": {
+    "list": [
+      {
+        "name": "DS_LOKI",
+        "type": "datasource",
+        "query": "loki",
+        "current": {
+          "selected": false,
+          "text": "Loki",
+          "value": "loki-v2"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "label": "Loki datasource",
+        "options": [],
+        "refresh": 1,
+        "regex": ""
+      }
+    ]
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "type": "dashboard",
+        "name": "Annotations & Alerts",
+        "iconColor": "rgba(0, 211, 255, 1)"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Honeypot Overview \u2014 haproxy front (real attacker IPs, 90/10 cowrie/beelzebub split)",
+      "id": 101,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 102,
+      "type": "stat",
+      "title": "Unique Attacker IPs (24h)",
+      "description": "Distinct src_ip values over the range, excluding pod-CIDR (10.244.x.x) kubelet/health-probe noise.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
+          "queryType": "instant",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "type": "stat",
+      "title": "Total Connections",
+      "description": "Distinct src_ip values over the range, excluding pod-CIDR (10.244.x.x) kubelet/health-probe noise.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 104,
+      "type": "stat",
+      "title": "Cowrie hits (90%)",
+      "description": "Distinct src_ip values over the range, excluding pod-CIDR (10.244.x.x) kubelet/health-probe noise.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"haproxy\"} |~ `/cowrie ` [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 105,
+      "type": "stat",
+      "title": "Beelzebub hits (10%)",
+      "description": "Distinct src_ip values over the range, excluding pod-CIDR (10.244.x.x) kubelet/health-probe noise.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds",
+            "fixedColor": "text"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"haproxy\"} |~ `/beelzebub ` [$__range]))",
+          "queryType": "instant",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 106,
+      "type": "piechart",
+      "title": "Backend Split (cowrie vs beelzebub)",
+      "description": "Distribution of Cowrie eventid types over the range.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 8,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            }
+          },
+          "mappings": [],
+          "overrides": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "pieType": "donut",
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "values": [
+            "value",
+            "percent"
+          ]
+        },
+        "displayLabels": [
+          "percent"
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum by (backend) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `/(?P<backend>cowrie|beelzebub) ` [$__range]))",
+          "format": "time_series",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{eventid}}"
+        }
+      ]
+    },
+    {
+      "id": 107,
+      "type": "table",
+      "title": "Top Attacker IPs (all honeypots)",
+      "description": "Most active source IPs over the range (all events), excluding pod-CIDR 10.244.x.x health-probe noise.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 5,
+        "w": 8,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto",
+            "filterable": true
+          },
+          "mappings": [],
+          "overrides": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "topk(10, sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
+          "format": "table",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "src_ip": "Source IP",
+              "Value": "Events"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "fields": {},
+            "sort": [
+              {
+                "field": "Events",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 108,
+      "type": "timeseries",
+      "title": "Connections Over Time (by backend)",
+      "description": "Rate of new honeypot sessions (cowrie.session.connect).",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 5,
+        "w": 8,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "spanNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "",
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "overrides": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum by (backend) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `/(?P<backend>cowrie|beelzebub) ` [$__interval]))",
+          "legendFormat": "sessions"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Cowrie \u2014 medium interaction (90% tier)",
+      "id": 121,
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 109,
+          "type": "logs",
+          "title": "Captured Commands (live)",
+          "description": "Every command an attacker typed into the honeypot shell (cowrie.command.input). Expand a line to see src_ip, session, username and the full input. This is the primary command-capture feed.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 24,
+            "x": 0,
+            "y": 6
+          },
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "prettifyLogMessage": true,
+            "showCommonLabels": false,
+            "showLabels": false,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "{namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` | line_format \"{{.src_ip}}  [{{.session}}]  $ {{.input}}\""
+            }
+          ]
+        },
+        {
+          "id": 110,
+          "type": "timeseries",
+          "title": "Login Attempts (success vs failed)",
+          "description": "Rate of successful vs failed SSH logins captured by the honeypot.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 21
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "gradientMode": "none",
+                "spanNulls": false,
+                "showPoints": "never",
+                "pointSize": 5,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "scaleDistribution": {
+                  "type": "linear"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "mappings": [],
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "failed"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "red"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "success"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "green"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "sum",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.success` [5m]))",
+              "legendFormat": "success"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.failed` [5m]))",
+              "legendFormat": "failed"
+            }
+          ]
+        },
+        {
+          "id": 111,
+          "type": "timeseries",
+          "title": "Sessions Over Time",
+          "description": "Rate of new honeypot sessions (cowrie.session.connect).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 21
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "spanNulls": false,
+                "showPoints": "never",
+                "pointSize": 5,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "scaleDistribution": {
+                  "type": "linear"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "mappings": [],
+              "overrides": []
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | src_ip!=\"\" | src_ip!~`10.244..*` | eventid=`cowrie.session.connect` [5m]))",
+              "legendFormat": "sessions"
+            }
+          ]
+        },
+        {
+          "id": 112,
+          "type": "table",
+          "title": "Top Commands",
+          "description": "Most frequently executed commands captured from interactive sessions (cowrie.command.input).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 30
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "align": "auto",
+                "displayMode": "auto",
+                "filterable": true
+              },
+              "mappings": [],
+              "overrides": []
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "topk(15, sum by (input) (count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` | input!=\"\" [$__range])))",
+              "format": "table",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "input": "Command",
+                  "Value": "Count"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "field": "Count",
+                    "desc": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": 113,
+          "type": "table",
+          "title": "Captured Credentials (successful logins)",
+          "description": "username / password pairs that resulted in cowrie.login.success \u2014 the credential combinations attackers believe are valid.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 40
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "align": "auto",
+                "displayMode": "auto",
+                "filterable": true
+              },
+              "mappings": [],
+              "overrides": []
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "topk(20, sum by (username, password) (count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.success` [$__range])))",
+              "format": "table",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "username": "Username",
+                  "password": "Password",
+                  "Value": "Count"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "field": "Count",
+                    "desc": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": 114,
+          "type": "piechart",
+          "title": "Event Breakdown",
+          "description": "Distribution of Cowrie eventid types over the range.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 40
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "hideFrom": {
+                  "tooltip": false,
+                  "viz": false,
+                  "legend": false
+                }
+              },
+              "mappings": [],
+              "overrides": []
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "pieType": "donut",
+            "tooltip": {
+              "mode": "single",
+              "sort": "desc"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "values": [
+                "value",
+                "percent"
+              ]
+            },
+            "displayLabels": [
+              "percent"
+            ]
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum by (eventid) (count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid!=\"\" [$__range]))",
+              "format": "time_series",
+              "instant": true,
+              "range": false,
+              "legendFormat": "{{eventid}}"
+            }
+          ]
+        },
+        {
+          "id": 115,
+          "type": "stat",
+          "title": "Honeypot-Detection Attempts (24h)",
+          "description": "Bots running anti-honeypot recon (write+chmod+execute canary, error-string fingerprinting).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 0,
+            "y": 51
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `SHELL_BEHAVIOR|filter_output|===DONE===` [$__range]))",
+              "queryType": "instant"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "continuous-GrYlRd"
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 116,
+          "type": "stat",
+          "title": "Distinct Recon Source IPs (24h)",
+          "description": "External IPs that ran the fingerprinting recon.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 6,
+            "y": 51
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
+              "queryType": "instant"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 117,
+          "type": "logs",
+          "title": "Recon / Detection Commands (live)",
+          "description": "The actual recon commands attackers run to fingerprint the box.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 51
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "{namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `SHELL_BEHAVIOR|uname|/proc/cpuinfo|lspci` | line_format \"{{.src_ip}} $ {{.input}}\"",
+              "queryType": "range"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "enableLogDetails": true,
+            "sortOrder": "Descending"
+          }
+        },
+        {
+          "id": 118,
+          "type": "stat",
+          "title": "Commands Captured",
+          "description": "Total cowrie.command.input events over the selected range. These come only from real interactive sessions (not health probes).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` [$__range]))",
+              "queryType": "instant",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 119,
+          "type": "stat",
+          "title": "Sessions",
+          "description": "Total cowrie.session.connect events over the selected range.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.session.connect` [$__range]))",
+              "queryType": "instant",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 120,
+          "type": "stat",
+          "title": "Failed Logins",
+          "description": "Total cowrie.login.failed events over the range.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.failed` [$__range]))",
+              "queryType": "instant",
+              "instant": true,
+              "range": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Beelzebub \u2014 LLM high interaction (10% tier)",
+      "id": 134,
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 122,
+          "type": "logs",
+          "title": "[beelzebub] Captured Commands (live)",
+          "description": "Every command an attacker typed into the honeypot shell (cowrie.command.input). Expand a line to see src_ip, session, username and the full input. This is the primary command-capture feed.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 14,
+            "w": 24,
+            "x": 0,
+            "y": 6
+          },
+          "options": {
+            "dedupStrategy": "none",
+            "enableLogDetails": true,
+            "prettifyLogMessage": true,
+            "showCommonLabels": false,
+            "showLabels": false,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "{namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` | line_format \"{{.event_SourceIp}}  [{{.event_ID}}]  $ {{.event_Command}}\""
+            }
+          ]
+        },
+        {
+          "id": 123,
+          "type": "timeseries",
+          "title": "[beelzebub] Login Attempts (success vs failed)",
+          "description": "Rate of successful vs failed SSH logins captured by the honeypot.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 21
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 12,
+                "gradientMode": "none",
+                "spanNulls": false,
+                "showPoints": "never",
+                "pointSize": 5,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "scaleDistribution": {
+                  "type": "linear"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "mappings": [],
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "failed"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "red"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "success"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "green"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "sum",
+                "max"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`New SSH Login Attempt` [5m]))",
+              "legendFormat": "success"
+            },
+            {
+              "refId": "B",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`New SSH Login Attempt` [5m]))",
+              "legendFormat": "failed"
+            }
+          ]
+        },
+        {
+          "id": 124,
+          "type": "timeseries",
+          "title": "[beelzebub] Sessions Over Time",
+          "description": "Rate of new honeypot sessions (cowrie.session.connect).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 21
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "lineWidth": 2,
+                "fillOpacity": 20,
+                "gradientMode": "none",
+                "spanNulls": false,
+                "showPoints": "never",
+                "pointSize": 5,
+                "stacking": {
+                  "mode": "none",
+                  "group": "A"
+                },
+                "axisPlacement": "auto",
+                "axisLabel": "",
+                "scaleDistribution": {
+                  "type": "linear"
+                }
+              },
+              "color": {
+                "mode": "palette-classic"
+              },
+              "mappings": [],
+              "overrides": []
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": []
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_SourceIp!=\"\" | event_SourceIp!~`10.244..*` | event_Msg=`New SSH Login Attempt` [5m]))",
+              "legendFormat": "sessions"
+            }
+          ]
+        },
+        {
+          "id": 125,
+          "type": "table",
+          "title": "[beelzebub] Top Commands",
+          "description": "Most frequently executed commands captured from interactive sessions (cowrie.command.input).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 12,
+            "x": 12,
+            "y": 30
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "align": "auto",
+                "displayMode": "auto",
+                "filterable": true
+              },
+              "mappings": [],
+              "overrides": []
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "topk(15, sum by (event_Command) (count_over_time({namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` | input!=\"\" [$__range])))",
+              "format": "table",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "input": "Command",
+                  "Value": "Count"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "field": "Count",
+                    "desc": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": 126,
+          "type": "table",
+          "title": "[beelzebub] Captured Credentials",
+          "description": "username / password pairs that resulted in cowrie.login.success \u2014 the credential combinations attackers believe are valid.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 40
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "align": "auto",
+                "displayMode": "auto",
+                "filterable": true
+              },
+              "mappings": [],
+              "overrides": []
+            },
+            "overrides": []
+          },
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            }
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "topk(20, sum by (event_User, event_Password) (count_over_time({namespace=\"honeypot\"} | json | event_Msg=`New SSH Login Attempt` [$__range])))",
+              "format": "table",
+              "instant": true,
+              "range": false
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "username": "Username",
+                  "password": "Password",
+                  "Value": "Count"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "fields": {},
+                "sort": [
+                  {
+                    "field": "Count",
+                    "desc": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": 127,
+          "type": "piechart",
+          "title": "[beelzebub] Event Breakdown",
+          "description": "Distribution of Cowrie eventid types over the range.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 40
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "hideFrom": {
+                  "tooltip": false,
+                  "viz": false,
+                  "legend": false
+                }
+              },
+              "mappings": [],
+              "overrides": []
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "pieType": "donut",
+            "tooltip": {
+              "mode": "single",
+              "sort": "desc"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true,
+              "values": [
+                "value",
+                "percent"
+              ]
+            },
+            "displayLabels": [
+              "percent"
+            ]
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum by (event_Msg) (count_over_time({namespace=\"honeypot\"} | json | eventid!=\"\" [$__range]))",
+              "format": "time_series",
+              "instant": true,
+              "range": false,
+              "legendFormat": "{{eventid}}"
+            }
+          ]
+        },
+        {
+          "id": 128,
+          "type": "stat",
+          "title": "[beelzebub] Honeypot-Detection Attempts (24h)",
+          "description": "Bots running anti-honeypot recon (write+chmod+execute canary, error-string fingerprinting).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 0,
+            "y": 51
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` |~ `SHELL_BEHAVIOR|filter_output|===DONE===` [$__range]))",
+              "queryType": "instant"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "continuous-GrYlRd"
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 129,
+          "type": "stat",
+          "title": "[beelzebub] Distinct Recon Source IPs (24h)",
+          "description": "External IPs that ran the fingerprinting recon.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 6,
+            "x": 6,
+            "y": 51
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} |~ `ssh_honeypots/beelzebub` | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
+              "queryType": "instant"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 130,
+          "type": "logs",
+          "title": "[beelzebub] Recon / Detection Commands (live)",
+          "description": "The actual recon commands attackers run to fingerprint the box.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 51
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "{namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` |~ `SHELL_BEHAVIOR|uname|/proc/cpuinfo|lspci` | line_format \"{{.event_SourceIp}} $ {{.event_Command}}\"",
+              "queryType": "range"
+            }
+          ],
+          "options": {
+            "showTime": true,
+            "wrapLogMessage": true,
+            "enableLogDetails": true,
+            "sortOrder": "Descending"
+          }
+        },
+        {
+          "id": 131,
+          "type": "stat",
+          "title": "[beelzebub] Commands Captured",
+          "description": "Total cowrie.command.input events over the selected range. These come only from real interactive sessions (not health probes).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` [$__range]))",
+              "queryType": "instant",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 132,
+          "type": "stat",
+          "title": "[beelzebub] Login Attempts",
+          "description": "Total cowrie.session.connect events over the selected range.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_SourceIp!=\"\" | event_SourceIp!~`10.244..*` | event_Msg=`New SSH Login Attempt` [$__range]))",
+              "queryType": "instant",
+              "instant": true,
+              "range": false
+            }
+          ]
+        },
+        {
+          "id": 133,
+          "type": "stat",
+          "title": "[beelzebub] Failed Logins",
+          "description": "Total cowrie.login.failed events over the range.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 1
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds",
+                "fixedColor": "text"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "area",
+            "textMode": "auto",
+            "justifyMode": "auto",
+            "orientation": "auto"
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-v2"
+              },
+              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`New SSH Login Attempt` [$__range]))",
+              "queryType": "instant",
+              "instant": true,
+              "range": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Falco runtime tripwire (breach = attacker escaped the emulation)",
+      "id": 135,
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 136,
+      "type": "logs",
+      "title": "HONEYPOT BREACH (Falco) \u2014 should ALWAYS be empty",
+      "description": "Falco fires this if a real process/exec/sensitive-read happens inside the honeypot pods \u2014 i.e. someone broke OUT of the Cowrie/Beelzebub emulation into the actual container. Any line here is a CRITICAL incident.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 24,
+        "h": 8
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "{rule=~\"Honeypot Container Breach.*\"}",
+          "queryType": "range"
+        }
+      ]
+    }
+  ]
+}

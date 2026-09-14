@@ -1,0 +1,30 @@
+---
+# Security Ops — unified honeypot dashboard (Cowrie + Beelzebub behind the haproxy VIP).
+#
+# Merges the former cowrie-ops + beelzebub-ops dashboards. Three sections:
+#   1. Overview (haproxy front): real attacker IPs + the 90/10 cowrie/beelzebub split. Since haproxy
+#      fronts both honeypots, the REAL attacker source IP is only in its tcplog
+#      ({namespace="honeypot", container="haproxy"}, "<src_ip>:<port> [date] <fe> <backend>/<server>");
+#      cowrie/beelzebub see only the proxy pod IP. Attacker-IP panels parse it with `| regexp`.
+#   2. Cowrie (90% tier) — medium-interaction session content (commands/logins/creds), from the logship
+#      sidecar JSON stream {namespace="honeypot", container="logship", pod=~"cowrie-.*"} | json.
+#   3. Beelzebub (10% tier) — LLM high-interaction session content, {namespace="honeypot"} | json event_*.
+#   + Falco runtime tripwire ({rule=~"Honeypot Container Breach.*"}) — empty = healthy.
+#
+# Datasource: Loki (uid loki-v2).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: honeypot-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: security
+spec:
+  folderRef: ops-security
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-honeypot-ops
+    key: honeypot-ops.json

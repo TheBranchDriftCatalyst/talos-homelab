@@ -7,8 +7,7 @@ from collections import namedtuple
 
 # dashboards to audit: (name, repo json path, uid)
 DASHBOARDS = [
-    ("cowrie-ops", "infrastructure/base/monitoring/grafana-dashboards/json/cowrie-ops.json", "cowrie-ops"),
-    ("beelzebub-ops", "infrastructure/base/monitoring/grafana-dashboards/json/beelzebub-ops.json", "beelzebub-ops"),
+    ("honeypot-ops", "infrastructure/base/monitoring/grafana-dashboards/json/honeypot-ops.json", "honeypot-ops"),
     ("crowdsec-ops", "infrastructure/base/monitoring/grafana-dashboards/json/crowdsec-ops.json", "crowdsec-ops"),
     ("falco-ops", "infrastructure/base/monitoring/grafana-dashboards/json/falco-ops.json", "falco-ops"),
 ]
@@ -30,22 +29,8 @@ Empty = namedtuple("Empty", "reason issue")
 # "this panel shows nothing" is a reviewed decision, not a silent gap. The --live audit SKIPs these
 # (rather than failing) but still reports them, so a real regression in a data-bearing panel is caught.
 EXPECTED_EMPTY = {
-    ("cowrie-ops", "HONEYPOT BREACH (Falco) — should ALWAYS be empty"): Empty(
-        "by design — Falco breach tripwire; populated only if an attacker escapes the emulation into "
-        "the container. Empty = healthy.", "TALOS-slbn"),
-    ("cowrie-ops", "Login Attempts (success vs failed)"): Empty(
-        "0 in a quiet window — external SSH login activity on the public honeypot is sporadic", "TALOS-a8vo"),
-    ("cowrie-ops", "Sessions Over Time"): Empty(
-        "0 in a quiet window — external (non-pod-CIDR) sessions are sporadic", "TALOS-a8vo"),
-    ("cowrie-ops", "Failed Logins"): Empty(
-        "0 until a real SSH brute-force attempt hits the honeypot (cowrie accepts most creds, so most "
-        "sessions log success not failure)", "TALOS-a8vo"),
     # cowrie recon-canary panels: fire only on the anti-honeypot fingerprinting pattern (SHELL_BEHAVIOR/
     # filter_output/===DONE===/uname/lspci), which is sporadic — not a broken query.
-    ("cowrie-ops", "Honeypot-Detection Attempts (24h)"): Empty(
-        "0 until an anti-honeypot recon canary hits cowrie (SHELL_BEHAVIOR/filter_output/===DONE===) — sporadic", "TALOS-qish"),
-    ("cowrie-ops", "Recon / Detection Commands (live)"): Empty(
-        "0 until a recon command (uname/lspci/SHELL_BEHAVIOR) hits cowrie — sporadic", "TALOS-qish"),
     # Falco honeypot-breach tripwires — empty = healthy (nobody escaped the emulation into the container).
     ("falco-ops", "HONEYPOT BREACHES"): Empty(
         "by design — Falco breach tripwire; non-empty only if an attacker escapes into the container. Empty = healthy.", "TALOS-slbn"),
@@ -53,26 +38,42 @@ EXPECTED_EMPTY = {
         "by design — Falco breach tripwire; non-empty only on a real container escape. Empty = healthy.", "TALOS-slbn"),
     # beelzebub is the 10% haproxy tier + freshly deployed, so its content panels are legitimately sparse
     # until it accumulates sessions. The attacker-IP panels are re-sourced to the haproxy beelzebub backend.
-    ("beelzebub-ops", "Commands Captured"): Empty(
-        "few captured commands until attackers land on the 10% tier", "TALOS-qish"),
-    ("beelzebub-ops", "Failed Logins"): Empty(
-        "beelzebub accepts creds like cowrie; failed logins are rare + it is the 10% tier", "TALOS-qish"),
-    ("beelzebub-ops", "Captured Commands (live)"): Empty(
-        "sparse commands until the 10% tier accumulates sessions", "TALOS-qish"),
-    ("beelzebub-ops", "Captured Credentials"): Empty(
-        "sparse credential captures until the 10% tier accumulates sessions", "TALOS-qish"),
-    ("beelzebub-ops", "Recon / Detection Commands (live)"): Empty(
-        "0 until an anti-honeypot recon canary hits beelzebub (10% tier) — sporadic", "TALOS-qish"),
-    ("beelzebub-ops", "Login Attempts"): Empty(
-        "beelzebub is the 10% tier — sparse login events in any short window", "TALOS-qish"),
-    ("beelzebub-ops", "Login Attempts (success vs failed)"): Empty(
-        "beelzebub is the 10% tier — sparse login events in any short window", "TALOS-qish"),
-    ("beelzebub-ops", "Sessions Over Time"): Empty(
-        "beelzebub is the 10% tier — sparse sessions in any short window", "TALOS-qish"),
-    ("beelzebub-ops", "Top Commands"): Empty(
-        "beelzebub is the 10% tier — sparse commands in any short window", "TALOS-qish"),
-    ("beelzebub-ops", "Honeypot-Detection Attempts (24h)"): Empty(
-        "0 until an anti-honeypot recon canary hits beelzebub (10% tier) — sporadic", "TALOS-qish"),
+    ("honeypot-ops", "Sessions Over Time"): Empty(
+        "0 in a quiet window — external cowrie sessions are sporadic", "TALOS-qish"),
+    ("honeypot-ops", "Honeypot-Detection Attempts (24h)"): Empty(
+        "0 until an anti-honeypot recon canary hits cowrie (SHELL_BEHAVIOR/filter_output) — sporadic", "TALOS-qish"),
+    ("honeypot-ops", "Recon / Detection Commands (live)"): Empty(
+        "0 until a recon command (uname/lspci/SHELL_BEHAVIOR) hits cowrie — sporadic", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Captured Commands (live)"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Login Attempts (success vs failed)"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Sessions Over Time"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Top Commands"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Captured Credentials"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Honeypot-Detection Attempts (24h)"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Recon / Detection Commands (live)"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Commands Captured"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Login Attempts"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Failed Logins"): Empty(
+        "beelzebub is the 10% tier — content panels are sparse until it accumulates sessions", "TALOS-qish"),
+    ("crowdsec-ops", "Local enforced decisions"): Empty(
+        "0 when there are no active LOCAL (cscli/manual) decisions — scenario/CAPI bans surface in the other panels", "TALOS-pbn"),
+    ("crowdsec-ops", "Active local decisions · expires at"): Empty(
+        "0 when there are no active LOCAL (cscli/manual) decisions — scenario/CAPI bans surface in the other panels", "TALOS-pbn"),
+    ("crowdsec-ops", "Time remaining · local decisions"): Empty(
+        "0 when there are no active LOCAL (cscli/manual) decisions — scenario/CAPI bans surface in the other panels", "TALOS-pbn"),
+    ("crowdsec-ops", "Inventory age"): Empty(
+        "0 when there are no active LOCAL (cscli/manual) decisions — scenario/CAPI bans surface in the other panels", "TALOS-pbn"),
+    ("crowdsec-ops", "Rows omitted by limit"): Empty(
+        "0 when there are no active LOCAL (cscli/manual) decisions — scenario/CAPI bans surface in the other panels", "TALOS-pbn"),
 }
 
 # grafana dashboard-variable macros -> concrete values for a standalone query
