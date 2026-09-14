@@ -100,7 +100,7 @@ compute + poisons AI training scrapes. Two entry paths:
    the Forgejo and whoami IngressRoutes.
 
 The `homelab/iocaine-tarpit` CrowdSec scenario turns any tarpit-host hit into an **alert** (detect-only
-today; delete the `simulation.yaml` exclusion in `infrastructure/base/crowdsec/helmrelease.yaml` to ban).
+today; delete the `simulation.yaml` exclusion in `infrastructure/base/security/crowdsec/helmrelease.yaml` to ban).
 
 ---
 
@@ -141,11 +141,11 @@ POSTed to Discord via the built-in `notification-http` plugin (`discord_default`
 ## Repo layout (today — see the consolidation note)
 
 ```
-infrastructure/base/crowdsec/   # LAPI+agent+AppSec, bouncer middleware, whitelist, scenarios, web-ui,
+infrastructure/base/security/crowdsec/   # LAPI+agent+AppSec, bouncer middleware, whitelist, scenarios, web-ui,
                                 #   CNPG postgres.yaml + objectstore.yaml + scheduledbackup.yaml,
                                 #   dynamic-allowlist.yaml, machine-registrar.yaml, podmonitor.yaml
 infrastructure/base/honeypot/   # Cowrie honeypot (+ logship sidecar)
-infrastructure/base/iocaine/    # iocaine tarpit + trap.knowledgedump.space maze
+infrastructure/base/security/iocaine/    # iocaine tarpit + trap.knowledgedump.space maze
 infrastructure/base/traefik/    # bouncer plugin + Bot Wrangler middleware + forwardedHeaders
 Taskfile.security.yaml          # task security:* — cscli wrappers + honeypot log helpers
 ```

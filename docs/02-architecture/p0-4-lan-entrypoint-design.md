@@ -75,7 +75,7 @@ Enumerated from the manifests (routes whose `Host()` is on a public zone):
 | `auth.priv.knowledgedump.space` | `infrastructure/base/authentik/ingressroute.yaml` | web+websecure; **review**: `priv` on a public zone |
 | `forge.knowledgedump.space` | `infrastructure/base/forgejo/ingressroute.yaml` | web+websecure |
 | `registry.knowledgedump.space` | `infrastructure/base/registry/zot/ingressroute.yaml` | web+websecure |
-| `trap.knowledgedump.space` | `infrastructure/base/iocaine/ingressroute.yaml` | tarpit |
+| `trap.knowledgedump.space` | `infrastructure/base/security/iocaine/ingressroute.yaml` | tarpit |
 | `bg.knowledgedump.space` | `infrastructure/base/authentik/login-background/ingressroute.yaml` | login background asset |
 | `analytics.knowledgedump.space` | `applications/crossplane-demo/plausible/ingressroute.yaml` | `/js/` + `/api/event` only |
 | `zipline.amberdark.net` | `applications/zipline/ingressroute.yaml` | web+websecure |

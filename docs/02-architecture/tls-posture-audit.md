@@ -412,10 +412,10 @@ CrowdSec is the one component doing internal TLS properly, and is the template t
 
 | Hop | Scheme | Evidence |
 |---|---|---|
-| agents/appsec → LAPI | **mTLS client cert** | `infrastructure/base/crowdsec/helmrelease.yaml:32-33,54,61` |
-| Traefik bouncer → LAPI | **https** + client-cert CA | `infrastructure/base/crowdsec/bouncer-middleware.yaml:18-20` |
-| web-ui → LAPI | **https** | `infrastructure/base/crowdsec/webui.yaml:55` |
-| CrowdSec → CNPG | **`sslmode: require`** | `infrastructure/base/crowdsec/helmrelease.yaml:310` |
+| agents/appsec → LAPI | **mTLS client cert** | `infrastructure/base/security/crowdsec/helmrelease.yaml:32-33,54,61` |
+| Traefik bouncer → LAPI | **https** + client-cert CA | `infrastructure/base/security/crowdsec/bouncer-middleware.yaml:18-20` |
+| web-ui → LAPI | **https** | `infrastructure/base/security/crowdsec/webui.yaml:55` |
+| CrowdSec → CNPG | **`sslmode: require`** | `infrastructure/base/security/crowdsec/helmrelease.yaml:310` |
 
 It uses a dedicated cert-manager CA chain (`crowdsec-root-issuer` → `crowdsec-ca` →
 `crowdsec-ca-issuer` → 5 leaf certs), all `Ready`. This proves the pattern works in this cluster.

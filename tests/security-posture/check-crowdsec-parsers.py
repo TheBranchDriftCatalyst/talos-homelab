@@ -26,7 +26,7 @@ def remote(*args, data=None):
 try:
     remote('cp', '-rf', '/etc/crowdsec', work)
     remote('sed', '-i', 's@/etc/crowdsec/@' + work + '/@g', work + '/config.yaml')
-    values = yaml.safe_load((ROOT / 'infrastructure/base/crowdsec/helmrelease.yaml').read_text())['spec']['values']
+    values = yaml.safe_load((ROOT / 'infrastructure/base/security/crowdsec/helmrelease.yaml').read_text())['spec']['values']
     parser = values['config']['parsers']['s01-parse']['cowrie-logs.yaml']
     # The custom parser is a mounted regular file, not a symlink to hub content.
     remote('sh', '-c', 'cat > "$1"', 'audit', work + '/parsers/s01-parse/cowrie-logs.yaml', data=parser)

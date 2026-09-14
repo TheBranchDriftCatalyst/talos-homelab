@@ -33,7 +33,7 @@ def document(path):
 
 
 def crowdsec_values():
-    return document('infrastructure/base/crowdsec/helmrelease.yaml')['spec']['values']
+    return document('infrastructure/base/security/crowdsec/helmrelease.yaml')['spec']['values']
 
 
 def traefik_values():
@@ -310,7 +310,7 @@ class RepositoryPosture(unittest.TestCase):
 
     def test_crowdsec_bouncer_trusted_ips_exclude_pod_cidr(self):
         # TALOS-lxz5.1.4b: pod CIDR must not spoof client IP nor bypass the bouncer.
-        plugin = document('infrastructure/base/crowdsec/bouncer-middleware.yaml')['spec']['plugin']['bouncer']
+        plugin = document('infrastructure/base/security/crowdsec/bouncer-middleware.yaml')['spec']['plugin']['bouncer']
         self.assertNotIn('10.0.0.0/8', plugin['forwardedHeadersTrustedIPs'])
         self.assertNotIn('10.0.0.0/8', plugin['clientTrustedIPs'])
         self.assertIn('192.168.0.0/16', plugin['clientTrustedIPs'],
@@ -360,7 +360,7 @@ class RepositoryPosture(unittest.TestCase):
                 assert_no_api_token(self, document(f'infrastructure/base/{app}/deployment.yaml')['spec']['template']['spec'])
 
     def test_enforcement_has_no_unbounded_fail_open(self):
-        plugin = document('infrastructure/base/crowdsec/bouncer-middleware.yaml')['spec']['plugin']['bouncer']
+        plugin = document('infrastructure/base/security/crowdsec/bouncer-middleware.yaml')['spec']['plugin']['bouncer']
         self.assertGreater(int(plugin['updateMaxFailure']), 0)
         self.assertLessEqual(int(plugin['updateMaxFailure']), 5)
         for key in ('streamStartupBlock', 'crowdsecAppsecUnreachableBlock', 'crowdsecAppsecFailureBlock'):
@@ -376,7 +376,7 @@ class RepositoryPosture(unittest.TestCase):
                                 t['labelSelector']['matchLabels'].get('type') == component for t in terms))
 
     def test_exporter_has_versioned_user_agent(self):
-        tree = ast.parse((ROOT / 'infrastructure/base/crowdsec/decision-exporter/exporter.py').read_text())
+        tree = ast.parse((ROOT / 'infrastructure/base/security/crowdsec/decision-exporter/exporter.py').read_text())
         agents = [value.value for node in ast.walk(tree) if isinstance(node, ast.Dict)
                   for key, value in zip(node.keys, node.values)
                   if isinstance(key, ast.Constant) and key.value == 'User-Agent' and isinstance(value, ast.Constant)]

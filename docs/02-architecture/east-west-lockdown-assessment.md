@@ -71,11 +71,11 @@ Source files:
 
 **talos-homelab (Flux):**
 - `infrastructure/base/honeypot/cilium-network-policy.yaml`
-- `infrastructure/base/iocaine/cilium-network-policy.yaml`
+- `infrastructure/base/security/iocaine/cilium-network-policy.yaml`
 - `infrastructure/base/teak-talos-dev/cilium-network-policy.yaml`
 - `infrastructure/base/authentik/dragonfly-network-policy.yaml`
 - `infrastructure/base/argocd/netpol-allow-monitoring.yaml`
-- `infrastructure/base/crowdsec/{decision-exporter,webui-network-policy}.yaml`
+- `infrastructure/base/security/crowdsec/{decision-exporter,webui-network-policy}.yaml`
 - `applications/gaming/base/kubevirt/guacamole-network-policy.yaml`
 - `applications/scratch/grpc-example/k8s/mtls-policies.yaml`
 

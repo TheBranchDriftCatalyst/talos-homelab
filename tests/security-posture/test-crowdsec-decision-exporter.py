@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location('exporter', ROOT / 'infrastructure/base/crowdsec/decision-exporter/exporter.py')
+spec = importlib.util.spec_from_file_location('exporter', ROOT / 'infrastructure/base/security/crowdsec/decision-exporter/exporter.py')
 exporter = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(exporter)
 

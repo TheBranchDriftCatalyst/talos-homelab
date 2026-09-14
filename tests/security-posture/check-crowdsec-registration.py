@@ -7,7 +7,7 @@ import tempfile
 import yaml
 
 root = Path(__file__).resolve().parents[2]
-release = yaml.safe_load((root / 'infrastructure/base/crowdsec/helmrelease.yaml').read_text())
+release = yaml.safe_load((root / 'infrastructure/base/security/crowdsec/helmrelease.yaml').read_text())
 
 # The token-register initContainers this check exercised were removed by the TLS cert-auth migration
 # (TALOS-3pdz): agents/appsec now authenticate to LAPI by CLIENT CERT — there is no token
