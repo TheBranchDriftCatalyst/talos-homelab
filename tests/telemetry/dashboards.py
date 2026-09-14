@@ -6,6 +6,8 @@ data, or is a justified EXPECTED_EMPTY). Add a dashboard by dropping its json pa
 from collections import namedtuple
 
 # dashboards to audit: (name, repo json path, uid)
+# TODO: have this also run into automatic mode, i bet we can just inquire with the cluster
+# and get all of thesee dashboards automatically. any crd
 DASHBOARDS = [
     ("honeypot-ops", "infrastructure/base/monitoring/grafana-dashboards/json/honeypot-ops.json", "honeypot-ops"),
     ("crowdsec-ops", "infrastructure/base/monitoring/grafana-dashboards/json/crowdsec-ops.json", "crowdsec-ops"),
@@ -74,6 +76,18 @@ EXPECTED_EMPTY = {
         "0 when there are no active LOCAL (cscli/manual) decisions — scenario/CAPI bans surface in the other panels", "TALOS-pbn"),
     ("crowdsec-ops", "Rows omitted by limit"): Empty(
         "0 when there are no active LOCAL (cscli/manual) decisions — scenario/CAPI bans surface in the other panels", "TALOS-pbn"),
+    ("honeypot-ops", "Beelzebub hits (10%)"): Empty(
+        "beelzebub is the 10% tier — 0 hits in a short window is normal", "TALOS-qish"),
+    ("honeypot-ops", "[beelzebub] Distinct Recon Source IPs (24h)"): Empty(
+        "beelzebub is the 10% tier — sparse in any window", "TALOS-qish"),
+    ("crowdsec-ops", "AbuseIPDB Report Failures (24h)"): Empty(
+        "0 = healthy (no report failures)", "TALOS-pbn"),
+    ("crowdsec-ops", "CrowdSec warning / error logs"): Empty(
+        "0 = healthy (no warn/error logs)", "TALOS-pbn"),
+    ("crowdsec-ops", "AbuseIPDB Reporter Log"): Empty(
+        "reporter is a daily CronJob — log panel is empty between runs", "TALOS-pbn"),
+    ("crowdsec-ops", "IPs Reported to AbuseIPDB (24h)"): Empty(
+        "reporter is a daily CronJob — populates on its run (fix just landed)", "TALOS-pbn"),
 }
 
 # grafana dashboard-variable macros -> concrete values for a standalone query
