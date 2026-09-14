@@ -36,16 +36,67 @@ DASHBOARDS = _discover()
 # EXPECTED_EMPTY allowlists per dashboard. Add a name here once its expected-empty panels are curated.
 LIVE_AUDIT = {"honeypot-ops", "crowdsec-ops", "falco-ops"}
 
-# datasource uid -> how the --live audit reaches it (svc, port, query path, engine)
-# loki uses the LogQL query endpoint; prometheus/mimir use the promql query endpoint.
-DATASOURCES = {
-    "loki-v2": dict(namespace="monitoring", service="loki", port=3100,
-                    path="/loki/api/v1/query", engine="loki"),
-    "loki":    dict(namespace="monitoring", service="loki", port=3100,
-                    path="/loki/api/v1/query", engine="loki"),
-    "mimir":   dict(namespace="monitoring", service="mimir-gateway", port=80,
-                    path="/prometheus/api/v1/query", engine="prom"),
+# datasource uid -> how the --live audit reaches it (namespace, service, port, query path, engine).
+# INFERRED from the GrafanaDatasource CRs (spec.datasource.{uid,type,url}) so this map maintains itself:
+# url http://<svc>.<ns>.svc[...][:port][/prefix] gives ns/service/port/prefix; type gives engine + the
+# query path suffix (loki -> LogQL /loki/api/v1/query, prometheus -> PromQL /api/v1/query).
+import urllib.parse as _urlparse  # noqa: E402
+
+_DS_CR_DIRS = [
+    "infrastructure/base/monitoring/grafana-datasources",
+    "infrastructure/base/monitoring/v2-otel/grafana-datasources",
+]
+# datasource type -> (audit engine, query-path suffix appended to the URL's own path prefix)
+_ENGINE_BY_TYPE = {"loki": ("loki", "/loki/api/v1/query"), "prometheus": ("prom", "/api/v1/query")}
+
+# fallback if the CRs can't be parsed (e.g. PyYAML missing) — the audit still runs
+_DATASOURCES_FALLBACK = {
+    "loki-v2": dict(namespace="monitoring", service="loki", port=3100, path="/loki/api/v1/query", engine="loki"),
+    "mimir":   dict(namespace="monitoring", service="mimir-gateway", port=80, path="/prometheus/api/v1/query", engine="prom"),
 }
+
+
+def _parse_ds_url(url):
+    u = _urlparse.urlparse(url)
+    labels = (u.hostname or "").split(".")
+    svc = labels[0] if labels else (u.hostname or "")
+    ns = labels[1] if len(labels) > 1 else "monitoring"
+    port = u.port or (443 if u.scheme == "https" else 80)
+    return ns, svc, port, (u.path or "").rstrip("/")
+
+
+def _discover_datasources():
+    try:
+        import yaml
+    except Exception:
+        return dict(_DATASOURCES_FALLBACK)
+    out = {}
+    for rel in _DS_CR_DIRS:
+        d = _ROOT / rel
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.yaml")):
+            try:
+                docs = list(yaml.safe_load_all(f.read_text()))
+            except Exception:
+                continue
+            for doc in docs:
+                if not doc or doc.get("kind") != "GrafanaDatasource":
+                    continue
+                ds = (doc.get("spec") or {}).get("datasource") or {}
+                typ, url = ds.get("type"), ds.get("url")
+                if typ not in _ENGINE_BY_TYPE or not url:
+                    continue  # skip tempo/other engines the data-audit can't query
+                key = ds.get("uid") or (ds.get("name") or "").lower()
+                if not key:
+                    continue
+                ns, svc, port, prefix = _parse_ds_url(url)
+                engine, suffix = _ENGINE_BY_TYPE[typ]
+                out[key] = dict(namespace=ns, service=svc, port=port, path=prefix + suffix, engine=engine)
+    return out or dict(_DATASOURCES_FALLBACK)
+
+
+DATASOURCES = _discover_datasources()
 
 Empty = namedtuple("Empty", "reason issue")
 

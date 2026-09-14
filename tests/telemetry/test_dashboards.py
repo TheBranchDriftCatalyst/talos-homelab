@@ -75,8 +75,22 @@ def _tmpl_subst(dash):
     return apply
 
 
+def _resolve_ds(ds, dash):
+    """Resolve a panel datasource to a concrete UID. A `$datasource` / `${datasource}` picker resolves to
+    that template variable's current value (a concrete UID); everything else passes through."""
+    if not ds:
+        return ds
+    s = str(ds)
+    if s.startswith("$"):
+        var = s.strip("${}")
+        for v in dash.get("templating", {}).get("list", []):
+            if v.get("name") == var and v.get("type") == "datasource":
+                return (v.get("current") or {}).get("value") or ds
+    return ds
+
+
 def _all_panels():
-    """[(dashname, uid, panel_title, ds_uid, [queries])] across every registered dashboard."""
+    """[(dashname, panel_title, ds_uid, [queries])] across every auto-discovered dashboard."""
     rows = []
     for name, path, _uid in reg.DASHBOARDS:
         dash = json.loads((helpers.ROOT / path).read_text())
@@ -88,7 +102,7 @@ def _all_panels():
             for t in p.get("targets", []):
                 if _ds_uid(t):
                     pds = _ds_uid(t)
-            rows.append((name, p.get("title", "?"), pds, [tvar(q) for q in queries if q]))
+            rows.append((name, p.get("title", "?"), _resolve_ds(pds, dash), [tvar(q) for q in queries if q]))
     return rows
 
 
@@ -103,19 +117,15 @@ class TelemetryDashboards:
 @pytest.mark.parametrize("dash,title,ds,queries", PANELS,
                          ids=[f"{r[0]}:{r[1]}" for r in PANELS])
 def test_panel_structure(dash, title, ds, queries):
-    """Every panel carries a non-empty query and a resolvable datasource. Concrete datasource UIDs must
-    be registered in DATASOURCES; template-picker ($datasource) and built-in (-- Mixed --/-- Grafana --/
-    -- Dashboard --) datasources are valid but not fixed UIDs; a None datasource inherits the dashboard
-    default. Auto-discovered across every committed dashboard."""
+    """Every panel carries at least one non-empty query — catches broken/empty/dangling panels in the
+    manifest. Auto-discovered across every committed dashboard.
+
+    Datasource *reachability* is deliberately NOT asserted here: it's validated by the --live audit
+    (which executes each query and reports panels whose datasource we don't port-forward). Imported
+    grafana.com dashboards legitimately reference datasources by their own name/UID (e.g. a
+    `$datasource` picker defaulting to "Cluster Prometheus"), so a hard DATASOURCES check would false-
+    positive on them."""
     assert queries, f"[{dash}] panel {title!r} has no non-empty query"
-    if ds is None:
-        return  # inherits the dashboard's default datasource — valid
-    s = str(ds)
-    if s.startswith("$") or s.startswith("--"):
-        return  # template-picker / built-in datasource — valid, not a fixed UID to port-forward
-    assert ds in reg.DATASOURCES, (
-        f"[{dash}] panel {title!r} datasource {ds!r} is not in tests/telemetry/dashboards.py "
-        f"DATASOURCES (known: {sorted(reg.DATASOURCES)})")
 
 
 # ---------- LIVE query audit ----------
@@ -184,50 +194,61 @@ def _query(engine, local, path, q):
     return len(result), None
 
 
-_LIVE_DASHES = sorted({r[0] for r in PANELS})
-
-
 @pytest.mark.skipif(not LIVE, reason="live query audit: pass --live")
-def test_live_every_panel_returns_data_or_is_allowlisted():
-    # group panels by datasource so we port-forward each once
+def test_live_no_query_errors_and_curated_have_data():
+    """Execute EVERY panel's query live against its datasource (auto-discovered dashboards).
+
+    Two failure modes, so we get full live coverage without hundreds of allowlists:
+      - a query that ERRORS (bad LogQL/PromQL, missing label, unreachable datasource) = a broken panel
+        -> HARD FAIL for every dashboard.
+      - a query returning NO DATA -> HARD FAIL only for the curated LIVE_AUDIT dashboards (they carry
+        EXPECTED_EMPTY allowlists); for the rest it's reported (idle service vs real break is ambiguous
+        without curation), not failed.
+    Panels whose datasource can't be resolved to a queryable UID (unresolved $var, -- Mixed --, tempo)
+    are reported as unqueryable, not failed.
+    """
     from collections import defaultdict
     by_ds = defaultdict(list)
+    unqueryable = []
     for dash, title, ds, queries in PANELS:
-        # the live per-panel data audit only runs for the curated LIVE_AUDIT dashboards — the rest are
-        # covered by the offline structural test (a live data check needs per-dashboard EXPECTED_EMPTY).
-        if dash not in reg.LIVE_AUDIT:
+        if ds not in reg.DATASOURCES:
+            unqueryable.append(f"[{dash}] {title!r} (ds={ds})")
             continue
         by_ds[ds].append((dash, title, queries))
 
-    empty, errors, checked = [], [], 0
+    errors, curated_empty, other_empty, checked = [], [], 0, 0
     for ds, panels in by_ds.items():
-        cfg = reg.DATASOURCES.get(ds)
-        if not cfg:
-            errors.append(f"{ds}: unknown datasource"); continue
+        cfg = reg.DATASOURCES[ds]
         with _PortForward(cfg["namespace"], cfg["service"], cfg["port"]) as pf:
             for dash, title, queries in panels:
-                # a panel passes if ANY of its targets returns data
-                got = 0; err = None
-                for q in queries:
+                got, err = 0, None
+                for q in queries:  # a panel passes if ANY target returns data
                     n, e = _query(cfg["engine"], pf.local, cfg["path"], q)
                     if e:
                         err = e
                     elif n and n > 0:
                         got = n; break
                 checked += 1
-                if got == 0:
-                    if (dash, title) in reg.EXPECTED_EMPTY:
-                        continue  # justified empty
-                    if err:
-                        errors.append(f"[{dash}] {title!r}: query error: {err}")
-                    else:
-                        empty.append(f"[{dash}] {title!r}")
+                if got:
+                    continue
+                if err:  # no data AND the query errored -> broken query, fail everywhere
+                    errors.append(f"[{dash}] {title!r}: {err}")
+                elif (dash, title) in reg.EXPECTED_EMPTY:
+                    continue  # justified empty
+                elif dash in reg.LIVE_AUDIT:
+                    curated_empty.append(f"[{dash}] {title!r}")
+                else:
+                    other_empty += 1
+
     assert checked > 0, "no panels checked — cluster/datasource unreachable?"
+    print(f"\n[telemetry] live-checked {checked} panels across {len(by_ds)} datasources; "
+          f"{other_empty} non-curated panels returned no data (idle/ambiguous); "
+          f"{len(unqueryable)} unqueryable (template/mixed/tempo datasource).")
     msg = []
-    if empty:
-        msg.append("panels returning NO data (not allowlisted): " + "; ".join(empty))
     if errors:
-        msg.append("panel query errors: " + "; ".join(errors))
+        msg.append(f"{len(errors)} panel query ERRORS (broken queries): " + "; ".join(errors[:40]))
+    if curated_empty:
+        msg.append("curated panels returning NO data (not allowlisted): " + "; ".join(curated_empty))
     assert not msg, " | ".join(msg)
 
 
