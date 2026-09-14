@@ -1,0 +1,43 @@
+# Cowrie SSH/Telnet honeypot (T-Pot image) as a native Deployment — the WAN-facing honeypot on the
+# existing WAN:22 -> talos02-gpu:2222 router forward. hostPort preserves the real attacker source IP
+# (no masquerade double-NAT). A logship sidecar tails Cowrie's JSON to stdout -> Alloy -> Loki (and the
+# CrowdSec agent later). Ephemeral emptyDirs for now; a retain PVC for malware samples can come later.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cowrie
+  namespace: tpot
+  labels:
+    app: cowrie
+    app.kubernetes.io/component: honeypot
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # hostPort can't double-bind during a rolling update
+  selector:
+    matchLabels: { app: cowrie }
+  template:
+    metadata:
+      labels:
+        app: cowrie
+        app.kubernetes.io/component: honeypot
+    spec:
+      automountServiceAccountToken: false # no cluster credential in a box we invite attackers into
+      nodeSelector:
+        kubernetes.io/hostname: talos02-gpu # the WAN:22 -> :2222 forward target; off control-plane + datastore nodes
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: cowrie
+          image: ghcr.io/telekom-security/cowrie:24.04.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: ssh, containerPort: 2222, hostPort: 2222, protocol: TCP }
+            - { name: telnet, containerPort: 2223, hostPort: 2223, protocol: TCP }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 512Mi }
