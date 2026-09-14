@@ -1,24 +1,25 @@
 ---
-# Internal LAN access (HTTP) — mirrors the live `zipline-local` IngressRoute
-# exactly (host, entrypoint, middleware, service/port) so reconciliation is a
-# no-op takeover, not a routing change.
+# Zipline routing. Two surfaces:
+#   - LAN:    zip.talos00           (HTTP, lan-only)
+#   - Public: zipline.knowledgedump.space (HTTPS via Cloudflare, external-dns)
 #
-# NOTE: the live host is `xzip.talos00` (leading x). Preserved verbatim per the
-# migration brief. Rename to `zip.talos00` here if you want the friendlier host —
-# just update /etc/hosts to match. External (knowledgedump.space / TLS) routes
-# from the old orphan manifest are intentionally NOT recreated because they are
-# NOT present on the live cluster.
+# NO Traefik forward-auth here on purpose: the dashboard/upload API is gated by
+# Zipline's NATIVE OIDC (Authentik) while uploaded file/image URLs are served
+# PUBLICLY by Zipline — a forward-auth middleware would block those public image
+# URLs. The public route carries defense-in-depth middlewares (security headers,
+# rate-limit, request-body-limit) for the unauthenticated upload/serve surface.
+# Replaces the old zipline.amberdark.net exposure (TALOS-0w6d).
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: zipline-local
+  name: zipline-lan
   labels:
     app: zipline
 spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`xzip.talos00`)
+    - match: Host(`zip.talos00`)
       kind: Rule
       middlewares:
         - name: lan-only
@@ -30,89 +31,46 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: zipline-priv
-  labels:
-    app: zipline
-spec:
-  entryPoints:
-  - websecure
-  routes:
-  - match: Host(`zipline.priv.talos00`)
-    kind: Rule
-    middlewares:
-    - name: private-domain-redirect
-      namespace: traefik
-    services:
-    - name: zipline
-      port: 3000
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: zipline-priv-http
-  labels:
-    app: zipline
-spec:
-  entryPoints:
-  - web
-  routes:
-  - match: Host(`zipline.priv.talos00`)
-    kind: Rule
-    middlewares:
-    - name: private-domain-redirect
-      namespace: traefik
-    services:
-    - name: zipline
-      port: 3000
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: zipline-priv-domain
+  name: zipline-public
   labels:
     app: zipline
   annotations:
-    external-dns.alpha.kubernetes.io/hostname: zipline.amberdark.net
-    external-dns.alpha.kubernetes.io/target: origin.amberdark.net
-    external-dns.alpha.kubernetes.io/cloudflare-proxied: 'true'
+    external-dns.alpha.kubernetes.io/hostname: zipline.knowledgedump.space
+    external-dns.alpha.kubernetes.io/target: knowledgedump.space
+    external-dns.alpha.kubernetes.io/cloudflare-proxied: "true"
 spec:
   entryPoints:
-  - websecure
+    - websecure
   routes:
-  - match: Host(`zipline.amberdark.net`)
-    kind: Rule
-    middlewares:
-    # security-headers: unchanged (HSTS/nosniff/frame-options).
-    - name: security-headers
-      namespace: traefik
-    # rate-limit + request-body-limit: TALOS-lxz5.4.1 / findings 009 & 007. This
-    # was the ONLY routed public amberdark app and carried no throttle/body-cap.
-    # Zipline enforces its own /api auth (401 without token) — these are
-    # defense-in-depth for the unauthenticated upload/proxy surface.
-    - name: rate-limit
-      namespace: traefik
-    - name: request-body-limit
-      namespace: traefik
-    services:
-    - name: zipline
-      port: 3000
+    - match: Host(`zipline.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - name: security-headers
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: request-body-limit
+          namespace: traefik
+      services:
+        - name: zipline
+          port: 3000
   tls: {}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
-  name: zipline-priv-http-domain
+  name: zipline-public-http
   labels:
     app: zipline
 spec:
   entryPoints:
-  - web
+    - web
   routes:
-  - match: Host(`zipline.amberdark.net`)
-    kind: Rule
-    middlewares:
-    - name: redirect-https
-      namespace: traefik
-    services:
-    - name: zipline
-      port: 3000
+    - match: Host(`zipline.knowledgedump.space`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: zipline
+          port: 3000

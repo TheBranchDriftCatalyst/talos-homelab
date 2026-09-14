@@ -1,0 +1,68 @@
+---
+# Zipline OIDC SSO (TALOS-0w6d): OAuth2 provider + application, gated to talos-apps
+# (+ cluster-admin). Zipline v4 uses generic OIDC (three explicit endpoints, no
+# discovery); client_secret from !Env ZIPLINE_OIDC_CLIENT_SECRET (authentik-zipline-oidc
+# ExternalSecret -> authentik pod env, wired in helmrelease.yaml). The Zipline app reads
+# the SAME 1Password field (zipline.oidc-client-secret) so both ends match.
+# Redirect URI is Zipline v4's callback: /api/auth/oauth/oidc.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-zipline-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  zipline-oidc.yaml: |
+    version: 1
+    metadata:
+      name: Zipline OIDC SSO
+      labels:
+        blueprints.goauthentik.io/description: "Zipline OIDC SSO: OAuth2 provider + application"
+    entries:
+
+      - model: authentik_providers_oauth2.oauth2provider
+        id: zipline-oauth2-provider
+        identifiers:
+          name: zipline
+        attrs:
+          name: zipline
+          client_type: confidential
+          client_id: zipline
+          client_secret: !Env ZIPLINE_OIDC_CLIENT_SECRET
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-explicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+          include_claims_in_id_token: true
+          sub_mode: hashed_user_id
+          issuer_mode: per_provider
+          redirect_uris:
+            - matching_mode: strict
+              url: https://zipline.knowledgedump.space/api/auth/oauth/oidc
+          property_mappings:
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+
+      - model: authentik_core.application
+        id: zipline-application
+        identifiers:
+          slug: zipline
+        attrs:
+          name: Zipline
+          slug: zipline
+          provider: !KeyOf zipline-oauth2-provider
+          meta_launch_url: https://zipline.knowledgedump.space
+          meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/zipline.png
+          meta_description: "Zipline — self-hosted image/file sharing (public URLs, SSO dashboard)"
+          meta_publisher: "Catalyst Homelab"
+          open_in_new_tab: false
+          policy_engine_mode: any
+          group: talos-apps
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, zipline]], group: !Find [authentik_core.group, [name, talos-apps]], order: 0}
+        attrs: {enabled: true}
+      - model: authentik_policies.policybinding
+        identifiers: {target: !Find [authentik_core.application, [slug, zipline]], group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}
+        attrs: {enabled: true}

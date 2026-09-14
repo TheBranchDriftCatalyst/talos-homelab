@@ -1,18 +1,19 @@
 ---
-# Kustomization for Zipline (self-hosted file/image sharing), namespace
-# media-private. GitOps-ified + migrated off the co-pod postgres:15-alpine to a
-# CloudNativePG cluster (TALOS-0w6d, epic TALOS-031k). Was previously a MANUAL
-# kubectl-applied Deployment (no Flux ownership label) — this brings it under
-# Flux reconciliation like every other app.
+# Kustomization for Zipline (self-hosted image/file sharing). Moved out of the
+# media-private namespace into its own `zipline` namespace (media-private is reserved
+# for talos-private-repo workloads) with a FRESH database — the old DB is not carried
+# over (TALOS-0w6d). Public at zipline.knowledgedump.space (Cloudflare) with native
+# Authentik OIDC on the dashboard + public image URLs; replaces zipline.amberdark.net.
 #
 # dependsOn:
-#   - storage           → provides the fatboy-nfs-appdata StorageClass (uploads PVC + CNPG PGDATA)
-#   - databases         → CloudNativePG operator + the postgresql.cnpg.io Cluster CRD
-#   - external-secrets  → ClusterSecretStore `onepassword` for the CORE_SECRET ExternalSecret
+#   - storage           → fatboy-nfs-appdata StorageClass (uploads PVC)
+#   - databases         → CloudNativePG operator + the CatalystCNPGAppDB composite
+#   - external-secrets  → ClusterSecretStore `onepassword` (CORE_SECRET + OIDC secrets)
+#   - authentik         → the zipline OAuth2 provider/app blueprint + authentik-zipline-oidc
 #
-# The media-private namespace already exists on the cluster (currently created
-# outside git); this Kustomization does NOT manage the Namespace object, so
-# `prune: true` only reaps zipline's own resources.
+# This Kustomization now OWNS the `zipline` Namespace object (namespace.yaml), so
+# prune:true reaps the whole app. The old media-private zipline resources (incl. the
+# old CNPG cluster + PVCs) are pruned on cutover — intentional, fresh start.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -26,11 +27,12 @@ spec:
   path: ./applications/zipline
   prune: true
   wait: true
-  timeout: 5m
+  timeout: 10m
   dependsOn:
     - name: storage
     - name: databases
     - name: external-secrets
+    - name: authentik
   postBuild:
     substituteFrom:
       - kind: ConfigMap

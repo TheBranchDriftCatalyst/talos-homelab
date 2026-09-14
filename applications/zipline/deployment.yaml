@@ -1,13 +1,9 @@
 ---
-# Zipline - Self-hosted image/file sharing
-# https://github.com/diced/zipline
+# Zipline - Self-hosted image/file sharing (https://github.com/diced/zipline)
 #
-# GitOps + CNPG migration (TALOS-0w6d): the co-pod `postgres:15-alpine` sidecar
-# is GONE. Zipline talks to the CNPG `zipline-postgres-rw` service and reads its
-# full connection string from the CNPG-generated `zipline-postgres-app` secret
-# (`uri` key = postgresql://zipline:<pass>@zipline-postgres-rw:5432/zipline).
-# CORE_SECRET comes from the zipline-secrets ExternalSecret (1Password item
-# `zipline`, field `core-secret`). No plaintext secrets remain in git.
+# Namespace `zipline` (moved off media-private). DB = CNPG `zipline-postgres-rw`
+# (DATABASE_URL from the CNPG-generated `zipline-postgres-app` secret). Auth = native
+# Authentik OIDC on the dashboard; uploaded file URLs (/u, /raw) stay PUBLIC. TALOS-0w6d.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,42 +22,75 @@ spec:
     metadata:
       labels:
         app: zipline
+        # server-side OIDC (token/userinfo to auth.knowledgedump.space): the oidc-hostalias
+        # Kyverno policy injects the in-cluster Traefik hostAlias so the call doesn't loop out
+        # through Cloudflare (would time out otherwise).
+        catalyst.io/oidc: "true"
       annotations:
-        # DB is CNPG-managed now; only the uploads volume needs Velero coverage.
         backup.velero.io/backup-volumes: uploads
     spec:
       containers:
-        # Zipline application
         - name: zipline
-          # TALOS-lxz5.4.1 / finding 007: pinned off the mutable :latest tag.
-          # `v4` is zipline's current stable major line (last semver was 3.7.9);
-          # digest captured from ghcr.io/diced/zipline:v4 on 2026-09-09. The
-          # digest is authoritative and immutable — the tag is human-readable
-          # context. Bump both together when updating.
-          image: ghcr.io/diced/zipline:v4@sha256:e9d0c5f62c6304e96204fc5e7612b8973fd3d9e6e773bfc8052c2f7177af2e3a
+          # Pinned by digest (immutable); tag is human context. v4.7.0 is the current
+          # latest release (2026-08-16, incl. security advisory GHSA-wq7g-g9f8-8q2p);
+          # digest resolved from the `v4` rolling tag 2026-09-14. Bump tag + digest together.
+          image: ghcr.io/diced/zipline:v4@sha256:2340b4cb2094165af3e9b036be5ec445f8fcbf49067ab8ade2135809e37e610d
           ports:
             - name: http
               containerPort: 3000
               protocol: TCP
           env:
-            # CORE_SECRET (token-signing key) from the zipline-secrets
-            # ExternalSecret (1Password item `zipline`, field core-secret).
+            # Token-signing key (1Password zipline.core-secret via the ExternalSecret).
             - name: CORE_SECRET
               valueFrom:
                 secretKeyRef:
                   name: zipline-secrets
                   key: CORE_SECRET
-            # Full DB connection string straight from the CNPG-generated
-            # zipline-postgres-app secret — points at the -rw service, carries
-            # the random rotated password. No plaintext, no templating needed.
+            # Full DB connection string from the CNPG-generated secret (-rw service, rotated pw).
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: zipline-postgres-app
                   key: uri
-            # Website configuration
             - name: WEBSITE_TITLE
               value: "Catalyst Share"
+            # --- behind Traefik + Cloudflare (TLS terminated at the edge) ---
+            # so generated URLs + the OAuth redirect use https + the canonical host.
+            - name: CORE_TRUST_PROXY
+              value: "true"
+            - name: CORE_RETURN_HTTPS_URLS
+              value: "true"
+            - name: CORE_DEFAULT_DOMAIN
+              value: "zipline.knowledgedump.space"
+            # --- native OIDC via Authentik (dashboard login; file URLs stay public) ---
+            # v4 uses three explicit endpoints (no discovery URL). client_secret shares the
+            # SAME 1Password field the authentik-zipline-oidc ExternalSecret reads, so both
+            # ends of the handshake stay in lockstep. optional:true so zipline still boots if
+            # the 1Password field hasn't landed yet (OIDC just won't work until it does).
+            - name: OAUTH_OIDC_CLIENT_ID
+              value: "zipline"
+            - name: OAUTH_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: zipline-oidc
+                  key: OIDC_CLIENT_SECRET
+                  optional: true
+            - name: OAUTH_OIDC_AUTHORIZE_URL
+              value: "https://auth.knowledgedump.space/application/o/authorize/"
+            - name: OAUTH_OIDC_TOKEN_URL
+              value: "https://auth.knowledgedump.space/application/o/token/"
+            - name: OAUTH_OIDC_USERINFO_URL
+              value: "https://auth.knowledgedump.space/application/o/userinfo/"
+            - name: OAUTH_OIDC_REDIRECT_URI
+              value: "https://zipline.knowledgedump.space/api/auth/oauth/oidc"
+            # SSO-only dashboard: surface the OIDC button, hide the local password form
+            # (single provider -> auto-redirect to Authentik), no local self-registration.
+            - name: FEATURES_OAUTH_REGISTRATION
+              value: "true"
+            - name: OAUTH_BYPASS_LOCAL_LOGIN
+              value: "true"
+            - name: FEATURES_USER_REGISTRATION
+              value: "false"
           volumeMounts:
             - name: uploads
               mountPath: /zipline/uploads
@@ -86,9 +115,7 @@ spec:
               port: http
             initialDelaySeconds: 10
             periodSeconds: 10
-
       volumes:
-        # The uploaded FILES — preserved across the migration (see pvc.yaml).
         - name: uploads
           persistentVolumeClaim:
             claimName: zipline-uploads
