@@ -82,8 +82,11 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 15
           resources:
-            requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 512Mi}
+            # The UI caches ALL decisions in memory (~488Mi at 101k decisions, 2026-09-14). The honeypot
+            # pipeline now feeds real attacker IPs + community blocklists, so the decision count grew and
+            # the old 512Mi limit OOMKilled it into a restart loop. Give the cache real headroom.
+            requests: {cpu: 50m, memory: 256Mi}
+            limits: {memory: 1Gi}
       volumes:
         - name: data
           persistentVolumeClaim:
