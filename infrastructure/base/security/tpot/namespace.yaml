@@ -1,11 +1,13 @@
-# Phase 2c (TALOS-82um): ephemeral KubeVirt VM detonation sandbox — a REAL Debian shell where captured
-# malware / escalated attacker sessions can actually execute (defeats every emulation-detection), fully
-# caged. INTERNAL-ONLY for now (no attacker routing, no WAN). Privileged PSA — virt-launcher needs it.
+# Honeypot namespace — the T-Pot honeypot images run here as native k8s Deployments (pivoted away from
+# the KubeVirt VM approach, which fought Talos networking at every layer). Isolated from the defensive
+# security services (crowdsec/falco) by living in its own namespace: this is the attacked surface.
+# PSA baseline — honeypot images need some latitude (caps, non-standard users); per-pod securityContext
+# locks each down. Cilium NetworkPolicy provides the real egress cage.
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: honeypot-vm
+  name: tpot
   labels:
-    pod-security.kubernetes.io/enforce: privileged
-    pod-security.kubernetes.io/audit: privileged
-    pod-security.kubernetes.io/warn: privileged
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
