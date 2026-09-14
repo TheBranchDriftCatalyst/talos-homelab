@@ -76,11 +76,13 @@ spec:
             - {name: CONFIG_INSTANCES_0_METRICS_2_ID, value: "appsec"}
             - {name: CONFIG_INSTANCES_0_METRICS_2_NAME, value: "AppSec"}
             # Cache-scope fix (TALOS-y5sx): the UI synced ALL non-CAPI decisions with no cap and OOMKilled
-            # at 101k (~89% was third-party blocklist bulk: blocklist-de/firehol/spamhaus via cscli-import).
-            # Filter to origin=crowdsec so the UI holds only OUR honeypot/scenario bans (~3.3k); the bulk
-            # blocklist + CAPI feeds are aggregate/historical and live in Prometheus/Mimir + Grafana
-            # (cs_active_decisions{origin,...}). Cuts the synced set ~89% -> ~150-250Mi.
-            - {name: CONFIG_CROWDSEC_ALERT_FILTERS_INCLUDE_ORIGINS_0, value: "crowdsec"}
+            # at 101k (~89% was third-party blocklist bulk: blocklist-de/firehol/spamhaus). Show EVERYTHING
+            # EXCEPT the third-party blocklist imports — so our own scenario bans + manual (cscli) + any
+            # future decision source stay visible, only the bulk blocklists drop out. CAPI (community
+            # blocklist) stays off (include_capi default false). The bulk feeds are aggregate/historical
+            # and live in Prometheus/Mimir + Grafana (cs_active_decisions{origin,...}).
+            - {name: CONFIG_CROWDSEC_ALERT_FILTERS_EXCLUDE_ORIGINS_0, value: "cscli-import"}
+            - {name: CONFIG_CROWDSEC_ALERT_FILTERS_EXCLUDE_ORIGINS_1, value: "lists"}  # console/lists-managed blocklists, if ever added
             # Retention window (per the operator): keep 30d of history in the UI; older is in Grafana.
             - {name: CONFIG_CROWDSEC_SYNC_LOOKBACK, value: "720h"}
           volumeMounts:
