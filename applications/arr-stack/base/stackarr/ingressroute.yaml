@@ -1,0 +1,49 @@
+---
+# Stackarr — HTTPS + Authentik forward-auth SSO on stackarr.talos00
+# Agentic control plane for homelab management
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: stackarr
+  labels:
+    app: stackarr
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "Stackarr"
+    gethomepage.dev/description: "Homelab Control Plane"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/weight: "5"
+    gethomepage.dev/icon: "stackarr.png"
+    gethomepage.dev/siteMonitor: "http://stackarr.media.svc.cluster.local:7777"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`stackarr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: stackarr
+          port: 7777
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: stackarr-http
+  labels:
+    app: stackarr
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`stackarr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: stackarr
+          port: 7777
