@@ -76,9 +76,14 @@ spec:
             # Config directory for app state
             - name: STACKARR_DATABASE_DIR
               value: /config
-            # Delegate authentication to Authentik forward-auth proxy
-            - name: STACKARR_SECURITY_HANDOFF
-              value: "true"
+            # NOTE: Stackarr v0.3.0-alpha.19 has NO forward-auth/trusted-header
+            # support (verified: zero matches for x-authentik/remote-user/
+            # x-forwarded-user in the image). The Authentik middleware on the
+            # IngressRoute is an outer gate only -- Stackarr always renders its
+            # own login. Do NOT re-add STACKARR_SECURITY_HANDOFF here: it is an
+            # internal guard flag for the `security apply-worker` maintenance
+            # container (requires STACKARR_RUNTIME=docker-updater), not an SSO
+            # toggle. See scripts/security.sh:572.
           ports:
             - name: http
               containerPort: 7777
