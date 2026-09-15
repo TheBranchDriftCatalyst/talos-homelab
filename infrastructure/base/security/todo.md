@@ -1,0 +1,2 @@
+- Need to turn this into a proper namespace but that wil fuck up a bunch of existing resources and configurations 
+- i.e., database namespacing rules etc
