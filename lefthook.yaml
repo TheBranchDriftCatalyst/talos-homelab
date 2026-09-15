@@ -157,10 +157,15 @@ commit-msg:
 pre-push:
   parallel: false
   commands:
-    # Full secret scan (not just staged)
+    # Full secret scan (not just staged).
+    # --baseline-path suppresses the 75 findings already present in history
+    # (tracked under beads epic TALOS-031k); any NEW secret still fails the
+    # push. Regenerate the baseline after any history rewrite -- gitleaks
+    # fingerprints are commit:file:rule:line, so a rewrite invalidates all of
+    # them at once. That is exactly how .gitleaksignore went 100% stale.
     gitleaks-full:
       tags: security
-      run: gitleaks detect --verbose --redact
+      run: gitleaks detect --verbose --redact --baseline-path .gitleaks-baseline.json
       skip:
         - merge
         - rebase
