@@ -157,15 +157,21 @@ commit-msg:
 pre-push:
   parallel: false
   commands:
-    # Full secret scan (not just staged).
-    # --baseline-path suppresses the 75 findings already present in history
-    # (tracked under beads epic TALOS-031k); any NEW secret still fails the
-    # push. Regenerate the baseline after any history rewrite -- gitleaks
-    # fingerprints are commit:file:rule:line, so a rewrite invalidates all of
-    # them at once. That is exactly how .gitleaksignore went 100% stale.
-    gitleaks-full:
+    # Secret scan of the commits being PUSHED, not all of history.
+    #
+    # --log-opts limits the scan to origin/main..HEAD. Measured on this repo:
+    # 0.04s / 152KB for a 3-commit range vs 5.4s / 59MB for full history, and
+    # historical findings cannot surface at all -- verified by rerunning the
+    # range scan with .gitleaksignore moved aside: still 0 findings. That
+    # makes this hook immune to the fingerprint churn that previously left it
+    # failing on every push (fingerprints are commit:file:rule:line, so any
+    # rebase/rewrite invalidates every suppression entry at once).
+    #
+    # A NEW secret in a pushed commit still fails the push.
+    # The deliberate full-history scan is `task dev:lint:secrets`.
+    gitleaks-push-range:
       tags: security
-      run: gitleaks detect --verbose --redact --baseline-path .gitleaks-baseline.json
+      run: gitleaks detect --verbose --redact --log-opts="origin/main..HEAD"
       skip:
         - merge
         - rebase

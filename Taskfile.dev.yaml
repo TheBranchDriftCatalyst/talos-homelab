@@ -106,7 +106,12 @@ tasks:
       - find scripts -name "*.sh" -exec shellcheck -x {} +
 
   lint:secrets:
-    desc: Scan for secrets in repository with gitleaks
+    # THE deliberate full-history deep scan. The pre-push hook deliberately
+    # does NOT do this -- it scans only origin/main..HEAD (0.04s vs 5.4s here).
+    # Run this after a history rewrite, or periodically, to re-check all
+    # ~2174 commits. Suppression comes from .gitleaksignore (the single
+    # suppression file; there is intentionally no baseline).
+    desc: Full-history secret scan with gitleaks (deep; hook only scans pushed commits)
     cmds:
       - gitleaks detect --verbose --redact
 

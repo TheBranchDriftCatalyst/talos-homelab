@@ -373,9 +373,13 @@ description = "Allowlisted files and patterns"
 
 # Paths to exclude from scanning
 paths = [
-    # Gitleaks' own baseline report. Its redacted Match fields (e.g.
-    # "postgresql://user:REDACTED@host") still trip rules, so scanning it
-    # would report ~17 phantom findings and re-break the pre-push hook.
+    # The short-lived .gitleaks-baseline.json (added 2ac0da11, removed when
+    # suppression was consolidated into .gitleaksignore). The file is gone
+    # from HEAD but its blob lives in history forever, and its redacted Match
+    # values (e.g. "postgresql://user:REDACTED@host") trip rules -- 27
+    # phantom findings without this line. Path-based, so it survives the
+    # fingerprint churn of any future history rewrite. Only removable once
+    # that blob is purged from history (see TALOS-031k.1).
     '''\.gitleaks-baseline\.json$''',
 
     # Generated/output files
