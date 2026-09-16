@@ -1768,8 +1768,8 @@
         {
           "id": 126,
           "type": "table",
-          "title": "[beelzebub] Top Usernames Tried",
-          "description": "Grouping by event_User AND event_Password exceeds Loki max_query_series (500) beyond ~1h: 143 distinct pairs at 1h, >500 at 3h. For the pairing, narrow the time range and use: topk(20, sum by (event_User, event_Password) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` [$__range])))",
+          "title": "[beelzebub] Captured Credentials",
+          "description": "Username+password pairs tried against the beelzebub SSH tier. Requires Loki max_query_series >= ~5000 (raised from 500 in loki/helmrelease.yaml): credential-stuffing is inherently high-cardinality -- 491 distinct pairs at 2h, 837 distinct passwords at 24h. If this errors with \"maximum of series reached\" again, the range has outgrown the limit; narrow the range or raise it further.",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -1807,7 +1807,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "topk(20, sum by (event_User) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` | event_User!=\"\" [$__range])))",
+              "expr": "topk(20, sum by (event_User, event_Password) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` [$__range])))",
               "format": "table",
               "instant": true,
               "range": false

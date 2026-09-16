@@ -34,6 +34,17 @@ data:
       stick-table type ip size 200k expire 24h
       stick on src
       server cowrie cowrie.honeypot.svc.cluster.local:2222 weight 50 check send-proxy-v2 check-send-proxy
+      # DO NOT add send-proxy-v2 to beelzebub. Verified against upstream
+      # (mariocandela/beelzebub v3.9.1): its go.mod has NO proxy-protocol
+      # dependency -- it serves SSH via gliderlabs/ssh directly. A PROXY v2
+      # header would be fed straight into the SSH handshake as garbage and
+      # every connection would fail.
+      #
+      # Consequence, by design: beelzebub logs the haproxy POD IP as
+      # event_SourceIp (measured: exactly 1 distinct value). Attribute
+      # beelzebub attacker IPs from THIS tcplog instead -- that is what the
+      # honeypot-ops dashboard does. Never filter beelzebub panels on
+      # event_SourceIp; two panels did and returned nothing (fixed da42e0a7).
       server beelzebub beelzebub.honeypot.svc.cluster.local:2222 weight 50 check  # 50/50 for now; back to 90/10 later
     frontend telnet_in
       bind :2223

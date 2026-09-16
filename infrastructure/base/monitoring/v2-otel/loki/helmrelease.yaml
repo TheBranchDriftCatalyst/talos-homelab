@@ -138,7 +138,16 @@ spec:
         ingestion_rate_mb: 10
         ingestion_burst_size_mb: 15
         max_streams_per_user: 5000
-        max_query_series: 500
+        # Raised 500 -> 5000 for honeypot credential analysis. The honeypot-ops
+        # dashboard groups beelzebub logins by (event_User, event_Password);
+        # credential-stuffing bots make that inherently high-cardinality --
+        # measured 491 distinct pairs at 2h, >500 at 6h, and 837 distinct
+        # passwords / 344 users at 24h. At 500 the panel returned
+        # "maximum of series (500) reached" at the dashboard's own default
+        # range. Only the topk(20) result reaches the browser, so the cost is
+        # query-side memory. See TALOS credential-store ticket: Loki label
+        # aggregation is the wrong long-term tool for this.
+        max_query_series: 5000
         max_line_size: 512kb
         # Accept older logs (for batch job logs, historical imports)
         reject_old_samples: true
