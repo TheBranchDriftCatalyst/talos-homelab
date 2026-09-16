@@ -10,4 +10,17 @@ kind: Kustomization
 resources:
   - serviceaccount.yaml
   - externalsecrets.yaml
-  - configmap-shared.yaml
+
+# homepage-shared is GENERATED, not a static ConfigMap. All 8 instance Deployments mount it with
+# subPath, and a subPath mount is FROZEN at pod start -- kubelet never propagates ConfigMap updates
+# into one. With a stable name an edit here (e.g. the 11KB custom.css) would silently never reach
+# ANY of the 8 boards. The hash suffix changes the CM name -> the podTemplates -> rolls them all.
+configMapGenerator:
+  - name: homepage-shared
+    files:
+      - cfg/services.yaml
+      - cfg/widgets.yaml
+      - cfg/bookmarks.yaml
+      - cfg/docker.yaml
+      - cfg/custom.css
+      - cfg/custom.js
