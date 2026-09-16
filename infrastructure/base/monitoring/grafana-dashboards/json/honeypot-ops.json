@@ -57,7 +57,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "Honeypot Overview \u2014 haproxy front (real attacker IPs, 90/10 cowrie/beelzebub split)",
+      "title": "Honeypot Overview \u2014 haproxy front (real attacker IPs, 50/50 cowrie/beelzebub split)",
       "id": 101,
       "collapsed": false,
       "gridPos": {
@@ -390,7 +390,8 @@
           "format": "time_series",
           "instant": true,
           "range": false,
-          "legendFormat": "{{backend}}"
+          "legendFormat": "{{backend}}",
+          "queryType": "instant"
         }
       ]
     },
@@ -609,7 +610,8 @@
           "format": "time_series",
           "instant": true,
           "range": false,
-          "legendFormat": "{{proto}}"
+          "legendFormat": "{{proto}}",
+          "queryType": "instant"
         }
       ]
     },
@@ -828,7 +830,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.success` [5m]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.success` [$__interval]))",
               "legendFormat": "success"
             },
             {
@@ -837,7 +839,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.failed` [5m]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.failed` [$__interval]))",
               "legendFormat": "failed"
             }
           ]
@@ -906,7 +908,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | src_ip!=\"\" | src_ip!~`10.244..*` | eventid=`cowrie.session.connect` [5m]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | src_ip!=\"\" | src_ip!~`10.244..*` | eventid=`cowrie.session.connect` [$__interval]))",
               "legendFormat": "sessions"
             }
           ]
@@ -1132,7 +1134,8 @@
               "format": "time_series",
               "instant": true,
               "range": false,
-              "legendFormat": "{{eventid}}"
+              "legendFormat": "{{eventid}}",
+              "queryType": "instant"
             }
           ]
         },
@@ -1140,7 +1143,7 @@
           "id": 115,
           "type": "stat",
           "title": "Honeypot-Detection Attempts (24h)",
-          "description": "Bots running anti-honeypot recon (write+chmod+execute canary, error-string fingerprinting).",
+          "description": "Commands that fingerprint the host (CPU/GPU/uptime) - i.e. an attacker checking whether this is a real box. Cowrie currently sees telnet/Mirai-style bots that do NOT fingerprint, so 0 here is an accurate result, not a broken panel. Compare with the beelzebub tier, which sees heavy GPU recon.",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -1158,7 +1161,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `SHELL_BEHAVIOR|filter_output|===DONE===` [$__range]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo` [$__range]))",
               "queryType": "instant"
             }
           ],
@@ -1188,8 +1191,8 @@
         {
           "id": 116,
           "type": "stat",
-          "title": "Distinct Recon Source IPs (24h)",
-          "description": "External IPs that ran the fingerprinting recon.",
+          "title": "Distinct Cowrie Source IPs (range)",
+          "description": "Unique source IPs routed to the cowrie backend. Previously counted ALL haproxy IPs, duplicating \"Unique Attacker IPs\".",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -1207,7 +1210,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
+              "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} |~ `/cowrie ` | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
               "queryType": "instant"
             }
           ],
@@ -1256,7 +1259,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "{namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `SHELL_BEHAVIOR|uname|/proc/cpuinfo|lspci` | line_format \"{{.src_ip}} $ {{.input}}\"",
+              "expr": "{namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo` | line_format \"{{.src_ip}} $ {{.input}}\"",
               "queryType": "range"
             }
           ],
@@ -1502,15 +1505,15 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "{namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` | line_format \"{{.event_SourceIp}}  [{{.event_ID}}]  $ {{.event_Command}}\""
+              "expr": "{namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` | line_format \"{{.event_SourceIp}}  [{{.event_ID}}]  $ {{.event_Command}}\""
             }
           ]
         },
         {
           "id": 123,
           "type": "timeseries",
-          "title": "[beelzebub] Login Attempts (success vs failed)",
-          "description": "Rate of successful vs failed SSH logins captured by the honeypot.",
+          "title": "[beelzebub] Login Attempts vs Terminal Sessions",
+          "description": "Beelzebub emits no success/failed distinction - every login event is Msg=\"New SSH Login Attempt\" with Status=\"Stateless\". The old panel ran the SAME query twice and labelled them success/failed. Now compares attempts against sessions that actually reached a terminal.",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -1604,8 +1607,8 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`New SSH Login Attempt` [5m]))",
-              "legendFormat": "success"
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` [$__interval]))",
+              "legendFormat": "login attempts"
             },
             {
               "refId": "B",
@@ -1613,8 +1616,8 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`New SSH Login Attempt` [5m]))",
-              "legendFormat": "failed"
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Terminal Session` [$__interval]))",
+              "legendFormat": "terminal sessions"
             }
           ]
         },
@@ -1622,7 +1625,7 @@
           "id": 124,
           "type": "timeseries",
           "title": "[beelzebub] Sessions Over Time",
-          "description": "Rate of new honeypot sessions (cowrie.session.connect).",
+          "description": "Uses Msg=\"New SSH Terminal Session\". The old query filtered event_SourceIp!~\"10.244..*\", which excluded 100% of rows because beelzebub only ever sees haproxy pod IP (no PROXY protocol).",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -1682,7 +1685,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_SourceIp!=\"\" | event_SourceIp!~`10.244..*` | event_Msg=`New SSH Login Attempt` [5m]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Terminal Session` [$__interval]))",
               "legendFormat": "sessions"
             }
           ]
@@ -1729,7 +1732,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "topk(15, sum by (event_Command) (count_over_time({namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` | input!=\"\" [$__range])))",
+              "expr": "topk(15, sum by (event_Command) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` | event_Command!=\"\" [$__range])))",
               "format": "table",
               "instant": true,
               "range": false
@@ -1765,8 +1768,8 @@
         {
           "id": 126,
           "type": "table",
-          "title": "[beelzebub] Captured Credentials",
-          "description": "username / password pairs that resulted in cowrie.login.success \u2014 the credential combinations attackers believe are valid.",
+          "title": "[beelzebub] Top Usernames Tried",
+          "description": "Grouping by event_User AND event_Password exceeds Loki max_query_series (500) beyond ~1h: 143 distinct pairs at 1h, >500 at 3h. For the pairing, narrow the time range and use: topk(20, sum by (event_User, event_Password) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` [$__range])))",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -1804,7 +1807,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "topk(20, sum by (event_User, event_Password) (count_over_time({namespace=\"honeypot\"} | json | event_Msg=`New SSH Login Attempt` [$__range])))",
+              "expr": "topk(20, sum by (event_User) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` | event_User!=\"\" [$__range])))",
               "format": "table",
               "instant": true,
               "range": false
@@ -1842,7 +1845,7 @@
           "id": 127,
           "type": "piechart",
           "title": "[beelzebub] Event Breakdown",
-          "description": "Distribution of Cowrie eventid types over the range.",
+          "description": "Was filtering eventid!=\"\" (a COWRIE field) with no container filter, so it displayed COWRIE events under a beelzebub heading.",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -1904,11 +1907,12 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum by (event_Msg) (count_over_time({namespace=\"honeypot\"} | json | eventid!=\"\" [$__range]))",
+              "expr": "sum by (event_Msg) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg!=\"\" [$__range]))",
               "format": "time_series",
               "instant": true,
               "range": false,
-              "legendFormat": "{{eventid}}"
+              "legendFormat": "{{event_Msg}}",
+              "queryType": "instant"
             }
           ]
         },
@@ -1916,7 +1920,7 @@
           "id": 128,
           "type": "stat",
           "title": "[beelzebub] Honeypot-Detection Attempts (24h)",
-          "description": "Bots running anti-honeypot recon (write+chmod+execute canary, error-string fingerprinting).",
+          "description": "GPU/CPU fingerprinting commands (uname, lspci, lscpu, nproc, nvidia-smi, ipinfo.io). Old sentinels matched 0 lines anywhere.",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -1934,7 +1938,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` |~ `SHELL_BEHAVIOR|filter_output|===DONE===` [$__range]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` |~ `uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo` [$__range]))",
               "queryType": "instant"
             }
           ],
@@ -2032,7 +2036,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "{namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` |~ `SHELL_BEHAVIOR|uname|/proc/cpuinfo|lspci` | line_format \"{{.event_SourceIp}} $ {{.event_Command}}\"",
+              "expr": "{namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` |~ `uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo` | line_format \"{{.event_SourceIp}} $ {{.event_Command}}\"",
               "queryType": "range"
             }
           ],
@@ -2099,7 +2103,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`SSH Raw Command` [$__range]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` [$__range]))",
               "queryType": "instant",
               "instant": true,
               "range": false
@@ -2110,7 +2114,7 @@
           "id": 132,
           "type": "stat",
           "title": "[beelzebub] Login Attempts",
-          "description": "Total cowrie.session.connect events over the selected range.",
+          "description": "Old query filtered event_SourceIp!~\"10.244..*\" which excluded everything (beelzebub only sees haproxy pod IP).",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -2162,7 +2166,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_SourceIp!=\"\" | event_SourceIp!~`10.244..*` | event_Msg=`New SSH Login Attempt` [$__range]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` [$__range]))",
               "queryType": "instant",
               "instant": true,
               "range": false
@@ -2172,8 +2176,8 @@
         {
           "id": 133,
           "type": "stat",
-          "title": "[beelzebub] Failed Logins",
-          "description": "Total cowrie.login.failed events over the range.",
+          "title": "[beelzebub] Terminal Sessions",
+          "description": "Renamed: the old \"Failed Logins\" ran the same query as Login Attempts. Beelzebub has no failure signal; this now counts sessions that reached a terminal.",
           "datasource": {
             "type": "loki",
             "uid": "loki-v2"
@@ -2225,7 +2229,7 @@
                 "type": "loki",
                 "uid": "loki-v2"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\"} | json | event_Msg=`New SSH Login Attempt` [$__range]))",
+              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Terminal Session` [$__range]))",
               "queryType": "instant",
               "instant": true,
               "range": false

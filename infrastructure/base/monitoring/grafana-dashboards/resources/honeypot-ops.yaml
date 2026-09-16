@@ -2,13 +2,16 @@
 # Security Ops — unified honeypot dashboard (Cowrie + Beelzebub behind the haproxy VIP).
 #
 # Merges the former cowrie-ops + beelzebub-ops dashboards. Three sections:
-#   1. Overview (haproxy front): real attacker IPs + the 90/10 cowrie/beelzebub split. Since haproxy
+#   1. Overview (haproxy front): real attacker IPs + the 50/50 cowrie/beelzebub split. Since haproxy
 #      fronts both honeypots, the REAL attacker source IP is only in its tcplog
 #      ({namespace="honeypot", container="haproxy"}, "<src_ip>:<port> [date] <fe> <backend>/<server>");
 #      cowrie/beelzebub see only the proxy pod IP. Attacker-IP panels parse it with `| regexp`.
-#   2. Cowrie (90% tier) — medium-interaction session content (commands/logins/creds), from the logship
+#   2. Cowrie (50% tier) — medium-interaction session content (commands/logins/creds), from the logship
 #      sidecar JSON stream {namespace="honeypot", container="logship", pod=~"cowrie-.*"} | json.
-#   3. Beelzebub (10% tier) — LLM high-interaction session content, {namespace="honeypot"} | json event_*.
+#   3. Beelzebub (50% tier) — LLM high-interaction session content,
+#      {namespace="honeypot", container="beelzebub"} | json event_* (nested event.Msg/.Command/.User).
+#      NOTE: beelzebub only ever sees the haproxy POD IP as event_SourceIp — haproxy does not
+#      send-proxy-v2 to it (haproxy.yaml:37), unlike cowrie. Never filter beelzebub on source IP.
 #   + Falco runtime tripwire ({rule=~"Honeypot Container Breach.*"}) — empty = healthy.
 #
 # Datasource: Loki (uid loki-v2).
