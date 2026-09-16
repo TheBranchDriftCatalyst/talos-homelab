@@ -5,7 +5,20 @@ kind: Kustomization
 # catalyst-bg — rotating login-background service for the Authentik login page.
 # Random-picks bg1..bg6 from the MinIO `catalyst-bgs` bucket per request and
 # proxies it out over an LE-trusted, Cloudflare-proxied host (TALOS-4o0k).
+# namespace must be set here: the Deployment hardcodes namespace: authentik, and kustomize
+# only rewrites a generated ConfigMap reference when namespace matches too. Without this the
+# volume would keep pointing at the unhashed name and the whole point would be lost.
+namespace: authentik
+
 resources:
-  - configmap.yaml
   - deployment.yaml
   - ingressroute.yaml
+
+# Generated, NOT a static ConfigMap: this is mounted with subPath, and a subPath mount is
+# FROZEN at pod start -- kubelet never propagates ConfigMap updates into one. With a stable
+# name the pod would run stale config forever, silently (proven on honeypot-lb, e0b9a475).
+# The hash suffix makes an edit change the CM name -> the podTemplate -> rolls the pod.
+configMapGenerator:
+  - name: catalyst-bg-nginx
+    files:
+      - cfg/default.conf

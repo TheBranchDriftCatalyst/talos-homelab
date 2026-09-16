@@ -16,7 +16,6 @@ resources:
   - namespace.yaml
   - gpuprofile.yaml            # the git-owned machine + cache SPEC
   - gpu-service.yaml           # selectorless backend + empty EndpointSlice
-  - gateway-config.yaml
   - gateway-deployment.yaml    # readiness gated on the GPU backend
   - gateway-service.yaml
   - httpscaledobject.yaml      # KEDA buffer + scale-from-zero
@@ -26,3 +25,12 @@ resources:
   - reaper-instance-cronjob.yaml  # tier 1: HOT -> WARM (cost backstop)
   - reaper-cache-cronjob.yaml     # tier 2: WARM -> COLD
   - alerts.yaml
+
+# Generated, NOT a static ConfigMap: this is mounted with subPath, and a subPath mount is
+# FROZEN at pod start -- kubelet never propagates ConfigMap updates into one. With a stable
+# name the pod would run stale config forever, silently (proven on honeypot-lb, e0b9a475).
+# The hash suffix makes an edit change the CM name -> the podTemplate -> rolls the pod.
+configMapGenerator:
+  - name: ollama-gateway-nginx
+    files:
+      - cfg/nginx.conf

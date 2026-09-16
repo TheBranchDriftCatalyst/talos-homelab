@@ -6,9 +6,17 @@ namespace: iocaine
 
 resources:
   - namespace.yaml
-  - configmap.yaml
   - corpus-configmap.yaml
   - deployment.yaml
   - service.yaml
   - cilium-network-policy.yaml
   - ingressroute.yaml
+
+# Generated, NOT a static ConfigMap: this is mounted with subPath, and a subPath mount is
+# FROZEN at pod start -- kubelet never propagates ConfigMap updates into one. With a stable
+# name the pod would run stale config forever, silently (proven on honeypot-lb, e0b9a475).
+# The hash suffix makes an edit change the CM name -> the podTemplate -> rolls the pod.
+configMapGenerator:
+  - name: iocaine-config
+    files:
+      - cfg/config.kdl
