@@ -8,23 +8,40 @@ resources:
   - namespace.yaml
   - cilium-network-policy.yaml # merged cage for both honeypots
   - vip.yaml
-  - haproxy.yaml  # weighted 90/10 sticky TCP front # the 50/50 sticky VIP LoadBalancer fronting both
+  - haproxy.yaml # 80/20 weighted, sticky TCP front (Deployment only; cfg is generated below)
   # --- cowrie (medium-interaction SSH/telnet) ---
-  - configmap.yaml
   - deployment.yaml
   - service.yaml
   - pvc.yaml # var/lib/cowrie: malware samples + tty recordings (binary; no log pipeline carries them)
   - backup-cronjob.yaml # off-node durability for those artifacts (read-only mount)
   # --- beelzebub (LLM high-interaction SSH) ---
-  - beelzebub-configmap.yaml
   - beelzebub-externalsecret.yaml # LLM key from 1Password (ESO)
   - beelzebub-deployment.yaml
   - beelzebub-service.yaml
   - beelzebub-podmonitor.yaml # Prometheus metrics :2112
 
-# Cowrie fingerprint-hardening txtcmds (TALOS-a8kx): realistic lscpu/nproc so botnet recon sees a
-# plausible modern box. Hash-suffixed so editing rolls the pod.
+# ALL honeypot configs are generated, never static ConfigMaps. These are mounted with subPath,
+# and a subPath mount is FROZEN at pod start -- kubelet never propagates ConfigMap updates into
+# one. With a static (stable-named) ConfigMap the pod therefore keeps running stale config
+# forever, silently: on 2026-09-16 the haproxy ConfigMap read weight 80/20 while the 40h-old pod
+# still ran 50/50. configMapGenerator hash-suffixes the name, so editing a file below changes the
+# ConfigMap name, which changes the podTemplate, which rolls the pod. Do NOT convert these back
+# to static ConfigMaps without also adding a checksum annotation to each podTemplate.
 configMapGenerator:
+  - name: honeypot-haproxy-cfg
+    files:
+      - cfg/haproxy.cfg
+  - name: cowrie-config
+    files:
+      - cfg/cowrie.cfg
+  - name: beelzebub-core
+    files:
+      - cfg/beelzebub.yaml
+  - name: beelzebub-services-tmpl
+    files:
+      - cfg/ssh-2222.yaml
+  # Cowrie fingerprint-hardening txtcmds (TALOS-a8kx): realistic lscpu/nproc so botnet recon sees a
+  # plausible modern box. Hash-suffixed so editing rolls the pod.
   - name: cowrie-fs-hardening
     files:
       - fs-hardening/lscpu
