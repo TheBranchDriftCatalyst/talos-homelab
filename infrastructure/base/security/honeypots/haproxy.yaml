@@ -1,5 +1,5 @@
 # Weighted + STICKY TCP front for the honeypot VIP. k8s Services can't weight endpoints, so this haproxy
-# does the split (50/50 for now; 90/10 later) AND keeps each attacker on one honeypot:
+# does the split (80/20 cowrie:beelzebub) AND keeps each attacker on one honeypot:
 #   - `balance roundrobin` + per-server `weight` assigns each NEW source IP at the configured ratio (cowrie:
 #     beelzebub) — weighted round-robin distributes accurately even for small/bursty IP sets, unlike
 #     `balance source` whose IP-hash was lumpy and starved beelzebub.
@@ -33,7 +33,7 @@ data:
       balance roundrobin
       stick-table type ip size 200k expire 24h
       stick on src
-      server cowrie cowrie.honeypot.svc.cluster.local:2222 weight 50 check send-proxy-v2 check-send-proxy
+      server cowrie cowrie.honeypot.svc.cluster.local:2222 weight 80 check send-proxy-v2 check-send-proxy
       # DO NOT add send-proxy-v2 to beelzebub. Verified against upstream
       # (mariocandela/beelzebub v3.9.1): its go.mod has NO proxy-protocol
       # dependency -- it serves SSH via gliderlabs/ssh directly. A PROXY v2
@@ -45,7 +45,7 @@ data:
       # beelzebub attacker IPs from THIS tcplog instead -- that is what the
       # honeypot-ops dashboard does. Never filter beelzebub panels on
       # event_SourceIp; two panels did and returned nothing (fixed da42e0a7).
-      server beelzebub beelzebub.honeypot.svc.cluster.local:2222 weight 50 check  # 50/50 for now; back to 90/10 later
+      server beelzebub beelzebub.honeypot.svc.cluster.local:2222 weight 20 check  # 80/20 cowrie:beelzebub
     frontend telnet_in
       bind :2223
       default_backend telnet_honeypots
