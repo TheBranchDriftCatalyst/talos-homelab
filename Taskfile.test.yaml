@@ -68,6 +68,23 @@ tasks:
     cmds:
       - python3 -m pytest -m disaster_recovery --destructive {{.CLI_ARGS}}
 
+  vpn-rotation-soak:
+    desc: "VPN rotation SOAK — repeated real rotations on the throwaway canary, measures downtime"
+    summary: |
+      Rotates the ad-hoc vpn-canary pod repeatedly and reports per-cycle downtime, so
+      timing-dependent rotator bugs surface as a distribution rather than a flaky bool.
+      Three distinct rotator bugs shipped in one day presenting as the same symptom
+      (TALOS-1gp false-failing validation, a 15s validation budget, and the TALOS-z16b
+      gluetun wedge) — a single pass/fail rotation test caught none of them reliably.
+
+      Chaos hits ONLY the canary, whose se-be-1/se-in-1 keys no real pod uses.
+
+        task test:vpn-rotation-soak                          # 5 cycles
+        VPN_SOAK_CYCLES=20 task test:vpn-rotation-soak       # longer soak
+    cmds:
+      - python3 -m pytest -m disaster_recovery --destructive
+          infrastructure/base/vpn-gateway/tests/test_vpn_rotation_soak.py -s {{.CLI_ARGS}}
+
   integration:
     desc: "Integration suite — end-to-end subsystem wiring (pytest, read-only; skips with no cluster)"
     cmds:
