@@ -5,10 +5,10 @@
 # globs are deliberately NOT set here. markdownlint-cli2 does NOT let explicit CLI file
 # arguments override a config `globs` list — setting it made `markdownlint-cli2 README.md`
 # lint the entire tree, which would turn lefthook's staged-file hook into a full-repo scan
-# on every commit. The standalone glob lives in the package.json scripts instead, so the
+# on every commit. The standalone glob lives in the Taskfile dev:lint:markdown task instead, so the
 # two invocation paths stay independent:
 #   lefthook          -> npx markdownlint-cli2 {staged_files}   (explicit files)
-#   yarn lint:markdown -> markdownlint-cli2 '**/*.md'           (glob in the script)
+#   task dev:lint:markdown -> markdownlint-cli2 '**/*.md'        (glob in the task)
 # Previously neither carried a glob, so every argument-less run reported
 # "Linting: 0 file(s) / Summary: 0 error(s)" and exited 0 — a green lint that had never
 # checked a single Markdown file.
@@ -41,6 +41,12 @@ ignores:
   # Agent worktrees: 661 vendored .md files that are not ours to lint.
   - '.claude'
   - '**/.claude'
+  # nix-direnv's flake-input cache holds a FULL copy of this repo's source
+  # (.direnv/flake-inputs/<hash>-source/**), so without this every tracked .md
+  # is linted twice. markdownlint-cli2 does not read .gitignore, so being
+  # gitignored is not enough — it has to be listed here.
+  - '.direnv'
+  - '**/.direnv'
   - 'node_modules'
   - '**/node_modules'
   - '.git'

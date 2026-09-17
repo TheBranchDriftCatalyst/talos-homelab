@@ -134,17 +134,17 @@ Note the sub-task names use **colons**, not hyphens (`dev:lint:yaml`, not `dev:l
 **Tasks:**
 
 - `setup` - Install development tools (Homebrew + Yarn)
-- `deps:brew` - Install Homebrew dependencies from `Brewfile`
-- `deps:yarn` - Install Yarn dependencies (markdownlint, prettier)
+- `setup` - Show how to get the dev toolchain (nix flake + direnv)
+- `lint:markdown` / `lint:format` - Markdown + Prettier checks (tools come from the flake)
 - `hooks:install` - Install git hooks with lefthook
 - `hooks:uninstall` - Uninstall git hooks
 - `hooks:run` - Manually run git hooks
-- `lint` - Run all linters (YAML, shell, `yarn lint` for markdown/prettier, secrets)
+- `lint` - Run all linters (YAML, shell, `lint:markdown` + `lint:format`, secrets)
 - `lint:yaml` - Lint YAML files with yamllint
 - `lint:shell` - Lint shell scripts with shellcheck
 - `lint:secrets` - Scan for secrets with gitleaks
 - `lint:secrets:report` - Scan and generate report
-- `format` - Format all code (shell via shfmt, then `yarn format` for markdown/prettier)
+- `format` - Format all code (shell via shfmt, then `format:markdown` + `format:prettier`)
 - `format-shell` - Format shell scripts with shfmt
 - `validate` - Validate all infrastructure manifests
 - `validate:kustomize` - Validate kustomizations build

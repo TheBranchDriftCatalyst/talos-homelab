@@ -71,12 +71,11 @@
               prettier
               markdownlint-cli2
 
-              # ── Node ───────────────────────────────────────────────────
-              # TODO(TALOS-hurz): drop both once package.json/yarn.lock are
-              # gone. Still load-bearing: Taskfile.dev.yaml shells out to
-              # `yarn lint`/`yarn format` and lefthook.yaml runs `npx`.
-              nodejs_22
-              yarn
+              # No nodejs/yarn on purpose (TALOS-hurz): package.json, yarn.lock
+              # and node_modules/ are gone, and the two tools they existed for —
+              # prettier and markdownlint-cli2 — are nixpkgs packages above that
+              # vendor their own node. Nothing in the repo shells out to
+              # node/npx/yarn any more.
 
               # ── Shell tooling used by scripts/ ─────────────────────────
               jq

@@ -3,8 +3,8 @@
 ## Prerequisites
 
 ```bash
-# Install the pinned toolchain (Brewfile at repo root)
-brew bundle
+# Install the pinned toolchain (flake.nix at repo root, loaded by direnv)
+direnv allow   # or, without direnv: nix develop
 
 # ...or just the minimum needed to provision
 brew install siderolabs/tap/talosctl kubectl go-task

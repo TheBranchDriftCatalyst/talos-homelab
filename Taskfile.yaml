@@ -29,7 +29,7 @@ tasks:
       - echo "╚════════════════════════════════════════════╝"
       - echo ""
       - echo "📦 First time setup:"
-      - echo "  task deps:install              - Install all dependencies (Homebrew, Yarn, Tilt, hooks)"
+      - echo "  task deps:install              - Verify the dev toolchain (flake + direnv)"
       - echo ""
       - echo "📋 Task domains:"
       - echo "  • talos:*     - Talos Linux operations (config, bootstrap, health, services)"
@@ -117,86 +117,37 @@ tasks:
   # ============================================
 
   deps:install:
-    desc: Install all dependencies (Homebrew, Yarn, Tilt, git hooks)
-    cmds:
-      - echo "🚀 Installing all project dependencies..."
-      - echo ""
-      - task: _check-homebrew
-      - task: _install-brew-deps
-      - task: _install-yarn-deps
-      - task: _install-tilt
-      - task: _install-hooks
-      - echo ""
-      - echo "✅ All dependencies installed successfully!"
-      - echo ""
-      - echo "📦 Installed:"
-      - echo "  ✓ Homebrew packages (kubectl, kustomize, helm, flux, talosctl, etc.)"
-      - echo "  ✓ Node packages (markdownlint, prettier)"
-      - echo "  ✓ Tilt (local development tool)"
-      - echo "  ✓ Git hooks (lefthook)"
-      - echo ""
-      - echo "🎯 Next steps:"
-      - echo "  1. Provision cluster - task provision"
-      - echo "  2. Merge kubeconfig - task kubeconfig-merge"
-      - echo "  3. Deploy - commit to git, Flux reconciles (task infra:flux-reconcile to force)"
-      - echo "  4. Start development - task dev:tilt-up"
-
-  _check-homebrew:
-    internal: true
+    desc: Verify the dev toolchain (nix flake + direnv)
     cmds:
       - |
-        if ! command -v brew &> /dev/null; then
-          echo "❌ Homebrew not installed. Install from https://brew.sh"
+        echo "🚀 This repo's toolchain is declared in flake.nix, not installed imperatively."
+        echo
+        missing=0
+        for t in talosctl talhelper kubectl kustomize helm flux task tilt lefthook \
+                 gitleaks yamllint yamlfmt shellcheck shfmt prettier markdownlint-cli2 \
+                 jq gum uv bd k9s; do
+          if command -v "$t" >/dev/null 2>&1; then
+            printf '  ✓ %s\n' "$t"
+          else
+            printf '  ✗ %s  (NOT on PATH)\n' "$t"; missing=$((missing+1))
+          fi
+        done
+        echo
+        if [ "$missing" -gt 0 ]; then
+          echo "❌ $missing tool(s) missing — you are probably outside the dev shell."
+          echo "   Run: direnv allow     (or, without direnv: nix develop)"
           exit 1
         fi
-        echo "✅ Homebrew found: $(brew --version | head -1)"
-
-  _install-brew-deps:
-    internal: true
-    cmds:
-      - |
-        echo "📦 Installing Homebrew packages from Brewfile..."
-        brew bundle --file=Brewfile
-        echo "✅ Homebrew packages installed"
-
-  _install-yarn-deps:
-    internal: true
-    cmds:
-      - |
-        if ! command -v yarn &> /dev/null; then
-          echo "⚠️  Yarn not found, installing..."
-          brew install yarn
-        fi
-        echo "📦 Installing Node packages..."
-        yarn install
-        echo "✅ Node packages installed"
-
-  _install-tilt:
-    internal: true
-    cmds:
-      - |
-        if ! command -v tilt &> /dev/null; then
-          echo "📦 Installing Tilt..."
-          brew install tilt-dev/tap/tilt
-          echo "✅ Tilt installed: $(tilt version)"
-        else
-          echo "✅ Tilt already installed: $(tilt version)"
-        fi
-
-  _install-hooks:
-    internal: true
-    cmds:
-      - |
-        if ! command -v lefthook &> /dev/null; then
-          echo "❌ Lefthook not found. Should have been installed via Brewfile."
-          exit 1
-        fi
-        echo "📦 Installing git hooks..."
-        lefthook install
-        echo "✅ Git hooks installed"
+        echo "✅ Full toolchain present."
+        echo
+        echo "🎯 Next steps:"
+        echo "  1. Provision cluster - task provision"
+        echo "  2. Merge kubeconfig  - task kubeconfig-merge"
+        echo "  3. Deploy            - commit to git, Flux reconciles (task infra:flux-reconcile to force)"
+        echo "  4. Start development - task dev:tilt-up"
 
   setup:
-    desc: Alias for deps:install
+    desc: Alias for deps:install (toolchain check)
     cmds:
       - task: deps:install
 

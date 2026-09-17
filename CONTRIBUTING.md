@@ -4,37 +4,39 @@
 
 ### Prerequisites
 
-- **macOS/Linux**: Most tools work on both (the Brewfile and the Tilt/trust-CA tasks assume macOS)
-- **Homebrew**: Install from [brew.sh](https://brew.sh)
-- **Node** >= 18 and **Yarn** >= 1.22 (per `package.json` engines) — Yarn is not in the Brewfile; `task deps:install` runs
-  `brew install yarn` for you if it is missing
+- **Nix** with flakes enabled — [nixos.org/download](https://nixos.org/download) or
+  [Determinate Nix](https://determinate.systems/nix)
+- **direnv** — [direnv.net](https://direnv.net). Optional but strongly recommended; without it
+  use `nix develop` instead.
+- **macOS/Linux**: the flake builds on both (the Tilt/trust-CA tasks still assume macOS)
+- **1Password CLI** with the desktop app's "Integrate with 1Password CLI" toggle on, if you want
+  this repo's secrets. Without it the shell still loads, secrets just don't.
+
+There is no Homebrew step and no Node/Yarn step. `flake.nix` declares the entire toolchain and
+`flake.lock` pins it.
 
 ### Quick Start
 
 ```bash
-# One-command setup (alias: task setup)
-task deps:install
+direnv allow   # once, after cloning
 ```
 
-This installs:
+That builds the dev shell (cached by nix-direnv, instant afterwards), puts the whole toolchain on
+PATH, renders this repo's secrets from 1Password, and installs the git hooks. `cd` out and it all
+unloads — nothing global changes.
 
-- ✅ Homebrew packages from `Brewfile` (lefthook, gitleaks, yamllint, shellcheck, shfmt, kubectl, kustomize, helm, flux, talosctl, etc.)
-- ✅ Yarn packages from `package.json` (markdownlint-cli2, prettier)
-- ✅ Tilt (local development)
-- ✅ Git hooks (automatic linting on commit)
+No direnv? `nix develop` gives you the same shell.
 
-### Manual Setup
+Verify what you got:
 
 ```bash
-# Install Homebrew dependencies
-task dev:deps:brew
-
-# Install Yarn dependencies
-task dev:deps:yarn
-
-# Install git hooks
-task dev:hooks:install
+task deps:install   # checks every expected tool is on PATH (alias: task setup)
 ```
+
+### Adding or changing a tool
+
+Edit the `packages` list in `flake.nix`, then `direnv reload`. Do not `brew install` it — a tool
+that is not in the flake is not reproducible for anyone else.
 
 ## Workflow
 
@@ -120,11 +122,12 @@ task lint
 # Individual linters
 task dev:lint:yaml      # YAML syntax/style (yamllint --strict)
 task dev:lint:shell     # Shell scripts (shellcheck -x, scripts/ only)
-yarn lint               # Markdown + Prettier
+task dev:lint:markdown  # markdownlint-cli2
+task dev:lint:format    # prettier --check
 task dev:lint:secrets   # Secret scanning (gitleaks detect)
 ```
 
-> `.markdownlint-cli2.yaml` deliberately omits globs (lefthook passes staged files), so the `yarn lint:markdown` step lints
+> `.markdownlint-cli2.yaml` deliberately omits globs (lefthook passes staged files), so the `task dev:lint:markdown` step lints
 > **0 files** when run standalone. To lint Markdown by hand: `npx markdownlint-cli2 '**/*.md'`.
 
 ### Formatting
@@ -135,7 +138,7 @@ task format
 
 # Individual formatters
 task dev:format-shell   # Shell scripts (shfmt, scripts/ only)
-yarn format             # Prettier --write . (markdownlint --fix matches 0 files standalone, see note above)
+task dev:format:prettier # prettier --write . (markdownlint --fix matches 0 files standalone, see note above)
 ```
 
 ### Validation
@@ -226,9 +229,9 @@ lefthook version
 ### Tool Not Found
 
 ```bash
-# Reinstall dependencies
-task dev:deps:brew
-task dev:deps:yarn
+# Rebuild the dev shell (you are probably outside it)
+direnv reload      # or: nix develop
+task deps:install  # lists exactly which tools are missing
 ```
 
 ### Linting Fails
@@ -237,7 +240,8 @@ task dev:deps:yarn
 # See specific errors
 task dev:lint:yaml    # Shows YAML errors
 task dev:lint:shell   # Shows shell errors
-yarn lint             # Shows Markdown/Prettier errors
+task dev:lint:markdown # Shows Markdown errors
+task dev:lint:format   # Shows Prettier errors
 ```
 
 ## Getting Help

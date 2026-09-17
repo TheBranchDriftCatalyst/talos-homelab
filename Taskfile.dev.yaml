@@ -7,51 +7,26 @@ tasks:
   # ============================================
 
   setup:
-    desc: Install all development tools (Homebrew + Yarn)
-    cmds:
-      - echo "📦 Installing development tools..."
-      - task: deps:brew
-      - task: deps:yarn
-      - task: hooks:install
-      - echo "✅ Development environment setup complete!"
-      - echo ""
-      - echo "Installed tools:"
-      - echo "  ✓ Homebrew packages (see Brewfile)"
-      - echo "  ✓ Node packages (see package.json)"
-      - echo "  ✓ Git hooks (lefthook)"
-
-  deps:brew:
-    desc: Install Homebrew dependencies from Brewfile
+    desc: Show how to get the dev toolchain (nix flake + direnv)
     cmds:
       - |
-        if ! command -v brew &> /dev/null; then
-          echo "❌ Homebrew not installed. Install from https://brew.sh"
-          exit 1
+        echo "The toolchain is declared in flake.nix and loaded by direnv."
+        echo
+        if [ -d .direnv ]; then
+          echo "  ✓ .direnv/ present — the dev shell has been built here before"
+        else
+          echo "  ✗ .direnv/ missing — run: direnv allow"
         fi
-        echo "📦 Installing Homebrew packages..."
-        brew bundle --file=Brewfile
-        echo "✅ Homebrew packages installed"
-    sources:
-      - Brewfile
-    generates:
-      - /usr/local/bin/lefthook
-      - /usr/local/bin/gitleaks
-
-  deps:yarn:
-    desc: Install Yarn dependencies (markdownlint, prettier)
-    cmds:
-      - |
-        if ! command -v yarn &> /dev/null; then
-          echo "❌ Yarn not installed. Install with: brew install yarn"
-          exit 1
+        if command -v direnv >/dev/null 2>&1; then
+          echo "  ✓ direnv on PATH"
+        else
+          echo "  ✗ direnv NOT installed — see https://direnv.net (or run: nix develop)"
         fi
-        echo "📦 Installing Node packages..."
-        yarn install
-        echo "✅ Node packages installed"
-    sources:
-      - package.json
-    generates:
-      - node_modules/
+        echo
+        echo "First time here:   direnv allow"
+        echo "No direnv?         nix develop"
+        echo "Secrets:           .env.tpl holds op:// refs; values come from 1Password"
+        echo "Git hooks:         installed automatically on direnv entry"
 
   # ============================================
   # Git Hooks
@@ -62,7 +37,7 @@ tasks:
     cmds:
       - |
         if ! command -v lefthook &> /dev/null; then
-          echo "❌ lefthook not installed. Run: task dev:deps:brew"
+          echo "❌ lefthook not on PATH. Enter the dev shell: direnv allow (or nix develop)"
           exit 1
         fi
         lefthook install
@@ -91,7 +66,8 @@ tasks:
       - echo "Running all linters..."
       - task: lint:yaml
       - task: lint:shell
-      - yarn lint # Markdown + Prettier
+      - task: lint:markdown
+      - task: lint:format
       - task: lint:secrets
       - echo "✅ All linters passed"
 
@@ -104,6 +80,19 @@ tasks:
     desc: Lint shell scripts with shellcheck
     cmds:
       - find scripts -name "*.sh" -exec shellcheck --rcfile=dev/shellcheckrc -x {} +
+
+  # markdownlint-cli2 and prettier come from the flake dev shell now; the glob
+  # stays in the COMMAND rather than the config file (see the note at the top
+  # of .markdownlint-cli2.yaml).
+  lint:markdown:
+    desc: Lint markdown with markdownlint-cli2
+    cmds:
+      - markdownlint-cli2 '**/*.md'
+
+  lint:format:
+    desc: Check formatting with prettier
+    cmds:
+      - prettier --check .
 
   lint:secrets:
     # THE deliberate full-history deep scan. The pre-push hook deliberately
@@ -131,13 +120,24 @@ tasks:
     cmds:
       - echo "Formatting code..."
       - task: format-shell
-      - yarn format # Markdown + Prettier
+      - task: format:markdown
+      - task: format:prettier
       - echo "✅ Formatting complete"
 
   format-shell:
     desc: Format shell scripts with shfmt
     cmds:
       - find scripts -name "*.sh" -exec shfmt -w -i 2 -ci -sr {} +
+
+  format:markdown:
+    desc: Auto-fix markdown with markdownlint-cli2
+    cmds:
+      - markdownlint-cli2 --fix '**/*.md'
+
+  format:prettier:
+    desc: Format with prettier
+    cmds:
+      - prettier --write .
 
   # ============================================
   # Validation
@@ -271,10 +271,13 @@ tasks:
     desc: Find repo-wide tool configs that do NOT exclude .claude/ (the sed-leak class)
     cmds:
       - |
-        echo "Configs that must exclude .claude/ (worktrees are full repo copies):"
-        for f in .prettierignore .markdownlint-cli2.yaml .gitignore; do
+        echo "Configs that must exclude .claude/ AND .direnv/ (both are full repo copies):"
+        for f in .prettierignore .markdownlint-cli2.yaml .gitignore dev/yamllint.yaml; do
           [ -f "$f" ] || continue
-          if grep -q '\.claude' "$f"; then echo "  ✓ $f"; else echo "  ✗ $f  <-- MISSING .claude exclusion"; fi
+          miss=""
+          grep -q '\.claude' "$f" || miss="$miss .claude"
+          grep -q '\.direnv' "$f" || miss="$miss .direnv"
+          if [ -z "$miss" ]; then echo "  ✓ $f"; else echo "  ✗ $f  <-- MISSING exclusion:$miss"; fi
         done
         echo
         echo "Habit for ad-hoc sweeps — always scope them:"
