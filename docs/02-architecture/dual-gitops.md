@@ -501,7 +501,7 @@ Related docs in this repo:
 - `docs/02-architecture/gitops-responsibilities.md` — responsibility matrix (**stale**: it still
   describes Flux as "not yet deployed")
 - `README.md` — deployment section, Flux reconcile commands
-- `OBSERVABILITY.md` — the monitoring/logging stack Flux manages
+- `docs/08-monitoring/observability.md` — the monitoring/logging stack Flux manages
 
 ---
 

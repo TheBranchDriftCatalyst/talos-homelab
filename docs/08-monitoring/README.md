@@ -1,7 +1,7 @@
 # Monitoring Reference
 
 Dashboard-level reference for the observability stack. The stack itself is documented in the root
-[OBSERVABILITY.md](../../OBSERVABILITY.md) (Alloy / Mimir / Loki / Tempo / ClickStack, all in the
+[OBSERVABILITY.md](observability.md) (Alloy / Mimir / Loki / Tempo / ClickStack, all in the
 `monitoring` namespace).
 
 ## Quick Navigation

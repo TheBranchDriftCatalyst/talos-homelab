@@ -286,8 +286,8 @@ spec:
 
 ## Related Documentation
 
-- [Observability Stack](../OBSERVABILITY.md) - Full monitoring architecture
-- [Traefik Configuration](../TRAEFIK.md) - Ingress setup
+- [Observability Stack](observability.md) - Full monitoring architecture
+- [Traefik Configuration](../02-architecture/traefik.md) - Ingress setup
 - [Flux Kustomizations](../../clusters/catalyst-cluster/) - what actually deploys infrastructure
 
 ## External Resources

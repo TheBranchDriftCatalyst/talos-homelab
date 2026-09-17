@@ -3,8 +3,8 @@
 ## TL;DR
 
 ```bash
-# Install tools, generate configs, provision cluster, access services
-brew install talosctl kubectl go-task/tap/go-task
+# Get the toolchain, generate configs, provision cluster, access services
+direnv allow            # builds the flake dev shell; no direnv? use `nix develop`
 export TALOS_NODE=192.168.1.54
 task talos:gen-config   # required first - provision.sh does NOT generate configs
 task talos:provision
@@ -20,17 +20,27 @@ task talos:provision
 
 ### Required Tools
 
-Install via Homebrew (macOS/Linux):
+There is nothing to install by hand. `flake.nix` declares the entire toolchain —
+talosctl, talhelper, kubectl, kustomize, helm, flux, task, tilt, lefthook, the
+linters, python and `bd` — and `flake.lock` pins it.
 
 ```bash
-brew install talosctl kubectl go-task/tap/go-task
+direnv allow   # once, after cloning
 ```
 
-Or manually:
+That builds the dev shell (cached by nix-direnv, instant afterwards), puts
+everything on PATH, renders this repo's secrets from 1Password, and installs the
+git hooks. `cd` out and it unloads.
 
-- **talosctl** - Talos CLI ([installation guide](https://www.talos.dev/latest/introduction/getting-started/))
-- **kubectl** - Kubernetes CLI ([installation guide](https://kubernetes.io/docs/tasks/tools/))
-- **go-task** - Task runner ([installation guide](https://taskfile.dev/installation/))
+Without direnv, `nix develop` gives you the same shell. Either way you need
+[Nix](https://nixos.org/download) with flakes enabled.
+
+```bash
+task deps:install   # verifies every expected tool is on PATH
+```
+
+Adding a tool means editing `packages` in `flake.nix` — not `brew install`, which
+would only work on your machine.
 
 ### Environment Variables
 

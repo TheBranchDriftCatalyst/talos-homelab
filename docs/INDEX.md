@@ -13,16 +13,14 @@ summarizes its children — drill down from here.
 | Document                                                  | What it is                                                                     |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [README.md](../README.md)                                 | Repo overview, cluster facts, task shortcuts, file layout                       |
-| [QUICKSTART.md](../QUICKSTART.md)                         | Essential commands (provision, health, kubeconfig, service URLs)                |
+| [QUICKSTART.md](01-getting-started/quickstart.md)                         | Essential commands (provision, health, kubeconfig, service URLs)                |
 | [CONTRIBUTING.md](../CONTRIBUTING.md)                     | Dev setup, lefthook hooks, lint/format/validate task names                      |
 | [CLAUDE.md](../CLAUDE.md)                                 | Agent guidance: beads workflow, GitOps rules, session protocol                  |
 | [AGENTS.md](../AGENTS.md)                                 | Agent-facing repo conventions                                                   |
-| [TRAEFIK.md](../TRAEFIK.md)                               | Ingress: Traefik DaemonSet, entrypoints, TLS, IngressRoutes, LB VIP             |
-| [OBSERVABILITY.md](../OBSERVABILITY.md)                   | **Authoritative** monitoring stack — Alloy / Mimir / Loki / Tempo / ClickStack  |
-| [SECURITY_ops.md](../SECURITY_ops.md)                     | CrowdSec + bouncer, honeypot, iocaine, allowlists, ban escalation               |
-| [IMPLEMENTATION-TRACKER.md](../IMPLEMENTATION-TRACKER.md) | **Frozen 2025-12-12 snapshot** — historical record, not current state           |
-| [DAH_REPORT.md](../DAH_REPORT.md)                         | 2026-03-14 three-perspective system analysis (findings marked resolved/changed) |
-| [beads-index.md](../beads-index.md)                       | Beads issue-tracker index                                                       |
+| [TRAEFIK.md](02-architecture/traefik.md)                               | Ingress: Traefik DaemonSet, entrypoints, TLS, IngressRoutes, LB VIP             |
+| [OBSERVABILITY.md](08-monitoring/observability.md)                   | **Authoritative** monitoring stack — Alloy / Mimir / Loki / Tempo / ClickStack  |
+| [SECURITY_ops.md](02-architecture/security-ops.md)                     | CrowdSec + bouncer, honeypot, iocaine, allowlists, ban escalation               |
+| [DAH_REPORT.md](_archive/2026-03-14-dah-report.md)                         | 2026-03-14 three-perspective system analysis (findings marked resolved/changed) |
 
 ---
 
@@ -79,7 +77,7 @@ Docs that live next to the manifests they describe.
 | [infrastructure/base/infra-control/README.md](../infrastructure/base/infra-control/README.md)                                | Infra control tooling                                             |
 | [infrastructure/base/monitoring/grafana-dashboards/README.md](../infrastructure/base/monitoring/grafana-dashboards/README.md) | Dashboard JSON + `GrafanaDashboard` CR workflow                   |
 | [infrastructure/base/storage/STRUCTURE.md](../infrastructure/base/storage/STRUCTURE.md)                                      | Storage layout — **stale** (still TrueNAS-centric)                |
-| [infrastructure/base/traefik/STATUS.md](../infrastructure/base/traefik/STATUS.md)                                            | Traefik status notes — **stale**, see [TRAEFIK.md](../TRAEFIK.md) |
+| [infrastructure/base/traefik/STATUS.md](../infrastructure/base/traefik/STATUS.md)                                            | Traefik status notes — **stale**, see [TRAEFIK.md](02-architecture/traefik.md) |
 | [infrastructure/base/vpn-gateway/README.md](../infrastructure/base/vpn-gateway/README.md)                                    | VPN egress gateway                                                |
 | [infrastructure/base/shared/gluetun-sidecar/README.md](../infrastructure/base/shared/gluetun-sidecar/README.md)              | Reusable gluetun sidecar                                          |
 | [infrastructure/base/hybrid-llm/nebula/README.md](../infrastructure/base/hybrid-llm/nebula/README.md)                        | Nebula mesh — manifests only, **not deployed**                    |
@@ -114,20 +112,19 @@ Docs that live next to the manifests they describe.
 
 Flagged for a human to resolve — do not assume one silently wins.
 
-- **Monitoring**: [OBSERVABILITY.md](../OBSERVABILITY.md) (grounded, LGTM stack) vs
-  [02-architecture/observability.md](02-architecture/observability.md) (retired v1 stack:
+- **Monitoring**: [OBSERVABILITY.md](08-monitoring/observability.md) (grounded, LGTM stack) vs
+  [02-architecture/observability.md](_archive/observability-v1-stack.md) (retired v1 stack:
   Prometheus / OpenSearch / Graylog). Treat the root doc as authoritative; the architecture doc is
   history and is an archive candidate.
 - **GitOps ownership**: [02-architecture/dual-gitops.md](02-architecture/dual-gitops.md) (grounded)
   vs [02-architecture/gitops-responsibilities.md](02-architecture/gitops-responsibilities.md)
   (still asserts Flux is "NOT YET DEPLOYED"). `dual-gitops.md` is authoritative.
-- **Quickstarts**: root [QUICKSTART.md](../QUICKSTART.md) and
+- **Quickstarts**: root [QUICKSTART.md](01-getting-started/quickstart.md) and
   [01-getting-started/quickstart.md](01-getting-started/quickstart.md) are both grounded and
   overlap in scope. Merge candidate.
-- **Status reports**: [DAH_REPORT.md](../DAH_REPORT.md),
+- **Status reports**: [DAH_REPORT.md](_archive/2026-03-14-dah-report.md),
   [executive-summary.md](executive-summary.md) and
   [followup-exec-summary.md](followup-exec-summary.md) overlap heavily.
-- **Trackers**: [IMPLEMENTATION-TRACKER.md](../IMPLEMENTATION-TRACKER.md) (frozen) vs
   [06-project-management/](06-project-management/README.md) roadmaps vs beads. Beads is the live
   source of truth.
 - **Traefik / storage component docs**: `infrastructure/base/traefik/STATUS.md` and

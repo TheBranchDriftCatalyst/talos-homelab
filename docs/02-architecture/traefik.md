@@ -392,7 +392,7 @@ Traefik plugins are Yaegi-loaded **from GitHub at pod startup** — a rollout ne
 github.com. Enabled: `rewritebody` + `rewriteHeaders` (analytics injection, TALOS-4gg),
 `bouncer` (CrowdSec IPS, TALOS-pbn), `botWrangler` (LLM-scraper tarpit, TALOS-mko).
 
-> **⚠️ Stale:** [infrastructure/base/traefik/STATUS.md](infrastructure/base/traefik/STATUS.md)
+> **⚠️ Stale:** [infrastructure/base/traefik/STATUS.md](../../infrastructure/base/traefik/STATUS.md)
 > (719 lines) was last updated 2025-11-11 and has **not** been kept current. It still
 > describes chart 37.x / Traefik v3.5.x, "HTTP only, no TLS", Nexus as the registry,
 > Prometheus + Graylog, "12+ IngressRoutes", and a manual-Helm deployment method — all of
@@ -403,7 +403,7 @@ github.com. Enabled: `rewritebody` + `rewriteHeaders` (analytics injection, TALO
 - [Traefik Official Documentation](https://doc.traefik.io/traefik/)
 - [IngressRoute CRD Reference](https://doc.traefik.io/traefik/routing/providers/kubernetes-crd/)
 - [Middleware Reference](https://doc.traefik.io/traefik/middlewares/overview/)
-- [Dual GitOps Architecture](docs/02-architecture/gitops-responsibilities.md)
+- [Dual GitOps Architecture](gitops-responsibilities.md)
 
 ---
 

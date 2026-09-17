@@ -37,15 +37,15 @@ This section documents the architectural patterns, design decisions, and infrast
 
 | Topic                                                        | Description                                                                                                                                                                                            | When to Read                              |
 | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| [observability.md](observability.md)                         | **STALE** - Describes the retired v1 stack (Prometheus/kube-prometheus-stack, OpenSearch, Graylog, Fluent Bit). Superseded by the v2 OTEL stack; see [otel-migration](../05-projects/otel-migration/README.md) and `infrastructure/base/monitoring/v2-otel/` | Historical reference only                 |
+| [observability.md](../_archive/observability-v1-stack.md)                         | **STALE** - Describes the retired v1 stack (Prometheus/kube-prometheus-stack, OpenSearch, Graylog, Fluent Bit). Superseded by the v2 OTEL stack; see [otel-migration](../05-projects/otel-migration/README.md) and `infrastructure/base/monitoring/v2-otel/` | Historical reference only                 |
 
 ### Related docs outside this section
 
 | Topic                                            | Description                                                                                   |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| [SECURITY_ops.md](../../SECURITY_ops.md)         | Security architecture as deployed — CrowdSec LAPI/bouncer, honeypot, iocaine, ban escalation   |
-| [TRAEFIK.md](../../TRAEFIK.md)                   | Ingress implementation detail behind [networking.md](networking.md)                            |
-| [OBSERVABILITY.md](../../OBSERVABILITY.md)       | The live monitoring stack (supersedes [observability.md](observability.md))                     |
+| [security-ops.md](security-ops.md)         | Security architecture as deployed — CrowdSec LAPI/bouncer, honeypot, iocaine, ban escalation   |
+| [traefik.md](traefik.md)                   | Ingress implementation detail behind [networking.md](networking.md)                            |
+| [observability.md](../08-monitoring/observability.md)       | The live monitoring stack (supersedes [observability.md](../_archive/observability-v1-stack.md))                     |
 | [patterns/](../patterns/README.md)               | Reusable cluster patterns extracted from these architecture docs                                |
 | [07-reference/cluster-crds.md](../07-reference/cluster-crds.md) | Catalog of every operator/CRD referenced by these designs                        |
 

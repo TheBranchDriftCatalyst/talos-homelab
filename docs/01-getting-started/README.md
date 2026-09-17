@@ -55,7 +55,6 @@ This section provides essential guides for getting started with the Talos Kubern
 
 | Destination                                                    | Why                                                        |
 | -------------------------------------------------------------- | ---------------------------------------------------------- |
-| [QUICKSTART.md](../../QUICKSTART.md)                           | Root-level command reference (overlaps with `quickstart.md`) |
 | [02-architecture/dual-gitops.md](../02-architecture/dual-gitops.md) | How changes actually reach the cluster                 |
 | [03-operations](../03-operations/README.md)                    | Day-to-day operations and provisioning                     |
 | [05-runbooks/cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md) | Full bare-metal / recovery bootstrap               |

@@ -13,8 +13,7 @@ Roadmaps and idea backlogs. **Beads is the source of truth for work tracking** (
 
 ## Related
 
-- Root [IMPLEMENTATION-TRACKER.md](../../IMPLEMENTATION-TRACKER.md) — frozen 2025-12-12 snapshot, overlaps with `enhancement-roadmap.md`
-- [DAH_REPORT.md](../../DAH_REPORT.md) — 2026-03-14 system analysis with action-plan tables
+- [DAH_REPORT.md](../_archive/2026-03-14-dah-report.md) — 2026-03-14 system analysis with action-plan tables
 - [followup-exec-summary.md](../followup-exec-summary.md) — gap analysis and recommendations
 
 ---

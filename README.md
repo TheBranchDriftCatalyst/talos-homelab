@@ -7,7 +7,7 @@ Production-ready Kubernetes cluster on Talos Linux with dual GitOps (Flux + Argo
 - **Control Plane:** 192.168.1.54 (talos00) — 5 nodes: talos00, talos01, talos02-gpu, talos03, talos06
 - **Dashboard:** http://grafana.talos00, http://argocd.talos00
 - **Quick Start:** `task kubeconfig && KUBECONFIG=./.output/kubeconfig kubectl get nodes`
-- **Architecture:** [TRAEFIK.md](TRAEFIK.md) | [Dual GitOps](docs/02-architecture/dual-gitops.md)
+- **Architecture:** [Traefik](docs/02-architecture/traefik.md) | [Dual GitOps](docs/02-architecture/dual-gitops.md)
 - **All docs:** [docs/INDEX.md](docs/INDEX.md)
 
 > ⚠️ `task kubeconfig-merge` is currently broken — it calls `./scripts/kubeconfig-merge.sh`, which
@@ -56,11 +56,12 @@ Full navigation: **[docs/INDEX.md](docs/INDEX.md)**.
 | [patterns](docs/patterns/README.md)                                | Reusable cluster patterns                                                 |
 | [investigations](docs/investigations/README.md) · [changelogs](docs/changelogs/README.md) · [retros](docs/retros/README.md) · [_archive](docs/_archive/README.md) | Audits, update campaigns, retrospectives, history |
 
-Root-level docs: [QUICKSTART.md](QUICKSTART.md) · [CONTRIBUTING.md](CONTRIBUTING.md) ·
-[TRAEFIK.md](TRAEFIK.md) · [OBSERVABILITY.md](OBSERVABILITY.md) · [SECURITY_ops.md](SECURITY_ops.md) ·
-[CLAUDE.md](CLAUDE.md) · [AGENTS.md](AGENTS.md) ·
-[IMPLEMENTATION-TRACKER.md](IMPLEMENTATION-TRACKER.md) (frozen 2025-12-12) ·
-[DAH_REPORT.md](DAH_REPORT.md) (2026-03-14 analysis)
+Root-level docs: [CONTRIBUTING.md](CONTRIBUTING.md) · [CLAUDE.md](CLAUDE.md) · [AGENTS.md](AGENTS.md)
+
+Everything else now lives under `docs/`: [quickstart](docs/01-getting-started/quickstart.md) ·
+[traefik](docs/02-architecture/traefik.md) · [observability](docs/08-monitoring/observability.md) ·
+[security-ops](docs/02-architecture/security-ops.md) · [testing](docs/03-operations/testing.md) ·
+[2026-03-14 analysis](docs/_archive/2026-03-14-dah-report.md)
 
 ## Quick Start
 
@@ -360,7 +361,7 @@ task audit
 
 ### Dashboard Access
 
-See [QUICKSTART.md](QUICKSTART.md#access-kubernetes-dashboard) for complete dashboard access instructions.
+See [the quickstart](docs/01-getting-started/quickstart.md#access-kubernetes-dashboard) for complete dashboard access instructions.
 
 ### Troubleshooting
 
@@ -461,10 +462,14 @@ task talos:upgrade-k8s -- 1.34.10
 ├── Taskfile.infra.yaml             # Infrastructure deployment tasks
 ├── Taskfile.security.yaml          # Security scanning tasks
 ├── Taskfile.certs.yaml             # Homelab CA / certificate tasks
+├── Taskfile.test.yaml              # Test suite tasks
+├── flake.nix / flake.lock          # The dev toolchain, pinned
+├── .envrc                          # direnv: use flake + 1Password secrets
+├── .env.tpl                        # Secret REFERENCES (op://), never values
+├── dev/                            # Developer tool configs (starship, yamllint, shellcheck)
 ├── README.md                       # This file
-├── QUICKSTART.md                   # Quick reference guide
-├── TRAEFIK.md                      # Traefik ingress documentation
-├── IMPLEMENTATION-TRACKER.md       # Implementation progress tracking
+├── CONTRIBUTING.md                 # Dev setup and workflow
+├── AGENTS.md                       # Agent guidance (distinct from CLAUDE.md)
 └── CLAUDE.md                       # Claude Code agent guidance
 ```
 

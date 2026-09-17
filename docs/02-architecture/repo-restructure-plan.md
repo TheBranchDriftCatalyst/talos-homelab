@@ -224,7 +224,7 @@ working-tree cleanup, not a git diff, except for the 10 `package.json` deletions
 | **F5**  | `infrastructure/base/hybrid-llm/` (8 files, incl. `liqo`, `ollama`, `_scripts`) has **no Flux Kustomization** — but 14 doc references. Docs describe infra that is not deployed.                                                                                                                                      | `ks=[]`, `refs=14`                                        |
 | **F6**  | `infrastructure/base/registry/` is a single-child wrapper (`zot/` only), and the Flux ks points at the **subpath**, not the wrapper.                                                                                                                                                                                  | `path: ./infrastructure/base/registry/zot`                |
 | **F7**  | Split pairs that should be parent/child, not siblings: `cert-manager` + `cert-manager-issuers`; `kyverno` + `kyverno-policies`; `aws` + `aws-providers`. The `aws/buckets` + `aws/apps` subpath pattern already proves Flux handles nested paths fine.                                                                | 3 pairs                                                   |
-| **F8**  | `infrastructure/base/` — the `base/` level is **vestigial**. There is no `infrastructure/overlays/`. It adds a path segment for nothing.                                                                                                                                                                              | `ls infrastructure/` → `_scripts`, `base`, `dashboard.sh` |
+| **F8**  | `infrastructure/base/` — the `base/` level is **vestigial**. There is no `infrastructure/overlays/`. It adds a path segment for nothing.                                                                                                                                                                              | `ls infrastructure/` → `_scripts`, `base`, `scripts/repo-dashboard.sh` |
 | **F9**  | 10 test suites duplicate `jest` as a devDependency and ship their own lockfile + `node_modules`, despite the root config already aggregating them.                                                                                                                                                                    | §4.4                                                      |
 | **F10** | 2 Flux Kustomizations point at non-existent paths; 1 of them (`applications/catalyst-llm`) is broken at `HEAD`.                                                                                                                                                                                                       | §3                                                        |
 | **F11** | `applications/` layout is inconsistent — 6× `base/`, 4× flat, 2× ad-hoc.                                                                                                                                                                                                                                              | §4.2                                                      |
@@ -816,7 +816,7 @@ infrastructure/base/honeypot/deployment.yaml:123
   # (b) the CrowdSec agent (CRI stdout tail -> crowdsecurity/cowrie parser
 ```
 
-CrowdSec's agent **tails Cowrie's stdout as a detection source.** Per `SECURITY_ops.md`, iocaine
+CrowdSec's agent **tails Cowrie's stdout as a detection source.** Per `docs/02-architecture/security-ops.md`, iocaine
 is wired the same way — Traefik's Bot Wrangler middleware proxies detected bots _into_ the maze,
 and the hits feed CrowdSec. These are not standalone workloads that happen to be security-themed;
 they are **sensors feeding an IPS.** Removing either degrades CrowdSec's detection.
@@ -826,7 +826,7 @@ _apply ordering_, not _runtime data flow_. A log-shipping relationship is invisi
 
 ### 16.2 The repo already decided this — TALOS-c4q
 
-`SECURITY_ops.md` documents all three as **one cooperating system** ("Layered, deception-driven
+`docs/02-architecture/security-ops.md` documents all three as **one cooperating system** ("Layered, deception-driven
 defense... Three cooperating systems"), and it already carries the ticket:
 
 > **Consolidation** (deferred, TALOS-c4q): folding crowdsec/honeypot/iocaine into a shared
@@ -855,7 +855,7 @@ infrastructure/30-security/
     └── iocaine/               #   tarpit — Bot Wrangler proxies into it, feeds crowdsec
 ```
 
-The `edge/` nesting makes the repo mirror `SECURITY_ops.md`'s "The layers" section 1:1, and
+The `edge/` nesting makes the repo mirror `docs/02-architecture/security-ops.md`'s "The layers" section 1:1, and
 separates _security capabilities other things depend on_ (secrets, PKI, identity) from _the
 cooperating detection/response stack_.
 
@@ -885,7 +885,7 @@ Cilium mutual auth is earning its keep, rather than continuing to patch the agen
 
 | #       | Question                                                                                                    | Recommendation                                                                                                                                        |
 | ------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Q15** | Nest the stack as `30-security/edge/{crowdsec,honeypot,iocaine}`, or keep the three flat in `30-security/`? | **Nest.** It mirrors `SECURITY_ops.md` and keeps capabilities visually distinct from the detection stack. Flat is fine if the extra level annoys you. |
+| **Q15** | Nest the stack as `30-security/edge/{crowdsec,honeypot,iocaine}`, or keep the three flat in `30-security/`? | **Nest.** It mirrors `docs/02-architecture/security-ops.md` and keeps capabilities visually distinct from the detection stack. Flat is fine if the extra level annoys you. |
 
 ---
 

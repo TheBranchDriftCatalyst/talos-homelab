@@ -289,5 +289,5 @@ talosctl reset --graceful=false --reboot
 ## Related Documentation
 
 - [Provisioning Guide](provisioning.md) - Complete cluster setup
-- [Quick Start Guide](../../QUICKSTART.md) - Common operational commands
+- [Quick Start Guide](../01-getting-started/quickstart.md) - Common operational commands
 - [Dual GitOps Architecture](../02-architecture/dual-gitops.md) - Understanding the deployment model

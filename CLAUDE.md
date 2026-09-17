@@ -106,9 +106,9 @@ Every doc should end with:
 
 | Doc                                   | Purpose                       |
 | ------------------------------------- | ----------------------------- |
-| `QUICKSTART.md`                       | Essential commands reference  |
-| `TRAEFIK.md`                          | Ingress configuration         |
-| `OBSERVABILITY.md`                    | Monitoring/logging stack      |
+| `docs/01-getting-started/quickstart.md`                       | Essential commands reference  |
+| `docs/02-architecture/traefik.md`                          | Ingress configuration         |
+| `docs/08-monitoring/observability.md`                    | Monitoring/logging stack      |
 | `docs/02-architecture/dual-gitops.md` | **CRITICAL** - GitOps pattern |
 
 ## Task Automation Structure
@@ -612,9 +612,9 @@ task provision             # Rebuild from scratch
 - `README.md` - Quick start and cluster overview
 - `docs/DUAL-GITOPS.md` - **CRITICAL** - Dual GitOps architecture
 - `docs/catalyst-ui-deployment.md` - Application deployment example
-- `TRAEFIK.md` - Ingress configuration
-- `OBSERVABILITY.md` - Monitoring and logging stack
-- `QUICKSTART.md` - Quick reference guide
+- `docs/02-architecture/traefik.md` - Ingress configuration
+- `docs/08-monitoring/observability.md` - Monitoring and logging stack
+- `docs/01-getting-started/quickstart.md` - Quick reference guide
 
 ## Development Workflow
 

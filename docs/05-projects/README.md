@@ -14,7 +14,7 @@ state of the cluster is documented under [02-architecture](../02-architecture/RE
 | [darkweb-archiver/SPEC.md](darkweb-archiver/SPEC.md)           | Technical specification for an internal archiving tool (TALOS-3fed)                                     | Draft spec                                    |
 
 > `otel-migration/README.md` is the design record for the migration; for how the stack works today
-> read [OBSERVABILITY.md](../../OBSERVABILITY.md).
+> read [OBSERVABILITY.md](../08-monitoring/observability.md).
 
 ---
 

@@ -75,7 +75,7 @@ HTTP→HTTPS redirect · gate the inference plane · header-strip allowlist gap 
 ## The standing regression net (Layer 3)
 
 This audit is now codified in `tests/ingress-accessibility/test_ingress_accessibility.py` — the third test
-layer (alongside DR + security-posture, see [TESTING.md](../../TESTING.md)). It renders the whole
+layer (alongside DR + security-posture, see [TESTING.md](../03-operations/testing.md)). It renders the whole
 Flux tree and asserts fleet-wide ingress invariants offline (middleware-ref-resolves, no-combined-EP,
 `/api`-carveouts-gated, `lan-only`-not-pod-CIDR, tcp-proxy-restricted, flux-paths-exist), with a
 `--live` read-only probe (admin-not-open, forged-identity-stripped). Accepted risks are reviewed
