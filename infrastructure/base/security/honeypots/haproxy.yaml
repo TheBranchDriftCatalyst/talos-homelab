@@ -36,6 +36,8 @@ spec:
             - { name: telnet, containerPort: 2223, protocol: TCP }
           volumeMounts:
             - { name: cfg, mountPath: /usr/local/etc/haproxy/haproxy.cfg, subPath: haproxy.cfg, readOnly: true }
+            - { name: cfg, mountPath: /usr/local/etc/haproxy/replay.map, subPath: replay.map, readOnly: true }
+            - { name: runtime, mountPath: /var/run/haproxy }
           securityContext:
             runAsNonRoot: true
             runAsUser: 99 # haproxy user in the official image
@@ -45,6 +47,41 @@ spec:
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { memory: 256Mi }
+        # Maintains replay.map IN MEMORY over the admin socket from CrowdSec
+        # `silentdrop` decisions (TALOS-hdw8). Same uid as haproxy so it can use the
+        # 660 socket. No ServiceAccount token, no k8s API, read-only rootfs -- its only
+        # inputs are the LAPI over TLS and its own bouncer key.
+        - name: dropwatch
+          image: python:3.12.12-alpine3.22
+          command: [python, -B, /app/dropwatch.py]
+          env:
+            - name: LAPI_URL
+              value: https://crowdsec-service.crowdsec.svc.cluster.local:8080
+            - name: API_KEY_FILE
+              value: /keys/lapi-key
+            - name: HAPROXY_SOCKET
+              value: /var/run/haproxy/admin.sock
+          volumeMounts:
+            - { name: dropwatch, mountPath: /app, readOnly: true }
+            - { name: bouncer-key, mountPath: /keys, readOnly: true }
+            - { name: runtime, mountPath: /var/run/haproxy }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 99
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 96Mi }
       volumes:
         - name: cfg
           configMap: { name: honeypot-haproxy-cfg }
+        - name: dropwatch
+          configMap: { name: honeypot-dropwatch }
+        - name: bouncer-key
+          secret: { secretName: crowdsec-bouncer-key }
+        # Shared so dropwatch can reach haproxy's admin socket. emptyDir: the map is
+        # rebuilt from the LAPI within one poll of any restart.
+        - name: runtime
+          emptyDir: {}

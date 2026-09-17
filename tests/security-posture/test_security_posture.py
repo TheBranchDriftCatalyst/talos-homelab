@@ -802,8 +802,14 @@ class RunningSystemPosture(unittest.TestCase):
                                         'cat', '/etc/crowdsec/simulation.yaml'))
         self.assertIs(simulation['simulation'], False, 'Global simulation must NOT be enabled')
         self.assertIn(scenario['name'], simulation['exclusions'], 'Intended simulation is ABSENT for runtime scenario name')
-        cowrie = yaml.safe_load(crowdsec_values()['config']['scenarios']['cowrie-activity.yaml'])
-        self.assertNotIn(cowrie['name'], simulation['exclusions'], 'Cowrie enforcement must NOT be simulated')
+        # The honeypot CONNECTION scenario is the single ban source and must stay enforcing.
+        # (cowrie-activity.yaml was removed in 35ade7f5 and replaced by this one.)
+        vip = yaml.safe_load(crowdsec_values()['config']['scenarios']['honeypot-vip-activity.yaml'])
+        self.assertNotIn(vip['name'], simulation['exclusions'], 'Honeypot ban source must NOT be simulated')
+        # homelab/cowrie-replay-drop is deliberately detect-only during its soak (TALOS-hdw8);
+        # it emits a `silentdrop`, not a ban, so simulating it changes only what reaches cowrie.
+        replay = yaml.safe_load(crowdsec_values()['config']['scenarios']['cowrie-replay-drop.yaml'])
+        self.assertIn(replay['name'], simulation['exclusions'], 'Replay scenario should still be simulated')
 
     def test_live_redundancy_and_agent_coverage(self):
         for component in ('lapi', 'appsec'):
