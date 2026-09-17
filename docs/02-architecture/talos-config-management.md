@@ -370,7 +370,7 @@ that node's factory installer URL at the configured `talosVersion`. Failure 2 be
 the upgrade command is generated *from* the extension declaration, so the two cannot disagree.
 
 The one gap: this only helps if the generated command is what actually gets run. Route it through
-a task and remove the raw `talosctl upgrade` escape hatches from `Taskfile.talos.yaml`.
+a task and remove the raw `talosctl upgrade` escape hatches from `dev/Taskfile.talos.yaml`.
 
 ---
 

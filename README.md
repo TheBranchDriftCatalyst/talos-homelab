@@ -455,18 +455,15 @@ task talos:upgrade-k8s -- 1.34.10
 │   ├── 07-reference/               # Reference documentation
 │   └── 08-monitoring/              # Monitoring/alerting reference
 ├── .gitignore                      # Git ignore patterns
-├── Taskfile.yaml                   # Root task orchestrator
-├── Taskfile.talos.yaml             # Talos-specific tasks
-├── Taskfile.k8s.yaml               # Kubernetes-specific tasks
-├── Taskfile.dev.yaml               # Development tooling tasks
-├── Taskfile.infra.yaml             # Infrastructure deployment tasks
-├── Taskfile.security.yaml          # Security scanning tasks
-├── Taskfile.certs.yaml             # Homelab CA / certificate tasks
-├── Taskfile.test.yaml              # Test suite tasks
+├── Taskfile.yaml                   # Root task orchestrator (the only one here)
+├── dev/                            # Domain Taskfiles + developer tool configs
+│   ├── Taskfile.{talos,k8s,dev,infra,security,certs,test}.yaml
+│   ├── starship.toml               # Repo-local prompt (via STARSHIP_CONFIG)
+│   ├── yamllint.yaml               # (via YAMLLINT_CONFIG_FILE / -c)
+│   └── shellcheckrc                # (via shellcheck --rcfile)
 ├── flake.nix / flake.lock          # The dev toolchain, pinned
 ├── .envrc                          # direnv: use flake + 1Password secrets
 ├── .env.tpl                        # Secret REFERENCES (op://), never values
-├── dev/                            # Developer tool configs (starship, yamllint, shellcheck)
 ├── README.md                       # This file
 ├── CONTRIBUTING.md                 # Dev setup and workflow
 ├── AGENTS.md                       # Agent guidance (distinct from CLAUDE.md)

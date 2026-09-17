@@ -14,7 +14,7 @@ Tracking: TALOS-0bo8. Prerequisite: TALOS-w04r (secrets bundle backed up to 1Pas
 | **Destroyed 6 private keys** | `configs/nebula-certs/ca.key`, `configs/securexng-mtls/ca.key` + 4 client keys. **Untracked, on disk only, not re-derivable.** A CA private key cannot be regenerated — every certificate it ever signed becomes worthless. |
 | **Destroyed the admin client config** | `configs/talosconfig` is untracked. It is what every `talosctl` command uses, including the ones you would reach for mid-incident. |
 | **Leaked the Talos secrets bundle** | `.gitignore` matched `talos/talsecret.yaml` by *anchored path*. After the rename that rule stops matching, and the next `git add` stages all five CAs and every token. *(Fixed — the rules are now filename-matched and survive the move. Verified under both paths.)* |
-| **Broke every recovery tool** | `./configs/talosconfig` is hardcoded in 10+ places: `Taskfile.yaml:15`, `Taskfile.talos.yaml:6`, `Taskfile.k8s.yaml:6`, `scripts/lib/common.sh:161`, `shutdown-cluster.sh`, `upgrade-talos-version.sh`, `bootstrap-talos-patches.sh`, `node-dossier.sh`, `capture-meltdown-evidence.sh`, `test-suspect-*.sh`. `Taskfile.talos.yaml:9-12` also references `configs/nodes/*.yaml`. |
+| **Broke every recovery tool** | `./configs/talosconfig` is hardcoded in 10+ places: `Taskfile.yaml:15`, `dev/Taskfile.talos.yaml:6`, `dev/Taskfile.k8s.yaml:6`, `scripts/lib/common.sh:161`, `shutdown-cluster.sh`, `upgrade-talos-version.sh`, `bootstrap-talos-patches.sh`, `node-dossier.sh`, `capture-meltdown-evidence.sh`, `test-suspect-*.sh`. `dev/Taskfile.talos.yaml:9-12` also references `configs/nodes/*.yaml`. |
 
 ---
 
@@ -87,7 +87,7 @@ But its context is named `catalyst-cluster` where the existing one is `homelab-s
 
 Every reference listed in the table above. `configs/talosconfig` still resolves if you did
 step 3, so this is not urgent for correctness, but `configs/nodes/*.yaml` in
-`Taskfile.talos.yaml:9-12` no longer exists.
+`dev/Taskfile.talos.yaml:9-12` no longer exists.
 
 ### 7. Commit
 

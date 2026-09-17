@@ -17,7 +17,7 @@
 # committing a change here. .env.local (gitignored) overrides anything below.
 
 # Bootstrap credential for 1Password Connect itself, consumed by
-# `task infra:setup-1password` (Taskfile.infra.yaml:63,68-74,90). Chicken-and-egg
+# `task infra:setup-1password` (dev/Taskfile.infra.yaml:63,68-74,90). Chicken-and-egg
 # by design: this is the one secret that cannot come from the cluster's own ESO
 # store, because it is the credential that store authenticates with.
 #

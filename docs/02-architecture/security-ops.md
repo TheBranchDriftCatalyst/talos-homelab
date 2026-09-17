@@ -131,7 +131,7 @@ POSTed to Discord via the built-in `notification-http` plugin (`discord_default`
 - **Grafana**: "Security Ops — CrowdSec" and "Cowrie Ops" in the *Ops / Security* folder
 - **Console** (hosted, enrolled as `talos-homelab`): app.crowdsec.net — the richest ops view (CTI,
   attacker map). Context + custom + tainted alerts are shared; manual decisions are not.
-- **CLI** — `task security:*` wraps `cscli` in the LAPI pod (`Taskfile.security.yaml`):
+- **CLI** — `task security:*` wraps `cscli` in the LAPI pod (`dev/Taskfile.security.yaml`):
   - `task security:alerts` · `task security:decisions` · `task security:bouncers` · `task security:metrics`
   - `task security:ban -- IP=1.2.3.4 [DURATION=4h]` / `task security:unban -- IP=1.2.3.4`
   - `task security:hub` (`cscli hub list`) · `task security:honeypot-events` / `honeypot-follow`
@@ -147,7 +147,7 @@ infrastructure/base/security/crowdsec/   # LAPI+agent+AppSec, bouncer middleware
 infrastructure/base/honeypot/   # Cowrie honeypot (+ logship sidecar)
 infrastructure/base/security/iocaine/    # iocaine tarpit + trap.knowledgedump.space maze
 infrastructure/base/traefik/    # bouncer plugin + Bot Wrangler middleware + forwardedHeaders
-Taskfile.security.yaml          # task security:* — cscli wrappers + honeypot log helpers
+dev/Taskfile.security.yaml          # task security:* — cscli wrappers + honeypot log helpers
 ```
 
 > **Consolidation** (deferred, TALOS-c4q): folding crowdsec/honeypot/iocaine into a shared

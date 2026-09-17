@@ -400,10 +400,10 @@ Modular Taskfile structure with 90+ automated tasks:
 
 ```
 Taskfile.yaml           # Root orchestrator
-├── Taskfile.talos.yaml  # 33 Talos operations
-├── Taskfile.k8s.yaml    # 18 Kubernetes tasks
-├── Taskfile.dev.yaml    # 17 DevEx tools
-└── Taskfile.infra.yaml  # 22 Infrastructure tasks
+├── dev/Taskfile.talos.yaml  # 33 Talos operations
+├── dev/Taskfile.k8s.yaml    # 18 Kubernetes tasks
+├── dev/Taskfile.dev.yaml    # 17 DevEx tools
+└── dev/Taskfile.infra.yaml  # 22 Infrastructure tasks
 ```
 
 **Common Operations:**

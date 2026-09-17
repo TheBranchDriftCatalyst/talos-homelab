@@ -119,12 +119,20 @@ This repository uses a **modular Taskfile structure** organized by domain for be
 
 ```
 .
-├── Taskfile.yaml          # Root orchestrator with common shortcuts
-├── Taskfile.talos.yaml    # Talos Linux operations (33 tasks)
-├── Taskfile.k8s.yaml      # Kubernetes operations (18 tasks)
-├── Taskfile.dev.yaml      # Development tools (17 tasks)
-└── Taskfile.infra.yaml    # Infrastructure deployment (22 tasks)
+├── Taskfile.yaml               # Root orchestrator — the ONLY one at the root
+└── dev/                        # every domain Taskfile lives here
+    ├── Taskfile.talos.yaml     # Talos Linux operations
+    ├── Taskfile.k8s.yaml       # Kubernetes operations
+    ├── Taskfile.dev.yaml       # Development tools
+    ├── Taskfile.infra.yaml     # Infrastructure deployment
+    ├── Taskfile.security.yaml  # Security scanning
+    ├── Taskfile.certs.yaml     # Homelab CA / certificates
+    └── Taskfile.test.yaml      # Test suites
 ```
+
+Task namespaces are unchanged — `task talos:health`, `task dev:lint`, etc. The
+includes in `Taskfile.yaml` carry the `dev/` prefix; included tasks still run
+from the repo root, so relative paths inside them are unaffected.
 
 ### Task Domains
 

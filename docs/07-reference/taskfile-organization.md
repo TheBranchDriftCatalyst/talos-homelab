@@ -7,12 +7,12 @@ This repository uses a modular Taskfile structure with domain-specific task file
 ```
 .
 ├── Taskfile.yaml          # Root orchestrator with common shortcuts
-├── Taskfile.talos.yaml    # Talos Linux operations
-├── Taskfile.k8s.yaml      # Kubernetes operations
-├── Taskfile.dev.yaml      # Development tools (linting, formatting, hooks, Tilt)
-├── Taskfile.infra.yaml    # Infrastructure deployment
-├── Taskfile.security.yaml # CrowdSec decisions/bans + honeypot visibility
-└── Taskfile.certs.yaml    # cert-manager PKI + local CA trust
+├── dev/Taskfile.talos.yaml    # Talos Linux operations
+├── dev/Taskfile.k8s.yaml      # Kubernetes operations
+├── dev/Taskfile.dev.yaml      # Development tools (linting, formatting, hooks, Tilt)
+├── dev/Taskfile.infra.yaml    # Infrastructure deployment
+├── dev/Taskfile.security.yaml # CrowdSec decisions/bans + honeypot visibility
+└── dev/Taskfile.certs.yaml    # cert-manager PKI + local CA trust
 ```
 
 All six domain files are wired up via `includes:` in the root `Taskfile.yaml`.
@@ -347,12 +347,12 @@ Variables are declared per Taskfile, not globally:
 | Taskfile                 | Variables                                                                                                                                                                                                                  |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Taskfile.yaml` (root)   | `TALOS_NODE` (default `192.168.1.54`), `TALOSCONFIG` (`./configs/talosconfig`), `KUBECONFIG` (`./.output/kubeconfig`)                                                                                                       |
-| `Taskfile.talos.yaml`    | the above, plus `CLUSTER_NAME` (`catalyst-cluster`), `CLUSTER_ENDPOINT` (`https://{{.TALOS_NODE}}:6443`). `CONTROLPLANE_CONFIG` and `WORKER_CONFIG` were removed in the talhelper cutover — machine configs are generated from `configs/talconfig.yaml` into `configs/clusterconfig/`, so there is no single hardcoded config path any more |
-| `Taskfile.k8s.yaml`      | `TALOS_NODE`, `TALOSCONFIG`, `KUBECONFIG`                                                                                                                                                                                  |
-| `Taskfile.infra.yaml`    | `KUBECONFIG`                                                                                                                                                                                                               |
-| `Taskfile.security.yaml` | `KUBECONFIG`, `NS` (`crowdsec`), `LAPI` (`deploy/crowdsec-lapi`)                                                                                                                                                           |
-| `Taskfile.certs.yaml`    | `CA_SECRET` (`homelab-ca-secret`), `CA_NS` (`cert-manager`), `CA_FILE` (`$HOME/homelab-ca.crt`)                                                                                                                             |
-| `Taskfile.dev.yaml`      | none                                                                                                                                                                                                                       |
+| `dev/Taskfile.talos.yaml`    | the above, plus `CLUSTER_NAME` (`catalyst-cluster`), `CLUSTER_ENDPOINT` (`https://{{.TALOS_NODE}}:6443`). `CONTROLPLANE_CONFIG` and `WORKER_CONFIG` were removed in the talhelper cutover — machine configs are generated from `configs/talconfig.yaml` into `configs/clusterconfig/`, so there is no single hardcoded config path any more |
+| `dev/Taskfile.k8s.yaml`      | `TALOS_NODE`, `TALOSCONFIG`, `KUBECONFIG`                                                                                                                                                                                  |
+| `dev/Taskfile.infra.yaml`    | `KUBECONFIG`                                                                                                                                                                                                               |
+| `dev/Taskfile.security.yaml` | `KUBECONFIG`, `NS` (`crowdsec`), `LAPI` (`deploy/crowdsec-lapi`)                                                                                                                                                           |
+| `dev/Taskfile.certs.yaml`    | `CA_SECRET` (`homelab-ca-secret`), `CA_NS` (`cert-manager`), `CA_FILE` (`$HOME/homelab-ca.crt`)                                                                                                                             |
+| `dev/Taskfile.dev.yaml`      | none                                                                                                                                                                                                                       |
 
 `TALOS_NODE` is the control-plane node (`talos00`). Tasks that target it explicitly hit only that
 node; the cluster also runs `talos01`, `talos02-gpu`, `talos03` and `talos06`.

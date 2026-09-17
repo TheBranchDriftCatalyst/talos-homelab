@@ -84,7 +84,7 @@
               # ── Python ─────────────────────────────────────────────────
               # uv is REQUIRED, not optional: scripts/upgrade-talos.py is a
               # PEP-723 script whose shebang is `env -S uv run --quiet`, and
-              # `task talos:upgrade` (Taskfile.talos.yaml:251) invokes it.
+              # `task talos:upgrade` (dev/Taskfile.talos.yaml:251) invokes it.
               uv
               pythonEnv
             ];
