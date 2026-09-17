@@ -121,7 +121,18 @@ id = "onepassword-secret-reference"
 description = "1Password secret reference (op://)"
 regex = '''op://[a-zA-Z0-9-]+/[a-zA-Z0-9-]+/[a-zA-Z0-9-]+'''
 tags = ["1password", "reference"]
-# Note: This is a reference, not the actual secret, but may indicate leaked structure
+# Note: This is a reference, not the actual secret, but may indicate leaked structure.
+# Two files are SUPPOSED to contain them and are allowlisted below: .env.tpl is the
+# committed manifest of op:// refs (the dev-side analog of an ExternalSecret), and
+# .envrc passes one to use_onepassword_file for the Connect credentials document.
+# Without this the pre-push hook fails on every change to either file, which trains
+# people to bypass the hook — the opposite of what it is for. A reference is not a
+# secret: resolving one still requires vault access.
+[rules.allowlist]
+paths = [
+  '''^\.env\.tpl$''',
+  '''^\.envrc$''',
+]
 
 [[rules]]
 id = "hashicorp-vault-token"
