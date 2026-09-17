@@ -87,6 +87,28 @@ spec:
                 expression: "evt.Parsed.src_ip"
               - meta: log_type
                 value: honeypot_vip
+          # ---- Cowrie command stream -> novelty analysis (TALOS-hdw8) ----
+          # Deliberately NARROWER than the parser 35ade7f5 removed. That one fed a
+          # connection-based scenario which double-banned alongside the haproxy front.
+          # This one emits ONLY cowrie.command.input and its scenario issues no ban, so
+          # homelab/honeypot-vip-activity remains the single ban source.
+          #
+          # src_ip is the REAL attacker IP: haproxy sends PROXY v2 to cowrie
+          # (honeypots/cfg/haproxy.cfg:17,35) and cowrie trusts it via listen_endpoints.
+          cowrie-logs.yaml: |
+            onsuccess: next_stage
+            filter: "evt.Parsed.program == 'cowrie' && evt.Parsed.message contains 'cowrie.command.input'"
+            name: homelab/cowrie-logs
+            description: "Parse cowrie.json command events -> source_ip + the command string"
+            statics:
+              - meta: service
+                value: cowrie
+              - meta: source_ip
+                expression: "JsonExtract(evt.Parsed.message, 'src_ip')"
+              - meta: cowrie_command
+                expression: "JsonExtract(evt.Parsed.message, 'input')"
+              - meta: log_type
+                value: cowrie_cmd
         s02-enrich:
           homelab-whitelist.yaml: |
             name: homelab/whitelist
@@ -193,12 +215,68 @@ spec:
             confidence: 3
             spoofable: 0
             label: "Honeypot VIP interaction (cowrie/beelzebub via haproxy)"
+        # ---- Cowrie REPLAY BOTS -> silent drop at the honeypot front (TALOS-hdw8) ----
+        # A honeypot earns its keep on NOVEL attacker behaviour. Measured 2026-09-17 over
+        # 8379 command events from 45 IPs, the traffic is cleanly bimodal:
+        #
+        #   109.160.32.105   1432 commands, ALL the identical string 'uname -s -v -n -r -m',
+        #                    one SSH session per command      -> 0.1% novelty
+        #   104.238.110.208   494 commands,   5 distinct                    -> 1.0% novelty
+        #   160.119.66.206     44 commands,   7 distinct (wget dropper)     -> 16% novelty
+        #   a real explorer    31 commands,  24 distinct, ONE session       -> 77% novelty
+        #
+        # 14 IPs at <=15% novelty produce 94% of ALL command volume. This catches them and
+        # leaves the explorers alone: >=30 commands with <=8 distinct hits 13 IPs / 93.9%
+        # of volume and zero IPs with >=20 distinct (nearest explorer has 24 - a 3x margin).
+        #
+        # 'conditional' evaluates an expr over the whole bucket queue rather than just
+        # counting, which is what lets us ask "how much of this was NEW?".
+        # Pattern copied from the hub's crowdsecurity/ssh-time-based-bf.
+        #
+        # remediation: true is required for ANY profile to match, but the dedicated
+        # cowrie_replay_drop profile below intercepts this scenario FIRST (profiles are
+        # ordered, on_success: break) and emits a 'silentdrop' decision, NOT a ban. So
+        # this cannot double-ban with honeypot-vip-activity - the exact failure 35ade7f5
+        # removed the old cowrie scenario to prevent.
+        #
+        # It filters on cowrie command text and never on an HTTP status, so it cannot
+        # re-enter the 403/429 self-reinforcing ban loop (bouncer-middleware.yaml:28-54).
+        cowrie-replay-drop.yaml: |
+          type: conditional
+          name: homelab/cowrie-replay-drop
+          description: "Cowrie session replaying the same payload with no new commands - stop feeding it"
+          filter: "evt.Meta.log_type == 'cowrie_cmd' && evt.Meta.source_ip != ''"
+          groupby: "evt.Meta.source_ip"
+          capacity: -1
+          condition: |
+            len(queue.Queue) >= 30 &&
+            len(Distinct(map(queue.Queue, {#.Meta.cowrie_command}))) <= 8
+          leakspeed: 1h
+          blackhole: 30m
+          labels:
+            remediation: true
+            type: scan
+            service: cowrie
+            behavior: "ssh:bruteforce"
+            classification:
+              - "attack.T1110"
+            confidence: 3
+            spoofable: 0
+            label: "Cowrie low-novelty replay bot"
       # DETECT-ONLY for the tarpit: exclude it from enforcement so it ALERTS but never bans yet.
       # Delete this exclusion (and flip nothing else) to turn tarpit hits into real bans.
       simulation.yaml: |
         simulation: false
         exclusions:
           - homelab/iocaine-tarpit
+          # homelab/cowrie-replay-drop -> DETECT-ONLY on arrival (TALOS-hdw8).
+          # Its decision is a 'silentdrop' consumed only by the honeypot haproxy
+          # enforcer, so promoting it changes what reaches cowrie - not who gets
+          # banned elsewhere. Soak first.
+          # PROMOTION CRITERIA: every alerted IP is in the <=8-distinct set and NO IP
+          # with >=20 distinct commands has ever been alerted. Verify with:
+          #   cscli alerts list --scenario homelab/cowrie-replay-drop
+          - homelab/cowrie-replay-drop
           # LePresidente/http-generic-403-bf -> DETECT-ONLY (TALOS-y260).
           #
           # Kept for the signal, demoted from enforcing because the evidence is
@@ -335,6 +413,28 @@ spec:
       # notifier (config.notifications below) posts every ban to Discord (rec #6). on_success: break
       # keeps one decision per alert. Cowrie/http/appsec bans all flow through default_ip_remediation.
       profiles.yaml: |
+        # Cowrie replay bots (TALOS-hdw8). MUST stay above default_ip_remediation:
+        # profiles are ordered and on_success: break stops evaluation, so this one
+        # claims the alert and the default never turns it into a ban. That is what
+        # keeps homelab/honeypot-vip-activity the single ban source (35ade7f5).
+        #
+        # type: silentdrop is deliberately NOT 'ban' - only the honeypot haproxy
+        # enforcer honours it, so it drops replay traffic at the honeypot front door
+        # without touching what the Traefik bouncer blocks.
+        #
+        # Flat 7d, not the escalating (count+1)*4h the defaults use: these are botnet
+        # and residential IPs that rotate, so a permanent ban just accumulates dead
+        # entries in the map.
+        name: cowrie_replay_drop
+        filters:
+          - Alert.Remediation == true && Alert.GetScenario() == "homelab/cowrie-replay-drop"
+        decisions:
+          - type: silentdrop
+            duration: 168h
+        notifications:
+          - discord_default
+        on_success: break
+        ---
         name: default_ip_remediation
         filters:
           - Alert.Remediation == true && Alert.GetScope() == "Ip"
@@ -490,6 +590,14 @@ spec:
         - namespace: honeypot
           podName: "honeypot-lb-*"
           program: haproxy-honeypot
+          poll_without_inotify: true
+        # Cowrie's own JSON command stream (TALOS-hdw8). The logship sidecar tails
+        # cowrie.json to stdout, so this reads the container log like any other pod.
+        # Feeds homelab/cowrie-logs -> homelab/cowrie-replay-drop ONLY; it issues no
+        # ban, so the haproxy front above remains the single ban source (35ade7f5).
+        - namespace: honeypot
+          podName: cowrie-*
+          program: cowrie
           poll_without_inotify: true
         # ---- APP-LEVEL ACQUISITION (TALOS-y260 follow-up) ----
         # Until now CrowdSec only saw Traefik's edge logs, so anything that got
