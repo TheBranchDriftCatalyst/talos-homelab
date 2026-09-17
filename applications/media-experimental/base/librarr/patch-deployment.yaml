@@ -19,7 +19,10 @@ spec:
           env:
             - name: TZ
               value: America/New_York
-            # TODO: replace changeme creds + API_KEY post-deploy
+            # TODO: AUTH_USERNAME/AUTH_PASSWORD and API_KEY are still upstream
+            # placeholders. AUTH_* is librarr's OWN login (README: "Login username
+            # (enables session auth)") and this app IS published via IngressRoute,
+            # so they must be replaced -- tracked separately.
             - name: AUTH_USERNAME
               value: "admin"
             - name: AUTH_PASSWORD
@@ -28,6 +31,21 @@ spec:
               value: "changeme-generate-me"
             - name: QB_URL
               value: "http://qbittorrent.media.svc.cluster.local:8080"
+            # QB_USER/QB_PASS are SEPARATE from AUTH_* (upstream README). They were
+            # never set, so librarr fell back to its defaults admin/changeme and
+            # login-looped against qBittorrent every ~30-60s -- 150+ ban events in a
+            # single afternoon, and because qBit sees Traefik's pod IP for browser
+            # traffic that noise helped ban real users out of the WebUI.
+            - name: QB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-webui
+                  key: username
+            - name: QB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-webui
+                  key: password
           volumeMounts:
             - name: config
               mountPath: /data
