@@ -21,7 +21,24 @@ spec:
       labels:
         app: qbittorrent
         app.kubernetes.io/name: qbittorrent
-        vpn-gateway.io/rotation: enabled
+        # DISABLED deliberately (2026-09-17). The vpn-rotator CronJob (every 35m,
+        # infrastructure/base/vpn-gateway/rotation/) rotates WIREGUARD_PRIVATE_KEY
+        # between the se-nl-1 / se-de-1 / se-be-1 / se-in-1 fields of the
+        # 1Password item `protonvpn-wireguard` and DERIVES SERVER_COUNTRIES from
+        # the key name (se-in-1 -> India). It does NOT touch SERVER_NAMES, which
+        # is pinned below to Netherlands servers -- so the moment it rotated off
+        # NL the filter became "country India AND names NL#..." which matches
+        # nothing, gluetun could not select a server, the liveness probe failed
+        # and the container restart-looped. That is the recurrent qBittorrent VPN
+        # outage (37 restarts on one pod). The killswitch held throughout, so
+        # torrents stalled rather than leaking.
+        #
+        # Re-enabling requires the rotator to keep SERVER_NAMES consistent with
+        # the country it selects, OR dropping SERVER_NAMES here entirely and
+        # letting `port_forward_only` pick any PF server in the rotated country
+        # -- all four key countries DO have PF-capable servers (NL 7, DE 8,
+        # BE 3, IN 2), so that would actually work. Until then: pinned.
+        vpn-gateway.io/rotation: disabled
       annotations:
         # Note: Scraped via ServiceMonitor (not pod annotations) to avoid duplicates
         # Velero backup: only config, exclude downloads
@@ -207,11 +224,31 @@ spec:
               value: "protonvpn"
             - name: VPN_TYPE
               value: "wireguard"
+            # Key choice drives the country. secret `protonvpn-credentials` is
+            # extracted wholesale from 1Password item `protonvpn-wireguard`
+            # (see externalsecret.yaml), which holds exactly four keys.
+            #
+            # PORT-FORWARD-CAPABLE SERVERS PER KEY, as of 2026-09-17
+            # (source: /gluetun/servers.json, .protonvpn.servers where
+            #  .vpn=="wireguard" and .port_forward==true — regenerate with:
+            #  kubectl exec -n media deploy/qbittorrent -c gluetun --
+            #    cat /gluetun/servers.json)
+            #
+            #   se-nl-1  Netherlands  7 of 28  NL#316,412,512,612,712,843,943
+            #   se-de-1  Germany      8 of 23  DE#23,187,221,435,468,521,731,768
+            #   se-be-1  Belgium      3 of  6  BE#30,61,71
+            #   se-in-1  India        2 of  6  IN#13,26
+            #
+            # Every country has PF servers, so switching keys is viable — but
+            # SERVER_NAMES below MUST be changed to match, or the filter
+            # (country AND names AND port_forward_only) matches nothing and the
+            # VPN never comes up. That mismatch is exactly what the vpn-rotator
+            # was doing to this pod; rotation is disabled above because of it.
             - name: WIREGUARD_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
                   name: protonvpn-credentials
-                  key: se-nl-1  # Netherlands server - good for torrenting
+                  key: se-nl-1  # Netherlands — pinned; see SERVER_NAMES below
             - name: WIREGUARD_ADDRESSES
               value: "10.2.0.2/32"
             - name: SERVER_COUNTRIES
