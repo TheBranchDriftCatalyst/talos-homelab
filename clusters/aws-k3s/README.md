@@ -121,7 +121,7 @@ See `docs/HYBRID-CLOUD-PLAYBOOK.md` for detailed troubleshooting including:
 | `infrastructure/base/cilium/clustermesh-forwarders/` | Talos-side socat forwarders, :32380 out / :32381 in |
 | `clusters/aws-k3s/manifests/clustermesh/` | AWS-side socat forwarder, :32381 → 10.100.0.1:32381 |
 | `clusters/aws-k3s/ami/` | Packer templates + EC2 userdata (base, lighthouse, gpu-worker) |
-| `tools/carrierarr/` | EC2/Fargate fleet management agent + provisioning notes |
+| `.scratch/carrierarr/` (untracked archive) | EC2/Fargate fleet management agent + provisioning notes |
 | `configs/nebula-certs/` | Nebula certificates (gitignored) |
 
 ---

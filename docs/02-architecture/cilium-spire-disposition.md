@@ -494,7 +494,7 @@ The PV advertises `1Ti`, but:
 
 - The **PVC requests `1Gi`** (and so does the StatefulSet's `volumeClaimTemplate`, matching
   `values.yaml`'s `dataStorage.size: 1Gi`).
-- The `1Ti` comes from a **hand-written recovery PV**, `recovery/pv-recovery-2026-05-09.yaml`,
+- The `1Ti` comes from a **hand-written recovery PV**, `.scratch/recovery/pv-recovery-2026-05-09.yaml` (untracked archive),
   created during the 2026-05-09 UPS incident (`recovery.catalyst/incident: "ups-2026-05-09"`).
 - It is a `hostPath` volume on `local-path`. **There is no quota** — the capacity field is a label,
   not a reservation.
@@ -645,7 +645,7 @@ All GitOps, per the Flux/infra demarcation. Cilium is CNI → Flux.
    ```
 
    Then remove the `rec-cilium-spire-spire-data-spire-server-0` entry from
-   `recovery/pv-recovery-2026-05-09.yaml` so it is not resurrected.
+   `.scratch/recovery/pv-recovery-2026-05-09.yaml` (untracked archive) so it is not resurrected.
 
 7. **Verify**: `kubectl get pv | grep spire` empty, `kubectl get ns cilium-spire` not found,
    `kubectl -n kube-system get cm cilium-config -o yaml | grep mesh-auth` shows only

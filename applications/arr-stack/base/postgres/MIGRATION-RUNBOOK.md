@@ -483,7 +483,7 @@ reason for the choice; node-independence and the "never `instances: 1` on
 - **Deleting the PVC is a git operation, deleting the PV is not.** Removing the
   PVC from `pvc.yaml` is what deletes it — the arr-stack Kustomization runs
   `prune: true`. The PV (`rec-media-<app>-db-local`) is hand-written in
-  `recovery/pv-recovery-2026-05-09.yaml`, which no Kustomization applies, so it
+  `.scratch/recovery/pv-recovery-2026-05-09.yaml` (untracked archive), which no Kustomization applies, so it
   has to go by hand after the PVC is pruned and it goes `Released`.
 
 - **The host directory is NOT reclaimed, and that is correct.** `Retain` means

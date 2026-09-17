@@ -107,9 +107,6 @@ Docs that live next to the manifests they describe.
 | ---------------------------------------------------------------------------------- | ------------------------------------------------------------ |
 | [clusters/aws-k3s/README.md](../clusters/aws-k3s/README.md)                        | AWS k3s + Cilium ClusterMesh — **dormant** (apiserver at 0/0) |
 | [clusters/aws-k3s/ami/README.md](../clusters/aws-k3s/ami/README.md)                | AMI build for the k3s node                                   |
-| [tools/carrierarr/README.md](../tools/carrierarr/README.md)                        | Carrierarr provisioning tool                                 |
-| [tools/carrierarr/PROVISIONING-NOTES.md](../tools/carrierarr/PROVISIONING-NOTES.md) | Provisioning notes                                           |
-| [tools/carrierarr/QA-CHECKLIST.md](../tools/carrierarr/QA-CHECKLIST.md)             | QA checklist                                                 |
 
 ---
 

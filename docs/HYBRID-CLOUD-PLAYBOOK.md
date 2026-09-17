@@ -5,7 +5,7 @@ This document describes the complete setup for running a hybrid cloud architectu
 > **Related:** [clusters/aws-k3s/README.md](../clusters/aws-k3s/README.md) (AWS side + live status —
 > the link is currently dormant) · [05-projects/hybrid-llm-cluster/](05-projects/hybrid-llm-cluster/README.md)
 > (design docs) · [infrastructure/base/hybrid-llm/nebula/README.md](../infrastructure/base/hybrid-llm/nebula/README.md)
-> (Nebula manifests, unwired) · [tools/carrierarr/README.md](../tools/carrierarr/README.md)
+> (Nebula manifests, unwired) · `.scratch/carrierarr/` (untracked archive)
 
 ## Architecture Overview
 
@@ -252,13 +252,13 @@ aws secretsmanager create-secret \
 
 ### Build Worker Agent Binary
 ```bash
-cd tools/carrierarr
+cd .scratch/carrierarr
 GOOS=linux GOARCH=amd64 go build -o bin/linux-amd64/worker-agent ./cmd/worker-agent/
 ```
 
 ### Build Lighthouse AMI
 ```bash
-cd tools/carrierarr/ami
+cd .scratch/carrierarr/ami
 packer init .
 packer build -only='lighthouse.*' .
 ```
@@ -298,7 +298,7 @@ aws ec2 run-instances \
   --key-name hybrid-llm-key \
   --security-group-ids $SG_ID \
   --iam-instance-profile Name=catalyst-llm-gpu-worker \
-  --user-data file://tools/carrierarr/ami/userdata/lighthouse.sh \
+  --user-data file://.scratch/carrierarr/ami/userdata/lighthouse.sh \
   --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=catalyst-llm-lighthouse}]'
 ```
 
@@ -472,9 +472,9 @@ kubectl exec -n kube-system deploy/clustermesh-apiserver -c kvstoremesh -- \
 | `configs/nebula-certs/` | Nebula CA and certificates (gitignored) |
 | `infrastructure/base/nebula/` | Lighthouse K8s manifests |
 | `infrastructure/base/carrierarr/` | Carrierarr control plane |
-| `tools/carrierarr/ami/` | Packer templates |
-| `tools/carrierarr/ami/userdata/` | EC2 userdata scripts |
-| `tools/carrierarr/ami/variables.pkr.hcl` | Packer variables |
+| `.scratch/carrierarr/ami/` | Packer templates |
+| `.scratch/carrierarr/ami/userdata/` | EC2 userdata scripts |
+| `.scratch/carrierarr/ami/variables.pkr.hcl` | Packer variables |
 
 ---
 
