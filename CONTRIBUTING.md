@@ -155,7 +155,7 @@ task dev:validate:k8s
 
 ### YAML
 
-Enforced by `.yamllint.yaml` (`yamllint --strict`):
+Enforced by `dev/yamllint.yaml` (`yamllint -c dev/yamllint.yaml --strict`):
 
 - 2-space indentation, sequences indented
 - 120 character line length (warning level, not an error)
@@ -166,14 +166,14 @@ Enforced by `.yamllint.yaml` (`yamllint --strict`):
 
 ### Shell Scripts
 
-Formatted by `shfmt -w -i 2 -ci -sr`, linted by `shellcheck -x` (see `.shellcheckrc`):
+Formatted by `shfmt -w -i 2 -ci -sr`, linted by `shellcheck --rcfile=dev/shellcheckrc -x` (see `dev/shellcheckrc`):
 
 - 2-space indentation, indented `case` branches, simplified redirects
 - Use `[[` instead of `[`
 - Quote all variables
 - Use `set -euo pipefail`
 
-`.shellcheckrc` disables SC1091, SC2034, SC2155, SC2016, SC2059, SC2162 and SC2005 as project-wide false positives.
+`dev/shellcheckrc` disables SC1091, SC2034, SC2155, SC2016, SC2059, SC2162 and SC2005 as project-wide false positives.
 
 ### Markdown
 

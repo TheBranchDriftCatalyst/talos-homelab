@@ -104,7 +104,7 @@ git commit -m "feat: add feature" --no-verify
 
 ### YAMLLint
 
-**Config:** `.yamllint.yaml`
+**Config:** `dev/yamllint.yaml`
 
 Validates YAML syntax and style:
 
@@ -430,7 +430,7 @@ npm install -g markdownlint-cli
 | -------------------- | --------------------------------------------- |
 | `lefthook.yaml`      | Git hooks configuration                       |
 | `.gitleaks.toml`     | Secret scanning rules                         |
-| `.yamllint.yaml`     | YAML linting rules                            |
+| `dev/yamllint.yaml`     | YAML linting rules                            |
 | `.markdownlint.yaml` | Markdown linting rules                        |
 | `.gitignore`         | Ignore patterns (includes .output/, configs/) |
 
