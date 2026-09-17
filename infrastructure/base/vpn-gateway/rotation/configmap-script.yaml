@@ -54,11 +54,17 @@ data:
     # status="stopping", so its rotation was recorded as a failure, the server was
     # cooled down for an hour, and the Job exited 1 -- the same
     # BackoffLimitExceeded symptom as the /v1/publicip/ip bug but a DIFFERENT
-    # cause. 20x5s=100s covers observed re-establish times with margin.
+    # cause.
     #
-    # Keep the worst case inside the Job's activeDeadlineSeconds (1500s):
-    #   2 pods x MAX_RETRIES_PER_POD(3) x 100s = 600s, plus up to 600s jitter.
-    VALIDATE_RETRIES = int(os.getenv("VPN_VALIDATE_RETRIES", "20"))
+    # MEASURED, not guessed: the rotation soak (tests/test_vpn_rotation_soak.py,
+    # 6 real rotations on the canary) recorded end-to-end downtime of min 32.2s,
+    # avg 60.6s, max 88.8s. The original 15s was 4-6x short, and even 100s left
+    # only ~11s over the worst observed case. 36x5s=180s gives real headroom;
+    # re-run the soak if these numbers need revisiting.
+    #
+    # Worst case vs the Job's activeDeadlineSeconds (raised to 2400s with this):
+    #   2 pods x MAX_RETRIES_PER_POD(3) x 180s = 1080s, plus up to 600s jitter.
+    VALIDATE_RETRIES = int(os.getenv("VPN_VALIDATE_RETRIES", "36"))
     VALIDATE_DELAY = int(os.getenv("VPN_VALIDATE_DELAY", "5"))
 
     STATE_FILE = "/state/rotation-state.json"
@@ -509,9 +515,15 @@ data:
         """
         Validate the VPN is actually carrying traffic after rotation.
 
-        DO NOT gate on /v1/publicip/ip. That endpoint returns {"public_ip":""} on
-        this cluster even when the tunnel is completely healthy, and gating on it
-        made EVERY rotation false-fail: rotate_pod() returned False, the server
+        DO NOT gate on /v1/publicip/ip. It reports {"public_ip":""} until gluetun's
+        IP getter finishes its lookup, and that gap is EXACTLY the window right
+        after a rotation -- precisely when this function runs. It is NOT
+        permanently broken; an earlier note here said so and was wrong. Measured
+        2026-09-17: a freshly-rotated canary returned {"public_ip":""} while a
+        settled qBittorrent returned a fully populated body (185.107.44.112,
+        Netherlands, Breda) -- same cluster, same endpoint, different point in the
+        rotation cycle. It is a timing signal, not a liveness one.
+        Gating on it made EVERY rotation false-fail: rotate_pod() returned False, the server
         was written into the persisted failed_servers map, all 3 attempts burned,
         and main() exited 1 -> Job BackoffLimitExceeded every 35 min, with the
         1h FAILED_SERVER_COOLDOWN keeping healthy servers suppressed (TALOS-1gp,

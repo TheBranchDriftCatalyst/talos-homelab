@@ -22,7 +22,12 @@ spec:
       # one stuck job blocks all subsequent windows. 25 min < the 35 min
       # cron interval, so a wedged job dies before the next fire. See
       # TALOS-r22 (2026-07-21) for the 54-day apk-hang that motivated this.
-      activeDeadlineSeconds: 1500
+      # 2400s, not 1500s: validation now allows 180s per attempt (measured rotation
+      # downtime is 32-89s, see rotation soak), so the worst case is
+      # 2 pods x 3 attempts x 180s = 1080s plus up to 600s jitter = 1680s. At 1500s
+      # a slow-but-healthy run would be killed as DeadlineExceeded, which reads
+      # exactly like the failures we just spent a day chasing.
+      activeDeadlineSeconds: 2400
       template:
         metadata:
           labels:
