@@ -31,6 +31,82 @@ spec:
         supplementalGroups:
           - 100   # Synology 'users' group
           - 1000  # abc user group
+      initContainers:
+        # Assert local_ranges into sabnzbd.ini on EVERY pod start, mirroring
+        # qbittorrent's seed-webui-auth. Without this the setting is only ever a
+        # live hand-edit that dies with the PVC.
+        #
+        # WHY IT IS NEEDED: SABnzbd authenticates on the SOCKET PEER, not
+        # X-Forwarded-For. Its own log proves it:
+        #   "Unsuccessful login attempt from ::ffff:10.244.0.93
+        #    (X-Forwarded-For: 192.168.1.33)"
+        # Behind Traefik the peer is always Traefik's POD IP, so a LAN entry like
+        # 192.168.1.0/24 can never match for browser traffic and you get a second
+        # login after Authentik. The pre-existing 10.0.0.0/16 covered only
+        # 10.0.0.0-10.0.255.255, so it never covered the 10.244.x pod CIDR either
+        # (it reads like a typo for /8; the exact pod CIDR is used instead of /8
+        # so the bypass stays as narrow as it can be).
+        #
+        # TRADEOFF, accepted deliberately: this whitelists the whole pod CIDR, so
+        # ANY pod can reach the SABnzbd WebUI/API without logging in, and SABnzbd
+        # holds usenet provider credentials. qBittorrent got a tighter deal --
+        # WebUI\ReverseProxySupportEnabled + TrustedReverseProxiesList let it
+        # resolve the REAL client, so its whitelist is the LAN only and pods still
+        # authenticate. SABnzbd has no trusted-proxy setting, so this is the only
+        # lever. Revisit if upstream ever adds one.
+        #
+        # Only `local_ranges` is owned here; every other line is passed through.
+        - name: seed-local-ranges
+          image: python:3.11-alpine
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          resources:
+            requests: {memory: 32Mi, cpu: 10m}
+          volumeMounts:
+            - name: config
+              mountPath: /config
+          command: ["python3", "-c"]
+          args:
+            - |
+              import os
+
+              CONF = "/config/sabnzbd.ini"
+              KEY = "local_ranges"
+              VALUE = "127.0.0.1/8, 10.244.0.0/16, 192.168.1.0/24"
+              SECTION = "[misc]"
+
+              if not os.path.isfile(CONF):
+                  # First ever start: SABnzbd has not written its ini yet. Do
+                  # nothing rather than hand it a half-built file; the next start
+                  # (after SABnzbd creates it) seeds correctly.
+                  print("sabnzbd.ini not present yet; skipping local_ranges seed")
+                  raise SystemExit(0)
+
+              with open(CONF, "r", encoding="utf-8", errors="replace") as f:
+                  lines = f.read().splitlines()
+
+              # Drop every existing local_ranges, wherever it sits.
+              lines = [l for l in lines if not l.lstrip().startswith(KEY + " =")
+                       and not l.lstrip().startswith(KEY + "=")]
+
+              out, inserted = [], False
+              for l in lines:
+                  out.append(l)
+                  if not inserted and l.strip() == SECTION:
+                      out.append("{} = {}".format(KEY, VALUE))
+                      inserted = True
+              if not inserted:
+                  if out and out[-1].strip():
+                      out.append("")
+                  out.append(SECTION)
+                  out.append("{} = {}".format(KEY, VALUE))
+
+              tmp = CONF + ".seed-tmp"
+              with open(tmp, "w", encoding="utf-8") as f:
+                  f.write("\n".join(out) + "\n")
+              os.replace(tmp, CONF)
+              print("Asserted {} in {}".format(KEY, CONF))
       containers:
         - name: sabnzbd
           image: lscr.io/linuxserver/sabnzbd:latest

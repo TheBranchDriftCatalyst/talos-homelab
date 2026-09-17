@@ -19,16 +19,27 @@ spec:
           env:
             - name: TZ
               value: America/New_York
-            # TODO: AUTH_USERNAME/AUTH_PASSWORD and API_KEY are still upstream
-            # placeholders. AUTH_* is librarr's OWN login (README: "Login username
-            # (enables session auth)") and this app IS published via IngressRoute,
-            # so they must be replaced -- tracked separately.
+            # AUTH_* is librarr's OWN login (upstream README: "Login username
+            # (enables session auth)") -- NOT the qBittorrent client credentials
+            # below. Password and API key come from 1Password item `librarr` via
+            # externalsecret.yaml; they shipped as admin/changeme and
+            # "changeme-generate-me" on a PUBLIC repo for 43 days.
+            #
+            # API_KEY is load-bearing: patch-ingressroute.yaml serves
+            # PathPrefix(/api) at priority 100 with NO forward-auth middleware, so
+            # this key is that route's only protection.
             - name: AUTH_USERNAME
               value: "admin"
             - name: AUTH_PASSWORD
-              value: "changeme"
+              valueFrom:
+                secretKeyRef:
+                  name: librarr-credentials
+                  key: AUTH_PASSWORD
             - name: API_KEY
-              value: "changeme-generate-me"
+              valueFrom:
+                secretKeyRef:
+                  name: librarr-credentials
+                  key: API_KEY
             - name: QB_URL
               value: "http://qbittorrent.media.svc.cluster.local:8080"
             # QB_USER/QB_PASS are SEPARATE from AUTH_* (upstream README). They were
