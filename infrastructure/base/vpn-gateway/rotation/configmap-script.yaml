@@ -193,9 +193,93 @@ data:
                 "pod_ip": pod_ip,
                 "deployment": labels.get("app.kubernetes.io/name", meta.get("name")),
                 "rotation_strategy": labels.get("vpn-gateway.io/rotation-strategy", "api"),
+                # Optional per-pod minimum interval, e.g. "4h". Absent => rotate on
+                # every scheduled run, which is the historical behaviour, so pods
+                # that do not set it are unaffected.
+                "rotation_interval": labels.get("vpn-gateway.io/rotation-interval", ""),
             })
 
         return pods
+
+    def parse_interval(value: str) -> int:
+        """
+        Parse a rotation interval like "4h" / "90m" / "3600s" (bare number = seconds).
+        Returns 0 when unset or unparseable, meaning "no minimum interval".
+        """
+        v = (value or "").strip().lower()
+        if not v:
+            return 0
+        units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+        try:
+            if v[-1] in units:
+                return int(float(v[:-1]) * units[v[-1]])
+            return int(float(v))
+        except ValueError:
+            log(f"Unparseable rotation-interval {value!r}, treating as no interval", "WARN")
+            return 0
+
+    def vpn_is_healthy(pod_ip: str) -> bool:
+        """
+        Is this instance's tunnel currently carrying traffic?
+
+        Used to decide whether a pod that is INSIDE its rotation interval should
+        still be rotated. Deliberately mirrors validate_vpn_connection()'s signals
+        (status, plus a forwarded port when the instance requires one) and likewise
+        never consults /v1/publicip/ip, which reports empty here even when healthy.
+        Any error is treated as unhealthy, so a pod we cannot reach gets rotated
+        rather than silently left broken.
+        """
+        try:
+            url = f"http://{pod_ip}:8000/v1/vpn/status"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if json.loads(resp.read().decode()).get("status") != "running":
+                    return False
+        except Exception as e:
+            log(f"Health check failed for {pod_ip}: {e}", "WARN")
+            return False
+
+        if requires_port_forward(pod_ip):
+            try:
+                url = f"http://{pod_ip}:8000/v1/portforward"
+                req = urllib.request.Request(url, method="GET")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    return int(json.loads(resp.read().decode()).get("port") or 0) > 0
+            except Exception as e:
+                log(f"Port-forward health check failed for {pod_ip}: {e}", "WARN")
+                return False
+
+        return True
+
+    def should_rotate(pod: Dict, state: Dict) -> Tuple[bool, str]:
+        """
+        Decide whether to rotate this pod now. Returns (rotate?, reason).
+
+        Rotate when EITHER the tunnel is unhealthy (self-heal) OR the pod's
+        minimum interval has elapsed. A healthy pod inside its interval is SKIPPED,
+        and a skip is not an error -- main() must not count it toward error_count,
+        or every quiet run would exit 1 and fail the Job.
+        """
+        interval = parse_interval(pod.get("rotation_interval", ""))
+        if interval <= 0:
+            return True, "no interval configured"
+
+        if not vpn_is_healthy(pod["pod_ip"]):
+            return True, "vpn unhealthy"
+
+        last = (state.get("pod_last_rotated") or {}).get(pod.get("deployment", pod["name"]))
+        if not last:
+            return True, "no recorded rotation"
+
+        try:
+            last_dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+        except Exception:
+            return True, f"unparseable last-rotation {last!r}"
+
+        age = (datetime.now(timezone.utc) - last_dt).total_seconds()
+        if age >= interval:
+            return True, f"interval elapsed ({int(age)}s >= {interval}s)"
+        return False, f"healthy and only {int(age)}s into {interval}s interval"
 
     def discover_blue_green_deployments() -> List[Dict]:
         """
@@ -387,14 +471,52 @@ data:
             log(f"Failed to get current server for {pod_ip}: {e}", "WARN")
             return None
 
+    def requires_port_forward(pod_ip: str) -> bool:
+        """
+        Does this gluetun instance require port forwarding?
+        Read from its own parsed settings rather than guessed from labels, so it
+        cannot drift from what gluetun is actually enforcing.
+        """
+        try:
+            url = f"http://{pod_ip}:8000/v1/vpn/settings"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+            sel = (data.get("provider") or {}).get("server_selection") or {}
+            return bool(sel.get("port_forward_only"))
+        except Exception as e:
+            log(f"Could not read port-forward setting for {pod_ip}: {e}", "WARN")
+            return False
+
     def validate_vpn_connection(pod_ip: str, expected_country: str, max_retries: int = 5, delay: int = 3) -> bool:
         """
-        Validate VPN connection is working after rotation.
-        Checks that gluetun reports 'running' status and public IP is in expected country.
+        Validate the VPN is actually carrying traffic after rotation.
+
+        DO NOT gate on /v1/publicip/ip. That endpoint returns {"public_ip":""} on
+        this cluster even when the tunnel is completely healthy, and gating on it
+        made EVERY rotation false-fail: rotate_pod() returned False, the server
+        was written into the persisted failed_servers map, all 3 attempts burned,
+        and main() exited 1 -> Job BackoffLimitExceeded every 35 min, with the
+        1h FAILED_SERVER_COOLDOWN keeping healthy servers suppressed (TALOS-1gp,
+        amplifier TALOS-0jx).
+
+        Observed 2026-09-17 on the qBittorrent gluetun: /v1/publicip/ip was empty
+        while /v1/vpn/status said "running", /v1/portforward returned port 34677,
+        the log read "gateway external IPv4 address is 46.29.25.148", and the
+        app's own egress IP equalled that gateway. The tunnel was fine; the probe
+        was wrong.
+
+        Signals used instead:
+          - /v1/vpn/status == "running"            (primary, always required)
+          - /v1/portforward returns a non-zero port (additionally required when
+            the instance sets port_forward_only -- proves the tunnel carries
+            traffic, which is the property we actually care about)
+        Public IP is logged when present, but is never a pass/fail condition.
         """
+        need_pf = requires_port_forward(pod_ip)
         for attempt in range(max_retries):
             try:
-                # Check VPN status
+                # Primary gate: gluetun's own view of the tunnel.
                 status_url = f"http://{pod_ip}:8000/v1/vpn/status"
                 req = urllib.request.Request(status_url, method="GET")
                 with urllib.request.urlopen(req, timeout=10) as resp:
@@ -406,21 +528,43 @@ data:
                     time.sleep(delay)
                     continue
 
-                # Check public IP and country
-                ip_url = f"http://{pod_ip}:8000/v1/publicip/ip"
-                req = urllib.request.Request(ip_url, method="GET")
-                with urllib.request.urlopen(req, timeout=10) as resp:
-                    ip_data = json.loads(resp.read().decode())
-                    public_ip = ip_data.get("public_ip", "unknown")
-                    actual_country = ip_data.get("country", "unknown")
+                # Advisory only -- may legitimately be empty, never fails validation.
+                public_ip, actual_country = "", "unknown"
+                try:
+                    ip_url = f"http://{pod_ip}:8000/v1/publicip/ip"
+                    req = urllib.request.Request(ip_url, method="GET")
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        ip_data = json.loads(resp.read().decode())
+                        public_ip = ip_data.get("public_ip", "") or ""
+                        actual_country = ip_data.get("country", "unknown") or "unknown"
+                except Exception:
+                    pass
 
-                # Verify we got a public IP (not empty/private)
-                if public_ip and public_ip != "unknown":
-                    log(f"VPN validated: public_ip={public_ip}, country={actual_country}")
+                if need_pf:
+                    # Stronger proof for port-forwarding workloads (qBittorrent):
+                    # a forwarded port only exists if NAT-PMP succeeded over the tunnel.
+                    fwd_port = 0
+                    try:
+                        pf_url = f"http://{pod_ip}:8000/v1/portforward"
+                        req = urllib.request.Request(pf_url, method="GET")
+                        with urllib.request.urlopen(req, timeout=10) as resp:
+                            pf_data = json.loads(resp.read().decode())
+                            fwd_port = int(pf_data.get("port") or 0)
+                    except Exception as e:
+                        log(f"VPN validation {attempt+1}/{max_retries}: portforward read failed: {e}", "WARN")
+
+                    if fwd_port <= 0:
+                        log(f"VPN validation {attempt+1}/{max_retries}: running but no forwarded port yet, waiting...", "WARN")
+                        time.sleep(delay)
+                        continue
+
+                    log(f"VPN validated: status=running, forwarded_port={fwd_port}, "
+                        f"public_ip={public_ip or '<not reported>'}, country={actual_country}")
                     return True
 
-                log(f"VPN validation {attempt+1}/{max_retries}: no public IP yet, waiting...", "WARN")
-                time.sleep(delay)
+                log(f"VPN validated: status=running, public_ip={public_ip or '<not reported>'}, "
+                    f"country={actual_country}")
+                return True
 
             except Exception as e:
                 log(f"VPN validation {attempt+1}/{max_retries} failed: {e}", "WARN")
@@ -457,13 +601,28 @@ data:
         # Gluetun expects nested payload structure for WireGuard
         try:
             url = f"http://{pod_ip}:8000/v1/vpn/settings"
+            # names MUST be cleared alongside the country change. Server names are
+            # country-specific, so any pinned SERVER_NAMES becomes unsatisfiable the
+            # moment the country moves: qBittorrent pins NL#316,... and rotating it
+            # to India produced the filter "country India AND names NL#... AND
+            # port_forward_only", which matches no server. gluetun then retried every
+            # 30s, its liveness probe failed and kubelet restart-looped the container
+            # (37 restarts on one pod) until rotation was disabled for it.
+            #
+            # Clearing names is unconditionally correct, and selection stays safe
+            # because gluetun still applies that instance's own port_forward_only --
+            # so a port-forwarding workload lands on a PF-capable server in the new
+            # country rather than any server. No static country->names map is kept
+            # here on purpose: such a map would go stale against ProtonVPN's server
+            # set, which is the same class of bug being fixed.
             payload = json.dumps({
                 "wireguard": {
                     "private_key": wg_key
                 },
                 "provider": {
                     "server_selection": {
-                        "countries": [country]
+                        "countries": [country],
+                        "names": []
                     }
                 }
             }).encode()
@@ -575,9 +734,21 @@ data:
 
         # Rotate each pod
         results = []
+        skipped = 0
         for i, pod in enumerate(pods):
             pod_name = f"{pod['namespace']}/{pod['name']}"
             deployment = pod.get("deployment", pod["name"])
+
+            # Rotate on failure, or once the pod's own interval has elapsed. A pod
+            # with no vpn-gateway.io/rotation-interval label rotates every run, as
+            # before. Skips are NOT appended to results, so they cannot inflate
+            # error_count and fail the Job.
+            do_rotate, reason = should_rotate(pod, state)
+            if not do_rotate:
+                log(f"Skipping {pod_name}: {reason}")
+                skipped += 1
+                continue
+            log(f"Rotating {pod_name}: {reason}")
 
             # Get current server for this pod (to exclude from selection)
             current = state.get("pod_servers", {}).get(deployment)
@@ -611,6 +782,9 @@ data:
                     state.setdefault("server_counts", {})[new_server] = \
                         state.get("server_counts", {}).get(new_server, 0) + 1
                     state.setdefault("pod_servers", {})[deployment] = new_server
+                    # Timestamp drives the per-pod interval check on later runs.
+                    state.setdefault("pod_last_rotated", {})[deployment] = \
+                        datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
                     results.append((deployment, new_server, True))
                     break
                 else:
@@ -636,7 +810,7 @@ data:
         # Summary
         success_count = sum(1 for _, _, s in results if s)
         error_count = len(results) - success_count
-        log(f"Rotation complete: {success_count} success, {error_count} errors")
+        log(f"Rotation complete: {success_count} success, {error_count} errors, {skipped} skipped (healthy within interval)")
 
         if error_count > 0:
             sys.exit(1)

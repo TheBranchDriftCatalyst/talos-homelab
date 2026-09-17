@@ -33,12 +33,23 @@ spec:
         # outage (37 restarts on one pod). The killswitch held throughout, so
         # torrents stalled rather than leaking.
         #
-        # Re-enabling requires the rotator to keep SERVER_NAMES consistent with
-        # the country it selects, OR dropping SERVER_NAMES here entirely and
-        # letting `port_forward_only` pick any PF server in the rotated country
-        # -- all four key countries DO have PF-capable servers (NL 7, DE 8,
-        # BE 3, IN 2), so that would actually work. Until then: pinned.
+        # The rotator now clears `names` alongside the country change, so the
+        # impossible filter can no longer form, and selection falls to this
+        # instance's port_forward_only -- landing on a PF-capable server in
+        # whichever country it rotates to (NL 7, DE 8, BE 3, IN 2 available).
+        #
+        # STILL `disabled` pending verification: the rotator's own Jobs were
+        # failing independently (TALOS-1gp -- it validated via
+        # /v1/publicip/ip, which returns empty on this cluster, so every
+        # rotation false-failed and exited 1). That is fixed in the same change
+        # but must be observed running green before this is flipped to
+        # `enabled`, or we would re-enable into a broken rotator.
         vpn-gateway.io/rotation: disabled
+        # Rotate at most every 4h instead of the 35m CronJob cadence -- rotation
+        # changes the forwarded port, and port churn forces constant tracker
+        # re-announces and stalls inbound connections (see SERVER_NAMES below).
+        # The rotator still rotates sooner if the tunnel is unhealthy.
+        vpn-gateway.io/rotation-interval: 4h
       annotations:
         # Note: Scraped via ServiceMonitor (not pod annotations) to avoid duplicates
         # Velero backup: only config, exclude downloads
