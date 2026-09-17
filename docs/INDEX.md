@@ -20,7 +20,6 @@ summarizes its children — drill down from here.
 | [TRAEFIK.md](../TRAEFIK.md)                               | Ingress: Traefik DaemonSet, entrypoints, TLS, IngressRoutes, LB VIP             |
 | [OBSERVABILITY.md](../OBSERVABILITY.md)                   | **Authoritative** monitoring stack — Alloy / Mimir / Loki / Tempo / ClickStack  |
 | [SECURITY_ops.md](../SECURITY_ops.md)                     | CrowdSec + bouncer, honeypot, iocaine, allowlists, ban escalation               |
-| [SKILLZ.md](../SKILLZ.md)                                 | Catalog of agent skills and which ones apply to this repo                       |
 | [IMPLEMENTATION-TRACKER.md](../IMPLEMENTATION-TRACKER.md) | **Frozen 2025-12-12 snapshot** — historical record, not current state           |
 | [DAH_REPORT.md](../DAH_REPORT.md)                         | 2026-03-14 three-perspective system analysis (findings marked resolved/changed) |
 | [beads-index.md](../beads-index.md)                       | Beads issue-tracker index                                                       |

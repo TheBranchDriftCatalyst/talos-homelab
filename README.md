@@ -58,7 +58,7 @@ Full navigation: **[docs/INDEX.md](docs/INDEX.md)**.
 
 Root-level docs: [QUICKSTART.md](QUICKSTART.md) · [CONTRIBUTING.md](CONTRIBUTING.md) ·
 [TRAEFIK.md](TRAEFIK.md) · [OBSERVABILITY.md](OBSERVABILITY.md) · [SECURITY_ops.md](SECURITY_ops.md) ·
-[CLAUDE.md](CLAUDE.md) · [AGENTS.md](AGENTS.md) · [SKILLZ.md](SKILLZ.md) ·
+[CLAUDE.md](CLAUDE.md) · [AGENTS.md](AGENTS.md) ·
 [IMPLEMENTATION-TRACKER.md](IMPLEMENTATION-TRACKER.md) (frozen 2025-12-12) ·
 [DAH_REPORT.md](DAH_REPORT.md) (2026-03-14 analysis)
 
