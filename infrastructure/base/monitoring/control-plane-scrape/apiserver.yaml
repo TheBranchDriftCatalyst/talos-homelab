@@ -24,7 +24,17 @@ spec:
       interval: 30s
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
-        insecureSkipVerify: true
+        # Verify the API SERVER, the highest-value impersonation target in the cluster
+        # (TALOS-pnyo). This scrape already mounts the ServiceAccount token; the cluster CA
+        # sits in the SAME directory, so this costs one line and distributes nothing.
+        #
+        # Confirmed against the real targets before enabling, because ServiceMonitors scrape
+        # ENDPOINT IPs rather than the Service DNS name and a SAN that only covered
+        # kubernetes.default.svc would fail: probed 192.168.1.54/.30/.177:6443 from inside a
+        # monitoring pod and each returned "Verify return code: 0 (ok)" with this CA. No
+        # serverName override is needed.
+        caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecureSkipVerify: false
       metricRelabelings:
         # Cardinality control: keep only the request/latency families we
         # actually alert and dashboard on, plus the apiserver's own Go

@@ -52,4 +52,15 @@ spec:
       interval: 30s
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
+        # STAYS TRUE, AND IT IS NOT AN OVERSIGHT -- do not "fix" this without re-testing.
+        # Talos serves the scheduler metrics endpoint (:10259) with a SELF-SIGNED
+        # certificate that is NOT issued by the cluster CA, so there is nothing to verify
+        # against. Measured from inside a monitoring pod against the live endpoint:
+        #   openssl s_client -connect 192.168.1.54:10259 -CAfile <serviceaccount ca.crt>
+        #   -> Verify return code: 19 (self-signed certificate in certificate chain)
+        # Setting caFile here would fail the handshake and silently kill this scrape.
+        #
+        # The apiserver scrape in this same directory DOES verify (return code 0) -- the
+        # difference is real, not inconsistency. Revisit only if Talos starts issuing these
+        # from the cluster CA. TALOS-pnyo.
         insecureSkipVerify: true
