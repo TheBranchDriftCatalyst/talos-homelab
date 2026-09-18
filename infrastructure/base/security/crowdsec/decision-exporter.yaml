@@ -67,13 +67,14 @@ spec:
             name: crowdsec-decision-exporter
         # ca.crt is published by cert-manager into the SAME secret that serves the LAPI cert,
         # so verification needs no new Certificate, no new issuer and no cross-namespace copy.
+        # homelab-ca-bundle, NOT the leaf secret's ca.crt. The leaf secret is rewritten
+        # every time cert-manager re-issues the LAPI certificate, which is exactly what took
+        # this exporter down; the CA bundle only changes when the CA itself rotates (2036).
+        # trust-manager publishes it into every namespace, so this is also one less coupling
+        # to the crowdsec chart's internals.
         - name: lapi-ca
-          secret:
-            secretName: crowdsec-lapi-tls
-            defaultMode: 0444
-            items:
-              - key: ca.crt
-                path: ca.crt
+          configMap:
+            name: homelab-ca-bundle
         - name: keys
           secret:
             secretName: crowdsec-decision-exporter-key

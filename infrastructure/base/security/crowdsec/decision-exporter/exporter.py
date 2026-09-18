@@ -28,7 +28,20 @@ ORIGINS = {'crowdsec', 'cscli', 'cscli-import'}
 _CA_FILE = os.environ.get('LAPI_CA_FILE', '/tls/ca.crt')
 if not Path(_CA_FILE).is_file():
     raise SystemExit(f'LAPI CA bundle missing at {_CA_FILE}; refusing to run unverified')
-_TLS_CTX = ssl.create_default_context(cafile=_CA_FILE)
+
+
+def _tls_context():
+    """Build the TLS context PER CALL, never once at import.
+
+    Building it at import is what took this exporter down for two hours: the LAPI certificate
+    was re-issued under a new CA (the homelab-ca swap), the mounted file updated, and the
+    running process went on trusting only the CA it had read at startup -- 129 consecutive
+    URLError polls with no self-healing, because nothing restarts a non-chart Deployment on
+    certificate rotation. A fresh context against the very same file succeeded immediately.
+
+    Rebuilding costs a file read every 30s and removes the entire class of failure.
+    """
+    return ssl.create_default_context(cafile=_CA_FILE)
 DURATION = re.compile(r'(\d+(?:\.\d+)?)(h|ms|us|µs|ns|m|s)')
 UNITS = {'h': 3600, 'm': 60, 's': 1, 'ms': .001, 'us': .000001, 'µs': .000001, 'ns': .000000001}
 
@@ -84,7 +97,7 @@ class Inventory:
             key = Path(os.environ['API_KEY_FILE']).read_text().strip()
             request = Request(os.environ['LAPI_URL'] + '/v1/decisions?origins=crowdsec,cscli,cscli-import',
                               headers={'X-Api-Key': key, 'User-Agent': 'crowdsec-decision-inventory/1.0.0'})
-            with urlopen(request, timeout=10, context=_TLS_CTX) as response:
+            with urlopen(request, timeout=10, context=_tls_context()) as response:
                 raw = response.read(MAX_BYTES + 1)
             if len(raw) > MAX_BYTES:
                 raise ValueError('decision response exceeds limit')
