@@ -135,7 +135,22 @@ spec:
             A process was executed inside a honeypot emulator container. Cowrie (python/twistd) and
             Beelzebub (go binary) emulate the shell in-process, so a real exec here beyond the known
             entrypoint indicates an attacker broke OUT of the emulation into the actual container.
-          condition: spawned_process and honeypot_emulator and not proc.name in (honeypot_expected_procs)
+          # The `not container_start` clause is load-bearing, not cosmetic. Without it this
+          # rule fires CRITICAL on every single pod restart: the container's own init is
+          # spawned by runc and its name is not in the expected list, so a routine rollout
+          # looked exactly like an escape. Measured on the live cluster -- proc.cmdline
+          # "6 init", proc.pname "runc", user root -- 4 hits from one afternoon of cowrie
+          # restarts. With CRITICAL now routed to Discord (TALOS-vy8s), that is the precise
+          # way an alert channel gets muted and a real breach gets missed.
+          #
+          # Scoped to vpid=1 deliberately: `kubectl exec` into the emulator is ALSO parented
+          # by runc, and that IS worth alerting on, so excluding parent=runc wholesale would
+          # blind the rule to exactly the operator-or-attacker exec it should catch. Only the
+          # container's own PID 1 at startup is exempted.
+          condition: >
+            spawned_process and honeypot_emulator
+            and not proc.name in (honeypot_expected_procs)
+            and not (proc.pname = runc and proc.vpid = 1)
           output: >
             HONEYPOT BREACH unexpected process (ns=%k8s.ns.name pod=%k8s.pod.name container=%container.name
             proc=%proc.cmdline parent=%proc.pname user=%user.name)
