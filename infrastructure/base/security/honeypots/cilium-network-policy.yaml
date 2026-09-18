@@ -39,6 +39,21 @@ spec:
             - { key: app, operator: In, values: [cowrie, beelzebub] }
       toPorts:
         - ports: [{ port: "2222", protocol: TCP }, { port: "2223", protocol: TCP }]
+    # haproxy-novelty-bouncer -> CrowdSec LAPI (TALOS-hdw8). WITHOUT THIS THE BOUNCER IS A NO-OP:
+    # it fails open and only prints {"event":"reconcile_error"}, so the first deploy logged 228
+    # consecutive failures and 0 successes without anything going red. DNS resolved; TCP timed out.
+    #
+    # Scoped to the honeypot-lb endpoint ONLY (this policy's endpointSelector) and to the LAPI
+    # pods on 8080. cowrie and beelzebub keep their original cage -- the honeypots themselves must
+    # never gain a route into the crowdsec namespace. This is the same trust the Traefik bouncers
+    # already hold, and the key is read-only (decision list).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crowdsec
+            k8s-app: crowdsec
+            type: lapi
+      toPorts:
+        - ports: [{ port: "8080", protocol: TCP }]
 ---
 # Cowrie: ingress only from haproxy; egress public 80/443 (sample-fetch), all private excepted.
 apiVersion: cilium.io/v2
