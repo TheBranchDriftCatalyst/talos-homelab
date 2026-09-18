@@ -16,7 +16,21 @@ spec:
       # --- LAPI (stream mode: decisions cached locally, LAPI is out-of-band) ---
       crowdsecMode: stream
       crowdsecLapiScheme: https  # LAPI is TLS (self-signed CA via cert-manager, TALOS-3pdz)
-      crowdsecLapiTLSInsecureVerify: "true"  # self-signed CA, in-cluster hop
+      # VERIFY the LAPI certificate instead of accepting any certificate (TALOS-k5vm).
+      # This hop previously ran InsecureVerify: "true", so it had encryption without
+      # authentication -- anything able to answer on that Service name could have impersonated
+      # the LAPI to the bouncer that decides who gets banned.
+      #
+      # The CA comes from the homelab-ca-bundle ConfigMap that trust-manager publishes into
+      # every namespace, mounted into traefik in the previous commit. Verified end to end
+      # before flipping this: the file inside the traefik pod validates the live LAPI
+      # certificate, and the LAPI cert's SAN already covers the exact name dialled below.
+      #
+      # THIS BOUNCER IS FAIL-CLOSED. If verification breaks, every HTTP route stops serving,
+      # not just crowdsec. Do not change this line without confirming a real request still
+      # gets a response -- Traefik pods stay Ready while the plugin rejects traffic.
+      crowdsecLapiTLSInsecureVerify: "false"
+      crowdsecLapiTLSCertificateAuthorityFile: /etc/traefik/crowdsec-ca/ca.crt
       crowdsecLapiHost: crowdsec-service.crowdsec.svc.cluster.local:8080
       crowdsecLapiKeyFile: /etc/traefik/crowdsec/lapi-key
       # Keep cached decisions through short interruptions; close after five failed refreshes.
