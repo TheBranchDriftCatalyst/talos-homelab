@@ -358,19 +358,28 @@ spec:
       # crowdsec expands ${ENV} in this file at load time, so we reuse the DB_* env vars already
       # injected into lapi.env (creds from the CNPG-generated crowdsec-postgres-app secret; host/
       # sslmode static). ${REGISTRATION_TOKEN} is chart-generated + injected into LAPI/agent/appsec
-      # pods — keep the auto_registration block verbatim so agents/appsec re-register cleanly once
-      # the Postgres schema exists (they run `cscli lapi register --token $REGISTRATION_TOKEN`).
+      # pods. auto_registration is DISABLED below — see the note there.
       config.yaml.local: |
         api:
           server:
-            auto_registration: # Activate if not using TLS for authentication
-              enabled: true
-              token: "${REGISTRATION_TOKEN}" # /!\ Do not modify this variable (auto-generated and handled by the chart)
-              allowed_ranges: # /!\ Make sure to adapt to the pod IP ranges used by your cluster
-                - "127.0.0.1/32"
-                - "192.168.0.0/16"
-                - "10.0.0.0/8"
-                - "172.16.0.0/12"
+            # DISABLED (TALOS-cscw). Its own upstream comment says "Activate if not using
+            # TLS for authentication" -- and this deployment DOES use TLS: tls.enabled with
+            # tlsClientAuth for both agent and appsec, and `cscli machines list` shows every
+            # engine authenticating `tls`, none via token. So this was a leftover from the
+            # pre-TLS era doing nothing but widening the attack surface.
+            #
+            # What it cost while enabled: REGISTRATION_TOKEN is injected into the LAPI, agent
+            # AND appsec pod envs, and allowed_ranges covered the entire pod CIDR plus all of
+            # RFC1918. Any workload that could read that env from anywhere in the cluster
+            # could register itself as a machine and then push fabricated alerts (ban
+            # arbitrary IPs = DoS of legitimate clients) or delete decisions. The LAPI has no
+            # NetworkPolicy restricting who can reach :8080 either.
+            #
+            # DISASTER RECOVERY: if the LAPI datastore is ever rebuilt and TLS registration
+            # cannot bootstrap, flip enabled back to true TEMPORARILY, let the engines
+            # re-register, then set it back. Do not leave it on.
+            auto_registration:
+              enabled: false
         db_config:
           type: pgx # postgres via the pgx driver (crowdsec's recommended pg backend)
           user: ${DB_USER} # from crowdsec-postgres-app secret (via lapi.env)
@@ -664,9 +673,6 @@ spec:
           program: sabnzbd
           poll_without_inotify: true
         - namespace: media
-          podName: "qbittorrent-*"
-          program: qbittorrent
-          poll_without_inotify: true
         - namespace: media-experimental
           podName: "audiobookshelf-*"
           program: audiobookshelf
@@ -674,9 +680,6 @@ spec:
         # Immich/Home Assistant use explicit container filename matches below;
         # ReplicaSet hash prefixes change on rollout and are not stable selectors.
         - namespace: catalyst-llm
-          podName: "litellm-*"
-          program: litellm
-          poll_without_inotify: true
         - namespace: monitoring
           podName: "clickstack-mongodb-*"
           program: mongodb
@@ -686,6 +689,27 @@ spec:
       # file; on worker nodes it's absent and harmlessly skipped. crowdsecurity/k8s-audit detects
       # sensitive events (secret reads, exec, RBAC/priv-esc, anonymous access). (TALOS-pbn)
       additionalAcquisition:
+        # Container-pinned, NOT podName globs (TALOS-cscw). Measured on a live agent, the
+        # old globs were ingesting the wrong containers entirely -- the same mistake this
+        # file already documents for forgejo:
+        #   litellm-*      also matched litellm-postgres-N (CNPG) and its barman-cloud
+        #                  sidecar -- 58 lines/agent of database noise, 0 parsed
+        #   qbittorrent-*  also matched the gluetun VPN sidecar (528 lines) and port-sync
+        # Every one of those was unparsed, so they bought nothing and cost parser cycles.
+        - source: file
+          filenames:
+            - /var/log/containers/litellm-*_catalyst-llm_litellm-*.log
+          poll_without_inotify: true
+          labels:
+            type: containerd
+            program: litellm
+        - source: file
+          filenames:
+            - /var/log/containers/qbittorrent-*_media_qbittorrent-*.log
+          poll_without_inotify: true
+          labels:
+            type: containerd
+            program: qbittorrent
         - source: file
           filenames:
             - /var/log/containers/cowrie-*_honeypot_logship-*.log
@@ -717,7 +741,7 @@ spec:
         # (crowdsecurity/whitelists is NOT a collection; RFC1918/CF whitelisting is the custom
         #  homelab/whitelist parser above. whitelist-good-actors = community known-good bots.)
         - name: COLLECTIONS
-          value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/whitelist-good-actors crowdsecurity/k8s-audit firix/authentik LePresidente/jellyfin crowdsecurity/plex LePresidente/grafana crowdsecurity/sshd-impossible-travel crowdsecurity/appsec-generic-rules schiz0phr3ne/sonarr schiz0phr3ne/radarr schiz0phr3ne/prowlarr crowdsecurity/sabnzbd gilbsgilbs/qbittorrent plague-doctor/audiobookshelf gauth-fr/immich crowdsecurity/home-assistant LearningSpot/litellm timokoessler/mongodb crowdsecurity/http-cve crowdsecurity/http-dos crowdsecurity/pgsql"
+          value: "crowdsecurity/traefik crowdsecurity/base-http-scenarios crowdsecurity/whitelist-good-actors crowdsecurity/k8s-audit firix/authentik LePresidente/jellyfin crowdsecurity/plex LePresidente/grafana crowdsecurity/appsec-generic-rules schiz0phr3ne/sonarr schiz0phr3ne/radarr schiz0phr3ne/prowlarr crowdsecurity/sabnzbd gilbsgilbs/qbittorrent plague-doctor/audiobookshelf gauth-fr/immich crowdsecurity/home-assistant LearningSpot/litellm timokoessler/mongodb crowdsecurity/http-cve crowdsecurity/http-dos crowdsecurity/pgsql"
       # Traefik is a DaemonSet on every node incl control-plane — the agent must be too.
       tolerations:
         - key: node-role.kubernetes.io/control-plane
