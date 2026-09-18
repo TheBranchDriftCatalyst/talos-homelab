@@ -57,10 +57,20 @@ spec:
           volumeMounts:
             - {name: code, mountPath: /app, readOnly: true}
             - {name: keys, mountPath: /keys, readOnly: true}
+            - {name: lapi-ca, mountPath: /tls, readOnly: true}
       volumes:
         - name: code
           configMap:
             name: crowdsec-decision-exporter
+        # ca.crt is published by cert-manager into the SAME secret that serves the LAPI cert,
+        # so verification needs no new Certificate, no new issuer and no cross-namespace copy.
+        - name: lapi-ca
+          secret:
+            secretName: crowdsec-lapi-tls
+            defaultMode: 0444
+            items:
+              - key: ca.crt
+                path: ca.crt
         - name: keys
           secret:
             secretName: crowdsec-keys

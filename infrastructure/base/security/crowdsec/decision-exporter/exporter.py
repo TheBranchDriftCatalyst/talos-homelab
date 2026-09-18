@@ -12,8 +12,23 @@ from urllib.request import Request, urlopen
 LIMIT = 1000
 MAX_BYTES = 8 * 1024 * 1024
 ORIGINS = {'crowdsec', 'cscli', 'cscli-import'}
-# LAPI is TLS (self-signed, in-cluster); skip verify for this hop (TALOS-3pdz/dw2p).
-_TLS_CTX = ssl._create_unverified_context()
+# LAPI is TLS, issued by the in-cluster crowdsec-ca (cert-manager). This hop used to run
+# ssl._create_unverified_context(), which accepts ANY certificate -- so the encryption bought
+# confidentiality but no authentication, and anything able to answer on that Service name
+# could have fed this exporter a fabricated decision inventory.
+#
+# The CA was there the whole time: crowdsec-lapi-tls publishes ca.crt alongside the cert, and
+# the served cert's SAN already covers crowdsec-service.crowdsec.svc.cluster.local, which is
+# exactly the name LAPI_URL dials. Nothing had to be reissued to turn verification on.
+#
+# Deliberately FAILS LOUDLY if the CA is absent rather than falling back to unverified. A
+# silent downgrade is how a security control ends up reporting success while enforcing
+# nothing -- this exporter is an observer, so the worst case of failing here is a metrics
+# gap, which the CrowdSecDecisionExporterDown alert already covers.
+_CA_FILE = os.environ.get('LAPI_CA_FILE', '/tls/ca.crt')
+if not Path(_CA_FILE).is_file():
+    raise SystemExit(f'LAPI CA bundle missing at {_CA_FILE}; refusing to run unverified')
+_TLS_CTX = ssl.create_default_context(cafile=_CA_FILE)
 DURATION = re.compile(r'(\d+(?:\.\d+)?)(h|ms|us|µs|ns|m|s)')
 UNITS = {'h': 3600, 'm': 60, 's': 1, 'ms': .001, 'us': .000001, 'µs': .000001, 'ns': .000000001}
 
