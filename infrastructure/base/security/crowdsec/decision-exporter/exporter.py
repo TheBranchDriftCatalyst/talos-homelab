@@ -26,8 +26,6 @@ ORIGINS = {'crowdsec', 'cscli', 'cscli-import'}
 # nothing -- this exporter is an observer, so the worst case of failing here is a metrics
 # gap, which the CrowdSecDecisionExporterDown alert already covers.
 _CA_FILE = os.environ.get('LAPI_CA_FILE', '/tls/ca.crt')
-if not Path(_CA_FILE).is_file():
-    raise SystemExit(f'LAPI CA bundle missing at {_CA_FILE}; refusing to run unverified')
 
 
 def _tls_context():
@@ -40,7 +38,15 @@ def _tls_context():
     certificate rotation. A fresh context against the very same file succeeded immediately.
 
     Rebuilding costs a file read every 30s and removes the entire class of failure.
+
+    The missing-CA guard lives HERE rather than at module scope on purpose. As an import-time
+    raise it also fired on any machine without the pod's mount, which broke the offline test
+    suite -- the module could not even be imported to test its parsing helpers. Checking at
+    first use keeps the fail-loud guarantee (the process still refuses to talk to LAPI
+    unverified, and refresh() surfaces it) without making import itself environment-dependent.
     """
+    if not Path(_CA_FILE).is_file():
+        raise RuntimeError(f'LAPI CA bundle missing at {_CA_FILE}; refusing to connect unverified')
     return ssl.create_default_context(cafile=_CA_FILE)
 DURATION = re.compile(r'(\d+(?:\.\d+)?)(h|ms|us|µs|ns|m|s)')
 UNITS = {'h': 3600, 'm': 60, 's': 1, 'ms': .001, 'us': .000001, 'µs': .000001, 'ns': .000000001}
