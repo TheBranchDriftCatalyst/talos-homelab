@@ -49,11 +49,25 @@ spec:
           secret:
             secretName: crowdsec-bouncer-key
             optional: true # boot even before the secret exists (breaks the crowdsec↔traefik cycle)
+        # CA for VERIFYING the CrowdSec LAPI certificate (TALOS-k5vm). Published into every
+        # namespace by trust-manager, so traefik needs no cross-namespace copy and picks up
+        # CA rotation automatically -- which matters because the previous crowdsec-specific
+        # CA expires 2026-12-09 and this bouncer is fail-closed.
+        # Mounted here in its OWN commit, BEFORE the middleware starts requiring it: the
+        # Middleware CR is dynamic config and applies with no pod restart, so flipping both
+        # at once could demand the file before the pods carrying it exist.
+        - name: crowdsec-lapi-ca
+          configMap:
+            name: homelab-ca-bundle
+            optional: true
 
     # Mount for the CrowdSec bouncer key volume above (into the Traefik container).
     additionalVolumeMounts:
       - name: crowdsec-bouncer-key
         mountPath: /etc/traefik/crowdsec
+        readOnly: true
+      - name: crowdsec-lapi-ca
+        mountPath: /etc/traefik/crowdsec-ca
         readOnly: true
 
     # HostPort rollout fix: terminate all old pods before starting new
