@@ -47,27 +47,38 @@ spec:
     # own startup log confirms it only ever enabled /run/host-containerd/containerd.sock.
     # Disabling the dead ones removes four host mounts from the most privileged pod we run.
     # NOTE the path is collectors.containerEngine.engines -- NOT collectors.container.*,
-    # which is silently ignored (caught by rendering the DaemonSet before deploying).
+    # which is silently ignored.
+    #
+    # THE cri ENGINE IS LOAD-BEARING. Disabling it killed container metadata cluster-wide:
+    # k8s.ns.name went null on 299/299 sampled events and container.name became "host". Every
+    # honeypot-breach rule filters on k8s.ns.name = "honeypot" and container.name in
+    # (cowrie, beelzebub), so none of them could fire -- Falco kept emitting events and looked
+    # perfectly healthy while the tripwires were blind. Event COUNTS cannot detect this;
+    # sample output_fields and confirm k8s.ns.name is populated.
+    #
+    # containerd and cri are different protocols against the same daemon: the native
+    # containerd API does not carry the Kubernetes pod metadata that the CRI API does.
+    #
+    # /run/host-containerd/containerd.sock DOES NOT EXIST ON TALOS. Verified from inside the
+    # pod: kubelet materialises that hostPath as an EMPTY DIRECTORY, so listing it is a decoy
+    # that silently resolves to nothing. Only /run/containerd/containerd.sock is a real socket
+    # (srw-rw---- root:root; falco runs as uid 0, so no DAC_OVERRIDE is needed to read it).
+    #
+    # docker/podman stay disabled: genuinely absent here, and each enabled engine mounts its
+    # hostPath socket whether or not the path is real.
     collectors:
       containerEngine:
         engines:
-          # Dead on Talos: no docker daemon, no podman, no crio, no k3s. Each enabled engine
-          # gets its hostPath socket mounted whether or not the path exists.
           docker: {enabled: false}
           podman: {enabled: false}
-          # cri is disabled but its two REAL sockets are folded into containerd below. The
-          # cri engine also drags in /run/crio and /run/k3s, which cannot exist here.
-          # Keeping both containerd paths matters: losing container metadata would strip
-          # k8s.ns.name/container.name from events, and every honeypot-breach rule filters
-          # on exactly those.
-          cri: {enabled: false}
           containerd:
             enabled: true
             sockets:
-              - /run/host-containerd/containerd.sock
               - /run/containerd/containerd.sock
-    # Keep default rules (cluster-wide baseline: shell-in-container, sensitive reads, etc.),
-    # plus our honeypot-breach tripwires below.
+          cri:
+            enabled: true
+            sockets:
+              - /run/containerd/containerd.sock
     falco:
       rules_files:
         - /etc/falco/falco_rules.yaml
