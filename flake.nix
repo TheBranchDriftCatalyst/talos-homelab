@@ -57,6 +57,14 @@
               tilt
               lefthook # git hooks
 
+              # The Go TOOLCHAIN, not just Go-built binaries. dev/docs-generator/
+              # is a Go module (`docsgen`), and `task docs:build` compiles it into
+              # dev/docs-generator/bin, which the shellHook below puts on PATH.
+              # `go` tracks the current nixpkgs default rather than a pinned
+              # go_1_xx, so the toolchain moves with the flake lock instead of
+              # rotting behind it.
+              go
+
               # Issue tracking. CLAUDE.md mandates bd over TodoWrite, so the
               # repo should carry it. nixpkgs pins 1.2.2 — deliberately the
               # release that refuses the schema-corrupting 1.2.1.
@@ -97,7 +105,27 @@
             # does.
             shellHook = ''
               export PATH="${pythonEnv}/bin:$PATH"
-              echo "⚗️  talos-homelab · talosctl $(talosctl version --client 2>/dev/null | awk '/Tag:/{print $2; exit}') · flux $(flux --version 2>/dev/null | awk '{print $3}') · $(python --version 2>&1)"
+
+              # Repo-local Go tools built by `task docs:build`. Putting the build
+              # output on PATH is what lets `docsgen lint` be typed anywhere in the
+              # repo without a path prefix or a `go run` incantation.
+              #
+              # GOWORK=off is deliberate: a parent go.work in the surrounding
+              # workspace otherwise pulls sibling modules into the build and breaks
+              # it. This module is self-contained and must stay that way, since the
+              # whole point is that dev/docs-generator/ can be copied elsewhere.
+              export GOWORK=off
+              export PATH="$PWD/dev/docs-generator/bin:$PATH"
+
+              # mise exports a global GOROOT (its own Go install) from the user's
+              # profile. Inherited here it makes the flake's `go` drive a DIFFERENT
+              # toolchain, which fails as:
+              #   compile: version "go1.22.1" does not match go tool version "go1.26.7"
+              # The flake's go finds its own GOROOT when the variable is absent, so
+              # the fix is to drop the inherited one rather than pin it.
+              unset GOROOT
+
+              echo "⚗️  talos-homelab · talosctl $(talosctl version --client 2>/dev/null | awk '/Tag:/{print $2; exit}') · flux $(flux --version 2>/dev/null | awk '{print $3}') · $(python --version 2>&1) · go $(go version 2>/dev/null | awk '{print $3}' | sed 's/go//')"
             '';
           };
         }

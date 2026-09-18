@@ -1,0 +1,136 @@
+# docsgen configuration — the ONLY file that should need editing when porting this tool.
+#
+# Everything here is repo-specific. The Go beside it knows nothing about Talos, Flux or beads by
+# name; it knows there is *a* way to enumerate components and *a* ticket shape, and reads both
+# from here. Copy dev/docs-generator/ into another repo, rewrite this file, and it works.
+
+# ---------------------------------------------------------------------------------------------
+# What to scan
+# ---------------------------------------------------------------------------------------------
+# The walker is `git ls-files`, so gitignored paths are already excluded — .direnv, .scratch,
+# .output and the ~10 full repo copies under .claude/worktrees/ never appear. These patterns are
+# for TRACKED files that should still be skipped.
+exclude:
+  # Archived docs are episodic history: correct as of their date, deliberately frozen, and full
+  # of links to each other and to since-moved paths. Linting them would produce ~67 permanent
+  # findings that nobody will ever action, which is how a linter gets switched off.
+  - docs/_archive/**
+  - .claude/**
+
+ticket_pattern: '\bTALOS-[0-9a-z]{2,6}(?:\.\d+)*\b'
+
+# ---------------------------------------------------------------------------------------------
+# How components are enumerated
+# ---------------------------------------------------------------------------------------------
+# Flux Kustomizations, not the directory tree. The tree alone is ambiguous: some directories are
+# GROUPING dirs whose children are each their own component (security/crowdsec, security/falco —
+# this is the CORRECT pattern), while others are one Kustomization wrapping many nested ones.
+# Only Flux names the real deployable boundary. The `component-shape` rule reports the second
+# case rather than the code silently working around it.
+#
+# slug_from: filename — the filename is the stable handle. metadata.name drifts from it in this
+# repo (external-secrets.yaml declares external-secrets-operator, kube-system.yaml declares
+# kube-system-utils), and a slug that changes when someone renames a field is not a slug.
+components:
+  kind: flux
+  path: clusters/catalyst-cluster
+  glob: "*.yaml"
+  slug_from: filename
+
+# ---------------------------------------------------------------------------------------------
+# Frontmatter vocabulary
+# ---------------------------------------------------------------------------------------------
+# Closed enums on purpose. An open vocabulary in a repo this size becomes forty singletons that
+# nobody can query and no generator can group by.
+doc_types:
+  - nav # index/README whose job is summarising children
+  - guide # first-time walkthrough; reader is calm and learning
+  - runbook # ordered procedure with a stop condition; reader is mid-incident
+  - architecture # how a thing is built and why; read before changing it
+  - decision # a choice was made and is binding until superseded
+  - reference # lookup table you scan rather than read
+  - record # dated artifact of what was true then; frozen by definition
+  - meta # docs about this repo's own process
+
+statuses:
+  - current # describes reality; trust it
+  - draft # proposed; not reality yet, so exempt from subject-drift staleness
+  - stale # known-wrong, not yet fixed
+  - superseded # replaced; requires superseded_by
+
+freshness:
+  - tracks-code # stale when the code it covers moves ahead of it
+  - tracks-cluster # subject is live cluster state, which git cannot see
+  - frozen # dated artifact; structurally cannot go stale
+
+# Per-type rot model. `record` and `decision` are frozen, which makes dated artifacts incapable
+# of producing a false staleness hit — that is correct, not a loophole.
+freshness_default:
+  nav: tracks-code
+  guide: tracks-code
+  runbook: tracks-code
+  architecture: tracks-code
+  meta: tracks-code
+  reference: tracks-cluster
+  record: frozen
+  decision: frozen
+
+# Keys that must never appear, each with the reason. `title` is not a style preference: verified
+# against this repo's pinned markdownlint 0.41.1, a title key both silently disables MD041 AND
+# turns every existing H1 into an MD025 duplicate-heading error. Every doc here has an H1.
+banned_keys:
+  title: "disables MD041 and makes the H1 an MD025 duplicate — verified against markdownlint 0.41.1"
+  created: "git knows; three docs already carry a lying **Last Updated** footer"
+  updated: "git knows"
+  last_reviewed: "git knows; a hand-maintained review date is the rot this tool removes"
+  owner: "dual-gitops.md credits an Infrastructure Team that does not exist"
+  maintained_by: "same — fiction consumed by nothing"
+  description: "duplicates the H1 and TL;DR; use blurb, which has no body twin"
+  related: "duplicates the ## Related Issues footer 47 docs already carry"
+
+key_order:
+  - type
+  - status
+  - covers
+  - freshness
+  - tickets
+  - blurb
+  - superseded_by
+  - pinned
+
+# A doc whose covered paths bottom out at one of these is cross-cutting and belongs in docs/.
+# Note what is NOT here: infrastructure/base/security. Four sibling components sharing that
+# parent is a legitimate colocation target, not a grouping root.
+grouping_roots:
+  - ""
+  - "."
+  - infrastructure
+  - infrastructure/base
+  - applications
+  - bootstrap
+  - clusters
+
+# Structural expectations per type — this is what stops `type:` becoming a decorative label.
+# Derived from CLAUDE.md's Documentation Pattern (TL;DR -> Quick Reference -> Deep Dive).
+type_requires:
+  runbook: ["## TL;DR"]
+  architecture: ["## TL;DR"]
+  guide: ["## TL;DR"]
+
+required_footer: "## Related Issues"
+
+# ---------------------------------------------------------------------------------------------
+# Rules
+# ---------------------------------------------------------------------------------------------
+# Severity is data, not code. Everything starts at warn because ~67 docs predate the taxonomy —
+# day-one findings are the migration worklist, not a regression. Promote to error per rule as
+# each is burned down. A linter that lands red on an existing codebase gets switched off.
+rules:
+  broken-links: { enabled: true, severity: error } # unambiguous and already 154 strong
+  frontmatter-schema: { enabled: true, severity: error } # only fires once frontmatter exists
+  covers-resolves: { enabled: true, severity: error }
+  component-path: { enabled: true, severity: warn } # 1 known failure: catalyst-llm
+  component-shape: { enabled: true, severity: warn } # the directory-shape smell, measured
+  colocation: { enabled: true, severity: warn }
+  tickets-in-body: { enabled: true, severity: warn }
+  taxonomy-structure: { enabled: true, severity: warn }

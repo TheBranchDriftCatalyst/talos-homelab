@@ -1,0 +1,82 @@
+# Documentation linting and (later) generation.
+#
+# The tool is a Go module at dev/docs-generator/ producing a `docsgen` binary. `task docs:build`
+# compiles it into dev/docs-generator/bin, which flake.nix's shellHook puts on PATH — so inside
+# the dev shell you can type `docsgen lint` directly from anywhere in the repo, and these tasks
+# are just the discoverable front door.
+#
+# The tool is deliberately self-contained and portable: dev/docs-generator/ can be copied into
+# another repo and works after editing config.yaml alone. That is why the build sets GOWORK=off
+# (a parent go.work in the surrounding workspace otherwise drags sibling modules in) and why
+# nothing in the Go knows this repo by name.
+#
+# PHASE 0 IS READ-ONLY. Nothing here writes to the repository. Generation lands in TALOS-kll3.
+version: "3"
+
+vars:
+  SRC: dev/docs-generator
+  BIN: dev/docs-generator/bin/docsgen
+
+tasks:
+  default:
+    desc: "Lint the documentation tree (all rules)"
+    cmds:
+      - task: lint
+
+  build:
+    desc: "Compile the docsgen binary into dev/docs-generator/bin"
+    sources:
+      - "{{.SRC}}/*.go"
+      - "{{.SRC}}/go.mod"
+      - "{{.SRC}}/go.sum"
+    generates:
+      - "{{.BIN}}"
+    cmds:
+      - cmd: cd {{.SRC}} && GOWORK=off go build -o bin/docsgen .
+      - cmd: echo "built {{.BIN}}"
+
+  lint:
+    desc: "Run every enabled documentation rule"
+    deps: [build]
+    cmds:
+      - "{{.BIN}} lint"
+
+  links:
+    desc: "Broken internal links only"
+    deps: [build]
+    cmds:
+      - "{{.BIN}} links"
+
+  components:
+    desc: "Component inventory — slug, README presence, nested-kustomization count"
+    deps: [build]
+    cmds:
+      - "{{.BIN}} components"
+
+  frontmatter:
+    desc: "Docs with no frontmatter — the migration worklist"
+    deps: [build]
+    cmds:
+      - "{{.BIN}} frontmatter"
+
+  stale:
+    desc: "Docs whose covered code has moved ahead of them"
+    deps: [build]
+    cmds:
+      - "{{.BIN}} stale"
+
+  rule:
+    desc: "Run a single rule, e.g. task docs:rule -- component-shape"
+    deps: [build]
+    cmds:
+      - "{{.BIN}} lint -rule {{.CLI_ARGS}}"
+
+  test:
+    desc: "Run the docsgen Go tests"
+    cmds:
+      - cd {{.SRC}} && GOWORK=off go test ./...
+
+  clean:
+    desc: "Remove the built binary"
+    cmds:
+      - rm -rf {{.SRC}}/bin
