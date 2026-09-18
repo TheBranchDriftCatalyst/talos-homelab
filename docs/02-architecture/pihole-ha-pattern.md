@@ -1,5 +1,7 @@
 # Pi-hole HA Pattern
 
+<!-- TODO: probably move this to be coloacted in the pihole/ folder itself README.md there -->
+
 ## TL;DR
 
 LAN DNS + ad-blocking is highly available via **5 active Pi-holes (one per node)** behind a **single Cilium LB-IPAM VIP `192.168.1.240`**, ARP-announced by exactly **one node at a time** (L2 lease leader election), with **nebula-sync** keeping every replica's config identical.
