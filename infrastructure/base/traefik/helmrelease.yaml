@@ -228,7 +228,17 @@ spec:
       # Bind the CrowdSec bouncer on both entrypoints — ALL ingress checked against
       # CrowdSec decisions before reaching services. Key verified mounted at
       # /etc/traefik/crowdsec/lapi-key (64 bytes) + bouncer "traefik" registered with
-      # LAPI. FAIL-OPEN (bouncer-middleware.yaml); LAN/pods in clientTrustedIPs bypass.
+      # LAPI.
+      #
+      # FAIL-CLOSED, not fail-open (corrected TALOS-cscw). bouncer-middleware.yaml sets
+      # updateMaxFailure: 5 with a 60s refresh and streamStartupBlock: true -- so after
+      # ~5 minutes of an unreachable LAPI, and during startup, ingress is BLOCKED rather
+      # than allowed. This comment previously said FAIL-OPEN, which is exactly the wrong
+      # thing to read while debugging "everything returns 429" during a LAPI outage.
+      #
+      # Only LAN (192.168.0.0/16) bypasses via clientTrustedIPs -- that is the recovery
+      # path. Pods do NOT: 10.0.0.0/8 was deliberately removed so a compromised pod
+      # cannot forge X-Forwarded-For to exempt itself.
       # TALOS-e9h / TALOS-pbn.
       #
       # TALOS-lxz5.2 / 5.2.3: `traefik-strip-authentik-headers` runs FIRST on both

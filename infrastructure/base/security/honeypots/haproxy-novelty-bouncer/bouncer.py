@@ -21,6 +21,7 @@ approach, same unverified-TLS hop to the LAPI, same "never trust a partial read"
 import json
 import os
 import re
+import ipaddress
 import socket
 import ssl
 import time
@@ -54,9 +55,16 @@ def wanted(payload):
         if d.get('type') != DROP_TYPE or d.get('scope') != 'Ip':
             continue
         value = d.get('value', '')
-        # haproxy map keys are plain addresses; refuse anything else rather than
-        # feeding an unvalidated string into the admin socket.
-        if not _IPV4.match(value):
+        # haproxy map keys are plain addresses; refuse anything else rather than feeding an
+        # unvalidated string into the admin socket. fullmatch + ip_address, NOT re.match:
+        # `$` also matches before a trailing newline, so "1.2.3.4\n" passed and would have
+        # written a stray newline into the socket, and the regex alone accepts nonsense
+        # octets like 999.999.999.999 which haproxy then rejects in a logged loop.
+        if not _IPV4.fullmatch(value):
+            continue
+        try:
+            ipaddress.ip_address(value)
+        except ValueError:
             continue
         result.add(value)
     return result
