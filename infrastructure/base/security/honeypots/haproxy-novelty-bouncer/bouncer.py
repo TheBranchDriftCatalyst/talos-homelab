@@ -16,7 +16,9 @@ type=silentdrop. If a second scenario ever emits that type, this enforces it unc
 and the name becomes a slight misnomer. Rename it then; do not add heuristics here.
 
 Shape deliberately mirrors crowdsec/decision-exporter/exporter.py: same stdlib-only
-approach, same unverified-TLS hop to the LAPI, same "never trust a partial read".
+approach, same VERIFIED-TLS hop to the LAPI, same "never trust a partial read".
+When one of them changes, CHANGE BOTH -- fixing only one of this pair is how the exporter
+spent two hours down on 2026-09-18 while this file carried the identical defect.
 """
 import json
 import os
@@ -46,9 +48,26 @@ DROP_TYPE = 'silentdrop'
 # bouncer fails OPEN by design (a missing map means nothing is dropped, and the honeypot
 # keeps collecting), so refusing to start is the safe direction.
 _CA_FILE = os.environ.get('LAPI_CA_FILE', '/tls/ca.crt')
-if not os.path.isfile(_CA_FILE):
-    raise SystemExit(f'LAPI CA bundle missing at {_CA_FILE}; refusing to run unverified')
-_TLS_CTX = ssl.create_default_context(cafile=_CA_FILE)
+
+
+def _tls_context():
+    """Build the TLS context PER CALL, and check for the CA HERE rather than at import.
+
+    Both halves of this are lessons paid for the same day this file was written, in the
+    sibling exporter:
+      - a module-level context caches the CA read at startup, so when cert-manager rotated
+        the LAPI certificate underneath it the process kept trusting a dead CA for two hours
+        with no self-healing (nothing restarts a non-chart Deployment on rotation);
+      - an import-time SystemExit fires on any machine without the pod's /tls mount, which
+        broke the offline test suite -- the module could not be imported at all.
+
+    Checking at first use keeps the fail-loud guarantee: this bouncer still refuses to talk
+    to the LAPI unverified, and reconcile() surfaces the error. It fails OPEN by design (an
+    empty map drops nothing and the honeypot keeps collecting), so erroring here is safe.
+    """
+    if not os.path.isfile(_CA_FILE):
+        raise RuntimeError(f'LAPI CA bundle missing at {_CA_FILE}; refusing to connect unverified')
+    return ssl.create_default_context(cafile=_CA_FILE)
 _IPV4 = re.compile(r'^\d{1,3}(?:\.\d{1,3}){3}$')
 
 
@@ -142,7 +161,7 @@ def main():
         key = Path(os.environ['API_KEY_FILE']).read_text().strip()
         request = Request(os.environ['LAPI_URL'] + '/v1/decisions',
                           headers={'X-Api-Key': key, 'User-Agent': 'haproxy-novelty-bouncer/1.0.0'})
-        with urlopen(request, timeout=10, context=_TLS_CTX) as response:
+        with urlopen(request, timeout=10, context=_tls_context()) as response:
             raw = response.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
             raise ValueError('decision response exceeds limit')
