@@ -159,7 +159,19 @@ def main():
 
     def api():
         key = Path(os.environ['API_KEY_FILE']).read_text().strip()
-        request = Request(os.environ['LAPI_URL'] + '/v1/decisions',
+        # FILTER SERVER-SIDE. This used to fetch /v1/decisions -- every decision in the LAPI --
+        # and filter down to silentdrop in Python. That worked while the store was small and
+        # then silently stopped: once the blocklist feeds pushed the store past MAX_BYTES the
+        # read tripped "decision response exceeds limit" on EVERY poll, and this bouncer fails
+        # OPEN, so it stopped enforcing while looking alive. Measured at the time: 67,469
+        # entries returned for a filter that matches a handful.
+        #
+        # ?type= makes the LAPI do the filtering, so the payload is proportional to what is
+        # actually enforced rather than to how many blocklist IPs happen to be loaded. The
+        # client-side checks below are KEPT as defence in depth -- in particular `simulated`,
+        # which the server-side filter does not apply and which is the only thing keeping a
+        # soaking scenario out of the live map.
+        request = Request(os.environ['LAPI_URL'] + f'/v1/decisions?type={DROP_TYPE}&scopes=Ip',
                           headers={'X-Api-Key': key, 'User-Agent': 'haproxy-novelty-bouncer/1.0.0'})
         with urlopen(request, timeout=10, context=_tls_context()) as response:
             raw = response.read(MAX_BYTES + 1)
