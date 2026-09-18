@@ -119,6 +119,43 @@ reorder it.**
   rotates, and the `crowdsec-allowlist-refresher` CronJob that was meant to track it is
   currently failing. If you are locked out, check that value first.
 
+## Falco rule provenance — the upstream ruleset is NOT in git
+
+Falco's detections come from two places, and only one of them is version-controlled.
+
+| | Where | Pinned? |
+| --- | --- | --- |
+| Our rules (`Honeypot Container Breach`, …) | `customRules` in the Falco HelmRelease | yes, in git |
+| Upstream base ruleset (~100 rules, 64KB) | `ghcr.io/falcosecurity/rules/falco-rules:5` | **no** |
+
+A `falcoctl-artifact-follow` sidecar runs in every Falco pod and polls that ref **every 168h**.
+`:5` is a *floating major tag*, so any upstream 5.x release lands here and Falco hot-reloads
+it — no commit, no PR, no review, no rollback path. This is the chart default; we configure
+nothing.
+
+This is a deliberate choice, not an oversight: rules are threat detection, and pinning them
+means detections go stale until a human remembers to bump. The trade is that detection
+behaviour can change underneath you — and since CRITICAL now routes to Discord, **that
+includes what pages you at 4am**.
+
+So the change is made *attributable* instead of silent. The `falco-ops` dashboard has a
+**Rule provenance** row showing exactly when the upstream ruleset moved:
+
+```logql
+{namespace="falco", container="falcoctl-artifact-follow"}
+  |~ "Found new artifact version|Artifact correctly installed"
+```
+
+**If Falco suddenly starts paging with a new false positive, or a detection goes quiet, check
+that panel first.** Empty is the normal state. falcoctl logs `Nothing to do, artifact already
+up to date.` on every no-op check including at pod start, so only real changes show up.
+
+There is no *alert* on this yet, only a panel — see the beads issue. Alerting on it needs a
+log-based rule, and this cluster has no path for one today: Grafana-managed alerting has only
+the stub `email receiver` contact point, and Loki's ruler has a bucket but no ruler config.
+Every working alert here is `PrometheusRule → Mimir → Alertmanager → Discord`, which cannot
+query logs.
+
 ## Operations
 
 ```sh

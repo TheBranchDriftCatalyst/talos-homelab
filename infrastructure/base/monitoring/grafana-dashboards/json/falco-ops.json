@@ -479,6 +479,53 @@
           "queryType": "range"
         }
       ]
+    },
+    {
+      "id": 24,
+      "type": "row",
+      "title": "Rule provenance \u2014 upstream ruleset auto-follow",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      },
+      "panels": []
+    },
+    {
+      "id": 25,
+      "type": "logs",
+      "title": "Upstream ruleset changed (falcoctl auto-follow)",
+      "description": "Falco's UPSTREAM ruleset is not pinned in git. A falcoctl-artifact-follow sidecar in every Falco pod polls ghcr.io/falcosecurity/rules/falco-rules:5 every 168h. ':5' is a FLOATING major tag, so any 5.x upstream publishes lands here and Falco hot-reloads it \u2014 no commit, no PR, no review.\n\nThis panel exists so that change is attributable rather than mysterious. If Falco suddenly starts paging Discord with a new false positive, or a detection you relied on goes quiet, LOOK HERE FIRST and check whether the ruleset moved on that date.\n\nEmpty is the normal state \u2014 it means the upstream ruleset has not changed in the window. falcoctl logs 'Nothing to do, artifact already up to date.' on every no-op check, including at pod start, so those are deliberately filtered out; only real changes appear.\n\nOur OWN rules (honeypot-breach etc.) are NOT affected \u2014 they live in customRules in the Falco HelmRelease and are version-controlled. Only the upstream base ruleset moves.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 46
+      },
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "{namespace=\"falco\", container=\"falcoctl-artifact-follow\"} |~ \"Found new artifact version|Artifact correctly installed\"",
+          "queryType": "range"
+        }
+      ]
     }
   ]
 }
