@@ -1,0 +1,132 @@
+---
+# Self-healing registrar for the `haproxy-novelty-bouncer` LAPI bouncer (TALOS-hdw8).
+#
+# WHY: the chart's Traefik bouncer re-registers from env on every boot, but this one is
+# added imperatively (`cscli bouncers add`), so it has no automatic re-register path.
+# The LAPI datastore is durable CNPG Postgres, so a registered bouncer normally survives
+# restarts -- this CronJob (a) performs the FIRST registration idempotently and (b) is a
+# safety net if that database is ever rebuilt or migrated. It only registers when the
+# bouncer is absent, so a healthy LAPI is never disturbed.
+#
+# Same shape as machine-registrar.yaml; see its notes on the alpine/k8s image choice.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: crowdsec-novelty-bouncer-registrar
+  namespace: crowdsec
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crowdsec-novelty-bouncer-registrar
+  namespace: crowdsec
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: crowdsec-novelty-bouncer-registrar
+  namespace: crowdsec
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: crowdsec-novelty-bouncer-registrar
+subjects:
+  - kind: ServiceAccount
+    name: crowdsec-novelty-bouncer-registrar
+    namespace: crowdsec
+---
+# The LAPI-side copy of the bouncer key. The honeypot-side copy of the SAME 1Password
+# property is mounted by the sidecar (honeypots/novelty-bouncer-externalsecret.yaml), so
+# both ends rotate together when the item is rotated.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: crowdsec-novelty-bouncer-key
+  namespace: crowdsec
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword
+    kind: ClusterSecretStore
+  target:
+    name: crowdsec-novelty-bouncer-key
+    creationPolicy: Owner
+  data:
+    - secretKey: lapi-key
+      remoteRef: {key: crowdsec, property: novelty-bouncer-api-key}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crowdsec-novelty-bouncer-register
+  namespace: crowdsec
+  labels:
+    app: haproxy-novelty-bouncer
+spec:
+  # Hourly is enough: unlike the web-ui machine this has no user-facing "offline"
+  # banner, and the sidecar keeps serving its last known map while unregistered.
+  schedule: "17 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 120
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 120
+      ttlSecondsAfterFinished: 300
+      template:
+        metadata:
+          labels:
+            app: haproxy-novelty-bouncer
+            app.kubernetes.io/component: bouncer-registrar
+        spec:
+          serviceAccountName: crowdsec-novelty-bouncer-registrar
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: register
+              image: alpine/k8s:1.34.1
+              env:
+                - name: BOUNCER_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: crowdsec-novelty-bouncer-key
+                      key: lapi-key
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  # Idempotent: only register when absent, so a healthy LAPI is never
+                  # disturbed. -k pins the key to the 1Password value, which is what lets
+                  # the sidecar authenticate without a separate handoff.
+                  if kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
+                       cscli bouncers list -o json 2>/dev/null | grep -q '"haproxy-novelty-bouncer"'; then
+                    echo "haproxy-novelty-bouncer registered — nothing to do"
+                  else
+                    echo "haproxy-novelty-bouncer MISSING — registering from secret"
+                    kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
+                      cscli bouncers add haproxy-novelty-bouncer -k "$BOUNCER_KEY"
+                    echo "registered — the sidecar authenticates on its next 30s poll"
+                  fi

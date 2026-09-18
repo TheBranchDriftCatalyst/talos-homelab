@@ -44,6 +44,7 @@ This section documents the architectural patterns, design decisions, and infrast
 | Topic                                            | Description                                                                                   |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | [security-ops.md](security-ops.md)         | Security architecture as deployed — CrowdSec LAPI/bouncer, honeypot, iocaine, ban escalation   |
+| [security/README.md](../../infrastructure/base/security/README.md) | **Start here for security**: how detection, decision and the two enforcement planes fit together |
 | [traefik.md](traefik.md)                   | Ingress implementation detail behind [networking.md](networking.md)                            |
 | [observability.md](../08-monitoring/observability.md)       | The live monitoring stack (supersedes [observability.md](../_archive/observability-v1-stack.md))                     |
 | [patterns/](../patterns/README.md)               | Reusable cluster patterns extracted from these architecture docs                                |

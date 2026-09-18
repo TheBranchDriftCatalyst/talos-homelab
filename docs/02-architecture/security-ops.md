@@ -18,7 +18,7 @@ Layered, deception-driven defense for the Traefik ingress. Three cooperating sys
   iocaine tarpit hits (detect) ──▶└───────────────────────────────────────────────────────┘
         ▲                                              │ decisions
   Bot Wrangler proxies bots → iocaine maze            ▼
-                                              Traefik bouncer plugin  →  403 to banned IPs
+                                              Traefik bouncer plugin  →  429 to banned IPs
 ```
 
 **Status:** fully live. The bouncer is bound globally on the `web` and `websecure` entrypoints
@@ -34,8 +34,9 @@ app brute-force scenarios (TALOS-wdwm).
 | Layer | Namespace | Role | Feeds CrowdSec? |
 |---|---|---|---|
 | **CrowdSec LAPI + agent + AppSec** | `crowdsec` | Detection engine + CNPG Postgres decisions DB + WAF | — (it *is* the engine) |
-| **crowdsec-bouncer-traefik-plugin** | `traefik` (plugin) | Enforcement — blocks banned IPs at L7 | — |
-| **Cowrie honeypot** | `honeypot` | SSH/Telnet trap (bait) | ✅ (`homelab/cowrie-logs` → `homelab/cowrie-activity`) |
+| **crowdsec-bouncer-traefik-plugin** | `traefik` (plugin) | Enforcement — blocks banned IPs at L7 (`429`) | — |
+| **haproxy-novelty-bouncer** | `honeypot` (sidecar) | Enforcement — silent-drops `silentdrop` IPs at L4, honeypot only | — |
+| **Cowrie honeypot** | `honeypot` | SSH/Telnet trap (bait) | ✅ (`homelab/haproxy-honeypot-logs` → `homelab/honeypot-vip-activity`; `homelab/cowrie-logs` → `homelab/cowrie-replay-drop`) |
 | **iocaine** tarpit + **Bot Wrangler** | `iocaine` / `traefik` | AI-crawler maze (`trap.knowledgedump.space`) + bot detection | ✅ detect-only (`homelab/iocaine-tarpit`) |
 
 ### CrowdSec (the brain)
@@ -113,7 +114,8 @@ today; delete the `simulation.yaml` exclusion in `infrastructure/base/security/c
 | k8s API audit | ✅ | ✅ (bouncer) |
 | App brute-force scenarios (Authentik, *arr, Jellyfin, Grafana, …) | ✅ | ❌ **detect-only** on arrival — promotion review TALOS-wdwm |
 | `LePresidente/http-generic-403-bf` | ✅ | ❌ still detect-only (`simulation.yaml`) — but the self-reinforcing loop that demoted it is now fixed at the bouncer (429 remediation, not 403), so it is a **promotion candidate**: the other 8 enforcing 403-keying scenarios (http-probing, http-admin-interface-probing, CVEs) no longer feed a renewal loop either (TALOS-y260 / crowdsec-selfban) |
-| Cowrie honeypot | ✅ `homelab/cowrie-activity` | ✅ enforcing + **publicly exposed**, capturing malware samples (TALOS-ik9o done; move to isolated Pi TALOS-1m1n) |
+| Honeypot connection (cowrie + beelzebub) | ✅ `homelab/honeypot-vip-activity` | ✅ enforcing — the **single ban source** for honeypot traffic. Bans protect every OTHER service; they deliberately do **not** close the honeypot, so the attacker keeps producing intelligence |
+| Cowrie replay bots (low command novelty) | ✅ `homelab/cowrie-replay-drop` | ❌ **detect-only** on arrival (TALOS-hdw8 / promotion TALOS-90pl). Emits `silentdrop`, not `ban`: only `haproxy-novelty-bouncer` acts on it, silently dropping those IPs at the honeypot front. 14 IPs = 94% of command volume |
 | iocaine tarpit hits | ✅ | ❌ **detect-only** (simulation) — by design for now |
 | Crowd blocklists (CAPI) | ✅ enrolled (COMMUNITY) | ✅ pulled + enforced (tens of thousands of live CAPI decisions) |
 
@@ -121,6 +123,15 @@ Fail-safe: LAPI stream cache + `updateMaxFailure: -1` → a CrowdSec/AppSec outa
 
 Bans escalate: `profiles.yaml` sets `duration_expr` to `(prior decisions + 1) * 4h`, and every ban is
 POSTed to Discord via the built-in `notification-http` plugin (`discord_default`).
+
+`profiles.yaml` is **ordered** and every entry uses `on_success: break`. `cowrie_replay_drop` sits
+*above* `default_ip_remediation` — that ordering is the only reason the replay scenario yields a
+`silentdrop` instead of a second ban. Do not reorder it.
+
+**Two enforcement planes, separated by decision type:** `ban` → Traefik (HTTP, 429);
+`silentdrop` → haproxy-novelty-bouncer (honeypot TCP). See
+[infrastructure/base/security/README.md](../../infrastructure/base/security/README.md) for the
+full architecture.
 
 ---
 

@@ -51,9 +51,9 @@ spec:
         # `silentdrop` decisions (TALOS-hdw8). Same uid as haproxy so it can use the
         # 660 socket. No ServiceAccount token, no k8s API, read-only rootfs -- its only
         # inputs are the LAPI over TLS and its own bouncer key.
-        - name: dropwatch
+        - name: novelty-bouncer
           image: python:3.12.12-alpine3.22
-          command: [python, -B, /app/dropwatch.py]
+          command: [python, -B, /app/bouncer.py]
           env:
             - name: LAPI_URL
               value: https://crowdsec-service.crowdsec.svc.cluster.local:8080
@@ -62,7 +62,7 @@ spec:
             - name: HAPROXY_SOCKET
               value: /var/run/haproxy/admin.sock
           volumeMounts:
-            - { name: dropwatch, mountPath: /app, readOnly: true }
+            - { name: novelty-bouncer, mountPath: /app, readOnly: true }
             - { name: bouncer-key, mountPath: /keys, readOnly: true }
             - { name: runtime, mountPath: /var/run/haproxy }
           securityContext:
@@ -77,11 +77,11 @@ spec:
       volumes:
         - name: cfg
           configMap: { name: honeypot-haproxy-cfg }
-        - name: dropwatch
-          configMap: { name: honeypot-dropwatch }
+        - name: novelty-bouncer
+          configMap: { name: honeypot-novelty-bouncer }
         - name: bouncer-key
-          secret: { secretName: crowdsec-bouncer-key }
-        # Shared so dropwatch can reach haproxy's admin socket. emptyDir: the map is
+          secret: { secretName: crowdsec-novelty-bouncer-key }
+        # Shared so the bouncer can reach haproxy's admin socket. emptyDir: the map is
         # rebuilt from the LAPI within one poll of any restart.
         - name: runtime
           emptyDir: {}

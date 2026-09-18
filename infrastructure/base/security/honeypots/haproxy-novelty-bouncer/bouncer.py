@@ -1,4 +1,4 @@
-"""Reconcile CrowdSec `silentdrop` decisions into haproxy's replay.map (TALOS-hdw8).
+"""haproxy-novelty-bouncer — a CrowdSec remediation component for the honeypot front.
 
 The honeypot is reached over raw TCP (VIP -> haproxy -> cowrie), which no CrowdSec
 bouncer touches, so decisions have never had any effect there. That is deliberate for
@@ -8,6 +8,12 @@ This consumes ONLY decisions of type `silentdrop`, which exactly one scenario pr
 (homelab/cowrie-replay-drop, via the cowrie_replay_drop profile). Everything else --
 every `ban`, community blocklist entry, and CAPI import -- is ignored, so the honeypot
 stays open to novel attackers by construction.
+
+ON THE NAME: the "novelty" analysis is NOT done here -- it lives entirely in the
+scenario homelab/cowrie-replay-drop, which counts distinct commands per source. This
+component never sees a command and counts nothing; it only enforces whatever carries
+type=silentdrop. If a second scenario ever emits that type, this enforces it unchanged
+and the name becomes a slight misnomer. Rename it then; do not add heuristics here.
 
 Shape deliberately mirrors crowdsec/decision-exporter/exporter.py: same stdlib-only
 approach, same unverified-TLS hop to the LAPI, same "never trust a partial read".
@@ -114,7 +120,7 @@ def main():
     def api():
         key = Path(os.environ['API_KEY_FILE']).read_text().strip()
         request = Request(os.environ['LAPI_URL'] + '/v1/decisions',
-                          headers={'X-Api-Key': key, 'User-Agent': 'honeypot-dropwatch/1.0.0'})
+                          headers={'X-Api-Key': key, 'User-Agent': 'haproxy-novelty-bouncer/1.0.0'})
         with urlopen(request, timeout=10, context=_TLS_CTX) as response:
             raw = response.read(MAX_BYTES + 1)
         if len(raw) > MAX_BYTES:
