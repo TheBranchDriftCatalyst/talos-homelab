@@ -1,0 +1,43 @@
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: honeypot-tripwire
+  namespace: honeypot
+  labels:
+    app.kubernetes.io/name: honeypot
+spec:
+  groups:
+    - name: honeypot.tripwire
+      rules:
+        - alert: HoneypotTripwireNotFiring
+          # `or vector(0)` is load-bearing, not defensive noise. If the tripwire breaks badly
+          # enough that the series disappears entirely -- which is what happened when Falco
+          # lost container metadata and the rule could not match at all -- then increase()
+          # returns NO SAMPLES and a bare comparison quietly evaluates to nothing. The alert
+          # would stay silent in precisely the failure it exists to catch.
+          #
+          # This is not hypothetical: CiliumIdentityCleanupOccurred in this cluster is
+          # unfirable for a related reason, and its condition is currently true and unalerted.
+          expr: |
+            (sum(increase(falcosecurity_falcosidekick_falco_events_total{rule=~"Honeypot Container Breach.*"}[8h])) or vector(0)) == 0
+          # The canary fires every 6h, so 8h of silence means at least one run produced
+          # nothing. 30m of `for:` avoids flapping around a scrape boundary while staying far
+          # below the emit interval -- a `for:` longer than the firing cadence is what makes
+          # an alert mathematically unfirable.
+          for: 30m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Honeypot breach tripwire has not fired in 8h — it is probably blind"
+            description: >-
+              The falco-tripwire-canary CronJob execs a non-whitelisted binary inside the live
+              cowrie container every 6h, which MUST produce a Honeypot Container Breach event.
+              No such event has been counted in 8h, so either the canary is not running or the
+              rule cannot match. This exact control was silently blind three times on
+              2026-09-18: once with k8s.ns.name null, once with container.name resolving to a
+              hex container ID instead of "cowrie", and once with the cri collector disabled.
+              CHECK IN THIS ORDER — falco pod on the node cowrie runs on (nodeSelector pins it,
+              so one node is all that matters): are k8s.ns.name AND container.name both
+              resolving to real values? A 12-hex container ID in container.name is the broken
+              state and is NOT null, so a null-check will pass over it.
