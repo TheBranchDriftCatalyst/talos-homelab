@@ -328,6 +328,23 @@ spec:
             scrape_interval = "60s"
             bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
             tls_config {
+              // The ca_file below is NOT doing anything: insecure_skip_verify overrides it,
+              // so this reads like verification is happening when it is not. Left in place
+              // only so it is ready if the note below is ever acted on. TALOS-pnyo.
+              //
+              // Verification genuinely cannot work here today. Talos serves the kubelet with
+              // a PER-NODE self-signed CA, not the cluster CA. Measured against the live
+              // endpoint from inside this pod:
+              //   openssl s_client -connect <node>:10250 -CAfile <serviceaccount ca.crt>
+              //   s: CN = talos00@...   i: CN = talos00-ca@...
+              //   -> Verify return code: 19 (self-signed certificate in certificate chain)
+              // Dropping insecure_skip_verify would fail the handshake and silently kill
+              // kubelet and cadvisor metrics -- trading an authentication gap for a much
+              // larger monitoring blind spot.
+              //
+              // The REAL fix is Talos-side, not here: enable kubelet serving-cert rotation
+              // (rotate-server-certificates plus a CSR approver) so kubelet certs are issued
+              // by the cluster CA. Then delete insecure_skip_verify and this comment.
               ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
               insecure_skip_verify = true
             }
@@ -383,6 +400,23 @@ spec:
             scrape_interval = "60s"
             bearer_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
             tls_config {
+              // The ca_file below is NOT doing anything: insecure_skip_verify overrides it,
+              // so this reads like verification is happening when it is not. Left in place
+              // only so it is ready if the note below is ever acted on. TALOS-pnyo.
+              //
+              // Verification genuinely cannot work here today. Talos serves the kubelet with
+              // a PER-NODE self-signed CA, not the cluster CA. Measured against the live
+              // endpoint from inside this pod:
+              //   openssl s_client -connect <node>:10250 -CAfile <serviceaccount ca.crt>
+              //   s: CN = talos00@...   i: CN = talos00-ca@...
+              //   -> Verify return code: 19 (self-signed certificate in certificate chain)
+              // Dropping insecure_skip_verify would fail the handshake and silently kill
+              // kubelet and cadvisor metrics -- trading an authentication gap for a much
+              // larger monitoring blind spot.
+              //
+              // The REAL fix is Talos-side, not here: enable kubelet serving-cert rotation
+              // (rotate-server-certificates plus a CSR approver) so kubelet certs are issued
+              // by the cluster CA. Then delete insecure_skip_verify and this comment.
               ca_file              = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
               insecure_skip_verify = true
             }
