@@ -591,14 +591,16 @@ spec:
           podName: "honeypot-lb-*"
           program: haproxy-honeypot
           poll_without_inotify: true
-        # Cowrie's own JSON command stream (TALOS-hdw8). The logship sidecar tails
-        # cowrie.json to stdout, so this reads the container log like any other pod.
-        # Feeds homelab/cowrie-logs -> homelab/cowrie-replay-drop ONLY; it issues no
-        # ban, so the haproxy front above remains the single ban source (35ade7f5).
-        - namespace: honeypot
-          podName: cowrie-*
-          program: cowrie
-          poll_without_inotify: true
+        # Cowrie's own JSON command stream (TALOS-hdw8). Feeds homelab/cowrie-logs ->
+        # homelab/cowrie-replay-drop ONLY; it issues no ban, so the haproxy front above
+        # remains the single ban source (35ade7f5).
+        #
+        # Moved from a podName glob to a container-pinned FILE source (TALOS-5yrf). The
+        # glob matched BOTH containers of the cowrie pod: the logship sidecar (1.5k lines,
+        # 153 parsed -- the one we want) and the raw cowrie container (329k lines, 0
+        # parsed -- pure noise). Two consequences, both bad: ~329k wasted parser lines a
+        # day, and CowrieCrowdSecIngestionStalled was satisfied by the raw container, so
+        # it would have stayed GREEN while logship wedged and starved this very pipeline.
         # ---- APP-LEVEL ACQUISITION (TALOS-y260 follow-up) ----
         # Until now CrowdSec only saw Traefik's edge logs, so anything that got
         # PAST the reverse proxy and brute-forced an app directly was invisible.
@@ -684,6 +686,12 @@ spec:
       # file; on worker nodes it's absent and harmlessly skipped. crowdsecurity/k8s-audit detects
       # sensitive events (secret reads, exec, RBAC/priv-esc, anonymous access). (TALOS-pbn)
       additionalAcquisition:
+        - source: file
+          filenames:
+            - /var/log/containers/cowrie-*_honeypot_logship-*.log
+          labels:
+            type: containerd
+            program: cowrie
         - source: file
           filenames:
             - /var/log/containers/immich-*_media-private_immich-server-*.log

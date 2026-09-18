@@ -45,13 +45,17 @@ spec:
           annotations:
             summary: "CrowdSec metrics unavailable for {{ $labels.pod }}"
             description: "The engine may be stopped even if its pod still exists."
+        # Pinned to the logship container (TALOS-5yrf). A wider regex also matched the raw
+        # cowrie container, which contributes ~329k unparsed lines/day -- enough to hold this
+        # alert green forever while the logship pipeline it guards was dead.
+        #
         # Meaningful again as of TALOS-hdw8: cowrie acquisition was deleted in 35ade7f5,
         # which left this alert keyed on a source label that could not exist, so the
         # `or vector(0)` made it permanently true. The acquisition is back, so a firing
         # alert now means something real.
         - alert: CowrieCrowdSecIngestionStalled
           expr: |
-            (sum(increase(cs_parser_hits_total{job="crowdsec/crowdsec",source=~".*cowrie-.*_honeypot_.*"}[15m])) or vector(0)) == 0
+            (sum(increase(cs_parser_hits_total{job="crowdsec/crowdsec",source=~".*cowrie-.*_honeypot_logship-.*"}[15m])) or vector(0)) == 0
           for: 5m
           labels:
             severity: critical

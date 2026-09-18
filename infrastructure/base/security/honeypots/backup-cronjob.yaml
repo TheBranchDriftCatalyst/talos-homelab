@@ -110,10 +110,17 @@ spec:
                   DST=/archive
                   mkdir -p "$$DST/samples"
 
-                  # Nothing captured yet is a normal state, not a failure.
+                  # The subdirs are created by the cowrie deployment's init-var-lib
+                  # initContainer. If they are ABSENT that is now a real failure, not a
+                  # quiet no-op: it means the initContainer is gone or cowrie's paths were
+                  # repointed again, and this job would otherwise report Complete in 3
+                  # seconds while archiving nothing -- which is exactly what it did for its
+                  # entire life before TALOS-ybtm.
                   if [ ! -d "$$SRC/downloads" ] && [ ! -d "$$SRC/tty" ]; then
-                    echo "no downloads/ or tty/ yet — nothing to archive"
-                    exit 0
+                    echo "FATAL: neither $$SRC/downloads nor $$SRC/tty exists."
+                    echo "       cowrie's ttylog_path/download_path or the init-var-lib"
+                    echo "       initContainer changed. Nothing is being archived."
+                    exit 1
                   fi
 
                   OUT="$$DST/samples/cowrie-$$STAMP.tar.gz"
@@ -125,7 +132,15 @@ spec:
                   # 0400: read-only even to the owner. Nothing should ever need to write
                   # to a sealed archive, and it cannot be executed regardless (noexec).
                   chmod 0400 "$$OUT" "$$OUT.sha256"
-                  echo "archived $$(wc -c < "$$OUT") bytes -> $$OUT"
+                  BYTES=$$(wc -c < "$$OUT")
+                  echo "archived $$BYTES bytes -> $$OUT"
+                  # An empty-ish tarball means the source dirs exist but hold nothing. That
+                  # is legitimate on a quiet day, so warn rather than fail -- but say it out
+                  # loud, because "Complete" on a zero-content archive is the failure mode
+                  # this job exists to avoid. A gzipped tar of two empty dirs is ~130 bytes.
+                  if [ "$$BYTES" -lt 200 ]; then
+                    echo "WARNING: archive is $$BYTES bytes — no samples or ttylogs captured since the last run"
+                  fi
 
                   # Report any sample carrying an exec bit. The source is mounted
                   # read-only so this job CANNOT chmod it — surfacing it is the point,

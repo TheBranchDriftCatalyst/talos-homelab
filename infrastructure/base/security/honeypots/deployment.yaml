@@ -66,6 +66,33 @@ spec:
       # (TALOS-a8vo / cowrie-public-exposure)
       nodeSelector:
         kubernetes.io/hostname: talos02-gpu
+      # Recreate the two subdirs cowrie expects inside var/lib/cowrie (TALOS-ybtm).
+      # The image ships them, but mounting a volume over var/lib/cowrie hides them, and
+      # cowrie does NOT recreate them at runtime -- opening a per-session ttylog then
+      # throws FileNotFoundError inside openShell/execCommand, so the interactive shell
+      # dies and NO cowrie.command.input is ever logged.
+      #
+      # The previous workaround repointed ttylog_path/download_path at the mount ROOT.
+      # That fixed logging but silently broke the backup, which archives downloads/ and
+      # tty/ and therefore found nothing to archive for its entire life. This restores
+      # cowrie's real layout so BOTH work. The volume is a PVC, so this runs once and
+      # persists; fsGroup 1000 makes the dirs writable by the cowrie user.
+      initContainers:
+        - name: init-var-lib
+          image: busybox:1.36
+          command: [sh, -c, 'mkdir -p /var/lib/cowrie/tty /var/lib/cowrie/downloads']
+          volumeMounts:
+            - name: cowrie-var-lib
+              mountPath: /var/lib/cowrie
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
       containers:
         - name: cowrie
           image: cowrie/cowrie:latest

@@ -37,12 +37,35 @@ spec:
       enabled: true
       webui:
         enabled: true
+        # Redis retained every event forever with no limits: measured 1.58 GiB RSS after
+        # five days and still climbing, on an event rate inflated by known false positives
+        # (TALOS-wn69). Unbounded it eventually pressures a node and OOMs whatever shares
+        # it, and the UI dies silently because nothing alerts on it. TTL expires events;
+        # the limit makes the failure loud and local instead of quiet and cluster-wide.
+        ttl: 604800 # 7d
+        redis:
+          resources:
+            requests: { cpu: 25m, memory: 128Mi }
+            limits: { memory: 512Mi }
+      # The webhook URL is NEVER in git: this secret is the ESO-managed copy of the same
+      # 1Password item CrowdSec posts its bans to. The chart reads every UPPERCASE key in
+      # it as a falcosidekick config env var, so DISCORD_WEBHOOKURL wires the output.
+      existingSecret: falco-discord
       config:
         loki:
           hostport: "http://loki.monitoring.svc:3100"
           apiendpoint: "/loki/api/v1/push"
           tenant: ""
           minimumpriority: "notice"
+        # CRITICAL alerts now reach a human (TALOS-vy8s). Until this existed, outputs were
+        # Loki + the WebUI only -- so the honeypot-breach tripwires below, the entire reason
+        # this deployment exists, fired into a log stream nobody is paged from.
+        #
+        # critical ONLY on purpose: at `notice` this channel would carry the ~3.7k/day
+        # false-positive stream (see TALOS-cscw) and be muted within a day. Loki keeps the
+        # full-fidelity record for investigation; Discord carries only "something escaped".
+        discord:
+          minimumpriority: "critical"
     # Honeypot-breach tripwires: Cowrie + Beelzebub EMULATE the shell, so any real process exec,
     # shell spawn, sensitive-file read, or unexpected outbound in those pods = a containment breach
     # (someone escaped the emulation into the real container). CRITICAL. Also the runtime-detection

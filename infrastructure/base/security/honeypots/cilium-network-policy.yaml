@@ -84,6 +84,14 @@ spec:
     - fromEndpoints: [{ matchLabels: { app: honeypot-lb } }]
       toPorts:
         - ports: [{ port: "2222", protocol: TCP }]
+    # Prometheus scrape of :2112 (TALOS-yy3x). Without this the PodMonitor cannot reach
+    # beelzebub and up{job="honeypot/beelzebub"} reads 0 in Mimir -- which on a honeypot
+    # dashboard is indistinguishable from "no attacks", the exact failure the test suite
+    # warns about. Alloy runs on the pod network, so ns monitoring is the right selector.
+    - fromEndpoints:
+        - matchLabels: { k8s:io.kubernetes.pod.namespace: monitoring }
+      toPorts:
+        - ports: [{ port: "2112", protocol: TCP }]
   egress:
     - toEndpoints:
         - matchLabels: { k8s:io.kubernetes.pod.namespace: catalyst-llm }
