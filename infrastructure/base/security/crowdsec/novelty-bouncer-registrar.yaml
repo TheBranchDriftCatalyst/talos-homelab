@@ -65,10 +65,32 @@ spec:
     - secretKey: lapi-key
       remoteRef: {key: crowdsec, property: novelty-bouncer-api-key}
 ---
+# The decision exporter's OWN bouncer credential. It used to authenticate with
+# BOUNCER_KEY_traefik -- the same key the whole Traefik enforcement fleet uses -- so this
+# read-only observer could not be revoked or rotated without simultaneously rotating every
+# enforcing bouncer. Least privilege aside, that coupling is what makes a compromise of the
+# observer expensive to contain.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: crowdsec-decision-exporter-key
+  namespace: crowdsec
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword
+    kind: ClusterSecretStore
+  target:
+    name: crowdsec-decision-exporter-key
+    creationPolicy: Owner
+  data:
+    - secretKey: lapi-key
+      remoteRef: {key: crowdsec, property: decision-exporter-api-key}
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: crowdsec-novelty-bouncer-register
+  name: crowdsec-bouncer-register
   namespace: crowdsec
   labels:
     app: haproxy-novelty-bouncer
@@ -113,6 +135,11 @@ spec:
                     secretKeyRef:
                       name: crowdsec-novelty-bouncer-key
                       key: lapi-key
+                - name: EXPORTER_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: crowdsec-decision-exporter-key
+                      key: lapi-key
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -123,15 +150,30 @@ spec:
                 - -c
                 - |
                   set -e
-                  # Idempotent: only register when absent, so a healthy LAPI is never
-                  # disturbed. -k pins the key to the 1Password value, which is what lets
-                  # the sidecar authenticate without a separate handoff.
-                  if kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
-                       cscli bouncers list -o json 2>/dev/null | grep -q '"haproxy-novelty-bouncer"'; then
-                    echo "haproxy-novelty-bouncer registered — nothing to do"
-                  else
-                    echo "haproxy-novelty-bouncer MISSING — registering from secret"
-                    kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
-                      cscli bouncers add haproxy-novelty-bouncer -k "$BOUNCER_KEY"
-                    echo "registered — the sidecar authenticates on its next 30s poll"
-                  fi
+                  # Registers every bouncer that is added IMPERATIVELY (cscli bouncers add)
+                  # rather than re-registering itself from env on boot the way the chart's
+                  # Traefik bouncer does. Each gets its OWN key so any one can be revoked
+                  # without disturbing the others.
+                  #
+                  # Idempotent: only registers when absent, so a healthy LAPI is never
+                  # disturbed. -k pins the key to the 1Password value, which is what lets the
+                  # client authenticate without a separate handoff.
+                  #
+                  # The grep is quoted deliberately. CrowdSec auto-creates child rows named
+                  # "<name>@<pod-ip>" whenever the key is presented from a new IP, and an
+                  # unquoted match would see one of those, conclude the parent exists and skip
+                  # a registration that is genuinely missing.
+                  register() {
+                    name="$1"; key="$2"
+                    if kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
+                         cscli bouncers list -o json 2>/dev/null | grep -q "\"${name}\""; then
+                      echo "${name} registered — nothing to do"
+                    else
+                      echo "${name} MISSING — registering from secret"
+                      kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
+                        cscli bouncers add "${name}" -k "${key}"
+                      echo "${name} registered — it authenticates on its next poll"
+                    fi
+                  }
+                  register haproxy-novelty-bouncer "$BOUNCER_KEY"
+                  register decision-exporter "$EXPORTER_KEY"

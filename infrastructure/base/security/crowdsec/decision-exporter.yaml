@@ -33,8 +33,11 @@ spec:
           env:
             - name: LAPI_URL
               value: https://crowdsec-service.crowdsec.svc.cluster.local:8080  # LAPI is TLS now (dw2p #3)
+            # Its OWN bouncer credential, not the Traefik fleet's. Previously this read
+            # BOUNCER_KEY_traefik, so revoking or rotating this read-only observer meant
+            # rotating every enforcing bouncer at the same time.
             - name: API_KEY_FILE
-              value: /keys/BOUNCER_KEY_traefik
+              value: /keys/lapi-key
           ports:
             - name: metrics
               containerPort: 9108
@@ -73,11 +76,11 @@ spec:
                 path: ca.crt
         - name: keys
           secret:
-            secretName: crowdsec-keys
+            secretName: crowdsec-decision-exporter-key
             defaultMode: 0440
             items:
-              - key: BOUNCER_KEY_traefik
-                path: BOUNCER_KEY_traefik
+              - key: lapi-key
+                path: lapi-key
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
