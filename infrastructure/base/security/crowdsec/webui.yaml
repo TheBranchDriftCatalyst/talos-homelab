@@ -49,9 +49,20 @@ spec:
             # Authentik forward-auth owns login; do not require a second local account.
             # webui-network-policy.yaml permits only Traefik to reach the backend.
             - {name: CONFIG_AUTH_ENABLED, value: "false"}
-            # LAPI serves a self-signed (cert-manager) cert now; this in-cluster, LAN-only UI skips
-            # verification for that hop — same posture as the Traefik bouncer's TLSInsecureVerify.
-            - {name: NODE_TLS_REJECT_UNAUTHORIZED, value: "0"}
+            # VERIFY the LAPI certificate (TALOS-pnyo). This previously set
+            # NODE_TLS_REJECT_UNAUTHORIZED=0, which is not a per-hop setting at all: it is a
+            # Node.js PROCESS-WIDE switch that disables certificate verification for EVERY
+            # outbound TLS connection this UI makes, not just the LAPI one.
+            #
+            # Its stated justification was "same posture as the Traefik bouncer's
+            # TLSInsecureVerify" — and df05527a removed that, so the rationale no longer
+            # existed. NODE_EXTRA_CA_CERTS is the correct mechanism: it ADDS a CA to Node's
+            # trust store instead of switching verification off, so the public trust store
+            # stays intact for anything else this process talks to.
+            #
+            # The CA is homelab-ca, which trust-manager publishes into every namespace and
+            # which signs the crowdsec PKI since TALOS-k5vm.
+            - {name: NODE_EXTRA_CA_CERTS, value: /tls/ca.crt}
             - {name: CONFIG_INSTANCE_LAPI_URL, value: "https://crowdsec-service.crowdsec.svc.cluster.local:8080"}  # LAPI is TLS now (TALOS-3pdz)
             - {name: CONFIG_INSTANCE_LAPI_AUTH_USERNAME, value: "crowdsec-web-ui"}
             - name: CONFIG_INSTANCE_LAPI_AUTH_PASSWORD
@@ -87,6 +98,7 @@ spec:
             - {name: CONFIG_CROWDSEC_SYNC_LOOKBACK, value: "720h"}
           volumeMounts:
             - {name: data, mountPath: /app/data}
+            - {name: lapi-ca, mountPath: /tls, readOnly: true}
           readinessProbe:
             httpGet: {path: /, port: http}
             initialDelaySeconds: 10
@@ -98,6 +110,9 @@ spec:
             requests: {cpu: 50m, memory: 256Mi}
             limits: {memory: 1Gi}
       volumes:
+        # CA for verifying the LAPI cert; published to every namespace by trust-manager.
+        - name: lapi-ca
+          configMap: {name: homelab-ca-bundle}
         - name: data
           persistentVolumeClaim:
             claimName: crowdsec-web-ui-data

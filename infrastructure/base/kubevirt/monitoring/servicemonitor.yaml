@@ -18,5 +18,21 @@ spec:
       interval: 30s
       scheme: https
       tlsConfig:
+        # STAYS TRUE, and it was tested rather than skipped (TALOS-pnyo).
+        #
+        # KubeVirt signs its metrics endpoint with its OWN internal CA, not the cluster CA:
+        #   s: CN = virt-api.kubevirt.pod.cluster.local
+        #   i: CN = kubevirt.io@1789388329
+        #   openssl ... -CAfile <serviceaccount ca.crt> -> Verify return code: 21
+        # so caFile against the cluster CA cannot work here.
+        #
+        # kubevirt-ca IS published, but only as a ConfigMap in the kubevirt namespace, and a
+        # ServiceMonitor can only reference one from the scraper's namespace. More decisive:
+        # that CA is valid for SEVEN DAYS (measured: notBefore Sep 14, notAfter Sep 21 2026),
+        # so any copy of it goes stale within a week. Verifying here needs machinery that
+        # tracks a weekly-rotating CA across namespaces, which is far more failure surface
+        # than the authentication gap it would close on an in-cluster metrics scrape.
+        #
+        # Revisit if KubeVirt is ever configured to use the cluster CA.
         insecureSkipVerify: true
       honorLabels: true
