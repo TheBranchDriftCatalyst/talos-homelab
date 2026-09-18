@@ -37,6 +37,31 @@ spec:
       enabled: true
       webui:
         enabled: true
+        # --- Local basic auth: NOT admin:admin (security audit) ---
+        # The UI has its OWN basic auth underneath the Authentik forward-auth at the ingress,
+        # and upstream defaults it to admin:admin. Authentik only guards the Traefik hop, so
+        # that default was a full in-cluster SSO bypass for anything able to reach the
+        # Service. Two settings close it, plus webui-network-policy.yaml.
+        #
+        # user: "" -- the chart writes FALCOSIDEKICK_UI_USER into its own -ui Secret only
+        # `{{- if .Values.webui.user }}`, so emptying it keeps admin:admin from ever being
+        # written to the cluster at all. Do NOT read this as "auth is off": the APP still
+        # falls back to admin:admin when the env var is ABSENT, so existingSecret below is
+        # mandatory, not optional -- emptying `user` on its own would re-open the hole.
+        user: ""
+        # The real credential, from 1Password via ESO (see externalsecret.yaml). The chart
+        # appends this as a second envFrom secretRef AFTER its own -ui Secret, so its
+        # FALCOSIDEKICK_UI_USER wins. That secretRef is not optional -> if ESO has not
+        # synced, the pod fails to start rather than booting on the admin:admin default.
+        existingSecret: falco-webui-auth
+        # disableauth stays FALSE on purpose. The crowdsec web-ui turns its native auth off
+        # and leans entirely on Authentik + a NetworkPolicy, but that app has no usable local
+        # credential to set; this one does, so leaving it ON buys real defense-in-depth -- an
+        # in-cluster caller that gets past the NetworkPolicy still needs the 40-char secret.
+        # Note this does NOT affect event ingestion: falcosidekick POSTs to the UI over
+        # WEBUI_URL with no credentials, and the UI's auth middleware skips ALL POSTs plus
+        # /api/v1/healthz by design, so only browser GETs are challenged.
+        disableauth: false
         # X<unit> format, NOT raw seconds -- the chart documents `ttl: X<unit>` with unit in
         # s/m/d/w. An earlier 604800 here was not 7 days, it was an invalid value.
         ttl: "7d"

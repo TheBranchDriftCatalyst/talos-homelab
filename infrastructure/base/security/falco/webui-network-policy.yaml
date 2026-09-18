@@ -1,0 +1,52 @@
+---
+# falcosidekick-ui is gated by Authentik at Traefik (ingress.yaml). That gate only covers the
+# ingress hop, so without this policy any pod in the cluster could dial
+# falco-falcosidekick-ui:2802 directly and skip SSO entirely. Same posture and same shape as
+# crowdsec/webui-network-policy.yaml.
+#
+# This is the SECOND of two layers: helmrelease.yaml also replaces the app's default
+# admin:admin basic-auth credential, so a caller that somehow reaches the pod still has to
+# authenticate. Neither layer alone is sufficient -- the UI's auth middleware skips every POST
+# (see below), so the credential does not protect event ingestion, and a NetworkPolicy does not
+# protect against anything already allowed through it.
+#
+# TWO ingress sources are required:
+#   1. traefik      -- browser traffic that has passed lan-only + the authentik middleware.
+#   2. falcosidekick -- the core deployment POSTs events to the UI in-cluster over WEBUI_URL
+#      (http://falco-falcosidekick-ui:2802, set by the chart). The UI's basic-auth middleware
+#      deliberately skips all POST requests, so falcosidekick pushes events UNAUTHENTICATED;
+#      this rule is what keeps that open ingest path reachable only by falcosidekick itself.
+#      Dropping it silently stops every event from reaching the UI while Falco looks healthy.
+#
+# Pod labels come from the falcosidekick subchart helpers: selectorLabels are
+# app.kubernetes.io/name=falcosidekick + app.kubernetes.io/instance=<release>, and the
+# component label separates the two deployments (ui vs core).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: falcosidekick-ui-ingress
+  namespace: falco
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: falcosidekick
+      app.kubernetes.io/instance: falco
+      app.kubernetes.io/component: ui
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: falcosidekick
+              app.kubernetes.io/instance: falco
+              app.kubernetes.io/component: core
+      ports:
+        - protocol: TCP
+          port: 2802

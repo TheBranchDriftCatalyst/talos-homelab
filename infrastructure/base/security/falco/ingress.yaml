@@ -1,7 +1,18 @@
 ---
 # falcosidekick-ui at falco.talos00 — the Falco alert UI (events, stats, replay). LAN-only +
-# Authentik SSO, mirroring the crowdsec web-ui pattern. Default UI login is admin/admin; the
-# Authentik + lan-only middlewares are the real gate in front of it.
+# Authentik SSO (forward_single), mirroring the crowdsec web-ui pattern. The `falco` Authentik
+# proxy provider + application already exist in authentik/infra-admin-blueprint.yaml and are
+# unioned into the embedded outpost by authentik/talos-private-blueprint.yaml; the ONE
+# HostRegexp route in authentik/ingressroute.yaml carries /outpost.goauthentik.io/* here.
+#
+# The middlewares below gate the INGRESS hop only. The app's own login is no longer the chart
+# default admin/admin — helmrelease.yaml sources it from 1Password (externalsecret.yaml), and
+# webui-network-policy.yaml stops in-cluster callers from reaching the pod behind Traefik.
+#
+# NO /api carve-out here, deliberately. The arr-stack apps exclude /api so machine clients can
+# use an API key, but this UI's /api/v1/* GETs are made by the SPA in the BROWSER and must stay
+# behind SSO; the only machine client is falcosidekick, which POSTs in-cluster and never
+# traverses this route.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
