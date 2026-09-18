@@ -23,6 +23,49 @@ spec:
     driver:
       kind: modern_ebpf
     tty: true
+    # LEAST PRIVILEGE (TALOS-cscw). The chart defaults to privileged: true, which modern_ebpf
+    # does not need -- the chart's own values file documents exactly this capability set as
+    # the alternative. Replacing full privilege with four capabilities is the single largest
+    # privilege reduction available in this tree.
+    #
+    # What each one is for: BPF loads the CO-RE probe, PERFMON reads the perf ring buffer,
+    # SYS_RESOURCE raises the locked-memory limit the probe needs, SYS_PTRACE reads
+    # /proc/<pid> for process lineage in rule output.
+    #
+    # IF DETECTION STOPS AFTER A CHANGE HERE, THIS IS THE FIRST THING TO REVERT -- a missing
+    # capability makes the probe fail to load, and Falco keeps running while detecting
+    # nothing. Verify with falcosecurity_falcosidekick_falco_events_total per hostname, not
+    # with pod readiness.
+    containerSecurityContext:
+      privileged: false
+      capabilities:
+        drop: [ALL]
+        add: [BPF, PERFMON, SYS_RESOURCE, SYS_PTRACE]
+    # Only containerd exists on Talos. The chart mounts a hostPath socket per ENABLED engine
+    # regardless of whether it exists, so the defaults gave this pod six runtime sockets --
+    # docker, podman, crio and k3s among them -- none of which can be present here. Falco's
+    # own startup log confirms it only ever enabled /run/host-containerd/containerd.sock.
+    # Disabling the dead ones removes four host mounts from the most privileged pod we run.
+    # NOTE the path is collectors.containerEngine.engines -- NOT collectors.container.*,
+    # which is silently ignored (caught by rendering the DaemonSet before deploying).
+    collectors:
+      containerEngine:
+        engines:
+          # Dead on Talos: no docker daemon, no podman, no crio, no k3s. Each enabled engine
+          # gets its hostPath socket mounted whether or not the path exists.
+          docker: {enabled: false}
+          podman: {enabled: false}
+          # cri is disabled but its two REAL sockets are folded into containerd below. The
+          # cri engine also drags in /run/crio and /run/k3s, which cannot exist here.
+          # Keeping both containerd paths matters: losing container metadata would strip
+          # k8s.ns.name/container.name from events, and every honeypot-breach rule filters
+          # on exactly those.
+          cri: {enabled: false}
+          containerd:
+            enabled: true
+            sockets:
+              - /run/host-containerd/containerd.sock
+              - /run/containerd/containerd.sock
     # Keep default rules (cluster-wide baseline: shell-in-container, sensitive reads, etc.),
     # plus our honeypot-breach tripwires below.
     falco:
@@ -71,24 +114,37 @@ spec:
         # X<unit> format, NOT raw seconds -- the chart documents `ttl: X<unit>` with unit in
         # s/m/d/w. An earlier 604800 here was not 7 days, it was an invalid value.
         ttl: "7d"
-        # The chart's bundled redis/redis-stack is REPLACED by Dragonfly (dragonfly.yaml),
-        # matching argocd/authentik/boomtime/manyfold -- after this, every Redis-compatible
-        # store in the cluster is Dragonfly and no standalone redis remains.
+        # BUNDLED redis-stack, NOT Dragonfly. Dragonfly was tried (78612fd6) and REVERTED:
+        # falcosidekick-ui writes every event through github.com/Issif/redisearch-go, whose
+        # Index() emits FT.ADD -- the deprecated RediSearch v1 API. redis-stack keeps FT.ADD
+        # as a back-compat alias that internally HSETs; Dragonfly implemented only the modern
+        # subset (FT.CREATE/SEARCH/AGGREGATE/INFO/_LIST/DROPINDEX) and never FT.ADD. The UI
+        # therefore returned 500 on every POST and stored nothing: DBSIZE 0, empty UI, while
+        # the index itself existed because FT.CREATE succeeded. Still true on the UI's master
+        # (v2.3.1, same library), so this is not fixable by upgrading or by config.
         #
-        # The bundled one shipped with resources:{}, no maxmemory and no TTL, grew to a
-        # 1.43 GB RDB in five days, and OOM-killed itself into CrashLoopBackOff on its first
-        # restart -- stalling the Helm upgrade AND its rollback. Dragonfly takes an explicit
-        # --maxmemory and EVICTS at the ceiling instead of dying at it.
+        # My pre-switch check tested FT.CREATE/_LIST/SEARCH/DROPINDEX -- exactly the commands
+        # Dragonfly HAS -- and never exercised the write path. Test the WRITE, not the schema.
         #
-        # RediSearch: the chart requires "RediSearch > v2" for this store. Verified against
-        # the live Dragonfly v1.39.0 before switching -- FT.CREATE returned OK, FT._LIST
-        # showed the index, FT.SEARCH ran, FT.DROPINDEX cleaned up. It is compatible.
+        # THE ORIGINAL GROWTH BUG IS STILL FIXED, without Dragonfly. That unbounded 1.43GB RDB
+        # came from ttl: 604800, which is not a valid value (the chart wants X<unit>), so no
+        # TTL was ever applied AND there was no maxmemory. Now: a real 7d TTL expires each
+        # event key, an lru ceiling backstops it if TTL ever fails again, and the memory limit
+        # sits ABOVE maxmemory so redis evicts rather than being OOM-killed.
+        #
+        # storageEnabled: false is deliberate -- events are ephemeral telemetry (Loki is the
+        # authoritative sink), and it means no PVC to reload a huge RDB from on restart, which
+        # is what turned the growth bug into a CrashLoop in the first place.
         redis:
-          enabled: false
-        externalRedis:
           enabled: true
-          url: "falcosidekick-cache.falco.svc.cluster.local"
-          port: 6379
+          storageEnabled: false
+          customConfig:
+            - maxmemory 512mb
+            - maxmemory-policy allkeys-lru
+            - save ""
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 768Mi}
       config:
         # The webhook URL is NEVER in git: this secret is the ESO-managed copy of the same
         # 1Password item CrowdSec posts its bans to. The chart reads every UPPERCASE key in
