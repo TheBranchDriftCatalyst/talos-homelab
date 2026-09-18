@@ -4,6 +4,17 @@
 # The Honeypot Container Breach rules went silently blind THREE TIMES on 2026-09-18. Each
 # time the config looked correct, Falco kept emitting events, every pod stayed Ready, and the
 # only thing that caught it was a human executing a process by hand and noticing nothing
+# fired. A rule that is never exercised is not a control, it is a belief.
+#
+# Lives in the falco namespace because honeypot's egress quarantine blocks the apiserver.
+# Its exec permission comes from a Role/RoleBinding in the honeypot namespace
+# (honeypots/tripwire-canary-rbac.yaml), which is what keeps that permission scoped.
+---
+# CONTINUOUS PROOF THAT THE HONEYPOT TRIPWIRE STILL WORKS.
+#
+# The Honeypot Container Breach rules went silently blind THREE TIMES on 2026-09-18. Each
+# time the config looked correct, Falco kept emitting events, every pod stayed Ready, and the
+# only thing that caught it was a human executing a process by hand and noticing nothing
 # fired. Each fix then verified the field it had just changed and missed the next break.
 #
 # This makes that manual test continuous. A rule that is never exercised is not a control, it
@@ -26,36 +37,6 @@ kind: ServiceAccount
 metadata:
   name: falco-tripwire-canary
   namespace: falco
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: falco-tripwire-canary
-  namespace: honeypot
-rules:
-  # Deliberately minimal: exec into the honeypot's own pods and nothing else.
-  - apiGroups: [""]
-    resources: [pods]
-    verbs: [get, list]
-  - apiGroups: [""]
-    resources: [pods/exec]
-    verbs: [create]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: falco-tripwire-canary
-  namespace: honeypot
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: falco-tripwire-canary
-subjects:
-  # Cross-namespace: the SA lives in falco, the Role it binds is in honeypot. The RoleBinding
-  # must stay in honeypot -- that is what scopes the exec permission to this namespace only.
-  - kind: ServiceAccount
-    name: falco-tripwire-canary
-    namespace: falco
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -111,3 +92,4 @@ spec:
                   echo "firing tripwire canary in $POD"
                   kubectl -n honeypot exec "$POD" -c cowrie -- getent passwd root >/dev/null
                   echo "canary exec completed; the breach rule must now increment"
+

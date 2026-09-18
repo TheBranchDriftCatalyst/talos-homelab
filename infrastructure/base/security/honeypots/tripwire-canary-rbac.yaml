@@ -1,0 +1,45 @@
+---
+# Exec permission for the tripwire canary, scoped to THIS namespace only.
+#
+# The canary's ServiceAccount and CronJob deliberately live in the FALCO namespace
+# (falco/tripwire-canary.yaml) because the honeypot namespace is under a strict Cilium egress
+# quarantine and cannot reach the apiserver -- proven when the first version died on
+# `dial tcp 10.96.0.1:443: i/o timeout`. Widening that quarantine to make a test convenient
+# would weaken containment on the namespace most likely to be compromised.
+#
+# Only the Role and RoleBinding stay here. A RoleBinding grants solely within its OWN
+# namespace no matter where the subject SA lives, so this is what keeps the permission narrow.
+#
+# NOTE these files are split across two directories because each kustomization sets
+# `namespace:`, and that transformer silently REWRITES any namespace set in the manifest.
+# Putting the CronJob in this directory with `namespace: falco` does not work -- it renders
+# into honeypot with no error at all.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: falco-tripwire-canary
+  namespace: honeypot
+rules:
+  # Deliberately minimal: exec into the honeypot's own pods and nothing else.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: falco-tripwire-canary
+  namespace: honeypot
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: falco-tripwire-canary
+subjects:
+  # Cross-namespace: the SA lives in falco, the Role it binds is in honeypot. The RoleBinding
+  # must stay in honeypot -- that is what scopes the exec permission to this namespace only.
+  - kind: ServiceAccount
+    name: falco-tripwire-canary
+    namespace: falco
