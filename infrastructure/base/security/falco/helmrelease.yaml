@@ -42,16 +42,28 @@ spec:
         # (TALOS-wn69). Unbounded it eventually pressures a node and OOMs whatever shares
         # it, and the UI dies silently because nothing alerts on it. TTL expires events;
         # the limit makes the failure loud and local instead of quiet and cluster-wide.
-        ttl: 604800 # 7d
+        # X<unit> format, NOT raw seconds -- the chart documents `ttl: X<unit>` with unit in
+        # s/m/d/w. An earlier 604800 here was not 7 days, it was an invalid value.
+        ttl: "7d"
         redis:
           resources:
             requests: { cpu: 25m, memory: 128Mi }
-            limits: { memory: 512Mi }
-      # The webhook URL is NEVER in git: this secret is the ESO-managed copy of the same
-      # 1Password item CrowdSec posts its bans to. The chart reads every UPPERCASE key in
-      # it as a falcosidekick config env var, so DISCORD_WEBHOOKURL wires the output.
-      existingSecret: falco-discord
+            # 2Gi, not 512Mi. Redis was already holding 1.58 GiB, so a 512Mi limit OOM-killed
+            # it into CrashLoopBackOff and stalled the Helm upgrade AND its rollback. The cap
+            # has to clear the EXISTING dataset; the TTL above is what actually shrinks it.
+            # NOTE: ttl applies to keys written from now on -- pre-existing keys have no
+            # expiry, so a one-time FLUSHDB is needed if this does not trend down.
+            limits: { memory: 2Gi }
       config:
+        # The webhook URL is NEVER in git: this secret is the ESO-managed copy of the same
+        # 1Password item CrowdSec posts its bans to. The chart reads every UPPERCASE key in
+        # it as a config env var, so DISCORD_WEBHOOKURL wires the output.
+        #
+        # Path matters: this is config.existingSecret. An earlier attempt put it at
+        # falcosidekick.existingSecret, one level too high, where the chart never reads it --
+        # the deployment came up with no DISCORD env at all and the output silently did
+        # nothing. The only `existingSecret` in the PARENT chart is for certs.
+        existingSecret: falco-discord
         loki:
           hostport: "http://loki.monitoring.svc:3100"
           apiendpoint: "/loki/api/v1/push"
