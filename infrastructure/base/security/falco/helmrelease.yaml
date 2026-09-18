@@ -37,23 +37,27 @@ spec:
       enabled: true
       webui:
         enabled: true
-        # Redis retained every event forever with no limits: measured 1.58 GiB RSS after
-        # five days and still climbing, on an event rate inflated by known false positives
-        # (TALOS-wn69). Unbounded it eventually pressures a node and OOMs whatever shares
-        # it, and the UI dies silently because nothing alerts on it. TTL expires events;
-        # the limit makes the failure loud and local instead of quiet and cluster-wide.
         # X<unit> format, NOT raw seconds -- the chart documents `ttl: X<unit>` with unit in
         # s/m/d/w. An earlier 604800 here was not 7 days, it was an invalid value.
         ttl: "7d"
+        # The chart's bundled redis/redis-stack is REPLACED by Dragonfly (dragonfly.yaml),
+        # matching argocd/authentik/boomtime/manyfold -- after this, every Redis-compatible
+        # store in the cluster is Dragonfly and no standalone redis remains.
+        #
+        # The bundled one shipped with resources:{}, no maxmemory and no TTL, grew to a
+        # 1.43 GB RDB in five days, and OOM-killed itself into CrashLoopBackOff on its first
+        # restart -- stalling the Helm upgrade AND its rollback. Dragonfly takes an explicit
+        # --maxmemory and EVICTS at the ceiling instead of dying at it.
+        #
+        # RediSearch: the chart requires "RediSearch > v2" for this store. Verified against
+        # the live Dragonfly v1.39.0 before switching -- FT.CREATE returned OK, FT._LIST
+        # showed the index, FT.SEARCH ran, FT.DROPINDEX cleaned up. It is compatible.
         redis:
-          resources:
-            requests: { cpu: 25m, memory: 128Mi }
-            # 2Gi, not 512Mi. Redis was already holding 1.58 GiB, so a 512Mi limit OOM-killed
-            # it into CrashLoopBackOff and stalled the Helm upgrade AND its rollback. The cap
-            # has to clear the EXISTING dataset; the TTL above is what actually shrinks it.
-            # NOTE: ttl applies to keys written from now on -- pre-existing keys have no
-            # expiry, so a one-time FLUSHDB is needed if this does not trend down.
-            limits: { memory: 2Gi }
+          enabled: false
+        externalRedis:
+          enabled: true
+          url: "falcosidekick-cache.falco.svc.cluster.local"
+          port: 6379
       config:
         # The webhook URL is NEVER in git: this secret is the ESO-managed copy of the same
         # 1Password item CrowdSec posts its bans to. The chart reads every UPPERCASE key in

@@ -1,0 +1,45 @@
+---
+# Dragonfly (Redis-compatible) store for the falcosidekick WebUI.
+# Replaces the chart's bundled `redis/redis-stack` StatefulSet, matching the house
+# pattern already used for argocd (infrastructure/base/argocd/dragonfly.yaml) and
+# authentik (infrastructure/base/authentik/dragonfly.yaml).
+#
+# WHY THE SWITCH (TALOS-wn69): the bundled redis-stack shipped with `resources: {}`,
+# no maxmemory and no key TTL, so it grew without bound -- 1.58 GiB RSS and a 1.43 GB
+# RDB after five days, on an event stream inflated by known false positives. It was a
+# time bomb: any restart had to re-load that RDB, and the first one OOM-killed it into
+# CrashLoopBackOff, which stalled the Helm upgrade AND its rollback. Dragonfly takes an
+# explicit `--maxmemory` and evicts instead of growing until something dies.
+#
+# CACHE-ONLY / EPHEMERAL: this holds the WebUI's event history only. falcosidekick's
+# authoritative sink is Loki (see the helmrelease `loki:` output), so dropping this
+# store loses nothing but the UI's scrollback -- no snapshot PVC, no migration, and a
+# restart simply repopulates from new events.
+#
+# AUTH -- intentionally none: reached only in-cluster over ClusterIP, and the operator
+# creates a per-Dragonfly NetworkPolicy admitting :6379 from same-namespace pods only.
+apiVersion: dragonflydb.io/v1alpha1
+kind: Dragonfly
+metadata:
+  name: falcosidekick-cache
+  namespace: falco
+spec:
+  replicas: 1
+  # Same known-good version as argocd/authentik. (prefer-latest: bump alongside the operator.)
+  image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.39.0
+  # Dragonfly sizes itself to the HOST thread count (~16 here) and would demand
+  # ~256Mi/thread, OOM-exiting under a small limit -- the same shape of failure that
+  # took the old redis down. Pin one proactor thread and an explicit maxmemory.
+  #
+  # maxmemory 384mb under a 512Mi limit: unlike redis-stack this EVICTS at the ceiling
+  # rather than growing into an OOMKill, so the cap is now a bound instead of a fuse.
+  args:
+    - "--proactor_threads=1" # 256Mi/thread floor -> fits the 512Mi limit
+    - "--maxmemory=384mb"
+    - "--cache_mode=true" # LRU-evict the oldest UI events instead of erroring on OOM
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
