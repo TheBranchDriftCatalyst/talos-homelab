@@ -33,9 +33,22 @@ POLL_SECONDS = 30
 MAP_PATH = '/usr/local/etc/haproxy/replay.map'
 # Only this decision type is enforced here. A `ban` must NOT close the honeypot.
 DROP_TYPE = 'silentdrop'
-# LAPI is TLS with a self-signed in-cluster CA (TALOS-3pdz/dw2p); same hop the
-# decision exporter makes.
-_TLS_CTX = ssl._create_unverified_context()
+# LAPI is TLS. This used to run ssl._create_unverified_context(), which accepts ANY
+# certificate -- confidentiality without authentication on the hop that tells this process
+# which addresses to silently drop. Anything able to answer on that Service name could have
+# fed it an arbitrary drop list, including one covering legitimate traffic.
+#
+# Verification is cheap now: crowdsec certs are signed by homelab-ca (TALOS-k5vm), and
+# trust-manager publishes that CA into EVERY namespace as the homelab-ca-bundle ConfigMap,
+# so this is a plain mount with no cross-namespace copying and rotation comes for free.
+#
+# Fails LOUDLY if the CA is absent rather than silently downgrading to unverified. This
+# bouncer fails OPEN by design (a missing map means nothing is dropped, and the honeypot
+# keeps collecting), so refusing to start is the safe direction.
+_CA_FILE = os.environ.get('LAPI_CA_FILE', '/tls/ca.crt')
+if not os.path.isfile(_CA_FILE):
+    raise SystemExit(f'LAPI CA bundle missing at {_CA_FILE}; refusing to run unverified')
+_TLS_CTX = ssl.create_default_context(cafile=_CA_FILE)
 _IPV4 = re.compile(r'^\d{1,3}(?:\.\d{1,3}){3}$')
 
 

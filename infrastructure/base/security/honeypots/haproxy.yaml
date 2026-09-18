@@ -84,6 +84,7 @@ spec:
           volumeMounts:
             - { name: novelty-bouncer, mountPath: /app, readOnly: true }
             - { name: bouncer-key, mountPath: /keys, readOnly: true }
+            - { name: lapi-ca, mountPath: /tls, readOnly: true }
             - { name: runtime, mountPath: /var/run/haproxy }
           securityContext:
             runAsNonRoot: true
@@ -101,6 +102,12 @@ spec:
           configMap: { name: honeypot-novelty-bouncer }
         - name: bouncer-key
           secret: { secretName: crowdsec-novelty-bouncer-key }
+        # CA for VERIFYING the LAPI cert (TALOS-pnyo). Published into every namespace by
+        # trust-manager, and since TALOS-k5vm the crowdsec PKI is signed by it -- so this is
+        # a plain ConfigMap mount that inherits CA rotation, with nothing copied across
+        # namespaces and no private key anywhere near the honeypot.
+        - name: lapi-ca
+          configMap: { name: homelab-ca-bundle }
         # Shared so the bouncer can reach haproxy's admin socket. emptyDir: the map is
         # rebuilt from the LAPI within one poll of any restart.
         - name: runtime
