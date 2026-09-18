@@ -116,8 +116,12 @@ reorder it.**
   `configMapGenerator` so the hash changes and the pod rolls. Never convert them to static
   ConfigMaps.
 - **The operator allowlist is fragile.** `homelab/whitelist` pins a *residential* IP that
-  rotates, and the `crowdsec-allowlist-refresher` CronJob that was meant to track it is
-  currently failing. If you are locked out, check that value first.
+  rotates; `crowdsec-allowlist-refresher` tracks it. If you are locked out, check that value
+  first.
+  (This bullet previously asserted the refresher "is currently failing". It was Complete and
+  refreshing normally within a day of that being written. Do not record live state in an
+  architecture doc -- it rots silently and then misleads exactly the person debugging an
+  outage. Health belongs in alerts; these files should carry only invariants.)
 
 ## Falco rule provenance — the upstream ruleset is NOT in git
 
