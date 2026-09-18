@@ -4,10 +4,18 @@ kind: Namespace
 metadata:
   name: honeypot
   labels:
-    # Pod Security Standards - privileged required for hostPort binding
-    pod-security.kubernetes.io/enforce: privileged
-    pod-security.kubernetes.io/audit: baseline
-    pod-security.kubernetes.io/warn: baseline
+    # Pod Security Standards. ENFORCE was `privileged`, justified in-comment by "required
+    # for hostPort binding" -- but no manifest in this tree has set a hostPort since ingress
+    # moved to the Cilium VIP + haproxy front (vip.yaml). So the ONE namespace that
+    # deliberately hosts attackers had admission control switched off on a rationale that no
+    # longer applied, and any privileged/hostPath pod could have landed here unchallenged.
+    #
+    # Verified against the live namespace before flipping: zero baseline violations across
+    # every running pod (no privileged, no hostNetwork/PID/IPC, no hostPath, no added
+    # capabilities, no hostPort). (TALOS-cscw)
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
     # Goldilocks for resource recommendations
     goldilocks.fairwinds.com/enabled: 'true'
     goldilocks.fairwinds.com/vpa-update-mode: 'off'

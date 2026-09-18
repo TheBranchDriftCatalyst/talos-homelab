@@ -95,8 +95,19 @@ spec:
             limits: { memory: 32Mi }
       containers:
         - name: cowrie
-          image: cowrie/cowrie:latest
-          imagePullPolicy: Always
+          # PINNED BY DIGEST (TALOS-cscw). This is the most-attacked workload in the cluster
+          # and it was on :latest with pullPolicy Always -- so every pod recreation silently
+          # fast-forwarded to whatever upstream last pushed. Two concrete risks that is not
+          # theoretical here: cowrie's JSON log format moving under homelab/cowrie-logs (which
+          # feeds the replay-drop scenario) with no warning, and a Docker Hub account
+          # compromise deploying straight into an internet-facing pod.
+          #
+          # This digest is the one that was ALREADY RUNNING when it was pinned, so pinning
+          # changed nothing behaviourally -- it only stopped the drift. Bump deliberately:
+          # resolve the new digest, read cowrie's release notes for log-format changes, then
+          # confirm cowrie.command.input still parses.
+          image: cowrie/cowrie@sha256:f6ea2e847a1837794cd570322a25a9da819824c70a718600fa6de4c1eba66626
+          imagePullPolicy: IfNotPresent
           ports:
             - name: ssh
               containerPort: 2222

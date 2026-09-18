@@ -26,6 +26,12 @@ spec:
       labels: { app: honeypot-lb }
     spec:
       automountServiceAccountToken: false
+      # The WAN-facing proxy and the key-holding bouncer were the only honeypot pods running
+      # with an unconfined syscall surface -- cowrie, beelzebub and iocaine all set this.
+      # Pod-level so both containers inherit it. (TALOS-cscw)
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       nodeSelector:
         kubernetes.io/hostname: talos02-gpu # co-located with the honeypots + the Local VIP announce node
       containers:

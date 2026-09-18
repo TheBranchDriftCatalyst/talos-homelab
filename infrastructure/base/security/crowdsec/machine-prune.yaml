@@ -79,12 +79,28 @@ spec:
         spec:
           serviceAccountName: crowdsec-machine-pruner
           restartPolicy: OnFailure
+          # This was the ONLY CronJob pod in the tree with no securityContext at all, so it
+          # ran as the image-default root while holding an SA with pods/exec into the LAPI
+          # (TALOS-cscw). Same shape as blocklist-import.yaml.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            seccompProfile: {type: RuntimeDefault}
           containers:
             - name: prune
-              image: bitnami/kubectl:latest
+              # alpine/k8s, matching every other job in this tree. bitnami/kubectl is NOT a safe
+              # choice here: machine-registrar.yaml already documents that Broadcom pulled that
+              # repo from Docker Hub (Aug 2025 bitnamilegacy move) causing ErrImagePull, and
+              # :latest on top of a dead repo means this job survives only on node image cache.
+              # First new node, re-image, or kubelet GC and it fails forever. (TALOS-cscw)
+              image: alpine/k8s:1.34.9
               resources:
                 requests: {cpu: 20m, memory: 32Mi}
                 limits: {memory: 128Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
               command:
                 - /bin/sh
                 - -c
