@@ -45,23 +45,29 @@ spec:
         #
         # user: "" -- the chart writes FALCOSIDEKICK_UI_USER into its own -ui Secret only
         # `{{- if .Values.webui.user }}`, so emptying it keeps admin:admin from ever being
-        # written to the cluster at all. Do NOT read this as "auth is off": the APP still
-        # falls back to admin:admin when the env var is ABSENT, so existingSecret below is
-        # mandatory, not optional -- emptying `user` on its own would re-open the hole.
+        # written to the cluster at all.
         user: ""
-        # The real credential, from 1Password via ESO (see externalsecret.yaml). The chart
-        # appends this as a second envFrom secretRef AFTER its own -ui Secret, so its
-        # FALCOSIDEKICK_UI_USER wins. That secretRef is not optional -> if ESO has not
-        # synced, the pod fails to start rather than booting on the admin:admin default.
+        # KEPT DELIBERATELY even though disableauth is true below and the app now ignores
+        # this credential. It costs nothing (the secret is synced regardless) and it is the
+        # guardrail for re-enabling auth: the app falls back to admin:admin whenever
+        # FALCOSIDEKICK_UI_USER is ABSENT, so flipping disableauth back to false with this
+        # removed would silently restore the default credential. With it present, that flip
+        # lands on the 1Password value instead. Do not "clean this up" as unused.
         existingSecret: falco-webui-auth
-        # disableauth stays FALSE on purpose. The crowdsec web-ui turns its native auth off
-        # and leans entirely on Authentik + a NetworkPolicy, but that app has no usable local
-        # credential to set; this one does, so leaving it ON buys real defense-in-depth -- an
-        # in-cluster caller that gets past the NetworkPolicy still needs the 40-char secret.
-        # Note this does NOT affect event ingestion: falcosidekick POSTs to the UI over
-        # WEBUI_URL with no credentials, and the UI's auth middleware skips ALL POSTs plus
-        # /api/v1/healthz by design, so only browser GETs are challenged.
-        disableauth: false
+        # ONE-CLICK SSO (operator decision). The app's own basic-auth prompt is off, so
+        # reaching https://falco.talos00 means exactly one login -- Authentik -- instead of
+        # an SSO round trip followed by a second credential box. Same posture the crowdsec
+        # web-ui already uses.
+        #
+        # THIS MAKES webui-network-policy.yaml THE ONLY IN-CLUSTER CONTROL. It was verified
+        # live before flipping: the policy is applied, its podSelector matches both UI pods,
+        # and the pods are Ready (so kubelet probes traverse it). If that policy is ever
+        # deleted or its selector drifts, the UI becomes open to anything in the cluster --
+        # there is no second layer behind it any more.
+        #
+        # Event ingestion is unaffected either way: falcosidekick POSTs to the UI over
+        # WEBUI_URL, and the UI's auth middleware skipped ALL POSTs even when auth was on.
+        disableauth: true
         # X<unit> format, NOT raw seconds -- the chart documents `ttl: X<unit>` with unit in
         # s/m/d/w. An earlier 604800 here was not 7 days, it was an invalid value.
         ttl: "7d"

@@ -4,11 +4,13 @@
 # falco-falcosidekick-ui:2802 directly and skip SSO entirely. Same posture and same shape as
 # crowdsec/webui-network-policy.yaml.
 #
-# This is the SECOND of two layers: helmrelease.yaml also replaces the app's default
-# admin:admin basic-auth credential, so a caller that somehow reaches the pod still has to
-# authenticate. Neither layer alone is sufficient -- the UI's auth middleware skips every POST
-# (see below), so the credential does not protect event ingestion, and a NetworkPolicy does not
-# protect against anything already allowed through it.
+# THIS IS NOW THE ONLY IN-CLUSTER CONTROL. The app's own basic auth is disabled
+# (helmrelease.yaml disableauth: true) so that SSO is one click rather than two prompts --
+# which means nothing behind this policy authenticates anything. Deleting it, or letting its
+# podSelector drift off the UI pods, opens the UI to every pod in the cluster.
+#
+# Note the credential layer never covered ingestion anyway: the UI's auth middleware skips
+# every POST, so falcosidekick always pushed events unauthenticated.
 #
 # TWO ingress sources are required:
 #   1. traefik      -- browser traffic that has passed lan-only + the authentik middleware.
