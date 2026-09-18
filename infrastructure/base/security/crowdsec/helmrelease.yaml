@@ -33,11 +33,31 @@ spec:
       enabled: true
       caBundle: true
       certManager:
-        enabled: true   # empty issuerRef => chart generates a self-signed Issuer + CA
+        enabled: true
         # chart 0.20.0 renders Certificate.spec fields directly from these — omit one and it
         # renders `null`, which the cert-manager CRD rejects (secretTemplate must be an object).
         # Provide every field the template references.
-        issuerRef: {}
+        # Sign every crowdsec cert with the SHARED homelab CA instead of a chart-generated
+        # self-signed one. This is what makes the LAPI certificate verifiable from OUTSIDE
+        # the crowdsec namespace (TALOS-k5vm).
+        #
+        # The problem it solves: the Traefik bouncer plugin ran
+        # crowdsecLapiTLSInsecureVerify: "true" because it had no way to obtain the CA. A
+        # pod can only mount Secrets from its own namespace, and every route to copy the CA
+        # into traefik was worse than the disease:
+        #   - trust-manager runs --trust-namespace=cert-manager, so a Bundle cannot source a
+        #     secret living in the crowdsec namespace.
+        #   - Kyverno clone would copy the CA PRIVATE KEY into traefik, and its background
+        #     controller cannot create Secrets anyway (verified: create=no, delete=no).
+        #   - Inlining the PEM goes stale at the CA's 2026-12-09 expiry, and this bouncer is
+        #     FAIL-CLOSED, so that is a cluster-wide HTTP outage on a timer.
+        # homelab-ca is already published to EVERY namespace as the homelab-ca-bundle
+        # ConfigMap by trust-manager, traefik included. So consumers get the CA and its
+        # rotation for free, with no new machinery.
+        issuerRef:
+          name: homelab-ca-issuer
+          kind: ClusterIssuer
+          group: cert-manager.io
         secretTemplate:
           # chart 0.20.0 only emits secretTemplate's CHILDREN when non-empty (empty {} is falsy in
           # Go templates), leaving `secretTemplate:` childless => rendered as null => CRD rejects it.
