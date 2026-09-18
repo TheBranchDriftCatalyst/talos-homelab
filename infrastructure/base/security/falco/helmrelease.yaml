@@ -198,6 +198,35 @@ spec:
     # (someone escaped the emulation into the real container). CRITICAL. Also the runtime-detection
     # net for the future KubeVirt VM detonation backend.
     customRules:
+      # Two known-benign sources were producing ~150-270 CRITICAL events per 30 MINUTES and
+      # 1,027 Discord posts, all from one upstream rule. Since CRITICAL now routes to Discord
+      # (TALOS-vy8s) and the honeypot breach rule has just been PROVEN to fire, that volume is
+      # the thing most likely to bury a real breach -- a channel this noisy gets muted, and
+      # then the tripwire might as well not exist.
+      #
+      # Both exclusions are deliberately narrow, matched on exepath/pod rather than on
+      # something broad like "ignore ns=monitoring":
+      #   1. cilium-cni -- the CNI binary invoked by containerd on the HOST for every pod
+      #      sandbox. It reports container_id=runtime with k8s_ns_name=<NA> because it is not
+      #      running in a container at all, so no metadata fix can make it stop; it has to be
+      #      excluded by identity.
+      #   2. alertmanager-config-pusher -- OUR OWN CronJob. An alpine image that legitimately
+      #      runs update-ca-certificates, c_rehash, envsubst and curl on every start, which is
+      #      exactly what "binary not part of base image" is designed to detect. Genuinely
+      #      benign, and it runs every 15 minutes.
+      #
+      # This narrows ONE upstream rule. It does not touch the honeypot breach rules.
+      drop-and-execute-exceptions.yaml: |-
+        - rule: Drop and execute new binary in container
+          condition: >
+            and not (proc.exepath = "/opt/cni/bin/cilium-cni" and container.id = "runtime")
+            and not (k8s.ns.name = "monitoring" and k8s.pod.name startswith "alertmanager-config-pusher")
+          # `override: {condition: append}`, NOT the bare `append: true` key -- falco --validate
+          # reports that one as LOAD_DEPRECATED_ITEM. A deprecated key on a security rule is
+          # precisely the thing that stops working on a chart bump and takes the exception with
+          # it, restoring the flood silently.
+          override:
+            condition: append
       honeypot-breach.yaml: |-
         - macro: honeypot_ns
           condition: (k8s.ns.name = "honeypot")
