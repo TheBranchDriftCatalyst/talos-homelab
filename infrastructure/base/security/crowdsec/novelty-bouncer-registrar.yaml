@@ -170,8 +170,15 @@ spec:
                       echo "${name} registered — nothing to do"
                     else
                       echo "${name} MISSING — registering from secret"
+                      # stdout is discarded because `cscli bouncers add` ECHOES THE KEY back
+                      # ("Please keep this key since you will not be able to retrieve it!"),
+                      # and this Job's stdout is scraped into Loki -- so a successful
+                      # registration was publishing the bouncer credential into the log store.
+                      # stderr is deliberately NOT discarded, and set -e still aborts on a
+                      # non-zero exit, so a genuine failure is still loud. (Swallowing both is
+                      # what hid the bogon-import bug for six days.)
                       kubectl exec -n crowdsec deploy/crowdsec-lapi -- \
-                        cscli bouncers add "${name}" -k "${key}"
+                        cscli bouncers add "${name}" -k "${key}" >/dev/null
                       echo "${name} registered — it authenticates on its next poll"
                     fi
                   }
