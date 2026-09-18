@@ -12,11 +12,20 @@
 # It also exercises the whole delivery path end to end: falco -> falcosidekick -> Discord.
 # The counter this alerts on is incremented by falcosidekick, so if ANY hop between the kernel
 # probe and the sidekick metric breaks, the canary stops incrementing and the alert fires.
+# The ServiceAccount and CronJob live in the FALCO namespace, not honeypot, and that is
+# deliberate. The honeypot namespace is under a strict Cilium egress quarantine -- DNS, the
+# CrowdSec LAPI and the emulator ports, nothing else -- so a pod running there cannot reach
+# the apiserver at all. Proven the hard way: the first version of this CronJob ran in
+# honeypot and died on `dial tcp 10.96.0.1:443: i/o timeout`.
+#
+# Widening that quarantine for a test pod would weaken the containment on the one namespace
+# most likely to be compromised, to make a canary convenient. Running from falco instead
+# costs a cross-namespace RoleBinding and weakens nothing.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: falco-tripwire-canary
-  namespace: honeypot
+  namespace: falco
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -42,15 +51,17 @@ roleRef:
   kind: Role
   name: falco-tripwire-canary
 subjects:
+  # Cross-namespace: the SA lives in falco, the Role it binds is in honeypot. The RoleBinding
+  # must stay in honeypot -- that is what scopes the exec permission to this namespace only.
   - kind: ServiceAccount
     name: falco-tripwire-canary
-    namespace: honeypot
+    namespace: falco
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: falco-tripwire-canary
-  namespace: honeypot
+  namespace: falco
   labels:
     app.kubernetes.io/component: tripwire-canary
 spec:
