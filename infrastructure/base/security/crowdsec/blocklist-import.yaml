@@ -92,14 +92,42 @@ data:
       # Drop bogons/our own space from BOTH lists before import. This filter used to be applied
       # to $ips only, never to $ranges -- which is exactly how 100.64.0.0/10 and 172.16.0.0/12
       # ended up with live ban decisions. Ranges are the dangerous half: one CIDR bans millions.
-      # Derived from the RFC 6890 / RFC 5737 special-use list, NOT from whatever happened to be
-      # banned on the day. The first version was built from the 8 bogons observed on
-      # 2026-09-18 and was overfit to that sample: it missed 192.0.0.0/24, 198.51.100.0/24
-      # (TEST-NET-2) and 203.0.113.0/24 (TEST-NET-3), and the 04:41 import re-banned two of
-      # them the same day. Enumerate the RFC, not today's symptoms.
-      BOGON='^(0\.|10\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.0\.(0|2)\.|192\.168\.|198\.1[89]\.|198\.51\.100\.|203\.0\.113\.|2(2[4-9]|[3-5][0-9])\.)'
-      ips=$(echo "$ips"       | grep -vE "$BOGON" || true)
-      ranges=$(echo "$ranges" | grep -vE "$BOGON" || true)
+      # SPECIAL-USE FILTER, by CIDR OVERLAP rather than text prefix.
+      #
+      # A prefix regex cannot be made correct here, and this is the third attempt. firehol
+      # AGGREGATES adjacent CIDRs, so a special-use block can arrive merged into a supernet
+      # whose text prefix looks routable: today's level1 ships 203.0.112.0/23, which CONTAINS
+      # all of TEST-NET-3 (203.0.113.0/24) but starts "203.0.112." and sails past any pattern
+      # written for "203.0.113.". The allowlist cannot save it either -- allowlists suppress
+      # decisions contained WITHIN an entry, not supersets of one.
+      #
+      # So compare numerically: expand every candidate and every reserved block to a
+      # [start,end] integer range and drop anything that OVERLAPS. That is complete against
+      # aggregation by construction, and needs no interpreter beyond awk (this image is
+      # bitnami/kubectl -- no python).
+      #
+      # Dropping a supernet loses the routable part of it too. That is the correct trade: one
+      # bad CIDR bans millions of addresses, while failing to ban 203.0.112.0/24 costs nothing.
+      SPECIAL='0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/3'
+      filter_special() {
+        awk -v special="$SPECIAL" '
+          function toint(ip,   a) { split(ip, a, "."); return a[1]*16777216 + a[2]*65536 + a[3]*256 + a[4] }
+          BEGIN {
+            n = split(special, S, " ")
+            for (i = 1; i <= n; i++) {
+              split(S[i], p, "/"); lo[i] = toint(p[1]); hi[i] = lo[i] + 2^(32 - p[2]) - 1
+            }
+          }
+          {
+            line = $0
+            if (line ~ /\//) { split(line, q, "/"); a = toint(q[1]); b = a + 2^(32 - q[2]) - 1 }
+            else { a = toint(line); b = a }
+            for (i = 1; i <= n; i++) if (a <= hi[i] && b >= lo[i]) next   # any overlap -> drop
+            print line
+          }'
+      }
+      ips=$(echo "$ips"       | filter_special)
+      ranges=$(echo "$ranges" | filter_special)
       # Recount AFTER filtering so the log line reports what was actually imported.
       ni=$(echo "$ips" | grep -c . || true); nr=$(echo "$ranges" | grep -c . || true)
       if [ "$DRY_RUN" = "true" ]; then
