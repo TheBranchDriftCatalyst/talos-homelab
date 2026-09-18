@@ -1,0 +1,44 @@
+---
+# falcosidekick CORE ingress. Without this, any pod in the cluster could POST to
+# falco-falcosidekick:2801 and inject arbitrary "Falco events" -- there is no authentication
+# on that endpoint. Two concrete abuses: flooding the Discord CRITICAL channel until the
+# operator mutes it (which is the alerting path added in TALOS-vy8s), and burying a real
+# honeypot-breach alert under forged noise.
+#
+# :2801 carries BOTH the event intake and /metrics, so the policy has to admit both senders
+# or it silently breaks one of them:
+#   1. falco  -- the DaemonSet agents POST detected events here. Drop this and Falco looks
+#      perfectly healthy while nothing it detects ever leaves the node.
+#   2. monitoring -- Alloy scrapes /metrics on the same port via podmonitor.yaml. Drop this
+#      and up{job="falco/falcosidekick"} silently goes to 0. That exact mistake was live on
+#      beelzebub until TALOS-yy3x: its PodMonitor scraped a port its own policy did not admit,
+#      so the dashboard read zero and was indistinguishable from "no attacks".
+#
+# Port 2810 (http-notls) is deliberately NOT admitted -- nothing in this deployment uses it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: falcosidekick-core-ingress
+  namespace: falco
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: falcosidekick
+      app.kubernetes.io/instance: falco
+      app.kubernetes.io/component: core
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Falco agents (DaemonSet) -> event intake
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: falco
+              app.kubernetes.io/instance: falco
+        # Alloy -> /metrics on the same port
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 2801
