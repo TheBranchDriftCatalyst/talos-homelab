@@ -10,7 +10,8 @@
 # (a parent go.work in the surrounding workspace otherwise drags sibling modules in) and why
 # nothing in the Go knows this repo by name.
 #
-# PHASE 0 IS READ-ONLY. Nothing here writes to the repository. Generation lands in TALOS-kll3.
+# `lint` and the report tasks never touch the repository. `generate` writes the whole-file
+# artifacts; `check` verifies them and writes nothing, which is the form a CI gate needs.
 version: "3"
 
 vars:
@@ -34,6 +35,18 @@ tasks:
     cmds:
       - cmd: cd {{.SRC}} && GOWORK=off go build -o bin/docsgen .
       - cmd: echo "built {{.BIN}}"
+
+  generate:
+    desc: "Write the generated documentation artifacts"
+    deps: [build]
+    cmds:
+      - "{{.BIN}} generate"
+
+  check:
+    desc: "Fail if a generated artifact is out of date (writes nothing)"
+    deps: [build]
+    cmds:
+      - "{{.BIN}} check"
 
   lint:
     desc: "Run every enabled documentation rule"
@@ -71,8 +84,34 @@ tasks:
     cmds:
       - "{{.BIN}} lint -rule {{.CLI_ARGS}}"
 
+  # Two test layers with a real boundary.
+  #
+  # unit  — in-package (package main), reaches unexported functions. Fast, no I/O.
+  # integ — black-box: builds the real binary and drives it against a SYNTHESIZED fixture
+  #         repo, so it asserts known answers instead of "whatever this cluster has today".
+  #         A suite keyed to the live component set fails the next time someone adds a
+  #         Kustomization, which trains everyone to ignore it.
+  #
+  # The ginkgo CLI comes from the module itself rather than from nixpkgs, so CLI and library
+  # versions match by construction — a skew between them is a documented ginkgo footgun.
   test:
-    desc: "Run the docsgen Go tests"
+    desc: "Run both docsgen test layers"
+    cmds:
+      - task: test:unit
+      - task: test:integration
+
+  test:unit:
+    desc: "Unit layer — pure functions, in-package"
+    cmds:
+      - cd {{.SRC}} && GOWORK=off go run github.com/onsi/ginkgo/v2/ginkgo --label-filter=unit ./...
+
+  test:integration:
+    desc: "Integration layer — builds the binary, drives it against a fixture repo"
+    cmds:
+      - cd {{.SRC}} && GOWORK=off go run github.com/onsi/ginkgo/v2/ginkgo --label-filter=integration ./...
+
+  test:go:
+    desc: "Both layers via plain `go test` (no ginkgo CLI needed)"
     cmds:
       - cd {{.SRC}} && GOWORK=off go test ./...
 

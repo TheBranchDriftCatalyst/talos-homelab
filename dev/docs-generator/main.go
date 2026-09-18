@@ -1,8 +1,9 @@
 // Command docsgen lints and (later) generates repository documentation.
 //
-// PHASE 0 IS READ-ONLY. Nothing here writes to the repository yet. The writing half — component
-// inventory, topology, staleness file, and nav marker regions — lands once the collection layer
-// below has been exercised against a real tree.
+// READ AND WRITE. `lint` and the report commands never touch the repository; `generate` writes
+// the whole-file artifacts and `check` verifies them without writing. The marker-region half —
+// nav tables interleaved with human prose in INDEX.md and the section READMEs — is deliberately
+// still absent, because whole-file and marker ownership must never be mixed in one file.
 //
 // WHY THIS EXISTS. Docs are the only projection of a codebase that nothing keeps honest: code
 // graphs are reindexed, session logs are derived from git, decision records are superseded
@@ -28,6 +29,8 @@ const usage = `docsgen — documentation linter
 usage: docsgen <command> [flags]
 
 commands:
+  generate     write the generated artifacts
+  check        verify generated artifacts are current (writes nothing)
   lint         run every enabled rule
   links        broken links only
   components   component inventory (slug, README presence, shape)
@@ -68,6 +71,10 @@ func main() {
 	ctx := Build(*root, cfg)
 
 	switch cmd {
+	case "generate":
+		os.Exit(reportGenerate(ctx, false))
+	case "check":
+		os.Exit(reportGenerate(ctx, true))
 	case "lint":
 		os.Exit(reportLint(ctx, *rule))
 	case "links":
@@ -147,8 +154,17 @@ func reportLint(ctx *Ctx, only string) int {
 func reportComponents(ctx *Ctx) int {
 	fmt.Printf("%-32s %-7s %-8s %-7s %s\n", "slug", "readme", "nested", "suspend", "path")
 	withReadme := 0
-	sort.Slice(ctx.Components, func(i, j int) bool { return ctx.Components[i].Slug < ctx.Components[j].Slug })
-	for _, c := range ctx.Components {
+	// Sort a COPY on a TOTAL key. Sorting ctx.Components in place mutated the model every other
+	// consumer reads, and slug alone is not a total order once two components can share one, so
+	// equal-slug rows could swap between runs of a command whose whole job is being diffable.
+	comps := append([]Component(nil), ctx.Components...)
+	sort.Slice(comps, func(i, j int) bool {
+		if comps[i].Slug != comps[j].Slug {
+			return comps[i].Slug < comps[j].Slug
+		}
+		return comps[i].Path < comps[j].Path
+	})
+	for _, c := range comps {
 		readme := "-"
 		if fileExists(filepath.Join(ctx.Root, c.Path, "README.md")) {
 			readme = "yes"
@@ -161,7 +177,7 @@ func reportComponents(ctx *Ctx) int {
 		fmt.Printf("%-32s %-7s %-8d %-7s %s\n", c.Slug, readme, c.Nested, suspend, c.Path)
 	}
 	fmt.Printf("\n%d components, %d with a README (%d without)\n",
-		len(ctx.Components), withReadme, len(ctx.Components)-withReadme)
+		len(comps), withReadme, len(comps)-withReadme)
 	return 0
 }
 
@@ -224,6 +240,31 @@ func reportStale(ctx *Ctx) int {
 	fmt.Printf("%-60s %-12s %s\n", "doc", "doc@", "subject@")
 	for _, r := range rows {
 		fmt.Printf("%-60s %-12s %s\n", r.path, r.docDate, r.subjDate)
+	}
+	return 0
+}
+
+// reportGenerate runs the artifact set in write or verify mode.
+//
+// Exit codes are the contract a CI gate depends on: check mode returns 1 on any difference,
+// generate mode returns 0 whenever it succeeded — including when it wrote nothing, which is the
+// expected steady state and must not read as failure.
+func reportGenerate(ctx *Ctx, check bool) int {
+	results, err := Generate(ctx, check)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "generate: %v\n", err)
+		return 2
+	}
+	stale := 0
+	for _, r := range results {
+		if r.Status == StatusDrift || r.Status == StatusMissing {
+			stale++
+		}
+		fmt.Printf("%-10s %s\n", r.Status, r.Rel)
+	}
+	if check && stale > 0 {
+		fmt.Fprintf(os.Stderr, "\n%d artifact(s) out of date — run `task docs:generate`\n", stale)
+		return 1
 	}
 	return 0
 }

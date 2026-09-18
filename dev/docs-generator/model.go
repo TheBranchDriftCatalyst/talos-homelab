@@ -22,6 +22,7 @@ type Doc struct {
 
 type Component struct {
 	Slug      string
+	Name      string // metadata.name — drifts from Slug in this repo, so both are kept
 	Path      string
 	DependsOn []string
 	Suspend   bool

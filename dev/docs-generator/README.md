@@ -88,6 +88,51 @@ switched off within a day. Promote rules to `error` in `config.yaml` as each is 
   the flake's `go` drive a different toolchain and fail with a `compile: version ... does not
   match` error.
 
+## Known limitations
+
+The normaliser's fixed-point claim — run prettier over generated output and nothing changes —
+holds for the constructs this generator emits, all of which are verified against real prettier
+by `TestPrettierFixedPoint`. It is **not** a claim about arbitrary markdown. Everything below
+was measured against prettier 3.9.6, not reasoned about.
+
+Where the two disagree, the normaliser declines to touch the block rather than rewriting it into
+a shape prettier will undo. An unformatted block is merely untidy; a block the two tools format
+differently is rewritten back and forth forever, with `task dev:lint:prettier` and
+`task docs:check` taking turns failing.
+
+| Construct | Behaviour | Consequence |
+| --- | --- | --- |
+| Table inside a blockquote (`> \| a \|`) | not matched, not normalised | prettier **will** reformat it: such a doc is not a fixed point |
+| Table inside a `` ```md `` / `` ```markdown `` fence | skipped with the rest of the fence | prettier formats embedded markdown, so it is not a fixed point |
+| `~~~` fence delimiters | left as written | prettier rewrites them to `` ``` ``; unrelated to tables, never normalised here |
+| Table indented 4+ columns | left alone as an indented code block | also declines tables nested two list levels deep, which is the price of having no block parser |
+| Cell containing ZWJ, a variation selector, ZWSP, ZWNJ or BOM | `Generate` **fails**, naming the artifact and the cell | deliberate: prettier's width for these is grapheme- and version-dependent, so any guess oscillates |
+| Trailing whitespace inside a line | always stripped | destroys a two-space markdown hard line break |
+| Generated file reached through a symlink | `os.Rename` replaces the link; `check` reads through it | the two can disagree about which file the artifact is |
+
+Three of those deserve more than a row.
+
+**Hard line breaks.** Two trailing spaces are a markdown hard line break and this normaliser
+strips them. That is invisible today because every artifact is generated from tables and
+headings, but it becomes real the moment the marker-region artifacts start normalising human
+prose. Matching prettier here is not a one-line change: it keeps exactly two trailing spaces
+when the next line continues the same paragraph, collapses three or more to two, and strips them
+at a paragraph end — so reproducing it needs the block context this line-based scanner does not
+have. Guessing wrong in the *other* direction (preserving a trailing run prettier would strip)
+is the worse failure, because it is the oscillation this whole design exists to avoid. Left as
+is, on purpose, until there is a prose artifact to test it against.
+
+**Blockquoted tables.** Out of scope. `tableLineRe` anchors on a leading `|`, so a `>`-prefixed
+row never reaches `renderTable`. Handling them means stripping and restoring the quote prefix
+much the way the indent is handled now — tractable, just not done, and no current artifact emits
+one.
+
+**Symlinked artifacts.** `check` reads the artifact with `os.ReadFile`, which follows a symlink;
+`generate` finishes with `os.Rename`, which replaces the link itself rather than writing through
+it. A symlinked artifact therefore reports drift forever after the first write, because check
+keeps reading the old target. No artifact is symlinked today and nothing detects it if one
+becomes so.
+
 ## Related Issues
 
 - `TALOS-hadr` — this tool (linter + read-only reports)

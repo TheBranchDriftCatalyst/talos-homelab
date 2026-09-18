@@ -202,8 +202,8 @@ func resolveCover(ctx *Ctx, tok string) (string, bool) {
 	if tok == "cluster" || tok == "repo" {
 		return "", false // reserved: forces cross-cutting
 	}
-	if strings.HasPrefix(tok, "path:") {
-		return strings.TrimSuffix(strings.TrimPrefix(tok, "path:"), "/"), true
+	if p, ok := strings.CutPrefix(tok, "path:"); ok {
+		return strings.TrimSuffix(p, "/"), true
 	}
 	if c, ok := ctx.BySlug[tok]; ok {
 		return strings.TrimSuffix(c.Path, "/"), true

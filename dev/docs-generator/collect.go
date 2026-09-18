@@ -148,6 +148,7 @@ func loadFlux(root string, cfg *Config) []Component {
 		// A single file may hold several documents; decoding only the first would silently
 		// drop components. At least one file in this repo does exactly that.
 		dec := yaml.NewDecoder(strings.NewReader(string(raw)))
+		var inFile []fluxDoc
 		for {
 			var fd fluxDoc
 			if err := dec.Decode(&fd); err != nil {
@@ -156,32 +157,56 @@ func loadFlux(root string, cfg *Config) []Component {
 			if fd.Kind != "Kustomization" {
 				continue
 			}
-			p := strings.TrimPrefix(strings.TrimPrefix(fd.Spec.Path, "."), "/")
-			if p == "" {
+			if strings.TrimPrefix(strings.TrimPrefix(fd.Spec.Path, "."), "/") == "" {
 				warnf("%s: Kustomization with no spec.path", filepath.Base(f))
 				continue
 			}
-			slug := strings.TrimSuffix(filepath.Base(f), filepath.Ext(f))
-			if cfg.Components.SlugFrom == "metadata.name" && fd.Metadata.Name != "" {
-				slug = fd.Metadata.Name
-			}
+			inFile = append(inFile, fd)
+		}
+		base := strings.TrimSuffix(filepath.Base(f), filepath.Ext(f))
+		for _, fd := range inFile {
 			var deps []string
 			for _, d := range fd.Spec.DependsOn {
 				if d.Name != "" {
 					deps = append(deps, d.Name)
 				}
 			}
+			rel := strings.TrimPrefix(strings.TrimPrefix(fd.Spec.Path, "."), "/")
 			out = append(out, Component{
-				Slug:      slug,
-				Path:      p,
+				Slug:      slugFor(cfg, base, fd, len(inFile)),
+				Name:      fd.Metadata.Name,
+				Path:      rel,
 				DependsOn: deps,
 				Suspend:   fd.Spec.Suspend,
 				Source:    mustRel(root, f),
-				Nested:    countNested(root, p),
+				Nested:    countNested(root, rel),
 			})
 		}
 	}
 	return out
+}
+
+// slugFor picks the stable handle for one component.
+//
+// The filename is preferred, because metadata.name drifts from it in this repo and a slug that
+// changes when someone renames a field is not a slug. But the filename is only a handle while it
+// identifies ONE thing: external-secrets.yaml declares both `external-secrets-operator` and
+// `external-secrets`, so under filename-slugging both collapsed to `external-secrets` and
+// Ctx.BySlug silently kept whichever decoded last. That made `covers: external-secrets` resolve
+// to an arbitrary one of two different paths — and therefore produced an arbitrary colocation
+// verdict — with nothing reporting it.
+//
+// So: filename while the file declares exactly one Kustomization, metadata.name the moment it
+// declares more. Uniqueness is the property that matters; the filename is just the usual way to
+// get it.
+func slugFor(cfg *Config, base string, fd fluxDoc, inFile int) string {
+	if cfg.Components.SlugFrom == "metadata.name" && fd.Metadata.Name != "" {
+		return fd.Metadata.Name
+	}
+	if inFile > 1 && fd.Metadata.Name != "" {
+		return fd.Metadata.Name
+	}
+	return base
 }
 
 func loadDirs(root string, cfg *Config) []Component {
@@ -228,8 +253,15 @@ func LastCommitDates(root string) map[string]string {
 
 func Build(root string, cfg *Config) *Ctx {
 	comps := LoadComponents(root, cfg)
+	// A collapsed slug is invisible corruption rather than a missing feature: BySlug keeps the
+	// last writer, so every cover/colocation/staleness answer for that slug silently describes
+	// the wrong component. slugFor removes the known cause; this catches the rest loudly.
 	bySlug := make(map[string]Component, len(comps))
 	for _, c := range comps {
+		if prev, dup := bySlug[c.Slug]; dup {
+			warnf("duplicate component slug %q: %s and %s — resolution is ambiguous",
+				c.Slug, prev.Path, c.Path)
+		}
 		bySlug[c.Slug] = c
 	}
 	return &Ctx{

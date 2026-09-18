@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -70,12 +71,7 @@ func (c *Config) RuleFor(name string) Rule {
 }
 
 func (c *Config) Has(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, want)
 }
 
 // LoadConfig reads config.yaml beside the executable's source directory.
