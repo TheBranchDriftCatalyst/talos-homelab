@@ -51,10 +51,14 @@ spec:
     #
     # THE cri ENGINE IS LOAD-BEARING. Disabling it killed container metadata cluster-wide:
     # k8s.ns.name went null on 299/299 sampled events and container.name became "host". Every
-    # honeypot-breach rule filters on k8s.ns.name = "honeypot" and container.name in
+    # honeypot-breach rule filters on k8s.ns.name = "honeypot" AND container.name in
     # (cowrie, beelzebub), so none of them could fire -- Falco kept emitting events and looked
-    # perfectly healthy while the tripwires were blind. Event COUNTS cannot detect this;
-    # sample output_fields and confirm k8s.ns.name is populated.
+    # perfectly healthy while the tripwires were blind.
+    #
+    # HOW TO VERIFY, and it must be all three: event COUNTS cannot detect this at all; sample
+    # output_fields and confirm BOTH k8s.ns.name AND container.name resolve; and do it PER
+    # NODE, because the failure was per-node. container.name resolving to a 12-hex container
+    # ID is the broken state -- it is not null, so a null-check passes straight over it.
     #
     # containerd and cri are different protocols against the same daemon: the native
     # containerd API does not carry the Kubernetes pod metadata that the CRI API does.
@@ -71,10 +75,19 @@ spec:
         engines:
           docker: {enabled: false}
           podman: {enabled: false}
-          containerd:
-            enabled: true
-            sockets:
-              - /run/containerd/containerd.sock
+          # NATIVE containerd IS DISABLED ON PURPOSE. Enabling it alongside cri on the SAME
+          # socket makes the two engines race for the container cache, and the winner differs
+          # PER NODE and across restarts. On talos02-gpu the native engine won and resolved
+          # container.name to the 12-hex container ID on 133/133 events, while every other
+          # node resolved real names -- and all three honeypot pods are pinned to
+          # talos02-gpu by nodeSelector, so the breach rules were dead exactly where they
+          # matter. A restart could silently flip any node either way.
+          #
+          # This is the SECOND time these rules were blind today. The first fix restored
+          # k8s.ns.name and verified only that field; container.name stayed broken and the
+          # rules still could not match. Verify BOTH fields, per node, and prefer the node
+          # the honeypot actually runs on.
+          containerd: {enabled: false}
           cri:
             enabled: true
             sockets:
