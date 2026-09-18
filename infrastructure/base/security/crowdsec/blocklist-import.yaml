@@ -78,7 +78,8 @@ data:
     csc_lapi cscli allowlists add homelab-infra \
       192.168.1.0/24 10.244.0.0/16 10.100.0.0/16 \
       10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 100.64.0.0/10 127.0.0.0/8 \
-      169.254.0.0/16 0.0.0.0/8 192.0.2.0/24 198.18.0.0/15 224.0.0.0/3 >/dev/null 2>&1 || true
+      169.254.0.0/16 0.0.0.0/8 192.0.2.0/24 198.18.0.0/15 224.0.0.0/3 \
+      192.0.0.0/24 198.51.100.0/24 203.0.113.0/24 >/dev/null 2>&1 || true
 
     for entry in $FEEDS; do
       name="${entry%%|*}"; url="${entry##*|}"
@@ -91,7 +92,12 @@ data:
       # Drop bogons/our own space from BOTH lists before import. This filter used to be applied
       # to $ips only, never to $ranges -- which is exactly how 100.64.0.0/10 and 172.16.0.0/12
       # ended up with live ban decisions. Ranges are the dangerous half: one CIDR bans millions.
-      BOGON='^(0\.|10\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.0\.2\.|192\.168\.|198\.1[89]\.|2(2[4-9]|[3-5][0-9])\.)'
+      # Derived from the RFC 6890 / RFC 5737 special-use list, NOT from whatever happened to be
+      # banned on the day. The first version was built from the 8 bogons observed on
+      # 2026-09-18 and was overfit to that sample: it missed 192.0.0.0/24, 198.51.100.0/24
+      # (TEST-NET-2) and 203.0.113.0/24 (TEST-NET-3), and the 04:41 import re-banned two of
+      # them the same day. Enumerate the RFC, not today's symptoms.
+      BOGON='^(0\.|10\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|127\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.0\.(0|2)\.|192\.168\.|198\.1[89]\.|198\.51\.100\.|203\.0\.113\.|2(2[4-9]|[3-5][0-9])\.)'
       ips=$(echo "$ips"       | grep -vE "$BOGON" || true)
       ranges=$(echo "$ranges" | grep -vE "$BOGON" || true)
       # Recount AFTER filtering so the log line reports what was actually imported.
