@@ -234,7 +234,22 @@ spec:
 
     # Additional arguments
     additionalArguments:
-      - --serversTransport.insecureSkipVerify=true # For self-signed certs
+      # --serversTransport.insecureSkipVerify=true REMOVED (TALOS-pnyo). It disabled
+      # certificate verification for EVERY https backend Traefik proxies to, cluster-wide,
+      # which is the broadest instance of that pattern in this repo.
+      #
+      # Safe to drop because it was inert: verified that NOTHING currently uses it. No live
+      # IngressRoute declares scheme: https or references a ServersTransport (0 of them), no
+      # ServersTransport CRs exist, the single Ingress object carries no backend-protocol
+      # annotation, and every forwardAuth address is plain http:// with tls=False. The
+      # `scheme: https` hits elsewhere in this repo are ServiceMonitors and a client-facing
+      # redirect, neither of which is a Traefik backend connection.
+      #
+      # Removing it matters for what comes NEXT rather than today: with the flag present, the
+      # first https backend anyone adds would be proxied without verification and nothing
+      # would say so. Without it, Traefik verifies by default, and a backend with a private
+      # CA fails LOUDLY -- fix that with an explicit ServersTransport carrying rootCAs (or
+      # insecureSkipVerify scoped to that one backend), never by restoring this global flag.
       # TALOS-lxz5.1 (5.1.1): --api.insecure removed. It exposed the full Traefik
       # API (incl. /api/rawdata) unauthenticated. The dashboard is now served only via
       # the authenticated websecure IngressRoute above; api@internal still backs it.
