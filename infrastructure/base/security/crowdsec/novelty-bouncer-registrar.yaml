@@ -73,9 +73,14 @@ metadata:
   labels:
     app: haproxy-novelty-bouncer
 spec:
-  # Hourly is enough: unlike the web-ui machine this has no user-facing "offline"
-  # banner, and the sidecar keeps serving its last known map while unregistered.
-  schedule: "17 * * * *"
+  # Every 15m, raised from hourly. This CronJob is the designated healer for a real
+  # recurring condition, not just a cold-start safety net: the parent bouncer row this
+  # registers stops pulling once honeypot-lb's pod IP changes (its `name@<ip>` children
+  # pull instead), so its last_pull freezes and bouncers_autodelete eventually reaps it.
+  # Hourly meant a worst-case ~60m window with the novelty bouncer unregistered; 15m
+  # bounds it to a quarter of that. The sidecar fails OPEN and keeps serving its last
+  # known map, so the honeypot keeps collecting throughout -- it just stops silent-dropping.
+  schedule: "*/15 * * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 2

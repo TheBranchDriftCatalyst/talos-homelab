@@ -403,7 +403,21 @@ spec:
               cert: 2h
               api_key: 2h
             bouncers_autodelete:
-              api_key: 720h       # 30d — generous; only reaps a truly-dead bouncer
+              # 48h, lowered from 720h. At 30d this GC never actually ran, so bouncer rows
+              # accumulated one per pod IP forever: 5 traefik pods held 12 rows. The agent
+              # side proves the mechanism works -- agents_autodelete at 2h keeps machines at
+              # exactly 9 rows for 9 live pods, zero stale. Bouncers were simply set 360x
+              # wider. This is what lets the external prune CronJob be deleted.
+              #
+              # KNOWN INTERACTION, do not "fix" by raising this again: the key-holding PARENT
+              # row (`haproxy-novelty-bouncer`, created by cscli bouncers add) stops pulling
+              # once the pod IP changes -- its children `name@<ip>` pull instead, and CrowdSec
+              # refuses to delete a child on its own ("delete parent bouncer ... instead").
+              # So the parent's last_pull freezes and ANY GC window eventually reaps it,
+              # taking the children with it. crowdsec-novelty-bouncer-register is the healer
+              # and now runs every 15m for that reason. The sidecar fails OPEN, so the blast
+              # radius of the gap is "no silent-drop at the honeypot", never a lockout.
+              api_key: 48h
 
       # ---- Console sharing options (LAPI-only, rec #5) — enable CONTEXT forwarding ----
       # Overrides the chart-default console.yaml (was share_context: false). Forwarding context
