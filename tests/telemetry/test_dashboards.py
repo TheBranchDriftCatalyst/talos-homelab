@@ -129,8 +129,11 @@ def test_panel_structure(dash, title, ds, queries):
 
 
 # ---------- LIVE query audit ----------
-def _subst_macros(q):
+def _subst_macros(q, dash=None, title=None):
+    rng = reg.LIVE_RANGE_OVERRIDE.get((dash, title))
     for k, v in reg.MACROS.items():
+        if rng and "$__range" in k:
+            v = f"[{rng}]" if k.startswith("[") else rng
         q = q.replace(k, v)
     return q
 
@@ -165,16 +168,20 @@ class _PortForward:
 _AGG = re.compile(r"\b(sum|count|topk|avg|min|max|rate|count_over_time|sum_over_time|bytes_over_time|absent)\b")
 
 
-def _query(engine, local, path, q):
+def _query(engine, local, path, q, dash=None, title=None):
     """Run the panel query; return (#result series/streams, error).
 
     Loki: metric queries (with an aggregation) use the instant endpoint; raw LOG queries
     (line_format / no aggregation) 400 on instant and must use query_range. Prom: instant.
     """
-    q = _subst_macros(q)
+    q = _subst_macros(q, dash, title)
     is_log = engine == "loki" and not _AGG.search(q)
     if engine == "loki" and is_log:
-        end = time.time(); start = end - 3600
+        # The raw-log window must honour the same override as $__range, or a panel widened to
+        # 24h for the 6-hourly canary would still be sampled over 1h and read as empty.
+        _rng = reg.LIVE_RANGE_OVERRIDE.get((dash, title), "1h")
+        _secs = int(_rng.rstrip("h")) * 3600 if _rng.endswith("h") else 3600
+        end = time.time(); start = end - _secs
         params = urllib.parse.urlencode({"query": q, "start": f"{int(start)}000000000",
                                          "end": f"{int(end)}000000000", "limit": "5",
                                          "direction": "backward"})
@@ -223,7 +230,7 @@ def test_live_no_query_errors_and_curated_have_data():
             for dash, title, queries in panels:
                 got, err = 0, None
                 for q in queries:  # a panel passes if ANY target returns data
-                    n, e = _query(cfg["engine"], pf.local, cfg["path"], q)
+                    n, e = _query(cfg["engine"], pf.local, cfg["path"], q, dash, title)
                     if e:
                         err = e
                     elif n and n > 0:
@@ -257,3 +264,33 @@ if __name__ == "__main__":
         os.environ["POSTURE_LIVE"] = "1"; LIVE = True
         sys.argv.remove("--live")
     sys.exit(pytest.main([__file__, "-v"] + sys.argv[1:]))
+
+
+def test_every_curated_dashboard_is_actually_discovered():
+    """Every dashboard we curate config FOR must be reachable by discovery.
+
+    This exists because the failure it catches is SILENT. Discovery used to glob a single
+    centralized directory; the three security dashboards live beside the components they
+    visualise, so they were never discovered — and the suite stayed GREEN at 713 passed while
+    auditing none of them. honeypot-ops alone carried 18 EXPECTED_EMPTY/LIVE_AUDIT entries that
+    could not execute, which reads as "covered" to anyone opening the file.
+
+    Reverting the discovery fix does not fail any other test in this suite — it simply drops
+    coverage from 795 to 713, both green. Under-coverage cannot be detected by the tests that
+    stop running, so it has to be asserted directly: curated config is a CLAIM of coverage, and
+    this checks the claim is true.
+    """
+    discovered = {name for name, _, _ in reg.DASHBOARDS}
+    missing = sorted(reg.LIVE_AUDIT - discovered)
+    assert not missing, (
+        f"LIVE_AUDIT names a dashboard discovery cannot see: {missing}. Its curated "
+        f"EXPECTED_EMPTY entries are dead config. Fix _EXTRA_GLOBS in dashboards.py — do not "
+        f"remove the name from LIVE_AUDIT."
+    )
+
+    # Same claim for EXPECTED_EMPTY, which is keyed (dashboard, panel).
+    curated = {d for d, _ in reg.EXPECTED_EMPTY}
+    orphaned = sorted(curated - discovered)
+    assert not orphaned, (
+        f"EXPECTED_EMPTY curates panels for undiscovered dashboards: {orphaned}"
+    )

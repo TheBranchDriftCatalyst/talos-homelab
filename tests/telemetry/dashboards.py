@@ -14,12 +14,35 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[2]  # repo root: tests/telemetry/dashboards.py -> ../../
 _JSON_DIR = _ROOT / "infrastructure/base/monitoring/grafana-dashboards/json"
 
+# Dashboards are no longer all in one directory: colocating a dashboard with the component it
+# visualises puts it at <component>/dashboard[s]/*.json. A single-root glob silently stopped
+# covering those the moment colocation started -- and silence is the whole problem, because the
+# suite stayed GREEN while covering none of them. honeypot-ops alone had 18 curated
+# EXPECTED_EMPTY/LIVE_AUDIT entries in this file that could never execute, which reads as
+# "audited" to anyone opening it.
+#
+# Globs, not a list: a hand-maintained list of auto-discovered things rots exactly like the
+# hand-maintained list of links this repo's docs generator exists to kill.
+_EXTRA_GLOBS = [
+    "infrastructure/base/*/dashboard/*.json",
+    "infrastructure/base/*/dashboards/*.json",
+    "infrastructure/base/*/*/dashboard/*.json",
+    "infrastructure/base/*/*/dashboards/*.json",
+]
+
 
 def _discover():
     """Auto-register every committed dashboard JSON -> (name, repo-relative path, uid). Automated so a
     new dashboard is smoke-tested the moment it lands, with no edit here."""
     out = []
-    for p in sorted(_JSON_DIR.glob("*.json")):
+    seen = set()
+    paths = list(_JSON_DIR.glob("*.json"))
+    for g in _EXTRA_GLOBS:
+        paths.extend(_ROOT.glob(g))
+    for p in sorted(paths):
+        if p in seen:
+            continue
+        seen.add(p)
         try:
             uid = json.loads(p.read_text()).get("uid") or p.stem
         except Exception:
@@ -106,11 +129,40 @@ Empty = namedtuple("Empty", "reason issue")
 EXPECTED_EMPTY = {
     # cowrie recon-canary panels: fire only on the anti-honeypot fingerprinting pattern (SHELL_BEHAVIOR/
     # filter_output/===DONE===/uname/lspci), which is sporadic — not a broken query.
-    # Falco honeypot-breach tripwires — empty = healthy (nobody escaped the emulation into the container).
-    ("falco-ops", "HONEYPOT BREACHES"): Empty(
-        "by design — Falco breach tripwire; non-empty only if an attacker escapes into the container. Empty = healthy.", "TALOS-slbn"),
-    ("falco-ops", "HONEYPOT BREACH events (any = someone escaped the emulation)"): Empty(
-        "by design — Falco breach tripwire; non-empty only on a real container escape. Empty = healthy.", "TALOS-slbn"),
+    # falcoctl auto-follow: legitimately empty, and worth contrasting with the breach panels
+    # directly below. falcoctl polls `check every 168h0m0s` (7 days) and only logs "Found new
+    # artifact version" / "Artifact correctly installed" when upstream ACTUALLY publishes, so
+    # over any audit window the normal state is silence driven by an EXTERNAL, uncontrolled
+    # event. Nothing in this cluster guarantees data.
+    #
+    # The breach panels below look superficially identical -- a security panel that is usually
+    # quiet -- but are the opposite case: falco-tripwire-canary GUARANTEES traffic every 6h, so
+    # silence there is a failure. "Usually empty" is not the test; "is something committed to
+    # producing data" is.
+    ("falco-ops", "Upstream ruleset changed (falcoctl auto-follow)"): Empty(
+        "falcoctl polls upstream every 168h and logs only on a real publish -- no in-cluster "
+        "actor produces this, so absence is the normal state, not a fault", "TALOS-slbn"),
+
+    # Falco honeypot-breach tripwires.
+    #
+    # EMPTY IS THE ALARM HERE, NOT HEALTH -- the opposite of what these entries used to say.
+    # falco/falco-tripwire-canary (schedule `41 */6 * * *`) deliberately execs `getent passwd
+    # root` into the cowrie container every 6h precisely BECAUSE getent is absent from
+    # honeypot_expected_procs, so a working tripwire MUST fire ~4x/day. Measured 2026-09-19:
+    # 13 Critical events in 24h (7 `6 init`, 6 `getent`), all at :41:01, all from the canary.
+    #
+    # So these panels going quiet means the CANARY died, i.e. the tripwire is no longer being
+    # verified -- which is the exact condition the canary exists to detect. An allowlist saying
+    # "empty = healthy" cannot express that, because Empty() is one-directional: it tolerates
+    # emptiness and says nothing when data appears.
+    #
+    # Left OUT of EXPECTED_EMPTY on purpose: these panels should carry canary traffic, so the
+    # live audit failing when they are empty is the correct behaviour. Do not "fix" a failure
+    # here by re-adding an Empty() entry -- check whether the canary CronJob is still running.
+    #
+    # Corollary for whoever tunes the Falco rule: do NOT widen the startup exemption to cover
+    # `getent` or `proc.pname = containerd-shim`. That suppresses the canary itself, and the
+    # dashboard would then look healthy precisely because the verification stopped.
     # beelzebub is the 10% haproxy tier + freshly deployed, so its content panels are legitimately sparse
     # until it accumulates sessions. The attacker-IP panels are re-sourced to the haproxy beelzebub backend.
     ("honeypot-ops", "Sessions Over Time"): Empty(
@@ -163,12 +215,28 @@ EXPECTED_EMPTY = {
         "reporter is a daily CronJob — populates on its run (fix just landed)", "TALOS-pbn"),
     ("honeypot-ops", "Failed Logins"): Empty(
         "cowrie accepts most creds, so failed logins are sporadic", "TALOS-qish"),
-    ("honeypot-ops", "HONEYPOT BREACH (Falco) — should ALWAYS be empty"): Empty(
-        "by design — Falco breach tripwire; empty = healthy (nobody escaped the emulation)", "TALOS-slbn"),
+    # Same inversion as the falco-ops breach panels above: the canary makes this fire ~4x/day,
+    # so empty means the canary stopped, not that the honeypot is safe. The panel TITLE ("should
+    # ALWAYS be empty") is also wrong and is tracked separately.
 }
 
 # grafana dashboard-variable macros -> concrete values for a standalone query
 MACROS = {
     "$__range": "1h", "[$__range]": "[1h]", "$__interval": "5m", "$__rate_interval": "5m",
     "$__auto": "5m",
+}
+
+# Panels whose $__range must be WIDER than the 1h default for the audit to mean anything.
+#
+# The breach panels are driven by falco-tripwire-canary on `41 */6 * * *`. Evaluated over 1h,
+# a working canary is invisible 5 times out of 6, so "this panel has data" would fail
+# constantly and the failure would be ignored -- the alert-fatigue outcome the canary exists to
+# prevent, reproduced inside its own test. 24h spans four canary runs, so absence is real.
+#
+# Widen the WINDOW; never relax the expectation.
+LIVE_RANGE_OVERRIDE = {
+    ("falco-ops", "HONEYPOT BREACHES"): "24h",
+    ("falco-ops", "HONEYPOT BREACH events (any = someone escaped the emulation)"): "24h",
+    ("honeypot-ops",
+     "HONEYPOT BREACH (Falco) — canary fires ~4x/day; EMPTY means the canary died"): "24h",
 }
