@@ -287,7 +287,7 @@ include('./applications/zipline/Tiltfile')
 # HONEYPOT - Cowrie SSH/Telnet honeypot
 # ============================================
 
-include('./infrastructure/base/honeypot/Tiltfile')
+include('./infrastructure/base/security/honeypots/Tiltfile')
 
 # ============================================
 # CONFIGURATION

@@ -145,12 +145,12 @@ def test_egress_is_dns_or_public_only_80_443():
     import glob
     import yaml
     cnps = []
-    for path in glob.glob("infrastructure/base/honeypot/*.yaml"):
+    for path in glob.glob("infrastructure/base/security/honeypots/*.yaml"):
         with open(path) as fh:
             for doc in yaml.safe_load_all(fh):
                 if isinstance(doc, dict) and doc.get("kind") == "CiliumNetworkPolicy":
                     cnps.append(doc)
-    assert cnps, "no CiliumNetworkPolicy manifest found under infrastructure/base/honeypot/"
+    assert cnps, "no CiliumNetworkPolicy manifest found under infrastructure/base/security/honeypots/"
     violations = []
     for p in cnps:
         name = p["metadata"]["name"]

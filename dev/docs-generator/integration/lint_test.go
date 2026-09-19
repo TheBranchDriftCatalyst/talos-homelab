@@ -57,10 +57,10 @@ var _ = Describe("the ruleset", Label("integration"), func() {
 
 	It("names this sample's own key order in the ordering message, not the host repo's", func() {
 		found := strings.Join(findingsFor(fx.run("lint").Out, "frontmatter-schema"), "\n")
-		// `summary` is this sample's key; `blurb` is talos-homelab's. Seeing `summary` here is
+		// `summary` is this sample's key; `bluf` is talos-homelab's. Seeing `summary` here is
 		// the evidence that key_order is read from config rather than compiled in.
 		Expect(found).To(ContainSubstring("[type status covers freshness tickets summary superseded_by pinned]"))
-		Expect(found).NotTo(ContainSubstring("blurb"))
+		Expect(found).NotTo(ContainSubstring("bluf"))
 	})
 
 	It("reports a covers: token that matches no component", func() {

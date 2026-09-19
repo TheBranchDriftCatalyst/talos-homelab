@@ -16,7 +16,7 @@ summary: Keys in the wrong order.
 EXPECT: frontmatter-schema
 
 The first two keys above are swapped. The canonical order the message reports is this sample's
-`key_order`, not talos-homelab's — it names `summary` where the real repo names `blurb`, which
+`key_order`, not talos-homelab's — it names `summary` where the real repo names `bluf`, which
 is how this doc pins that `key_order` is config-driven.
 
 ## Tracking

@@ -7,7 +7,7 @@ freshness: tracks-code
 tickets:
   - TALOS-kll3
   - TALOS-f0sd
-blurb: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
+bluf: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
 ---
 
 # Component Inventory
@@ -22,7 +22,7 @@ children that are each their own component, others are a single Kustomization wr
 nested ones, and nothing in the tree tells the two apart. So this table is built from the
 Kustomizations, never from the filesystem.
 
-65 components are declared across 64 manifest files. 14 have a colocated `README.md`,
+65 components are declared across 64 manifest files. 18 have a colocated `README.md`,
 which is the question this table really asks: a component with no README has no doc home,
 and whatever documents it lives somewhere that nothing keeps pointed at it.
 
@@ -49,23 +49,23 @@ and whatever documents it lives somewhere that nothing keeps pointed at it.
 | `control-plane-scrape`       | `control-plane-scrape`       | `infrastructure/base/monitoring/control-plane-scrape` | yes     | -      | 1      | -         |
 | `crossplane-demo`            | `crossplane-demo`            | `applications/crossplane-demo`                        | yes     | yes    | 5      | -         |
 | `crossplane-demo-object`     | `crossplane-demo-object`     | `applications/crossplane-demo/object`                 | yes     | -      | 1      | -         |
-| `crowdsec`                   | `crowdsec`                   | `infrastructure/base/security/crowdsec`               | yes     | -      | 2      | -         |
+| `crowdsec`                   | `crowdsec`                   | `infrastructure/base/security/crowdsec`               | yes     | yes    | 2      | -         |
 | `databases`                  | `databases`                  | `infrastructure/base/databases`                       | yes     | yes    | 7      | -         |
 | `descheduler`                | `descheduler`                | `infrastructure/base/descheduler`                     | yes     | -      | 1      | -         |
 | `external-dns`               | `external-dns`               | `infrastructure/base/external-dns`                    | yes     | yes    | 4      | -         |
 | `external-secrets`           | `external-secrets`           | `infrastructure/base/external-secrets`                | yes     | yes    | 6      | -         |
 | `external-secrets-operator`  | `external-secrets-operator`  | `infrastructure/base/external-secrets/operator`       | yes     | -      | 1      | -         |
-| `falco`                      | `falco`                      | `infrastructure/base/security/falco`                  | yes     | -      | 1      | -         |
+| `falco`                      | `falco`                      | `infrastructure/base/security/falco`                  | yes     | yes    | 1      | -         |
 | `flux-notifications`         | `flux-notifications`         | `infrastructure/base/flux-notifications`              | yes     | yes    | 1      | -         |
 | `forgejo`                    | `forgejo`                    | `infrastructure/base/forgejo`                         | yes     | -      | 1      | -         |
 | `gaming`                     | `gaming`                     | `applications/gaming/base`                            | yes     | -      | 3      | -         |
 | `gpu-inference`              | `gpu-inference`              | `infrastructure/base/gpu-inference`                   | yes     | yes    | 1      | -         |
 | `home-automation`            | `home-automation`            | `applications/home-automation/base`                   | yes     | -      | 4      | -         |
 | `homepage`                   | `homepage`                   | `applications/homepage`                               | yes     | -      | 11     | -         |
-| `honeypots`                  | `honeypots`                  | `infrastructure/base/security/honeypots`              | yes     | -      | 1      | -         |
+| `honeypots`                  | `honeypots`                  | `infrastructure/base/security/honeypots`              | yes     | yes    | 1      | -         |
 | `infra-control`              | `infra-control`              | `infrastructure/base/infra-control`                   | yes     | yes    | 6      | -         |
 | `intel-gpu`                  | `intel-gpu`                  | `infrastructure/base/intel-gpu`                       | yes     | yes    | 1      | -         |
-| `iocaine`                    | `iocaine`                    | `infrastructure/base/security/iocaine`                | yes     | -      | 1      | -         |
+| `iocaine`                    | `iocaine`                    | `infrastructure/base/security/iocaine`                | yes     | yes    | 1      | -         |
 | `kube-system`                | `kube-system-utils`          | `infrastructure/base/kube-system`                     | yes     | -      | 4      | -         |
 | `kubevirt`                   | `kubevirt`                   | `infrastructure/base/kubevirt`                        | yes     | -      | 3      | -         |
 | `kyverno`                    | `kyverno`                    | `infrastructure/base/kyverno`                         | yes     | -      | 1      | -         |

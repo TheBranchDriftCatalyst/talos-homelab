@@ -40,7 +40,7 @@ freshness: tracks-code
 tickets:
   - TALOS-kll3
   - TALOS-f0sd
-blurb: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
+bluf: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
 ---
 `
 
