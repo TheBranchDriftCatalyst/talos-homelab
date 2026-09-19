@@ -289,14 +289,30 @@ spec:
         simulation: false
         exclusions:
           - homelab/iocaine-tarpit
-          # homelab/cowrie-replay-drop -> DETECT-ONLY on arrival (TALOS-hdw8).
-          # Its decision is a 'silentdrop' consumed only by the honeypot haproxy
-          # enforcer, so promoting it changes what reaches cowrie - not who gets
-          # banned elsewhere. Soak first.
-          # PROMOTION CRITERIA: every alerted IP is in the <=8-distinct set and NO IP
-          # with >=20 distinct commands has ever been alerted. Verify with:
-          #   cscli alerts list --scenario homelab/cowrie-replay-drop
-          - homelab/cowrie-replay-drop
+          # homelab/cowrie-replay-drop -> PROMOTED TO ENFORCING 2026-09-19 (TALOS-hdw8,
+          # TALOS-sahd). Its decision is a 'silentdrop' consumed only by the honeypot haproxy
+          # enforcer, so this changes what reaches cowrie - not who gets banned elsewhere.
+          #
+          # THE ORIGINAL PROMOTION CRITERIA WERE TAUTOLOGICAL and are recorded here so they are
+          # not re-adopted. They read: "every alerted IP is in the <=8-distinct set and NO IP
+          # with >=20 distinct commands has ever been alerted". The scenario's own condition is
+          # `len(queue) >= 30 && len(Distinct(commands)) <= 8`, so it CANNOT alert on an IP
+          # outside the <=8 set. Both clauses are true by construction; the soak could not have
+          # failed, and passing it demonstrated nothing.
+          #
+          # WHAT ACTUALLY JUSTIFIED PROMOTION, measured 2026-09-19 over the 16 alerts (7 IPs):
+          # every alerted IP is INDEPENDENTLY corroborated as hostile --
+          #   195.178.110.30   100 homelab/honeypot-vip-activity bans
+          #   154.18.197.29    100 bans
+          #   109.160.32.87    blocklist/feodo-c2 + blocklist-de-ssh + firehol + spamhaus, 76 bans
+          #   2.57.122.238     blocklist-de + firehol + spamhaus, 78 bans
+          #   104.238.110.208  blocklist-de + feodo-c2 + firehol, 60 bans
+          # Third-party blocklist agreement is the part that matters: it is evidence from
+          # outside this cluster, so it cannot be an artefact of our own scenario's shape.
+          #
+          # RE-SOAK RULE if this scenario is ever retuned: corroborate against an INDEPENDENT
+          # signal (public blocklists, or repeat bans from a scenario with a different filter).
+          # Never re-derive the criterion from the scenario's own condition.
           # LePresidente/http-generic-403-bf -> DETECT-ONLY (TALOS-y260).
           #
           # Kept for the signal, demoted from enforcing because the evidence is
