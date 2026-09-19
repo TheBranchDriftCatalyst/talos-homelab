@@ -31,13 +31,16 @@ import (
 // against a freshly normalised render, so if normalising twice ever differed from normalising
 // once, the gate would flag the file the generator had just written.
 func TestNormalizeMarkdownIsIdempotent(t *testing.T) {
+	// `empty` and `whitespace only` deliberately do NOT live here. Idempotence is satisfied by
+	// BOTH "" and "\n", so a mutation deleting the `if body == ""` guard left this test green
+	// while reinstating the one-byte file prettier and docsgen can never agree on. They are
+	// asserted as exact bytes in TestNormalizeMarkdownCanonicalBytes instead, which is the only
+	// assertion shape that can tell the two apart.
 	cases := map[string]string{
-		"table":           "# H\n\n| a | bbbb |\n| :-- | --: |\n| cc | d |\n\ntail\n",
-		"no table":        "# H\n\nsome prose with a | pipe in it\n\n- bullet\n",
-		"empty":           "",
-		"whitespace only": "   \n\t\n  \t  \n",
-		"crlf":            "# H\r\n\r\n| a | b |\r\n| --- | --- |\r\n| c | d |\r\n",
-		"ragged table":    "| a | b | c |\n| --- | --- | --- |\n| x |\n",
+		"table":        "# H\n\n| a | bbbb |\n| :-- | --: |\n| cc | d |\n\ntail\n",
+		"no table":     "# H\n\nsome prose with a | pipe in it\n\n- bullet\n",
+		"crlf":         "# H\r\n\r\n| a | b |\r\n| --- | --- |\r\n| c | d |\r\n",
+		"ragged table": "| a | b | c |\n| --- | --- | --- |\n| x |\n",
 	}
 	for name, in := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -64,6 +67,12 @@ func TestNormalizeMarkdownCanonicalBytes(t *testing.T) {
 		{"crlf becomes lf", "# H\r\n\r\nbody\r\n", "# H\n\nbody\n"},
 		{"missing final newline is added", "# H", "# H\n"},
 		{"repeated trailing newlines collapse to one", "# H\n\n\n\n", "# H\n"},
+		// The empty-document invariant, asserted as BYTES because that is the only way to see
+		// it. The unconditional `+ "\n"` tail turned "" into "\n", which prettier deletes on
+		// sight — a one-byte file the two tools rewrite past each other forever, and the only
+		// drift `docsgen check` can report with nothing to show.
+		{"an empty document stays empty rather than becoming a lone newline", "", ""},
+		{"a whitespace-only document also collapses to empty", "   \n\t\n  \t  \n", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -172,6 +181,39 @@ func TestFormatTablesMatchesPrettierLayout(t *testing.T) {
 				`| a \| b | c   |`,
 			},
 		},
+		{
+			// THE EM-DASH BUG, made a test. An em dash is three BYTES and one display COLUMN.
+			// Measuring it with len() padded this column to 7 while prettier padded it to 5,
+			// after which `task dev:lint:prettier` and `task docs:check` rewrote the file past
+			// each other on every run. `want` below is the literal output of prettier 3.9.6.
+			name: "an em dash is one display column, not its three bytes",
+			in: []string{
+				"| head | b |",
+				"| --- | --- |",
+				"| a — b | c |",
+			},
+			want: []string{
+				"| head  | b   |",
+				"| ----- | --- |",
+				"| a — b | c   |",
+			},
+		},
+		{
+			// The other half of the same measurement: East Asian Wide characters are ONE rune
+			// and TWO columns. len() says nine bytes and a width function without the UAX #11
+			// table says three; prettier says six, and only six lays the table out as shown.
+			name: "CJK characters are two display columns each",
+			in: []string{
+				"| head | b |",
+				"| --- | --- |",
+				"| 日本語 | c |",
+			},
+			want: []string{
+				"| head   | b   |",
+				"| ------ | --- |",
+				"| 日本語 | c   |",
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -205,6 +247,233 @@ func TestFormatTablesLeavesNonTablesAlone(t *testing.T) {
 			t.Errorf("line %d rewritten:\n got %q\nwant %q", i, got[i], in[i])
 		}
 	}
+}
+
+// --- fenced code blocks ----------------------------------------------------------------------
+
+// A table shown as an EXAMPLE inside a fence is documentation, not content. Reformatting it
+// rewrites what the reader is being shown, and the damage is invisible to a fixed-point test
+// because prettier leaves fences alone and so both sides are individually stable.
+//
+// Each case asserts BYTE-IDENTICAL passthrough of a deliberately badly-laid-out table. That is
+// the only assertion shape that can tell "the fence was honoured" from "the table happened to
+// already be canonical".
+func TestFormatTablesRespectsFences(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+	}{
+		{
+			// The base case the whole state machine exists for.
+			name: "a table inside a plain fence is left exactly as written",
+			in: []string{
+				"# H",
+				"",
+				"```",
+				"| a | bbbb |",
+				"| --- | --- |",
+				"| cc | d |",
+				"```",
+				"",
+				"tail",
+			},
+		},
+		{
+			// A closer must repeat the OPENER's character AT LEAST as many times. Without the
+			// `n < f.count` half of that rule the inner ``` closes the ```` fence three lines
+			// early and the second table — still inside the block a reader sees — is rewritten.
+			name: "a ```` fence is not closed by an inner ```",
+			in: []string{
+				"````",
+				"| a | bbbb |",
+				"| --- | --- |",
+				"| cc | d |",
+				"```",
+				"| x | yyyy |",
+				"| --- | --- |",
+				"| zz | w |",
+				"````",
+			},
+		},
+		{
+			// The other half: a closer carries NO info string. Without that check a ```go line
+			// inside a plain fence closes it immediately and everything after it is treated as
+			// live document content.
+			//
+			// This one is deliberately NOT in TestPrettierFixedPoint: prettier widens the fence
+			// to ```` so the inner ``` cannot be mistaken for a closer, which is a rewrite of
+			// the fence rather than of the table. Declining to touch the block is still the
+			// correct behaviour here — see "Known limitations" in README.md.
+			name: "a plain fence is not closed by a ```go line",
+			in: []string{
+				"```",
+				"| a | bbbb |",
+				"| --- | --- |",
+				"| cc | d |",
+				"```go",
+				"| x | yyyy |",
+				"| --- | --- |",
+				"| zz | w |",
+				"```",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatTables(tc.in)
+			if len(got) != len(tc.in) {
+				t.Fatalf("line count: got %d, want %d\ngot:\n%s", len(got), len(tc.in), strings.Join(got, "\n"))
+			}
+			for i := range got {
+				if got[i] != tc.in[i] {
+					t.Errorf("line %d rewritten inside a fence:\n got %q\nwant %q", i, got[i], tc.in[i])
+				}
+			}
+		})
+	}
+}
+
+// --- indentation -------------------------------------------------------------------------------
+
+// Indent decides two separate questions, and both are load-bearing:
+//
+//   - HOW MANY columns of it there are decides whether the block is a table at all, because
+//     four columns is an indented code block in markdown and reformatting one changes what the
+//     reader sees rather than how it is laid out.
+//   - WHICH bytes they are decides where the rewritten table is emitted, because a table nested
+//     in a list item that comes back at column zero has been torn out of its list.
+func TestFormatTablesIndentHandling(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{
+			// Two columns is still a table, and it must come back at two columns. `want` is the
+			// literal output of prettier 3.9.6 on the same list item.
+			name: "a table indented two spaces inside a list item keeps its indent",
+			in: []string{
+				"- item",
+				"",
+				"  | a | bbbb |",
+				"  | --- | --- |",
+				"  | cc | d |",
+			},
+			want: []string{
+				"- item",
+				"",
+				"  | a   | bbbb |",
+				"  | --- | ---- |",
+				"  | cc  | d    |",
+			},
+		},
+		{
+			// Four columns is an INDENTED CODE BLOCK. Laying it out as a table would change the
+			// document's meaning, so it passes through byte-identical. Prettier agrees: it
+			// leaves this block untouched too.
+			name: "a table indented four spaces is an indented code block and is untouched",
+			in: []string{
+				"    | a | bbbb |",
+				"    | --- | --- |",
+				"    | cc | d |",
+			},
+			want: []string{
+				"    | a | bbbb |",
+				"    | --- | --- |",
+				"    | cc | d |",
+			},
+		},
+		{
+			// A tab advances to the next multiple of four, so one tab is four columns and this
+			// is an indented code block by exactly the same rule. Measuring the indent in RUNES
+			// instead would call it one column and reformat a code block.
+			//
+			// Not a prettier fixed point and deliberately not in TestPrettierFixedPoint:
+			// prettier expands the leading tab to four spaces. Leaving the block alone is the
+			// conservative half of that disagreement — an untouched block is merely unformatted.
+			name: "a tab-indented table is four columns too and is untouched",
+			in: []string{
+				"\t| a | bbbb |",
+				"\t| --- | --- |",
+				"\t| cc | d |",
+			},
+			want: []string{
+				"\t| a | bbbb |",
+				"\t| --- | --- |",
+				"\t| cc | d |",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatTables(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("line count: got %d, want %d\ngot:\n%s", len(got), len(tc.want), strings.Join(got, "\n"))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("line %d:\n got %q\nwant %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// --- refusal on unstable widths ------------------------------------------------------------
+
+// The refusal is the whole reason normalizeMarkdownChecked exists apart from normalizeMarkdown.
+// Prettier measures a cell with a grapheme-aware width library whose answer for a zero-width
+// joiner is ONE column, while any "zero-width means zero columns" model says none — so a cell
+// containing one is a file prettier repads and docsgen pads back, forever.
+//
+// A guard with no test can be deleted wholesale and every other spec stays green, because the
+// error path is the only observable difference.
+func TestNormalizeMarkdownRefusesUnstableWidth(t *testing.T) {
+	const zwj = "\u200d"
+
+	t.Run("a cell containing a zero-width joiner is refused", func(t *testing.T) {
+		_, err := normalizeMarkdownChecked("| head | b |\n| --- | --- |\n| a" + zwj + "b | c |\n")
+		if err == nil {
+			t.Fatal("no error; the refusal guard is gone and the artifact will oscillate with prettier")
+		}
+		// The message must NAME the cell, because the only available fix is a human rewriting
+		// that cell and an error that says "somewhere in this document" does not locate it.
+		// The cell is quoted with %q, which is what makes an invisible code point visible at
+		// all — the raw bytes in a terminal would read as "ab".
+		if want := strconv.Quote("a" + zwj + "b"); !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not name the offending cell %s: %v", want, err)
+		}
+		if !strings.Contains(err.Error(), "U+200D") {
+			t.Errorf("error does not name the offending code point: %v", err)
+		}
+	})
+
+	t.Run("a document with no such cell is not refused", func(t *testing.T) {
+		if _, err := normalizeMarkdownChecked("| head | b |\n| --- | --- |\n| ab | c |\n"); err != nil {
+			t.Errorf("unexpected refusal: %v", err)
+		}
+	})
+
+	// formatTables discards the error and must still hand back every row — a caller that only
+	// wants bytes needs a complete slice, and every row but the offending cell is correct.
+	t.Run("the unchecked line-level form still returns every row", func(t *testing.T) {
+		in := []string{"| head | b |", "| --- | --- |", "| a" + zwj + "b | c |"}
+		if got := formatTables(in); len(got) != len(in) {
+			t.Errorf("got %d lines, want %d:\n%s", len(got), len(in), strings.Join(got, "\n"))
+		}
+	})
+
+	// The DOCUMENT-level unchecked form behaves differently and this pins which: it returns the
+	// empty string, because normalizeMarkdownChecked returns ("", err) before the rows reach
+	// it. Asserted rather than left implicit, so the two "unchecked" spellings are not assumed
+	// to agree — they do not.
+	t.Run("the unchecked document-level form yields empty bytes, not a best-effort table", func(t *testing.T) {
+		if got := normalizeMarkdown("| head | b |\n| --- | --- |\n| a" + zwj + "b | c |\n"); got != "" {
+			t.Errorf("got %q, want the empty string", got)
+		}
+	})
 }
 
 func TestIsSeparatorRow(t *testing.T) {
@@ -324,6 +593,59 @@ func TestPrettierFixedPoint(t *testing.T) {
 			"## Related Issues",
 			"",
 			"- TALOS-f0sd — a ticket",
+			"",
+		}, "\n")),
+		// The display-width cases re-proved against the real binary. The layout test above
+		// hardcodes prettier 3.9.6's bytes; this is what keeps that capture honest when
+		// prettier moves.
+		"display width": normalizeMarkdown(strings.Join([]string{
+			"# Widths",
+			"",
+			"| head | b |",
+			"| --- | --- |",
+			"| a — b | c |",
+			"",
+			"| head | b |",
+			"| --- | --- |",
+			"| 日本語 | c |",
+			"",
+		}, "\n")),
+		// Blocks docsgen deliberately does not touch. A fixed point here means "untouched" and
+		// "prettier-correct" are the same answer for these shapes, which is the claim the fence
+		// and indent tests make in isolation.
+		//
+		// The ```go-inside-a-plain-fence case and the tab-indented case are absent on purpose:
+		// prettier rewrites the FENCE and the INDENT respectively, so neither is a fixed point.
+		// Both are covered byte-for-byte in TestFormatTablesRespectsFences and
+		// TestFormatTablesIndentHandling.
+		"untouched blocks": normalizeMarkdown(strings.Join([]string{
+			"# Untouched",
+			"",
+			"```",
+			"| a | bbbb |",
+			"| --- | --- |",
+			"| cc | d |",
+			"```",
+			"",
+			"````",
+			"| a | bbbb |",
+			"| --- | --- |",
+			"| cc | d |",
+			"```",
+			"| x | yyyy |",
+			"| --- | --- |",
+			"| zz | w |",
+			"````",
+			"",
+			"    | a | bbbb |",
+			"    | --- | --- |",
+			"    | cc | d |",
+			"",
+			"- item",
+			"",
+			"  | a | bbbb |",
+			"  | --- | --- |",
+			"  | cc | d |",
 			"",
 		}, "\n")),
 		"real component inventory": normalizeMarkdown(renderComponentInventory(realCtx(t))),
@@ -624,6 +946,73 @@ func TestGenerateReportsEveryArtifact(t *testing.T) {
 	}
 	if len(results) != len(Artifacts()) {
 		t.Errorf("got %d results for %d artifacts", len(results), len(Artifacts()))
+	}
+}
+
+// A read that fails for any reason OTHER than "no such file" is an error, never a silent
+// "treat it as absent and write anyway". Treating every read failure as absence is the
+// documented mode-000 bug: a byte-identical but unreadable artifact reported `missing` under
+// check and got REWRITTEN under generate, silently relaxing it to 0644 and breaking the
+// write-only-if-changed invariant. A target that is a directory, or one whose parent is
+// unwritable, misreported the same way and then failed later with an error about something
+// else entirely.
+//
+// The file is made byte-identical FIRST, so nothing about this case depends on the content
+// differing — the only thing that changed is whether the bytes can be read.
+func TestGenerateRefusesAnUnreadableArtifact(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root, which reads mode-000 files regardless of permissions")
+	}
+	rel := firstArtifactRel(t)
+
+	for _, check := range []bool{false, true} {
+		mode := "generate"
+		if check {
+			mode = "check"
+		}
+		t.Run(mode+" mode returns an error naming the file", func(t *testing.T) {
+			ctx := tempCtx(t)
+			if _, err := Generate(ctx, false); err != nil {
+				t.Fatalf("seeding Generate: %v", err)
+			}
+			abs := filepath.Join(ctx.Root, rel)
+			before, err := os.ReadFile(abs)
+			if err != nil {
+				t.Fatalf("read back the seeded artifact: %v", err)
+			}
+			if err := os.Chmod(abs, 0); err != nil {
+				t.Fatalf("chmod 0: %v", err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(abs, 0o644) })
+
+			_, gerr := Generate(ctx, check)
+
+			if gerr == nil {
+				t.Fatal("no error; an unreadable artifact was treated as absent, which is the mode-000 bug")
+			}
+			if !strings.Contains(gerr.Error(), rel) {
+				t.Errorf("error does not name the artifact %q: %v", rel, gerr)
+			}
+			// And it must not have been rewritten on the way past. 0644 here would mean the
+			// generator silently relaxed the mode a human deliberately set.
+			fi, serr := os.Stat(abs)
+			if serr != nil {
+				t.Fatalf("stat: %v", serr)
+			}
+			if got := fi.Mode().Perm(); got != 0 {
+				t.Errorf("mode = %04o, want 0000 — the artifact was rewritten", got)
+			}
+			if err := os.Chmod(abs, 0o644); err != nil {
+				t.Fatalf("restore mode: %v", err)
+			}
+			after, err := os.ReadFile(abs)
+			if err != nil {
+				t.Fatalf("read back after: %v", err)
+			}
+			if !bytes.Equal(before, after) {
+				t.Error("the artifact's bytes changed; the unreadable file was rewritten")
+			}
+		})
 	}
 }
 

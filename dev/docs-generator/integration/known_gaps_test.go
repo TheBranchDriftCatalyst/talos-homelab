@@ -95,12 +95,33 @@ var _ = Describe("known gaps", Label("integration", "known-gap"), func() {
 			"every component reports nested=0 because the measurement is kustomize-specific")
 	})
 
-	It("reports a ticket that is listed in frontmatter but never mentioned in the prose", func() {
+})
+
+// CLOSED 2026-09-19 — no longer a known gap, so it carries no `known-gap` label and counts
+// toward the promotable gate.
+//
+// Two defects had to be fixed for this one spec to mean anything, and the second was hiding
+// behind the first:
+//
+//  1. the rule searched d.Text, which still contains the frontmatter it read the ticket out of,
+//     so every ticket trivially matched itself and the rule could never fire;
+//  2. the fixture defeated itself — ticket-drift.md's own explanatory prose NAMED the ticket it
+//     was supposed to omit, so once the rule was fixed it correctly stayed silent.
+//
+// The second only became visible after the first was fixed, because a spec asserting broken
+// behaviour passes for either reason. That is the argument for asserting the behaviour you
+// WANT and labelling it, rather than pinning the behaviour you have.
+var _ = Describe("tickets-in-body", Label("integration"), func() {
+	It("reports a ticket listed in frontmatter but never mentioned in the prose", func() {
 		fx := newFixture(fluxCluster)
-		// handbook/process/ticket-drift.md lists ORCH-109 and ORCH-110 and names only ORCH-109.
-		// The rule searches d.Text, which INCLUDES the frontmatter it read the ticket from, so
-		// every ticket trivially matches itself and the rule can never fire.
+		// ticket-drift.md lists ORCH-109 and ORCH-110 and cites only ORCH-109 in its body.
 		Expect(findingsFor(fx.run("lint").Out, "tickets-in-body")).To(ContainElement(
 			ContainSubstring("ORCH-110")))
+	})
+
+	It("stays silent for a ticket the prose does cite, so a correct doc is not nagged", func() {
+		fx := newFixture(fluxCluster)
+		Expect(findingsFor(fx.run("lint").Out, "tickets-in-body")).NotTo(ContainElement(
+			ContainSubstring("ORCH-109")))
 	})
 })

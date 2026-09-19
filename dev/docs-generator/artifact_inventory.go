@@ -13,14 +13,10 @@ package main
 // at which point the drift gate starts failing on files it just produced.
 
 import (
-	"bytes"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // Frontmatter, emitted in config.yaml's key_order.
@@ -48,52 +44,6 @@ blurb: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest 
 ---
 `
 
-// kustomizationNames reads the Flux `metadata.name` back out of each component's source
-// manifest, keyed by source manifest + normalised spec.path.
-//
-// It is read here rather than carried on Component because Component belongs to every consumer
-// and this is the only one that needs it. The slug stays filename-derived on purpose:
-// metadata.name drifts from the filename in this repo (`external-secrets.yaml` declares
-// external-secrets-operator, `kube-system.yaml` declares kube-system-utils), and a handle that
-// changes when someone edits a field is not a handle. Both are shown so the divergence is
-// visible instead of merely being worked around.
-//
-// The key includes spec.path because one manifest may declare several Kustomizations; keying by
-// file alone would hand every component in a multi-document file the same name.
-func kustomizationNames(root string, comps []Component) map[string]string {
-	names := map[string]string{}
-	read := map[string]bool{}
-	for _, c := range comps {
-		if read[c.Source] {
-			continue
-		}
-		read[c.Source] = true
-
-		raw, err := os.ReadFile(filepath.Join(root, c.Source))
-		if err != nil {
-			warnf("%s: %v; metadata.name unavailable", c.Source, err)
-			continue
-		}
-		// Warn and skip, never abort: one malformed manifest must not cost the whole artifact,
-		// because the run that produces a broken file is exactly the run you need the rest of.
-		dec := yaml.NewDecoder(bytes.NewReader(raw))
-		for {
-			var fd fluxDoc
-			if err := dec.Decode(&fd); err != nil {
-				break
-			}
-			if fd.Kind != "Kustomization" || fd.Metadata.Name == "" {
-				continue
-			}
-			p := strings.TrimPrefix(strings.TrimPrefix(fd.Spec.Path, "."), "/")
-			names[nameKey(c.Source, p)] = fd.Metadata.Name
-		}
-	}
-	return names
-}
-
-func nameKey(source, path string) string { return source + "\x00" + path }
-
 func yesOr(b bool, no string) string {
 	if b {
 		return "yes"
@@ -116,7 +66,6 @@ func renderComponentInventory(ctx *Ctx) string {
 		}
 		return a.Source < b.Source
 	})
-	names := kustomizationNames(ctx.Root, comps)
 
 	var b strings.Builder
 	b.WriteString(inventoryFrontMatter)
@@ -150,7 +99,7 @@ func renderComponentInventory(ctx *Ctx) string {
 		if fileExists(filepath.Join(ctx.Root, c.Path, "README.md")) {
 			withReadme++
 		}
-		if n := names[nameKey(c.Source, c.Path)]; n != "" && n != c.Slug {
+		if c.Name != "" && c.Name != c.Slug {
 			renamed++
 		}
 		if !fileExists(filepath.Join(ctx.Root, c.Path)) {
@@ -172,7 +121,7 @@ func renderComponentInventory(ctx *Ctx) string {
 	b.WriteString("| slug | flux name | path | on disk | readme | nested | suspended |\n")
 	b.WriteString("| --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, c := range comps {
-		name := names[nameKey(c.Source, c.Path)]
+		name := c.Name
 		if name == "" {
 			name = "-"
 		}

@@ -12,13 +12,15 @@ summary: A ticket listed in frontmatter but never mentioned in the prose.
 
 # Q3 Migration Notes
 
-EXPECTED FINDING: `tickets-in-body` (warn) naming ORCH-110, which appears in the frontmatter
-above and nowhere in the prose.
+EXPECTED FINDING: `tickets-in-body` (warn) naming the SECOND ticket in the frontmatter above,
+which appears there and nowhere in this prose. The first is cited under Tracking below, so
+exactly one finding is expected, not two.
 
-See integration/README.md before trusting that sentence: as shipped, this rule searches the
-WHOLE file including the frontmatter it read the ticket from, so it can never fire. This doc is
-the evidence, and the spec that covers it asserts the CURRENT behaviour so the day somebody
-fixes the rule, the spec fails and says so.
+DO NOT WRITE THAT TICKET ID ANYWHERE IN THIS BODY — not even to explain what this file is for.
+The rule is a substring search over the body, so naming the ticket here silently repairs the
+document and the spec then passes while testing nothing. That is not hypothetical: this file
+did exactly that until 2026-09-19, and `missing-footer.md` in the sibling sample did the same
+with its footer heading. A fixture that describes its own defect tends to cure it.
 
 ## Tracking
 

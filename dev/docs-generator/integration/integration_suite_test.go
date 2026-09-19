@@ -85,9 +85,21 @@ func assertSamplesAreReal() {
 
 		comps := fx.run("components")
 		Expect(comps.Code).To(Equal(0), "sample %s: `components` failed:\n%s", s.Name, comps.Err)
-		Expect(comps.Out).NotTo(ContainSubstring("0 components"),
+		// Parse the count; do NOT substring-match "0 components". "10 components" CONTAINS
+		// "0 components", so the substring form would have fired a false alarm the first time a
+		// sample reached ten — and this failure message reads exactly like the real failure it
+		// exists to detect, which is the worst possible way for a guard to be wrong.
+		Expect(componentCount(comps.Out)).To(BeNumerically(">", 0),
 			"sample %s enumerated NO components — the fixture is not real, and every spec "+
 				"downstream would pass vacuously", s.Name)
+
+		// `stale` is the one report that silently empties when the doc and its subject land in
+		// the same commit second, so assert it is populated rather than trusting it.
+		st := fx.run("stale")
+		Expect(st.Code).To(Equal(0), "sample %s: `stale` failed:\n%s", s.Name, st.Err)
+		Expect(st.Out).NotTo(ContainSubstring("no docs report stale"),
+			"sample %s: `stale` found nothing — the fixture's commit timestamps collapsed and "+
+				"every staleness assertion downstream would pass vacuously", s.Name)
 
 		front := fx.run("frontmatter")
 		Expect(front.Code).To(Equal(0), "sample %s: `frontmatter` failed:\n%s", s.Name, front.Err)
