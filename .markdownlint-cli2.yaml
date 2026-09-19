@@ -54,6 +54,18 @@ ignores:
   - '.venv'
   - '**/.venv'
   - '**/.*venv'
+  # Scratch//archive space: moved out of the repo deliberately, not ours to lint.
+  - '.scratch'
+  - '**/.scratch'
+  # docsgen integration FIXTURES. These are supposed to be malformed — unterminated
+  # frontmatter, a missing H1, two H1s — because specs assert docsgen reports exactly those
+  # defects. Linting them turns a fixture's planted defect into a repo defect, and would
+  # block every commit once this hook is made to block.
+  - 'dev/docs-generator/integration/testdata'
+  - '**/integration/testdata'
+  # Preserved review artifacts from `task docs:test:integration:keep`. Gitignored, and they
+  # contain copies of the fixtures above.
+  - '**/.artifacts'
 
 # Configuration for markdownlint
 config:
@@ -83,7 +95,12 @@ config:
     strict: false
 
   # MD010/no-hard-tabs
-  MD010: true
+  # Exempt fenced code: quoted source is often tab-indented, and de-tabbing it makes the
+  # quote wrong. docs/05-runbooks/bluetooth-enablement.md reproduces net/bluetooth/Kconfig
+  # verbatim to refute a specific claim about CONFIG_RFKILL; tabs there are the evidence.
+  # Hard tabs in PROSE are still flagged.
+  MD010:
+    code_blocks: false
 
   # MD012/no-multiple-blanks
   MD012:

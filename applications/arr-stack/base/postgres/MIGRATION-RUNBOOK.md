@@ -785,8 +785,8 @@ Whisparr seeded 7 tables: `VersionInfo`, `QualityDefinitions`, `ScheduledTasks`,
 `QualityProfiles`, `Metadata`, `Commands`, `DelayProfiles`. Two deviations from Sonarr, both the
 kind this runbook keeps warning about: **`Config` seeded 0 rows here** (Sonarr seeded 1 and it was
 a real collision) and **`NamingConfig` seeded 0** (Radarr seeded 1). The union of the previous
-lists is still not the answer. Re-derive, every time — and if you truncate-and-reload per Harder
-#2, the delete list is moot anyway because TRUNCATE clears the seed too.
+lists is still not the answer. Re-derive, every time — and if you truncate-and-reload per
+Harder #2, the delete list is moot anyway because TRUNCATE clears the seed too.
 
 ### What it came out at
 

@@ -86,9 +86,24 @@ pre-commit:
       stage_fixed: true
 
     # Markdown linting
+    # markdownlint-cli2 and prettier live ONLY in the flake, not in the user's global profile,
+    # and a git hook inherits the ambient shell (2 nix PATH entries) rather than the dev shell
+    # (49). So a bare `markdownlint-cli2` exits 127 for anyone not already inside `nix develop`.
+    # That went unnoticed for a long time because the beads hook wrapper discarded lefthook's
+    # exit code, so the failure never blocked anything — the repo read as linted while this job
+    # had never once run. Resolve through direnv when the tool is absent, and fail LOUDLY if
+    # neither path works, because a lint job that cannot run must not look like a pass.
     markdownlint:
       tags: linting markdown
-      run: markdownlint-cli2 {staged_files}
+      run: |
+        if command -v markdownlint-cli2 >/dev/null 2>&1; then
+          markdownlint-cli2 {staged_files}
+        elif command -v direnv >/dev/null 2>&1; then
+          direnv exec "$(git rev-parse --show-toplevel)" markdownlint-cli2 {staged_files}
+        else
+          echo "markdownlint-cli2 is unavailable and direnv cannot provide it" >&2
+          exit 1
+        fi
       glob: '*.md'
       skip:
         - merge

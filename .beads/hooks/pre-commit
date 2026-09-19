@@ -69,6 +69,11 @@ call_lefthook()
 }
 
 call_lefthook run "pre-commit" "$@"
+# Capture lefthook's verdict. Without this the exit code is DISCARDED and the script
+# exits with beads' status instead, so every failing lefthook job — markdownlint exiting
+# 127 because the tool was missing, yamllint exiting 1 on a real finding — silently let
+# the commit through. The repo read as linted while nothing was enforced.
+_lefthook_exit=$?
 
 # --- BEGIN BEADS INTEGRATION v1.2.2 ---
 # This section is managed by beads. Do not remove these markers.
@@ -102,3 +107,7 @@ if command -v bd >/dev/null 2>&1; then
   if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
 fi
 # --- END BEADS INTEGRATION v1.2.2 ---
+
+# Propagate lefthook's verdict last: beads may exit 0 for its own reasons
+# (timeout, uninitialised db), and that must not mask a lint failure.
+exit ${_lefthook_exit:-0}
