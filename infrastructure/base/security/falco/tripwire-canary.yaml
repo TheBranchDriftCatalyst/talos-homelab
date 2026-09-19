@@ -89,7 +89,17 @@ spec:
                   # getent is chosen deliberately. It exists in the cowrie image, is harmless,
                   # and is NOT in honeypot_expected_procs -- python/python3/python3.13 all ARE
                   # whitelisted, so the obvious candidate would silently prove nothing.
+                  #
+                  # The ARGUMENT is the marker: `falco-tripwire-canary` is not a real user, so
+                  # getent exits 2 and prints nothing, but proc.cmdline carries a string no
+                  # other actor in this cluster produces. Before this, the canary ran
+                  # `getent passwd root`, which is indistinguishable from an operator or an
+                  # attacker doing the same -- so the breach panel could not tell its own
+                  # heartbeat from a real intrusion, and the canary's 4 firings/day were
+                  # perfect cover for anyone hiding in them.
+                  #
+                  # `|| true` because a missing user is exit 2, and that is the expected path.
                   echo "firing tripwire canary in $POD"
-                  kubectl -n honeypot exec "$POD" -c cowrie -- getent passwd root >/dev/null
+                  kubectl -n honeypot exec "$POD" -c cowrie -- \
+                    getent passwd falco-tripwire-canary >/dev/null 2>&1 || true
                   echo "canary exec completed; the breach rule must now increment"
-

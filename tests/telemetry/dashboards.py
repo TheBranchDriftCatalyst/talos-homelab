@@ -238,5 +238,5 @@ LIVE_RANGE_OVERRIDE = {
     ("falco-ops", "HONEYPOT BREACHES"): "24h",
     ("falco-ops", "HONEYPOT BREACH events (any = someone escaped the emulation)"): "24h",
     ("honeypot-ops",
-     "HONEYPOT BREACH (Falco) — canary fires ~4x/day; EMPTY means the canary died"): "24h",
+     "HONEYPOT BREACH (Falco) — UNEXPLAINED execs (canary filtered out)"): "24h",
 }

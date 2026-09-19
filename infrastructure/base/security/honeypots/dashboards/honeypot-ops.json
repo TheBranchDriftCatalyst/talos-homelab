@@ -2254,8 +2254,8 @@
     {
       "id": 136,
       "type": "logs",
-      "title": "HONEYPOT BREACH (Falco) \u2014 canary fires ~4x/day; EMPTY means the canary died",
-      "description": "falco-tripwire-canary execs `getent passwd root` into cowrie every 6h (41 */6 * * *) precisely because getent is NOT in honeypot_expected_procs, so a WORKING tripwire must fire here ~4x/day. Quiet = the canary stopped and the tripwire is no longer verified. A real escape looks like activity OFF the :41 cadence, or from a proc other than getent/`6 init`. Falco fires this if a real process/exec/sensitive-read happens inside the honeypot pods \u2014 i.e. someone broke OUT of the Cowrie/Beelzebub emulation into the actual container. Any line here is a CRITICAL incident.",
+      "title": "HONEYPOT BREACH (Falco) \u2014 UNEXPLAINED execs (canary filtered out)",
+      "description": "Every Honeypot Container Breach event EXCEPT the tripwire canary's own marker.\n\nThe canary (falco/falco-tripwire-canary, `41 */6 * * *`) execs `getent passwd falco-tripwire-canary` into cowrie 4x/day to prove this rule still fires. That marker is filtered here, so anything showing up is an exec nobody has accounted for -- an operator with kubectl, or an intruder.\n\nKNOWN BASELINE, ~4/day: each canary run ALSO emits one `6 init` (the runc plumbing of the exec itself), which carries no marker and cannot be filtered. Those are expected. Anything else is not.\n\nDO NOT suppress `6 init` to clean this up. python3, sh and busybox are all in honeypot_expected_procs, so an exec using them produces NO alert on the command -- the runc plumbing is the only thing that fires. Measured 2026-09-19: six operator execs produced six `6 init` events and zero python3 events. Suppressing it blinds the rule to exactly the binaries an intruder would choose.",
       "datasource": {
         "type": "loki",
         "uid": "loki-v2"
@@ -2279,7 +2279,7 @@
             "type": "loki",
             "uid": "loki-v2"
           },
-          "expr": "{rule=~\"Honeypot Container Breach.*\"}",
+          "expr": "{rule=~\"Honeypot Container Breach.*\"} != `falco-tripwire-canary`",
           "queryType": "range"
         }
       ]
