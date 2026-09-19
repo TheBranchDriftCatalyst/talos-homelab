@@ -14,13 +14,18 @@ WHY EACH ASSERTION EXISTS — read before "fixing" a failure by relaxing a test:
   automountServiceAccountToken  A live API token was found mounted into BOTH containers
                                 (2026-08-24); Cowrie has no need for the API.
   egress default-deny           THE most important control — stops a compromised honeypot doing
-                                lateral movement / scanning / C2 / exfil. kube-dns:53 is the only
-                                intended exception; the sample-fetch rule (public 80/443,
-#                                all private ranges excepted) is the second sanctioned shape (#5).
+                                lateral movement / scanning / C2 / exfil. Three shapes are
+                                sanctioned and nothing else: kube-dns:53; the sample-fetch rule
+                                (public 80/443, all private ranges excepted, #5); and the named
+                                in-cluster destinations in _SANCTIONED_IN_CLUSTER_EGRESS — each
+                                one individually justified there, source AND destination.
   ingress reaches world         The inverse failure: if Cilium silently drops attacker traffic the
                                 dashboard reads zero, indistinguishable from "no attacks".
-  not-yet-exposed               Nothing in git should make this reachable before the operator
-                                forwards the port themselves.
+  exposure is declared          Exposure must be DELIBERATE and visible in git. It used to come
+                                from a hand-made router forward, so the rule was "nothing in git
+                                may expose this". It now comes from the VIP Service declaring its
+                                own WAN forward (unifi-port-forward annotation), so the rule is
+                                "exactly that one declared Service, and nothing else".
 """
 import json
 import sys
@@ -125,59 +130,178 @@ def test_default_deny_egress_policy_exists(cnps):
     assert len(deny) > 0, "no default-deny-all egress policy present"
 
 
-# Sanctioned egress shapes: (1) kube-dns:53; (2) public-only 0.0.0.0/0 on 80/443 with ALL private
-# ranges excepted — the sample-fetch rule that lets cowrie capture the payloads attackers wget
-# (#5). The invariant is NOT "no egress" but "egress that can never reach anything of ours".
+# ── Sanctioned egress shapes ───────────────────────────────────────────────
+# EXACTLY three shapes are permitted, and nothing else:
+#   (1) kube-dns :53.
+#   (2) public-only 0.0.0.0/0 on 80/443 with every private range excepted — the sample-fetch rule
+#       that lets cowrie capture the payloads attackers wget (#5).
+#   (3) a named in-cluster destination listed in _SANCTIONED_IN_CLUSTER_EGRESS below.
+# The invariant is NOT "no egress" but "no egress that has not been individually signed off on".
 _PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.2", "172.3",
                      "192.168.", "127.", "169.254.")
-_SANCTIONED_PORTS = {"53", "80", "443"}
+_PUBLIC_FETCH_PORTS = {"80", "443"}
 _REQUIRED_EXCEPTS = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
 
+# Sanctioned IN-CLUSTER egress, keyed on (policy name, SOURCE endpointSelector, DESTINATION
+# selector) -> the exact set of ports allowed to that destination.
+#
+# Keying on the SOURCE as well as the destination is deliberate: it is what stops an entry written
+# for the haproxy front from silently sanctioning "cowrie may now reach crowdsec". Any edit to
+# either selector changes the key and the rule becomes unsanctioned again — which is the point.
+# Widening a cage has to be a reviewed diff to THIS table, not a quiet edit to a policy.
+_SANCTIONED_IN_CLUSTER_EGRESS = {
+    # haproxy front -> the two honeypots it proxies for. This IS the data path
+    # (world -> VIP -> honeypot-lb -> cowrie/beelzebub); without it the trap is dark.
+    # Wrong again if: the destination widens past {cowrie, beelzebub}, the ports widen past the
+    # two honeypot listeners, or the source stops being the haproxy front.
+    ("honeypot-lb", "app=honeypot-lb", "app In(beelzebub,cowrie)"): {"2222", "2223"},
 
-def test_egress_is_dns_or_public_only_80_443():
-    """Every permitted egress is kube-dns:53 OR public-only 80/443 with every private range excepted.
-    Mutation check: drop an `except` CIDR from the sample-fetch rule (or add 10.0.0.0/8 to the allowed
-    set) and this MUST go red — otherwise the honeypot can reach the LAN/API. (ported from the peer's
-    egress-isolation test when honeypot tests moved Jest->pytest).
+    # haproxy's novelty-bouncer sidecar -> CrowdSec LAPI :8080 (TALOS-hdw8). Read-only decision
+    # list; without it the bouncer fails open and is a no-op.
+    # SCOPED TO THE honeypot-lb ENDPOINT ONLY. The honeypots themselves must NEVER gain a route
+    # into the crowdsec namespace. Wrong again if: this destination ever appears under source
+    # app=cowrie or app=beelzebub (that is the regression, not a formatting change), or the port
+    # widens past the LAPI.
+    ("honeypot-lb", "app=honeypot-lb",
+     "k8s-app=crowdsec,k8s:io.kubernetes.pod.namespace=crowdsec,type=lapi"): {"8080"},
 
-    OFFLINE by design: reads the CNP manifest directly so CI enforces the egress shape on every PR
-    (a live-only check would be skipped in CI, where the regression is most likely to slip in)."""
-    import glob
+    # !!! BEELZEBUB -> CATALYST-LLM (LiteLLM :4000) — A REAL CLUSTER-REACH PATH FROM A
+    # !!! COMPROMISED-BY-DESIGN WORKLOAD. Grep "catalyst-llm" in this file when auditing what the
+    # !!! honeypot can touch; this is NOT meant to be a silent allowlist entry.
+    # It is intentional and load-bearing: beelzebub asks the internal LLM to generate its fake
+    # shell responses, which is the whole premise of that honeypot. It is also precisely the pivot
+    # an attacker inside beelzebub would go looking for, so it is the one entry here that buys
+    # capability rather than just preserving the cage.
+    # Wrong again if: the port widens past 4000, the destination widens past the catalyst-llm
+    # namespace, or cowrie/honeypot-lb acquire the same reach. Note the destination is a BARE
+    # NAMESPACE selector, i.e. any pod in catalyst-llm — narrowing it to the LiteLLM pod labels is
+    # the obvious hardening and would only require updating this key.
+    ("beelzebub", "app=beelzebub", "k8s:io.kubernetes.pod.namespace=catalyst-llm"): {"4000"},
+}
+
+# Ingress/egress rule keys this suite knows how to classify. Anything else (toEntities, toCIDR,
+# toServices, toFQDNs, toGroups...) is a shape nobody has reviewed, so it fails loudly rather than
+# slipping through an `else` branch.
+_KNOWN_EGRESS_KEYS = {"toEndpoints", "toCIDRSet", "toPorts"}
+
+
+def _sel_key(selector):
+    """Canonical, order-independent key for one Cilium endpoint selector.
+
+    Any change to the labels/namespace/matchExpressions of a source or destination changes this
+    string, so an allowlist keyed on it cannot be widened by editing a selector in place.
+    """
+    if not selector:
+        return "*"  # empty selector == every endpoint
+    parts = [f"{k}={v}" for k, v in sorted((selector.get("matchLabels") or {}).items())]
+    for ex in selector.get("matchExpressions") or []:
+        vals = ",".join(sorted(str(v) for v in (ex.get("values") or [])))
+        parts.append(f"{ex.get('key')} {ex.get('operator')}({vals})")
+    return ",".join(sorted(parts)) or "*"
+
+
+def _dest_key(to_endpoints):
+    return "|".join(sorted(_sel_key(t) for t in to_endpoints))
+
+
+def _rule_ports(rule):
+    return {str(x.get("port")) for tp in rule.get("toPorts", []) for x in tp.get("ports", [])}
+
+
+def _honeypot_manifest_cnps():
+    """Every CiliumNetworkPolicy in the honeypot manifests, read OFFLINE from the repo."""
     import yaml
-    cnps = []
-    for path in glob.glob("infrastructure/base/security/honeypots/*.yaml"):
+    out = []
+    for path in sorted((_ROOT / "infrastructure/base/security/honeypots").glob("*.yaml")):
         with open(path) as fh:
             for doc in yaml.safe_load_all(fh):
                 if isinstance(doc, dict) and doc.get("kind") == "CiliumNetworkPolicy":
-                    cnps.append(doc)
+                    out.append(doc)
+    return out
+
+
+def test_egress_is_dns_public_80_443_or_explicitly_sanctioned():
+    """Every permitted egress is kube-dns:53, public-only 80/443 with all private ranges excepted,
+    or one of the individually sanctioned in-cluster destinations above.
+
+    The intent is unchanged from when this was written: A HONEYPOT MUST NOT BE ABLE TO PIVOT INTO
+    OUR NETWORKS. What changed is that the cage now has three legitimate in-cluster doors (the
+    haproxy front reaching its backends, the novelty bouncer reading the CrowdSec LAPI, and
+    beelzebub calling the internal LLM), none of which existed when this test was written. They are
+    named explicitly rather than waved through with a blanket "in-cluster egress is fine" — a
+    blanket exemption would delete this test's value.
+
+    Mutation check: add a port to any rule, point a rule at a new namespace, move a sanctioned
+    destination under a different source policy, or drop an `except` CIDR from the sample-fetch
+    rule, and this MUST go red.
+
+    OFFLINE by design: reads the CNP manifests directly so CI enforces the egress shape on every PR
+    (a live-only check would be skipped in CI, where the regression is most likely to slip in)."""
+    cnps = _honeypot_manifest_cnps()
     assert cnps, "no CiliumNetworkPolicy manifest found under infrastructure/base/security/honeypots/"
     violations = []
     for p in cnps:
         name = p["metadata"]["name"]
+        src = _sel_key(p.get("spec", {}).get("endpointSelector"))
         for e in p.get("spec", {}).get("egress", []) or []:
             if len(e) == 0:
                 continue  # the default-deny rule itself
-            to_dns = any(t.get("matchLabels", {}).get("k8s-app") == "kube-dns"
-                         for t in e.get("toEndpoints", []))
-            if to_dns:
+            unknown = sorted(set(e) - _KNOWN_EGRESS_KEYS)
+            if unknown:
+                violations.append(
+                    f"{name}: egress rule uses unreviewed selector(s) {unknown} — this suite cannot "
+                    "prove it stays out of our networks")
                 continue
+            ports = _rule_ports(e)
+            to_eps = e.get("toEndpoints", [])
             cidr_sets = e.get("toCIDRSet", [])
-            ports = [str(x.get("port")) for tp in e.get("toPorts", []) for x in tp.get("ports", [])]
-            bad = [pt for pt in ports if pt not in _SANCTIONED_PORTS]
-            if bad:
-                violations.append(f"{name}: egress on non-sanctioned port(s) {bad}")
-            for cset in cidr_sets:
-                cidr = cset.get("cidr", "")
-                excepts = set(cset.get("except", []))
-                if any(cidr.startswith(r) for r in _PRIVATE_PREFIXES):
-                    violations.append(f"{name}: egress toCIDR {cidr} is a PRIVATE range")
+
+            if to_eps and cidr_sets:
+                violations.append(f"{name}: egress rule mixes toEndpoints and toCIDRSet — split it "
+                                  "so each destination is classifiable")
+                continue
+
+            if to_eps:
+                if any(t.get("matchLabels", {}).get("k8s-app") == "kube-dns" for t in to_eps):
+                    bad = sorted(ports - {"53"})
+                    if bad:
+                        violations.append(f"{name}: kube-dns egress on non-DNS port(s) {bad}")
                     continue
-                if cidr == "0.0.0.0/0":
-                    missing = _REQUIRED_EXCEPTS - excepts
-                    if missing:
-                        violations.append(f"{name}: 0.0.0.0/0 egress MISSING excepts {sorted(missing)} — reaches our networks")
-            if not cidr_sets and not to_dns:
-                violations.append(f"{name}: unclassified egress rule {json.dumps(e)[:140]}")
+                dst = _dest_key(to_eps)
+                allowed = _SANCTIONED_IN_CLUSTER_EGRESS.get((name, src, dst))
+                if allowed is None:
+                    violations.append(
+                        f"{name}: UNSANCTIONED in-cluster egress [{src}] -> [{dst}] on {sorted(ports) or 'ALL PORTS'} "
+                        "— add it to _SANCTIONED_IN_CLUSTER_EGRESS with a reason, or remove it")
+                    continue
+                if not ports:
+                    violations.append(f"{name}: [{src}] -> [{dst}] has no toPorts, granting ALL ports "
+                                      f"(sanctioned: {sorted(allowed)})")
+                bad = sorted(ports - allowed)
+                if bad:
+                    violations.append(f"{name}: [{src}] -> [{dst}] on non-sanctioned port(s) {bad} "
+                                      f"(sanctioned: {sorted(allowed)})")
+                continue
+
+            if cidr_sets:
+                bad = sorted(ports - _PUBLIC_FETCH_PORTS)
+                if bad:
+                    violations.append(f"{name}: egress on non-sanctioned port(s) {bad}")
+                if not ports:
+                    violations.append(f"{name}: CIDR egress has no toPorts, granting ALL ports")
+                for cset in cidr_sets:
+                    cidr = cset.get("cidr", "")
+                    excepts = set(cset.get("except", []))
+                    if any(cidr.startswith(r) for r in _PRIVATE_PREFIXES):
+                        violations.append(f"{name}: egress toCIDR {cidr} is a PRIVATE range")
+                        continue
+                    if cidr == "0.0.0.0/0":
+                        missing = _REQUIRED_EXCEPTS - excepts
+                        if missing:
+                            violations.append(f"{name}: 0.0.0.0/0 egress MISSING excepts {sorted(missing)} — reaches our networks")
+                continue
+
+            violations.append(f"{name}: unclassified egress rule {json.dumps(e)[:140]}")
     assert violations == [], "egress can reach our own networks (pivot risk): " + "; ".join(violations)
 
 
@@ -262,32 +386,154 @@ def test_policy_admits_world_on_honeypot_ports(cnps):
         "traffic and the dashboard reads zero (looks like 'no attacks')")
 
 
-def test_kubelet_probe_traffic_from_pod_cidr_permitted(cnps):
-    pod_cidr = any(
-        any(c.startswith("10.") for c in (i.get("fromCIDR") or []))
-        for p in cnps for i in p.get("spec", {}).get("ingress", []) or [])
-    assert pod_cidr, "pod-CIDR ingress not retained (liveness probes would break)"
+# kubelet reaches a pod either as the node it runs on (Cilium entity "host") or, on the older
+# spelling, from a 10.x node/pod CIDR. Both mean the same thing; the cage must admit one of them.
+_NODE_LOCAL_ENTITIES = {"host", "remote-node"}
 
 
-# ── Exposure stays operator-controlled ─────────────────────────────────────
+def _probe_ports():
+    """Ports kubelet actually probes, resolved through named ports, from the live Deployments."""
+    deploys = _get_json("get", "deploy", "-n", NS)
+    out = set()
+    for d in (deploys or {}).get("items", []):
+        for c in d.get("spec", {}).get("template", {}).get("spec", {}).get("containers", []):
+            by_name = {p.get("name"): p.get("containerPort") for p in c.get("ports", []) if p.get("name")}
+            for probe in ("livenessProbe", "readinessProbe", "startupProbe"):
+                handlers = c.get(probe) or {}
+                for h in ("httpGet", "tcpSocket"):
+                    port = (handlers.get(h) or {}).get("port")
+                    if port is not None:
+                        out.add(str(by_name.get(port, port)))
+    return out
+
+
+def test_kubelet_probe_traffic_is_admitted(cnps):
+    """Liveness/readiness probes must not be blackholed by the cage.
+
+    Intent unchanged — A PROBE THAT FAILS CLOSED RESTART-LOOPS A HEALTHY HONEYPOT, and a honeypot
+    that is down looks exactly like a honeypot nobody is attacking. Only the MECHANISM moved: this
+    used to require a `fromCIDR: 10.x` (pod/node CIDR) ingress rule; kubelet probe traffic is now
+    expressed as `fromEntities: ["host"]` on the honeypot-lb policy for the dedicated :8404 health
+    listener. "host" is the node the pod runs on, which is what kubelet actually is. Either
+    spelling satisfies this; admitting NEITHER is the regression.
+
+    Deliberately `any`, not `all`: cowrie's own liveness probe rides Cilium's implicit
+    host->endpoint allowance rather than an explicit rule, so requiring every probe port to be
+    named in a policy would fail on a configuration that works."""
+    admitting = []
+    for p in cnps:
+        name = p["metadata"]["name"]
+        for i in p.get("spec", {}).get("ingress", []) or []:
+            ports = {str(x.get("port")) for tp in i.get("toPorts", []) for x in tp.get("ports", [])}
+            node_local = set(i.get("fromEntities") or []) & _NODE_LOCAL_ENTITIES
+            legacy_cidrs = [str(c) for c in (i.get("fromCIDR") or [])]
+            legacy_cidrs += [str(cs.get("cidr", "")) for cs in (i.get("fromCIDRSet") or [])]
+            if node_local or any(c.startswith("10.") for c in legacy_cidrs):
+                admitting.append((name, ports))
+    assert admitting, (
+        "no ingress rule admits node-local kubelet probe traffic — neither fromEntities "
+        f"{sorted(_NODE_LOCAL_ENTITIES)} nor a 10.x fromCIDR/fromCIDRSet. Probes fail closed and "
+        "the honeypot is restart-looped into silence")
+    probe_ports = _probe_ports()
+    if probe_ports:
+        covered = {pt for _, ports in admitting for pt in ports} & probe_ports
+        assert covered, (
+            f"node-local ingress exists but on none of the ports kubelet probes {sorted(probe_ports)} "
+            f"(admitted: {[(n, sorted(pp)) for n, pp in admitting]}) — the probe still fails closed")
+
+
+# ── Exposure stays deliberate and declared ─────────────────────────────────
+# The ONE sanctioned public exposure is the honeypot VIP Service, and ONLY while it declares its
+# own WAN forward in git via the UniFi port-forward operator's annotation (which replaced the
+# standalone PortForwardRule CRD, itself a replacement for a hand-made router forward).
+#
+# Why the annotation is load-bearing to this test and not cosmetic: it is the whole reason a
+# LoadBalancer in this namespace is allowed at all. With it, going public is a reviewable manifest
+# diff. Without it, a LoadBalancer is either exposure by accident or a forward someone configured
+# by hand on the router — the exact failure mode this design removed — so a VIP that loses the
+# annotation MUST still fail here.
+VIP_SVC = os.environ.get("HONEYPOT_VIP_SVC", "honeypot-vip")
+PORT_FORWARD_ANNOTATION = "unifi-port-forward.fiskhe.st/mapping"
+
+
 def test_no_in_cluster_resource_exposes_honeypot_publicly():
+    """Exactly one declared exposure, and nothing else.
+
+    Intent unchanged — EXPOSURE MUST BE DELIBERATE AND DECLARED, NEVER INCIDENTAL. Previously that
+    meant "nothing in git may expose this" because exposure came from a hand-made router forward.
+    Exposure is now declared in the repo on the VIP Service, so the assertion narrows to that one
+    named Service carrying its mapping annotation. Every other LoadBalancer/NodePort, any
+    external-dns annotation, and any IngressRoute/IngressRouteTCP still fails."""
     dr.require_cluster()
     svcs = _get_json("get", "svc", "-n", NS)
     bad = []
     for s in (svcs or {}).get("items", []):
-        if s.get("spec", {}).get("type") in ("LoadBalancer", "NodePort"):
-            bad.append(f"{s['metadata']['name']} ({s['spec']['type']})")
+        name = s["metadata"]["name"]
+        typ = s.get("spec", {}).get("type")
         ann = s.get("metadata", {}).get("annotations", {}) or {}
+        mapping = str(ann.get(PORT_FORWARD_ANNOTATION, "")).strip()
+        if typ in ("LoadBalancer", "NodePort"):
+            if not (name == VIP_SVC and typ == "LoadBalancer" and mapping):
+                reason = (f"missing/empty {PORT_FORWARD_ANNOTATION} — an undeclared public Service"
+                          if name == VIP_SVC
+                          else f"only {VIP_SVC} may be public, and only by declaring its WAN forward")
+                bad.append(f"{name} ({typ}) — {reason}")
         if any(k.startswith("external-dns.alpha.kubernetes.io") for k in ann):
-            bad.append(f"{s['metadata']['name']} (external-dns annotation)")
+            bad.append(f"{name} (external-dns annotation — a published DNS name is not part of this design)")
     for kind in ("ingressroutetcp", "ingressroute"):
         r = _get_json("get", kind, "-n", NS)
         for item in (r or {}).get("items", []):
             bad.append(f"{item['metadata']['name']} ({kind})")
-    assert bad == [], f"in-cluster resource(s) expose the honeypot (must come from router forward): {bad}"
+    assert bad == [], (
+        f"undeclared/incidental exposure of the honeypot (only {VIP_SVC} + "
+        f"{PORT_FORWARD_ANNOTATION} is sanctioned): {bad}")
 
 
-def test_honeypot_ports_published_via_hostport(pod_spec):
-    hp = [str(p.get("hostPort")) for c in pod_spec.get("containers", [])
-          for p in c.get("ports", []) if p.get("hostPort")]
-    assert SSH_PORT in hp, f"hostPort {SSH_PORT} not present (hostPorts: {hp or 'none'})"
+def test_honeypot_ports_published_via_vip_service():
+    """The honeypot ports must ACTUALLY be published — now via the VIP Service, not hostPort.
+
+    Same intent as the old hostPort assertion: IF THE PORTS ARE NOT REALLY PUBLISHED, THE TRAP IS
+    DARK, and a dark trap is indistinguishable from "no attacks". The mechanism changed — hostPort
+    2222/2223 on the cowrie pod was replaced by `honeypot-vip` (LoadBalancer) in front of the
+    haproxy front — so this walks the current chain end to end:
+
+        declared WAN forward -> a Service port that exists -> targeting the honeypot SSH port
+        -> the VIP holds a LoadBalancer address -> the VIP has a ready backend.
+
+    Break any link (rename a port, retarget it, lose the address, lose the backend) and this goes
+    red. externalTrafficPolicy: Local makes the last link real: with no ready local endpoint the
+    VIP stops being announced and WAN traffic is blackholed."""
+    dr.require_cluster()
+    svc = _get_json("get", "svc", VIP_SVC, "-n", NS)
+    assert svc, f"Service {VIP_SVC} missing in {NS} — the honeypot is not published at all"
+    assert svc.get("spec", {}).get("type") == "LoadBalancer", (
+        f"{VIP_SVC} is {svc.get('spec', {}).get('type')!r}, not a LoadBalancer — the VIP is what "
+        "publishes the honeypot ports")
+
+    mapping = str((svc["metadata"].get("annotations") or {}).get(PORT_FORWARD_ANNOTATION, "")).strip()
+    assert mapping, (
+        f"{VIP_SVC} declares no WAN forward ({PORT_FORWARD_ANNOTATION}) — nothing routes the "
+        "internet at the honeypot")
+    ports_by_name = {p.get("name"): p for p in svc.get("spec", {}).get("ports", [])}
+    forwarded_targets = {}
+    for pair in mapping.split(","):
+        wan, _, port_name = pair.strip().partition(":")
+        assert port_name in ports_by_name, (
+            f"WAN forward {pair!r} names Service port {port_name!r}, which {VIP_SVC} does not "
+            f"define (ports: {sorted(n for n in ports_by_name if n)}) — the forward resolves to nothing")
+        forwarded_targets[wan] = str(ports_by_name[port_name].get("targetPort"))
+    assert SSH_PORT in forwarded_targets.values(), (
+        f"no declared WAN forward reaches the honeypot SSH port {SSH_PORT} "
+        f"(forwards {mapping!r} resolve to targetPort(s) {sorted(set(forwarded_targets.values()))})")
+
+    ips = [i.get("ip") for i in (svc.get("status", {}).get("loadBalancer", {}).get("ingress") or [])
+           if i.get("ip")]
+    assert ips, f"{VIP_SVC} has no LoadBalancer address assigned — the VIP is not announced"
+
+    slices = _get_json("get", "endpointslices", "-n", NS, "-l", f"kubernetes.io/service-name={VIP_SVC}")
+    ready = [a for sl in (slices or {}).get("items", [])
+             for ep in sl.get("endpoints", []) if (ep.get("conditions") or {}).get("ready")
+             for a in ep.get("addresses", [])]
+    assert ready, (
+        f"{VIP_SVC} ({ips}) has no ready backend — externalTrafficPolicy: Local means the VIP "
+        "stops being announced and every attacker connection is blackholed")
