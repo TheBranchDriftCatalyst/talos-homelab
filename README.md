@@ -60,7 +60,7 @@ Root-level docs: [CONTRIBUTING.md](CONTRIBUTING.md) · [CLAUDE.md](CLAUDE.md) ·
 
 Everything else now lives under `docs/`: [quickstart](docs/01-getting-started/quickstart.md) ·
 [traefik](docs/02-architecture/traefik.md) · [observability](docs/08-monitoring/observability.md) ·
-[security-ops](docs/02-architecture/security-ops.md) · [testing](docs/03-operations/testing.md) ·
+[security-ops](infrastructure/base/security/README.md) · [testing](docs/03-operations/testing.md) ·
 [2026-03-14 analysis](docs/_archive/2026-03-14-dah-report.md)
 
 ## Quick Start

@@ -20,7 +20,19 @@ resources:
   - prometheusrule.yaml
   - webui-network-policy.yaml
   - decision-exporter.yaml
+  - dashboards/crowdsec-ops.yaml # Grafana dashboard CR (Grafana is in `monitoring` -> allowCrossNamespaceImport)
 configMapGenerator:
+  # Dashboard JSON. `options.disableNameSuffixHash` (NOT the global generatorOptions --
+  # that would also unhash crowdsec-decision-exporter below) keeps the name stable at
+  # `dashboard-crowdsec-ops`, which is what the CR's configMapRef.name points at.
+  # configMapRef resolves in the CR's OWN namespace, so both must be `crowdsec`; this
+  # kustomization has no namespace transformer, hence the explicit namespace.
+  - name: dashboard-crowdsec-ops
+    namespace: crowdsec
+    options:
+      disableNameSuffixHash: true
+    files:
+      - dashboards/crowdsec-ops.json
   - name: crowdsec-decision-exporter
     namespace: crowdsec
     files:

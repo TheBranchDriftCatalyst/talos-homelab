@@ -11,3 +11,15 @@ resources:
   - ingress.yaml
   - webui-network-policy.yaml # UI reachable only via Traefik (SSO) + falcosidekick
   - core-network-policy.yaml # falcosidekick event intake + metrics (TALOS-cscw)
+  - dashboards/falco-ops.yaml # Grafana dashboard CR (Grafana is in `monitoring` -> allowCrossNamespaceImport)
+
+configMapGenerator:
+  # Dashboard JSON. disableNameSuffixHash keeps the name stable at `dashboard-falco-ops`,
+  # which is what the CR's configMapRef.name points at -- a hash suffix would dangle the ref.
+  # The `namespace: falco` transformer above puts BOTH this ConfigMap and the CR in `falco`,
+  # which is required because configMapRef resolves in the CR's own namespace.
+  - name: dashboard-falco-ops
+    options:
+      disableNameSuffixHash: true
+    files:
+      - dashboards/falco-ops.json

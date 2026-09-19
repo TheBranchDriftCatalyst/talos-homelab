@@ -22,6 +22,8 @@ resources:
   - beelzebub-deployment.yaml
   - beelzebub-service.yaml
   - beelzebub-podmonitor.yaml # Prometheus metrics :2112
+  # --- observability ---
+  - dashboards/honeypot-ops.yaml # Grafana dashboard CR (Grafana is in `monitoring` -> allowCrossNamespaceImport)
 
 # ALL honeypot configs are generated, never static ConfigMaps. These are mounted with subPath,
 # and a subPath mount is FROZEN at pod start -- kubelet never propagates ConfigMap updates into
@@ -53,3 +55,14 @@ configMapGenerator:
     files:
       - fs-hardening/lscpu
       - fs-hardening/nproc
+  # The ONE exception to the hash-suffix rule above: this ConfigMap is not mounted by any
+  # pod, it is read by the Grafana operator via the CR's configMapRef.name, which is the
+  # stable string `dashboard-honeypot-ops`. A hash suffix would dangle that ref. Scoped as a
+  # per-generator `options` so the hash-suffixing of every generator above is preserved.
+  # configMapRef resolves in the CR's own namespace; the `namespace: honeypot` transformer
+  # puts both this ConfigMap and the CR there.
+  - name: dashboard-honeypot-ops
+    options:
+      disableNameSuffixHash: true
+    files:
+      - dashboards/honeypot-ops.json

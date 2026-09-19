@@ -19,12 +19,25 @@ apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
   name: honeypot-ops
-  namespace: monitoring
+  namespace: honeypot
   labels:
     app.kubernetes.io/component: dashboard
     dashboard-category: security
 spec:
-  folderRef: ops-security
+  # This dashboard lives in the `honeypot` namespace alongside the component it
+  # visualises, but the Grafana instance runs in `monitoring`. The operator only
+  # imports a cross-namespace GrafanaDashboard when this is explicitly true --
+  # without it the dashboard silently never appears while everything reconciles green.
+  allowCrossNamespaceImport: true
+  # Same folder as before (Ops/Security) -- but addressed by UID, not by CR name.
+  # `folderRef` is resolved by the operator as "a GrafanaFolder in the SAME namespace"
+  # (per the CRD field doc), and the ops-security GrafanaFolder lives in `monitoring`.
+  # From this namespace a folderRef would therefore never resolve and the dashboard
+  # would silently land in General. `folderUID` is a plain Grafana UID with no namespace
+  # scoping; the ops-security folder declares `uid: ops-security`, so this targets the
+  # identical folder. Matches the existing cross-namespace dashboards (boomtime,
+  # stash-tagger), which all use folderUID + allowCrossNamespaceImport.
+  folderUID: ops-security
   instanceSelector:
     matchLabels:
       dashboards: "grafana"

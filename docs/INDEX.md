@@ -19,7 +19,7 @@ summarizes its children — drill down from here.
 | [AGENTS.md](../AGENTS.md)                                 | Agent-facing repo conventions                                                   |
 | [TRAEFIK.md](02-architecture/traefik.md)                               | Ingress: Traefik DaemonSet, entrypoints, TLS, IngressRoutes, LB VIP             |
 | [OBSERVABILITY.md](08-monitoring/observability.md)                   | **Authoritative** monitoring stack — Alloy / Mimir / Loki / Tempo / ClickStack  |
-| [SECURITY_ops.md](02-architecture/security-ops.md)                     | CrowdSec + bouncer, honeypot, iocaine, allowlists, ban escalation               |
+| [SECURITY_ops.md](../infrastructure/base/security/README.md)                     | CrowdSec + bouncer, honeypot, iocaine, allowlists, ban escalation               |
 | [DAH_REPORT.md](_archive/2026-03-14-dah-report.md)                         | 2026-03-14 three-perspective system analysis (findings marked resolved/changed) |
 
 ---
