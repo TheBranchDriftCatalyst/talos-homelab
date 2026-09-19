@@ -11,7 +11,9 @@ pinned: shape test; belongs with the other reference-table fixtures.
 
 # Gateway Routes
 
-EXPECTED FINDING: `frontmatter-schema` (error), "covers must be a block sequence of strings".
+EXPECT: frontmatter-schema
+
+`covers:` above is written as a scalar rather than a block sequence.
 
 A scalar still RESOLVES — the tool coerces it — so this is a shape complaint, not a broken
 reference. It matters because prettier explodes a flow sequence, which would make any generated

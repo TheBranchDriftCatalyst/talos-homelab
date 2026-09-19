@@ -8,9 +8,9 @@ covers: [flow, sequence, nonsense]
 freshness: yesterday
 ---
 
-EXPECTED FINDINGS: none, ever.
+EXPECT: none
 
-This file violates nearly every rule at once — three banned keys, a type outside the enum, a
+Not "none today" — none ever. This file violates nearly every rule at once — three banned keys, a type outside the enum, a
 freshness outside the enum, `superseded` with no `superseded_by`, a flow sequence for `covers`
 full of tokens that match nothing, keys in the wrong order, no H1, no `## Tracking` footer, and
 a [dead link](./vanished.md). It sits under `handbook/_attic/`, which this sample's config

@@ -8,6 +8,7 @@ package main
 // commit to docs/ or to the cluster manifests.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -462,7 +463,13 @@ var _ = Describe("ruleCoversResolves", Label("unit"), func() {
 
 	DescribeTable("accepts every token form that is resolvable by design",
 		func(token string) {
+			// A real root, because a `path:` cover is now checked for EXISTENCE. It used to be
+			// trusted unconditionally, which let a typo silently feed both the colocation
+			// verdict and the staleness subject.
+			root := GinkgoT().TempDir()
+			Expect(os.MkdirAll(filepath.Join(root, "docs/07-reference"), 0o755)).To(Succeed())
 			ctx := unitRulesCtx(nil, MakeDoc("docs/a.md", "---\ncovers:\n  - "+token+"\n---\n# Doc\n"))
+			ctx.Root = root
 
 			Expect(ruleCoversResolves(ctx)).To(BeEmpty())
 		},
@@ -470,6 +477,21 @@ var _ = Describe("ruleCoversResolves", Label("unit"), func() {
 		Entry("the reserved token cluster", "cluster"),
 		Entry("the reserved token repo", "repo"),
 		Entry("a path: escape hatch, which deliberately names a directory with no component", "path:docs/07-reference"),
+	)
+
+	DescribeTable("rejects a path: cover that names nothing real, because an unchecked path feeds the colocation verdict AND the staleness subject",
+		func(token, want string) {
+			root := GinkgoT().TempDir()
+			ctx := unitRulesCtx(nil, MakeDoc("docs/a.md", "---\ncovers:\n  - "+token+"\n---\n# Doc\n"))
+			ctx.Root = root
+
+			Expect(unitMessages(ruleCoversResolves(ctx))).To(ContainElement(want))
+		},
+		Entry("a path that does not exist", "path:services/gone", "`path:services/gone` does not exist on disk"),
+		Entry("a path escaping the repository", "path:../../etc/passwd", "`path:../../etc/passwd` escapes the repository"),
+		// Quoted on purpose: bare `- path:` is a YAML MAP (`{path: null}`), not the string
+		// "path:", so an unquoted fixture would test a different thing entirely.
+		Entry("an empty path", `"path:"`, "`path:` with no path"),
 	)
 
 	It("skips a doc with no frontmatter, because an unmigrated doc has nothing to resolve", func() {
@@ -927,5 +949,94 @@ var _ = Describe("Run", Label("unit"), func() {
 		cfg.Rules = map[string]Rule{"covers-resolve": {Enabled: false}}
 
 		Expect(unitRules(Run(runCtx(cfg), ""))).To(ContainElement("covers-resolves"))
+	})
+})
+
+// --- ruleTicketsExist ---------------------------------------------------------------------
+//
+// These specs exist because ticket IDs were the THIRD reference kind in this tool validated for
+// shape but never for existence — after bare `covers:` slugs (always checked) and `path:` covers
+// (trusted unconditionally until they were caught feeding a wrong colocation verdict). A regex
+// cannot distinguish a real ticket from a one-character typo of one.
+//
+// The backend is faked through cfg.Tickets.Command so the specs never shell out to the real
+// tracker: a test whose result depends on the current backlog would change answer as tickets are
+// opened and closed, which is the definition of a test nobody can trust.
+var _ = Describe("ruleTicketsExist", Label("unit"), func() {
+	// fakeBackend writes a script that prints the given JSON, and returns its path.
+	fakeBackend := func(stdout string, exitCode int) string {
+		dir := GinkgoT().TempDir()
+		path := filepath.Join(dir, "fake-tracker")
+		script := "#!/bin/sh\ncat <<'JSON'\n" + stdout + "\nJSON\nexit " + fmt.Sprint(exitCode) + "\n"
+		Expect(os.WriteFile(path, []byte(script), 0o755)).To(Succeed())
+		return path
+	}
+
+	ticketCfg := func(cmd string) *Config {
+		return &Config{
+			TicketPattern: `\bTALOS-[0-9a-z]{2,6}\b`,
+			Tickets:       TicketSource{Backend: "beads", Command: cmd},
+		}
+	}
+
+	doc := func(ids ...string) Doc {
+		body := "---\ntickets:\n"
+		for _, id := range ids {
+			body += "  - " + id + "\n"
+		}
+		return MakeDoc("docs/a.md", body+"---\n\n# Doc\n")
+	}
+
+	It("reports a ticket that matches the pattern but does not exist in the tracker", func() {
+		cfg := ticketCfg(fakeBackend(`[{"id":"TALOS-kll3"}]`, 0))
+		ctx := unitRulesCtx(cfg, doc("TALOS-kll8"))
+		ctx.Root = GinkgoT().TempDir()
+
+		Expect(unitMessages(ruleTicketsExist(ctx))).To(ContainElement(
+			"`TALOS-kll8` matches the ticket pattern but no such ticket exists"))
+	})
+
+	It("stays silent for a ticket the tracker knows, including a closed one", func() {
+		cfg := ticketCfg(fakeBackend(`[{"id":"TALOS-kll3"},{"id":"TALOS-done"}]`, 0))
+		ctx := unitRulesCtx(cfg, doc("TALOS-kll3", "TALOS-done"))
+		ctx.Root = GinkgoT().TempDir()
+
+		Expect(ruleTicketsExist(ctx)).To(BeEmpty())
+	})
+
+	It("ignores an id from another project, so a legitimate cross-repo reference is not nagged", func() {
+		cfg := ticketCfg(fakeBackend(`[{"id":"TALOS-kll3"}]`, 0))
+		ctx := unitRulesCtx(cfg, doc("CILIUM-h2b"))
+		ctx.Root = GinkgoT().TempDir()
+
+		Expect(ruleTicketsExist(ctx)).To(BeEmpty())
+	})
+
+	It("reports itself as SKIPPED when the backend is unreachable, instead of passing quietly", func() {
+		cfg := ticketCfg(filepath.Join(GinkgoT().TempDir(), "does-not-exist"))
+		ctx := unitRulesCtx(cfg, doc("TALOS-kll8"))
+		ctx.Root = GinkgoT().TempDir()
+
+		msgs := unitMessages(ruleTicketsExist(ctx))
+		Expect(msgs).To(HaveLen(1))
+		Expect(msgs[0]).To(HavePrefix("SKIPPED"))
+		Expect(msgs[0]).To(ContainSubstring("were NOT verified"))
+	})
+
+	It("treats an empty tracker as unreachable rather than as `no ticket exists`", func() {
+		// The difference matters: an empty result would otherwise condemn EVERY ticket in the
+		// repo at once, which reads as catastrophic drift when the real cause is a broken query.
+		cfg := ticketCfg(fakeBackend(`[]`, 0))
+		ctx := unitRulesCtx(cfg, doc("TALOS-kll3"))
+		ctx.Root = GinkgoT().TempDir()
+
+		Expect(unitMessages(ruleTicketsExist(ctx))[0]).To(HavePrefix("SKIPPED"))
+	})
+
+	It("does nothing at all when no backend is configured, so a repo without a tracker is unaffected", func() {
+		ctx := unitRulesCtx(&Config{TicketPattern: `\bTALOS-[0-9a-z]{2,6}\b`}, doc("TALOS-nope"))
+		ctx.Root = GinkgoT().TempDir()
+
+		Expect(ruleTicketsExist(ctx)).To(BeEmpty())
 	})
 })

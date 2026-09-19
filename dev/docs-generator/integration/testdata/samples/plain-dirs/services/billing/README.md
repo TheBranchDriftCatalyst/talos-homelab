@@ -14,9 +14,12 @@ tickets:
 
 Takes an order, returns an invoice.
 
+EXPECT: none
+
 Correctly colocated: covers the `billing` component, whose path is `services/billing`, and
-lives inside it. Zero findings expected. This is also the sample's STALE doc — the fixture
-builder's second commit touches `main.go` beside it.
+lives inside it. This is also the sample's STALE doc — the fixture builder's second commit
+touches `main.go` beside it. Staleness is a report, not a finding, which is why nothing is
+declared here.
 
 ## Follow-up
 

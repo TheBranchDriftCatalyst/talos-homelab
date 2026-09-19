@@ -14,11 +14,12 @@ summary: A doc carrying a key that must never appear.
 
 ## Context
 
-EXPECTED FINDING: `frontmatter-schema` (error), banned key `title`. Verified against
-markdownlint 0.41.1, a `title:` key both suppresses MD041 and turns the H1 above into an MD025
-duplicate-heading error.
+EXPECT: frontmatter-schema
 
-`title` is not in `key_order`, so it is invisible to the ordering check and this doc raises
+The defect is the banned key in the frontmatter above. Verified against markdownlint 0.41.1: it
+both suppresses MD041 and turns the H1 above into an MD025 duplicate-heading error.
+
+That key is not in `key_order`, so it is invisible to the ordering check and this doc raises
 exactly one finding.
 
 ## Tracking

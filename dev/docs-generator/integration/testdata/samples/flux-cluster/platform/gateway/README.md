@@ -16,6 +16,8 @@ summary: How the gateway terminates TLS and routes to workloads.
 The gateway is the single ingress point for the cluster. It is its own Flux Kustomization, so
 it is its own component, so this README is its doc home.
 
+EXPECT: none
+
 This doc is CORRECTLY COLOCATED: it covers `gateway`, whose path is `platform/gateway`, and it
 lives at `platform/gateway/README.md`.
 

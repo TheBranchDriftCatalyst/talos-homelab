@@ -15,8 +15,10 @@ tickets:
 1. Build the image.
 2. Push it.
 
-EXPECTED FINDING: `colocation` (warn). Covers `catalog`, whose path is `services/catalog`, but
-lives in `notes/`. No `pinned:` key, so nothing suppresses it.
+EXPECT: colocation
+
+Covers `catalog`, whose path is `services/catalog`, but lives in `notes/`. No `pinned:` key, so
+nothing suppresses it.
 
 ## Follow-up
 

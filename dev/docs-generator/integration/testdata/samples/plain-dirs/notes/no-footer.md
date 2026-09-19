@@ -10,8 +10,10 @@ tickets:
 
 # Release Log
 
-EXPECTED FINDINGS: `taxonomy-structure` (warn) for the missing footer heading this sample's
-config requires, and nothing else. Tracked under PD-07.
+EXPECT: taxonomy-structure
+
+The footer heading this sample's config requires is absent, and nothing else is wrong here.
+Tracked under PD-07.
 
 DO NOT WRITE THAT HEADING ANYWHERE IN THIS BODY, not even inside backticks to explain what is
 missing. The rule is `strings.Contains(d.Body, cfg.RequiredFooter)`, so naming it here satisfies
@@ -21,7 +23,8 @@ against the silence so nothing complained.
 
 Third occurrence of this class: see `missing-footer.md` and `ticket-drift.md` in the sibling
 sample. A fixture that describes its own defect tends to cure it. Describe the defect by its
-role, never by its literal text.
+role, never by its literal text — which is the whole reason the declaration above is a rule id
+and has no room for the string it is about.
 
 The footer requirement is data, not a constant: this sample requires one heading, flux-cluster
 requires another, and talos-homelab a third. That is the point being pinned.

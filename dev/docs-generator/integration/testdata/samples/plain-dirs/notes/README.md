@@ -10,6 +10,8 @@ tickets:
 
 # Notes
 
+EXPECT: none
+
 Clean by construction; see [deploying](deploying.md) and [the rules exercise](rule-sweep.md).
 
 ## Follow-up

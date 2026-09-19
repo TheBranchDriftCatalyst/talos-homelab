@@ -14,7 +14,9 @@ pinned: covers `storage` but documents a decision, not the component; kept with 
 
 ## Context
 
-EXPECTED FINDING: `frontmatter-schema` (error), `status: superseded requires superseded_by`.
+EXPECT: frontmatter-schema
+
+The frontmatter above is superseded and never says by what.
 
 `pinned:` carries a real reason and suppresses the `colocation` finding this doc would
 otherwise raise, so the superseded error is the ONLY finding here. That is the pinned-with-a-

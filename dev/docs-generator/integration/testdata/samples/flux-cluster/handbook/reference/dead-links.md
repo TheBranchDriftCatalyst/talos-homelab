@@ -11,8 +11,11 @@ summary: Link handling, pinned in both directions.
 
 # Link Reference
 
-EXPECTED FINDINGS: exactly TWO `broken-links` (error). Everything else on this page must be
-ignored, and that is the more valuable half of this fixture.
+EXPECT: broken-links x2
+
+Exactly two, and everything else on this page must be ignored — that is the more valuable half
+of this fixture. The count is part of the declaration precisely so a rule that starts reporting
+the fenced example as a third cannot slip past as "still covered".
 
 Reported — these targets do not exist:
 

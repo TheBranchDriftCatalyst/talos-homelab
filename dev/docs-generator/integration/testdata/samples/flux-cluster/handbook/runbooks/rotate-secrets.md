@@ -25,7 +25,9 @@ Stop when `orchard-api` serves a token signed by the new key.
 This doc covers BOTH components declared in the single manifest
 [fleet/prod-west/secrets.yaml](../../fleet/prod-west/secrets.yaml). Their longest common
 ancestor is `platform`, which is a grouping root, so the colocation rule would exile this doc
-to a cross-cutting home; `pinned:` records why it stays. Zero findings expected.
+to a cross-cutting home; `pinned:` records why it stays.
+
+EXPECT: none
 
 ## Tracking
 

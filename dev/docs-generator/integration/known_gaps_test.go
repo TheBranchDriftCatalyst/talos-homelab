@@ -73,17 +73,6 @@ var _ = Describe("known gaps", Label("integration", "known-gap"), func() {
 			"the artifact path is hardcoded to another repository's docs tree")
 	})
 
-	It("does not try to read a directory as a YAML manifest under components.kind: dirs", func() {
-		fx := newFixture(plainDirs)
-		res := fx.run("generate")
-		Expect(res.Code).To(Equal(0))
-		Expect(res.Err).NotTo(ContainSubstring("is a directory"),
-			"the inventory renderer reads Component.Source as a file, but under `dirs` the "+
-				"Source IS the component directory — one spurious warning per component")
-		Expect(res.Err).NotTo(ContainSubstring(fx.Root),
-			"those warnings also leak the absolute repo root onto stderr")
-	})
-
 	It("measures component shape in terms the strategy actually supplies", func() {
 		fx := newFixture(plainDirs)
 		out := fx.run("components").Out
@@ -123,5 +112,25 @@ var _ = Describe("tickets-in-body", Label("integration"), func() {
 		fx := newFixture(fluxCluster)
 		Expect(findingsFor(fx.run("lint").Out, "tickets-in-body")).NotTo(ContainElement(
 			ContainSubstring("ORCH-109")))
+	})
+})
+
+// CLOSED 2026-09-19 — delabelled, so it counts toward the promotable gate.
+//
+// The renderer used to re-open every Component.Source and re-decode it to recover the Flux
+// metadata.name. Under components.kind: dirs the Source IS the component directory, so each
+// component produced one `is a directory` warning that also leaked the absolute repo root onto
+// stderr. The fix was a deletion, not a strategy: loadFlux already computes that value and
+// stores it on Component.Name, so ~45 lines and an entire second parse pass over every manifest
+// went away. Kept as a live spec because the cheap regression is someone reintroducing a
+// filesystem read keyed on Source.
+var _ = Describe("dirs strategy", Label("integration"), func() {
+	It("never reads a component's Source as a file, because under `dirs` the Source is a directory", func() {
+		fx := newFixture(plainDirs)
+		res := fx.run("generate")
+		Expect(res.Code).To(Equal(0))
+		Expect(res.Err).NotTo(ContainSubstring("is a directory"))
+		Expect(res.Err).NotTo(ContainSubstring(fx.Root),
+			"a per-component warning would also leak the absolute repo root onto stderr")
 	})
 })

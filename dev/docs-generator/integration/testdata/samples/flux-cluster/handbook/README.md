@@ -14,6 +14,8 @@ summary: Entry point for the Orchard handbook.
 Start with [first deploy](getting-started/first-deploy.md), then the
 [runbooks](runbooks/rotate-secrets.md).
 
+EXPECT: none
+
 This doc is deliberately clean: it must produce ZERO findings under every rule. If it ever
 starts producing one, a rule changed meaning rather than a doc rotting.
 

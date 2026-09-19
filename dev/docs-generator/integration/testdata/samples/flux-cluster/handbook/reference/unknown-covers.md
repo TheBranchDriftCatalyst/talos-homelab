@@ -13,9 +13,11 @@ pinned: intentionally lists a bogus token; keep it here rather than beside the g
 
 # Component Aliases
 
-EXPECTED FINDING: `covers-resolves` (error), "`nonesuch` matches no known component". The
-`gateway` token beside it resolves, which is what makes this a targeted finding rather than a
-doc that simply has no valid covers at all.
+EXPECT: covers-resolves
+
+The second `covers:` token above matches no component. The `gateway` token beside it resolves,
+which is what makes this a targeted finding rather than a doc that simply has no valid covers
+at all.
 
 `pinned:` suppresses the `colocation` finding the resolvable half would otherwise raise.
 

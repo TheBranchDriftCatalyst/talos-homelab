@@ -68,6 +68,7 @@ integration/
     fixture_test.go             copy + git init + commit, the runner, tree hashing
     invariants_test.go          strategy-agnostic invariants, run against EVERY sample
     lint_test.go                the ruleset and component enumeration, pinned per finding
+    declarations_test.go        declared-vs-actual reconciliation, per sample
     cli_test.go                 exit-code contract, usage, path leaks, prettier agreement
     golden_test.go              byte-exact comparison, and -update-golden
     known_gaps_test.go          invariants the tool does NOT satisfy yet
@@ -113,10 +114,8 @@ cases matter as much: `handbook/reference/dead-links.md` carries a dead link ins
 and another inside an inline span, and neither may ever be reported; `handbook/_attic/` is a
 deliberate minefield that must produce **zero** findings because the config excludes it.
 
-> A fixture can defeat itself. `handbook/getting-started/missing-footer.md` must never write its
-> own footer heading anywhere, not even inside backticks — the rule is a substring search over
-> the whole file, so one mention silently repairs the fixture and the spec then passes while
-> testing nothing. This happened once during authoring.
+> A fixture can defeat itself, and this one has three times — see
+> [Declarations](#declarations-what-a-fixture-says-it-produces) below, which is what now stops it.
 
 ### `plain-dirs` — no GitOps at all (`components.kind: dirs`)
 
@@ -124,6 +123,72 @@ Services in `services/`, prose in `notes/`, tickets `PD-nn`, footer `## Follow-u
 `note`/`spec`/`howto`/`log`. `loadDirs` had **zero** coverage before this sample, and it is the
 fallback for every repo that is not a Flux repo — simultaneously the least-tested and the most
 load-bearing path for portability.
+
+## Declarations: what a fixture says it produces
+
+### The defect class
+
+Every sample doc is written to trip exactly one rule. docsgen's rules are **substring searches
+over the document body**, so a fixture that NAMES the thing it is supposed to omit silently
+**cures itself**: the rule falls silent, the fixture still reads as intentional, and the golden
+gets regenerated against the silence. Nothing about the resulting report looks wrong — that is
+what makes this class so durable.
+
+It has happened three times:
+
+| #   | fixture                                                   | what it named                                |
+| --- | --------------------------------------------------------- | -------------------------------------------- |
+| 1   | `flux-cluster/handbook/getting-started/missing-footer.md`  | its own required footer heading              |
+| 2   | `flux-cluster/handbook/process/ticket-drift.md`            | the very ticket id it exists to omit         |
+| 3   | `plain-dirs/notes/no-footer.md`                            | the literal footer heading, inside backticks |
+
+The third was the worst: it cost `taxonomy-structure` its **only** coverage in that sample, and
+an **undeclared** `tickets-in-body` finding on the same path kept the page looking covered in
+`lint.txt`, so the golden was regenerated against the silence and nothing complained.
+
+All three are fixed. The convention that was supposed to prevent them — each doc stating its
+expectation in prose — was enforced by nothing, so a fourth was a matter of time.
+
+### The format
+
+A declaration is a line of its own, in the file the finding is attributed to:
+
+```text
+EXPECT: <rule-id>              # this file trips <rule-id> once
+EXPECT: <rule-id> x<N>         # …N times
+EXPECT: <rule-id> on <path>    # …attributed to <path> rather than to this file
+EXPECT: none                   # this file produces no findings at all
+```
+
+Leading `#`, `//` and `<!-- … -->` are peeled off, so the same grammar works in markdown prose,
+in a YAML manifest and in Go — which is why `component-path` is declared in
+`fleet/prod-west/legacy-cache.yaml` and `component-shape` in `platform/storage/kustomization.yaml`
+rather than in a side table nobody reads.
+
+**A declaration names the RULE ID and nothing else.** It cannot contain the literal the rule
+searches for — no footer heading, no ticket id, no link target — because the grammar has nowhere
+to put one: anything after the rule id other than `x<N>` / `on <path>` is a hard parse failure
+and the spec rejects the file. Explanatory prose still belongs in the fixture, on its **own**
+lines, where it is not part of the declaration. The rule ids themselves are inert — no rule
+searches for its own name, and no rule id is a substring of any trigger text.
+
+That last claim is not left as a claim. One spec **deletes every declaration line** from a built
+fixture, re-lints it, and requires byte-identical findings. If a declaration ever starts
+satisfying — or provoking — a rule, it goes red and names the path.
+
+### What is asserted, per sample, with no per-sample code
+
+1. **Every declaration parses**, names a rule the sample's own `config.yaml` declares, and
+   carries no free text. The old prose form (`EXPECTED FINDING: …`) is banned outright: two
+   conventions means the unenforced one keeps getting used.
+2. **Every `.md` in the sample declares something**, `EXPECT: none` included. This is the half
+   that catches occurrences 1-3 — a fixture that cures itself produces nothing, so only a
+   standing declaration can notice the silence.
+3. **Declared and reported findings are the same multiset**, keyed on `(path, rule)`. Failure
+   prints two explicit lists: *declared but missing* and *found but undeclared*. The second is
+   what would have caught the accidental finding that masked occurrence 3.
+4. **A file declaring `EXPECT: none` produces nothing** — an over-reporting rule gets switched
+   off just as fast as one that misses.
 
 ## What the goldens pin
 
@@ -185,20 +250,30 @@ Drop a spec's label the moment its defect is fixed; that is the ratchet.
    `docs/07-reference/component-inventory.md` with no config input, so a repo whose docs live
    anywhere else cannot be served without editing Go.
 
-3. **`kustomizationNames` reads `Component.Source` as a file.** Under `kind: dirs` the Source *is*
-   the component directory, so every `generate` emits one `is a directory` warning per component
-   — and those warnings carry the absolute repo root onto stderr.
-
-4. **`component-shape` and `component-path` cannot fire under `dirs`.** `Nested` counts
+3. **`component-shape` and `component-path` cannot fire under `dirs`.** `Nested` counts
    `kustomization.yaml` files, so it is structurally always zero in a repo with no kustomize; and
    `loadDirs` only ever emits directories that exist, so the path check has nothing to catch. A
    rule that silently never fires is worse than an absent one, because you believe you are
    covered. Whether these should skip-with-a-reason or be strategy-gated is an architecture call.
 
-5. **`tickets-in-body` can never fire.** It tests `strings.Contains(d.Text, ticket)`, and `d.Text`
-   is the whole file *including the frontmatter the ticket was read from*, so every ticket
-   trivially matches itself. It should search `d.Body`. `handbook/process/ticket-drift.md` is the
-   fixture waiting for the fix.
+### Closed gaps
+
+Recorded rather than deleted, because both closures changed how the suite is read.
+
+- **`tickets-in-body` could never fire** (closed 2026-09-19). It tested
+  `strings.Contains(d.Text, ticket)`, and `d.Text` is the whole file *including the frontmatter
+  the ticket was read from*, so every ticket trivially matched itself. It now searches `d.Body`
+  and fires on `handbook/process/ticket-drift.md`. Two defects had to be fixed for the spec to
+  mean anything, and the second — the fixture naming the ticket it was supposed to omit — only
+  became visible once the first was fixed. That is occurrence 2 of the self-curing class above.
+
+- **Reading `Component.Source` as a file under `kind: dirs`** (closed). The function this entry
+  used to name, `kustomizationNames`, no longer exists, and `generate` on `plain-dirs` emits no
+  `is a directory` warning. The spec asserting it — *"does not try to read a directory as a YAML
+  manifest under `components.kind: dirs`"* in `known_gaps_test.go` — is **green today but still
+  carries its `known-gap` label**, so it sits outside the promotable gate for no reason. Dropping
+  that one label is the ratchet this section describes; it is left here rather than done silently
+  because it moves the gate's spec count.
 
 ### Dead keys and unobservable state
 

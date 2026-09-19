@@ -15,9 +15,10 @@ summary: A runbook that is really an essay.
 
 Stop when the node reports zero running pods.
 
-EXPECTED FINDING: `taxonomy-structure` (warn), "runbook has no ordered procedure". There is no
-ordered list anywhere on this page, so it reads as prose in a slot that promises steps — which
-is the worst thing to hand somebody mid-incident. ORCH-113 is named here.
+EXPECT: taxonomy-structure
+
+There is no ordered list anywhere on this page, so it reads as prose in a slot that promises
+steps — which is the worst thing to hand somebody mid-incident. ORCH-113 is named here.
 
 ## Tracking
 

@@ -14,6 +14,8 @@ tickets:
 
 Issues and verifies tokens.
 
+EXPECT: none
+
 ## Follow-up
 
 - PD-02 — identity interface

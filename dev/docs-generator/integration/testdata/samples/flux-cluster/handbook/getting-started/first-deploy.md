@@ -15,9 +15,11 @@ summary: Deploy Orchard for the first time.
 
 Apply the cluster definition and wait for the gateway to come up.
 
-EXPECTED FINDING: `colocation` (warn). This doc covers `gateway`, whose path is
-`platform/gateway`, but it lives under `handbook/getting-started`. There is no `pinned:` key,
-so the rule is not suppressed — this is the "should move" case.
+EXPECT: colocation
+
+This doc covers `gateway`, whose path is `platform/gateway`, but it lives under
+`handbook/getting-started`. There is no `pinned:` key, so the rule is not suppressed — this is
+the "should move" case.
 
 ## Tracking
 

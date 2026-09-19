@@ -41,6 +41,18 @@ type Rule struct {
 	Severity string `yaml:"severity"` // warn | error
 }
 
+// TicketSource says whether ticket IDs can be checked for EXISTENCE, not merely for shape.
+//
+// ticket_pattern is a regex, so it validates spelling and nothing else: `TALOS-kll8` is a
+// one-character typo of a real ticket, matches the pattern perfectly, and refers to nothing.
+// Backend "" (the default) means no checking, which is right for a repo with no tracker — the
+// rule then skips WITH A REASON rather than silently passing, because a check that quietly
+// never runs is worse than an absent one.
+type TicketSource struct {
+	Backend string `yaml:"backend"` // "" (off) | "beads"
+	Command string `yaml:"command"` // override the binary; defaults per backend
+}
+
 type Config struct {
 	Exclude          []string            `yaml:"exclude"`
 	TicketPattern    string              `yaml:"ticket_pattern"`
@@ -55,6 +67,7 @@ type Config struct {
 	GroupingRoots    []string            `yaml:"grouping_roots"`
 	TypeRequires     map[string][]string `yaml:"type_requires"`
 	RequiredFooter   string              `yaml:"required_footer"`
+	Tickets          TicketSource        `yaml:"tickets"`
 }
 
 // RuleFor returns the configured rule, defaulting to enabled/warn. An unknown rule name is

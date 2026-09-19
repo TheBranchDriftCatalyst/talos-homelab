@@ -13,10 +13,11 @@ summary: Keys in the wrong order.
 
 ## Context
 
-EXPECTED FINDING: `frontmatter-schema` (error), `type` should come before `status`. The
-reported canonical order is this sample's `key_order`, not talos-homelab's — the message names
-`summary` where the real repo names `blurb`, which is how this doc pins that `key_order` is
-config-driven.
+EXPECT: frontmatter-schema
+
+The first two keys above are swapped. The canonical order the message reports is this sample's
+`key_order`, not talos-homelab's — it names `summary` where the real repo names `blurb`, which
+is how this doc pins that `key_order` is config-driven.
 
 ## Tracking
 

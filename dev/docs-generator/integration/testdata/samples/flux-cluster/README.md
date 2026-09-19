@@ -7,4 +7,6 @@ The cluster definition lives in [fleet/prod-west](fleet/prod-west), platform com
 [handbook](handbook).
 
 This file carries no frontmatter on purpose: it is one of the three entries the
-`docsgen frontmatter` migration worklist must name.
+`docsgen frontmatter` migration worklist must name. Being on the worklist is not a finding:
+
+EXPECT: none

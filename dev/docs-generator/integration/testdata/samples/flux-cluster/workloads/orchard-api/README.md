@@ -13,8 +13,11 @@ summary: The Orchard API service.
 
 ## Context
 
+EXPECT: none
+
 Deployed after the gateway; `orchard-web` in turn depends on this. That three-level chain is
-declared in the Kustomizations and is, today, read by nothing.
+declared in the Kustomizations and is, today, read by nothing. It is correctly colocated and
+clean, which is what makes the secrets-slug spec beside it meaningful.
 
 ## Tracking
 

@@ -8,8 +8,10 @@ package main
 // switched off; one that lands yellow and is promoted deliberately survives.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -33,6 +35,7 @@ var Rules = map[string]RuleFunc{
 	"component-shape":    ruleComponentShape,
 	"colocation":         ruleColocation,
 	"tickets-in-body":    ruleTicketsInBody,
+	"tickets-exist":      ruleTicketsExist,
 	"taxonomy-structure": ruleTaxonomyStructure,
 }
 
@@ -152,7 +155,34 @@ func ruleCoversResolves(ctx *Ctx) []Finding {
 		}
 		covers, _ := StringSlice(d.Front["covers"])
 		for _, tok := range covers {
-			if tok == "cluster" || tok == "repo" || strings.HasPrefix(tok, "path:") {
+			if tok == "cluster" || tok == "repo" {
+				continue // reserved scope tokens; they name no entity by design
+			}
+			// A `path:` token was previously trusted WITHOUT any existence check, which made it
+			// the one unvalidated reference kind in the vocabulary — and resolveCover returns it
+			// as resolved, so an unchecked path silently fed BOTH the colocation verdict and the
+			// staleness subject. A typo produced a wrong doc home and a staleness comparison
+			// against a directory that cannot exist, so the doc could never be reported stale.
+			// One unchecked reference, three silently wrong answers.
+			if rel, ok := strings.CutPrefix(tok, "path:"); ok {
+				rel = strings.TrimSuffix(rel, "/")
+				if rel == "" {
+					out = append(out, find(ctx, "covers-resolves", d.Path, "`path:` with no path"))
+					continue
+				}
+				// Reject traversal before touching the filesystem: a cover must name something
+				// INSIDE the repo, and `path:../../../etc/passwd` resolving cleanly would make
+				// the colocation target a directory outside the tree entirely.
+				clean := filepath.Clean(rel)
+				if clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(clean) {
+					out = append(out, find(ctx, "covers-resolves", d.Path,
+						fmt.Sprintf("`%s` escapes the repository", tok)))
+					continue
+				}
+				if _, err := os.Stat(filepath.Join(ctx.Root, clean)); err != nil {
+					out = append(out, find(ctx, "covers-resolves", d.Path,
+						fmt.Sprintf("`%s` does not exist on disk", tok)))
+				}
 				continue
 			}
 			if _, ok := ctx.BySlug[tok]; !ok {
@@ -300,6 +330,86 @@ func ruleTicketsInBody(ctx *Ctx) []Finding {
 		}
 	}
 	return out
+}
+
+// ruleTicketsExist checks that a referenced ticket IS one, not merely that it looks like one.
+//
+// This is the third instance of a single class in this tool: a reference validated for SHAPE but
+// never for EXISTENCE. Bare `covers:` slugs were checked against the component registry from the
+// start; `path:` covers were trusted unconditionally until they were caught feeding a wrong
+// colocation verdict AND an impossible staleness comparison; ticket IDs are the same hole again.
+// A regex cannot tell a real ticket from a typo of one.
+//
+// Closed tickets are VALID. A doc citing completed work is correct history, not drift — this
+// checks existence, never status.
+//
+// When the backend is unavailable the rule SKIPS AND SAYS SO. It must never hard-fail a repo
+// that has no tracker installed (the tool is meant to be portable), and it must never pass
+// silently, because then nobody learns the check stopped running.
+func ruleTicketsExist(ctx *Ctx) []Finding {
+	cfg := ctx.Cfg.Tickets
+	if cfg.Backend == "" {
+		return nil // not configured: not a skip, the repo opted out
+	}
+	known, err := knownTickets(ctx)
+	if err != nil {
+		return []Finding{find(ctx, "tickets-exist", ctx.Cfg.Components.Path,
+			fmt.Sprintf("SKIPPED — cannot reach the %q ticket backend (%v); ticket IDs were NOT verified",
+				cfg.Backend, err))}
+	}
+
+	var pat *regexp.Regexp
+	if ctx.Cfg.TicketPattern != "" {
+		pat, _ = regexp.Compile(ctx.Cfg.TicketPattern)
+	}
+
+	var out []Finding
+	for _, d := range ctx.Docs {
+		if d.Front == nil {
+			continue
+		}
+		tickets, _ := StringSlice(d.Front["tickets"])
+		for _, id := range tickets {
+			// Only IDs this repo claims to own. A doc may legitimately cite a ticket from
+			// another project, and flagging those would train everyone to ignore the rule.
+			if pat != nil && !pat.MatchString(id) {
+				continue
+			}
+			if !known[id] {
+				out = append(out, find(ctx, "tickets-exist", d.Path,
+					fmt.Sprintf("`%s` matches the ticket pattern but no such ticket exists", id)))
+			}
+		}
+	}
+	return out
+}
+
+// knownTickets returns every ticket id the backend knows, closed ones included, in ONE call.
+func knownTickets(ctx *Ctx) (map[string]bool, error) {
+	bin := ctx.Cfg.Tickets.Command
+	if bin == "" {
+		bin = "bd"
+	}
+	cmd := exec.Command(bin, "list", "--status=all", "--json")
+	cmd.Dir = ctx.Root
+	raw, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, fmt.Errorf("unparseable backend output: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("backend returned no tickets at all")
+	}
+	known := make(map[string]bool, len(rows))
+	for _, x := range rows {
+		known[x.ID] = true
+	}
+	return known, nil
 }
 
 // --- taxonomy structure -----------------------------------------------------------------

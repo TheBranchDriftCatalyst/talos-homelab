@@ -11,9 +11,9 @@ summary: A type from somebody else's vocabulary.
 
 # Queue Topology
 
-EXPECTED FINDING: `frontmatter-schema` (error), `type architecture not in [...]`.
+EXPECT: frontmatter-schema
 
-`architecture` is talos-homelab's word; this repo's word is `design`. The finding is the
+The defect is the `type:` value above: `architecture` is talos-homelab's word; this repo's word is `design`. The finding is the
 evidence that `doc_types` really is read from config. Note also what does NOT happen: because
 `architecture` has no `type_requires` entry here, no `## Context` section is demanded, so this
 doc raises exactly one finding.
