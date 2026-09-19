@@ -98,7 +98,19 @@ spec:
       toPorts:
         - ports: [{ port: "2112", protocol: TCP }]
   egress:
+    # beelzebub -> LiteLLM ONLY. This is the one path that grants a compromised-by-design
+    # workload reach INTO the cluster, so it is scoped to the single pod that serves it rather
+    # than to the namespace. It used to select the namespace alone, which also permitted :4000
+    # against the three CNPG Postgres instances, lobe-chat, open-webui and searxng — none of
+    # which listen there, but the policy should not be the thing relying on that.
+    #
+    # `app: litellm` is the litellm Service's OWN selector, so the rule permits exactly what the
+    # Service can route to. If that selector ever changes, this must change with it: beelzebub
+    # loses its LLM and falls back to canned responses, and Cilium fails closed, so the symptom
+    # is silent degradation of the honeypot rather than an error.
     - toEndpoints:
-        - matchLabels: { k8s:io.kubernetes.pod.namespace: catalyst-llm }
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: catalyst-llm
+            app: litellm
       toPorts:
         - ports: [{ port: "4000", protocol: TCP }]

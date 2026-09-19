@@ -174,9 +174,10 @@ _SANCTIONED_IN_CLUSTER_EGRESS = {
     # capability rather than just preserving the cage.
     # Wrong again if: the port widens past 4000, the destination widens past the catalyst-llm
     # namespace, or cowrie/honeypot-lb acquire the same reach. Note the destination is a BARE
-    # NAMESPACE selector, i.e. any pod in catalyst-llm — narrowing it to the LiteLLM pod labels is
-    # the obvious hardening and would only require updating this key.
-    ("beelzebub", "app=beelzebub", "k8s:io.kubernetes.pod.namespace=catalyst-llm"): {"4000"},
+    # destination is now scoped to `app: litellm` — the litellm Service's own selector — rather
+    # than to the whole namespace. Widening it back to a bare namespace selector must fail here.
+    ("beelzebub", "app=beelzebub",
+     "app=litellm,k8s:io.kubernetes.pod.namespace=catalyst-llm"): {"4000"},
 }
 
 # Ingress/egress rule keys this suite knows how to classify. Anything else (toEntities, toCIDR,
