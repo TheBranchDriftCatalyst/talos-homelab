@@ -46,7 +46,7 @@ some other way, add a `kind` in `collect.go`; never special-case inside a rule.
 | `type_requires` | per-type structural expectations — what makes `type:` more than a label |
 | `rules` | enable/disable and severity per rule |
 | `docs_root` | the repo's documentation root (default `docs`) — where artifacts are written, and what `colocation` calls "central" |
-| `artifacts` | the generated document set: destination, frontmatter and footer tickets, per artifact |
+| `artifacts` | the generated document set: destination, scope, frontmatter and footer tickets, per artifact |
 
 ### The generated artifact set
 
@@ -54,8 +54,8 @@ some other way, add a `kind` in `collect.go`; never special-case inside a rule.
 docs_root: docs
 
 artifacts:
-  component-inventory: # the key names the renderer; `docsgen generate` lists what exists
-    path: 07-reference/component-inventory.md # relative to docs_root
+  component-inventory: # the key names the renderer unless `renderer:` says otherwise
+    path: 07-reference/component-inventory.md # relative to the artifact's root
     front: # rendered in key_order; no key here is special to the Go
       type: reference
       status: current
@@ -65,7 +65,45 @@ artifacts:
       bluf: ...
     ticket_notes: # annotations for the footer's ticket list
       TALOS-kll3: the generator and its whole-file artifacts
+
+  security-inventory: # the SAME renderer, over a SUBSET, beside the manifests it describes
+    renderer: component-inventory
+    root: infrastructure/base/security # overrides docs_root for this artifact
+    path: components.md # relative to `root`
+    scope:
+      path_prefix: infrastructure/base/security
+    front: { ... }
 ```
+
+### `scope:` — a members table for one section
+
+An artifact with no `scope:` renders **every** component, which is what every artifact written
+before scoping does, so their bytes did not move by one character when the key landed. A
+`scope.path_prefix` narrows it to the components whose path is inside that directory.
+
+Matching is **segment-aware**: `infrastructure/base/security` covers that directory and anything
+under it, and does **not** cover `infrastructure/base/security-extras`. A substring prefix would
+pull the neighbour into a members table and nothing would ever report it.
+
+**A scope that matches no component is exit 2, naming the key.** Never a silently empty table —
+"this section has nothing in it" and "your filter is wrong" render identically, and only the
+first one is a document anybody can act on. The error carries the component COUNT as well as the
+prefix, because "matched nothing" has two causes (a typo, or a collector that found nothing at
+all) and the count is what tells them apart.
+
+### `root:` — an artifact outside the documentation tree
+
+`path` is resolved against `root`, and `root` defaults to `docs_root`. It exists because a
+section inventory belongs beside its manifests, and those are outside the documentation root —
+which `path` may not escape, and that guard is worth keeping. So the escape is DECLARED rather
+than smuggled through `../..`, and it is still bounded: `root` must resolve inside the repo.
+
+### `renderer:` — one renderer, several artifacts
+
+`renderers` is keyed by name, so before scoping there was exactly one way to spell "render a
+component inventory" and therefore exactly one per repo. A per-section inventory is the same
+renderer over a subset; `renderer:` lets the second one be a YAML stanza rather than a Go edit,
+which is the whole portability claim.
 
 Behaviour when the block is incomplete, which is the part that is easy to get wrong:
 
@@ -75,6 +113,12 @@ Behaviour when the block is incomplete, which is the part that is easy to get wr
 | `artifacts.<name>.path` missing | **exit 2**, naming the key |
 | `front.type` / `status` / `freshness` outside the configured enum | **exit 2**, naming the key and printing the allowed values |
 | `docs_root` absent | default `docs` |
+| `root` absent | default `docs_root` |
+| `root` escaping the repository | **exit 2**, naming the key |
+| `scope` absent | every component |
+| `scope:` present with no `path_prefix` | **exit 2** — a half-written filter is not "cover everything"; omit the block for that |
+| `scope.path_prefix` matching no component | **exit 2**, naming the key and the component count |
+| `renderer` naming no renderer | **exit 2**, naming `artifacts.<name>.renderer` |
 
 **There is no default `type`, `status` or `freshness`.** A default is a Go constant wearing a
 config key — silently wrong in every repo that does not share this one's vocabulary, which is

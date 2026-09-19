@@ -94,16 +94,36 @@ func Artifacts(cfg *Config) []Artifact {
 	var out []Artifact
 	for _, name := range names {
 		spec := cfg.Artifacts[name]
-		render, known := renderers[name]
+		render, known := renderers[cfg.RendererFor(name, spec)]
 		if !known || strings.TrimSpace(spec.Path) == "" {
 			continue
 		}
 		out = append(out, Artifact{
 			Name:   name,
-			Rel:    path.Join(cfg.DocsRootOr(), spec.Path),
+			Rel:    path.Join(cfg.RootFor(spec), spec.Path),
 			Spec:   spec,
 			Render: func(ctx *Ctx) string { return render(ctx, spec) },
 		})
+	}
+	return out
+}
+
+// scopeComponents returns the components an artifact covers, in the order it was given them.
+//
+// This is the ONE definition of "which components does this artifact describe". The renderer
+// calls it to build its table and validateArtifactScopes calls it to decide whether that table
+// would be empty; if those two ever computed the filter separately, a scope could pass
+// validation and still render nothing, which is the exact failure the validation exists to make
+// impossible.
+func scopeComponents(comps []Component, scope *ArtifactScope) []Component {
+	if scope == nil {
+		return comps
+	}
+	out := make([]Component, 0, len(comps))
+	for _, c := range comps {
+		if scope.Matches(c) {
+			out = append(out, c)
+		}
 	}
 	return out
 }
@@ -128,21 +148,47 @@ func validateArtifacts(cfg *Config) error {
 	for _, name := range names {
 		spec := cfg.Artifacts[name]
 		key := "artifacts." + name
-		if _, known := renderers[name]; !known {
+		renderer := cfg.RendererFor(name, spec)
+		if _, known := renderers[renderer]; !known {
+			// Blame `renderer` when the artifact named one and its own key otherwise, so the
+			// error points at the line a human would edit rather than at the one they would not.
+			at := key
+			if strings.TrimSpace(spec.Renderer) != "" {
+				at = key + ".renderer"
+			}
 			problems = append(problems, fmt.Sprintf(
-				"%s: no renderer is named %q; this repo can generate %v", key, name, rendererNames()))
+				"%s: no renderer is named %q; this repo can generate %v", at, renderer, rendererNames()))
 			continue
 		}
 		if strings.TrimSpace(spec.Path) == "" {
 			problems = append(problems, key+".path: missing — an artifact with no path has nowhere to go")
 			continue
 		}
-		// A path is joined onto docs_root and then onto the repo root. One that escapes either
-		// would write outside the documentation tree, or outside the repository entirely.
+		// `root` moves the artifact out of the documentation tree on purpose — a section
+		// inventory belongs beside its manifests. It does NOT move it out of the repository:
+		// the destination is joined onto the repo root and then written to, so an escaping root
+		// writes wherever it likes on the machine.
+		if clean := path.Clean(spec.Root); spec.Root != "" &&
+			(path.IsAbs(spec.Root) || clean == ".." || strings.HasPrefix(clean, "../")) {
+			problems = append(problems, fmt.Sprintf(
+				"%s.root: %q escapes the repository", key, spec.Root))
+		}
+		// A path is joined onto the artifact's root and then onto the repo root. One that
+		// escapes would write outside the documentation tree — or, with a root of its own,
+		// outside the directory the artifact claims to document.
 		if clean := path.Clean(spec.Path); path.IsAbs(spec.Path) || clean == ".." ||
 			strings.HasPrefix(clean, "../") {
 			problems = append(problems, fmt.Sprintf(
 				"%s.path: %q escapes the documentation root", key, spec.Path))
+		}
+		// `scope:` with nothing in it is a filter somebody started and did not finish. It
+		// cannot be read as "cover everything" — that is what omitting the block means — and
+		// reading it that way would turn a half-written filter into a full inventory nobody
+		// asked for, in a file named after a section.
+		if spec.Scope != nil && strings.Trim(strings.TrimSpace(spec.Scope.PathPrefix), "/") == "" {
+			problems = append(problems, fmt.Sprintf(
+				"%s.scope.path_prefix: missing — a scope that filters on nothing is not a scope; "+
+					"omit `scope:` to cover every component", key))
 		}
 		for _, e := range []struct {
 			field   string
@@ -185,6 +231,41 @@ func validateArtifacts(cfg *Config) error {
 		if _, err := renderFrontMatter(cfg, spec.Front); err != nil {
 			problems = append(problems, fmt.Sprintf("%s.front.%v", key, err))
 		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.New("config:\n  " + strings.Join(problems, "\n  "))
+}
+
+// validateArtifactScopes rejects a scope that matches NO component, naming the key.
+//
+// This cannot live in validateArtifacts: whether a prefix matches anything is a fact about the
+// repository, not about the config, and validateArtifacts deliberately sees only the Config.
+//
+// AN EMPTY SCOPED INVENTORY IS NEVER WRITTEN. It would render a heading, the prose that
+// promises a row per component, and no rows — a document that reads as "this section has
+// nothing in it" when it means "your filter is wrong". That is the vacuity failure mode this
+// tool exists to remove, and a generator that emits it is doing the same damage as a check that
+// silently stops running.
+//
+// The error names the prefix, the artifact key and how many components were enumerated, because
+// "matched nothing" has two very different causes — a typo in the prefix, and a collector that
+// found no components at all — and the count is what tells them apart.
+func validateArtifactScopes(ctx *Ctx) error {
+	var problems []string
+	for _, a := range Artifacts(ctx.Cfg) {
+		if a.Spec.Scope == nil {
+			continue
+		}
+		if len(scopeComponents(ctx.Components, a.Spec.Scope)) > 0 {
+			continue
+		}
+		problems = append(problems, fmt.Sprintf(
+			"artifacts.%s.scope.path_prefix: %q matches none of the %d component(s) docsgen "+
+				"enumerated, so %s would be an empty table that reads as \"nothing to report\" "+
+				"when it means \"the filter is wrong\"",
+			a.Name, a.Spec.Scope.PathPrefix, len(ctx.Components), a.Rel))
 	}
 	if len(problems) == 0 {
 		return nil
@@ -274,6 +355,9 @@ type GenResult struct {
 // reported, which is what makes `docsgen check` usable as a CI gate.
 func Generate(ctx *Ctx, check bool) ([]GenResult, error) {
 	if err := validateArtifacts(ctx.Cfg); err != nil {
+		return nil, err
+	}
+	if err := validateArtifactScopes(ctx); err != nil {
 		return nil, err
 	}
 	var out []GenResult

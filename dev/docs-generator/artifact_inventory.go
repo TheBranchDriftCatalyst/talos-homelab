@@ -48,9 +48,54 @@ func yesOr(b bool, no string) string {
 	return no
 }
 
+// scopeNote returns the sentence that tells a reader the table in front of them is a SUBSET,
+// or "" for an unscoped artifact.
+//
+// The empty string for an unscoped artifact is load-bearing, not tidiness: every artifact that
+// existed before scoping omits `scope:`, and their bytes must not move by one character. An
+// unconditional "scoped to: everything" line would have rewritten every inventory in every repo
+// that adopted the tool, and the diff would have been indistinguishable from a real change.
+func scopeNote(scope *ArtifactScope) string {
+	prefix := scopePrefix(scope)
+	if prefix == "" {
+		return ""
+	}
+	// The prefix CLOSES its line, with the shortest possible lead-in. It is the only
+	// variable-length run in this paragraph, so putting it mid-line would push that line past
+	// the width every other paragraph here wraps at, by an amount nobody can predict from the
+	// Go — it depends entirely on how deep the host repo's directory tree is.
+	return fmt.Sprintf(
+		"SCOPED inventory — only components whose path is inside `%s/`\n"+
+			"appear below. That is what makes this a members table rather than a hand-written list:\n"+
+			"a component added to or removed from the folder changes this file, and one that moves\n"+
+			"out of it leaves.\n\n", prefix)
+}
+
+// scopePrefix is the scope's directory in its canonical spelling, or "" when the artifact
+// covers every component. One definition, so the heading and the prose can never disagree about
+// whether a table is scoped.
+func scopePrefix(scope *ArtifactScope) string {
+	if scope == nil {
+		return ""
+	}
+	return strings.Trim(strings.TrimSpace(scope.PathPrefix), "/")
+}
+
+// scopeHeadingSuffix qualifies the H1 with the scoped directory, or "" when unscoped.
+func scopeHeadingSuffix(scope *ArtifactScope) string {
+	prefix := scopePrefix(scope)
+	if prefix == "" {
+		return ""
+	}
+	return " \u2014 `" + prefix + "`"
+}
+
 func renderComponentInventory(ctx *Ctx, spec ArtifactSpec) string {
 	cfg := ctx.Cfg
-	comps := append([]Component(nil), ctx.Components...)
+	// Filtered FIRST, so every count, every column and the missing-paths list below all describe
+	// the same set of rows. A renderer that scoped only its table would report "12 components
+	// are declared" above a table showing four.
+	comps := append([]Component(nil), scopeComponents(ctx.Components, spec.Scope)...)
 	// Slug alone is NOT a total order here: `external-secrets.yaml` declares two Kustomizations,
 	// so two rows share a slug, and sort.Slice is not stable. Without the path/source tiebreaks
 	// those two rows could swap between runs and the artifact would stop being byte-identical.
@@ -77,7 +122,11 @@ func renderComponentInventory(ctx *Ctx, spec ArtifactSpec) string {
 		warnf("front matter: %v", err)
 	}
 	b.WriteString(front)
-	b.WriteString("\n# Component Inventory\n\n")
+	// The H1 names the scope, because a members table whose title is indistinguishable from the
+	// whole-repo inventory lies by omission: the reader who lands on it from a search result has
+	// no way to know rows are missing by design. Unscoped artifacts keep the bare heading, so
+	// their bytes do not move.
+	fmt.Fprintf(&b, "\n# Component Inventory%s\n\n", scopeHeadingSuffix(spec.Scope))
 
 	// A blockquote, not *emphasis*: prettier rewrites `*em*` to `_em_`, so an emphasised banner
 	// is not a fixed point and would make this file churn. The wording also has to match the
@@ -88,6 +137,7 @@ func renderComponentInventory(ctx *Ctx, spec ArtifactSpec) string {
 	fmt.Fprintf(&b, "> The source of truth is the Flux Kustomizations in `%s/`,\n",
 		strings.TrimSuffix(cfg.Components.Path, "/"))
 	b.WriteString("> so a wrong row here is a wrong manifest there.\n\n")
+	b.WriteString(scopeNote(spec.Scope))
 
 	b.WriteString("Every row is one Flux Kustomization — the unit Flux reconciles, and therefore the unit a\n")
 	b.WriteString("doc can honestly claim to cover. The directory tree is not that unit: some directories group\n")
@@ -95,6 +145,10 @@ func renderComponentInventory(ctx *Ctx, spec ArtifactSpec) string {
 	b.WriteString("nested ones, and nothing in the tree tells the two apart. So this table is built from the\n")
 	b.WriteString("Kustomizations, never from the filesystem.\n\n")
 
+	// Unreachable for a SCOPED artifact: validateArtifactScopes refuses to generate one whose
+	// filter matches nothing, so an empty scoped table cannot reach a renderer at all. What
+	// survives here is the unscoped case — a repo whose collector found nothing — where an
+	// empty file is the honest answer and the text says where to go looking.
 	if len(comps) == 0 {
 		b.WriteString("No components were found. Check `components.path` and `components.glob` in\n")
 		b.WriteString("`dev/docs-generator/config.yaml`.\n\n")

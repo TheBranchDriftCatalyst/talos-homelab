@@ -67,9 +67,37 @@ type TicketSource struct {
 // to share this one's vocabulary, which is precisely the defect. An artifact whose front is
 // incomplete is a config error, reported by name.
 type ArtifactSpec struct {
-	// Path is relative to Config.DocsRoot, so a repo moving its documentation root moves every
-	// artifact with it and no artifact has to repeat the root.
+	// Renderer names the Go renderer to run, defaulting to the artifact's own config key.
+	//
+	// It exists because SCOPING made one renderer serve several artifacts. `renderers` is keyed
+	// by name, so before scope there was exactly one way to spell "render a component
+	// inventory" and therefore exactly one component inventory per repo. A per-section
+	// inventory is the SAME renderer over a SUBSET, and without this key adding the second one
+	// would mean registering `security-inventory: renderComponentInventory` in Go — which is
+	// precisely the "adding an artifact costs a Go edit" defect config.yaml exists to remove.
+	Renderer string `yaml:"renderer"`
+
+	// Root is the repo-relative directory Path is resolved against, defaulting to
+	// Config.DocsRoot.
+	//
+	// The default is right for prose: a repo moving its documentation tree moves every artifact
+	// with it. It is wrong for a SECTION inventory, whose whole point is to sit beside the
+	// manifests it describes — and those live outside the documentation root, which the path
+	// guard correctly refuses to let `path:` escape. So the escape is declared here instead of
+	// smuggled through `../..`, and it is still bounded: Root must resolve inside the repo.
+	Root string `yaml:"root"`
+
+	// Path is relative to Root (hence to Config.DocsRoot by default), so no artifact has to
+	// repeat its root.
 	Path string `yaml:"path"`
+
+	// Scope narrows the artifact to a subset of the component set. ABSENT MEANS EVERY
+	// COMPONENT, which is what keeps every pre-scope artifact byte-identical.
+	//
+	// A pointer, not a value: `scope: {}` and no `scope:` at all are different intentions, and
+	// only a pointer can tell them apart. The first is a filter somebody forgot to fill in and
+	// is reported; the second is "cover everything" and is the default.
+	Scope *ArtifactScope `yaml:"scope"`
 
 	// Front is rendered by renderFrontMatter in Config.KeyOrder. It is map[string]any and NOT a
 	// struct: the moment one key is special to Go, that key is a constant again.
@@ -80,6 +108,38 @@ type ArtifactSpec struct {
 	// is prose, and prose belongs in config rather than in Go. A note for an id that is not in
 	// Front["tickets"] is a config error rather than a line nobody ever sees.
 	TicketNotes map[string]string `yaml:"ticket_notes"`
+}
+
+// ArtifactScope narrows an artifact to a subset of the components docsgen enumerated.
+//
+// path_prefix rather than a label, because docsgen already thinks in paths: ExpectedLocation
+// computes a doc's home from the longest common ancestor of its covers, so a path prefix is the
+// primitive already in the model and needs no new parsing. Scoping by a Kubernetes label would
+// require reading Namespace manifests, which is a genuinely new fact for the collector to
+// gather and does not belong behind a rendering key.
+//
+// Matching is SEGMENT-AWARE (see Matches). A substring prefix would quietly pull
+// `infrastructure/base/security-extras` into a scope meant for `infrastructure/base/security`,
+// and an inventory silently containing a neighbour is worse than one that is obviously wrong.
+type ArtifactScope struct {
+	PathPrefix string `yaml:"path_prefix"`
+}
+
+// Matches reports whether a component falls inside the scope. A nil scope matches everything,
+// which is the "scope absent => all components" rule expressed once rather than at each caller.
+func (s *ArtifactScope) Matches(c Component) bool {
+	if s == nil {
+		return true
+	}
+	prefix := strings.Trim(strings.TrimSpace(s.PathPrefix), "/")
+	if prefix == "" {
+		// Unreachable through Generate — validateArtifacts rejects an empty prefix by name
+		// first. Matching everything here rather than nothing keeps a direct caller honest: a
+		// filter that silently excluded every row is the vacuity this feature exists to refuse.
+		return true
+	}
+	p := strings.TrimSuffix(c.Path, "/")
+	return p == prefix || strings.HasPrefix(p, prefix+"/")
 }
 
 type Config struct {
@@ -118,6 +178,27 @@ func (c *Config) DocsRootOr() string {
 		return "docs"
 	}
 	return strings.TrimSuffix(c.DocsRoot, "/")
+}
+
+// RootFor returns the repo-relative directory an artifact's `path` is resolved against: the
+// artifact's own `root` when it declares one, and the documentation root otherwise.
+//
+// Callers go through this rather than reading the field, so an artifact built in a test behaves
+// exactly like one loaded from YAML — the same reason DocsRootOr exists.
+func (c *Config) RootFor(spec ArtifactSpec) string {
+	if r := strings.Trim(strings.TrimSpace(spec.Root), "/"); r != "" {
+		return r
+	}
+	return c.DocsRootOr()
+}
+
+// RendererFor returns the renderer name an artifact asks for: its own `renderer` key when it
+// declares one, and its config key otherwise.
+func (c *Config) RendererFor(name string, spec ArtifactSpec) string {
+	if r := strings.TrimSpace(spec.Renderer); r != "" {
+		return r
+	}
+	return name
 }
 
 // RuleFor returns the configured rule, defaulting to enabled/warn. An unknown rule name is

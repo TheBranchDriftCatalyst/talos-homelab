@@ -101,6 +101,19 @@ func assertSamplesAreReal() {
 			"sample %s: `stale` found nothing — the fixture's commit timestamps collapsed and "+
 				"every staleness assertion downstream would pass vacuously", s.Name)
 
+		// The scoped artifact is table-driven like everything else, so an empty slot in the
+		// table would make every scoping spec iterate over nothing and pass. Refuse the sample
+		// instead, here, before any spec is allowed to draw a conclusion.
+		Expect(s.ScopeRel).NotTo(BeEmpty(),
+			"sample %s declares no scoped artifact, so every scoping spec would run against "+
+				"nothing and report green", s.Name)
+		Expect(s.ScopePrefix).NotTo(BeEmpty(), "sample %s declares no scope prefix", s.Name)
+		Expect(s.ScopeSlugs).NotTo(BeEmpty(),
+			"sample %s: a scope covering no component cannot show that scoping includes anything", s.Name)
+		Expect(s.ScopeExcludes).NotTo(BeEmpty(),
+			"sample %s: a scope excluding no component cannot show that scoping excludes anything — "+
+				"an artifact ignoring the filter entirely would satisfy every remaining assertion", s.Name)
+
 		front := fx.run("frontmatter")
 		Expect(front.Code).To(Equal(0), "sample %s: `frontmatter` failed:\n%s", s.Name, front.Err)
 		for _, doc := range s.Worklist {

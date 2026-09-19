@@ -115,6 +115,12 @@ cases matter as much: `handbook/reference/dead-links.md` carries a dead link ins
 and another inside an inline span, and neither may ever be reported; `handbook/_attic/` is a
 deliberate minefield that must produce **zero** findings because the config excludes it.
 
+Two artifacts are configured, and the second one is why: `component-inventory` is UNSCOPED and
+covers all eight components, while `platform-inventory` is scoped to `path_prefix: platform` and
+covers six — so the same run asserts both that the filter includes what it should and that the
+default still includes everything. It keeps the default root (`handbook/`) because `platform` is
+a `grouping_root` here, which is where the `colocation` rule sends a doc covering it.
+
 > A fixture can defeat itself, and this one has three times — see
 > [Declarations](#declarations-what-a-fixture-says-it-produces) below, which is what now stops it.
 
@@ -124,6 +130,11 @@ Services in `services/`, prose in `notes/` (`docs_root: notes` — there is no `
 all), tickets `PD-nn`, footer `## Follow-up`, types `note`/`spec`/`howto`/`log`. `loadDirs` had **zero** coverage before this sample, and it is the
 fallback for every repo that is not a Flux repo — simultaneously the least-tested and the most
 load-bearing path for portability.
+
+This is the sample that exercises `root:`. Its `search-inventory` artifact is scoped to
+`services/search` and rooted there too, so it lands at `services/search/components.md` —
+**outside** `docs_root`, which is the whole reason `root:` exists: a section inventory belongs
+beside the thing it describes, and `path` may not escape its own root.
 
 ## Declarations: what a fixture says it produces
 

@@ -193,3 +193,36 @@ artifacts:
     ticket_notes:
       TALOS-f0sd: "docs as a projection: frontmatter, linting, generation"
       TALOS-kll3: the generator and its whole-file artifacts
+
+  # A SECTION inventory: the same renderer over a subset, landing beside the manifests it
+  # describes rather than in docs/. `infrastructure/base/security` is deliberately absent from
+  # grouping_roots above — four sibling components sharing that parent is a legitimate
+  # colocation target — so this file is exactly where the `colocation` rule wants it.
+  #
+  # It exists because the alternative is a hand-written members list in the section README, and
+  # that list is wrong the moment a fifth component lands in the folder. Nothing would report it.
+  security-inventory:
+    # The renderer is the component inventory; only the SUBSET differs. Without this key a
+    # second inventory would mean a Go edit, which is the defect config.yaml exists to remove.
+    renderer: component-inventory
+    # Outside docs_root on purpose — and the only supported way out, because `path` may not
+    # escape its root.
+    root: infrastructure/base/security
+    path: components.md
+    scope:
+      path_prefix: infrastructure/base/security
+    front:
+      type: reference
+      status: current
+      # `path:` rather than the four slugs: the scope is the directory, and listing the slugs
+      # would be the hand-maintained membership list this file exists to delete. The longest
+      # common ancestor of a `path:` cover is the directory itself, which is where this doc
+      # lives — so `colocation` is satisfied by construction rather than by a `pinned:` excuse.
+      covers: [path:infrastructure/base/security]
+      # Derived from git-tracked manifests, not from live cluster state, so `tracks-code`
+      # overrides the reference default.
+      freshness: tracks-code
+      tickets: [TALOS-f0sd.5]
+      bluf: The Flux Kustomizations whose manifests live under infrastructure/base/security, with whether each has a colocated README and how many nested kustomizations it wraps.
+    ticket_notes:
+      TALOS-f0sd.5: artifact scoping, which is what makes a per-section inventory possible

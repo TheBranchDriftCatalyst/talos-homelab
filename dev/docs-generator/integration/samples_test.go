@@ -63,6 +63,27 @@ type sample struct {
 	// how the hardcoded `docs/07-reference/component-inventory.md` survived as long as it did.
 	ArtifactRel string
 
+	// --- the scoped artifact ------------------------------------------------------------
+	//
+	// Every sample declares one, and assertSamplesAreReal refuses a sample that does not: a
+	// table-driven suite whose table has an empty slot runs the scoping specs against nothing
+	// and reports them green, which is the exact vacuity this feature was written to refuse in
+	// the tool itself.
+
+	// ScopeRel is where the scoped artifact lands: the artifact's own `root` (or docs_root)
+	// joined with its path.
+	ScopeRel string
+
+	// ScopePrefix is the sample's configured `scope.path_prefix`, spelled exactly as it appears
+	// in the sample's config.yaml so a spec can edit that line.
+	ScopePrefix string
+
+	// ScopeSlugs is every component inside the scope and ScopeExcludes is every component
+	// outside it. Both are required and both are checked: asserting only that the included rows
+	// are present would pass for an artifact that ignored the filter entirely.
+	ScopeSlugs    []string
+	ScopeExcludes []string
+
 	// WarnOnlyRule fires in this sample at warn severity; ErrorRule fires at error severity.
 	// Together they pin the half of the exit-code contract that severity drives.
 	WarnOnlyRule string
@@ -132,6 +153,12 @@ var fluxCluster = &sample{
 
 	ArtifactRel: "handbook/reference/component-inventory.md",
 
+	// Six of the eight components live under platform/; the two orchard workloads do not.
+	ScopeRel:      "handbook/reference/platform-inventory.md",
+	ScopePrefix:   "platform",
+	ScopeSlugs:    []string{"gateway", "legacy-cache", "secrets-operator", "secrets-store", "storage", "telemetry"},
+	ScopeExcludes: []string{"orchard-api", "orchard-web"},
+
 	WarnOnlyRule: "component-shape", // platform/storage wraps 5 nested kustomizations
 	ErrorRule:    "broken-links",    // handbook/reference/dead-links.md has exactly two
 
@@ -181,6 +208,13 @@ var plainDirs = &sample{
 	ExcludedDir: "notes/archive",
 
 	ArtifactRel: "notes/reference/component-inventory.md",
+
+	// One of five, and its `root:` puts the artifact OUTSIDE the documentation root — which is
+	// the whole reason `root:` exists.
+	ScopeRel:      "services/search/components.md",
+	ScopePrefix:   "services/search",
+	ScopeSlugs:    []string{"search"},
+	ScopeExcludes: []string{"billing", "catalog", "identity", "notifications"},
 
 	WarnOnlyRule: "colocation",   // notes/deploying.md covers catalog but lives in notes/
 	ErrorRule:    "broken-links", // notes/rule-sweep.md links at ./vanished.md

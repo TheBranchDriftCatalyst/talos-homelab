@@ -121,6 +121,13 @@ var _ = Describe("golden output", Label("integration"), func() {
 				fx.matchGolden("component-inventory.md", fx.read(fx.artifactRel()))
 			})
 
+			It("generates a SCOPED inventory whose exact bytes are recorded, so a change to what "+
+				"the filter admits shows up as a diff rather than as a quietly shorter table", func() {
+				res := fx.run("generate")
+				Expect(res.Code).To(Equal(0), res.Err)
+				fx.matchGolden("scoped-inventory.md", fx.read(s.ScopeRel))
+			})
+
 			It("reports the same findings, in the same order, with the same severities", func() {
 				fx.matchGolden("lint.txt", fx.run("lint").Out)
 			})
