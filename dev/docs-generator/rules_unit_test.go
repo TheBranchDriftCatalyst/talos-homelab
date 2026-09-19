@@ -1114,3 +1114,43 @@ var _ = Describe("staleSubject", Label("unit"), func() {
 		Expect(staleSubject(ctxWith(), []string{"path:does/not/exist"})).To(BeEmpty())
 	})
 })
+
+// --- Ctx.HasDoc -----------------------------------------------------------------------------
+//
+// README presence used to be an os.Stat while the doc corpus was `git ls-files`, so the two
+// halves of this tool disagreed about reality: `components` stated the filesystem and `lint`
+// walked git. An UNTRACKED README counted as documentation in one command and did not exist in
+// the other, and that nearly shipped a false clean — a doc was moved, lint reported no
+// findings, and the file was simply invisible to it.
+//
+// The first fix changed the inventory ARTIFACT and missed the `components` REPORT, which is a
+// separate call site; an on-disk probe caught it. Hence the last spec here: the guarantee is
+// that EVERY caller answers from the corpus, not that one of them does.
+var _ = Describe("Ctx.HasDoc", Label("unit"), func() {
+	ctx := &Ctx{tracked: map[string]bool{
+		"infrastructure/base/pihole/README.md": true,
+	}}
+
+	It("reports a tracked doc as present", func() {
+		Expect(ctx.HasDoc("infrastructure/base/pihole/README.md")).To(BeTrue())
+	})
+
+	It("reports an untracked path as absent even though it may exist on disk", func() {
+		// The whole point: existence is not the question, admission to the corpus is.
+		Expect(ctx.HasDoc("infrastructure/base/authentik/README.md")).To(BeFalse())
+	})
+
+	It("is nil-safe, so a hand-built Ctx reports nothing rather than panicking", func() {
+		Expect((&Ctx{}).HasDoc("anything.md")).To(BeFalse())
+	})
+
+	It("leaves no os.Stat-based README probe behind in any caller", func() {
+		// Guards the fix-one-call-site failure this bug actually exhibited.
+		for _, f := range []string{"main.go", "artifact_inventory.go"} {
+			b, err := os.ReadFile(f)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(string(b)).NotTo(ContainSubstring(`fileExists(filepath.Join(ctx.Root, c.Path, "README.md"))`),
+				"%s still answers README presence from the filesystem", f)
+		}
+	})
+})

@@ -416,27 +416,56 @@ spec:
           # K8s" behavior (91 ghosts -> ~70 Console seats). TALOS-3pdz.
           flush:
             agents_autodelete:
-              # NOTE: crowdsec 1.7.8 uses the shared AuthGCCfg yaml tags (cert / api_key) for BOTH
-              # agents and bouncers — the documented `login_password` key is IGNORED (verified via
-              # `cscli config show`: it left AgentsGC.Api nil). api_key here = the non-cert (password)
-              # GC slot, which is what token-mode agents use today; cert covers the post-TLS mode.
-              cert: 2h
-              api_key: 2h
+              # The yaml TAGS are shared between agents and bouncers (AuthGCCfg), but what each
+              # side CONSUMES is not: agents read cert + login_password, bouncers read cert +
+              # api_key. `api_key` here was a DEAD KEY -- pkg/database/flush.go:80-82 parses it
+              # into nothing and only logs "agents auto-delete for API auth is not supported".
+              #
+              # The earlier note claimed the reverse, that `login_password` was ignored, citing
+              # `cscli config show` leaving AgentsGC.Api nil. That check could not have shown
+              # anything else: setting login_password populates LoginPasswordDuration, never Api.
+              # It verified a field the thing under test cannot set. Settle this from flush.go,
+              # not from config show.
+              cert: 2h # the 7 tls agents
+              login_password: 2h # the 1 password agent (crowdsec-web-ui) -- previously ungoverned
             bouncers_autodelete:
               # 48h, lowered from 720h. At 30d this GC never actually ran, so bouncer rows
-              # accumulated one per pod IP forever: 5 traefik pods held 12 rows. The agent
-              # side proves the mechanism works -- agents_autodelete at 2h keeps machines at
-              # exactly 9 rows for 9 live pods, zero stale. Bouncers were simply set 360x
-              # wider. This is what lets the external prune CronJob be deleted.
+              # accumulated one per pod IP forever: 5 traefik pods held 12 rows.
+              #
+              # DO NOT use this to justify deleting machine-prune: that argument credited native
+              # GC with work the CronJob is doing. flushAgents excludes Not(HasAlerts()) and
+              # IpAddressNotIn('127.0.0.1','::1'), and 5 of 8 machines here carry alerts, so
+              # native GC can reach almost none of them. The CronJob reaps four classes native
+              # GC structurally cannot: loopback ghosts (recurring -- see the prune logs),
+              # alert-bearing machines, unvalidated/pending rows at any age, and password-auth
+              # machines. Verified 2026-09-19 against crowdsec v1.7.8 source + live DB.
               #
               # KNOWN INTERACTION, do not "fix" by raising this again: the key-holding PARENT
               # row (`haproxy-novelty-bouncer`, created by cscli bouncers add) stops pulling
               # once the pod IP changes -- its children `name@<ip>` pull instead, and CrowdSec
               # refuses to delete a child on its own ("delete parent bouncer ... instead").
-              # So the parent's last_pull freezes and ANY GC window eventually reaps it,
-              # taking the children with it. crowdsec-novelty-bouncer-register is the healer
-              # and now runs every 15m for that reason. The sidecar fails OPEN, so the blast
-              # radius of the gap is "no silent-drop at the honeypot", never a lockout.
+              # So the parent's last_pull freezes and this GC eventually reaps it.
+              #
+              # IT DOES NOT TAKE THE CHILDREN WITH IT -- an earlier note here said it did, and
+              # that conflated two different code paths:
+              #   flush.go:187   GC  = plain per-row Delete on LastPullLTE + AuthTypeEQ. No
+              #                  name-prefix logic, no auto_created check, no key revocation.
+              #   clibouncer/delete.go:60  cscli bouncers delete = a Go loop that deletes every
+              #                  `name@*` AutoCreated row FIRST, then the parent.
+              # So the unattended GC reap is a non-event, while a MANUAL `cscli bouncers delete
+              # haproxy-novelty-bouncer` takes the whole fleet down. Auth is per-row on
+              # (api_key, ip_address) (api_key.go:167), so surviving children keep working; the
+              # registrar re-adds the parent with the SAME key from ESO, so nothing is orphaned.
+              # crowdsec-novelty-bouncer-register is the healer and runs every 15m. The sidecar
+              # fails OPEN, so the blast radius of the gap is "no silent-drop at the honeypot",
+              # never a lockout.
+              #
+              # WHY traefik SURVIVES THIS, and why that is luck rather than design: the traefik
+              # parent's last_pull is NULL, and LastPullLTE never matches NULL. That bouncer is
+              # fail-closed cluster-wide ingress. Note the GC index is already
+              # btree (last_pull, created_at) -- reaping never-pulled rows by created_at is a
+              # cheap upstream change, and it would take ingress down. Re-check on every
+              # crowdsec upgrade.
               api_key: 48h
 
       # ---- Console sharing options (LAPI-only, rec #5) — enable CONTEXT forwarding ----

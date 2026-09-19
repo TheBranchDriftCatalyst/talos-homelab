@@ -23,6 +23,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -228,7 +229,7 @@ func reportComponents(ctx *Ctx) int {
 	})
 	for _, c := range comps {
 		readme := "-"
-		if fileExists(filepath.Join(ctx.Root, c.Path, "README.md")) {
+		if ctx.HasDoc(path.Join(c.Path, "README.md")) {
 			readme = "yes"
 			withReadme++
 		}

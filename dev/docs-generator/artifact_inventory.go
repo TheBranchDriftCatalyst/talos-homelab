@@ -14,6 +14,7 @@ package main
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -161,7 +162,7 @@ func renderComponentInventory(ctx *Ctx, spec ArtifactSpec) string {
 	files := map[string]bool{}
 	for _, c := range comps {
 		files[c.Source] = true
-		if fileExists(filepath.Join(ctx.Root, c.Path, "README.md")) {
+		if ctx.HasDoc(path.Join(c.Path, "README.md")) {
 			withReadme++
 		}
 		if c.Name != "" && c.Name != c.Slug {
@@ -195,7 +196,7 @@ func renderComponentInventory(ctx *Ctx, spec ArtifactSpec) string {
 			name,
 			c.Path,
 			yesOr(fileExists(filepath.Join(ctx.Root, c.Path)), "MISSING"),
-			yesOr(fileExists(filepath.Join(ctx.Root, c.Path, "README.md")), "-"),
+			yesOr(ctx.HasDoc(path.Join(c.Path, "README.md")), "-"),
 			c.Nested,
 			yesOr(c.Suspend, "-"),
 		)

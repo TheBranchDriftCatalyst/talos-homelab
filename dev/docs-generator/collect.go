@@ -47,7 +47,21 @@ type Ctx struct {
 	// assembled by hand: it reports every fact-dependent rule as unable to run rather than
 	// running it against fields nobody populated. Build always fills this in.
 	Facts FactSet
+
+	// tracked is the set of doc paths LoadDocs actually admitted, so that "does this component
+	// have a README" is answered from the SAME corpus the linter reads.
+	//
+	// It used to be an os.Stat. That made the two halves of this tool disagree about reality:
+	// `components` stated the filesystem while `lint` walked `git ls-files`, so an UNTRACKED
+	// README counted as documentation in one command and did not exist in the other. It nearly
+	// shipped a false clean — a doc was moved, lint reported no findings, and the file was
+	// simply invisible to it. An uncommitted README documents nothing for anybody else, so
+	// "tracked" is also the honest answer, not merely the consistent one.
+	tracked map[string]bool
 }
+
+// HasDoc reports whether a repo-relative markdown path is in the tracked corpus.
+func (c *Ctx) HasDoc(rel string) bool { return c.tracked[rel] }
 
 func warnf(format string, a ...any) {
 	fmt.Fprintf(os.Stderr, "WARN "+format+"\n", a...)
@@ -98,6 +112,8 @@ func TrackedMarkdown(root string, cfg *Config) []string {
 }
 
 func LoadDocs(root string, cfg *Config) []Doc {
+	// NOTE: any change to what this admits must stay in lockstep with Ctx.tracked below —
+	// they are two views of one corpus and divergence is exactly the bug this fixed.
 	var docs []Doc
 	for _, rel := range TrackedMarkdown(root, cfg) {
 		b, err := os.ReadFile(filepath.Join(root, rel))
@@ -170,10 +186,16 @@ func Build(root string, cfg *Config) *Ctx {
 		}
 		bySlug[c.Slug] = c
 	}
+	docs := LoadDocs(root, cfg)
+	tracked := make(map[string]bool, len(docs))
+	for _, d := range docs {
+		tracked[d.Path] = true
+	}
 	return &Ctx{
 		Root:       root,
 		Cfg:        cfg,
-		Docs:       LoadDocs(root, cfg),
+		Docs:       docs,
+		tracked:    tracked,
 		Components: comps,
 		BySlug:     bySlug,
 		Dates:      LastCommitDates(root),
