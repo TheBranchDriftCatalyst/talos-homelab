@@ -110,6 +110,23 @@ tasks:
     cmds:
       - cd {{.SRC}} && GOWORK=off go run github.com/onsi/ginkgo/v2/ginkgo --label-filter=integration ./...
 
+  # Review mode. Same specs, same assertions — the only difference is that the materialised
+  # fixture, every command's argv/exit/stdout/stderr, and any golden diffs are left on disk
+  # instead of being deleted with the temp dir. A suite whose output nobody can read is a suite
+  # nobody trusts enough to act on when it goes red.
+  #
+  # Output lands in dev/docs-generator/integration/.artifacts/<sample>/ — a STABLE path, so it
+  # can be bookmarked and diffed against the previous run. It is wiped at the start of each run
+  # (stale files silently contaminating the next run is worse than not preserving at all) and
+  # gitignored, because a generated tree in git is the exact drift this effort exists to remove.
+  test:integration:keep:
+    desc: "Integration layer, preserving artifacts on disk for review"
+    env:
+      DOCSGEN_PRESERVE_ARTIFACTS: "1"
+    cmds:
+      - cd {{.SRC}} && GOWORK=off go run github.com/onsi/ginkgo/v2/ginkgo --label-filter=integration ./...
+      - cmd: echo "artifacts preserved in {{.SRC}}/integration/.artifacts/"
+
   test:go:
     desc: "Both layers via plain `go test` (no ginkgo CLI needed)"
     cmds:

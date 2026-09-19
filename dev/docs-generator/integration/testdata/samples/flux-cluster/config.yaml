@@ -1,0 +1,101 @@
+# docsgen configuration for the `flux-cluster` integration sample.
+#
+# This file exists to PROVE THE PORTABILITY CLAIM in the tool's own package docs: "copy
+# dev/docs-generator/ into another repo, edit the YAML, and it works — no Go changes."
+#
+# So every value here is deliberately DIFFERENT from talos-homelab's real config.yaml. The
+# cluster lives in fleet/prod-west rather than clusters/catalyst-cluster, components live under
+# platform/ and workloads/ rather than infrastructure/base/, docs live in handbook/ rather than
+# docs/, tickets are ORCH-nnn rather than TALOS-xxxx, the footer is `## Tracking` rather than
+# `## Related Issues`, and the doc-type vocabulary shares only the words any repo would use.
+#
+# Anything this sample CANNOT express without editing Go is a portability defect, and is
+# recorded in integration/README.md rather than worked around here.
+
+exclude:
+  # The attic is frozen history: correct as of its date, full of links to since-moved paths.
+  # handbook/_attic/retired-plan.md is a deliberate minefield — banned keys, dead links, a
+  # bogus type. It must produce ZERO findings, which is how this sample pins `exclude`.
+  - handbook/_attic/**
+  - .orchard/**
+
+# NOTE: nothing in the Go reads this. See integration/README.md, "dead config keys".
+ticket_pattern: '\bORCH-\d{3}\b'
+
+components:
+  kind: flux
+  path: fleet/prod-west
+  glob: "*.yaml"
+  slug_from: filename
+
+# A deliberately different vocabulary: overview (not nav), design (not architecture),
+# adr (not decision), table (not reference), journal (not record). `guide` and `runbook` are
+# kept because they are words any repo uses, and because `runbook` is the one type whose
+# structural check is hardcoded in Go and would otherwise get no coverage at all.
+doc_types:
+  - overview
+  - guide
+  - runbook
+  - design
+  - adr
+  - table
+  - journal
+
+statuses:
+  - current
+  - draft
+  - stale
+  - superseded # the value `superseded` is hardcoded in rules.go; it cannot be renamed
+
+freshness:
+  - follows-code
+  - follows-cluster
+  - frozen # the value `frozen` is hardcoded in main.go; it cannot be renamed
+
+freshness_default:
+  overview: follows-code
+  guide: follows-code
+  runbook: follows-code
+  design: follows-code
+  adr: frozen
+  table: follows-cluster
+  journal: frozen
+
+banned_keys:
+  title: "disables MD041 and makes the H1 an MD025 duplicate"
+  author: "git knows who wrote it, and the answer here is always wrong within a quarter"
+  sla: "an availability target belongs in the service catalogue, not in prose"
+
+key_order:
+  - type
+  - status
+  - covers
+  - freshness
+  - tickets
+  - summary
+  - superseded_by
+  - pinned
+
+grouping_roots:
+  - ""
+  - "."
+  - platform
+  - workloads
+  - fleet
+
+type_requires:
+  guide: ["## Start here"]
+  runbook: ["## Stop condition"]
+  design: ["## Context"]
+
+required_footer: "## Tracking"
+
+rules:
+  broken-links: { enabled: true, severity: error }
+  frontmatter-schema: { enabled: true, severity: error }
+  covers-resolves: { enabled: true, severity: error }
+  component-path: { enabled: true, severity: warn }
+  component-shape: { enabled: true, severity: warn }
+  colocation: { enabled: true, severity: warn }
+  tickets-in-body: { enabled: true, severity: warn }
+  taxonomy-structure: { enabled: true, severity: warn }

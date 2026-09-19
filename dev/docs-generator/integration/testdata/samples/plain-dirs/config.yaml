@@ -1,0 +1,78 @@
+# docsgen configuration for the `plain-dirs` integration sample.
+#
+# A repo with NO GitOps controller: no Kustomizations, no spec.path, no cluster. The deployable
+# unit is simply a directory under services/, which is what `components.kind: dirs` is for.
+#
+# This sample exists because `loadDirs` is simultaneously the least-tested code path in the tool
+# and the most load-bearing one for the portability claim — it is the fallback for every repo
+# that is not a Flux repo. It is also the sample that shows which rules are secretly
+# Flux-specific; those are recorded in integration/README.md, not worked around here.
+#
+# Every value below differs from BOTH talos-homelab and the flux-cluster sample, so that
+# anything shared between the two samples is shared because the Go made it so.
+
+exclude:
+  - notes/archive/**
+
+ticket_pattern: '\bPD-\d{2}\b'
+
+components:
+  kind: dirs
+  path: services
+  glob: "*"
+
+doc_types:
+  - note
+  - spec
+  - howto
+  - log
+
+statuses:
+  - current
+  - draft
+  - superseded
+
+freshness:
+  - live
+  - frozen
+
+freshness_default:
+  note: live
+  spec: live
+  howto: live
+  log: frozen
+
+banned_keys:
+  title: "the H1 is the title; a second one confuses every markdown renderer"
+  owner: "team names rot faster than code"
+
+key_order:
+  - type
+  - status
+  - covers
+  - freshness
+  - tickets
+  - superseded_by
+  - pinned
+
+grouping_roots:
+  - ""
+  - "."
+  - services
+  - lib
+
+type_requires:
+  howto: ["## Steps"]
+  spec: ["## Interface"]
+
+required_footer: "## Follow-up"
+
+rules:
+  broken-links: { enabled: true, severity: error }
+  frontmatter-schema: { enabled: true, severity: error }
+  covers-resolves: { enabled: true, severity: error }
+  component-path: { enabled: true, severity: warn }
+  component-shape: { enabled: true, severity: warn }
+  colocation: { enabled: true, severity: warn }
+  tickets-in-body: { enabled: true, severity: warn }
+  taxonomy-structure: { enabled: true, severity: warn }
