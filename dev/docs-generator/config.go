@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -53,6 +54,34 @@ type TicketSource struct {
 	Command string `yaml:"command"` // override the binary; defaults per backend
 }
 
+// ArtifactSpec is one generated document, declared entirely in config.
+//
+// The frontmatter is DATA. Every value the generator stamps into an artifact — its type, its
+// status, its freshness, the tickets it cites — used to be a Go string constant, which meant
+// docsgen emitted `type: reference` into a repo whose vocabulary has no such type and then
+// reported its own output as a schema violation. A generator that emits documents its own
+// ruleset rejects cannot be trusted to keep any other document honest.
+//
+// There is deliberately NO default for `type`, `status` or `freshness`. A default is the same
+// constant wearing a config key: it would be silently wrong in every repo that does not happen
+// to share this one's vocabulary, which is precisely the defect. An artifact whose front is
+// incomplete is a config error, reported by name.
+type ArtifactSpec struct {
+	// Path is relative to Config.DocsRoot, so a repo moving its documentation root moves every
+	// artifact with it and no artifact has to repeat the root.
+	Path string `yaml:"path"`
+
+	// Front is rendered by renderFrontMatter in Config.KeyOrder. It is map[string]any and NOT a
+	// struct: the moment one key is special to Go, that key is a constant again.
+	Front map[string]any `yaml:"front"`
+
+	// TicketNotes annotates the footer's ticket list. The list itself comes from
+	// Front["tickets"], which is what makes the `tickets-in-body` rule self-satisfying; a note
+	// is prose, and prose belongs in config rather than in Go. A note for an id that is not in
+	// Front["tickets"] is a config error rather than a line nobody ever sees.
+	TicketNotes map[string]string `yaml:"ticket_notes"`
+}
+
 type Config struct {
 	Exclude          []string            `yaml:"exclude"`
 	TicketPattern    string              `yaml:"ticket_pattern"`
@@ -68,6 +97,27 @@ type Config struct {
 	TypeRequires     map[string][]string `yaml:"type_requires"`
 	RequiredFooter   string              `yaml:"required_footer"`
 	Tickets          TicketSource        `yaml:"tickets"`
+
+	// DocsRoot is the repo's documentation root. It defaults to `docs` via DocsRootOr, which is
+	// safe in a way that a default `type:` would not be: a root is a PATH, not a vocabulary
+	// term, so a wrong one is visible the first time anybody looks at the tree. A wrong
+	// vocabulary term is invisible until someone runs the linter over the generated file.
+	DocsRoot string `yaml:"docs_root"`
+
+	// Artifacts is the generated document set, keyed by renderer name. Absent means this repo
+	// generates nothing — which is a legitimate configuration and must not fall back to some
+	// artifact compiled into Go.
+	Artifacts map[string]ArtifactSpec `yaml:"artifacts"`
+}
+
+// DocsRootOr returns the configured documentation root without a trailing slash, defaulting to
+// `docs`. Callers go through this rather than reading the field so that a Config built in a test
+// — or a repo with no config file at all — behaves the same as one loaded from YAML.
+func (c *Config) DocsRootOr() string {
+	if c.DocsRoot == "" {
+		return "docs"
+	}
+	return strings.TrimSuffix(c.DocsRoot, "/")
 }
 
 // RuleFor returns the configured rule, defaulting to enabled/warn. An unknown rule name is

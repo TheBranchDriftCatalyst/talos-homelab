@@ -151,3 +151,45 @@ rules:
   tickets-in-body: { enabled: true, severity: warn }
   tickets-exist: { enabled: true, severity: warn } # warn until the backlog is verified clean
   taxonomy-structure: { enabled: true, severity: warn }
+
+# ---------------------------------------------------------------------------------------------
+# Generated artifacts
+# ---------------------------------------------------------------------------------------------
+# The generated document set. Everything here was a Go string constant until it was not, and the
+# reason is the whole point of the file: `type: reference`, `covers: cluster`, `TALOS-kll3` and a
+# `## Related Issues` footer are correct for THIS repo and are an out-of-enum type, another
+# project's tickets and the wrong footer for any other. docsgen was generating a document
+# docsgen itself rejects, and only got away with it because nothing linted the result.
+#
+# There is deliberately no default for `type`, `status` or `freshness`. A default is the same
+# constant wearing a config key. Omit one and the pre-write gate refuses to write at all, naming
+# the key — which is the behaviour that makes emitting a rejected document impossible rather
+# than merely unlikely.
+docs_root: docs
+
+artifacts:
+  component-inventory:
+    # Relative to docs_root, so moving the documentation tree moves every artifact with it.
+    path: 07-reference/component-inventory.md
+    # Rendered in key_order above by a deterministic writer, NOT by yaml.Marshal: that reorders
+    # keys (which this repo's own frontmatter-schema rule then reports) and may emit
+    # `covers: [cluster]` as a flow sequence, which prettier explodes — at which point the
+    # generated file stops being a prettier fixed point and `docsgen check` reports drift it
+    # caused itself. No key below is special to the Go.
+    front:
+      type: reference
+      status: current
+      covers: [cluster]
+      # Overrides the per-type default (reference -> tracks-cluster) because this artifact is
+      # derived from git-tracked manifests rather than from live cluster state: it goes stale
+      # when clusters/catalyst-cluster moves, which git can see.
+      freshness: tracks-code
+      tickets: [TALOS-kll3, TALOS-f0sd]
+      bluf: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
+    # The footer's ticket LIST comes from front.tickets — which is what makes tickets-in-body
+    # self-satisfying — and these are the annotations beside each id. A note for a ticket that
+    # is not in front.tickets is a config error, because dead config looks exactly like config
+    # that stopped working.
+    ticket_notes:
+      TALOS-f0sd: "docs as a projection: frontmatter, linting, generation"
+      TALOS-kll3: the generator and its whole-file artifacts

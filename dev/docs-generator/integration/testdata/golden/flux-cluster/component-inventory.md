@@ -1,19 +1,19 @@
 ---
-type: reference
+type: table
 status: current
 covers:
   - cluster
-freshness: tracks-code
+freshness: follows-cluster
 tickets:
-  - TALOS-kll3
-  - TALOS-f0sd
-bluf: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
+  - ORCH-204
+  - ORCH-201
+summary: Every Flux Kustomization in fleet/prod-west, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
 ---
 
 # Component Inventory
 
 > Generated file — do not edit by hand. Regenerate with `task docs:generate`.
-> The source of truth is the Flux Kustomizations in `clusters/catalyst-cluster/`,
+> The source of truth is the Flux Kustomizations in `fleet/prod-west/`,
 > so a wrong row here is a wrong manifest there.
 
 Every row is one Flux Kustomization — the unit Flux reconciles, and therefore the unit a
@@ -64,7 +64,7 @@ healthy and nothing surfaces it.
 
 - `legacy-cache` (declared in `fleet/prod-west/legacy-cache.yaml`) points at `platform/legacy-cache`
 
-## Related Issues
+## Tracking
 
-- TALOS-f0sd — docs as a projection: frontmatter, linting, generation
-- TALOS-kll3 — the generator and its whole-file artifacts
+- ORCH-201 — the component inventory artifact
+- ORCH-204 — documentation taxonomy and linting

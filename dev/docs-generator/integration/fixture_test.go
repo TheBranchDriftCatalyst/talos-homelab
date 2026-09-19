@@ -223,11 +223,14 @@ func (f *fixture) runRaw(args ...string) result {
 
 // --- observing the fixture ---------------------------------------------------------------------
 
-const artifactRel = "docs/07-reference/component-inventory.md"
+// The artifact's destination is per-sample, read from the sample table rather than from a
+// constant here. It was a constant, and a constant is exactly what the tool itself used to hold
+// — so a shared one in the harness would have kept the specs agreeing with the defect.
+func (f *fixture) artifactRel() string { return f.Sample.ArtifactRel }
 
 func (f *fixture) path(rel string) string { return filepath.Join(f.Root, rel) }
 
-func (f *fixture) artifact() string { return f.path(artifactRel) }
+func (f *fixture) artifact() string { return f.path(f.artifactRel()) }
 
 func (f *fixture) read(rel string) string {
 	GinkgoHelper()
@@ -240,6 +243,40 @@ func (f *fixture) write(rel, content string) {
 	GinkgoHelper()
 	Expect(os.MkdirAll(filepath.Dir(f.path(rel)), 0o755)).To(Succeed())
 	Expect(os.WriteFile(f.path(rel), []byte(content), 0o644)).To(Succeed())
+}
+
+// dropArtifacts rewrites the fixture's config.yaml without its `artifacts:` block, which is the
+// configuration most repos adopting this tool actually have. It truncates rather than parses on
+// purpose: a YAML round trip here would silently normalise the rest of the file and the spec
+// would no longer be testing the sample's real config.
+func (f *fixture) dropArtifacts() {
+	GinkgoHelper()
+	raw := f.read("config.yaml")
+	i := strings.Index(raw, "\nartifacts:\n")
+	Expect(i).To(BeNumerically(">", 0),
+		"the sample config has no `artifacts:` block to drop; this spec would assert nothing")
+	f.write("config.yaml", raw[:i+1])
+	Expect(f.read("config.yaml")).NotTo(ContainSubstring("\nartifacts:"))
+}
+
+// editConfig makes one textual substitution in the fixture's config.yaml, failing loudly when
+// the anchor is absent — an edit that silently matched nothing would leave the spec asserting
+// against an unmodified config.
+func (f *fixture) editConfig(old, replacement string) {
+	GinkgoHelper()
+	raw := f.read("config.yaml")
+	Expect(raw).To(ContainSubstring(old), "config anchor %q is gone; this edit would be a no-op", old)
+	f.write("config.yaml", strings.Replace(raw, old, replacement, 1))
+}
+
+// isTracked asks git whether the path is in the index. The lint walker is `git ls-files`, so an
+// untracked artifact is invisible to every doc rule — and "no findings" then means "nothing was
+// examined", which reads exactly like a pass.
+func (f *fixture) isTracked(rel string) bool {
+	cmd := exec.Command("git", "ls-files", "--error-unmatch", "--", rel)
+	cmd.Dir = f.Root
+	cmd.Env = append(os.Environ(), gitEnv...)
+	return cmd.Run() == nil
 }
 
 func (f *fixture) exists(rel string) bool {

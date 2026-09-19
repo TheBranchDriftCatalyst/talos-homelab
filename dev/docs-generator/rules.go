@@ -263,9 +263,17 @@ func longestCommonAncestor(paths []string) string {
 // LCA rather than a count of slugs: a README covering four sibling components is correctly
 // colocated at their shared parent, while a count would wrongly exile it to docs/.
 func ExpectedLocation(ctx *Ctx, covers []string) string {
+	// The documentation root is config, not the literal `docs/`. A repo whose prose lives in
+	// handbook/ or notes/ was previously told by this rule that every cross-cutting doc it owns
+	// is misplaced, and told by the generator to write its artifacts into a docs/ tree it does
+	// not have. Those were the same hardcoded string.
+	//
+	// The trailing slash is load-bearing: it is how ruleColocation tells "the docs root" apart
+	// from an LCA that happens to spell the same directory.
+	docsRoot := ctx.Cfg.DocsRootOr() + "/"
 	for _, c := range covers {
 		if c == "cluster" || c == "repo" {
-			return "docs/"
+			return docsRoot
 		}
 	}
 	var resolved []string
@@ -275,11 +283,11 @@ func ExpectedLocation(ctx *Ctx, covers []string) string {
 		}
 	}
 	if len(resolved) == 0 {
-		return "docs/"
+		return docsRoot
 	}
 	lca := longestCommonAncestor(resolved)
 	if lca == "" || ctx.Cfg.Has(ctx.Cfg.GroupingRoots, lca) {
-		return "docs/"
+		return docsRoot
 	}
 	return lca
 }
@@ -299,9 +307,10 @@ func ruleColocation(ctx *Ctx) []Finding {
 		}
 		want := ExpectedLocation(ctx, covers)
 		here := filepath.Dir(d.Path)
-		if want == "docs/" {
-			if !strings.HasPrefix(d.Path, "docs/") {
-				out = append(out, find(ctx, "colocation", d.Path, "cross-cutting scope — belongs under docs/"))
+		if docsRoot := ctx.Cfg.DocsRootOr() + "/"; want == docsRoot {
+			if !strings.HasPrefix(d.Path, docsRoot) {
+				out = append(out, find(ctx, "colocation", d.Path,
+					"cross-cutting scope — belongs under "+docsRoot))
 			}
 			continue
 		}

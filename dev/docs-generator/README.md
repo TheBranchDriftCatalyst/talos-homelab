@@ -45,6 +45,55 @@ some other way, add a `kind` in `collect.go`; never special-case inside a rule.
 | `grouping_roots` | paths that mean "cross-cutting", so a doc covering them belongs centrally |
 | `type_requires` | per-type structural expectations — what makes `type:` more than a label |
 | `rules` | enable/disable and severity per rule |
+| `docs_root` | the repo's documentation root (default `docs`) — where artifacts are written, and what `colocation` calls "central" |
+| `artifacts` | the generated document set: destination, frontmatter and footer tickets, per artifact |
+
+### The generated artifact set
+
+```yaml
+docs_root: docs
+
+artifacts:
+  component-inventory: # the key names the renderer; `docsgen generate` lists what exists
+    path: 07-reference/component-inventory.md # relative to docs_root
+    front: # rendered in key_order; no key here is special to the Go
+      type: reference
+      status: current
+      covers: [cluster]
+      freshness: tracks-code
+      tickets: [TALOS-kll3, TALOS-f0sd]
+      bluf: ...
+    ticket_notes: # annotations for the footer's ticket list
+      TALOS-kll3: the generator and its whole-file artifacts
+```
+
+Behaviour when the block is incomplete, which is the part that is easy to get wrong:
+
+| situation | behaviour |
+| --- | --- |
+| `artifacts:` absent entirely | write nothing, say `no artifacts configured`, **exit 0** — generating nothing is a normal adoption state |
+| `artifacts.<name>.path` missing | **exit 2**, naming the key |
+| `front.type` / `status` / `freshness` outside the configured enum | **exit 2**, naming the key and printing the allowed values |
+| `docs_root` absent | default `docs` |
+
+**There is no default `type`, `status` or `freshness`.** A default is a Go constant wearing a
+config key — silently wrong in every repo that does not share this one's vocabulary, which is
+exactly the defect the block exists to remove. A wrong `docs_root` is different in kind: it is a
+PATH, and a wrong path is visible the first time anybody looks at the tree.
+
+### The pre-write gate
+
+After rendering and **before writing**, `Generate` runs each artifact's own bytes back through
+`MakeDoc` + `ruleFrontmatterSchema` + `ruleTaxonomyStructure` against the live config, and
+refuses to write on **any** finding — in `check` mode as well as `generate`, and regardless of
+severity (`warn` grandfathers documents that predate the taxonomy; a file being written right now
+has no history to grandfather). The error names the config key at fault.
+
+This is stronger than making the constants configurable. Configurable constants can still be
+configured wrong, and the wrong value is then discovered only if somebody commits the artifact
+and runs the linter — which, because the walker is `git ls-files` and a generated artifact is
+usually untracked, had never happened once. The gate means docsgen cannot emit a document its own
+ruleset rejects, whether or not the file is ever tracked.
 
 ## The rules
 

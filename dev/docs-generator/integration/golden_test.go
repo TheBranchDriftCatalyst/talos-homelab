@@ -118,7 +118,7 @@ var _ = Describe("golden output", Label("integration"), func() {
 				"also the prettier fixed-point guarantee", func() {
 				res := fx.run("generate")
 				Expect(res.Code).To(Equal(0), res.Err)
-				fx.matchGolden("component-inventory.md", fx.read(artifactRel))
+				fx.matchGolden("component-inventory.md", fx.read(fx.artifactRel()))
 			})
 
 			It("reports the same findings, in the same order, with the same severities", func() {

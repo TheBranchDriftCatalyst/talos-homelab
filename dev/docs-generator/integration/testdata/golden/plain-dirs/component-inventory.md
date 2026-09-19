@@ -1,19 +1,17 @@
 ---
-type: reference
+type: note
 status: current
 covers:
-  - cluster
-freshness: tracks-code
+  - repo
+freshness: live
 tickets:
-  - TALOS-kll3
-  - TALOS-f0sd
-bluf: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
+  - PD-07
 ---
 
 # Component Inventory
 
 > Generated file — do not edit by hand. Regenerate with `task docs:generate`.
-> The source of truth is the Flux Kustomizations in `clusters/catalyst-cluster/`,
+> The source of truth is the Flux Kustomizations in `services/`,
 > so a wrong row here is a wrong manifest there.
 
 Every row is one Flux Kustomization — the unit Flux reconciles, and therefore the unit a
@@ -57,7 +55,6 @@ the outliers.
 
 Every declared `spec.path` resolves to a directory in this repo.
 
-## Related Issues
+## Follow-up
 
-- TALOS-f0sd — docs as a projection: frontmatter, linting, generation
-- TALOS-kll3 — the generator and its whole-file artifacts
+- PD-07 — the component inventory artifact

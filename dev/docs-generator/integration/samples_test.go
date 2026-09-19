@@ -57,6 +57,12 @@ type sample struct {
 	// ExcludedDir matches an `exclude` pattern in the sample's config.
 	ExcludedDir string
 
+	// ArtifactRel is where THIS sample's config sends the generated inventory: docs_root joined
+	// with artifacts.component-inventory.path. It is per-sample and not a constant because the
+	// destination is per-repo — neither sample has a docs/ directory, and a shared constant is
+	// how the hardcoded `docs/07-reference/component-inventory.md` survived as long as it did.
+	ArtifactRel string
+
 	// WarnOnlyRule fires in this sample at warn severity; ErrorRule fires at error severity.
 	// Together they pin the half of the exit-code contract that severity drives.
 	WarnOnlyRule string
@@ -124,6 +130,8 @@ var fluxCluster = &sample{
 
 	ExcludedDir: "handbook/_attic",
 
+	ArtifactRel: "handbook/reference/component-inventory.md",
+
 	WarnOnlyRule: "component-shape", // platform/storage wraps 5 nested kustomizations
 	ErrorRule:    "broken-links",    // handbook/reference/dead-links.md has exactly two
 
@@ -171,6 +179,8 @@ var plainDirs = &sample{
 	CoversToken: "identity",
 
 	ExcludedDir: "notes/archive",
+
+	ArtifactRel: "notes/reference/component-inventory.md",
 
 	WarnOnlyRule: "colocation",   // notes/deploying.md covers catalog but lives in notes/
 	ErrorRule:    "broken-links", // notes/rule-sweep.md links at ./vanished.md

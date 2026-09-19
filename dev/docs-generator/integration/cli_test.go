@@ -53,7 +53,7 @@ var _ = Describe("the command-line contract", Label("integration"), func() {
 		Entry("check fails after a hand-edit",
 			func(fx *fixture) {
 				Expect(fx.run("generate").Code).To(Equal(0))
-				fx.write(artifactRel, fx.read(artifactRel)+"\nedited by hand\n")
+				fx.write(fx.artifactRel(), fx.read(fx.artifactRel())+"\nedited by hand\n")
 			},
 			false, []string{"check"}, 1),
 
@@ -101,7 +101,10 @@ var _ = Describe("the command-line contract", Label("integration"), func() {
 
 		res := fx.run("check")
 		Expect(res.Session).To(gexec.Exit(2), "an I/O fault must not share an exit code with drift")
-		Expect(res.Err).To(ContainSubstring("generate:"))
+		// The diagnostic names the command that actually ran. `check` reporting itself as
+		// `generate:` sends a reader looking for a write that never happened.
+		Expect(res.Err).To(ContainSubstring("check:"))
+		Expect(res.Err).NotTo(ContainSubstring("generate:"))
 		Expect(res.Out).NotTo(ContainSubstring("missing"))
 		Expect(res.Out).NotTo(ContainSubstring("drift"))
 
@@ -129,7 +132,7 @@ var _ = Describe("the command-line contract", Label("integration"), func() {
 					"`%s` leaked the repo root into stdout; its output is not portable and a "+
 						"golden could never match from a second machine", cmd)
 			}
-			Expect(fx.read(artifactRel)).NotTo(ContainSubstring(fx.Root),
+			Expect(fx.read(fx.artifactRel())).NotTo(ContainSubstring(fx.Root),
 				"the generated artifact embeds the absolute path it was generated from")
 		},
 		Entry("flux-cluster", fluxCluster),
@@ -149,15 +152,15 @@ var _ = Describe("prettier agreement", Label("integration"), func() {
 		}
 		fx := newFixture(fluxCluster)
 		Expect(fx.run("generate").Code).To(Equal(0))
-		before := fx.read(artifactRel)
+		before := fx.read(fx.artifactRel())
 
 		cmd := exec.Command(prettier[0], append(append([]string{}, prettier[1:]...),
-			"--write", artifactRel)...)
+			"--write", fx.artifactRel())...)
 		cmd.Dir = fx.Root
 		out, err := cmd.CombinedOutput()
 		Expect(err).NotTo(HaveOccurred(), "prettier failed: %s", out)
 
-		Expect(fx.read(artifactRel)).To(Equal(before), "prettier rewrote generated output")
+		Expect(fx.read(fx.artifactRel())).To(Equal(before), "prettier rewrote generated output")
 		Expect(fx.run("check").Code).To(Equal(0), "check rejects the file after prettier touched it")
 	})
 })

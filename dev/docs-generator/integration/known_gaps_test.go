@@ -22,6 +22,38 @@ import (
 
 var _ = Describe("known gaps", Label("integration", "known-gap"), func() {
 
+	It("measures component shape in terms the strategy actually supplies", func() {
+		fx := newFixture(plainDirs)
+		out := fx.run("components").Out
+		// `nested` counts kustomization.yaml files. In a repo with no kustomize it is
+		// structurally always zero, so `component-shape` can never fire and `component-path`
+		// can never fire either (loadDirs only ever emits directories that exist). A rule that
+		// silently never fires is worse than an absent one: you believe you are covered.
+		Expect(out).NotTo(MatchRegexp(`(?m)^\S+\s+\S+\s+0\s+`),
+			"every component reports nested=0 because the measurement is kustomize-specific")
+	})
+
+})
+
+// CLOSED 2026-09-19 — the generated artifact is config-driven, so these three carry no
+// `known-gap` label and count toward the promotable gate.
+//
+// The defect was one cause with three faces: `Artifacts()` returned a hardcoded
+// `docs/07-reference/component-inventory.md`, and `artifact_inventory.go` held the frontmatter
+// type, freshness, footer heading and ticket ids as Go string constants. Against any config but
+// this repo's own that is an out-of-enum type, an out-of-enum freshness, the wrong footer,
+// another project's tickets and a docs/ tree the host repo does not have.
+//
+// It survived because the artifact was untracked in the host repo and the walker is
+// `git ls-files`, so docsgen had never once linted its own output. The first spec below tracks
+// the file deliberately for exactly that reason — without the `git add`, it asserts nothing.
+//
+// The fix that makes these STAY closed is not the config keys; it is the pre-write gate in
+// generate.go, which runs the rendered bytes through the repo's own frontmatter and taxonomy
+// rules and refuses to write on any finding. Configurable constants can still be configured
+// wrong. A gate cannot let the wrong bytes reach the disk at all.
+var _ = Describe("generated artifacts obey the host repo's config", Label("integration"), func() {
+
 	It("generates an artifact that passes the tool's own lint — a generator that emits docs its "+
 		"own ruleset rejects cannot be trusted to keep any other doc honest", func() {
 		for _, s := range samples {
@@ -34,9 +66,18 @@ var _ = Describe("known gaps", Label("integration", "known-gap"), func() {
 			runGit(fx.Root, nil, "add", "-A")
 
 			res := fx.run("lint")
+			// Prove the artifact was actually in scope before concluding anything from a clean
+			// report: if `git add` or the walker missed it, "no findings" means "nothing was
+			// linted" and this spec is back to asserting nothing.
+			Expect(fx.run("frontmatter").Code).To(Equal(0))
+			Expect(strings.Contains(res.Out, fx.artifactRel()) ||
+				strings.Contains(fx.run("stale").Out, fx.artifactRel()) ||
+				fx.isTracked(fx.artifactRel())).To(BeTrue(),
+				"sample %s: the artifact is not tracked, so lint never saw it", s.Name)
+
 			var attributed []string
 			for _, line := range strings.Split(res.Out, "\n") {
-				if strings.Contains(line, artifactRel) {
+				if strings.Contains(line, fx.artifactRel()) {
 					attributed = append(attributed, strings.TrimSpace(line))
 				}
 			}
@@ -50,7 +91,7 @@ var _ = Describe("known gaps", Label("integration", "known-gap"), func() {
 		"not from values compiled into Go", func() {
 		fx := newFixture(fluxCluster)
 		Expect(fx.run("generate").Code).To(Equal(0))
-		content := fx.read(artifactRel)
+		content := fx.read(fx.artifactRel())
 
 		Expect(content).NotTo(ContainSubstring("TALOS-"),
 			"the generated doc cites another repository's ticket IDs")
@@ -61,27 +102,23 @@ var _ = Describe("known gaps", Label("integration", "known-gap"), func() {
 		Expect(content).NotTo(ContainSubstring("## Related Issues"))
 		Expect(content).To(ContainSubstring("type: table"),
 			"the generated doc declares a `type` outside this repo's doc_types")
+
+		// The footer's BODY is the frontmatter's ticket list, which is what makes
+		// `tickets-in-body` self-satisfying rather than merely satisfied today.
+		Expect(content).To(ContainSubstring("## Tracking\n\n- ORCH-201"))
+		Expect(content).To(ContainSubstring("- ORCH-204"))
+		// And the banner names THIS repo's component source, composed from components.path.
+		Expect(content).To(ContainSubstring("Flux Kustomizations in `fleet/prod-west/`"))
 	})
 
 	It("places the artifact under the host repo's own documentation root", func() {
 		fx := newFixture(fluxCluster)
 		Expect(fx.run("generate").Code).To(Equal(0))
-		// This sample's prose lives in handbook/, not docs/. The destination is a Go constant,
-		// so porting the tool means editing Go — which is exactly what the package doc promises
-		// is unnecessary.
+		// This sample's prose lives in handbook/, and the repo has no docs/ directory at all.
 		Expect(fx.exists("docs/07-reference/component-inventory.md")).To(BeFalse(),
 			"the artifact path is hardcoded to another repository's docs tree")
-	})
-
-	It("measures component shape in terms the strategy actually supplies", func() {
-		fx := newFixture(plainDirs)
-		out := fx.run("components").Out
-		// `nested` counts kustomization.yaml files. In a repo with no kustomize it is
-		// structurally always zero, so `component-shape` can never fire and `component-path`
-		// can never fire either (loadDirs only ever emits directories that exist). A rule that
-		// silently never fires is worse than an absent one: you believe you are covered.
-		Expect(out).NotTo(MatchRegexp(`(?m)^\S+\s+\S+\s+0\s+`),
-			"every component reports nested=0 because the measurement is kustomize-specific")
+		Expect(fx.exists("handbook/reference/component-inventory.md")).To(BeTrue(),
+			"docs_root + artifacts.component-inventory.path is where the artifact belongs")
 	})
 
 })

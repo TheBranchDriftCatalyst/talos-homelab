@@ -92,8 +92,9 @@ claim.
 
 ### `flux-cluster` — a GitOps repo (`components.kind: flux`)
 
-Cluster in `fleet/prod-west`, components in `platform/` and `workloads/`, prose in `handbook/`,
-tickets `ORCH-nnn`, footer `## Tracking`, and a doc-type vocabulary (`overview`, `design`, `adr`,
+Cluster in `fleet/prod-west`, components in `platform/` and `workloads/`, prose in `handbook/`
+(`docs_root: handbook` — there is no `docs/` here at all), tickets `ORCH-nnn`, footer
+`## Tracking`, and a doc-type vocabulary (`overview`, `design`, `adr`,
 `table`, `journal`) that shares only the words any repo would use.
 
 Eight components across seven manifests. The interesting ones:
@@ -119,8 +120,8 @@ deliberate minefield that must produce **zero** findings because the config excl
 
 ### `plain-dirs` — no GitOps at all (`components.kind: dirs`)
 
-Services in `services/`, prose in `notes/`, tickets `PD-nn`, footer `## Follow-up`, types
-`note`/`spec`/`howto`/`log`. `loadDirs` had **zero** coverage before this sample, and it is the
+Services in `services/`, prose in `notes/` (`docs_root: notes` — there is no `docs/` here at
+all), tickets `PD-nn`, footer `## Follow-up`, types `note`/`spec`/`howto`/`log`. `loadDirs` had **zero** coverage before this sample, and it is the
 fallback for every repo that is not a Flux repo — simultaneously the least-tested and the most
 load-bearing path for portability.
 
@@ -198,7 +199,7 @@ an invariant means the golden is stale.**
 
 | file                    | pins                                                                          |
 | ----------------------- | ----------------------------------------------------------------------------- |
-| `component-inventory.md`| the generated artifact's exact bytes — also the prettier fixed-point guarantee |
+| `component-inventory.md`| the generated artifact's exact bytes — also the prettier fixed-point guarantee, and the proof that its frontmatter, footer and banner come from THIS sample's `artifacts:` stanza rather than from Go |
 | `lint.txt`              | every finding, its rule, its severity and the stable order they print in       |
 | `components.txt`        | slug, README presence, nested count, suspend flag and path for every component |
 | `frontmatter.txt`       | the migration worklist, exactly                                                |
@@ -239,18 +240,7 @@ These are real assertions carrying an extra `known-gap` label, not specs blessin
 behaviour — a spec that documents a defect as correct is how a defect becomes a requirement.
 Drop a spec's label the moment its defect is fixed; that is the ratchet.
 
-1. **The generated artifact violates the tool's own ruleset.** Its frontmatter, footer and ticket
-   IDs are string constants in `artifact_inventory.go`: `type: reference`, `covers: cluster`,
-   `## Related Issues`, `TALOS-kll3`, and prose naming `clusters/catalyst-cluster`. Against any
-   other repo's config those are an out-of-enum type, a wrong footer and another project's
-   tickets. It goes unnoticed in normal use only because the artifact is usually untracked, and
-   an untracked file is never linted.
-
-2. **The artifact's destination is hardcoded.** `Artifacts()` returns
-   `docs/07-reference/component-inventory.md` with no config input, so a repo whose docs live
-   anywhere else cannot be served without editing Go.
-
-3. **`component-shape` and `component-path` cannot fire under `dirs`.** `Nested` counts
+1. **`component-shape` and `component-path` cannot fire under `dirs`.** `Nested` counts
    `kustomization.yaml` files, so it is structurally always zero in a repo with no kustomize; and
    `loadDirs` only ever emits directories that exist, so the path check has nothing to catch. A
    rule that silently never fires is worse than an absent one, because you believe you are
@@ -258,7 +248,47 @@ Drop a spec's label the moment its defect is fixed; that is the ratchet.
 
 ### Closed gaps
 
-Recorded rather than deleted, because both closures changed how the suite is read.
+Recorded rather than deleted, because each closure changed how the suite is read.
+
+- **docsgen generated a document docsgen itself rejects** (closed 2026-09-19). One cause with
+  three faces, and three specs delabelled at once:
+
+  - *generates an artifact that passes the tool's own lint*
+  - *writes the artifact's frontmatter and footer from the host repo's configured vocabulary*
+  - *places the artifact under the host repo's own documentation root*
+
+  `Artifacts()` returned a hardcoded `docs/07-reference/component-inventory.md`, and
+  `artifact_inventory.go` held the frontmatter type, freshness, footer heading and ticket ids as
+  Go string constants. Against `plain-dirs` — doc root `notes/`, vocabulary
+  `[note spec howto log]`, freshness `[live frozen]`, footer `## Follow-up` — that produced an
+  out-of-enum `type`, an out-of-enum `freshness`, a missing footer and an invented `docs/` tree.
+  The sample's findings went **5 → 8** the moment the artifact was committed.
+
+  It hid because the artifact is normally UNTRACKED and the walker is `git ls-files`, so the tool
+  had never once linted its own output. The first of the three specs `git add`s the artifact
+  deliberately for exactly that reason, and now also asserts the file really is tracked before
+  concluding anything from a clean report — otherwise "no findings" means "nothing was examined".
+
+  What changed:
+
+  | before                                            | after                                                              |
+  | ------------------------------------------------- | ------------------------------------------------------------------ |
+  | `Artifacts()` returns one hardcoded `Rel`          | `Artifacts(cfg)` resolves `docs_root` + `artifacts.<name>.path`     |
+  | `const inventoryFrontMatter`                       | `artifacts.<name>.front` rendered by `renderFrontMatter`            |
+  | `const inventoryRelatedIssues`                     | `cfg.RequiredFooter` + the ticket list from `front.tickets`         |
+  | banner names `clusters/catalyst-cluster`           | banner composed from `cfg.Components.Path`                          |
+  | colocation's cross-cutting target is `docs/`       | it is `cfg.DocsRootOr() + "/"`                                      |
+
+  The fix that makes these STAY closed is not the config keys — a configurable constant can still
+  be configured wrong, and the wrong value would again be discovered only if somebody happened to
+  commit the artifact. It is the **pre-write gate**: `Generate` runs each artifact's rendered
+  bytes through `MakeDoc` + `ruleFrontmatterSchema` + `ruleTaxonomyStructure` against the live
+  config and refuses to write on any finding, in `check` mode as well as `generate`. The wrong
+  bytes cannot reach the disk at all, tracked or not, linted or not.
+
+  Both samples now carry their own `artifacts:` stanza in their own vocabulary, so
+  `testdata/golden/*/component-inventory.md` moved — frontmatter, banner source path and footer.
+  No other golden moved, which is itself the evidence that `docs_root` changed no lint verdict.
 
 - **`tickets-in-body` could never fire** (closed 2026-09-19). It tested
   `strings.Contains(d.Text, ticket)`, and `d.Text` is the whole file *including the frontmatter
@@ -277,7 +307,13 @@ Recorded rather than deleted, because both closures changed how the suite is rea
 
 ### Dead keys and unobservable state
 
-- `ticket_pattern` is parsed into `Config.TicketPattern` and read by nothing.
+- `ticket_pattern` is read only by `tickets-exist`, and neither sample configures a ticket
+  backend — so in these fixtures it is parsed and used by nothing.
+- The generated artifact's PROSE is still Flux-specific under `components.kind: dirs`: it says
+  "Every row is one Flux Kustomization" and the `nested` column counts `kustomization.yaml`
+  files. `plain-dirs`' inventory therefore describes itself in terms its repo has none of. The
+  frontmatter, footer, destination and banner source path are now config; the body copy is not,
+  and fixing it is the same architecture call as known gap 1.
 - `Component.DependsOn` is collected from every manifest and surfaced by no command, so the
   dependency graph — including the sample's three-level chain — cannot be asserted through the
   CLI at all.

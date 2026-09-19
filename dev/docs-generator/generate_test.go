@@ -648,7 +648,7 @@ func TestPrettierFixedPoint(t *testing.T) {
 			"  | cc | d |",
 			"",
 		}, "\n")),
-		"real component inventory": normalizeMarkdown(renderComponentInventory(realCtx(t))),
+		"real component inventory": normalizeMarkdown(renderComponentInventory(realCtx(t), realSpec(t))),
 	}
 
 	for name, doc := range docs {
@@ -760,12 +760,47 @@ func TestWriteAtomic(t *testing.T) {
 
 // --- Generate status semantics ---------------------------------------------------------------
 
-// Artifacts() is hardcoded, so there is no seam to inject a stub artifact through. Ctx.Root is
-// the seam that matters anyway: pointing it at a temp dir makes the real renderer write into a
-// scratch tree, which exercises the genuine artifact without touching docs/.
+// tempCtx builds a Ctx whose root is a scratch tree AND whose config declares a real artifact.
+//
+// THE CONFIG HALF IS NOT OPTIONAL. Artifacts(cfg) returns the empty set for a config with no
+// `artifacts:` block, so a `&Config{}` here would make every status spec below iterate nothing
+// and pass while asserting nothing — the exact failure mode this whole change exists to remove,
+// reappearing inside the fix for it. firstArtifactRel and TestGenerateReportsEveryArtifact both
+// fail loudly on an empty set for the same reason.
+//
+// The vocabulary is minimal but REAL: the pre-write gate runs the repo's own frontmatter and
+// taxonomy rules over the rendered bytes, so a config whose enums did not admit the artifact's
+// own front matter would refuse to write and every spec here would fail on the refusal rather
+// than on what it meant to assert.
 func tempCtx(t *testing.T) *Ctx {
 	t.Helper()
-	return &Ctx{Root: t.TempDir(), Cfg: &Config{}, BySlug: map[string]Component{}}
+	return &Ctx{Root: t.TempDir(), Cfg: tempConfig(), BySlug: map[string]Component{}}
+}
+
+func tempConfig() *Config {
+	return &Config{
+		DocsRoot:       "docs",
+		DocTypes:       []string{"reference"},
+		Statuses:       []string{"current"},
+		Freshness:      []string{"tracks-code"},
+		KeyOrder:       []string{"type", "status", "covers", "freshness", "tickets", "bluf"},
+		RequiredFooter: "## Related Issues",
+		Components:     ComponentSource{Kind: "dirs", Path: "components", Glob: "*"},
+		Artifacts: map[string]ArtifactSpec{
+			"component-inventory": {
+				Path: "07-reference/component-inventory.md",
+				Front: map[string]any{
+					"type":      "reference",
+					"status":    "current",
+					"covers":    []any{"cluster"},
+					"freshness": "tracks-code",
+					"tickets":   []any{"UNIT-1"},
+					"bluf":      "the unit layer's stand-in for a real host repository",
+				},
+				TicketNotes: map[string]string{"UNIT-1": "the unit-layer artifact fixture"},
+			},
+		},
+	}
 }
 
 func statusOf(t *testing.T, results []GenResult, rel string) GenStatus {
@@ -779,19 +814,22 @@ func statusOf(t *testing.T, results []GenResult, rel string) GenStatus {
 	return ""
 }
 
-// The Rel is read from Artifacts() rather than spelled out, so renaming the artifact does not
-// break tests that are about status semantics.
+// The Rel is read from Artifacts(cfg) rather than spelled out, so renaming the artifact — or
+// moving the host repo's docs_root — does not break tests that are about status semantics.
 func firstArtifactRel(t *testing.T) string {
 	t.Helper()
-	arts := Artifacts()
+	arts := Artifacts(tempConfig())
 	if len(arts) == 0 {
-		t.Fatal("Artifacts() is empty; nothing to exercise")
+		t.Fatal("no artifacts configured; every status spec below would pass vacuously")
 	}
 	return arts[0].Rel
 }
 
 func TestGenerateStatuses(t *testing.T) {
 	rel := firstArtifactRel(t)
+	if len(Artifacts(tempConfig())) == 0 {
+		t.Fatal("no artifacts configured; this test would pass vacuously")
+	}
 
 	t.Run("first run creates the file", func(t *testing.T) {
 		ctx := tempCtx(t)
@@ -940,12 +978,18 @@ func TestGenerateStatuses(t *testing.T) {
 // prints that list and a silently dropped artifact looks exactly like a passing gate.
 func TestGenerateReportsEveryArtifact(t *testing.T) {
 	ctx := tempCtx(t)
+	// Artifacts(cfg) can legitimately be empty now, and an empty set makes "one result per
+	// artifact" trivially true. Guard before asserting, or this spec becomes a tautology the
+	// moment somebody drops the `artifacts:` stanza out of tempConfig.
+	if len(Artifacts(ctx.Cfg)) == 0 {
+		t.Fatal("no artifacts configured; this test would pass vacuously")
+	}
 	results, err := Generate(ctx, true)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if len(results) != len(Artifacts()) {
-		t.Errorf("got %d results for %d artifacts", len(results), len(Artifacts()))
+	if len(results) != len(Artifacts(ctx.Cfg)) {
+		t.Errorf("got %d results for %d artifacts", len(results), len(Artifacts(ctx.Cfg)))
 	}
 }
 
@@ -1043,6 +1087,21 @@ func realCtx(t *testing.T) *Ctx {
 	return realCtxVal
 }
 
+// realSpec is the host repo's own `artifacts.component-inventory` stanza, read from its config
+// rather than reconstructed here. Reconstructing it would let this file and config.yaml drift
+// apart, and the determinism spec below would then be proving a property of a stanza nothing
+// ships.
+func realSpec(t *testing.T) ArtifactSpec {
+	t.Helper()
+	cfg := realCtx(t).Cfg
+	spec, ok := cfg.Artifacts["component-inventory"]
+	if !ok {
+		t.Fatal("the host config declares no `artifacts.component-inventory`; this spec would " +
+			"render an artifact nobody ships")
+	}
+	return spec
+}
+
 func repoRootForTest(t *testing.T) string {
 	t.Helper()
 	realCtx(t)
@@ -1054,8 +1113,8 @@ func repoRootForTest(t *testing.T) string {
 // not stable, so equal-slug rows swap between runs unless the comparator is a total order.
 func TestRenderComponentInventoryIsDeterministic(t *testing.T) {
 	ctx := realCtx(t)
-	first := renderComponentInventory(ctx)
-	second := renderComponentInventory(ctx)
+	first := renderComponentInventory(ctx, realSpec(t))
+	second := renderComponentInventory(ctx, realSpec(t))
 	if first != second {
 		t.Errorf("two renders differ:\n%s", firstDifference(first, second))
 	}
@@ -1077,7 +1136,7 @@ func TestRenderComponentInventoryIsDeterministic(t *testing.T) {
 func TestRenderComponentInventoryDoesNotMutateCtx(t *testing.T) {
 	ctx := realCtx(t)
 	before := append([]Component(nil), ctx.Components...)
-	renderComponentInventory(ctx)
+	renderComponentInventory(ctx, realSpec(t))
 	if len(ctx.Components) != len(before) {
 		t.Fatalf("component count changed: %d -> %d", len(before), len(ctx.Components))
 	}

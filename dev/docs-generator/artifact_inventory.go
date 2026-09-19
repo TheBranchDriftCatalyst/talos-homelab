@@ -19,30 +19,27 @@ import (
 	"strings"
 )
 
-// Frontmatter, emitted in config.yaml's key_order.
+// The frontmatter, the banner and the footer are all CONFIG, not constants.
 //
-// No `title:` key. That is not style: verified against this repo's pinned markdownlint, a title
-// key both suppresses MD041 and turns the H1 below into an MD025 duplicate-heading error.
+// They used to be the Go string literal below this comment: `type: reference`, `covers:
+// cluster`, `freshness: tracks-code`, two TALOS ticket ids and a `## Related Issues` footer.
+// Against any other repo's config that is an out-of-enum type, an out-of-enum freshness, the
+// wrong footer and another project's tickets — so docsgen generated a document docsgen itself
+// rejects. It went unnoticed here only because the artifact was never linted.
 //
-// `covers:` is a BLOCK sequence. A flow sequence (`[cluster]`) is exploded by prettier, so the
-// generated file would stop being a prettier fixed point on the first unrelated format run and
-// `docsgen check` would report drift it did not cause.
+// What the Go still owns is the SHAPE: which columns the table has, what the prose says about
+// them, and the ordering guarantees below. What it must never own again is any value that only
+// makes sense in one repository.
 //
-// `freshness: tracks-code` overrides the per-type default (`reference` -> tracks-cluster)
-// because this artifact is derived from git-tracked manifests, not from live cluster state: it
-// goes stale when `clusters/catalyst-cluster/` moves, which git can see.
-const inventoryFrontMatter = `---
-type: reference
-status: current
-covers:
-  - cluster
-freshness: tracks-code
-tickets:
-  - TALOS-kll3
-  - TALOS-f0sd
-bluf: Every Flux Kustomization in clusters/catalyst-cluster, with the manifest that declares it, whether it has a colocated README, and how many nested kustomizations it wraps.
----
-`
+// Two constraints on the rendered frontmatter survive the move into config and are enforced by
+// renderFrontMatter rather than by a comment:
+//
+//   - No `title:` key. Verified against this repo's pinned markdownlint: a title key both
+//     suppresses MD041 and turns the H1 below into an MD025 duplicate-heading error. It is in
+//     `banned_keys`, and the pre-write gate refuses an artifact that carries one.
+//   - `covers:` is a BLOCK sequence. A flow sequence (`[cluster]`) is exploded by prettier, so
+//     the generated file would stop being a prettier fixed point on the first unrelated format
+//     run and `docsgen check` would report drift it did not cause.
 
 func yesOr(b bool, no string) string {
 	if b {
@@ -51,7 +48,8 @@ func yesOr(b bool, no string) string {
 	return no
 }
 
-func renderComponentInventory(ctx *Ctx) string {
+func renderComponentInventory(ctx *Ctx, spec ArtifactSpec) string {
+	cfg := ctx.Cfg
 	comps := append([]Component(nil), ctx.Components...)
 	// Slug alone is NOT a total order here: `external-secrets.yaml` declares two Kustomizations,
 	// so two rows share a slug, and sort.Slice is not stable. Without the path/source tiebreaks
@@ -68,14 +66,27 @@ func renderComponentInventory(ctx *Ctx) string {
 	})
 
 	var b strings.Builder
-	b.WriteString(inventoryFrontMatter)
+	// A render error cannot be returned from here — the renderer signature is bytes-in-bytes-out
+	// so that Generate owns writing, normalisation and the byte-identical guarantee alone. It
+	// does not need to be: validateArtifacts has already rejected an unrenderable `front:` with
+	// an exit-2 error naming the key, so reaching this branch means config validation and the
+	// writer disagree, and an artifact with no frontmatter at all is exactly what the pre-write
+	// gate refuses a moment later.
+	front, err := renderFrontMatter(cfg, spec.Front)
+	if err != nil {
+		warnf("front matter: %v", err)
+	}
+	b.WriteString(front)
 	b.WriteString("\n# Component Inventory\n\n")
 
 	// A blockquote, not *emphasis*: prettier rewrites `*em*` to `_em_`, so an emphasised banner
 	// is not a fixed point and would make this file churn. The wording also has to match the
 	// `reference` taxonomy rule, which requires a generated doc to say how it is regenerated.
 	b.WriteString("> Generated file — do not edit by hand. Regenerate with `task docs:generate`.\n")
-	b.WriteString("> The source of truth is the Flux Kustomizations in `clusters/catalyst-cluster/`,\n")
+	// The source path is read from config, never named here. A banner that hardcodes one repo's
+	// cluster directory tells every other repo to go look somewhere that does not exist.
+	fmt.Fprintf(&b, "> The source of truth is the Flux Kustomizations in `%s/`,\n",
+		strings.TrimSuffix(cfg.Components.Path, "/"))
 	b.WriteString("> so a wrong row here is a wrong manifest there.\n\n")
 
 	b.WriteString("Every row is one Flux Kustomization — the unit Flux reconciles, and therefore the unit a\n")
@@ -87,7 +98,7 @@ func renderComponentInventory(ctx *Ctx) string {
 	if len(comps) == 0 {
 		b.WriteString("No components were found. Check `components.path` and `components.glob` in\n")
 		b.WriteString("`dev/docs-generator/config.yaml`.\n\n")
-		b.WriteString(inventoryRelatedIssues)
+		b.WriteString(renderFooter(cfg, spec))
 		return b.String()
 	}
 
@@ -166,14 +177,36 @@ func renderComponentInventory(ctx *Ctx) string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(inventoryRelatedIssues)
+	b.WriteString(renderFooter(cfg, spec))
 	return b.String()
 }
 
-// The `## Related Issues` footer is required of every non-nav type by the taxonomy rule, and a
-// generated file is exactly the kind that would otherwise ship without one.
-const inventoryRelatedIssues = `## Related Issues
-
-- TALOS-f0sd — docs as a projection: frontmatter, linting, generation
-- TALOS-kll3 — the generator and its whole-file artifacts
-`
+// renderFooter writes the footer the taxonomy rule requires of every non-nav type — a generated
+// file being exactly the kind that would otherwise ship without one.
+//
+// The heading is cfg.RequiredFooter, so the artifact satisfies whatever the host repo asks for
+// rather than whatever this repo asked for. The body is the ticket list from `front.tickets`,
+// which is what makes `tickets-in-body` SELF-SATISFYING: that rule fires when a frontmatter
+// ticket never appears in the prose, and here the prose is derived from the frontmatter, so the
+// two cannot disagree by construction.
+//
+// Sorted, because the two lists are independent inputs and a footer ordered by however the
+// config happened to list its tickets would churn the moment somebody reorders them.
+func renderFooter(cfg *Config, spec ArtifactSpec) string {
+	if cfg.RequiredFooter == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(cfg.RequiredFooter + "\n\n")
+	tickets, _ := StringSlice(spec.Front["tickets"])
+	sorted := append([]string(nil), tickets...)
+	sort.Strings(sorted)
+	for _, id := range sorted {
+		if note := spec.TicketNotes[id]; note != "" {
+			fmt.Fprintf(&b, "- %s — %s\n", id, note)
+			continue
+		}
+		fmt.Fprintf(&b, "- %s\n", id)
+	}
+	return b.String()
+}

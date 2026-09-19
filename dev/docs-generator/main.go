@@ -250,9 +250,21 @@ func reportStale(ctx *Ctx) int {
 // generate mode returns 0 whenever it succeeded — including when it wrote nothing, which is the
 // expected steady state and must not read as failure.
 func reportGenerate(ctx *Ctx, check bool) int {
+	mode := "generate"
+	if check {
+		mode = "check"
+	}
+	// An empty artifact set is a legitimate configuration, not a failure: most repos adopting
+	// this tool start as linter-only. Exit 0 and SAY SO, because the alternative failure mode —
+	// a silent zero-line report — reads exactly like a clean gate, and the alternative to that
+	// (falling back to some artifact compiled into Go) is the defect this whole change removes.
+	if len(ctx.Cfg.Artifacts) == 0 {
+		fmt.Println("no artifacts configured (see artifacts: in config.yaml)")
+		return 0
+	}
 	results, err := Generate(ctx, check)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "generate: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", mode, err)
 		return 2
 	}
 	stale := 0

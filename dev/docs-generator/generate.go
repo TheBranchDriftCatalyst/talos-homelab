@@ -36,26 +36,223 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
 )
 
-// Artifact is one generated file. Whole-file ownership only — the marker-region artifacts
-// (INDEX.md and the section navs, which interleave generated tables with human prose) land
-// separately, because mixing both ownership models in one file is how a generator deletes
-// editorial work.
+// Artifact is one generated file, resolved from one `artifacts:` entry in config. Whole-file
+// ownership only — the marker-region artifacts (INDEX.md and the section navs, which interleave
+// generated tables with human prose) land separately, because mixing both ownership models in
+// one file is how a generator deletes editorial work.
 type Artifact struct {
-	Rel    string
+	Name   string // the config key under `artifacts:`, used to name the key at fault
+	Rel    string // repo-relative destination: docs_root + spec.path
+	Spec   ArtifactSpec
 	Render func(*Ctx) string
 }
 
-func Artifacts() []Artifact {
-	return []Artifact{
-		{Rel: "docs/07-reference/component-inventory.md", Render: renderComponentInventory},
+// renderers is the extension point: a renderer is Go, an artifact is config. Adding a generated
+// document to a repo that already has a renderer for it costs a YAML stanza and no Go at all;
+// adding a new KIND of document costs a function here plus that stanza.
+var renderers = map[string]func(*Ctx, ArtifactSpec) string{
+	"component-inventory": renderComponentInventory,
+}
+
+func rendererNames() []string {
+	names := make([]string, 0, len(renderers))
+	for n := range renderers {
+		names = append(names, n)
 	}
+	sort.Strings(names)
+	return names
+}
+
+// Artifacts resolves the configured artifact set.
+//
+// AN ABSENT `artifacts:` BLOCK YIELDS AN EMPTY SET, and that is the whole point. The previous
+// version returned one hardcoded `docs/07-reference/component-inventory.md` regardless of
+// config, so porting the tool meant editing Go and every port silently invented a `docs/` tree
+// the host repo did not have. A default here would be that bug wearing a config key.
+//
+// Sorted by name so the result — and therefore `docsgen generate`'s output — does not depend on
+// Go's randomised map iteration.
+//
+// Entries this cannot resolve are SKIPPED rather than guessed at; validateArtifacts turns each
+// one into an exit-2 error naming the key, and Generate calls it first.
+func Artifacts(cfg *Config) []Artifact {
+	names := make([]string, 0, len(cfg.Artifacts))
+	for n := range cfg.Artifacts {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var out []Artifact
+	for _, name := range names {
+		spec := cfg.Artifacts[name]
+		render, known := renderers[name]
+		if !known || strings.TrimSpace(spec.Path) == "" {
+			continue
+		}
+		out = append(out, Artifact{
+			Name:   name,
+			Rel:    path.Join(cfg.DocsRootOr(), spec.Path),
+			Spec:   spec,
+			Render: func(ctx *Ctx) string { return render(ctx, spec) },
+		})
+	}
+	return out
+}
+
+// validateArtifacts reports every way the `artifacts:` block is unusable, in one pass.
+//
+// Every problem names the config key at fault, because the only actionable form of "this
+// artifact is misconfigured" is the YAML path a human can go and edit. Reporting them all at
+// once rather than stopping at the first matters for a block that is usually written in one
+// sitting: fix-run-fix-run over five keys is five builds.
+//
+// What is NOT here is any defaulting. `type`, `status` and `freshness` have no fallback value;
+// an artifact that omits one is caught by the pre-write gate against the repo's own schema rule.
+func validateArtifacts(cfg *Config) error {
+	names := make([]string, 0, len(cfg.Artifacts))
+	for n := range cfg.Artifacts {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var problems []string
+	for _, name := range names {
+		spec := cfg.Artifacts[name]
+		key := "artifacts." + name
+		if _, known := renderers[name]; !known {
+			problems = append(problems, fmt.Sprintf(
+				"%s: no renderer is named %q; this repo can generate %v", key, name, rendererNames()))
+			continue
+		}
+		if strings.TrimSpace(spec.Path) == "" {
+			problems = append(problems, key+".path: missing — an artifact with no path has nowhere to go")
+			continue
+		}
+		// A path is joined onto docs_root and then onto the repo root. One that escapes either
+		// would write outside the documentation tree, or outside the repository entirely.
+		if clean := path.Clean(spec.Path); path.IsAbs(spec.Path) || clean == ".." ||
+			strings.HasPrefix(clean, "../") {
+			problems = append(problems, fmt.Sprintf(
+				"%s.path: %q escapes the documentation root", key, spec.Path))
+		}
+		for _, e := range []struct {
+			field   string
+			allowed []string
+		}{
+			{"type", cfg.DocTypes},
+			{"status", cfg.Statuses},
+			{"freshness", cfg.Freshness},
+		} {
+			v, present := spec.Front[e.field]
+			if !present {
+				continue
+			}
+			s, isString := v.(string)
+			if !isString {
+				problems = append(problems, fmt.Sprintf(
+					"%s.front.%s: must be one of %v, not a %T", key, e.field, e.allowed, v))
+				continue
+			}
+			if len(e.allowed) > 0 && !slices.Contains(e.allowed, s) {
+				problems = append(problems, fmt.Sprintf(
+					"%s.front.%s: %q is not one of %v", key, e.field, s, e.allowed))
+			}
+		}
+		// A note for a ticket the frontmatter does not list would render nowhere, and dead
+		// config is indistinguishable from config that stopped working.
+		tickets, _ := StringSlice(spec.Front["tickets"])
+		noteIDs := make([]string, 0, len(spec.TicketNotes))
+		for id := range spec.TicketNotes {
+			noteIDs = append(noteIDs, id)
+		}
+		sort.Strings(noteIDs)
+		for _, id := range noteIDs {
+			if !slices.Contains(tickets, id) {
+				problems = append(problems, fmt.Sprintf(
+					"%s.ticket_notes.%s: not listed in %s.front.tickets, so the note renders nowhere",
+					key, id, key))
+			}
+		}
+		if _, err := renderFrontMatter(cfg, spec.Front); err != nil {
+			problems = append(problems, fmt.Sprintf("%s.front.%v", key, err))
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.New("config:\n  " + strings.Join(problems, "\n  "))
+}
+
+// gate runs the artifact's own bytes through the repo's own frontmatter and taxonomy rules
+// BEFORE anything is written, and refuses to write on any finding.
+//
+// This is what actually closes the defect, and it is strictly stronger than making the
+// constants configurable. Configurable constants can still be configured wrong — a repo that
+// sets `front.type: reference` against a vocabulary of [note spec howto log] gets the identical
+// bug back, discovered whenever somebody happens to commit the artifact and run the linter.
+// Checking in memory at generation time means the wrong value cannot reach the disk at all,
+// whether or not the file is ever tracked, and whether or not anyone ever lints it.
+//
+// Severity is ignored on purpose. `warn` is a migration affordance for documents that PREDATE
+// the taxonomy; a file this tool is writing right now has no history to be grandfathered for.
+//
+// Only the two rules that judge a document's own bytes are run. broken-links, colocation and
+// covers-resolves need the surrounding repository, and the artifact is not on disk yet.
+func gate(ctx *Ctx, a Artifact, content string) error {
+	doc := MakeDoc(a.Rel, content)
+	scratch := &Ctx{Root: ctx.Root, Cfg: ctx.Cfg, Docs: []Doc{doc}, BySlug: map[string]Component{}}
+	findings := append(ruleFrontmatterSchema(scratch), ruleTaxonomyStructure(scratch)...)
+	if len(findings) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(findings))
+	for _, f := range findings {
+		lines = append(lines, fmt.Sprintf("%s: %s [%s]", blameKey(ctx.Cfg, a, f.Message), f.Message, f.Rule))
+	}
+	sort.Strings(lines)
+	return fmt.Errorf(
+		"refusing to write %s — docsgen would be emitting a document its own ruleset rejects:\n  %s\n"+
+			"fix the named config key(s), or the repo vocabulary they are checked against",
+		a.Rel, strings.Join(lines, "\n  "))
+}
+
+// blameKey maps a finding back to the config key that produced it, so the error a human reads
+// names something they can edit rather than a rule they cannot.
+//
+// A finding nothing can be blamed on lands on the artifact itself, which is the honest answer:
+// "no H1" is a renderer bug, not a config one, and pretending otherwise would send the reader
+// to edit YAML that is already correct.
+func blameKey(cfg *Config, a Artifact, msg string) string {
+	candidates := make([]string, 0, len(a.Spec.Front)+len(cfg.KeyOrder))
+	for k := range a.Spec.Front {
+		candidates = append(candidates, k)
+	}
+	candidates = append(candidates, cfg.KeyOrder...)
+	candidates = append(candidates, "type", "status", "covers")
+	for k := range cfg.BannedKeys {
+		candidates = append(candidates, k)
+	}
+	sort.Strings(candidates)
+
+	for _, k := range candidates {
+		if strings.Contains(msg, "`"+k+"`") ||
+			strings.HasPrefix(msg, k+" ") || strings.HasPrefix(msg, k+":") {
+			return fmt.Sprintf("artifacts.%s.front.%s", a.Name, k)
+		}
+	}
+	if cfg.RequiredFooter != "" && strings.Contains(msg, cfg.RequiredFooter) {
+		return "required_footer + artifacts." + a.Name + ".front.tickets"
+	}
+	return "artifacts." + a.Name
 }
 
 type GenStatus string
@@ -76,11 +273,21 @@ type GenResult struct {
 // Generate renders every artifact. In check mode nothing is written and any difference is
 // reported, which is what makes `docsgen check` usable as a CI gate.
 func Generate(ctx *Ctx, check bool) ([]GenResult, error) {
+	if err := validateArtifacts(ctx.Cfg); err != nil {
+		return nil, err
+	}
 	var out []GenResult
-	for _, a := range Artifacts() {
+	for _, a := range Artifacts(ctx.Cfg) {
 		content, err := normalizeMarkdownChecked(a.Render(ctx))
 		if err != nil {
 			return out, fmt.Errorf("%s: %w", a.Rel, err)
+		}
+		// Before the write, and before the comparison check mode makes: an artifact whose bytes
+		// the repo's own rules reject is refused in BOTH modes. check writes nothing, so it
+		// cannot emit the bad document — but it would otherwise report `unchanged` for a file
+		// that is only unchanged because the same rejected bytes are already on disk.
+		if err := gate(ctx, a, content); err != nil {
+			return out, err
 		}
 		abs := filepath.Join(ctx.Root, a.Rel)
 

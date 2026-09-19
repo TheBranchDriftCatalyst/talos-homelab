@@ -33,35 +33,30 @@ This cluster uses a **dual GitOps pattern** with two distinct deployment workflo
 > Note: the manual "scripts + kubectl apply" model this section used to describe is retired.
 > Direct `kubectl apply` against infrastructure is reverted on the next Flux reconcile.
 
-**Full details**: See [docs/02-architecture/dual-gitops.md](docs/02-architecture/dual-gitops.md)
-(authoritative). [gitops-responsibilities.md](docs/02-architecture/gitops-responsibilities.md) covers
-the same ground but is stale — it still says Flux is "NOT YET DEPLOYED".
+**Full details**: See [docs/02-architecture/dual-gitops.md](docs/02-architecture/dual-gitops.md),
+which is now the only description of the GitOps split — the rival doc that contradicted it was
+retired.
 
 ## Documentation
 
 Full navigation: **[docs/INDEX.md](docs/INDEX.md)**.
 
-| Section                                                            | Contents                                                                  |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| [01-getting-started](docs/01-getting-started/README.md)            | Onboarding, cluster facts, fresh-cluster setup                            |
-| [02-architecture](docs/02-architecture/README.md)                  | GitOps model, networking, DNS HA, service mesh, auth, ADRs                |
-| [03-operations](docs/03-operations/README.md)                      | Provisioning, node shutdown, etcd backup/restore, dev tooling             |
-| [04-deployment](docs/04-deployment/README.md)                      | Flux and ArgoCD bootstrap + deployment workflows                          |
-| [05-projects](docs/05-projects/README.md)                          | Per-project design docs (OTEL migration, hybrid LLM, optimization)        |
-| [05-runbooks](docs/05-runbooks/README.md)                          | Recovery/migration procedures + Talos machine-config patches              |
-| [06-project-management](docs/06-project-management/README.md)      | Roadmaps and idea backlogs (work itself lives in beads)                   |
-| [06-troubleshooting](docs/06-troubleshooting/README.md)            | Post-mortems and hardware/kernel workarounds                              |
-| [07-reference](docs/07-reference/README.md)                        | CRD catalog, Taskfile reference, cloud GPU sizing                         |
-| [08-monitoring](docs/08-monitoring/README.md)                      | Grafana dashboard index and query audit                                   |
-| [patterns](docs/patterns/README.md)                                | Reusable cluster patterns                                                 |
-| [investigations](docs/investigations/README.md) · [changelogs](docs/changelogs/README.md) · [retros](docs/retros/README.md) · [_archive](docs/_archive/README.md) | Audits, update campaigns, retrospectives, history |
+| Section                                                       | Contents                                                      |
+| ------------------------------------------------------------- | ------------------------------------------------------------- |
+| [01-getting-started](docs/01-getting-started/README.md)       | Onboarding, cluster facts, fresh-cluster setup                |
+| [02-architecture](docs/02-architecture/README.md)             | GitOps model, networking, DNS HA, service mesh, auth, ADRs    |
+| [03-operations](docs/03-operations/README.md)                 | Provisioning, node shutdown, etcd backup/restore, dev tooling |
+| [05-runbooks](docs/05-runbooks/README.md)                     | Recovery/migration procedures + Talos machine-config patches  |
+| [06-project-management](docs/06-project-management/README.md) | Roadmaps and idea backlogs (work itself lives in beads)       |
+| [07-reference](docs/07-reference/README.md)                   | CRD catalog, Taskfile reference, cloud GPU sizing             |
+| [08-monitoring](docs/08-monitoring/README.md)                 | Grafana dashboard index and query audit                       |
+| [patterns](docs/patterns/README.md)                           | Reusable cluster patterns                                     |
 
 Root-level docs: [CONTRIBUTING.md](CONTRIBUTING.md) · [CLAUDE.md](CLAUDE.md) · [AGENTS.md](AGENTS.md)
 
 Everything else now lives under `docs/`: [quickstart](docs/01-getting-started/quickstart.md) ·
 [traefik](docs/02-architecture/traefik.md) · [observability](docs/08-monitoring/observability.md) ·
-[security-ops](infrastructure/base/security/README.md) · [testing](docs/03-operations/testing.md) ·
-[2026-03-14 analysis](docs/_archive/2026-03-14-dah-report.md)
+[security-ops](infrastructure/base/security/README.md) · [testing](docs/03-operations/testing.md)
 
 ## Quick Start
 
@@ -101,11 +96,11 @@ brew install go-task/tap/go-task kubectx k9s helm
    > Editing a generated file under `configs/clusterconfig/` accomplishes nothing — the next
    > `genconfig` overwrites it.
    >
-   > | command | does what |
-   > |---|---|
-   > | `cd configs && talhelper genconfig` | regenerate every node's config |
-   > | `task talos:verify` | regenerate AND diff against every live node |
-   > | `task talos:verify-dry-run` | ask each node what applying would actually change |
+   > | command                             | does what                                         |
+   > | ----------------------------------- | ------------------------------------------------- |
+   > | `cd configs && talhelper genconfig` | regenerate every node's config                    |
+   > | `task talos:verify`                 | regenerate AND diff against every live node       |
+   > | `task talos:verify-dry-run`         | ask each node what applying would actually change |
    >
    > The old hand-maintained tree (`configs/nodes/`, `controlplane.yaml`, `worker-base.yaml`)
    > was retired by the talhelper migration and is archived at `.scratch/__configs/`. It is an

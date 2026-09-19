@@ -63,17 +63,17 @@ var _ = Describe("docsgen invariants", Label("integration"), func() {
 
 			It("creates the artifact on the first run and leaves it readable by everything that "+
 				"has to read it", func() {
-				Expect(fx.exists(artifactRel)).To(BeFalse(), "the sample must not ship a generated artifact")
+				Expect(fx.exists(fx.artifactRel())).To(BeFalse(), "the sample must not ship a generated artifact")
 
 				res := fx.run("generate")
 				Expect(res.Code).To(Equal(0), res.Err)
-				Expect(res.Out).To(ContainSubstring(artifactRel))
+				Expect(res.Out).To(ContainSubstring(fx.artifactRel()))
 
-				Expect(fx.exists(artifactRel)).To(BeTrue())
-				Expect(fx.read(artifactRel)).NotTo(BeEmpty())
+				Expect(fx.exists(fx.artifactRel())).To(BeTrue())
+				Expect(fx.read(fx.artifactRel())).NotTo(BeEmpty())
 				// CreateTemp makes 0600; a generated doc every tool in the repo reads must not
 				// inherit that.
-				Expect(fx.mode(artifactRel)).To(Equal(os.FileMode(0o644)))
+				Expect(fx.mode(fx.artifactRel())).To(Equal(os.FileMode(0o644)))
 			})
 
 			It("reports `unchanged` on a second run and does not rewrite the file, so mtime and "+
@@ -82,12 +82,12 @@ var _ = Describe("docsgen invariants", Label("integration"), func() {
 
 				// Backdate first: a rewrite landing inside one filesystem timestamp tick is
 				// indistinguishable from no write at all, and a naive comparison would pass.
-				before := fx.backdate(artifactRel)
+				before := fx.backdate(fx.artifactRel())
 
 				res := fx.run("generate")
 				Expect(res.Code).To(Equal(0), res.Err)
 				Expect(res.Out).To(ContainSubstring("unchanged"))
-				Expect(fx.modTime(artifactRel)).To(Equal(before),
+				Expect(fx.modTime(fx.artifactRel())).To(Equal(before),
 					"the artifact was rewritten despite being byte-identical")
 			})
 
@@ -104,17 +104,17 @@ var _ = Describe("docsgen invariants", Label("integration"), func() {
 			It("produces byte-identical output from two clean starts, because a generator with "+
 				"volatile content makes its own drift gate noise", func() {
 				Expect(fx.run("generate").Code).To(Equal(0))
-				first := fx.read(artifactRel)
+				first := fx.read(fx.artifactRel())
 
 				Expect(os.Remove(fx.artifact())).To(Succeed())
 				Expect(fx.run("generate").Code).To(Equal(0))
-				Expect(fx.read(artifactRel)).To(Equal(first))
+				Expect(fx.read(fx.artifactRel())).To(Equal(first))
 			})
 
 			It("produces identical bytes from a different temp root built in reverse file order, "+
 				"so neither the absolute path nor directory enumeration order reaches the output", func() {
 				Expect(fx.run("generate").Code).To(Equal(0))
-				mine := fx.read(artifactRel)
+				mine := fx.read(fx.artifactRel())
 
 				other := filepath.Join(mustTempDir(), "repo")
 				defer os.RemoveAll(filepath.Dir(other))
@@ -129,7 +129,7 @@ var _ = Describe("docsgen invariants", Label("integration"), func() {
 				twin := &fixture{Root: other, Base: filepath.Dir(other), Sample: s}
 				Expect(twin.run("generate").Code).To(Equal(0))
 
-				Expect(twin.read(artifactRel)).To(Equal(mine))
+				Expect(twin.read(fx.artifactRel())).To(Equal(mine))
 				Expect(mine).NotTo(ContainSubstring(fx.Root))
 				Expect(mine).NotTo(ContainSubstring(other))
 			})
@@ -176,7 +176,7 @@ var _ = Describe("docsgen invariants", Label("integration"), func() {
 				Expect(fx.treeHash()).To(Equal(before), "check wrote to the tree when the artifact was current")
 
 				// drifted
-				fx.write(artifactRel, fx.read(artifactRel)+"\nhand-edited\n")
+				fx.write(fx.artifactRel(), fx.read(fx.artifactRel())+"\nhand-edited\n")
 				before = fx.treeHash()
 				Expect(fx.run("check").Code).To(Equal(1))
 				Expect(fx.treeHash()).To(Equal(before), "check wrote to the tree when the artifact had drifted")
