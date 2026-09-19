@@ -138,7 +138,9 @@ brew install go-task/tap/go-task kubectx k9s helm
   tainted, check `machine.nodeTaints` FIRST, not the cluster flag. See TALOS-obvn and the header of
   `configs/patches/talos00-controlplane-taint.yaml`.
 - **maxPods**: raised from the Talos default 110 to 200 per node (kubelet patch, see
-  `scripts/bootstrap-talos-patches.sh`)
+  `configs/patches/maxpods-200.yaml`, composed by `configs/talconfig.yaml`). The old
+  `scripts/bootstrap-talos-patches.sh` that applied this with `talosctl patch mc` has been
+  deleted; talhelper owns it now.
 
 ### Included Services
 
@@ -401,13 +403,15 @@ task talos:upgrade-k8s -- 1.34.10
 
 ## File Structure
 
-```
+```text
 .
 ├── configs/                         # Talos configuration files (gitignored - sensitive)
-│   ├── nodes/                      # Machine configs actually in use
-│   │   ├── controlplane.yaml       # Control plane configuration
-│   │   ├── worker-base.yaml        # Worker node configuration template
-│   │   └── talos0X/                # Per-node overrides
+│   ├── talconfig.yaml              # talhelper input: nodes, patches, versions
+│   ├── talsecret.yaml              # Cluster secrets (1Password-backed)
+│   ├── patches/                    # Machine-config patches talconfig.yaml composes
+│   │                               #   (maxpods-200, *-baseline, per-node overrides)
+│   ├── clusterconfig/              # talhelper OUTPUT: one rendered config per node
+│   │                               #   (catalyst-cluster-talos0X.yaml) + talosconfig
 │   └── talosconfig                 # Talos CLI configuration
 ├── clusters/catalyst-cluster/       # Flux entrypoint - one Kustomization per stack
 ├── infrastructure/base/             # Kubernetes infrastructure manifests (~45 components)
@@ -415,7 +419,7 @@ task talos:upgrade-k8s -- 1.34.10
 │   ├── argocd/                     # ArgoCD GitOps controller
 │   ├── traefik/                    # Traefik ingress controller
 │   ├── authentik/                  # SSO / forward-auth
-│   ├── crowdsec/                   # IPS + AppSec
+│   ├── security/                   # crowdsec (IPS + AppSec), honeypots, falco, iocaine
 │   ├── kyverno/, kyverno-policies/ # Policy engine + derived-config ClusterPolicies
 │   ├── monitoring/                 # Mimir, Loki, Tempo, Grafana, Alloy, ClickStack
 │   ├── registry/                   # Zot container registry
@@ -431,7 +435,6 @@ task talos:upgrade-k8s -- 1.34.10
 │   ├── provision.sh                # Complete cluster provisioning
 │   ├── cluster-audit.sh            # Generate Markdown audit report
 │   ├── kube-dashboard-token.sh     # Retrieve dashboard/Headlamp/ArgoCD tokens
-│   ├── bootstrap-talos-patches.sh  # Apply Talos machine-config patches (maxPods, etc.)
 │   └── developer/                  # kubeconfig-merge / unmerge / update-hosts (see caveats above)
 ├── .output/                         # Generated files (gitignored)
 │   ├── kubeconfig                  # Kubernetes cluster access config
@@ -442,17 +445,16 @@ task talos:upgrade-k8s -- 1.34.10
 │   ├── 01-getting-started/         # Quick start guides
 │   ├── 02-architecture/            # Architecture decisions and patterns
 │   ├── 03-operations/              # Operational procedures
-│   ├── 04-deployment/              # Deployment guides
-│   ├── 05-projects/                # Project-specific documentation
 │   ├── 05-runbooks/                # Runbooks (bootstrap, recovery, Talos patches)
 │   ├── 06-project-management/      # Planning and progress tracking
-│   ├── 06-troubleshooting/         # Troubleshooting guides
 │   ├── 07-reference/               # Reference documentation
-│   └── 08-monitoring/              # Monitoring/alerting reference
+│   ├── 08-monitoring/              # Monitoring/alerting reference
+│   └── patterns/                   # Cross-cutting patterns
 ├── .gitignore                      # Git ignore patterns
 ├── Taskfile.yaml                   # Root task orchestrator (the only one here)
 ├── dev/                            # Domain Taskfiles + developer tool configs
-│   ├── Taskfile.{talos,k8s,dev,infra,security,certs,test}.yaml
+│   ├── Taskfile.{talos,k8s,dev,infra,security,certs,test,docs}.yaml
+│   ├── docs-generator/             # docsgen: generated doc artifacts + doc linter
 │   ├── starship.toml               # Repo-local prompt (via STARSHIP_CONFIG)
 │   ├── yamllint.yaml               # (via YAMLLINT_CONFIG_FILE / -c)
 │   └── shellcheckrc                # (via shellcheck --rcfile)

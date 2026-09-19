@@ -1,6 +1,22 @@
+---
+type: architecture
+status: current
+covers:
+  - vpn-gateway
+freshness: tracks-code
+tickets:
+  - TALOS-yy8
+  - TALOS-1ms
+bluf: The inline gluetun sidecar keeps its kill-switch in the app's own netns, which a pre-warmed gateway pool cannot do — so the pool is only worth it for apps that can tolerate a NetworkPolicy as their only leak guard.
+pinned: >-
+  Subject is infrastructure/base/vpn-gateway, but the comparison turns on consumers under
+  applications/ as well; relocation is deferred to the colocation slice.
+---
+
 # VPN Egress Rotation — Architecture Comparison
 
-> Spike: **TALOS-yy8** · Related: **TALOS-1ms** (native sidecars), **TALOS-4qwy** (stale-route crashloop)
+> Spike: **TALOS-yy8** · Related: **TALOS-1ms** (native sidecars). The stale-route crashloop
+> was tracked as `TALOS-4qwy`, which no longer resolves in `bd` — the symptom is real, the ID is not.
 
 ## TL;DR
 
@@ -8,7 +24,8 @@ Two ways to give containers rotatable VPN egress:
 
 - **A — Inline sidecar (current):** every consumer pod carries its **own** gluetun sidecar in the shared
   netns. Rotation = the rotator `PUT`s the gluetun control API and it **reconnects in place** (brief
-  tunnel flap).
+  tunnel flap). Rotation is **opt-in per pod** via a `vpn-gateway.io/rotation` label, and most
+  consumers currently opt out — the flap in the next sentence is exactly why.
 - **B — Pre-warmed gateway pool (proposed):** run **N always-on** gluetun egress gateways (one per
   server/country), and consumers **flip which gateway they route through**. Rotation is an instant
   pointer swap — no tunnel setup, no reconnect flap.
@@ -22,8 +39,15 @@ frequently-rotated apps (searxng/scrapers) behind a strict egress `NetworkPolicy
 
 ## A — Inline sidecar, rotate-in-place (current)
 
-Each consumer pod = `app + gluetun` sharing one netns. `vpn-rotator` (CronJob, `*/35`) `PUT`s
-`/v1/vpn/settings` on each `rotation=enabled` gluetun, which tears down and re-dials a new server.
+Each consumer pod = `app + gluetun` sharing one netns. `vpn-rotator`
+(`infrastructure/base/vpn-gateway/rotation/`, a CronJob) `PUT`s `/v1/vpn/settings` on each pod
+labelled `vpn-gateway.io/rotation=enabled`, which tears down and re-dials a new server.
+
+> **Most gluetun consumers are opted out of rotation, and that is the finding, not a bug.**
+> Read the labels from the manifests, not from the diagram below: a pod labelled
+> `rotation=disabled` keeps its tunnel and never flaps. qBittorrent in particular opts out,
+> because a mid-transfer flap is worse for it than a static exit IP. The diagram shows the
+> _topology_, not who actually rotates.
 
 ```mermaid
 flowchart LR
@@ -50,7 +74,7 @@ flowchart LR
   class VD,VN vpn
 ```
 
-**Kill-switch:** gluetun's firewall lives in the **same netns** as the app — the app *physically cannot*
+**Kill-switch:** gluetun's firewall lives in the **same netns** as the app — the app _physically cannot_
 egress except through the tunnel. No `NetworkPolicy` required.
 
 ---
@@ -92,14 +116,15 @@ flowchart LR
 
 **Kill-switch moves to the app:** the plain app pod has no VPN firewall of its own. If routing to the
 gateway breaks and egress isn't hard-locked, it **falls back to cluster/home egress = leak**. Every
-consumer must be `NetworkPolicy`-locked to *only* the gateway Services (+ DNS).
+consumer must be `NetworkPolicy`-locked to _only_ the gateway Services (+ DNS).
 
 **Flip mechanisms (pick one):**
 
-| Variant | How the flip works | Works for | Caveat |
-|---|---|---|---|
-| **Proxy-pointer** | change the app's `HTTP(S)_PROXY` / SOCKS URL (or a Service selector) | apps that honor a proxy (searxng, qbit, scrapers) | DNS may bypass the proxy → DNS leak; app must support proxies |
-| **L3 route-swap** | swap the default route in the app netns (policy routing / routing sidecar w/ `NET_ADMIN`) | *any* app | fiddly; live route swap still resets in-flight connections |
+| Variant           | How the flip works                                                                        | Works for                                                                                                 | Caveat                                                           |
+| ----------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| **Proxy-pointer** | change the app's `HTTP(S)_PROXY` / SOCKS URL (or a Service selector)                      | apps that honor a proxy (searxng, qbit, scrapers)                                                         | DNS may bypass the proxy → DNS leak; app must support proxies    |
+| **Blue-green**    | stand a second gluetun up, cut over, retire the first                                     | already implemented in the rotator script, gated on a `vpn-gateway.io/rotation-strategy=blue-green` label | **no workload carries that label**, so it is untested code today |
+| **L3 route-swap** | swap the default route in the app netns (policy routing / routing sidecar w/ `NET_ADMIN`) | _any_ app                                                                                                 | fiddly; live route swap still resets in-flight connections       |
 
 ---
 
@@ -107,23 +132,23 @@ consumer must be `NetworkPolicy`-locked to *only* the gateway Services (+ DNS).
 
 ### A — Inline sidecar (current)
 
-| Pros | Cons |
-|---|---|
-| Dead-simple: 1 pod = 1 tunnel = 1 app, no cross-pod routing | **Rotation flaps the tunnel** (seconds of egress downtime) — the thing we want to kill |
-| **Strongest kill-switch** — firewall in the app's own netns, no `NetworkPolicy` needed | Resource duplication: a gluetun per app (CPU/mem × N) |
-| Blast radius = one app | Every app pod needs `NET_ADMIN` + privileged |
-| No extra ProtonVPN connections beyond what's used | Stale-route (`table 51820`) crashloop risk lives in **every** app pod (TALOS-4qwy) |
-| Ecosystem-blessed, already battle-tested here | App startup coupled to its gluetun init each deploy |
+| Pros                                                                                   | Cons                                                                                   |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Dead-simple: 1 pod = 1 tunnel = 1 app, no cross-pod routing                            | **Rotation flaps the tunnel** (seconds of egress downtime) — the thing we want to kill |
+| **Strongest kill-switch** — firewall in the app's own netns, no `NetworkPolicy` needed | Resource duplication: a gluetun per app (CPU/mem × N)                                  |
+| Blast radius = one app                                                                 | Every app pod needs `NET_ADMIN` + privileged                                           |
+| No extra ProtonVPN connections beyond what's used                                      | Stale-route (`table 51820`) crashloop risk lives in **every** app pod                  |
+| Ecosystem-blessed, already battle-tested here                                          | App startup coupled to its gluetun init each deploy                                    |
 
 ### B — Pre-warmed gateway pool (proposed)
 
-| Pros | Cons |
-|---|---|
+| Pros                                                                               | Cons                                                                                                                           |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | **Zero-setup rotation** — gateways already up; flip is instant for new connections | **Leak surface moves to the app** — no per-app kill-switch; requires strict egress `NetworkPolicy` or it leaks on gateway loss |
-| App pods become plain (no gluetun, no `NET_ADMIN`, no stale-route risk) | **Hard cap = 4 concurrent exits** (= # ProtonVPN keys: nl/de/be/in); can't pre-warm more routes than keys allow |
-| Resource-efficient at scale: 4 shared gateways vs 1-per-app | Flip mechanism complexity (proxy-support gaps *or* L3 policy-routing) |
-| Trivial failover: gateway dies → flip to another already-up gateway | Long-lived connections still reset on flip (exit IP changes) |
-| Instant "menu" of exit locations any app can pick | More moving parts (N Deployments + Services + NetworkPolicies + flip controller); 4 tunnels always up even when idle |
+| App pods become plain (no gluetun, no `NET_ADMIN`, no stale-route risk)            | **Hard cap = 4 concurrent exits** (= # ProtonVPN keys: nl/de/be/in); can't pre-warm more routes than keys allow                |
+| Resource-efficient at scale: 4 shared gateways vs 1-per-app                        | Flip mechanism complexity (proxy-support gaps _or_ L3 policy-routing)                                                          |
+| Trivial failover: gateway dies → flip to another already-up gateway                | Long-lived connections still reset on flip (exit IP changes)                                                                   |
+| Instant "menu" of exit locations any app can pick                                  | More moving parts (N Deployments + Services + NetworkPolicies + flip controller); 4 tunnels always up even when idle           |
 
 ---
 
@@ -142,7 +167,7 @@ consumer must be `NetworkPolicy`-locked to *only* the gateway Services (+ DNS).
 ### DR-test implications
 
 - Under **B** the kill-switch test changes shape: it becomes (1) a per-gateway kill-switch test **plus**
-  (2) a consumer **egress-lock** test (kill the gateway, assert the app egress goes to *nothing*, never
+  (2) a consumer **egress-lock** test (kill the gateway, assert the app egress goes to _nothing_, never
   home WAN — the `NetworkPolicy` is doing the work now).
 - Rotation under **B** is a "pointer-flip" test: assert new connections exit the new gateway and the app
   pod is untouched (which B satisfies trivially — the app never runs gluetun).
@@ -153,4 +178,4 @@ consumer must be `NetworkPolicy`-locked to *only* the gateway Services (+ DNS).
 
 - **TALOS-yy8** — SPIKE: pre-warmed egress-gateway pool + route/proxy flip
 - **TALOS-1ms** — Migrate gluetun sidecars to K8s native sidecars (1.28+)
-- **TALOS-4qwy** — stale WireGuard `table 51820` crashloop (root cause)
+- `TALOS-4qwy` — stale WireGuard `table 51820` crashloop (root cause). **Dangling:** no issue resolves under this ID any more.

@@ -20,17 +20,43 @@ import (
 // Every entry below is explained in integration/README.md under "Known gaps". Delete a spec's
 // `known-gap` label the moment the underlying defect is fixed — that is the whole ratchet.
 
+// THE RATCHET IS AT ZERO. There is deliberately no spec in here right now.
+//
+// An empty container is the honest state, not an oversight: the last entry — "measures
+// component shape in terms the strategy actually supplies" — was delabelled below on
+// 2026-09-19 and now counts toward the promotable gate. Leaving the container standing keeps
+// the convention and its instructions in front of whoever finds the next gap.
 var _ = Describe("known gaps", Label("integration", "known-gap"), func() {
+})
+
+// CLOSED 2026-09-19 — delabelled, so it counts toward the promotable gate.
+//
+// `nested` counts kustomization.yaml files, which is a kustomize-specific measurement: in a
+// repo with no kustomize it was structurally always zero, so `component-shape` could never fire
+// — and `component-path` could never fire either, because the `dirs` strategy only ever emits
+// directories that exist. Both rules ran, found nothing, and reported a clean pass. A rule that
+// silently never fires is worse than an absent one, because the report reads as coverage.
+//
+// The fix is not a better measurement; there is no honest number to print. It is that the
+// strategy now DECLARES what it can supply, each rule DECLARES what it measures, and the two
+// unmeasurable rules announce themselves instead of passing. The report says `n/a` rather than
+// `0` for the same reason: those are different claims, and printing the first for the second
+// was the same lie in a different column.
+var _ = Describe("measurements the strategy cannot make", Label("integration"), func() {
 
 	It("measures component shape in terms the strategy actually supplies", func() {
 		fx := newFixture(plainDirs)
 		out := fx.run("components").Out
-		// `nested` counts kustomization.yaml files. In a repo with no kustomize it is
-		// structurally always zero, so `component-shape` can never fire and `component-path`
-		// can never fire either (loadDirs only ever emits directories that exist). A rule that
-		// silently never fires is worse than an absent one: you believe you are covered.
+
 		Expect(out).NotTo(MatchRegexp(`(?m)^\S+\s+\S+\s+0\s+`),
-			"every component reports nested=0 because the measurement is kustomize-specific")
+			"a component reports nested=0, but the measurement is kustomize-specific and this "+
+				"sample has no kustomize — the zero is invented")
+		// The positive half, which the negative one cannot give: the column must still be
+		// THERE, saying it has no answer.
+		Expect(componentRow(out, "billing")).To(
+			MatchRegexp(`^billing\s+yes\s+n/a\s+n/a\s+services/billing$`),
+			"the unavailable measurements must read `n/a` in their own fixed columns; dropping "+
+				"a column instead breaks every positional reader of this report")
 	})
 
 })

@@ -137,7 +137,7 @@ What the tenant's dbgate registers automatically:
 
 Provisioning is a single writer (CronJob every 15 min + a dbgate initContainer so *a deploy is
 a run*), never per-source mutation. The reasons that matters are in
-[`docs/patterns/handoff-crd-driven-auto-registration.md`](../../../docs/patterns/handoff-crd-driven-auto-registration.md) §5.
+[`docs/patterns/cross-namespace-secret-reflection.md`](../../../docs/patterns/cross-namespace-secret-reflection.md) §4.
 
 ## Day-2
 

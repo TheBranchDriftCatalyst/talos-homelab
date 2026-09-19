@@ -1,3 +1,12 @@
+---
+type: architecture
+status: current
+covers:
+  - repo
+freshness: tracks-code
+bluf: Flux reconciles infrastructure out of this repo, ArgoCD reconciles applications out of their own repos, and the dividing line is "do we build the image?".
+---
+
 # Dual GitOps Pattern
 
 ## TL;DR
@@ -13,19 +22,25 @@ This Talos Kubernetes cluster uses a **dual GitOps pattern** that separates infr
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Talos Kubernetes Cluster                  │
-│                                                               │
-│  ┌────────────────────────┐    ┌──────────────────────────┐ │
-│  │  Infrastructure GitOps  │    │  Application GitOps       │ │
-│  │  (FluxCD Pattern)       │    │  (ArgoCD Pattern)         │ │
-│  │                         │    │                           │ │
-│  │  Repo: talos-homelab   │    │  Repo: catalyst-ui, ...   │ │
-│  │  Tool: FluxCD          │    │  Tool: ArgoCD             │ │
-│  │  Scope: Platform       │    │  Scope: Applications      │ │
-│  └────────────────────────┘    └──────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  R1["Repo: talos-homelab (this repo)<br/>entrypoint clusters/catalyst-cluster/"]
+  R2["Repos: catalyst-ui, boomtime, catalyst-llm, …"]
+
+  subgraph CLUSTER["Talos Kubernetes cluster"]
+    direction LR
+    F["FluxCD<br/>infrastructure GitOps"]
+    AC["ArgoCD<br/>application GitOps"]
+  end
+
+  S1["Scope: platform<br/>CNI, ingress, storage, operators, monitoring, SSO"]
+  S2["Scope: applications<br/>workloads built from their own repos"]
+
+  R1 -->|"polled every 1m"| F
+  R2 --> AC
+  F --> S1
+  AC --> S2
+  F -.->|"installs ArgoCD itself"| AC
 ```
 
 ## Pattern 1: Infrastructure GitOps (FluxCD)
@@ -45,7 +60,7 @@ Manage the foundational platform infrastructure that the cluster depends on.
 - Talos machine configurations (`configs/`, gitignored output)
 - Core platform services:
   - ArgoCD (GitOps controller for applications)
-  - Cilium (CNI), Traefik (ingress, LoadBalancer VIP `192.168.1.251`)
+  - Cilium (CNI), Traefik (ingress)
   - Zot container registry (`registry.talos00`)
   - Monitoring/observability: Mimir (metrics), Loki (logs), Tempo (traces), Grafana, Alloy, ClickStack/HyperDX
   - Authentik (SSO), CrowdSec (IPS/AppSec), cert-manager, External Secrets Operator, Kyverno, reflector, CNPG
@@ -68,25 +83,25 @@ flux reconcile source git flux-system
 flux reconcile kustomization <name> --with-source
 ```
 
-> `./scripts/deploy-stack.sh` no longer exists at that path. It was moved to
-> `infrastructure/_scripts/deploy-stack.sh` and is **legacy** — it predates Flux and is not part of
-> the reconciliation path. The `infra:deploy-stack` task that invoked it has been removed, along
-> with the other `deploy-*` tasks that would have `kubectl apply`-ed over Flux.
+> **There is no deploy script any more.** `scripts/deploy-stack.sh` is gone and no
+> `deploy-stack.sh` is tracked anywhere in the repo; the `infra:deploy-stack` task that invoked
+> it was removed along with the other `deploy-*` tasks that would have `kubectl apply`-ed over
+> Flux. If you find a copy on disk it is an untracked leftover, not a supported path — running
+> it fights the reconciler.
 
 ### File Structure
 
-```
+```text
 talos-homelab/
 ├── clusters/
 │   └── catalyst-cluster/  # Flux entrypoint: one Kustomization per component
 │       ├── flux-system/   # Flux controllers + GitRepository source
 │       ├── argocd.yaml    # -> ./infrastructure/base/argocd
 │       ├── traefik.yaml   # -> ./infrastructure/base/traefik
-│       └── ...            # ~60 Kustomizations total
+│       └── ...            # ~68 Kustomizations total
 ├── infrastructure/
-│   ├── base/              # Platform manifests (argocd, cilium, traefik,
-│   │                      #   registry/zot, monitoring/v2-otel, kyverno, ...)
-│   └── _scripts/          # Legacy pre-Flux scripts (not in the normal path)
+│   └── base/              # Platform manifests (argocd, cilium, traefik,
+│                          #   registry/zot, monitoring/v2-otel, kyverno, ...)
 ├── applications/          # In-repo app workloads, also Flux-managed
 ├── bootstrap/flux/        # One-time Flux bootstrap
 ├── scripts/               # Provisioning / operational automation
@@ -138,7 +153,7 @@ ArgoCD watches application repositories and automatically syncs changes to the c
 
 ### File Structure (Example: catalyst-ui)
 
-```
+```text
 catalyst-ui/
 ├── k8s/                   # Kubernetes manifests
 │   ├── namespace.yaml     # Application namespace
@@ -155,7 +170,8 @@ catalyst-ui/
 1. Modify application code or K8s manifests
 2. Commit and push to `main` branch
 3. **ArgoCD automatically detects changes**
-4. ArgoCD syncs new state to cluster (poll interval `timeout.reconciliation: 120s` in `argocd-cm`)
+4. ArgoCD syncs the new state to the cluster on its polling interval. Nothing in this repo sets
+   `timeout.reconciliation`, so it is ArgoCD's chart default — do not quote a number for it here
 5. Rolling update occurs automatically
 
 Image tags are bumped separately by **argocd-image-updater**, driven by `ImageUpdater` CRs in
@@ -198,7 +214,7 @@ Application deployments are **continuous and automated**. Developers push code, 
 - **Application repos** manage workloads that have their own source repo and build
 - Never put platform manifests in an application repo
 
-> Reality check: this repo *does* carry app workloads under `applications/` (arr stack, homepage,
+> Reality check: this repo _does_ carry app workloads under `applications/` (arr stack, homepage,
 > tdarr, metube, zipline, …). Those are third-party images with no upstream source repo of ours,
 > so they are Flux-managed here. The dividing line in practice is **"do we build it?"** — if we
 > build the image, the manifests live with the code and ArgoCD owns it; if we only deploy someone
@@ -253,9 +269,11 @@ Application deployments are **continuous and automated**. Developers push code, 
 
 > Note: `media` is a Flux-created namespace even though the private arr-stack ArgoCD Application
 > also deploys into it (`CreateNamespace=false`); same for `kasa-exporter` into `monitoring`.
-> Namespace *creation* is Flux's; workloads inside can come from either side.
-> The `observability` namespace still exists but is **empty** — Graylog/OpenSearch/Fluent Bit were
-> removed when logging moved to Loki/ClickStack.
+> Namespace _creation_ is Flux's; workloads inside can come from either side. That asymmetry is
+> the reason a namespace's owner is not inferable from what runs in it.
+> `infrastructure/base/namespaces/` still declares `observability`, left over from the
+> Graylog/OpenSearch/Fluent Bit era that Loki/ClickStack replaced; nothing in this repo deploys
+> into it any more.
 
 ### Rule 7: Image Management
 
@@ -498,15 +516,8 @@ remember to re-enable it.
 
 Related docs in this repo:
 
-- `docs/02-architecture/gitops-responsibilities.md` — responsibility matrix (**stale**: it still
-  describes Flux as "not yet deployed")
 - `README.md` — deployment section, Flux reconcile commands
 - `docs/08-monitoring/observability.md` — the monitoring/logging stack Flux manages
-
----
-
-**Last Updated**: 2026-08-22 (truth-alignment pass against live cluster)
-**Maintained By**: Infrastructure Team
 
 ---
 

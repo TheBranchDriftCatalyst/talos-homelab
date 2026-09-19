@@ -37,7 +37,18 @@ func unitRulesCtx(cfg *Config, docs ...Doc) *Ctx {
 	if cfg == nil {
 		cfg = &Config{}
 	}
-	return &Ctx{Root: "/nonexistent-root", Cfg: cfg, Docs: docs, Components: comps, BySlug: bySlug}
+	// Facts: EVERYTHING. A hand-built Ctx with no facts reports every fact-dependent rule as
+	// unable to run, which would quietly turn each rule spec in this file into an assertion
+	// about a rule that never executed. The specs that are ABOUT unavailability build their own
+	// fact-poor Ctx and say so.
+	return &Ctx{Root: "/nonexistent-root", Cfg: cfg, Docs: docs, Components: comps, BySlug: bySlug,
+		Facts: FactSet{
+			FactDeclaredName:   true,
+			FactSubUnits:       true,
+			FactInactive:       true,
+			FactDependsOn:      true,
+			FactPathIsDeclared: true,
+		}}
 }
 
 func unitMessages(fs []Finding) []string {
@@ -910,12 +921,15 @@ var _ = Describe("Run", Label("unit"), func() {
 	footerCfg := func() *Config { return &Config{RequiredFooter: "## Related Issues"} }
 
 	It("runs every rule by default, because an unknown or unlisted rule name defaults to enabled", func() {
-		Expect(unitRules(Run(runCtx(footerCfg()), ""))).To(ContainElements(
+		findings, _ := Run(runCtx(footerCfg()), "")
+
+		Expect(unitRules(findings)).To(ContainElements(
 			"covers-resolves", "frontmatter-schema", "taxonomy-structure"))
 	})
 
 	It("emits findings grouped in stable rule-name order, so report output diffs cleanly between runs", func() {
-		rules := unitRules(Run(runCtx(footerCfg()), ""))
+		findings, _ := Run(runCtx(footerCfg()), "")
+		rules := unitRules(findings)
 		sorted := append([]string(nil), rules...)
 		sort.Strings(sorted)
 
@@ -924,21 +938,26 @@ var _ = Describe("Run", Label("unit"), func() {
 	})
 
 	It("honours the only-filter by running exactly one rule, which is what makes `--only` usable for burning a rule down", func() {
-		findings := Run(runCtx(footerCfg()), "covers-resolves")
+		findings, _ := Run(runCtx(footerCfg()), "covers-resolves")
 
 		Expect(findings).NotTo(BeEmpty())
 		Expect(unitRules(findings)).To(HaveEach("covers-resolves"))
 	})
 
 	It("returns nothing for an only-filter naming no real rule, rather than falling back to running everything", func() {
-		Expect(Run(runCtx(footerCfg()), "no-such-rule")).To(BeEmpty())
+		findings, skipped := Run(runCtx(footerCfg()), "no-such-rule")
+
+		Expect(findings).To(BeEmpty())
+		Expect(skipped).To(BeEmpty(), "a rule name that matches nothing selected nothing, so "+
+			"there is nothing that could not run")
 	})
 
 	It("skips a rule explicitly disabled in config while still running the others, because adoption means promoting rules one at a time", func() {
 		cfg := footerCfg()
 		cfg.Rules = map[string]Rule{"covers-resolves": {Enabled: false}}
 
-		rules := unitRules(Run(runCtx(cfg), ""))
+		findings, _ := Run(runCtx(cfg), "")
+		rules := unitRules(findings)
 
 		Expect(rules).NotTo(ContainElement("covers-resolves"))
 		Expect(rules).To(ContainElement("taxonomy-structure"))
@@ -948,7 +967,9 @@ var _ = Describe("Run", Label("unit"), func() {
 		cfg := footerCfg()
 		cfg.Rules = map[string]Rule{"covers-resolve": {Enabled: false}}
 
-		Expect(unitRules(Run(runCtx(cfg), ""))).To(ContainElement("covers-resolves"))
+		findings, _ := Run(runCtx(cfg), "")
+
+		Expect(unitRules(findings)).To(ContainElement("covers-resolves"))
 	})
 })
 
@@ -1038,5 +1059,58 @@ var _ = Describe("ruleTicketsExist", Label("unit"), func() {
 		ctx.Root = GinkgoT().TempDir()
 
 		Expect(ruleTicketsExist(ctx)).To(BeEmpty())
+	})
+})
+
+// --- staleSubject ---------------------------------------------------------------------------
+//
+// These exist because a cover naming a FILE was silently inert for staleness. ctx.Dates comes
+// from `git log --name-only`, which lists file paths only, so the old prefix-only match needed
+// a dated path beginning "<the covered file>/" — impossible. The cover still moved the
+// colocation verdict, so it looked alive while the thing it was written for never worked.
+//
+// Nine real covers were affected, four of them configs/talconfig.yaml. The tool rewarded the
+// vague directory-shaped declaration and discarded the precise one.
+var _ = Describe("staleSubject", Label("unit"), func() {
+	dates := map[string]string{
+		"configs/talconfig.yaml":                  "2026-09-10T00:00:00Z",
+		"infrastructure/base/pihole/deploy.yaml":  "2026-09-12T00:00:00Z",
+		"infrastructure/base/pihole/svc.yaml":     "2026-09-14T00:00:00Z",
+		"infrastructure/base/piholeXtra/rogue.md": "2026-09-30T00:00:00Z",
+	}
+	ctxWith := func() *Ctx {
+		return &Ctx{Root: "/repo", Cfg: &Config{}, Dates: dates}
+	}
+
+	It("resolves a cover naming a FILE — the case that was silently inert", func() {
+		Expect(staleSubject(ctxWith(), []string{"path:configs/talconfig.yaml"})).
+			To(Equal("2026-09-10T00:00:00Z"))
+	})
+
+	It("resolves a cover naming a DIRECTORY to its newest member", func() {
+		Expect(staleSubject(ctxWith(), []string{"path:infrastructure/base/pihole"})).
+			To(Equal("2026-09-14T00:00:00Z"))
+	})
+
+	It("does not let a directory cover capture a sibling with the same prefix", func() {
+		// `piholeXtra` starts with `pihole`, and its file is the newest in the map. A
+		// substring-style match would return it and report the doc stale for a change in a
+		// component it does not describe.
+		Expect(staleSubject(ctxWith(), []string{"path:infrastructure/base/pihole"})).
+			NotTo(Equal("2026-09-30T00:00:00Z"))
+	})
+
+	It("takes the newest across several covers, so any covered change counts", func() {
+		Expect(staleSubject(ctxWith(), []string{
+			"path:configs/talconfig.yaml", "path:infrastructure/base/pihole"})).
+			To(Equal("2026-09-14T00:00:00Z"))
+	})
+
+	It("returns empty for reserved tokens, which name no path", func() {
+		Expect(staleSubject(ctxWith(), []string{"cluster", "repo"})).To(BeEmpty())
+	})
+
+	It("returns empty when a cover resolves to nothing dated", func() {
+		Expect(staleSubject(ctxWith(), []string{"path:does/not/exist"})).To(BeEmpty())
 	})
 })

@@ -1,64 +1,72 @@
+---
+type: nav
+status: current
+covers:
+  - repo
+freshness: tracks-code
+bluf: Entry point for standing this cluster up and running it day to day; the walkthrough itself is quickstart.md.
+---
+
 # Getting Started
 
 > Parent: [docs/INDEX.md](../INDEX.md)
 
-## Overview
-
-This section provides essential guides for getting started with the Talos Kubernetes homelab. Whether you're setting up the cluster for the first time or looking for a daily operations reference, these guides will help you get up and running quickly.
-
 ## Quick Navigation
 
-| Topic                                | Description                                           | When to Read                                                |
-| ------------------------------------ | ----------------------------------------------------- | ----------------------------------------------------------- |
-| [quickstart.md](quickstart.md)       | Fast-track cluster setup and common commands          | First time setup, daily operations reference                |
+<!-- docs:gen:nav -->
+
+| Doc                            | What it covers                                                                                                                                                                |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [quickstart.md](quickstart.md) | Get the toolchain from the flake, plan a rebuild with `task talos:provision`, then merge the kubeconfig — this covers bringing nodes up, not the full Flux/secrets bootstrap. |
+
+<!-- /docs:gen:nav -->
 
 ## Key Concepts
 
-- **Talos Linux** is an immutable Kubernetes OS configured via machine configs, not SSH
-- **Control Plane IP** defaults to `192.168.1.54` (configurable via `TALOS_NODE` env var)
-- **Five-node cluster** - control plane `talos00` (192.168.1.54) plus workers `talos01` (192.168.1.177), `talos02-gpu` (192.168.1.144), `talos03` (192.168.1.30), `talos06` (192.168.1.19)
-- **Control plane is tainted** - `talos00` carries `node-role.kubernetes.io/control-plane:NoSchedule`, so general workloads land on the worker nodes unless they tolerate it
-- **Cilium** is the CNI (not Flannel); Traefik fronts ingress on LoadBalancer VIP `192.168.1.251`
-- **Kubernetes Dashboard** runs in the `kubernetes-dashboard` namespace and is reached via `task k8s:dashboard-token` + `task k8s:dashboard-proxy`. It is **not** deployed by `scripts/provision.sh`
+Four things that stay true. The numbers they imply do not, so read those from the manifest.
+
+- **Talos has no SSH and no package manager.** Every node change is a machine-config change
+  applied with `talosctl`; there is no "log in and fix it" path.
+- **`configs/talconfig.yaml` is the node inventory** — hostnames, IPs, which nodes are control
+  plane, and the pinned versions. Prose copies of it rot.
+- **`talos00` is deliberately tainted `NoSchedule`,** and `allowSchedulingOnControlPlanes` does
+  **not** override it: Talos applies `machine.nodeTaints` through a separate, unconditional code
+  path. Reasoning in `configs/patches/talos00-controlplane-taint.yaml` — never `kubectl taint`
+  it away.
+- **A freshly applied node stays `NotReady` on purpose.** Talos is configured `cniConfig: none`,
+  so installing the CNI is Flux's job (`infrastructure/base/cilium/`), not the installer's.
 
 ## Common Tasks
 
 ### Fresh Cluster Setup
 
-- [Provision using Task](quickstart.md#fresh-cluster-setup) - `task provision` or `./scripts/provision.sh`
-- [Access Kubernetes Dashboard](quickstart.md#access-kubernetes-dashboard) - Get token and start proxy
+- [Plan the rebuild](quickstart.md#fresh-cluster-setup) — `task talos:provision` prints the
+  commands; it applies nothing itself
+- [Kubernetes Dashboard](quickstart.md#access-kubernetes-dashboard) — token and proxy
 
 ### Daily Operations
 
-- [Check cluster health](quickstart.md#common-commands) - `task health`
-- [View all pods](quickstart.md#common-commands) - `task get-pods`
-- [Access Talos dashboard](quickstart.md#common-commands) - `task dashboard`
+- [Health, pods, node dashboard](quickstart.md#common-commands) — `task talos:health`,
+  `task k8s:get-pods`, `task talos:dashboard`
 
 ### Testing Infrastructure Changes
 
-> **Local Docker-based testing was removed (2025-12-20).** `local-testing.md` was deleted in
-> commit `b2130815`, and `scripts/provision-local.sh` is retired - it now sits at
-> `scripts/__provision-local.sh` (the `__` prefix marks a disabled script). There is currently
-> no supported local Talos cluster workflow; validate against manifests instead.
-
-- Validate all kustomizations - `task dev:validate`
-- Validate a single component - `kubectl apply -k <path> --dry-run=client`
-- Lint YAML / secrets before committing - `task dev:lint`
+No local Talos cluster workflow exists; the Docker-based one was removed. Validate against the
+manifests with `task dev:validate`, `kubectl apply -k <path> --dry-run=client`, and
+`task dev:lint`.
 
 ### Troubleshooting
 
-- [Dashboard access issues](quickstart.md#troubleshooting) - Proxy and token troubleshooting
-- [Pod scheduling issues](quickstart.md#troubleshooting) - Check taints and node status
-- [Talos API connectivity](quickstart.md#troubleshooting) - `task talos:ping`, `task talos:check-api`
+- [Dashboard, scheduling, Talos API](quickstart.md#troubleshooting)
 
 ## Where to Next
 
-| Destination                                                    | Why                                                        |
-| -------------------------------------------------------------- | ---------------------------------------------------------- |
-| [02-architecture/dual-gitops.md](../02-architecture/dual-gitops.md) | How changes actually reach the cluster                 |
-| [03-operations](../03-operations/README.md)                    | Day-to-day operations and provisioning                     |
-| [05-runbooks/cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md) | Full bare-metal / recovery bootstrap               |
-| [docs/INDEX.md](../INDEX.md)                                   | Everything else                                            |
+| Destination                                                             | Why                                    |
+| ----------------------------------------------------------------------- | -------------------------------------- |
+| [02-architecture/dual-gitops.md](../02-architecture/dual-gitops.md)     | How changes actually reach the cluster |
+| [03-operations](../03-operations/README.md)                             | Day-to-day operations                  |
+| [05-runbooks/cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md) | Full bare-metal / recovery bootstrap   |
+| [docs/INDEX.md](../INDEX.md)                                            | Everything else                        |
 
 ---
 
@@ -66,5 +74,5 @@ This section provides essential guides for getting started with the Talos Kubern
 
 <!-- Beads tracking for this section -->
 
-- `CILIUM-kkw` - Initial creation of section README (stale reference: the beads prefix is now
-  `TALOS-`, and no issue resolves under either prefix - the original was closed and compacted)
+- `CILIUM-kkw` — initial creation of this section README. Stale reference: the beads prefix is
+  now `TALOS-`, and the original was closed and compacted, so it resolves under neither prefix.

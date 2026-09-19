@@ -153,7 +153,7 @@ Two readings mislead if you do not know them: a scenario-trigger panel **include
 overflows, so an overflow there is not evidence of a ban; and simulated decisions are skipped
 by both bouncers, so a decision existing is not evidence of enforcement. The procedure that
 distinguishes them is
-[crowdsec/crowdsec-verification.md](crowdsec/crowdsec-verification.md).
+[crowdsec/docs/crowdsec-verification.md](crowdsec/docs/crowdsec-verification.md).
 
 ## Why there is no shared `security` namespace
 

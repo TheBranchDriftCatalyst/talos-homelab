@@ -32,21 +32,43 @@ func componentCount(out string) int {
 	return n
 }
 
-func nestedCount(row string) int {
+// nestedCount returns the row's nested-kustomization count, and whether that count is a
+// MEASUREMENT at all.
+//
+// Two return values, because the column has three states and not two: a number, and `n/a` when
+// the repo's component strategy cannot count sub-units. It used to Atoi() the cell and fail the
+// spec on anything else, which is right for a number and wrong for an honest "unavailable" —
+// and the alternative, rendering unavailable as 0, is the exact lie this whole slice removes:
+// `nested 0` claims the component wraps nothing, `n/a` says nobody looked.
+func nestedCount(row string) (int, bool) {
 	GinkgoHelper()
-	fields := strings.Fields(row)
-	Expect(len(fields)).To(BeNumerically(">=", 5), "unexpected components row: %q", row)
-	n, err := strconv.Atoi(fields[2])
-	Expect(err).NotTo(HaveOccurred())
-	return n
+	cell := componentCell(row, 2)
+	if cell == unavailableCell {
+		return 0, false
+	}
+	n, err := strconv.Atoi(cell)
+	Expect(err).NotTo(HaveOccurred(),
+		"the nested column is neither a number nor %q: %q", unavailableCell, row)
+	return n, true
 }
 
-func readmeCell(row string) string {
+// unavailableCell is what `docsgen components` prints where the strategy supplies no
+// measurement. Spelled once here so a spec asserting it cannot drift from the tool.
+const unavailableCell = "n/a"
+
+// componentCell reads one FIXED column out of a components row.
+//
+// The arity is part of the contract: the report prints `n/a` rather than dropping a column
+// precisely so positional reads like this one stay honest. A dropped column would make every
+// index here silently name the wrong measurement.
+func componentCell(row string, i int) string {
 	GinkgoHelper()
 	fields := strings.Fields(row)
 	Expect(len(fields)).To(BeNumerically(">=", 5), "unexpected components row: %q", row)
-	return fields[1]
+	return fields[i]
 }
+
+func readmeCell(row string) string { return componentCell(row, 1) }
 
 var _ = Describe("docsgen invariants", Label("integration"), func() {
 	for _, s := range samples {
@@ -260,13 +282,39 @@ var _ = Describe("docsgen invariants", Label("integration"), func() {
 				Expect(readmeCell(componentRow(after.Out, s.ReadmeOwner))).To(Equal("-"))
 			})
 
-			It("notices one more nested kustomization under a component", func() {
-				before := nestedCount(componentRow(fx.run("components").Out, s.NestedOwner))
+			// FACT-AWARE, not conditional-and-silent. Under `dirs` there is nothing to notice
+			// — a kustomization count is kustomize-specific and that strategy supplies none —
+			// but "nothing to notice" must still be ASSERTED, because a spec that quietly
+			// returns early under one sample is the same silence the tool just stopped telling.
+			// So the unavailable branch pins the cell at `n/a` both before and after the write:
+			// the count must not appear, and it must not read as a zero either.
+			It("notices one more nested kustomization under a component, or says in the report "+
+				"that it cannot count them at all", func() {
+				beforeRow := componentRow(fx.run("components").Out, s.NestedOwner)
+				before, measurable := nestedCount(beforeRow)
+
+				// Which branch runs is decided by the SAMPLE TABLE, never by what the report
+				// printed. Reading the branch off the output would make this spec agree with
+				// the tool whichever answer it gave — including the old one, where `0` meant
+				// both "no sub-units" and "no way to count them".
+				Expect(measurable).To(Equal(s.CountsSubUnits),
+					"sample %s declares CountsSubUnits=%v, and the report disagrees: %q",
+					s.Name, s.CountsSubUnits, beforeRow)
 
 				fx.write(filepath.Join(s.NestedDir, "extra", "kustomization.yaml"),
 					"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources: []\n")
 
-				after := nestedCount(componentRow(fx.run("components").Out, s.NestedOwner))
+				afterRow := componentRow(fx.run("components").Out, s.NestedOwner)
+				if !measurable {
+					Expect(componentCell(beforeRow, 2)).To(Equal(unavailableCell))
+					Expect(componentCell(afterRow, 2)).To(Equal(unavailableCell),
+						"components.kind `%s` supplies no sub-unit count, so the column must keep "+
+							"saying so — a number here would be invented, and a 0 would claim the "+
+							"component wraps nothing", s.Kind)
+					return
+				}
+
+				after, _ := nestedCount(afterRow)
 				Expect(after).To(Equal(before + 1))
 			})
 

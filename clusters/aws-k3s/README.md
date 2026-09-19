@@ -20,58 +20,65 @@ tilt up
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      TALOS CLUSTER (talos-home, ID:1)                       │
-│  Nodes: 5  |  Endpoints: ~275  |  Nebula IP: 10.100.0.1                     │
-│                                                                             │
-│  ┌─────────────────┐     ┌──────────────────────┐     ┌─────────────────┐   │
-│  │  Cilium Agents  │────▶│  KVStoreMesh Cache   │◀────│ ClusterMesh API │   │
-│  │  (per node)     │     │  (local etcd cache)  │     │ NodePort :32379 │   │
-│  └─────────────────┘     └──────────────────────┘     └────────┬────────┘   │
-│                                                                │            │
-│  Forwarders on talos00 (socat, hostNetwork):                   │            │
-│    out  :32380 → 10.100.2.1:32380   (Talos → AWS)              │            │
-│    in   :32381 → 127.0.0.1:32379    (AWS → Talos)              │            │
-└────────────────────────────────────────────────────────────────┼────────────┘
-                                                                 │
-                          Nebula Mesh (10.100.0.0/16)            │
-                          TLS with Combined CA Bundle            │
-                                                                 │
-┌────────────────────────────────────────────────────────────────┼────────────┐
-│  Forwarders on the k3s node (socat, hostNetwork):              │            │
-│    out  :32381 → 10.100.0.1:32381   (AWS → Talos)              │            │
-│    in   :32380 → clustermesh-apiserver.kube-system:2379        │            │
-│                                                                │            │
-│  ┌─────────────────┐     ┌──────────────────────┐     ┌────────┴────────┐   │
-│  │  Cilium Agents  │────▶│  KVStoreMesh Cache   │◀────│ ClusterMesh API │   │
-│  │  (per node)     │     │  (local etcd cache)  │     │ NodePort :32379 │   │
-│  └─────────────────┘     └──────────────────────┘     └─────────────────┘   │
-│                                                                             │
-│                       AWS K3S CLUSTER (aws-k3s, ID:2)                       │
-│  Nodes: 1  |  Endpoints: ~6  |  Nebula IP: 10.100.2.1                       │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph talos["TALOS CLUSTER — talos-home, ID 1 · 5 nodes · Nebula 10.100.0.1"]
+        direction TB
+        tAgents["Cilium agents<br/>one per node"]
+        tCache["KVStoreMesh cache<br/>local etcd cache"]
+        tApi["ClusterMesh apiserver<br/>NodePort :32379"]
+        tOut["talos00 forwarder OUT<br/>socat, hostNetwork<br/>:32380 to 10.100.2.1:32380"]
+        tIn["talos00 forwarder IN<br/>socat, hostNetwork<br/>:32381 to 127.0.0.1:32379"]
+        tAgents --> tCache
+        tApi --> tCache
+        tAgents --> tOut
+        tIn --> tApi
+    end
+
+    subgraph aws["AWS K3S CLUSTER — aws-k3s, ID 2 · 1 node · Nebula 10.100.2.1"]
+        direction TB
+        aAgents["Cilium agents<br/>one per node"]
+        aCache["KVStoreMesh cache<br/>local etcd cache"]
+        aApi["ClusterMesh apiserver<br/>NodePort :32379"]
+        aOut["k3s forwarder OUT<br/>socat, hostNetwork<br/>:32381 to 10.100.0.1:32381"]
+        aIn["k3s forwarder IN<br/>:32380 to clustermesh-apiserver.kube-system:2379"]
+        aAgents --> aCache
+        aApi --> aCache
+        aAgents --> aOut
+        aIn --> aApi
+    end
+
+    tOut -->|"Nebula 10.100.0.0/16 · TLS, combined CA bundle"| aIn
+    aOut -->|"Nebula 10.100.0.0/16 · TLS, combined CA bundle"| tIn
 ```
 
+Endpoint counts (~275 on Talos, ~6 on AWS) were observed while the mesh was up and are not
+re-checkable while it is dormant. The AWS cluster's ID (2) is configured on the k3s side,
+which is not in this repo. Both Talos-side forwarders exist as manifests
+(`infrastructure/base/cilium/clustermesh-forwarders/{talos-to-aws,aws-to-talos}.yaml`), but
+on the AWS side only the OUT forwarder has a manifest here
+(`clusters/aws-k3s/manifests/clustermesh/port-forwarder.yaml`) — the IN forwarder above is
+part of the intended topology and has no manifest in this repo.
+
 The ClusterMesh apiserver is only ever exposed on NodePort **32379**. Ports 32380
-and 32381 belong to the socat forwarders, one per direction — see the port table
-in `docs/HYBRID-CLOUD-PLAYBOOK.md`.
+and 32381 belong to the socat forwarders, one per direction. (`docs/HYBRID-CLOUD-PLAYBOOK.md`
+used to carry the full port table; it is no longer in the tree.)
 
 ## Components
 
-| Component | Purpose |
-|-----------|---------|
-| Nebula Mesh | L3 overlay network (10.100.0.0/16) |
+| Component       | Purpose                                             |
+| --------------- | --------------------------------------------------- |
+| Nebula Mesh     | L3 overlay network (10.100.0.0/16)                  |
 | Port Forwarders | socat DaemonSets bridging Nebula TUN to ClusterMesh |
-| KVStoreMesh | Centralized sync - agents read from local cache |
-| Combined CA | Both Cilium CAs bundled for mutual TLS |
+| KVStoreMesh     | Centralized sync - agents read from local cache     |
+| Combined CA     | Both Cilium CAs bundled for mutual TLS              |
 
 ## Contexts
 
-| Context | Cluster | Nebula IP |
-|---------|---------|-----------|
+| Context                  | Cluster       | Nebula IP  |
+| ------------------------ | ------------- | ---------- |
 | `admin@catalyst-cluster` | Talos homelab | 10.100.0.1 |
-| `aws-lighthouse` | AWS k3s | 10.100.2.1 |
+| `aws-lighthouse`         | AWS k3s       | 10.100.2.1 |
 
 ## Common Commands
 
@@ -101,28 +108,29 @@ To make a service accessible across clusters, add the annotation:
 ```yaml
 metadata:
   annotations:
-    io.cilium/global-service: "true"
+    io.cilium/global-service: 'true'
 ```
 
 ## Troubleshooting
 
 See `docs/HYBRID-CLOUD-PLAYBOOK.md` for detailed troubleshooting including:
+
 - TLS certificate issues
 - KVStoreMesh endpoint configuration
 - Port forwarder deployment
 
 ## Related Files
 
-| Path | Purpose |
-|------|---------|
-| `docs/HYBRID-CLOUD-PLAYBOOK.md` | Complete hybrid cloud setup guide |
-| `infrastructure/base/nebula/` | Nebula lighthouse manifests (not currently wired into Flux) |
-| `infrastructure/base/cilium/clustermesh/` | ClusterMesh apiserver manifests (not in the cilium kustomization) |
-| `infrastructure/base/cilium/clustermesh-forwarders/` | Talos-side socat forwarders, :32380 out / :32381 in |
-| `clusters/aws-k3s/manifests/clustermesh/` | AWS-side socat forwarder, :32381 → 10.100.0.1:32381 |
-| `clusters/aws-k3s/ami/` | Packer templates + EC2 userdata (base, lighthouse, gpu-worker) |
-| `.scratch/carrierarr/` (untracked archive) | EC2/Fargate fleet management agent + provisioning notes |
-| `configs/nebula-certs/` | Nebula certificates (gitignored) |
+| Path                                                 | Purpose                                                           |
+| ---------------------------------------------------- | ----------------------------------------------------------------- |
+| `docs/HYBRID-CLOUD-PLAYBOOK.md`                      | Complete hybrid cloud setup guide                                 |
+| `infrastructure/base/nebula/`                        | Nebula lighthouse manifests (not currently wired into Flux)       |
+| `infrastructure/base/cilium/clustermesh/`            | ClusterMesh apiserver manifests (not in the cilium kustomization) |
+| `infrastructure/base/cilium/clustermesh-forwarders/` | Talos-side socat forwarders, :32380 out / :32381 in               |
+| `clusters/aws-k3s/manifests/clustermesh/`            | AWS-side socat forwarder, :32381 → 10.100.0.1:32381               |
+| `clusters/aws-k3s/ami/`                              | Packer templates + EC2 userdata (base, lighthouse, gpu-worker)    |
+| `.scratch/carrierarr/` (untracked archive)           | EC2/Fargate fleet management agent + provisioning notes           |
+| `configs/nebula-certs/`                              | Nebula certificates (gitignored)                                  |
 
 ---
 

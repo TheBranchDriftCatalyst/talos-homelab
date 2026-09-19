@@ -45,13 +45,21 @@ import (
 	"unicode"
 )
 
-// Artifact is one generated file, resolved from one `artifacts:` entry in config. Whole-file
-// ownership only — the marker-region artifacts (INDEX.md and the section navs, which interleave
-// generated tables with human prose) land separately, because mixing both ownership models in
-// one file is how a generator deletes editorial work.
+// Artifact is one generated document, resolved from one `artifacts:` entry in config.
+//
+// TWO OWNERSHIP MODELS, and exactly one of them per file. An artifact with an empty Region owns
+// its file end to end. One that names a Region owns only the span between that region's markers
+// and copies every other byte through untouched — which is the only way INDEX.md and the
+// section navs can be generated at all, because they interleave a link table with editorial
+// prose no generator can reproduce.
+//
+// What must NEVER happen is a file owned both ways, or a marker-owned artifact quietly
+// degrading to whole-file ownership when it cannot find its markers. Both delete prose silently.
+// region.go refuses instead.
 type Artifact struct {
 	Name   string // the config key under `artifacts:`, used to name the key at fault
 	Rel    string // repo-relative destination: docs_root + spec.path
+	Region string // "" for whole-file ownership; otherwise the marker region this artifact owns
 	Spec   ArtifactSpec
 	Render func(*Ctx) string
 }
@@ -61,6 +69,7 @@ type Artifact struct {
 // adding a new KIND of document costs a function here plus that stanza.
 var renderers = map[string]func(*Ctx, ArtifactSpec) string{
 	"component-inventory": renderComponentInventory,
+	"nav":                 renderNav,
 }
 
 func rendererNames() []string {
@@ -101,6 +110,7 @@ func Artifacts(cfg *Config) []Artifact {
 		out = append(out, Artifact{
 			Name:   name,
 			Rel:    path.Join(cfg.RootFor(spec), spec.Path),
+			Region: strings.TrimSpace(spec.Region),
 			Spec:   spec,
 			Render: func(ctx *Ctx) string { return render(ctx, spec) },
 		})
@@ -190,6 +200,8 @@ func validateArtifacts(cfg *Config) error {
 				"%s.scope.path_prefix: missing — a scope that filters on nothing is not a scope; "+
 					"omit `scope:` to cover every component", key))
 		}
+		problems = append(problems, validateRegion(key, spec)...)
+		problems = append(problems, validateNav(cfg, key, renderer, spec)...)
 		for _, e := range []struct {
 			field   string
 			allowed []string
@@ -232,10 +244,147 @@ func validateArtifacts(cfg *Config) error {
 			problems = append(problems, fmt.Sprintf("%s.front.%v", key, err))
 		}
 	}
+	problems = append(problems, validateArtifactOwnership(cfg)...)
 	if len(problems) == 0 {
 		return nil
 	}
 	return errors.New("config:\n  " + strings.Join(problems, "\n  "))
+}
+
+// validateArtifactOwnership rejects two artifacts that would fight over the same bytes.
+//
+// Two failure shapes, both silent and both destructive:
+//
+//   - A WHOLE-FILE artifact sharing a destination with anything else. It writes the entire file,
+//     so whichever runs second erases the other's work — and because `generate` then reports
+//     both as written, and `check` reports whichever ran last as unchanged, the loss never
+//     surfaces. There is no such thing as two artifacts owning one file end to end.
+//
+//   - Two MARKER artifacts naming the same region in the same file. Each splices its own table
+//     into the other's span, so `generate` never reaches a fixed point and `check` fails
+//     forever on a file it just wrote.
+//
+// Distinct regions in one file are legitimate and deliberately allowed: an INDEX with a
+// sections table and a root-documents table is two enumerations of two different things.
+func validateArtifactOwnership(cfg *Config) []string {
+	type owner struct{ name, region string }
+	byRel := map[string][]owner{}
+	var rels []string
+	for _, a := range Artifacts(cfg) {
+		if _, seen := byRel[a.Rel]; !seen {
+			rels = append(rels, a.Rel)
+		}
+		byRel[a.Rel] = append(byRel[a.Rel], owner{a.Name, a.Region})
+	}
+	sort.Strings(rels)
+
+	var problems []string
+	for _, rel := range rels {
+		owners := byRel[rel]
+		if len(owners) < 2 {
+			continue
+		}
+		seenRegion := map[string]string{}
+		for _, o := range owners {
+			if o.region == "" {
+				problems = append(problems, fmt.Sprintf(
+					"artifacts.%s: owns the whole of %s, but %d artifact(s) write that file; a "+
+						"whole-file artifact erases everything else written there",
+					o.name, rel, len(owners)))
+				continue
+			}
+			if prev, dup := seenRegion[o.region]; dup {
+				problems = append(problems, fmt.Sprintf(
+					"artifacts.%s.region: `%s` in %s is already owned by artifacts.%s — two "+
+						"artifacts splicing into one region never reach a fixed point",
+					o.name, o.region, rel, prev))
+				continue
+			}
+			seenRegion[o.region] = o.name
+		}
+	}
+	return problems
+}
+
+// validateRegion checks the marker-ownership half of an artifact declaration.
+//
+// The `front:`/`ticket_notes:` refusal is the load-bearing one. A marker-owned artifact does
+// NOT write the file's frontmatter — the file does, and it existed before the artifact did — so
+// a `front:` block here is config that renders nowhere. That is worse than merely useless: the
+// pre-write gate checks the MERGED document against the repo's schema rule, so the operator
+// would see their `front:` apparently validated while the bytes on disk came from somewhere
+// else entirely.
+func validateRegion(key string, spec ArtifactSpec) []string {
+	region := strings.TrimSpace(spec.Region)
+	if region == "" {
+		return nil
+	}
+	var problems []string
+	if !regionNameRe.MatchString(region) {
+		problems = append(problems, fmt.Sprintf(
+			"%s.region: %q is not a region name — use lowercase words joined by `-`; the name is "+
+				"interpolated into an HTML comment that is then searched for in an existing "+
+				"document, so an arbitrary one can match and overwrite arbitrary prose", key, region))
+	}
+	if len(spec.Front) > 0 {
+		problems = append(problems, fmt.Sprintf(
+			"%s.front: a marker-owned artifact does not write frontmatter — the file it writes "+
+				"into owns its own, and this block would render nowhere", key))
+	}
+	if len(spec.TicketNotes) > 0 {
+		problems = append(problems, fmt.Sprintf(
+			"%s.ticket_notes: a marker-owned artifact writes no footer, so these notes render "+
+				"nowhere", key))
+	}
+	return problems
+}
+
+// validateNav checks the `nav:` block, and checks that it is attached to the renderer that
+// reads it.
+//
+// Both directions are errors. A `nav` artifact with no block cannot know what to enumerate; a
+// block on some other renderer is dead config, which looks exactly like config that stopped
+// working.
+func validateNav(cfg *Config, key, renderer string, spec ArtifactSpec) []string {
+	var problems []string
+	if renderer != "nav" {
+		if spec.Nav != nil {
+			problems = append(problems, fmt.Sprintf(
+				"%s.nav: the %q renderer does not read a `nav:` block, so this one renders nowhere",
+				key, renderer))
+		}
+		return problems
+	}
+	if spec.Nav == nil {
+		problems = append(problems, fmt.Sprintf(
+			"%s.nav: missing — the nav renderer has nothing to enumerate without it", key))
+		return problems
+	}
+	if entries := strings.TrimSpace(spec.Nav.Entries); !slices.Contains(navEntryKinds(), entries) {
+		problems = append(problems, fmt.Sprintf(
+			"%s.nav.entries: %q is not one of %v", key, entries, navEntryKinds()))
+	}
+	// NO DEFAULT. Falling back to some key name would make every description silently degrade
+	// to the H1 in a repo that spells it differently, and a silent degradation in the column
+	// that carries all the curation is the exact failure this key exists to prevent.
+	if strings.TrimSpace(spec.Nav.DescriptionKey) == "" {
+		problems = append(problems, fmt.Sprintf(
+			"%s.nav.description_key: missing — name the frontmatter key that carries each "+
+				"target's one-line summary (this repo's is `bluf`), or every description falls "+
+				"back to the H1 without saying so", key))
+	} else if len(cfg.KeyOrder) > 0 && !slices.Contains(cfg.KeyOrder, strings.TrimSpace(spec.Nav.DescriptionKey)) {
+		problems = append(problems, fmt.Sprintf(
+			"%s.nav.description_key: %q is not in key_order %v, so no document in this repo is "+
+				"expected to carry it and every description would fall back to the H1",
+			key, spec.Nav.DescriptionKey, cfg.KeyOrder))
+	}
+	if d := strings.TrimSpace(spec.Nav.Dir); d != "" {
+		if clean := path.Clean(d); path.IsAbs(d) || clean == ".." || strings.HasPrefix(clean, "../") {
+			problems = append(problems, fmt.Sprintf(
+				"%s.nav.dir: %q escapes the repository", key, spec.Nav.Dir))
+		}
+	}
+	return problems
 }
 
 // validateArtifactScopes rejects a scope that matches NO component, naming the key.
@@ -273,6 +422,37 @@ func validateArtifactScopes(ctx *Ctx) error {
 	return errors.New("config:\n  " + strings.Join(problems, "\n  "))
 }
 
+// validateNavRows rejects a nav whose enumeration finds NOTHING, naming the key.
+//
+// Same reasoning as validateArtifactScopes, and the same failure it refuses: a nav table with a
+// header, a separator and no rows reads as "this section is empty" when it means "`nav.dir` is
+// wrong, or `entries:` is the wrong kind, or the repo's `exclude:` swallowed the directory".
+// One of those is a fact about the world and three are bugs, and the rendered table cannot tell
+// them apart.
+//
+// It cannot live in validateArtifacts for the same reason: whether a directory holds documents
+// is a fact about the repository, and validateArtifacts deliberately sees only the Config.
+func validateNavRows(ctx *Ctx) error {
+	var problems []string
+	for _, a := range Artifacts(ctx.Cfg) {
+		if ctx.Cfg.RendererFor(a.Name, a.Spec) != "nav" || a.Spec.Nav == nil {
+			continue
+		}
+		if len(navRows(ctx, a.Spec)) > 0 {
+			continue
+		}
+		problems = append(problems, fmt.Sprintf(
+			"artifacts.%s.nav: enumerating %q as %q matched no document, so %s would be a table "+
+				"with no rows — which reads as \"this section is empty\" when it means the "+
+				"enumeration is wrong",
+			a.Name, navDir(ctx.Cfg, a.Spec), strings.TrimSpace(a.Spec.Nav.Entries), a.Rel))
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.New("config:\n  " + strings.Join(problems, "\n  "))
+}
+
 // gate runs the artifact's own bytes through the repo's own frontmatter and taxonomy rules
 // BEFORE anything is written, and refuses to write on any finding.
 //
@@ -295,15 +475,23 @@ func gate(ctx *Ctx, a Artifact, content string) error {
 	if len(findings) == 0 {
 		return nil
 	}
+	blame, remedy := blameKey, "fix the named config key(s), or the repo vocabulary they are checked against"
+	if a.Region != "" {
+		// A marker-owned artifact merges its table into a document it did not write, so the
+		// finding is almost always about the prose around it.
+		blame = func(*Config, Artifact, string) string { return blameRegion(a) }
+		remedy = "fix the document's own frontmatter or structure — a marker-owned artifact " +
+			"writes only the region, so this finding is about the file, not about config"
+	}
 	lines := make([]string, 0, len(findings))
 	for _, f := range findings {
-		lines = append(lines, fmt.Sprintf("%s: %s [%s]", blameKey(ctx.Cfg, a, f.Message), f.Message, f.Rule))
+		lines = append(lines, fmt.Sprintf("%s: %s [%s]", blame(ctx.Cfg, a, f.Message), f.Message, f.Rule))
 	}
 	sort.Strings(lines)
 	return fmt.Errorf(
 		"refusing to write %s — docsgen would be emitting a document its own ruleset rejects:\n  %s\n"+
-			"fix the named config key(s), or the repo vocabulary they are checked against",
-		a.Rel, strings.Join(lines, "\n  "))
+			"%s",
+		a.Rel, strings.Join(lines, "\n  "), remedy)
 }
 
 // blameKey maps a finding back to the config key that produced it, so the error a human reads
@@ -336,6 +524,15 @@ func blameKey(cfg *Config, a Artifact, msg string) string {
 	return "artifacts." + a.Name
 }
 
+// blameRegion is blameKey for a marker-owned artifact, and it deliberately does NOT name a
+// config key.
+//
+// The document's frontmatter, its headings and its footer are the FILE's, written by whoever
+// wrote the prose; the artifact contributes one table. Sending that reader to edit
+// `artifacts.<name>.front` — a block validateRegion refuses to let them have — would be a
+// wrong answer delivered confidently.
+func blameRegion(a Artifact) string { return a.Rel }
+
 type GenStatus string
 
 const (
@@ -351,6 +548,45 @@ type GenResult struct {
 	Status GenStatus
 }
 
+// resolveContent produces the exact bytes an artifact's file should hold.
+//
+// The two ownership models differ ONLY here, and the difference is which bytes get normalised.
+//
+//   - A whole-file artifact normalises everything it renders, because it wrote everything.
+//
+//   - A marker-owned artifact normalises ONLY the region body, then splices it between markers
+//     in the existing bytes. Running the normaliser over the merged document would be the
+//     obvious thing and is wrong: these files are not prettier fixed points — this repo has a
+//     611-file formatting backlog — so normalising the whole thing would silently reformat
+//     editorial prose the artifact does not own, and the diff would be indistinguishable from a
+//     content change. Prose outside the markers must come out byte-identical, which means never
+//     touching it.
+//
+// A marker-owned artifact whose file does not exist is an ERROR, not a creation. There is no
+// prose to preserve and no markers to find, so writing the table alone would manufacture a
+// document that claims to be a hand-written nav and is not — and the next run would then
+// "preserve" the emptiness around it forever.
+func resolveContent(ctx *Ctx, a Artifact, old string, absent bool) (string, error) {
+	body, err := normalizeMarkdownChecked(a.Render(ctx))
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", a.Rel, err)
+	}
+	if a.Region == "" {
+		return body, nil
+	}
+	if absent {
+		openMarker, closeMarker := regionMarkers(a.Region)
+		return "", fmt.Errorf(
+			"%s: marker-owned artifact `artifacts.%s` but the file does not exist — docsgen "+
+				"writes only the span between\n  %s\n  %s\n"+
+				"and will not create the document around them, because a generated file wearing "+
+				"a hand-written document's name is exactly what marker ownership exists to avoid. "+
+				"Create the file with its prose and both markers first",
+			a.Rel, a.Name, openMarker, closeMarker)
+	}
+	return spliceRegion(a.Rel, old, a.Region, body)
+}
+
 // Generate renders every artifact. In check mode nothing is written and any difference is
 // reported, which is what makes `docsgen check` usable as a CI gate.
 func Generate(ctx *Ctx, check bool) ([]GenResult, error) {
@@ -360,19 +596,11 @@ func Generate(ctx *Ctx, check bool) ([]GenResult, error) {
 	if err := validateArtifactScopes(ctx); err != nil {
 		return nil, err
 	}
+	if err := validateNavRows(ctx); err != nil {
+		return nil, err
+	}
 	var out []GenResult
 	for _, a := range Artifacts(ctx.Cfg) {
-		content, err := normalizeMarkdownChecked(a.Render(ctx))
-		if err != nil {
-			return out, fmt.Errorf("%s: %w", a.Rel, err)
-		}
-		// Before the write, and before the comparison check mode makes: an artifact whose bytes
-		// the repo's own rules reject is refused in BOTH modes. check writes nothing, so it
-		// cannot emit the bad document — but it would otherwise report `unchanged` for a file
-		// that is only unchanged because the same rejected bytes are already on disk.
-		if err := gate(ctx, a, content); err != nil {
-			return out, err
-		}
 		abs := filepath.Join(ctx.Root, a.Rel)
 
 		// Only a genuine not-exist means "never generated". Treating every read failure as
@@ -380,10 +608,25 @@ func Generate(ctx *Ctx, check bool) ([]GenResult, error) {
 		// get REWRITTEN under generate — silently relaxing it to 0644 and breaking invariant 3.
 		// A target that is a directory, or one whose parent is unwritable, misreported the same
 		// way and then failed later with an error about the wrong thing.
+		//
+		// The read comes BEFORE the render because a marker-owned artifact's content is the
+		// existing file with one span replaced: there is nothing to render into without it.
 		old, rerr := os.ReadFile(abs)
 		absent := rerr != nil && errors.Is(rerr, fs.ErrNotExist)
 		if rerr != nil && !absent {
 			return out, fmt.Errorf("%s: reading the existing artifact: %w", a.Rel, rerr)
+		}
+
+		content, err := resolveContent(ctx, a, string(old), absent)
+		if err != nil {
+			return out, err
+		}
+		// Before the write, and before the comparison check mode makes: an artifact whose bytes
+		// the repo's own rules reject is refused in BOTH modes. check writes nothing, so it
+		// cannot emit the bad document — but it would otherwise report `unchanged` for a file
+		// that is only unchanged because the same rejected bytes are already on disk.
+		if err := gate(ctx, a, content); err != nil {
+			return out, err
 		}
 
 		switch {

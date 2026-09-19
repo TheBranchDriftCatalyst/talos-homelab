@@ -1,11 +1,28 @@
+---
+type: architecture
+status: current
+covers:
+  - traefik
+  - unifi-port-forward
+freshness: tracks-code
+tickets:
+  - TALOS-a8vo
+bluf: Traefik routes on `Host()` regardless of entrypoint, so internal services are WAN-reachable by Host-spoof; the fix is a second, unforwarded LAN entrypoint pair rather than inverting the WAN entrypoint default.
+---
+
 # P0-4 — Host-spoof remediation: dedicated LAN entrypoint
 
-> Epic **TALOS-a8vo**, P0-4. Companion to `ingress-accessibility-audit-2026-09.md`.
-> Status: **design + scaffolding landed; route migration is a live batched cutover for the main session.**
+> Epic **TALOS-a8vo**, P0-4. The companion audit that opened this
+> (`ingress-accessibility-audit-2026-09.md`) has since been pruned from `docs/`; this page is
+> the surviving record of the design.
+> Status: **entrypoints and middleware chains have landed in the manifests; zero IngressRoutes
+> have been migrated onto them.**
 
 ## TL;DR
 
-- **Exposure:** 66/136 hostnames have no `ipAllowList`/`forwardAuth`. The origin WAN IP is published at
+- **Exposure:** roughly half the routed hostnames have no `ipAllowList`/`forwardAuth` — the
+  exact ratio came from the since-pruned audit, so re-measure with
+  `tests/ingress-accessibility/` rather than quoting it. The origin WAN IP is published at
   the `knowledgedump.space` apex (grey-cloud), and Traefik routes on `Host:` **regardless of which
   entrypoint** the request arrived on. So an attacker who hits `origin_ip:443` with
   `Host: grafana.talos00` is routed straight to Grafana — every internal `*.talos00` service is
@@ -33,7 +50,7 @@ Traefik binds entrypoint-default HTTP middlewares via
 is **no per-router opt-out**. Today `web`/`websecure` carry `strip-authentik-headers,bouncer` as
 defaults. Adding `lan-only` there would apply it to the public routes too:
 
-- Cloudflare-proxied public hosts (e.g. `zipline.amberdark.net`) arrive from Cloudflare edge IPs —
+- Cloudflare-proxied public hosts (e.g. `zipline.knowledgedump.space`) arrive from Cloudflare edge IPs —
   not RFC1918 — so `lan-only` (10/8+172.16/12+192.168/16+loopback) would **403 them**.
 - Grey-cloud public hosts (`forge`/`registry`/apex) arrive from real WAN client IPs — also blocked.
 
@@ -51,8 +68,9 @@ not forwarding the LAN hostPorts** and **(b)** the `lan-only` default middleware
 `infrastructure/base/traefik/helmrelease.yaml`:
 
 1. **New entrypoints** `weblan` (port/hostPort 8081) and `websecurelan` (port/hostPort 8443).
-   No hostPort collisions in the repo (verified). They are **INERT** until routes declare them —
-   with no router attached they return 404, so merging this alone changes nothing user-visible.
+   No hostPort collisions in the repo. They are **INERT** until routes declare them — with no
+   router attached they return 404, so landing them alone changed nothing user-visible, which
+   is still true: no IngressRoute in the repo names either entrypoint.
 2. **Default middleware chains** for the LAN entrypoints:
    `--entrypoints.weblan.http.middlewares=traefik-strip-authentik-headers@kubernetescrd,traefik-bouncer@kubernetescrd,traefik-lan-only@kubernetescrd`
    (and the same for `websecurelan`). Same strip+bouncer as web/websecure, **plus** `lan-only`.
@@ -67,21 +85,20 @@ No IngressRoutes were migrated in this branch — see the cutover plan below.
 
 Enumerated from the manifests (routes whose `Host()` is on a public zone):
 
-| Host | Source | Notes |
-|------|--------|-------|
-| `linkwarden.knowledgedump.space` | `applications/home-automation/base/linkwarden/ingressroute.yaml` | web+websecure |
-| `whoami.knowledgedump.space` | `infrastructure/base/whoami/ingressroute.yaml` | web+websecure (live-probe target L5) |
-| `auth.knowledgedump.space` | `infrastructure/base/authentik/ingressroute.yaml` | login plane |
-| `auth.priv.knowledgedump.space` | `infrastructure/base/authentik/ingressroute.yaml` | web+websecure; **review**: `priv` on a public zone |
-| `forge.knowledgedump.space` | `infrastructure/base/forgejo/ingressroute.yaml` | web+websecure |
-| `registry.knowledgedump.space` | `infrastructure/base/registry/zot/ingressroute.yaml` | web+websecure |
-| `trap.knowledgedump.space` | `infrastructure/base/security/iocaine/ingressroute.yaml` | tarpit |
-| `bg.knowledgedump.space` | `infrastructure/base/authentik/login-background/ingressroute.yaml` | login background asset |
-| `analytics.knowledgedump.space` | `applications/crossplane-demo/plausible/ingressroute.yaml` | `/js/` + `/api/event` only |
-| `zipline.amberdark.net` | `applications/zipline/ingressroute.yaml` | web+websecure |
-| `auth.amberdark.net` / `amberdark.net` apex | authentik amberdark outpost (HostRegexp, `infrastructure/base/authentik/ingressroute.yaml`) | the ONE outpost callback route |
-| authentik outpost callback route | `infrastructure/base/authentik/ingressroute.yaml` (`/outpost.goauthentik.io`) | must stay unauth on websecure |
-| `boomtime.knowledgedump.space` | **ArgoCD-managed** (sister repo, not in this Flux tree) | verify separately; drift-allowlist |
+| Host                             | Source                                                                        | Notes                                                                                                                                                                                                                                        |
+| -------------------------------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `linkwarden.knowledgedump.space` | `applications/home-automation/base/linkwarden/ingressroute.yaml`              | web+websecure                                                                                                                                                                                                                                |
+| `whoami.knowledgedump.space`     | `infrastructure/base/whoami/ingressroute.yaml`                                | web+websecure (live-probe target L5)                                                                                                                                                                                                         |
+| `auth.knowledgedump.space`       | `infrastructure/base/authentik/ingressroute.yaml`                             | login plane                                                                                                                                                                                                                                  |
+| `auth.priv.knowledgedump.space`  | `infrastructure/base/authentik/ingressroute.yaml`                             | web+websecure; **review**: `priv` on a public zone                                                                                                                                                                                           |
+| `forge.knowledgedump.space`      | `infrastructure/base/forgejo/ingressroute.yaml`                               | web+websecure                                                                                                                                                                                                                                |
+| `registry.knowledgedump.space`   | `infrastructure/base/registry/zot/ingressroute.yaml`                          | web+websecure                                                                                                                                                                                                                                |
+| `trap.knowledgedump.space`       | `infrastructure/base/security/iocaine/ingressroute.yaml`                      | tarpit                                                                                                                                                                                                                                       |
+| `bg.knowledgedump.space`         | `infrastructure/base/authentik/login-background/ingressroute.yaml`            | login background asset                                                                                                                                                                                                                       |
+| `analytics.knowledgedump.space`  | `applications/crossplane-demo/plausible/ingressroute.yaml`                    | `/js/` + `/api/event` only                                                                                                                                                                                                                   |
+| `zipline.knowledgedump.space`    | `applications/zipline/ingressroute.yaml`                                      | web+websecure                                                                                                                                                                                                                                |
+| authentik outpost callback route | `infrastructure/base/authentik/ingressroute.yaml` (`/outpost.goauthentik.io`) | the ONE outpost route; must stay unauth on websecure. Its HostRegexp covers `*.talos00` **and** `*.priv.knowledgedump.space`, so migrating `*.talos00` routes to the LAN entrypoints without moving this one breaks every forward-auth login |
+| `boomtime.knowledgedump.space`   | **ArgoCD-managed** (sister repo, not in this Flux tree)                       | verify separately; drift-allowlist                                                                                                                                                                                                           |
 
 Everything else — `*.talos00`, `*.priv.talos00`, `teak.talos00`, `homepage.talos00`,
 `${CLUSTER_DOMAIN}`/`${DOMAIN}` (both = `talos00`) — is internal and migrates to the LAN entrypoints.
@@ -91,10 +108,16 @@ Everything else — `*.talos00`, `*.priv.talos00`, `teak.talos00`, `homepage.tal
 Do this as **verified batches**, not one big commit, because each moved service must be reachable on
 the new port and TLS must resolve on `websecurelan`.
 
-**Step 0 — router (do FIRST, and confirm):** ensure the edge router / port-forward **does NOT**
-forward `:8081` or `:8443` to the nodes. WAN reaches only `:80`/`:443`. (No change needed if only
-80/443 are forwarded today — just confirm.) `web`/`websecure` and the public routes are untouched,
-so public services keep working throughout.
+**Step 0 — router (do FIRST; it is currently WRONG):** the isolation story assumes the edge
+router does **not** forward `:8081` or `:8443` to the nodes. It does.
+`infrastructure/base/unifi-port-forward/portforward-rules.yaml` declares a `cluster-web` rule
+with `externalPort: "80,443,8443"` → `192.168.1.54`, so **`websecurelan` is WAN-reachable
+today**. Migrating an internal route onto `websecurelan` before that rule is narrowed to
+`80,443` would move it from one WAN-exposed entrypoint to another, leaving only the `lan-only`
+middleware between the internet and it — which is defence-in-depth, not the perimeter this
+design promised. Narrow the rule first, then confirm, then migrate. (The comment in
+`infrastructure/base/traefik/helmrelease.yaml` asserting these hostPorts are not forwarded
+predates that rule and is wrong for the same reason.)
 
 **Step 1 — communicate the LAN port change.** Internal bare-hostname access changes from
 `http://grafana.talos00` (implicit :80/:443) to `https://grafana.talos00:8443` (or `:8081` plaintext).

@@ -21,7 +21,7 @@ LAN". This runbook is how to put the trap on the internet, how to confirm it is 
 to take it back off, and — the long half — what an attacker who fully compromises it can
 actually reach.
 
-Read [README.md](README.md) first for the topology; this file assumes it.
+Read [README.md](../README.md) first for the topology; this file assumes it.
 
 ## TL;DR
 
@@ -151,7 +151,7 @@ separately.
 | `allowPrivilegeEscalation`          | false                                                  |
 | Capabilities                        | all dropped                                            |
 | Seccomp                             | `RuntimeDefault`, set pod-level so sidecars inherit it |
-| Service-account token               | not projected — see [README.md](README.md#the-cage)    |
+| Service-account token               | not projected — see [README.md](../README.md#the-cage) |
 | `readOnlyRootFilesystem` (cowrie)   | **false** — see below                                  |
 | `readOnlyRootFilesystem` (sidecars) | true                                                   |
 | Namespace Pod Security Standard     | `baseline` enforced                                    |
@@ -185,7 +185,7 @@ Downloads are named by their content hash; session recordings are replayable wit
 `cowrie playlog`. Neither is a log line, so the Loki pipeline does not carry them. The full
 storage design — why node-local rather than NFS, why the archive job mounts the source
 read-only, and why the archive volume is `noexec` — is in
-[README.md](README.md#captured-artifacts-never-touch-shared-storage-directly).
+[README.md](../README.md#captured-artifacts-never-touch-shared-storage-directly).
 
 > **Handling rule:** every archive is live malware. Analyse only in an isolated VM. Never
 > extract or execute one on a workstation. The `noexec` mount and the restrictive permissions

@@ -21,7 +21,7 @@ into a ban everywhere else — see [../README.md](../README.md) for how that ban
 close the trap.
 
 For the exposure posture, the containment analysis and the go-live procedure, read
-[cowrie-public-exposure.md](cowrie-public-exposure.md).
+[cowrie-public-exposure.md](docs/cowrie-public-exposure.md).
 
 ## TL;DR
 

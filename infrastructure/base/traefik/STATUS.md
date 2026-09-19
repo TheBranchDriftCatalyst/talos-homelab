@@ -8,14 +8,14 @@
 
 ## 📊 Current Status
 
-| Metric                    | Value               | Health       |
-| ------------------------- | ------------------- | ------------ |
-| **Deployment Status**     | ✅ Deployed         | 🟢 Healthy   |
-| **Version**               | v3.5.x (Helm v37.x) | 🟢 Current   |
-| **Uptime**                | >99%                | 🟢 Stable    |
-| **IngressRoutes Managed** | 12+                 | 🟢 Active    |
-| **TLS/HTTPS**             | ❌ Not Configured   | 🔴 HTTP Only |
-| **Metrics Endpoint**      | ✅ Prometheus       | 🟢 Enabled   |
+| Metric                    | Value               | Health     |
+| ------------------------- | ------------------- | ---------- |
+| **Deployment Status**     | ✅ Deployed         | 🟢 Healthy |
+| **Version**               | v3.5.x (Helm v37.x) | 🟢 Current |
+| **Uptime**                | >99%                | 🟢 Stable  |
+| **IngressRoutes Managed** | 12+                 | 🟢 Active  |
+| **TLS/HTTPS**             | ✅ Configured       | 🟢 Enabled |
+| **Metrics Endpoint**      | ✅ Prometheus       | 🟢 Enabled |
 
 **Health Legend:** 🟢 Healthy | 🟡 Degraded | 🔴 Down | 🔵 Development
 
@@ -153,19 +153,26 @@ securityContext:
 
 ### Files Structure
 
-```
+```text
 infrastructure/base/traefik/
 ├── STATUS.md (this file)
-├── helmrelease.yaml (FluxCD HelmRelease - not active)
+├── kustomization.yaml
 ├── namespace.yaml
-└── kustomization.yaml
-
-kubernetes/
-└── traefik-values.yaml (Helm values)
-
-scripts/
-└── setup-infrastructure.sh (Traefik bootstrap script)
+├── helmrelease.yaml                    # Flux HelmRelease — this IS how Traefik is deployed.
+│                                       #   Chart values are inline under `spec.values`;
+│                                       #   ${DOMAIN} is substituted by Flux postBuild.
+├── service-internal.yaml
+├── middlewares.yaml
+├── tlsstore.yaml                       # default cert + the SNI wildcard list
+├── homepage-wildcard-certificate.yaml  # *.homepage.talos00 wildcard (TALOS-xgrl.18)
+├── components/
+│   └── lan-only/                       # reusable kustomize component
+└── tests/
+    └── test_traefik_dr.py
 ```
+
+There is no `kubernetes/traefik-values.yaml` and no `scripts/setup-infrastructure.sh` — both
+were listed here historically and neither exists in the repo any more.
 
 ---
 
@@ -202,7 +209,6 @@ scripts/
 - **Impact:** Cannot push images via Traefik ingress (registry.talos00)
 - **Cause:** HTTP blob upload returns 404 via Traefik proxy
 - **Workaround:** Use kubectl port-forward to localhost:5000
-- **Related Issue:** See [infrastructure/base/registry/STATUS.md](../registry/STATUS.md)
 - **Fix ETA:** Under investigation
 
 ### 3. Insecure Dashboard Access
@@ -219,7 +225,7 @@ scripts/
 - **Impact:** Mixed usage of `.lab` (values.YAML) vs `.talos00` (IngressRoutes)
 - **Cause:** Migration from initial setup
 - **Current:** All IngressRoutes use `.talos00`
-- **Fix ETA:** Standardize to `.talos00` (see TODO.md)
+- **Fix ETA:** Standardize to `.talos00`
 
 ---
 
@@ -469,7 +475,6 @@ traefik_tls_certs_not_after
 - [IngressRoute CRD Reference](https://doc.traefik.io/traefik/routing/providers/kubernetes-crd/)
 - [Middleware Reference](https://doc.traefik.io/traefik/middlewares/overview/)
 - [cert-manager Integration](https://cert-manager.io/docs/usage/traefik/)
-- [TODO.md - Traefik Section](../../../TODO.md#traefik)
 
 ---
 

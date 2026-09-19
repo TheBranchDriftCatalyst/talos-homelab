@@ -1,3 +1,12 @@
+---
+type: reference
+status: current
+covers:
+  - cluster
+freshness: tracks-cluster
+bluf: Which operator owns each CRD group, where that operator is declared in this repo, and which CRDs are installed but carry no custom resources at all.
+---
+
 # Cluster CRDs & Operators
 
 > **Living reference.** Snapshot of every operator/platform CustomResourceDefinition (CRD)
@@ -33,40 +42,40 @@ Snapshot taken **2026-08-09** against the live cluster (`kubectl get crd`).
 CR counts are live instance counts at snapshot time. "0" means the operator/CRD is installed but no
 custom resources exist yet.
 
-| Domain | Operator / Project | Key CRDs (Kind) | Repo path | In use? (CRs) |
-| --- | --- | --- | --- | --- |
-| **GitOps** | Flux (gotk) | Kustomization, HelmRelease, HelmChart, HelmRepository, GitRepository, OCIRepository, Alert, Provider, Receiver | `clusters/catalyst-cluster/flux-system/` | Yes — Kustomization 51, HelmRelease 35, HelmChart 35, HelmRepository 26, GitRepository 1, Alert 2 |
-| **GitOps** | Argo CD | Application, ApplicationSet, AppProject | `infrastructure/base/argocd/` | Yes — Application 8, AppProject 1 |
-| **GitOps** | Argo CD Image Updater | ImageUpdater | `infrastructure/base/argocd/image-updater/` | Yes — ImageUpdater 3 |
-| **GitOps** | Argo Workflows | Workflow, WorkflowTemplate, CronWorkflow (+8 more) | `infrastructure/base/operators/argo-workflows/` | Barely — WorkflowTemplate 1, no active Workflows |
-| **Networking / CNI** | Cilium | CiliumIdentity, CiliumEndpoint, CiliumNetworkPolicy, CiliumNode, CiliumLoadBalancerIPPool, CiliumL2AnnouncementPolicy (11 total) | `infrastructure/base/cilium/` | Yes — Identity 256, Endpoint 253, NetworkPolicy 6, Node 5, LBIPPool 1, L2 1 |
-| **Networking / CNI** | external-dns | DNSEndpoint | `infrastructure/base/external-dns/` | Yes — DNSEndpoint 1 |
-| **Networking / CNI** | Gateway API (SIG) | Gateway, GatewayClass, HTTPRoute, GRPCRoute, ReferenceGrant, BackendTLSPolicy | bundled w/ Cilium | **No — 0 CRs** (ingress via Traefik) |
-| **Ingress & Certs** | Traefik | IngressRoute, IngressRouteTCP/UDP, Middleware, TLSStore, TLSOption, TraefikService, ServersTransport | `infrastructure/base/traefik/` (CRDs `bootstrap-crds/`) | Yes — IngressRoute 105, Middleware 16, IngressRouteTCP 4, TLSStore 1, TLSOption 1 |
-| **Ingress & Certs** | Traefik Hub | API, APIPortal, APIPlan, ManagedApplication (15 total) | bundled w/ Traefik CRDs | **No — 0 CRs** (Hub not used) |
-| **Ingress & Certs** | cert-manager | Certificate, CertificateRequest, Issuer, ClusterIssuer, Order, Challenge | `infrastructure/base/cert-manager/` | Yes — CertRequest 18, Certificate 15, Issuer 8, ClusterIssuer 4, Order 4 |
-| **Ingress & Certs** | trust-manager | Bundle | `infrastructure/base/cert-manager/trust-manager.yaml` | Installed — 0 CRs |
-| **Secrets** | External Secrets Operator | ExternalSecret, SecretStore, ClusterSecretStore, ClusterExternalSecret, PushSecret (+ 11 generators) | `infrastructure/base/external-secrets/` | Yes — ExternalSecret 114, SecretStore 1, ClusterSecretStore 1, ClusterExternalSecret 1 |
-| **Databases** | CloudNativePG (CNPG) | Cluster, Pooler, Backup, ScheduledBackup, ImageCatalog | `infrastructure/base/databases/cloudnative-pg/` | Yes — Cluster 8, ScheduledBackup 1, Backup 1 |
-| **Cache** | Dragonfly operator | Dragonfly | `infrastructure/base/operators/dragonfly-operator/` | Yes — Dragonfly 2 |
-| **Messaging** | RabbitMQ cluster + topology operator | RabbitmqCluster, Queue, Exchange, Binding, User, Vhost, Permission, Policy (14 total) | `infrastructure/base/operators/rabbitmq-operator/` | Yes — RabbitmqCluster 2, Queue 2 |
-| **NoSQL / object / search** | MongoDB (mongodb-kubernetes) | MongoDBCommunity (community) + MongoDB/MongoDBUser/OpsManager (enterprise) | `infrastructure/base/databases/mongodb-operator/` | Partial — MongoDBCommunity 1; enterprise CRDs 0 |
-| **NoSQL / object / search** | MinIO operator | Tenant, PolicyBinding | `infrastructure/base/databases/minio-operator/` + `infrastructure/base/minio/` | Yes — Tenant 1 |
-| **NoSQL / object / search** | ClickHouse (Altinity) | ClickHouseInstallation, ClickHouseInstallationTemplate, ClickHouseKeeperInstallation | `infrastructure/base/operators/clickhouse-operator/` | Yes — ClickHouseInstallation 2 |
-| **NoSQL / object / search** | OpenSearch operator | OpenSearchCluster, OpensearchUser, OpensearchRole (10 kinds × 2 API groups) | `infrastructure/base/operators/opensearch-operator/` | Yes — OpenSearchCluster 1 (`opensearch.org`); `opensearch.opster.io` 0 |
-| **Virtualization** | KubeVirt + CDI | KubeVirt, VirtualMachine, VirtualMachineInstance, DataVolume, VM(Cluster)Instancetype/Preference | `infrastructure/base/kubevirt/` | Yes — ClusterInstancetype 48, ClusterPreference 42, VM 1, KubeVirt 1, CDI 1, StorageProfile 3 |
-| **Observability** | Prometheus operator (CRDs) | ServiceMonitor, PodMonitor, PrometheusRule, Prometheus, Alertmanager, ScrapeConfig, Probe | CRDs `bootstrap-crds/`; consumed by `monitoring/v2-otel/alloy` | Partial — ServiceMonitor 36, PrometheusRule 15, PodMonitor 9; **no Prometheus/Alertmanager CR** |
-| **Observability** | Grafana operator | Grafana, GrafanaDashboard, GrafanaFolder, GrafanaDatasource (+ alerting kinds) | `infrastructure/base/monitoring/grafana-operator/` | Yes — Dashboard 44, Folder 12, Datasource 3, Grafana 1 |
-| **Observability** | OpenTelemetry operator | OpenTelemetryCollector, Instrumentation, TargetAllocator, OpAMPBridge | `infrastructure/base/monitoring/v2-otel/operators/otel-operator/` | Installed — 0 CRs |
-| **Observability** | Tempo operator | TempoStack, TempoMonolithic | `infrastructure/base/monitoring/v2-otel/operators/tempo-operator/` | Installed — 0 CRs |
-| **Observability** | Mimir rollout-operator | ReplicaTemplate, ZoneAwarePodDisruptionBudget | bundled w/ `monitoring/v2-otel/mimir` (mimir-distributed chart) | Installed — 0 CRs |
-| **Autoscaling** | KEDA | ScaledObject, ScaledJob, TriggerAuthentication, CloudEventSource | `infrastructure/base/operators/keda/` | Yes — ScaledObject 1 |
-| **Autoscaling** | VPA (via Goldilocks) | VerticalPodAutoscaler, VerticalPodAutoscalerCheckpoint | `infrastructure/base/infra-control/goldilocks/` | Yes — VPA 70, Checkpoint 78 |
-| **Policy** | Kyverno | ClusterPolicy, Policy, PolicyException, ValidatingPolicy, PolicyReport (7+11+2 kinds) | `infrastructure/base/kyverno/` (policies in `kyverno-policies/`) | Yes — ClusterPolicy 1, PolicyReport 8 |
-| **Backup** | Velero | Backup, Restore, Schedule, PodVolumeBackup, BackupRepository, BackupStorageLocation (13 total) | `infrastructure/base/backup/` | Yes (heavy) — PodVolumeBackup 1211, Backup 44, BackupRepository 13, Schedule 3 |
-| **Infra-as-code** | Crossplane (+ providers) | Composition, CompositeResourceDefinition, Provider, Function, ManagedResourceDefinition, Object | `infrastructure/base/operators/crossplane/` | Demo-level — ManagedResourceDefinition 4, DeploymentRuntimeConfig 2, Provider 1, Object 1 |
-| **Hardware / nodes** | Intel Device Plugins | GpuDevicePlugin, FpgaDevicePlugin, QatDevicePlugin (7 total) + fpga.intel.com | `infrastructure/base/intel-gpu/` (CRDs `bootstrap-crds/`) | Partial — GpuDevicePlugin 1; other plugins 0 |
-| **Hardware / nodes** | Node Feature Discovery | NodeFeature, NodeFeatureRule, NodeFeatureGroup | `infrastructure/base/intel-gpu/nfd-helmrelease.yaml` | Yes — NodeFeature 4, NodeFeatureRule 1 |
+| Domain                      | Operator / Project                   | Key CRDs (Kind)                                                                                                                  | Repo path                                                                      | In use? (CRs)                                                                                     |
+| --------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| **GitOps**                  | Flux (gotk)                          | Kustomization, HelmRelease, HelmChart, HelmRepository, GitRepository, OCIRepository, Alert, Provider, Receiver                   | `clusters/catalyst-cluster/flux-system/`                                       | Yes — Kustomization 51, HelmRelease 35, HelmChart 35, HelmRepository 26, GitRepository 1, Alert 2 |
+| **GitOps**                  | Argo CD                              | Application, ApplicationSet, AppProject                                                                                          | `infrastructure/base/argocd/`                                                  | Yes — Application 8, AppProject 1                                                                 |
+| **GitOps**                  | Argo CD Image Updater                | ImageUpdater                                                                                                                     | `infrastructure/base/argocd/image-updater/`                                    | Yes — ImageUpdater 3                                                                              |
+| **GitOps**                  | Argo Workflows                       | Workflow, WorkflowTemplate, CronWorkflow (+8 more)                                                                               | `infrastructure/base/operators/argo-workflows/`                                | Barely — WorkflowTemplate 1, no active Workflows                                                  |
+| **Networking / CNI**        | Cilium                               | CiliumIdentity, CiliumEndpoint, CiliumNetworkPolicy, CiliumNode, CiliumLoadBalancerIPPool, CiliumL2AnnouncementPolicy (11 total) | `infrastructure/base/cilium/`                                                  | Yes — Identity 256, Endpoint 253, NetworkPolicy 6, Node 5, LBIPPool 1, L2 1                       |
+| **Networking / CNI**        | external-dns                         | DNSEndpoint                                                                                                                      | `infrastructure/base/external-dns/`                                            | Yes — DNSEndpoint 1                                                                               |
+| **Networking / CNI**        | Gateway API (SIG)                    | Gateway, GatewayClass, HTTPRoute, GRPCRoute, ReferenceGrant, BackendTLSPolicy                                                    | bundled w/ Cilium                                                              | **No — 0 CRs** (ingress via Traefik)                                                              |
+| **Ingress & Certs**         | Traefik                              | IngressRoute, IngressRouteTCP/UDP, Middleware, TLSStore, TLSOption, TraefikService, ServersTransport                             | `infrastructure/base/traefik/` (CRDs `bootstrap-crds/`)                        | Yes — IngressRoute 105, Middleware 16, IngressRouteTCP 4, TLSStore 1, TLSOption 1                 |
+| **Ingress & Certs**         | Traefik Hub                          | API, APIPortal, APIPlan, ManagedApplication (15 total)                                                                           | bundled w/ Traefik CRDs                                                        | **No — 0 CRs** (Hub not used)                                                                     |
+| **Ingress & Certs**         | cert-manager                         | Certificate, CertificateRequest, Issuer, ClusterIssuer, Order, Challenge                                                         | `infrastructure/base/cert-manager/`                                            | Yes — CertRequest 18, Certificate 15, Issuer 8, ClusterIssuer 4, Order 4                          |
+| **Ingress & Certs**         | trust-manager                        | Bundle                                                                                                                           | `infrastructure/base/cert-manager/trust-manager.yaml`                          | Installed — 0 CRs                                                                                 |
+| **Secrets**                 | External Secrets Operator            | ExternalSecret, SecretStore, ClusterSecretStore, ClusterExternalSecret, PushSecret (+ 11 generators)                             | `infrastructure/base/external-secrets/`                                        | Yes — ExternalSecret 114, SecretStore 1, ClusterSecretStore 1, ClusterExternalSecret 1            |
+| **Databases**               | CloudNativePG (CNPG)                 | Cluster, Pooler, Backup, ScheduledBackup, ImageCatalog                                                                           | `infrastructure/base/databases/cloudnative-pg/`                                | Yes — Cluster 8, ScheduledBackup 1, Backup 1                                                      |
+| **Cache**                   | Dragonfly operator                   | Dragonfly                                                                                                                        | `infrastructure/base/operators/dragonfly-operator/`                            | Yes — Dragonfly 2                                                                                 |
+| **Messaging**               | RabbitMQ cluster + topology operator | RabbitmqCluster, Queue, Exchange, Binding, User, Vhost, Permission, Policy (14 total)                                            | `infrastructure/base/operators/rabbitmq-operator/`                             | Yes — RabbitmqCluster 2, Queue 2                                                                  |
+| **NoSQL / object / search** | MongoDB (mongodb-kubernetes)         | MongoDBCommunity (community) + MongoDB/MongoDBUser/OpsManager (enterprise)                                                       | `infrastructure/base/databases/mongodb-operator/`                              | Partial — MongoDBCommunity 1; enterprise CRDs 0                                                   |
+| **NoSQL / object / search** | MinIO operator                       | Tenant, PolicyBinding                                                                                                            | `infrastructure/base/databases/minio-operator/` + `infrastructure/base/minio/` | Yes — Tenant 1                                                                                    |
+| **NoSQL / object / search** | ClickHouse (Altinity)                | ClickHouseInstallation, ClickHouseInstallationTemplate, ClickHouseKeeperInstallation                                             | `infrastructure/base/operators/clickhouse-operator/`                           | Yes — ClickHouseInstallation 2                                                                    |
+| **NoSQL / object / search** | OpenSearch operator                  | OpenSearchCluster, OpensearchUser, OpensearchRole (10 kinds × 2 API groups)                                                      | `infrastructure/base/operators/opensearch-operator/`                           | Yes — OpenSearchCluster 1 (`opensearch.org`); `opensearch.opster.io` 0                            |
+| **Virtualization**          | KubeVirt + CDI                       | KubeVirt, VirtualMachine, VirtualMachineInstance, DataVolume, VM(Cluster)Instancetype/Preference                                 | `infrastructure/base/kubevirt/`                                                | Yes — ClusterInstancetype 48, ClusterPreference 42, VM 1, KubeVirt 1, CDI 1, StorageProfile 3     |
+| **Observability**           | Prometheus operator (CRDs)           | ServiceMonitor, PodMonitor, PrometheusRule, Prometheus, Alertmanager, ScrapeConfig, Probe                                        | CRDs `bootstrap-crds/`; consumed by `monitoring/v2-otel/alloy`                 | Partial — ServiceMonitor 36, PrometheusRule 15, PodMonitor 9; **no Prometheus/Alertmanager CR**   |
+| **Observability**           | Grafana operator                     | Grafana, GrafanaDashboard, GrafanaFolder, GrafanaDatasource (+ alerting kinds)                                                   | `infrastructure/base/monitoring/grafana-operator/`                             | Yes — Dashboard 44, Folder 12, Datasource 3, Grafana 1                                            |
+| **Observability**           | OpenTelemetry operator               | OpenTelemetryCollector, Instrumentation, TargetAllocator, OpAMPBridge                                                            | `infrastructure/base/monitoring/v2-otel/operators/otel-operator/`              | Installed — 0 CRs                                                                                 |
+| **Observability**           | Tempo operator                       | TempoStack, TempoMonolithic                                                                                                      | `infrastructure/base/monitoring/v2-otel/operators/tempo-operator/`             | Installed — 0 CRs                                                                                 |
+| **Observability**           | Mimir rollout-operator               | ReplicaTemplate, ZoneAwarePodDisruptionBudget                                                                                    | bundled w/ `monitoring/v2-otel/mimir` (mimir-distributed chart)                | Installed — 0 CRs                                                                                 |
+| **Autoscaling**             | KEDA                                 | ScaledObject, ScaledJob, TriggerAuthentication, CloudEventSource                                                                 | `infrastructure/base/operators/keda/`                                          | Yes — ScaledObject 1                                                                              |
+| **Autoscaling**             | VPA (via Goldilocks)                 | VerticalPodAutoscaler, VerticalPodAutoscalerCheckpoint                                                                           | `infrastructure/base/infra-control/goldilocks/`                                | Yes — VPA 70, Checkpoint 78                                                                       |
+| **Policy**                  | Kyverno                              | ClusterPolicy, Policy, PolicyException, ValidatingPolicy, PolicyReport (7+11+2 kinds)                                            | `infrastructure/base/kyverno/` (policies in `kyverno-policies/`)               | Yes — ClusterPolicy 1, PolicyReport 8                                                             |
+| **Backup**                  | Velero                               | Backup, Restore, Schedule, PodVolumeBackup, BackupRepository, BackupStorageLocation (13 total)                                   | `infrastructure/base/backup/`                                                  | Yes (heavy) — PodVolumeBackup 1211, Backup 44, BackupRepository 13, Schedule 3                    |
+| **Infra-as-code**           | Crossplane (+ providers)             | Composition, CompositeResourceDefinition, Provider, Function, ManagedResourceDefinition, Object                                  | `infrastructure/base/operators/crossplane/`                                    | Demo-level — ManagedResourceDefinition 4, DeploymentRuntimeConfig 2, Provider 1, Object 1         |
+| **Hardware / nodes**        | Intel Device Plugins                 | GpuDevicePlugin, FpgaDevicePlugin, QatDevicePlugin (7 total) + fpga.intel.com                                                    | `infrastructure/base/intel-gpu/` (CRDs `bootstrap-crds/`)                      | Partial — GpuDevicePlugin 1; other plugins 0                                                      |
+| **Hardware / nodes**        | Node Feature Discovery               | NodeFeature, NodeFeatureRule, NodeFeatureGroup                                                                                   | `infrastructure/base/intel-gpu/nfd-helmrelease.yaml`                           | Yes — NodeFeature 4, NodeFeatureRule 1                                                            |
 
 ---
 
@@ -82,7 +91,7 @@ cluster:
 - `helm.toolkit.fluxcd.io/HelmRelease` (35), `source.toolkit.fluxcd.io/HelmChart` (35), `HelmRepository` (26), `GitRepository` (1) — Helm-based installs.
 - `notification.toolkit.fluxcd.io/Alert` (2), `Provider` (1) — Discord/Slack notifications (`flux-notifications`).
 
-**Argo CD** (`infrastructure/base/argocd/`) drives *application* GitOps (per the repo's dual-GitOps
+**Argo CD** (`infrastructure/base/argocd/`) drives _application_ GitOps (per the repo's dual-GitOps
 model). `argoproj.io/Application` (8) + `AppProject` (1). **Argo CD Image Updater**
 (`argocd-image-updater.argoproj.io/ImageUpdater`, 3) automates image bumps.
 
@@ -121,7 +130,7 @@ CRDs (Password, UUID, GithubAccessToken, …) for dynamic values.
 
 ### Databases (relational) — consolidated on CNPG
 
-**CloudNativePG** (`infrastructure/base/databases/cloudnative-pg/`) is the *single* Postgres
+**CloudNativePG** (`infrastructure/base/databases/cloudnative-pg/`) is the _single_ Postgres
 platform — all app Postgres runs as `postgresql.cnpg.io/Cluster` (8 clusters: authentik, forgejo,
 etc.). Backups via `ScheduledBackup`/`Backup`. This is a deliberate consolidation: no more
 per-app Postgres StatefulSets.
@@ -149,7 +158,7 @@ in active use, not just the cluster CRD.
 - **ClickHouse** (`infrastructure/base/operators/clickhouse-operator/`, Altinity) —
   `ClickHouseInstallation` (2) for OLAP/analytics.
 - **OpenSearch** (`infrastructure/base/operators/opensearch-operator/`) — registers 10 kinds under
-  *two* API groups (`opensearch.opster.io` legacy + `opensearch.org` current). Only
+  _two_ API groups (`opensearch.opster.io` legacy + `opensearch.org` current). Only
   `opensearch.org/OpenSearchCluster` (1) has a CR.
 
 ### Virtualization — KubeVirt
@@ -163,7 +172,7 @@ single VM.
 
 ### Observability — OTel-first v2 stack
 
-The metrics pipeline is **Alloy → Mimir**, *not* a Prometheus server. Key nuance:
+The metrics pipeline is **Alloy → Mimir**, _not_ a Prometheus server. Key nuance:
 
 - **Prometheus operator CRDs** are installed (via `bootstrap-crds/`) and heavily consumed —
   `ServiceMonitor` (36), `PrometheusRule` (15), `PodMonitor` (9) — but there is **no `Prometheus`,

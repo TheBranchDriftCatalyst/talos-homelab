@@ -1,3 +1,20 @@
+---
+type: architecture
+status: current
+covers:
+  - monitoring
+  - monitoring-v2-operators
+  - control-plane-scrape
+  - version-checker
+freshness: tracks-code
+tickets:
+  - TALOS-cjny
+  - TALOS-vbr
+  - TALOS-xgrl.12
+bluf: An OTEL-native LGTM stack in one namespace — Alloy collects everything and fans out to Mimir, Loki, Tempo and ClickStack — and this explains why each backend is deployed the way it is.
+pinned: covers resolves to infrastructure/base/monitoring, but this is the section-level stack document for docs/08-monitoring and moving it would empty the section.
+---
+
 # Observability Stack
 
 ## TL;DR
@@ -23,7 +40,7 @@ an OTEL-native LGTM stack living entirely in the **`monitoring`** namespace:
 
 > **Migrated stack.** Prometheus (kube-prometheus-stack) and the Graylog / OpenSearch /
 > MongoDB / Fluent Bit stack that this document used to describe were **removed** during the
-> OTEL migration (`TALOS-nh8`). See [Removed Components](#removed-components) below.
+> OTEL migration. See [Removed Components](#removed-components) below.
 
 ---
 
@@ -43,7 +60,7 @@ Everything now lives in a single namespace.
   logs → Loki **and** ClickStack (dual-write), traces → Tempo **and** ClickStack.
 - **Alloy-node** (DaemonSet, one pod per node): per-node file tailing —
   kernel-capture logs (`/var/log/kernel-capture/<node>.log`) and netconsole-receiver
-  logs → Loki. Deliberately *not* a cluster-wide scraper (that would duplicate metrics).
+  logs → Loki. Deliberately _not_ a cluster-wide scraper (that would duplicate metrics).
 
 **Storage / query:**
 
@@ -51,8 +68,8 @@ Everything now lives in a single namespace.
   query-scheduler / store-gateway / compactor / ruler / alertmanager / nginx gateway.
   Blocks live in MinIO (`minio-hl.minio.svc:9000`, bucket `mimir`).
 - **Loki**: logs, single-binary mode, chunks in MinIO (bucket `loki`).
-- **Tempo**: traces, monolithic `grafana/tempo` Helm chart (chart 1.24.4 — deliberately
-  *not* tempo-operator, which would drag in a cert-manager dependency). Blocks in MinIO
+- **Tempo**: traces, the monolithic `grafana/tempo` Helm chart — deliberately _not_
+  tempo-operator, which would drag in a cert-manager dependency. Blocks in MinIO
   (bucket `tempo`).
 - **ClickStack**: HyperDX app + its own OTel collector + an Altinity-operator ClickHouse
   (`chi-hyperdx-logs`) + MongoDB (HyperDX app state only, no log data).
@@ -148,9 +165,10 @@ Alloy pushes via the native Loki push API. Loki PVCs/pods are labelled
 
 ### Tempo
 
-**Deployment Method**: Helm chart `grafana/tempo` 1.24.4 (monolithic), via Flux HelmRelease.
-The chart is used **instead of** tempo-operator, which requires cert-manager. A
-`tempo-operator-controller` pod does exist in the namespace but manages no Tempo CRs.
+**Deployment Method**: the monolithic `grafana/tempo` Helm chart via Flux HelmRelease, used
+**instead of** tempo-operator, which requires cert-manager. A `tempo-operator` install is still
+declared under `v2-otel/operators/`, so expect to find the operator without any Tempo CRs for it
+to reconcile.
 
 **Configuration**: `infrastructure/base/monitoring/v2-otel/tempo/helmrelease.yaml`
 
@@ -169,8 +187,8 @@ Tempo datasource, not a standalone UI.
 
 ### ClickStack / HyperDX
 
-**Deployment Method**: Helm chart `clickstack` 1.1.1 (app 2.8.0) via Flux HelmRelease,
-plus an Altinity-operator `ClickHouseInstallation`.
+**Deployment Method**: the `clickstack` Helm chart via Flux HelmRelease, plus an
+Altinity-operator `ClickHouseInstallation` and an operator-managed `MongoDBCommunity`.
 
 **Configuration**: `infrastructure/base/monitoring/v2-otel/clickstack/`
 
@@ -180,12 +198,16 @@ plus an Altinity-operator `ClickHouseInstallation`.
 - `clickstack-otel-collector` - receives the Alloy dual-write on OTLP/4318
 - `chi-hyperdx-logs` - ClickHouse (50Gi `local-path`), the analytics store
 - `clickstack-mongodb` - HyperDX app state only (users, dashboards, saved searches);
-  10Gi data + 2G logs on `local-path`
+  a `MongoDBCommunity` CR with a 10Gi `local-path` data volume
 
-**Deliberate deviations from chart defaults** (documented inline in the HelmRelease):
-bundled ClickHouse disabled in favour of the CHI, MongoDB image bumped 5.0.32 → 8.3.8,
-`usageStatsEnabled=false`, chart ingress off in favour of our Traefik IngressRoute, and a
-20m Helm timeout because the mongo → app → collector OpAMP startup chain is slow.
+**Deliberate deviations from chart defaults** (each documented inline in the HelmRelease, which
+is where the reasoning is maintained): the bundled ClickHouse and the bundled MongoDB are both
+**disabled** in favour of operator-managed resources — the chart ships Mongo as a plain Deployment
+on a `local-path` PVC with _no authentication at all_, and that PVC pinned the pod to a node it
+later could not be rescheduled onto. Also `usageStatsEnabled=false`, chart ingress off in favour of
+our Traefik IngressRoute, and a long Helm timeout because the mongo → app → collector OpAMP startup
+chain is slow enough that the default expired mid-boot and killed pods that were seconds from
+ready.
 
 **Access**: http://hyperdx.talos00 (HyperDX's own auth; Authentik forward-auth is a
 follow-up)
@@ -206,8 +228,8 @@ Loki stays the ops tail.
 
 **Datasources** (all `GrafanaDatasource` CRs):
 
-| Name  | Type       | URL                                              |
-| ----- | ---------- | ------------------------------------------------ |
+| Name  | Type       | URL                                               |
+| ----- | ---------- | ------------------------------------------------- |
 | Mimir | prometheus | http://mimir-gateway.monitoring.svc:80/prometheus |
 | Loki  | loki       | http://loki.monitoring.svc:3100                   |
 | Tempo | tempo      | http://tempo.monitoring.svc:3200                  |
@@ -244,9 +266,9 @@ kubectl get secret -n monitoring grafana-admin-credentials \
 
 **Flow**:
 
-1. PrometheusRule CRs (`baseline-alerts/` — cert-manager, cilium BPF, cilium identity,
-   etcd snapshot, memory pressure, pipeline health, platform regression, spire) are
-   synced into the **Mimir ruler** by Alloy's `mimir.rules.kubernetes`.
+1. PrometheusRule CRs from `baseline-alerts/` are synced into the **Mimir ruler** by Alloy's
+   `mimir.rules.kubernetes` — `ls` that directory for the current set rather than trusting a
+   list here.
 2. The ruler evaluates them and fires to the **Mimir Alertmanager**.
 3. `alertmanager-config-pusher` (CronJob, `*/15 * * * *`) POSTs the rendered tenant
    config from `config-template.yaml` to Mimir's Alertmanager API and pings a heartbeat URL.
@@ -258,17 +280,17 @@ kubectl get secret -n monitoring grafana-admin-credentials \
 
 ### Exporters
 
-| Exporter               | Namespace  | Purpose                                    |
-| ---------------------- | ---------- | ------------------------------------------ |
-| kube-state-metrics     | monitoring | Kubernetes object state                    |
-| node-exporter          | monitoring | Host metrics (DaemonSet, all 5 nodes)      |
-| blackbox-exporter      | monitoring | HTTP/TCP probes                            |
-| pushgateway            | monitoring | Batch-job metrics                          |
-| kasa-exporter          | monitoring | TP-Link Kasa smart plugs                   |
-| tdarr-exporter         | monitoring | Tdarr transcode stats                      |
-| nfs-storage-exporter   | monitoring | NAS/NFS free space (node-exporter can't see the NAS) |
-| version-checker        | monitoring | Container image staleness                  |
-| redis-exporter-\*      | monitoring | Dragonfly caches (multiplexed RESP+HTTP can't be scraped directly) |
+| Exporter             | Namespace  | Purpose                                                            |
+| -------------------- | ---------- | ------------------------------------------------------------------ |
+| kube-state-metrics   | monitoring | Kubernetes object state                                            |
+| node-exporter        | monitoring | Host metrics (DaemonSet, every node)                               |
+| blackbox-exporter    | monitoring | HTTP/TCP probes                                                    |
+| pushgateway          | monitoring | Batch-job metrics                                                  |
+| kasa-exporter        | monitoring | TP-Link Kasa smart plugs                                           |
+| tdarr-exporter       | monitoring | Tdarr transcode stats                                              |
+| nfs-storage-exporter | monitoring | NAS/NFS free space (node-exporter can't see the NAS)               |
+| version-checker      | monitoring | Container image staleness                                          |
+| redis-exporter-\*    | monitoring | Dragonfly caches (multiplexed RESP+HTTP can't be scraped directly) |
 
 Cluster-wide auto-scrape PodMonitors also exist for CloudNativePG, MongoDBCommunity,
 RabbitmqCluster, and KEDA — one PodMonitor each rather than per-instance wiring.
@@ -289,7 +311,7 @@ Alloy (scraping). `infrastructure/base/monitoring/kube-prometheus-stack/` no lon
 
 ### Graylog / OpenSearch / MongoDB / Fluent Bit — REMOVED
 
-The whole v1 logging pipeline was retired in the OTEL migration (`TALOS-nh8`). Logs now go
+The whole v1 logging pipeline was retired in the OTEL migration. Logs now go
 Alloy → Loki (+ ClickStack). `graylog.talos00` no longer resolves to anything, and
 `infrastructure/base/observability/` is gone from the repo. An `opensearch-operator` is still
 installed, but its only consumer in the repo is the `OpenSearchCluster` in
@@ -311,12 +333,12 @@ This stack is **Flux-managed**. There is no deploy script — the former
 
 ### Flux Kustomizations
 
-| Kustomization             | Path                                             | Notes                                  |
-| ------------------------- | ------------------------------------------------ | -------------------------------------- |
-| `monitoring-v2-operators` | `./infrastructure/base/monitoring/v2-otel/operators` | Operators/CRDs first                |
-| `monitoring`              | `./infrastructure/base/monitoring/v2-otel`       | Data plane; depends on the operators ks |
-| `control-plane-scrape`    | `./infrastructure/base/monitoring/control-plane-scrape` | etcd/apiserver scrape config    |
-| `version-checker`         | `./infrastructure/base/monitoring/version-checker` |                                       |
+| Kustomization             | Path                                                    | Notes                                   |
+| ------------------------- | ------------------------------------------------------- | --------------------------------------- |
+| `monitoring-v2-operators` | `./infrastructure/base/monitoring/v2-otel/operators`    | Operators/CRDs first                    |
+| `monitoring`              | `./infrastructure/base/monitoring/v2-otel`              | Data plane; depends on the operators ks |
+| `control-plane-scrape`    | `./infrastructure/base/monitoring/control-plane-scrape` | etcd/apiserver scrape config            |
+| `version-checker`         | `./infrastructure/base/monitoring/version-checker`      |                                         |
 
 The operators split exists so CRDs land before anything that references them.
 
@@ -348,7 +370,7 @@ flux get helmrelease -n monitoring
    `infrastructure/base/monitoring/grafana-dashboards/json/` and a matching
    `GrafanaDashboard` CR under `.../resources/`. To force a refresh of an existing
    dashboard, delete its `GrafanaDashboard` CR and let Flux recreate it.
-   See `docs/08-monitoring/GRAFANA-DASHBOARDS.md`.
+   See [`grafana-dashboards/README.md`](../../infrastructure/base/monitoring/grafana-dashboards/README.md).
 
 ### HyperDX
 
@@ -456,8 +478,8 @@ Mimir outage can otherwise wedge the metrics pipeline for weeks. If the pipeline
 long after Mimir recovered, restart Alloy.
 
 **Chronic distributed-state wedges**: the `wedge-buster` CronJobs in
-`infrastructure/base/kube-system/wedge-buster/` do staggered weekly rollout-restarts of
-Alloy/Mimir/spire-agent as a backstop.
+`infrastructure/base/kube-system/wedge-buster/` do staggered weekly rollout-restarts of the
+components with a known wedge class — Alloy and Mimir among them — as a backstop.
 
 ### Mimir Issues
 
@@ -518,18 +540,19 @@ pods seconds before ready.
 Declared PVC sizes for the observability stack (all `local-path`, i.e. node-local NVMe on
 the Talos EPHEMERAL partition at `/var`):
 
-| Component            | Size          |
-| -------------------- | ------------- |
-| Loki                 | 30Gi          |
-| Mimir ingester       | 3 × 20Gi      |
-| Mimir compactor      | 20Gi          |
-| Mimir store-gateway  | 10Gi          |
-| Mimir alertmanager   | 5Gi           |
-| ClickHouse (HyperDX) | 50Gi          |
-| ClickStack MongoDB   | 10Gi + 2G logs |
+| Component            | Size     |
+| -------------------- | -------- |
+| Loki                 | 30Gi     |
+| Mimir ingester       | 3 × 20Gi |
+| Mimir compactor      | 20Gi     |
+| Mimir store-gateway  | 10Gi     |
+| Mimir alertmanager   | 5Gi      |
+| ClickHouse (HyperDX) | 50Gi     |
+| ClickStack MongoDB   | 10Gi     |
 
-**Total declared: ~187Gi** of `local-path`. (Some Mimir PVCs are currently bound to
-larger legacy recovered PVs — check `kubectl get pvc -n monitoring` for actual capacity.)
+**Total declared: ~185Gi** of `local-path`, plus whatever the MongoDB operator adds for its
+default logs volume. These are the sizes the manifests _request_; a PVC can be bound to a larger
+pre-existing PV, so `kubectl get pvc -n monitoring` is the only answer for actual capacity.
 
 Bulk data does **not** live on these volumes: Mimir blocks, Loki chunks, and Tempo blocks
 are all in MinIO (buckets `mimir`, `loki`, `tempo`). Tempo has no PVC at all.
@@ -565,9 +588,11 @@ TrueNAS is decommissioned and is not a storage backend for anything here.
 
 ## Backup and Recovery
 
-The `monitoring` namespace is in the **`velero-critical-data-daily`** schedule
-(`30 2 * * *`, alongside `authentik`, `cilium-spire`, `dungeon-library`), and in
-`velero-weekly-full` (`0 3 * * 0`, all namespaces).
+The `monitoring` namespace is one of the few in the **`critical-data-daily`** Velero schedule
+(alongside `authentik` and `dungeon-library`), which sets `defaultVolumesToFsBackup: true` so every
+PVC in scope is captured without per-pod annotations on charts we do not control. It is also in
+`weekly-full`, which covers every namespace bar a short exclude list. Both schedules are declared in
+`infrastructure/base/backup/velero.yaml`.
 
 **Deliberately excluded**: Loki PVCs and pods are labelled
 `velero.io/exclude-from-backup` by a CronJob in
@@ -628,8 +653,8 @@ Or query with SQL in HyperDX for anything Loki's label model can't express.
 - [Tempo Documentation](https://grafana.com/docs/tempo/latest/)
 - [ClickStack / HyperDX](https://clickhouse.com/docs/use-cases/observability/clickstack)
 - [Grafana Operator](https://grafana.github.io/grafana-operator/)
-- `docs/05-projects/otel-migration/README.md` - the v1→v2 migration design doc
-- `docs/08-monitoring/GRAFANA-DASHBOARDS.md` - dashboard authoring workflow
+- [`grafana-dashboards/README.md`](../../infrastructure/base/monitoring/grafana-dashboards/README.md) -
+  dashboard authoring workflow, beside the dashboards themselves
 
 ---
 
@@ -637,8 +662,6 @@ Or query with SQL in HyperDX for anything Loki's label model can't express.
 
 <!-- Beads tracking for this documentation domain -->
 
-- [CILIUM-rwr] - Moved from docs/02-architecture/ to root level
-- [TALOS-nh8] - OTEL stack migration (Prometheus/Graylog/OpenSearch/Fluent Bit → LGTM)
 - [TALOS-cjny] - ClickStack / HyperDX dedicated log-analytics stack
 - [TALOS-vbr] - Baseline alerts filling the kube-prometheus-stack gap
 - [TALOS-xgrl.12] - Scoped per-service MinIO users for Mimir/Loki/Tempo

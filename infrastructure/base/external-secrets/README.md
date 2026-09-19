@@ -12,49 +12,53 @@ The setup consists of three main components:
 2. **1Password Connect Server** - Secure bridge between Kubernetes and 1Password
 3. **SecretStores** - Configuration that defines how to access 1Password vaults
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Kubernetes Cluster                                      │
-│                                                          │
-│  ┌──────────────────┐      ┌────────────────────────┐  │
-│  │ ExternalSecret   │─────▶│ External Secrets       │  │
-│  │ Resources        │      │ Operator               │  │
-│  └──────────────────┘      └────────────┬───────────┘  │
-│                                          │              │
-│                             ┌────────────▼───────────┐  │
-│                             │ 1Password Connect      │  │
-│                             │ Server                 │  │
-│                             └────────────┬───────────┘  │
-│                                          │              │
-└──────────────────────────────────────────┼──────────────┘
-                                           │
-                                           │ HTTPS
-                                           ▼
-                                  ┌────────────────┐
-                                  │  1Password     │
-                                  │  Cloud/Team    │
-                                  └────────────────┘
+```mermaid
+flowchart TB
+    subgraph cluster["Kubernetes cluster"]
+        direction TB
+        es["ExternalSecret resources"]
+        eso["External Secrets Operator"]
+        connect["1Password Connect Server<br/>connect-api + connect-sync"]
+        es --> eso
+        eso --> connect
+    end
+    op["1Password Cloud / Team"]
+    connect -->|HTTPS| op
 ```
 
 ## Directory Structure
 
-```
+```text
 external-secrets/
 ├── namespace.yaml                    # Namespace definition
 ├── operator/                         # ESO Helm deployment
-│   ├── helmrepository.yaml          # External Secrets Helm repo
-│   ├── helmrelease.yaml             # ESO deployment via Flux
+│   ├── helmrepository.yaml           # External Secrets Helm repo
+│   ├── helmrelease.yaml              # ESO deployment via Flux
+│   ├── eso-ca-bundle.yaml            # CA bundle ESO trusts for 1Password Connect
 │   └── kustomization.yaml
-├── onepassword-connect/             # 1Password Connect Server
-│   ├── deployment.yaml              # Connect API + Sync containers
-│   ├── service.yaml                 # ClusterIP service
+├── onepassword-connect/              # 1Password Connect Server
+│   ├── deployment.yaml               # connect-api + connect-sync containers
+│   ├── service.yaml                  # ClusterIP service
+│   ├── certificate.yaml              # TLS cert for the Connect API
 │   └── kustomization.yaml
-├── secretstores/                    # SecretStore configs
-│   ├── onepassword-secretstore.yaml # ClusterSecretStore + SecretStore
-│   ├── example-externalsecret.yaml  # Usage example (not deployed)
+├── secretstores/                     # SecretStore configs
+│   ├── onepassword-secretstore.yaml  # ClusterSecretStore + SecretStore
+│   ├── example-externalsecret.yaml   # Reference only, NOT in kustomization.yaml
 │   └── kustomization.yaml
-└── kustomization.yaml               # Root kustomization
+├── jobs/                             # secret-dump CronJob
+│   ├── secret-dump-cronjob.yaml
+│   └── kustomization.yaml
+├── ghcr-pull-secret/                 # ClusterExternalSecret for the GHCR pull secret
+│   ├── cluster-external-secret.yaml
+│   └── kustomization.yaml
+├── STATUS.md
+└── kustomization.yaml                # Root kustomization
 ```
+
+The root `kustomization.yaml` deploys only `onepassword-connect/`, `secretstores/`, `jobs/`
+and `ghcr-pull-secret/`. `namespace.yaml` and `operator/` are applied by the separate
+`external-secrets-operator` Flux Kustomization, because everything else depends on the CRDs
+the operator installs.
 
 ## Prerequisites
 
@@ -508,7 +512,7 @@ ExternalSecret resources work seamlessly with GitOps:
 3. **ESO creates/updates the actual Secret resources**
 4. **Applications reference the synced Secrets**
 
-```
+```text
 Git Repo → Flux/ArgoCD → ExternalSecret → ESO → 1Password → Kubernetes Secret → App
 ```
 

@@ -1,3 +1,15 @@
+---
+type: decision
+status: current
+covers:
+  - cluster
+freshness: frozen
+tickets:
+  - TALOS-9aw8
+  - TALOS-0xb3
+bluf: MinIO CE is archived upstream with unpatchable CVEs, so the object store has to move; Garage covers every bucket except the one that uses versioning, which is versitygw's job.
+---
+
 # S3 Backend Evaluation — replacing MinIO CE
 
 > Research: 2026-09-11 (5 parallel agents, current-year data). Epic: **TALOS-9aw8**.
@@ -25,21 +37,21 @@
 
 ## The field of play
 
-| | **MinIO CE** | **Garage** | **versitygw** | **SeaweedFS** | **Ceph/Rook RGW** | **RustFS** |
-|---|---|---|---|---|---|---|
-| **Latest** | RELEASE.2025-10-15 (last ever) | v2.4.1 (2026-09-08) | v1.8.0 (2026-09-04) | v4.46 (2026-09-08) | Ceph 20.2.4 / Rook 1.20.7 (2026-09) | 1.0.0-rc.6 (2026-09-11) |
-| **Cadence** | — | ~3–4 mo + LTS | ~monthly | ~38 rel/yr (rolling) | point ~1–4 mo | pre-GA |
-| **90-day commits** | **0** | 85 (20 authors) | active | ~960 (bus-factor 1) | Rook 622 / Ceph 2,887 | high |
-| **Status** | ☠️ archived | 🟢 active, rising | 🟢 active | 🟢 active | 🟢 mature | 🟡 pre-GA |
-| **License** | AGPL (abandoned) | **AGPL-3.0** | **Apache-2.0** | Apache-2.0 (open-core) | LGPL | Apache-2.0 |
-| **Governance** | MinIO Inc (gone) | Deuxfleurs non-profit | Versity (genuine OSS) | 1 person | CNCF / Ceph Fdn (IBM/RH) | CN single-vendor |
-| **Web UI** | gutted → deleted | none (NLnet-funded, WIP) | preview-quality | **broad, built-in** | Ceph Dashboard | built-in console |
-| **Versioning** | yes | ❌ **none** | opt-in (POSIX) | yes | yes | claimed |
-| **Object-lock** | yes | ❌ | unverified | yes | yes | claimed |
-| **HA / durability** | erasure coding | replication 1/2/3 | = underlying FS | replication + EC¹ | CRUSH repl/EC | EC |
-| **Footprint** | baseline | **~20× lighter** | thin gateway | light–med | **20–26 GB RAM floor** | unknown |
-| **K8s** | operator (archived) | community helm | official helm (OCI) | operator + helm | **mature Rook operator** | v0.1 operator |
-| **Homelab fit** | — | **4.5/5** | **5/5** (backups) | 3/5 | ⛔ blocked | revisit post-GA |
+|                     | **MinIO CE**                   | **Garage**               | **versitygw**         | **SeaweedFS**          | **Ceph/Rook RGW**                   | **RustFS**              |
+| ------------------- | ------------------------------ | ------------------------ | --------------------- | ---------------------- | ----------------------------------- | ----------------------- |
+| **Latest**          | RELEASE.2025-10-15 (last ever) | v2.4.1 (2026-09-08)      | v1.8.0 (2026-09-04)   | v4.46 (2026-09-08)     | Ceph 20.2.4 / Rook 1.20.7 (2026-09) | 1.0.0-rc.6 (2026-09-11) |
+| **Cadence**         | —                              | ~3–4 mo + LTS            | ~monthly              | ~38 rel/yr (rolling)   | point ~1–4 mo                       | pre-GA                  |
+| **90-day commits**  | **0**                          | 85 (20 authors)          | active                | ~960 (bus-factor 1)    | Rook 622 / Ceph 2,887               | high                    |
+| **Status**          | ☠️ archived                    | 🟢 active, rising        | 🟢 active             | 🟢 active              | 🟢 mature                           | 🟡 pre-GA               |
+| **License**         | AGPL (abandoned)               | **AGPL-3.0**             | **Apache-2.0**        | Apache-2.0 (open-core) | LGPL                                | Apache-2.0              |
+| **Governance**      | MinIO Inc (gone)               | Deuxfleurs non-profit    | Versity (genuine OSS) | 1 person               | CNCF / Ceph Fdn (IBM/RH)            | CN single-vendor        |
+| **Web UI**          | gutted → deleted               | none (NLnet-funded, WIP) | preview-quality       | **broad, built-in**    | Ceph Dashboard                      | built-in console        |
+| **Versioning**      | yes                            | ❌ **none**              | opt-in (POSIX)        | yes                    | yes                                 | claimed                 |
+| **Object-lock**     | yes                            | ❌                       | unverified            | yes                    | yes                                 | claimed                 |
+| **HA / durability** | erasure coding                 | replication 1/2/3        | = underlying FS       | replication + EC¹      | CRUSH repl/EC                       | EC                      |
+| **Footprint**       | baseline                       | **~20× lighter**         | thin gateway          | light–med              | **20–26 GB RAM floor**              | unknown                 |
+| **K8s**             | operator (archived)            | community helm           | official helm (OCI)   | operator + helm        | **mature Rook operator**            | v0.1 operator           |
+| **Homelab fit**     | —                              | **4.5/5**                | **5/5** (backups)     | 3/5                    | ⛔ blocked                          | revisit post-GA         |
 
 ¹ SeaweedFS **automatic EC shard repair + bitrot scrubbing are paid Enterprise features** — a real caveat for a backup target.
 
@@ -48,9 +60,11 @@
 ## What our consumers actually need
 
 Our S3 is used by **CNPG barman-cloud** (Postgres WAL + base backups), **Velero** (cluster
-backup/restore), **ESO static creds**, and the **MinIO operator + tenant** (`servers:1,
-volumesPerServer:1` — a simple target). None use the console. Requirements: multipart upload
-(barman + Velero), presigned URLs, list/get/put/delete. Object-lock is *nice* for Velero
+backup/restore), the **Loki / Mimir / Tempo** stores, and **etcd snapshots** — all against a
+MinIO tenant configured `servers: 1, volumesPerServer: 1`, i.e. a deliberately simple target.
+(External Secrets _creates_ the credential Secrets these consumers use, out of 1Password; it is
+not itself an S3 client, so it constrains nothing here.) None of them use the console. Requirements: multipart upload
+(barman + Velero), presigned URLs, list/get/put/delete. Object-lock is _nice_ for Velero
 (immutable backups) but not required. **Versioning is only needed if a specific bucket relies on
 it** — the one flag that rules Garage in or out.
 
@@ -59,6 +73,7 @@ it** — the one flag that rules Garage in or out.
 ## Per-option
 
 ### Garage — the frontrunner ✅
+
 AGPL-3.0, run by **Deuxfleurs** (French non-profit; published an explicit anti-VC / "commoning
 open source" position — structurally the opposite of MinIO). Active: v2.4.1 (2026-09-08), 85
 commits/90d across 20 authors, fresh 1-yr NLnet grant (2026-04). **~20× lighter** than our MinIO
@@ -69,6 +84,7 @@ OIDC SSO we wired to it. Bus-factor concern (lead ~20% of recent commits — imp
 means a fork is always possible). Issues live on their Forgejo, not GitHub.
 
 ### Versity Gateway (versitygw) — the dark horse for backups ✅
+
 Apache-2.0, backed by Versity (commercial archive vendor; this is their genuine OSS front door).
 Active: v1.8.0 (2026-09-04), ~monthly. It's an **S3-over-POSIX gateway** — puts an S3 face on the
 NVMe/NFS we already have. **Killer property for a backup-of-record target: data stays as ordinary
@@ -81,6 +97,7 @@ unverified** (must test); UI is preview-quality; multi-replica needs the new sta
 "filesystem → S3" answer after dropping community MinIO.
 
 ### SeaweedFS — capable, wrong risk profile ⚠️
+
 Apache-2.0, the most active project in the class (~960 commits/90d) with a **broad built-in admin
 UI** (closest to the old MinIO Console). But **bus-factor 1** (chrislusf = 71% of recent commits, no
 governance/co-maintainer) and **open-core creeping into durability**: automatic EC shard repair and
@@ -89,6 +106,7 @@ wrong trade — and the open-core direction is the very thing we're leaving. Fin
 homelab S3 with a second copy elsewhere; not as the sole home for backups.
 
 ### Ceph / Rook RGW — best tech, blocked here ⛔
+
 Technically the strongest S3 (RGW: full compat, versioning, object-lock, STS) and safest long-term
 bet (CNCF-graduated Rook, Ceph Foundation, 20 yrs). **But blocked on hardware:** all 5 Talos nodes
 have exactly one disk (the OS disk) and no spare devices/partitions/block-PVs — Rook has nothing to
@@ -96,20 +114,23 @@ build OSDs on. Even with disks added, the realistic **~20–26 GB RAM cluster fl
 for a WAL-and-tarball workload. Revisit only if the cluster grows dedicated storage nodes.
 
 ### RustFS — promising, not yet ⏳
+
 Apache-2.0 Rust MinIO-alike with a built-in console — the most likely eventual drop-in. But
 **pre-GA** (1.0.0-rc.6, no GA date), a v0.1 operator, Chinese single-vendor origin, and a recent
 **CVSS 9.8** hardcoded-gRPC-token bug. **Re-evaluation trigger: GA + one quiet quarter.** Not for
 backups today.
 
 ### Escape hatches (no data migration)
+
 - **SILO (`pgsty/minio`)** — a maintained AGPL MinIO-server fork (Pigsty). Because our Tenant CRD
   just runs the server binary, swapping `spec.image` to a SILO tag is plausibly **drop-in** — the
-  only option that fixes the security exposure *without* a data migration. Worth a scratch-namespace
+  only option that fixes the security exposure _without_ a data migration. Worth a scratch-namespace
   test as a hedge if migration slips.
 - **Clyso Chorus** — S3 migration/replication tooling; the cleanest documented path to move off
   MinIO **without downtime** regardless of the target. Evaluate as tooling for the cutover.
 
 ### Ruled out
+
 Apache Ozone (no versioning/object-lock, JVM sprawl), Zenko/CloudServer (closed IAM, lab-grade),
 CubeFS (Ceph-scale ops, less mature), JuiceFS (circular dep with CNPG backups), Storj (satellite,
 not self-host prod), s3proxy/rclone-serve (single-node; rclone has an active critical advisory).
@@ -151,17 +172,17 @@ alternative) precisely for the backup role.
 
 Live audit of the running MinIO tenant, 2026-09-11:
 
-| Bucket | Versioning | Object-lock | Consumer |
-|---|---|---|---|
-| **dagster** | **✅ enabled** | ❌ | Dagster |
-| backups | ❌ | ❌ | (general) |
-| cnpg-backups | ❌ | ❌ | CNPG barman-cloud |
-| velero | ❌ | ❌ | Velero |
-| loki / mimir / tempo | ❌ | ❌ | observability |
-| catalyst-data / catalyst-bgs / boomtime-cards | ❌ | ❌ | apps |
-| lobechat | ❌ | ❌ | LobeChat |
+| Bucket                                        | Versioning     | Object-lock | Consumer          |
+| --------------------------------------------- | -------------- | ----------- | ----------------- |
+| **dagster**                                   | **✅ enabled** | ❌          | Dagster           |
+| backups                                       | ❌             | ❌          | (general)         |
+| cnpg-backups                                  | ❌             | ❌          | CNPG barman-cloud |
+| velero                                        | ❌             | ❌          | Velero            |
+| loki / mimir / tempo                          | ❌             | ❌          | observability     |
+| catalyst-data / catalyst-bgs / boomtime-cards | ❌             | ❌          | apps              |
+| lobechat                                      | ❌             | ❌          | LobeChat          |
 
 **Result: 10 of 11 un-versioned, none object-locked → Garage covers everything except `dagster`.**
-Open question before we can call it 100% Garage: does Dagster actually *rely* on versioning, or was
+Open question before we can call it 100% Garage: does Dagster actually _rely_ on versioning, or was
 it just enabled by default? (Dagster's S3 IO manager does not require it.) If not relied upon → Garage
 for all 11. If it is → that one bucket goes to a versioned store (versitygw), everything else to Garage.

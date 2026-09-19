@@ -1,20 +1,27 @@
+---
+type: nav
+status: current
+covers:
+  - repo
+freshness: tracks-code
+bluf: Index of the planning artifacts; the table is generated from the tree, and beads is the source of truth for work tracking.
+---
+
 # Project Management
 
-Roadmaps and idea backlogs. **Beads is the source of truth for work tracking** (`bd ready`,
-`bd list`); these documents are planning artifacts, and several are dated snapshots.
+Planning artifacts that are not work items. **Beads is the source of truth for work tracking**
+(`bd ready`, `bd list`) — anything that duplicated ticket state has been removed rather than
+kept in sync. What belongs here is design and process reasoning that a ticket cannot hold.
 
 ## Quick Navigation
 
-| Document                                                       | Description                                                              | Status                                 |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------ | -------------------------------------- |
-| [enhancement-roadmap.md](enhancement-roadmap.md)               | Two-stream enhancement roadmap (MCP servers, Tilt), tracked in beads      | Dated 2025-11-25, updated 2025-12-12   |
-| [k8s-enhancements-roadmap.md](k8s-enhancements-roadmap.md)     | Backlog of future cluster improvements and tooling additions              | Living backlog                         |
-| [KUBERNETES-ECOSYSTEM-IDEAS.md](KUBERNETES-ECOSYSTEM-IDEAS.md) | Unfiltered list of K8s tools/operators/integrations worth considering     | Idea list, no commitment               |
+<!-- docs:gen:nav -->
 
-## Related
+| Doc                                                                  | What it covers                                                                                                                                                                        |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [memory-knowledge-architecture.md](memory-knowledge-architecture.md) | The project does not have a memory problem, it has a routing problem — every fact needs exactly one authoritative home and a promotion ladder that ends in a test rather than a note. |
 
-- [DAH_REPORT.md](../_archive/2026-03-14-dah-report.md) — 2026-03-14 system analysis with action-plan tables
-- [followup-exec-summary.md](../followup-exec-summary.md) — gap analysis and recommendations
+<!-- /docs:gen:nav -->
 
 ---
 

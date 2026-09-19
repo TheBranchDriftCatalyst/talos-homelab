@@ -104,12 +104,12 @@ Every doc should end with:
 
 ## Key Documentation
 
-| Doc                                   | Purpose                       |
-| ------------------------------------- | ----------------------------- |
-| `docs/01-getting-started/quickstart.md`                       | Essential commands reference  |
-| `docs/02-architecture/traefik.md`                          | Ingress configuration         |
-| `docs/08-monitoring/observability.md`                    | Monitoring/logging stack      |
-| `docs/02-architecture/dual-gitops.md` | **CRITICAL** - GitOps pattern |
+| Doc                                     | Purpose                       |
+| --------------------------------------- | ----------------------------- |
+| `docs/01-getting-started/quickstart.md` | Essential commands reference  |
+| `docs/02-architecture/traefik.md`       | Ingress configuration         |
+| `docs/08-monitoring/observability.md`   | Monitoring/logging stack      |
+| `docs/02-architecture/dual-gitops.md`   | **CRITICAL** - GitOps pattern |
 
 ## Task Automation Structure
 
@@ -117,7 +117,7 @@ This repository uses a **modular Taskfile structure** organized by domain for be
 
 ### Taskfile Organization
 
-```
+```text
 .
 ├── Taskfile.yaml               # Root orchestrator — the ONLY one at the root
 └── dev/                        # every domain Taskfile lives here
@@ -127,7 +127,9 @@ This repository uses a **modular Taskfile structure** organized by domain for be
     ├── Taskfile.infra.yaml     # Infrastructure deployment
     ├── Taskfile.security.yaml  # Security scanning
     ├── Taskfile.certs.yaml     # Homelab CA / certificates
-    └── Taskfile.test.yaml      # Test suites
+    ├── Taskfile.test.yaml      # Test suites
+    ├── Taskfile.docs.yaml      # docsgen: generated doc artifacts + doc lint
+    └── docs-generator/         # the docsgen source itself
 ```
 
 Task namespaces are unchanged — `task talos:health`, `task dev:lint`, etc. The
@@ -291,20 +293,22 @@ task etcd-status
 
 ## Repository Structure
 
-```
+```text
 talos-homelab/
-├── infrastructure/base/      # Platform infrastructure (modify these)
+├── infrastructure/base/      # Platform infrastructure (modify these) — ~45 components
 │   ├── argocd/              # ArgoCD (GitOps controller for apps)
-│   ├── cilium/              # CNI (migrating from Flannel)
+│   ├── cilium/              # CNI: eBPF, kubeProxyReplacement, LB-IPAM
 │   ├── traefik/             # Ingress controller
-│   ├── registry/            # Docker registry (Nexus)
-│   ├── monitoring/          # Prometheus, Grafana, Loki
-│   ├── observability/       # OpenSearch, FluentBit, Graylog
-│   └── storage/             # Storage classes, NFS
+│   ├── authentik/           # SSO / forward-auth
+│   ├── security/            # crowdsec, honeypots, falco, iocaine
+│   ├── registry/            # Zot container registry
+│   ├── monitoring/          # v2-otel stack: Mimir, Loki, Tempo, Grafana, Alloy, ClickStack
+│   └── storage/             # StorageClasses: local-path (default), fatboy-nfs-appdata,
+│                            #   synology-nfs
 ├── applications/            # App deployments (arr-stack, etc.)
 ├── clusters/catalyst-cluster/ # Flux cluster config
-├── scripts/                 # Deployment automation
-├── configs/                 # Talos machine configs (gitignored)
+├── scripts/                 # Automation scripts
+├── configs/                 # Talos machine configs, talhelper input (gitignored)
 └── docs/                    # Documentation (numbered sections)
 ```
 
@@ -653,6 +657,7 @@ When adding applications:
 - CILIUM-h2b - Initial restructure with beads workflow section
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
+
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
@@ -693,8 +698,10 @@ bd close <id>         # Complete work
 7. **Hand off** - Provide context for next session
 
 **CRITICAL RULES:**
+
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
 <!-- END BEADS INTEGRATION -->

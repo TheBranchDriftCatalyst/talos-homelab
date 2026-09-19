@@ -114,6 +114,23 @@ func assertSamplesAreReal() {
 			"sample %s: a scope excluding no component cannot show that scoping excludes anything — "+
 				"an artifact ignoring the filter entirely would satisfy every remaining assertion", s.Name)
 
+		// The marker-region nav, checked the same way and for the same reason.
+		Expect(s.NavRel).NotTo(BeEmpty(),
+			"sample %s declares no marker-owned nav, so every nav spec would run against "+
+				"nothing and report green", s.Name)
+		Expect(s.NavRegion).NotTo(BeEmpty(), "sample %s declares no nav region", s.Name)
+		Expect(s.NavRows).NotTo(BeEmpty(),
+			"sample %s: a nav with no expected rows cannot show that anything is listed", s.Name)
+		Expect(s.NavExcludes).NotTo(BeEmpty(),
+			"sample %s: a nav excluding nothing cannot show that anything is filtered — a table "+
+				"listing every file in the directory would satisfy every remaining assertion", s.Name)
+		Expect(s.NavDescribed).NotTo(BeEmpty(),
+			"sample %s: without a row whose description comes from the frontmatter key, a nav "+
+				"that ignored the key and always used the H1 would pass", s.Name)
+		Expect(s.NavFallback).NotTo(BeEmpty(),
+			"sample %s: without a row that has no frontmatter key, the H1 fallback is untested "+
+				"and can break silently", s.Name)
+
 		front := fx.run("frontmatter")
 		Expect(front.Code).To(Equal(0), "sample %s: `frontmatter` failed:\n%s", s.Name, front.Err)
 		for _, doc := range s.Worklist {

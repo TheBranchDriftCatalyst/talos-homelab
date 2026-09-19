@@ -8,13 +8,13 @@
 
 ## 📊 Current Status
 
-| Metric                   | Value           | Health          |
-| ------------------------ | --------------- | --------------- |
-| **Deployment Status**    | ✅ Deployed     | 🟢 Healthy      |
-| **Version**              | Latest (Helm)   | 🟢 Current      |
-| **Uptime**               | >99%            | 🟢 Stable       |
-| **Applications Managed** | 1 (catalyst-ui) | 🟡 Limited      |
-| **Sync Status**          | Manual          | 🟡 Needs Config |
+| Metric                   | Value         | Health          |
+| ------------------------ | ------------- | --------------- |
+| **Deployment Status**    | ✅ Deployed   | 🟢 Healthy      |
+| **Version**              | Latest (Helm) | 🟢 Current      |
+| **Uptime**               | >99%          | 🟢 Stable       |
+| **Applications Managed** | 8             | 🟢 Active       |
+| **Sync Status**          | Manual        | 🟡 Needs Config |
 
 **Health Legend:** 🟢 Healthy | 🟡 Degraded | 🔴 Down | 🔵 Development
 
@@ -79,15 +79,32 @@ syncPolicy:
 
 ### Files
 
-```
+```text
 infrastructure/base/argocd/
 ├── STATUS.md (this file)
 ├── README.md
 ├── kustomization.yaml
 ├── namespace.yaml
-├── helmrelease.yaml (if using Flux)
+├── helmrelease.yaml                          # Flux HelmRelease — this IS how ArgoCD is deployed
+├── values.yaml                               # NOT referenced by kustomization.yaml or the HelmRelease
+├── ingressroute.yaml
+├── servicemonitor.yaml
+├── netpol-allow-monitoring.yaml
+├── dragonfly.yaml                            # Dragonfly cache, replaces the chart's bundled redis
+├── admin-credentials-externalsecret.yaml
+├── discord-webhook-externalsecret.yaml
+├── externalsecret-private-repo.yaml
+├── image-updater/                            # ArgoCD Image Updater + per-app update CRs
 └── applications/
-    └── catalyst-ui.yaml
+    ├── kustomization.yaml
+    ├── arr-stack-private.yaml
+    ├── boomtime.yaml
+    ├── catalyst-data.yaml
+    ├── catalyst-llm.yaml
+    ├── catalyst-ui.yaml
+    ├── dungeon-library.yaml
+    ├── kasa-exporter.yaml
+    └── openscad.yaml
 ```
 
 ---
@@ -264,9 +281,7 @@ kubectl get secret -n argocd -l argocd.argoproj.io/secret-type=repository
 ## 🔗 Related Documentation
 
 - [Dual GitOps Architecture](../../../docs/02-architecture/dual-gitops.md)
-- [ArgoCD Bootstrap Guide](../../../docs/04-deployment/argocd-setup.md)
-- [Application Deployment Pattern](../../../docs/04-deployment/applications.md)
-- [Catalyst UI Example](../../../docs/05-projects/catalyst-ui/deployment-guide.md)
+- `scripts/bootstrap-argocd.sh` — the one-time bootstrap; the script is the procedure
 
 ---
 
@@ -321,7 +336,7 @@ spec:
 
 ### Repository Structure
 
-```
+```text
 app-repo/
 ├── k8s/                    # Kubernetes manifests
 │   ├── deployment.yaml

@@ -8,11 +8,17 @@ A self-contained Go module. Lints a repository's markdown against its code, and 
 ```sh
 task docs:lint          # every enabled rule
 task docs:links         # broken internal links only
-task docs:components    # component inventory: slug, README presence, nested-kustomization count
+task docs:components    # component inventory: slug, README presence, nested-kustomization count (`n/a` where the strategy cannot measure it)
 task docs:frontmatter   # docs with no frontmatter — the migration worklist
 task docs:stale         # docs whose covered code has moved ahead of them
 task docs:rule -- component-shape   # a single rule
+docsgen lint -all       # every finding, not the first 20 per rule
 ```
+
+Each rule prints at most 20 findings by default and then says how many it withheld. `-all` lifts
+that cap completely. Both halves matter: the cap is what keeps a fresh adoption's 154-finding
+wall readable, and `-all` is what makes a 120-finding rule triageable at all — you cannot act on
+what the tool will not print.
 
 Inside the dev shell the binary is on `PATH`, so `docsgen lint` works from anywhere in the repo
 without a path prefix. `task docs:build` compiles it; the flake's `shellHook` adds
@@ -34,7 +40,8 @@ Copy `dev/docs-generator/` and edit `config.yaml`. That is the whole procedure �
 
 The Go knows nothing about Talos, Flux or beads by name. It knows there is *a* way to enumerate
 components and *a* ticket shape, and reads both from config. If a repo enumerates components
-some other way, add a `kind` in `collect.go`; never special-case inside a rule.
+some other way, add one `strategy_<kind>.go` that registers itself from `init()`; no existing
+file needs editing, and never special-case inside a rule.
 
 | Config key | What it controls |
 | --- | --- |
@@ -47,6 +54,8 @@ some other way, add a `kind` in `collect.go`; never special-case inside a rule.
 | `rules` | enable/disable and severity per rule |
 | `docs_root` | the repo's documentation root (default `docs`) — where artifacts are written, and what `colocation` calls "central" |
 | `artifacts` | the generated document set: destination, scope, frontmatter and footer tickets, per artifact |
+| `artifacts.<name>.region` | marker-region ownership: the artifact writes only the span between that region's markers |
+| `artifacts.<name>.nav` | the nav renderer's enumeration: `entries`, `dir`, `description_key` |
 
 ### The generated artifact set
 
@@ -125,6 +134,97 @@ config key — silently wrong in every repo that does not share this one's vocab
 exactly the defect the block exists to remove. A wrong `docs_root` is different in kind: it is a
 PATH, and a wrong path is visible the first time anybody looks at the tree.
 
+### `region:` — marker ownership, for a file docsgen must not own outright
+
+`INDEX.md` and the section READMEs carry editorial prose a generator cannot reproduce: a
+grounding-pass note, a "Key Concepts" block, a list of known contradictions between documents. A
+whole-file artifact pointed at one of those deletes it on the first run. So those files are
+**marker-owned**: docsgen writes one span and copies every other byte through untouched.
+
+```markdown
+<!-- docs:gen:nav -->
+
+| Doc | What it covers |
+| --- | --- |
+| [quickstart.md](quickstart.md) | Fast-track cluster setup and common commands. |
+
+<!-- /docs:gen:nav -->
+```
+
+```yaml
+nav-getting-started:
+  renderer: nav
+  path: 01-getting-started/README.md
+  region: nav # the marker name; presence of this key switches on marker ownership
+  nav:
+    entries: siblings # or `sections`
+    description_key: bluf # NO DEFAULT — see below
+```
+
+Three properties are load-bearing.
+
+**The blank lines around the table are part of the convention.** Verified against this repo's
+pinned prettier 3.9.6: a table butted directly against an HTML comment gets a blank line inserted
+on either side, so the unframed form is not a fixed point and `docsgen check` would report drift
+on the first unrelated `prettier --write`.
+
+**Only the region body is normalised.** Running the normaliser over the merged document would be
+the obvious implementation and is wrong: these files are not prettier fixed points — this repo
+has a 611-file formatting backlog — so normalising the whole thing silently reformats prose the
+artifact does not own, and the diff is indistinguishable from a content change.
+
+**A broken marker state is a hard error naming the file.** Missing, unbalanced, nested, inverted,
+or a file that does not exist: every one of them refuses to write, in both `generate` and
+`check`, with exit 2. Never an append, never a fall back to whole-file ownership. Both of those
+alternatives are silent, both destroy or duplicate prose, and neither is recoverable from
+anything but somebody's memory.
+
+`front:` and `ticket_notes:` are **refused** on a marker-owned artifact. It writes no frontmatter
+and no footer — the file it writes into owns both — so such a block would render nowhere while
+appearing to have been validated.
+
+Two artifacts may own two different regions in one file (`INDEX.md` has a sections table and a
+root-documents table). Two artifacts owning the *same* region, or any whole-file artifact sharing
+a destination, is a config error: the first never reaches a fixed point and the second erases the
+other's work.
+
+### `nav` — a link table derived from the tree
+
+A hand-written link table is a claim about the tree that nothing revalidates. When
+`docs/_archive/` was deleted from this repo, 58 rows across nine nav files kept pointing at
+documents that no longer existed anywhere — not moved, **deleted**, with nothing to repoint them
+at — and `broken-links` reported all 58 forever. Rows derived from the corpus cannot reach that
+state.
+
+| `nav` key | Meaning |
+| --- | --- |
+| `entries: siblings` | the markdown documents directly in `dir`, skipping the artifact itself and any `README.md` (a section's README is indexed by the parent's sections table) |
+| `entries: sections` | `<subdir>/README.md` for each subdirectory of `dir` |
+| `dir` | the directory to enumerate; defaults to the artifact's own directory |
+| `description_key` | the frontmatter key carrying each target's one-liner |
+
+Rows come from `ctx.Docs` — `git ls-files` filtered by `exclude:` — so an untracked scratch file
+never appears and a deliberately excluded tree never leaks into a published index. They are
+**sorted by repo-relative target path**, bytewise ascending. That key is total (two rows cannot
+share it, which the link text can) and it makes numeric section prefixes order naturally without
+the generator knowing about them.
+
+The description column is the **target's own** `description_key` value, falling back to its H1
+and then to an em dash. Reading it from the target rather than generating it is what keeps the
+curated one-liners — the only reason anybody reads a nav table instead of running `ls` — alive
+across a regeneration. There is deliberately **no default** for `description_key`: against a repo
+whose key is spelled `summary`, a hardcoded `bluf` would make every description silently degrade
+to the H1 while looking like it worked. It must also appear in `key_order`, or no document in the
+repo is expected to carry it.
+
+A target whose frontmatter says `status: superseded` is skipped **unless** it declares
+`superseded_by`. A dead end says "do not trust me" and offers nowhere to go; a forwarded one is
+worth an entry, because following it is how a reader reaches the replacement.
+
+A nav whose enumeration matches nothing is an error naming the key, for the same reason an empty
+scoped inventory is: a header, a separator and no rows reads as "this section is empty" when it
+means "the enumeration is wrong".
+
 ### The pre-write gate
 
 After rendering and **before writing**, `Generate` runs each artifact's own bytes back through
@@ -141,16 +241,61 @@ ruleset rejects, whether or not the file is ever tracked.
 
 ## The rules
 
-| Rule | What it catches |
-| --- | --- |
-| `broken-links` | relative links to files that do not exist |
-| `frontmatter-schema` | unknown enum values, missing required keys, banned keys, key order |
-| `covers-resolves` | a doc claiming to cover a component that does not exist |
-| `component-path` | a component whose declared path is missing on disk |
-| `component-shape` | **one component slug wrapping many nested units** — see below |
-| `colocation` | a doc that is not where its declared scope says it should live |
-| `tickets-in-body` | a ticket in frontmatter that the body never mentions |
-| `taxonomy-structure` | a doc that does not match the shape its `type:` claims |
+| Rule | What it catches | Requires |
+| --- | --- | --- |
+| `broken-links` | relative links to files that do not exist | — |
+| `frontmatter-schema` | unknown enum values, missing required keys, banned keys, key order | — |
+| `covers-resolves` | a doc claiming to cover a component that does not exist | — |
+| `component-path` | a component whose declared path is missing on disk | `component.path_is_declared` |
+| `component-shape` | **one component slug wrapping many nested units** — see below | `component.sub_units` |
+| `colocation` | a doc that is not where its declared scope says it should live | — |
+| `tickets-in-body` | a ticket in frontmatter that the body never mentions | — |
+| `taxonomy-structure` | a doc that does not match the shape its `type:` claims | — |
+
+### A rule that cannot run says so
+
+`Requires` is the demand side of the fact vocabulary a component strategy declares with
+`Provides()`. A rule whose measurement the configured `components.kind` cannot supply is **not
+run**, and is reported:
+
+```text
+skipped  component-path   needs component.path_is_declared, which components.kind `dirs` does not report
+skipped  component-shape  needs component.sub_units, which components.kind `dirs` does not report
+
+5 finding(s): 3 error, 2 warn
+2 rule(s) could not run — see the `skipped` lines above
+```
+
+Why it exists: `component-shape` counts nested `kustomization.yaml` files and `component-path`
+asks whether a *declared* path exists. Under `components.kind: dirs` neither measurement is
+available — the count is structurally zero without kustomize, and a directory the walker found
+is on disk by construction. Both rules used to run, find nothing, and be reported as a clean
+pass. **A rule that silently never fires is worse than an absent one, because the report reads
+as coverage.**
+
+Four properties are deliberate:
+
+- **On stdout, with the report.** A skip is part of the lint *answer*, not a diagnostic about
+  the run. On stderr it is invisible to `docsgen lint | tee report.txt` and to any CI log that
+  keeps only stdout — which is exactly where somebody reads "no `component-shape` findings".
+- **Leading token `skipped`, never `component-shape  [skipped]`.** The second shape is
+  indistinguishable from a rule block to anything reading the report by rule name, so a check
+  for "no `component-shape` findings" would pass identically whether the rule ran clean or never
+  ran. That ambiguity *is* the defect being removed.
+- **The summary line is untouched.** `N finding(s): E error, W warn` keeps its exact bytes; the
+  skip count is appended as its own line, so a skip can never be counted as a finding.
+- **Skips do not affect the exit code, and there is no `-strict` flag.** A repo whose strategy
+  is narrower than Flux's must be able to adopt the tool without landing red on day one. A flag
+  nobody sets is a feature nobody tests.
+
+`docsgen components` follows the same rule with **fixed columns and `n/a`**, never a dropped
+column and never a zero: `nested 0` and `nested n/a` are different claims, and printing the
+first for the second is the same lie in a different place.
+
+```text
+slug       readme  nested   suspend path
+billing    yes     n/a      n/a     services/billing
+```
 
 ### On `component-shape`
 

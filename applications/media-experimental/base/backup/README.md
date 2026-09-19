@@ -1,7 +1,6 @@
 # media-experimental config backup / restore
 
 > Parent: [applications/media-experimental](../../) ·
-> Rationale: [docs/02-architecture/embedded-db-migration-audit.md §4](../../../../docs/02-architecture/embedded-db-migration-audit.md#4-media-experimental--the-answer-is-tar-not-postgres-and-not-nfs) ·
 > Ticket: TALOS-uml1 (EPIC 0 / TALOS-k62s)
 
 ## TL;DR
@@ -22,17 +21,18 @@ Verbatim output in [Proof](#proof--this-path-has-been-exercised-not-just-designe
 
 ## Why not NFS, and why not Postgres
 
-Settled by the audit; do not re-litigate.
+Settled by the 2026 embedded-DB migration audit, which has since been pruned from the tree —
+the conclusion below is now the record. Do not re-litigate.
 
 - **Not Postgres.** Only 3 of 12 apps support an external database at all, and
   migrating 3 of 12 does not un-pin the node. Partial migration buys nothing here.
 - **Not NFS.** 9 of the 12 volumes hold live SQLite. This cluster already ran the
   SQLite-on-NFS experiment on the arr stack, hit locking problems, and migrated
-  *off* NFS onto `local-path` in December 2025. The artifact is still on disk
+  _off_ NFS onto `local-path` in December 2025. The artifact is still on disk
   (`/config/radarr.db.nfs-backup`, 2025-12-20) and the reason is in the header of
   `applications/arr-stack/base/shared/db-migration-configmap.yaml`.
 
-NFS is safe for *this* PVC because it only ever sees whole-file sequential
+NFS is safe for _this_ PVC because it only ever sees whole-file sequential
 `tar.gz` writes. It is unsafe for the config volumes because those hold open
 databases. Different workload, different answer.
 
@@ -40,7 +40,7 @@ databases. Different workload, different answer.
 
 1. Off-cluster. `192.168.1.36:/volume1/appdata` survives a node reset and a
    cluster-wide outage. That is the whole point.
-2. MinIO would land on the same NAS anyway — the tenant's own `data0` PVC *is*
+2. MinIO would land on the same NAS anyway — the tenant's own `data0` PVC _is_
    `fatboy-nfs-appdata`. S3 adds a hop (tenant pod on talos06) and a failure
    mode, not durability.
 3. No credentials. MinIO would need an ESO-generated scoped user, and those
@@ -50,11 +50,11 @@ databases. Different workload, different answer.
 
 ## What the jobs do
 
-| CronJob | What it does | Touches live data? |
-| --- | --- | --- |
-| `config-backup` | Scales each Deployment to 0 **one at a time**, tars its volume, writes a checksum list, re-extracts the archive and re-checks every sha256, scales back up | Scales apps; writes only to the backup PVC |
-| `config-restore` | Extracts archives back into the config volumes and verifies every file | **Yes** — writes app data |
-| `config-restore-verify` | Same `restore.sh`, but into throwaway ephemeral volumes | No |
+| CronJob                 | What it does                                                                                                                                               | Touches live data?                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `config-backup`         | Scales each Deployment to 0 **one at a time**, tars its volume, writes a checksum list, re-extracts the archive and re-checks every sha256, scales back up | Scales apps; writes only to the backup PVC |
+| `config-restore`        | Extracts archives back into the config volumes and verifies every file                                                                                     | **Yes** — writes app data                  |
+| `config-restore-verify` | Same `restore.sh`, but into throwaway ephemeral volumes                                                                                                    | No                                         |
 
 ### SQLite consistency
 
@@ -107,7 +107,7 @@ wall clock for the whole stack.
 generic ephemeral volumes named `<pod>-<volume>`, created empty when the pod
 starts and deleted with it. No live config PVC was written to at any point.
 
-```
+```text
 === restore from run 20260823T010514Z (/backup/20260823T010514Z) ===
 === FORCE=false QUIESCE=false ===
 --- audiobookshelf-config (deployment audiobookshelf)
@@ -156,7 +156,7 @@ uid/gid/mode matched capture time.
 ### Read the uid:gid histogram correctly
 
 **Not every volume should come back as 1000:1000.** kavita, komga,
-audiobookshelf and libation are root-owned *at the source* — those containers run
+audiobookshelf and libation are root-owned _at the source_ — those containers run
 as root — and this was confirmed straight from the live pods, independently of the
 archive:
 
@@ -176,8 +176,7 @@ So the correct property is **restore reproduces captured ownership exactly**, ov
 a source that is a genuine mix. The volumes that carry 1000:1000 —
 `chaptarr` 16/16, `livrarr` 28/28, `mylar3` 23/23, `storyteller` 9/9,
 `booksonic` 31/34, `librarr` 2/3, `bindery` 1/2 — are what proves the `CAP_CHOWN`
-fix holds. Before it, those all landed as `0:0`, and the apps run as PUID/PGID
-1000. A blanket "everything must be 1000:1000" assertion would be wrong here and
+fix holds. Before it, those all landed as `0:0`, and the apps run as PUID/PGID 1000. A blanket "everything must be 1000:1000" assertion would be wrong here and
 would fail on four healthy volumes.
 
 ### bindery-config is covered
@@ -219,14 +218,14 @@ Retention keeps the newest `RETAIN` (default 5) runs.
 
 Set as env on the CronJob (or on a one-off Job).
 
-| Var | Default | Meaning |
-| --- | --- | --- |
-| `VOLUMES` | all 12 | Space-separated `deployment=pvc`. Narrow it to work on one app. |
-| `QUIESCE` | `true` | Scale the owning Deployment to 0 first. |
-| `VERIFY` | `full` | backup only: `full` re-extracts, `listing` checks the tar stream, `none` skips. |
-| `RETAIN` | `5` | backup only: run directories to keep. |
-| `RUN_ID` | newest clean | restore only: pin a specific run. |
-| `FORCE` | `false` | restore only: `true` wipes a non-empty target first. **Interlock — leave it false unless you mean it.** |
+| Var       | Default      | Meaning                                                                                                 |
+| --------- | ------------ | ------------------------------------------------------------------------------------------------------- |
+| `VOLUMES` | all 12       | Space-separated `deployment=pvc`. Narrow it to work on one app.                                         |
+| `QUIESCE` | `true`       | Scale the owning Deployment to 0 first.                                                                 |
+| `VERIFY`  | `full`       | backup only: `full` re-extracts, `listing` checks the tar stream, `none` skips.                         |
+| `RETAIN`  | `5`          | backup only: run directories to keep.                                                                   |
+| `RUN_ID`  | newest clean | restore only: pin a specific run.                                                                       |
+| `FORCE`   | `false`      | restore only: `true` wipes a non-empty target first. **Interlock — leave it false unless you mean it.** |
 
 To back up a single app:
 
@@ -294,23 +293,23 @@ The volumes are only half the pin. Both halves have to move together.
 
 Bytes are the sum of regular-file sizes on the volume; archive is the gzipped tar.
 
-| Volume | Deployment | Files | Bytes | Archive | Embedded store |
-| --- | --- | ---: | ---: | ---: | --- |
-| `kavita-config` | kavita | 49 | 46,940,774 | 17.0 MB | `kavita.db` + `cache.db` + WAL/SHM |
-| `storyteller-config` | storyteller | 4 | 5,676,718 | 1.15 MB | `storyteller.db` + WAL |
-| `chaptarr-config` | chaptarr | 11 | 5,566,119 | 845 KB | `chaptarr.db` (+cache/logs/staging) + WAL/SHM |
-| `livrarr-config` | livrarr | 26 | 1,874,048 | 82 KB | `livrarr.db` + WAL/SHM (+ pre-migrate copies) |
-| `komga-config` | komga | 14 | 653,091 | 27 KB | `database.sqlite` + `tasks.sqlite` + WAL/SHM |
-| `bindery-config` | bindery | 1 | 614,400 | 25 KB | `bindery.db` — **SQLite, now confirmed on disk** |
-| `mylar3-config` | mylar3 | 12 | 557,018 | 47 KB | `mylar.db` + `.mylar_maintenance.db` |
-| `booksonic-config` | booksonic | 22 | 473,195 | 233 KB | HSQLDB `airsonic.script` + Lucene index + `.lck` |
-| `audiobookshelf-config` | audiobookshelf | 16 | 446,217 | 20 KB | `absdatabase.sqlite` |
-| `librarr-config` | librarr | 2 | 182,495 | 6 KB | `librarr.db` |
-| `audiobookshelf-metadata` | audiobookshelf | 2 | 13,557 | 2 KB | none — two daily log files |
-| `libation-config` | libation | 2 | 750 | 0.6 KB | none — `Settings.json` + `AccountsSettings.json` |
-| **Total** | | **161** | **62,998,382** (60 MiB) | **18.5 MB** | across 60 Gi of provisioned claims |
+| Volume                    | Deployment     |   Files |                   Bytes |     Archive | Embedded store                                   |
+| ------------------------- | -------------- | ------: | ----------------------: | ----------: | ------------------------------------------------ |
+| `kavita-config`           | kavita         |      49 |              46,940,774 |     17.0 MB | `kavita.db` + `cache.db` + WAL/SHM               |
+| `storyteller-config`      | storyteller    |       4 |               5,676,718 |     1.15 MB | `storyteller.db` + WAL                           |
+| `chaptarr-config`         | chaptarr       |      11 |               5,566,119 |      845 KB | `chaptarr.db` (+cache/logs/staging) + WAL/SHM    |
+| `livrarr-config`          | livrarr        |      26 |               1,874,048 |       82 KB | `livrarr.db` + WAL/SHM (+ pre-migrate copies)    |
+| `komga-config`            | komga          |      14 |                 653,091 |       27 KB | `database.sqlite` + `tasks.sqlite` + WAL/SHM     |
+| `bindery-config`          | bindery        |       1 |                 614,400 |       25 KB | `bindery.db` — **SQLite, now confirmed on disk** |
+| `mylar3-config`           | mylar3         |      12 |                 557,018 |       47 KB | `mylar.db` + `.mylar_maintenance.db`             |
+| `booksonic-config`        | booksonic      |      22 |                 473,195 |      233 KB | HSQLDB `airsonic.script` + Lucene index + `.lck` |
+| `audiobookshelf-config`   | audiobookshelf |      16 |                 446,217 |       20 KB | `absdatabase.sqlite`                             |
+| `librarr-config`          | librarr        |       2 |                 182,495 |        6 KB | `librarr.db`                                     |
+| `audiobookshelf-metadata` | audiobookshelf |       2 |                  13,557 |        2 KB | none — two daily log files                       |
+| `libation-config`         | libation       |       2 |                     750 |      0.6 KB | none — `Settings.json` + `AccountsSettings.json` |
+| **Total**                 |                | **161** | **62,998,382** (60 MiB) | **18.5 MB** | across 60 Gi of provisioned claims               |
 
-`bindery-config` was recorded as *unverified* by the audit because the image is
+`bindery-config` was recorded as _unverified_ by the audit because the image is
 distroless with no shell. Mounting the PVC from this job settles it: one 600 KB
 `bindery.db`, SQLite, as upstream implied. It stays on `local-path`.
 
@@ -331,15 +330,15 @@ Verified live for all 11: no `nodeSelector`, no tolerations, no `hostPath`, no
 `hostNetwork`/`hostPID`, no device resources. The config PVC is the only thing
 tying any of them to a node.
 
-| App | Store on its local-path config volume | Other pin? | Co-location claim? | Verdict |
-| --- | --- | --- | --- | --- |
-| kavita | `kavita.db`, `cache.db` + WAL/SHM | none | none | Justified — by the PVC alone |
-| komga | `database.sqlite`, `tasks.sqlite` + WAL/SHM | none | none | Justified — by the PVC alone |
-| libation | **none** — 750 bytes of JSON | none | none | **Not justified by data.** See below |
-| librarr | `librarr.db` | none | `QB_URL` → qbittorrent Service DNS | Justified — by the PVC alone |
-| livrarr | `livrarr.db` + WAL/SHM | none | none | Justified — by the PVC alone |
-| mylar3 | `mylar.db`, `.mylar_maintenance.db` | none | none | Justified — by the PVC alone |
-| storyteller | `storyteller.db` + WAL | none | none | Justified — by the PVC alone |
+| App         | Store on its local-path config volume       | Other pin? | Co-location claim?                 | Verdict                              |
+| ----------- | ------------------------------------------- | ---------- | ---------------------------------- | ------------------------------------ |
+| kavita      | `kavita.db`, `cache.db` + WAL/SHM           | none       | none                               | Justified — by the PVC alone         |
+| komga       | `database.sqlite`, `tasks.sqlite` + WAL/SHM | none       | none                               | Justified — by the PVC alone         |
+| libation    | **none** — 750 bytes of JSON                | none       | none                               | **Not justified by data.** See below |
+| librarr     | `librarr.db`                                | none       | `QB_URL` → qbittorrent Service DNS | Justified — by the PVC alone         |
+| livrarr     | `livrarr.db` + WAL/SHM                      | none       | none                               | Justified — by the PVC alone         |
+| mylar3      | `mylar.db`, `.mylar_maintenance.db`         | none       | none                               | Justified — by the PVC alone         |
+| storyteller | `storyteller.db` + WAL                      | none       | none                               | Justified — by the PVC alone         |
 
 `librarr` is the only workload in the stack that references another app, and the
 reference is a ClusterIP Service name (`qbittorrent.media.svc.cluster.local`) —
@@ -350,7 +349,7 @@ here too. It is not claimed anywhere, but it is now checked.
 ### What was actually wrong with it
 
 The affinity is not bogus — but it was **hard-coded to `talos03`**, which makes it
-an *independent* pin that outlives the volume. That is precisely the sonarr
+an _independent_ pin that outlives the volume. That is precisely the sonarr
 failure: the PVC was removed and the pod stayed welded to the node while every
 check reported green. Worse for a restore: fresh `local-path` PVCs are
 `WaitForFirstConsumer`, so after a reset the node is chosen by whichever pod binds

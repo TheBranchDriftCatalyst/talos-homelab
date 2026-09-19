@@ -1,3 +1,14 @@
+---
+type: runbook
+status: current
+covers:
+  - path:configs
+  - path:bootstrap/flux
+  - path:scripts/external-secrets
+freshness: tracks-code
+bluf: Bare metal to fully reconciling GitOps in six idempotent steps — generate and apply machine configs, bootstrap etcd once, bootstrap Flux, then unblock ESO with a single 1Password Connect command.
+---
+
 # Cluster Bootstrap Runbook
 
 End-to-end procedure for bringing the Talos cluster from bare metal (or full
@@ -39,12 +50,12 @@ The whole sequence is idempotent — re-running any step is safe.
 
 Before you start, gather these. They are NOT in the repo (and must not be):
 
-| Item | Source | Where it lives during bootstrap |
-| --- | --- | --- |
-| `1password-credentials.json` | 1Password developer-tools → Connect → catalyst-eso → "Download credentials" | Project root, `./1password-credentials.json` (gitignored on line 35 of `.gitignore`) |
-| `OP_CONNECT_TOKEN` | 1Password developer-tools → Connect → catalyst-eso → access token | Shell env var |
-| `GITHUB_TOKEN` (PAT) | GitHub → settings → developer settings → fine-grained PAT, scope: `repo` | Shell env var, used only by `flux bootstrap` |
-| Talos node IP | `192.168.1.54` (control plane) | `TALOS_NODE` env var |
+| Item                         | Source                                                                      | Where it lives during bootstrap                           |
+| ---------------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `1password-credentials.json` | 1Password developer-tools → Connect → catalyst-eso → "Download credentials" | Project root, `./1password-credentials.json` (gitignored) |
+| `OP_CONNECT_TOKEN`           | 1Password developer-tools → Connect → catalyst-eso → access token           | Shell env var                                             |
+| `GITHUB_TOKEN` (PAT)         | GitHub → settings → developer settings → fine-grained PAT, scope: `repo`    | Shell env var, used only by `flux bootstrap`              |
+| Talos node IP                | `192.168.1.54` (control plane)                                              | `TALOS_NODE` env var                                      |
 
 CLI tools required (install with `task deps:install`):
 `talosctl`, `kubectl`, `flux`, `kustomize`, `helm`, `task`.
@@ -82,9 +93,11 @@ gitignored, so a fresh clone will not have it — restore it from 1Password firs
 `talhelper gensecret` with no arguments to "fix" a missing one: that mints a new CA, which
 does not recover this cluster but defines a different one.
 
-If any step hangs see `docs/03-operations/provisioning.md` for deeper detail.
+If a node hangs mid-apply, work from `task talos:verify-dry-run` — it asks each node what
+applying would do, read-only, and is the fastest way to tell "config not applied" from
+"node not reachable".
 
-## Step 2 — Patch kubelet bind mounts *(no longer a step)*
+## Step 2 — Patch kubelet bind mounts _(no longer a step)_
 
 **Nothing to do here.** Step 1 already applied these.
 
@@ -92,17 +105,17 @@ The kubelet bind mounts for iSCSI (Democratic-CSI / TrueNAS) and the local-path-
 host directory — plus `maxPods`, the memory reserves and image GC — are declared in
 `configs/talconfig.yaml` and generated into every node's machine config:
 
-| Setting | Declared in |
-| --- | --- |
+| Setting                                                        | Declared in                                 |
+| -------------------------------------------------------------- | ------------------------------------------- |
 | `/etc/iscsi`, `/var/lib/iscsi`, `/var/lib/rancher` bind mounts | `configs/patches/all-kubelet-baseline.yaml` |
-| `systemReserved` / `kubeReserved` / `evictionHard` | `configs/patches/all-kubelet-baseline.yaml` |
-| `imageMaximumGCAge: 336h` | `configs/patches/all-kubelet-baseline.yaml` |
-| `maxPods: 200` (every node except talos03) | `configs/patches/maxpods-200.yaml` |
-| `maxPods: 60` (talos03 — deliberately lower) | `configs/patches/talos03-maxpods.yaml` |
+| `systemReserved` / `kubeReserved` / `evictionHard`             | `configs/patches/all-kubelet-baseline.yaml` |
+| `imageMaximumGCAge: 336h`                                      | `configs/patches/all-kubelet-baseline.yaml` |
+| `maxPods: 200` (every node except talos03)                     | `configs/patches/maxpods-200.yaml`          |
+| `maxPods: 60` (talos03 — deliberately lower)                   | `configs/patches/talos03-maxpods.yaml`      |
 
-`scripts/bootstrap-talos-patches.sh` and `task talos:patches` used to do this with
-`talosctl patch mc`. Both are retired and now refuse to run. Applying these by hand as well
-creates drift the next `task talos:apply-config` reverts.
+`scripts/bootstrap-talos-patches.sh` used to do this with `talosctl patch mc`. It has been
+deleted; `task talos:patches` survives only to print where its work went. Applying these by
+hand as well creates drift the next `task talos:apply-config` reverts.
 
 To check a node actually has them:
 
@@ -228,62 +241,59 @@ After a UPS event or any catastrophic recovery, the operator runs
 `./1password-credentials.json` in place — that single command unblocks the
 ~9 downstream Flux Kustomizations that depend on ESO.
 
-## Sizing Considerations (verify on a re-bootstrap)
+## Sizing traps a fresh cluster walks into
+
+These are already handled in the manifests. They are recorded here because each one presents
+as something other than "a number is too small", and recognising the symptom is the slow part.
 
 ### Cilium BPF map sizes
 
-`configs/cilium-values.yaml` should include explicit BPF map sizes — defaults
-are too small for a homelab cluster with ~50 namespaces:
+The defaults are sized for a cluster with far fewer namespaces and network policies than this
+one. `policyMapMax` and `lbMapMax` are therefore set explicitly in
+`infrastructure/base/cilium/values.yaml` — read the current values there rather than from here.
 
-```yaml
-bpf:
-  masquerade: true
-  policyMapMax: 65536  # default 16384 — overflows at ~200 pods × many policies
-  lbMapMax: 65536      # already 65536 default, keep explicit
-```
+An undersized `policyMapMax` does not report itself as a sizing problem. It looks like:
 
-Symptoms of an undersized `policyMapMax`:
-
-```
+```text
 Failed to add PolicyMap key" ... error="update map cilium_policy_NNNN:
 update: no space left on device"
 ```
 
-…followed by every new pod sandbox failing with `Cilium API client timeout`.
-See `docs/06-troubleshooting/2026-05-21-cilium-cascading-meltdown.md`.
+…followed by every new pod sandbox failing with `Cilium API client timeout`, which reads like a
+CNI outage. If you see that combination, check the map size before anything else.
 
 ### Kubelet maxPods (per-node)
 
-Default is 110. For GPU nodes that gather GPU-pinned workloads (Plex, Jellyfin,
-Tdarr, ML inference) plus their dependencies, this fills quickly. If you see
-`FailedScheduling ... Too many pods` on a node, increase via Talos machine
-config:
+The kubelet default is 110, which GPU nodes exhaust once GPU-pinned workloads and their
+dependencies pile onto one node. The symptom is `FailedScheduling ... Too many pods`.
 
-```yaml
-machine:
-  kubelet:
-    extraConfig:
-      maxPods: 200
-```
+This is **not** fixed with a hand-applied `talosctl patch mc` — see Step 2. `maxPods` is declared
+per node under `configs/patches/`, deliberately per-node rather than globally, because talhelper
+applies the global `patches:` list _after_ each node's own and a node-level override of a
+globally-declared value silently loses. One node is set lower than the fleet on purpose; the
+reasoning is in the patch file next to the value.
 
-Apply with `talosctl apply-config` — kubelet restarts, no node reboot required.
+The ceiling above the kubelet setting is the per-node pod CIDR, not the kubelet — a `/24` cannot
+host more addresses than it has.
 
-### Admission webhook failurePolicy
+### Admission webhooks
 
-All operators we deploy that register MutatingWebhookConfigurations must use
-`failurePolicy: Ignore` (with a `namespaceSelector` excluding kube-system).
-The cluster meltdown of 2026-05-21 was caused by a webhook with
-`failurePolicy: Fail` whose operator had crashed — every pod admission was
-blocking. The pre-flight in `upgrade-talos.py` and `shutdown-cluster.sh`
-detects this state now, but the defense lives in the helm values too.
+The 2026-05-21 meltdown was a webhook with `failurePolicy: Fail` whose backend had crashed: every
+pod admission cluster-wide blocked. Two defences exist now, and they are different in kind:
+
+- **Detection** — both `scripts/upgrade-talos.py` and `scripts/shutdown-cluster.sh` refuse to
+  proceed when an admission webhook's service has no Ready endpoints.
+- **Design** — most operators here register `failurePolicy: Ignore`. Kyverno's admission
+  controller is the deliberate exception: it is fail-closed by design, so it instead runs
+  multiple replicas with a PodDisruptionBudget so a voluntary disruption can never take the last
+  one down. Read `infrastructure/base/kyverno/helmrelease.yaml` before changing either.
 
 ## Related
 
 - `infrastructure/base/external-secrets/README.md` — ESO details and ExternalSecret patterns
 - `scripts/external-secrets/README.md` — All ESO/1Password helper scripts
-- `docs/03-operations/provisioning.md` — Talos provisioning detail
-- `docs/04-deployment/flux-setup.md` — Flux bootstrap detail
-- `docs/02-architecture/dual-gitops.md` — Why Flux + ArgoCD coexist
+- [docs/02-architecture/dual-gitops.md](../02-architecture/dual-gitops.md) — Why Flux + ArgoCD coexist
+- [docs/05-runbooks/README.md](README.md) — the standing local-path / Velero / reset constraints
 
 ## Related Issues
 

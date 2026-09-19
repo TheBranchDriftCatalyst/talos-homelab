@@ -22,7 +22,7 @@ children that are each their own component, others are a single Kustomization wr
 nested ones, and nothing in the tree tells the two apart. So this table is built from the
 Kustomizations, never from the filesystem.
 
-65 components are declared across 64 manifest files. 18 have a colocated `README.md`,
+65 components are declared across 64 manifest files. 19 have a colocated `README.md`,
 which is the question this table really asks: a component with no README has no doc home,
 and whatever documents it lives somewhere that nothing keeps pointed at it.
 
@@ -79,7 +79,7 @@ and whatever documents it lives somewhere that nothing keeps pointed at it.
 | `monitoring-v2-operators`    | `monitoring-v2-operators`    | `infrastructure/base/monitoring/v2-otel/operators`    | yes     | -      | 3      | -         |
 | `namespaces`                 | `namespaces`                 | `infrastructure/base/namespaces`                      | yes     | -      | 1      | -         |
 | `operators`                  | `operators`                  | `infrastructure/base/operators`                       | yes     | -      | 8      | -         |
-| `pihole`                     | `pihole`                     | `infrastructure/base/pihole`                          | yes     | -      | 1      | -         |
+| `pihole`                     | `pihole`                     | `infrastructure/base/pihole`                          | yes     | yes    | 1      | -         |
 | `reflector`                  | `reflector`                  | `infrastructure/base/reflector`                       | yes     | -      | 1      | -         |
 | `scratch`                    | `scratch`                    | `applications/scratch`                                | yes     | -      | 7      | -         |
 | `storage`                    | `storage`                    | `infrastructure/base/storage`                         | yes     | -      | 2      | -         |

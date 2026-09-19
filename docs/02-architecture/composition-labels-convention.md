@@ -1,3 +1,16 @@
+---
+type: decision
+status: current
+covers:
+  - catalyst-cnpg-appdb
+  - catalyst-websecure-ingress
+freshness: tracks-code
+tickets:
+  - TALOS-l2sm.10
+  - TALOS-l2sm.11
+bluf: Composed resources carry `catalyst.io/composition` and `catalyst.io/managed-by` on the inner manifest because Crossplane's own label only reaches the outer Object wrapper, which cannot identify the real resource.
+---
+
 # Composition labels & DRY convention
 
 ## TL;DR
@@ -6,11 +19,11 @@ Every resource produced by a Crossplane composition carries two labels so a dash
 tell **composition-managed** resources apart from hand-written **look-alikes** (drying-up
 candidates), and each migration records how many lines of YAML it replaced.
 
-| Label / annotation | Value | On | Purpose |
-|---|---|---|---|
-| `catalyst.io/composition` | `<composition-name>` (e.g. `catalyst-cnpg-appdb`) | every composed resource | identifies the resource as composition-managed + which composition |
-| `catalyst.io/managed-by` | `crossplane` | every composed resource | generic "this is composed" flag |
-| `catalyst.io/replaced-loc` (annotation) | integer | the composite claim (XR) | lines of hand-written YAML this XR replaced — summed on the dashboard as "LOC dried up" |
+| Label / annotation                      | Value                                             | On                       | Purpose                                                                                 |
+| --------------------------------------- | ------------------------------------------------- | ------------------------ | --------------------------------------------------------------------------------------- |
+| `catalyst.io/composition`               | `<composition-name>` (e.g. `catalyst-cnpg-appdb`) | every composed resource  | identifies the resource as composition-managed + which composition                      |
+| `catalyst.io/managed-by`                | `crossplane`                                      | every composed resource  | generic "this is composed" flag                                                         |
+| `catalyst.io/replaced-loc` (annotation) | integer                                           | the composite claim (XR) | lines of hand-written YAML this XR replaced — summed on the dashboard as "LOC dried up" |
 
 Crossplane's built-in `crossplane.io/composite` label lands on the **outer `Object` wrapper
 only**, never the real resource — so it can't identify the inner CNPG Cluster / IngressRoute /
@@ -43,10 +56,17 @@ When migrating an app to a composition, count the lines of YAML the composition 
 ```yaml
 metadata:
   annotations:
-    catalyst.io/replaced-loc: "142"
+    catalyst.io/replaced-loc: '142'
 ```
 
-The Compositions dashboard sums these into a single "lines of YAML dried up" stat.
+Each composition ships its own dashboard (`<composition>/dashboard/dashboard.json`) with a
+"LOC dried up" panel, fed by a kube-state-metrics custom-resource-state rule that exports the
+annotation as `..._composite_replaced_loc`.
+
+> **This is a convention, not an enforced one, and it is mostly unobserved.** Almost no XR in
+> the repo carries the annotation, so the panel reads as an empty gauge rather than as a
+> failure — which is the worst shape for a metric to fail in. Treat a zero there as "nobody
+> recorded it", not as "nothing was dried up", and set the annotation when you migrate.
 
 ---
 

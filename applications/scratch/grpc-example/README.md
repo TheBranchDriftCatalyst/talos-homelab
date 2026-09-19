@@ -4,20 +4,14 @@ A demonstration of gRPC communication between a Go service and a Python service,
 
 ## Architecture
 
-```
-┌─────────────────┐         gRPC          ┌──────────────────┐
-│   Go Service    │◄─────────────────────►│  Python Service  │
-│                 │                        │                  │
-│  Port: 50051    │                        │  Port: 50052     │
-│  Metrics: 9090  │                        │  Metrics: 9091   │
-└─────────────────┘                        └──────────────────┘
-         │                                          │
-         └──────────────┬───────────────────────────┘
-                        ▼
-              ┌─────────────────┐
-              │   Prometheus    │
-              │ ServiceMonitors │
-              └─────────────────┘
+```mermaid
+flowchart TB
+    go["Go Service<br/>gRPC :50051<br/>metrics :9090"]
+    py["Python Service<br/>gRPC :50052<br/>metrics :9091"]
+    prom["Prometheus<br/>two ServiceMonitors"]
+    go <-->|gRPC| py
+    go -->|metrics| prom
+    py -->|metrics| prom
 ```
 
 Both services:

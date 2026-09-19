@@ -23,7 +23,7 @@ Tier 1 reaper does HOT→WARM, tier 2 does WARM→COLD. Both TTLs are fields on 
 
 ## Request path
 
-```
+```text
 client → Traefik (ollama.talos00) → KEDA HTTP interceptor  ← HOLDS the request
        → ollama-gateway (KEDA scales 0↔1)                  ← the demand signal
             readiness = GPU backend answers /health        ← THE critical detail

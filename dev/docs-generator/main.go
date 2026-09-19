@@ -1,9 +1,14 @@
 // Command docsgen lints and (later) generates repository documentation.
 //
 // READ AND WRITE. `lint` and the report commands never touch the repository; `generate` writes
-// the whole-file artifacts and `check` verifies them without writing. The marker-region half —
-// nav tables interleaved with human prose in INDEX.md and the section READMEs — is deliberately
-// still absent, because whole-file and marker ownership must never be mixed in one file.
+// the artifacts and `check` verifies them without writing.
+//
+// TWO OWNERSHIP MODELS, never mixed in one file. A whole-file artifact owns its destination end
+// to end. A marker-owned one (`region:` in config) writes only the span between its markers and
+// copies every other byte through untouched — which is what lets the nav tables in INDEX.md and
+// the section READMEs be generated at all, since those files also carry editorial prose no
+// generator can reproduce. A marker-owned file whose markers are missing, unbalanced or nested
+// is a hard error naming the file; see region.go.
 //
 // WHY THIS EXISTS. Docs are the only projection of a codebase that nothing keeps honest: code
 // graphs are reindexed, session logs are derived from git, decision records are superseded
@@ -21,6 +26,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -41,6 +47,7 @@ flags:
   -root   repo root (default: git rev-parse --show-toplevel)
   -config directory holding config.yaml (default: alongside this source)
   -rule   run a single rule by name
+  -all    print every finding instead of the first 20 per rule
 `
 
 func main() {
@@ -53,6 +60,7 @@ func main() {
 	root := fs.String("root", "", "repo root")
 	confDir := fs.String("config", "", "directory holding config.yaml")
 	rule := fs.String("rule", "", "run a single rule")
+	all := fs.Bool("all", false, "print every finding instead of the first 20 per rule")
 	_ = fs.Parse(os.Args[2:])
 
 	if *root == "" {
@@ -76,9 +84,9 @@ func main() {
 	case "check":
 		os.Exit(reportGenerate(ctx, true))
 	case "lint":
-		os.Exit(reportLint(ctx, *rule))
+		os.Exit(reportLint(ctx, *rule, *all))
 	case "links":
-		os.Exit(reportLint(ctx, "broken-links"))
+		os.Exit(reportLint(ctx, "broken-links", *all))
 	case "components":
 		os.Exit(reportComponents(ctx))
 	case "frontmatter":
@@ -107,8 +115,31 @@ func fileExists(p string) bool {
 	return err == nil
 }
 
-func reportLint(ctx *Ctx, only string) int {
-	findings := Run(ctx, only)
+// skipRuleWidth pads the rule name in a `skipped` line so the reasons line up.
+//
+// FIXED, not computed from the skipped set: a width that shrank when one rule started running
+// again would rewrite every other skip line, turning a one-line change into a whole-block diff
+// in output whose whole job is being diffable.
+const skipRuleWidth = 15
+
+// lintTruncateAt caps how many findings each rule prints by DEFAULT.
+//
+// The cap exists because the first thing a fresh adoption produces is a wall — this repo's own
+// broken-links rule was 154 findings on day one — and a report nobody can read is a report
+// nobody runs. The cap is also how a rule with 120 findings became untriageable: you cannot act
+// on what the tool will not print. `-all` is the escape hatch, and it is a FLAG rather than a
+// new default because both failure modes are real and only the operator knows which one they
+// are in.
+const lintTruncateAt = 20
+
+// reportLint prints the findings, grouped by rule.
+//
+// `all` lifts the per-rule cap. It must lift it COMPLETELY: a flag that raised the ceiling to
+// some larger number would reintroduce the same defect at a different scale, and — worse — the
+// `... and N more` line would still be there to say so in a mode whose whole promise is that
+// nothing was withheld.
+func reportLint(ctx *Ctx, only string, all bool) int {
+	findings, skipped := Run(ctx, only)
 	byRule := map[string][]Finding{}
 	for _, f := range findings {
 		byRule[f.Rule] = append(byRule[f.Rule], f)
@@ -134,17 +165,48 @@ func reportLint(ctx *Ctx, only string) int {
 		fmt.Printf("\n%s  [%s]  %d finding(s)\n", n, sev, len(items))
 		sort.Slice(items, func(i, j int) bool { return items[i].Path < items[j].Path })
 		shown := items
-		if len(shown) > 20 {
-			shown = shown[:20]
+		if !all && len(shown) > lintTruncateAt {
+			shown = shown[:lintTruncateAt]
 		}
 		for _, f := range shown {
 			fmt.Printf("  %s: %s\n", f.Path, f.Message)
 		}
-		if len(items) > 20 {
-			fmt.Printf("  ... and %d more\n", len(items)-20)
+		// The elision notice is derived from what was ACTUALLY withheld, never from a second
+		// comparison against the cap. Deriving it independently is how `-all` would end up
+		// printing every finding and then claiming some were hidden.
+		if hidden := len(items) - len(shown); hidden > 0 {
+			fmt.Printf("  ... and %d more (re-run with -all to see every finding)\n", hidden)
 		}
 	}
+	// Skips go to STDOUT, with the report, because a rule that could not run is part of the
+	// lint ANSWER and not a diagnostic about the run. On stderr it would be invisible to
+	// `docsgen lint | tee report.txt` and to every CI log that keeps only stdout — which is
+	// exactly where somebody reads "no component-shape findings" and concludes they are covered.
+	//
+	// The leading token is `skipped`, deliberately NOT the `<rule>  [skipped]` shape the rule
+	// blocks above use. That shape is indistinguishable from a rule block to anything parsing
+	// this output by rule name — the integration harness's own findingsFor matches `rule + "  ["`
+	// — so a spec asserting "no component-shape findings" would pass identically whether the
+	// rule ran clean or never ran at all. That ambiguity IS the defect being removed here; it
+	// must not be reintroduced by the format that announces its removal.
+	if len(skipped) > 0 {
+		fmt.Println()
+		for _, s := range skipped {
+			fmt.Printf("skipped  %-*s  %s\n", skipRuleWidth, s.Rule, s.Why)
+		}
+	}
+	// The summary line's bytes are unchanged, and must stay that way: it is the line CI gates
+	// and specs grep for. The skip count is APPENDED as its own line rather than folded into
+	// it, so a skip can never be mistaken for a finding or move a count somebody is asserting
+	// on.
 	fmt.Printf("\n%d finding(s): %d error, %d warn\n", len(findings), errors, len(findings)-errors)
+	if len(skipped) > 0 {
+		fmt.Printf("%d rule(s) could not run — see the `skipped` lines above\n", len(skipped))
+	}
+	// Skips contribute ZERO to the exit code. A repo whose strategy is narrower than Flux's
+	// must be able to adopt this tool without landing red on day one, or it simply will not
+	// adopt it — and a red gate nobody can turn green teaches people to pass -k. The report
+	// says what could not be measured; the exit code stays a statement about defects found.
 	if errors > 0 {
 		return 1
 	}
@@ -170,15 +232,37 @@ func reportComponents(ctx *Ctx) int {
 			readme = "yes"
 			withReadme++
 		}
-		suspend := "-"
-		if c.Suspend {
-			suspend = "YES"
-		}
-		fmt.Printf("%-32s %-7s %-8d %-7s %s\n", c.Slug, readme, c.Nested, suspend, c.Path)
+		// FIXED COLUMNS, with `n/a` where the strategy cannot supply the measurement — never a
+		// dropped column and never a zero.
+		//
+		// A zero is the worse of the two failures: `nested 0` and `nested n/a` are different
+		// claims — "this component wraps no sub-units" versus "this repo shape cannot count
+		// sub-units" — and printing the first for the second is the same lie the silent rule
+		// told. Dropping the column instead would keep the honesty and lose the arity, which
+		// breaks every positional reader of this report; a spec filtering rows on field count
+		// would then see zero rows and pass vacuously.
+		fmt.Printf("%-32s %-7s %-8s %-7s %s\n",
+			c.Slug, readme, factCell(ctx, FactSubUnits, strconv.Itoa(c.Nested)),
+			factCell(ctx, FactInactive, suspendCell(c)), c.Path)
 	}
 	fmt.Printf("\n%d components, %d with a README (%d without)\n",
 		len(comps), withReadme, len(comps)-withReadme)
 	return 0
+}
+
+// factCell renders a measurement, or `n/a` when the strategy cannot make it.
+func factCell(ctx *Ctx, f Fact, value string) string {
+	if !ctx.Facts.Has(f) {
+		return "n/a"
+	}
+	return value
+}
+
+func suspendCell(c Component) string {
+	if c.Suspend {
+		return "YES"
+	}
+	return "-"
 }
 
 func reportFrontmatter(ctx *Ctx) int {
@@ -215,18 +299,7 @@ func reportStale(ctx *Ctx) int {
 			continue
 		}
 		covers, _ := StringSlice(d.Front["covers"])
-		var subj string
-		for _, c := range covers {
-			p, ok := resolveCover(ctx, c)
-			if !ok {
-				continue
-			}
-			for path, date := range ctx.Dates {
-				if strings.HasPrefix(path, p+"/") && date > subj {
-					subj = date
-				}
-			}
-		}
+		subj := staleSubject(ctx, covers)
 		docDate := ctx.Dates[d.Path]
 		if subj != "" && docDate != "" && subj > docDate {
 			rows = append(rows, row{d.Path, docDate[:10], subj[:10]})
@@ -279,4 +352,31 @@ func reportGenerate(ctx *Ctx, check bool) int {
 		return 1
 	}
 	return 0
+}
+
+// staleSubject returns the newest commit date across everything the covers resolve to, or "".
+//
+// The match is prefix OR EQUAL, and the "or equal" half is the whole point. ctx.Dates comes
+// from `git log --name-only`, which lists FILE paths only — so a prefix-only match needed a
+// dated path beginning "<the covered file>/", which cannot exist. Every cover naming a FILE was
+// therefore silently inert here while still moving the colocation verdict: half-wired, with the
+// working half disguising the dead half.
+//
+// It punished precision. Nine covers named the exact file whose change invalidates their doc —
+// four of them configs/talconfig.yaml, which would invalidate half the runbooks — and every one
+// contributed nothing. The vaguer directory-shaped declaration worked; the careful one did not.
+func staleSubject(ctx *Ctx, covers []string) string {
+	var subj string
+	for _, c := range covers {
+		p, ok := resolveCover(ctx, c)
+		if !ok {
+			continue
+		}
+		for path, date := range ctx.Dates {
+			if (path == p || strings.HasPrefix(path, p+"/")) && date > subj {
+				subj = date
+			}
+		}
+	}
+	return subj
 }

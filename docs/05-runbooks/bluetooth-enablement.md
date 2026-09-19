@@ -1,6 +1,24 @@
+---
+type: architecture
+status: draft
+covers:
+  - bt-radar
+  - path:configs/talconfig.yaml
+freshness: tracks-code
+tickets:
+  - TALOS-1mog
+bluf: Stock Talos compiles Bluetooth out entirely; enabling it means rebuilding the official kernel for modules only, shipping Intel firmware as an extension, and deleting the signature-enforcement boot arg with the negation form — none of which is applied to any node yet.
+---
+
 # Bluetooth enablement (Talos)
 
 > Parent: [docs/05-runbooks](./) · Status: **artefacts built, NOT yet applied to any node**
+
+Nothing in this document has been applied. The repo agrees: the `bt-agent` DaemonSet in
+`applications/bt-radar/base/40-bt-agent.yaml` blocks in its init container waiting for an
+`hciN` device that no node exposes, and says so in its own header. When the work below lands,
+the per-node `schematic:` and installer references belong in `configs/talconfig.yaml` alongside
+every other node image decision.
 
 ## TL;DR
 
@@ -20,12 +38,12 @@ needs three things, in this order:
 
 ## Why each piece is needed
 
-| Problem | Evidence | Fix |
-| --- | --- | --- |
-| No Bluetooth code in the kernel | `# CONFIG_BT is not set` in `/proc/config.gz` on a live node, and in `pkgs@f541ca4/kernel/build/config-amd64` | rebuild with `CONFIG_BT=m`, `CONFIG_BT_HCIBTUSB=m` |
-| Modules would be rejected at load | `module.sig_enforce=1` on every node's cmdline; signing key is `CN = Build time throw-away kernel key`, generated per build and never published | remove the boot arg |
-| Intel radios need firmware | `/lib/firmware` on talos06 has only `i915`, `intel-ucode`; no official extension ships `intel/ibt-*` | custom firmware extension (88 files, 31 MB) |
-| Realtek radios need firmware | same | official `siderolabs/realtek-firmware` (already ships `rtl_bt`) |
+| Problem                           | Evidence                                                                                                                                        | Fix                                                             |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| No Bluetooth code in the kernel   | `# CONFIG_BT is not set` in `/proc/config.gz` on a live node, and in `pkgs@f541ca4/kernel/build/config-amd64`                                   | rebuild with `CONFIG_BT=m`, `CONFIG_BT_HCIBTUSB=m`              |
+| Modules would be rejected at load | `module.sig_enforce=1` on every node's cmdline; signing key is `CN = Build time throw-away kernel key`, generated per build and never published | remove the boot arg                                             |
+| Intel radios need firmware        | `/lib/firmware` on talos06 has only `i915`, `intel-ucode`; no official extension ships `intel/ibt-*`                                            | custom firmware extension (88 files, 31 MB)                     |
+| Realtek radios need firmware      | same                                                                                                                                            | official `siderolabs/realtek-firmware` (already ships `rtl_bt`) |
 
 ## The `-module.sig_enforce` trap — read this before editing any schematic
 
@@ -33,7 +51,7 @@ needs three things, in this order:
 
 1. Talos appends `extraKernelArgs` **after** its defaults, and only `console` and
    `talos.platform` are in the overwrite list (`pkg/imager/imager.go:386-412`). So you end up
-   with *both* `module.sig_enforce=1` and `module.sig_enforce=0` on the cmdline.
+   with _both_ `module.sig_enforce=1` and `module.sig_enforce=0` on the cmdline.
 2. The kernel refuses the downgrade (`kernel/params.c:348`):
    ```c
    /* Don't let them unset it once it's set! */
@@ -58,13 +76,13 @@ talosctl -n <ip> read /proc/cmdline | tr ' ' '\n' | grep sig_enforce
 
 `Cls=e0(wlcon)` = Bluetooth. All currently show `Driver=(none)`.
 
-| Node | IP | Radios | Firmware needed |
-| --- | --- | --- | --- |
-| talos00 | 192.168.1.54 | none (VM) | — keep enforcement ON |
-| talos01 | 192.168.1.177 | 1 — Intel `8087:0026` | intel-bt-firmware |
-| talos02-gpu | 192.168.1.144 | 1 — Intel `8087:0037` | intel-bt-firmware |
-| talos03 | 192.168.1.30 | 1 — Realtek `0bda:b85b` | realtek-firmware (official) |
-| talos06 | 192.168.1.19 | 2 — Realtek `0bda:a728` + Intel `8087:0026` | both |
+| Node        | IP            | Radios                                      | Firmware needed             |
+| ----------- | ------------- | ------------------------------------------- | --------------------------- |
+| talos00     | 192.168.1.54  | none (VM)                                   | — keep enforcement ON       |
+| talos01     | 192.168.1.177 | 1 — Intel `8087:0026`                       | intel-bt-firmware           |
+| talos02-gpu | 192.168.1.144 | 1 — Intel `8087:0037`                       | intel-bt-firmware           |
+| talos03     | 192.168.1.30  | 1 — Realtek `0bda:b85b`                     | realtek-firmware (official) |
+| talos06     | 192.168.1.19  | 2 — Realtek `0bda:a728` + Intel `8087:0026` | both                        |
 
 Total: **5 radios**. Only talos06 has two.
 
@@ -74,13 +92,13 @@ Total: **5 radios**. Only talos06 has two.
 
 ## Existing per-node schematics (must be preserved)
 
-| Node | Schematic | Extensions |
-| --- | --- | --- |
-| talos00 | *(stock installer)* | none |
-| talos01 | `c9078f94…` | iscsi-tools |
-| talos02-gpu | `4b3cd373…` | i915, intel-ucode |
-| talos03 | `1e17720b…` | amd-ucode, amdgpu, iscsi-tools |
-| talos06 | `16be3b98…` | intel-ucode, i915, mei |
+| Node        | Schematic           | Extensions                     |
+| ----------- | ------------------- | ------------------------------ |
+| talos00     | _(stock installer)_ | none                           |
+| talos01     | `c9078f94…`         | iscsi-tools                    |
+| talos02-gpu | `4b3cd373…`         | i915, intel-ucode              |
+| talos03     | `1e17720b…`         | amd-ucode, amdgpu, iscsi-tools |
+| talos06     | `16be3b98…`         | intel-ucode, i915, mei         |
 
 The **public** Image Factory cannot deliver this: its schematic schema exposes only
 `SystemExtensions.OfficialExtensions []string` — no field for a custom OCI image. Build
@@ -118,14 +136,14 @@ named namespace.
 
 ## What a pod needs to actually use a radio
 
-| Requirement | Why |
-| --- | --- |
+| Requirement                         | Why                                                                                                                                                                                                                             |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hostNetwork: true` — **mandatory** | `bt_sock_create()` starts `if (net != &init_net) return -EAFNOSUPPORT;` (`net/bluetooth/af_bluetooth.c:121`). Bluetooth is not netns-aware; **every** AF_BLUETOOTH socket fails in a pod netns. Not fixable by a device plugin. |
-| `CAP_NET_ADMIN` | required to bind `HCI_CHANNEL_USER` (`hci_sock.c:1287`) and for `HCIDEVUP` |
-| `CAP_NET_RAW` | required for raw HCI channel and unfiltered commands |
-| **no** device node | there is no `/dev/hciN`. `bt_class` is a bare sysfs class with no devnode; access is socket-only. A device plugin therefore cannot hand out a device file — it must pass the adapter **index** (e.g. an env var). |
-| exclusive access | `hci_dev_test_and_set_flag(hdev, HCI_USER_CHANNEL)` -> second opener gets `-EUSERS`; and bind fails `-EBUSY` if the adapter is already UP. **Capacity is strictly 1 per radio.** |
-| no BlueZ needed | `HCI_CHANNEL_USER` bypasses bluetoothd entirely — and *conflicts* with it, since User Channel calls `mgmt_index_removed()`. Do **not** ship bluetoothd. |
+| `CAP_NET_ADMIN`                     | required to bind `HCI_CHANNEL_USER` (`hci_sock.c:1287`) and for `HCIDEVUP`                                                                                                                                                      |
+| `CAP_NET_RAW`                       | required for raw HCI channel and unfiltered commands                                                                                                                                                                            |
+| **no** device node                  | there is no `/dev/hciN`. `bt_class` is a bare sysfs class with no devnode; access is socket-only. A device plugin therefore cannot hand out a device file — it must pass the adapter **index** (e.g. an env var).               |
+| exclusive access                    | `hci_dev_test_and_set_flag(hdev, HCI_USER_CHANNEL)` -> second opener gets `-EUSERS`; and bind fails `-EBUSY` if the adapter is already UP. **Capacity is strictly 1 per radio.**                                                |
+| no BlueZ needed                     | `HCI_CHANNEL_USER` bypasses bluetoothd entirely — and _conflicts_ with it, since User Channel calls `mgmt_index_removed()`. Do **not** ship bluetoothd.                                                                         |
 
 `go-ble` matches this exactly: `unix.Socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HCI)` bound with
 `SockaddrHCI{Dev: id, Channel: unix.HCI_CHANNEL_USER}`.
@@ -158,13 +176,13 @@ Talos v1.13.9 pins), linux 6.18.44, config delta of **two lines**:
 
 Everything else came from Kconfig defaults and `select`. Modules produced:
 
-| Module | Size | depends |
-| --- | --- | --- |
-| `bluetooth.ko` | 2,330,298 | — |
-| `btusb.ko` | 171,378 | bluetooth, btrtl, btintel, btbcm |
-| `btintel.ko` | 156,138 | bluetooth |
-| `btrtl.ko` | 64,442 | bluetooth |
-| `btbcm.ko` | 50,594 | bluetooth |
+| Module         | Size      | depends                          |
+| -------------- | --------- | -------------------------------- |
+| `bluetooth.ko` | 2,330,298 | —                                |
+| `btusb.ko`     | 171,378   | bluetooth, btrtl, btintel, btbcm |
+| `btintel.ko`   | 156,138   | bluetooth                        |
+| `btrtl.ko`     | 64,442    | bluetooth                        |
+| `btbcm.ko`     | 50,594    | bluetooth                        |
 
 ### Gate 1 — config delta is modules-only: **PASS**
 
@@ -179,7 +197,7 @@ Four official modules pulled off the live node (`tg3`, `e1000e`, `hid-multitouch
 covering net, PCI, DMA, HID/USB and crypto — contribute **313 distinct versioned symbols**.
 Every one was checked against our `Module.symvers`:
 
-```
+```text
 DISTINCT symbols checked : 313
 CRC mismatches           : 0
 Missing from our symvers : 0
@@ -197,7 +215,7 @@ no reboot and no node change.
 
 All five modules end with `~Module signature appended~` and their signer certificate reads:
 
-```
+```text
 O  = Sidero Labs, Inc.
 CN = Build time throw-away kernel key
 ```
@@ -227,7 +245,7 @@ true and the dependency is satisfied.
 
 **Proven empirically, not just by reading Kconfig** — the completed build has:
 
-```
+```text
 # CONFIG_RFKILL is not set
 CONFIG_BT=m
 ```
@@ -259,12 +277,12 @@ soft-block point above.
 
 ## Confirmations for the device-plugin work
 
-| Requirement | Status | Evidence |
-| --- | --- | --- |
-| `/sys/class/bluetooth/hciN` appears | **confirmed** | `hci_init_sysfs()` sets `dev->class = &bt_class` (class name `"bluetooth"`); `dev_set_name(&hdev->dev, "hci%u", id)` → `hci0`, `hci1` |
-| radios bind `btusb`, not generic `usb` | **confirmed** | `btusb.ko` declares the generic alias `usb:v*p*d*dc*dsc*dp*icE0isc01ip01in*`; all four radio types report exactly `Cls=e0 Sub=01 Prot=01`, so all match. No explicit VID/PID needed. |
-| `machine.kernel.modules` includes btusb | **schema confirmed** | `KernelModuleConfig{ ModuleName, ModuleParameters }` exists in v1.13.9 |
-| no BlueZ / bluetoothd | **confirmed** | User Channel calls `mgmt_index_removed()` and bind fails `-EBUSY` if the adapter is UP; bluetoothd would fight go-ble for the adapter |
+| Requirement                             | Status               | Evidence                                                                                                                                                                             |
+| --------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `/sys/class/bluetooth/hciN` appears     | **confirmed**        | `hci_init_sysfs()` sets `dev->class = &bt_class` (class name `"bluetooth"`); `dev_set_name(&hdev->dev, "hci%u", id)` → `hci0`, `hci1`                                                |
+| radios bind `btusb`, not generic `usb`  | **confirmed**        | `btusb.ko` declares the generic alias `usb:v*p*d*dc*dsc*dp*icE0isc01ip01in*`; all four radio types report exactly `Cls=e0 Sub=01 Prot=01`, so all match. No explicit VID/PID needed. |
+| `machine.kernel.modules` includes btusb | **schema confirmed** | `KernelModuleConfig{ ModuleName, ModuleParameters }` exists in v1.13.9                                                                                                               |
+| no BlueZ / bluetoothd                   | **confirmed**        | User Channel calls `mgmt_index_removed()` and bind fails `-EBUSY` if the adapter is UP; bluetoothd would fight go-ble for the adapter                                                |
 
 ```yaml
 machine:
@@ -280,9 +298,9 @@ mechanism and removes a dependency on udev uevent timing.
 
 ### Extensions
 
-| Image | Digest | Contents |
-| --- | --- | --- |
-| `registry.talos00/talos00-registry/talos-bluetooth:v1.13.9` | `sha256:0eba0b34…bcdf94` | 5 modules |
+| Image                                                               | Digest                   | Contents         |
+| ------------------------------------------------------------------- | ------------------------ | ---------------- |
+| `registry.talos00/talos00-registry/talos-bluetooth:v1.13.9`         | `sha256:0eba0b34…bcdf94` | 5 modules        |
 | `registry.talos00/talos00-registry/talos-intel-bt-firmware:v1.13.9` | `sha256:7d5cefd8…a07ffa` | 88 `intel/ibt-*` |
 
 ### Per-node installers
@@ -290,12 +308,12 @@ mechanism and removes a dependency on udev uevent timing.
 Each is built on the node's **existing** factory schematic as `--base-installer-image`, so its
 current extensions are preserved exactly, with our extensions and the kernel-arg change layered on.
 
-| Node | Installer image | Digest | Base schematic | Custom extensions added |
-| --- | --- | --- | --- | --- |
-| talos01 | `…/talos-installer-talos01:v1.13.9-bt` | `sha256:254b1c99…db9d03` | `c9078f94…` (existing) | bluetooth + intel-fw |
-| talos02-gpu | `…/talos-installer-talos02-gpu:v1.13.9-bt` | `sha256:4f93f64b…a925a810` | `4b3cd373…` (existing) | bluetooth + intel-fw |
-| talos03 | `…/talos-installer-talos03:v1.13.9-bt` | `sha256:751c3f62…fa7459` | `6e369a21…` (**new**) | bluetooth |
-| talos06 | `…/talos-installer-talos06:v1.13.9-bt` | `sha256:a407829d…5ab13b` | `6fe7fae0…` (**new**) | bluetooth + intel-fw |
+| Node        | Installer image                            | Digest                     | Base schematic         | Custom extensions added |
+| ----------- | ------------------------------------------ | -------------------------- | ---------------------- | ----------------------- |
+| talos01     | `…/talos-installer-talos01:v1.13.9-bt`     | `sha256:254b1c99…db9d03`   | `c9078f94…` (existing) | bluetooth + intel-fw    |
+| talos02-gpu | `…/talos-installer-talos02-gpu:v1.13.9-bt` | `sha256:4f93f64b…a925a810` | `4b3cd373…` (existing) | bluetooth + intel-fw    |
+| talos03     | `…/talos-installer-talos03:v1.13.9-bt`     | `sha256:751c3f62…fa7459`   | `6e369a21…` (**new**)  | bluetooth               |
+| talos06     | `…/talos-installer-talos06:v1.13.9-bt`     | `sha256:a407829d…5ab13b`   | `6fe7fae0…` (**new**)  | bluetooth + intel-fw    |
 
 **talos00 is deliberately excluded** — VM, no radio, keeps signature enforcement.
 
@@ -310,7 +328,7 @@ to the nodes with Realtek radios, preserving their existing extensions:
 The imager prints the resulting cmdline, which let me run a control experiment. Same base, same
 Talos version, only the flag differs:
 
-```
+```text
 --extra-kernel-arg=module.sig_enforce=0   (the WRONG form)
   -> ... selinux=1 module.sig_enforce=1 module.sig_enforce=0 proc_mem.force_override=never
          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ BOTH present; =1 is first and wins (-EROFS)
@@ -332,7 +350,7 @@ carries a `.cmdline` with no `module.sig_enforce` token.
 
 Unpacked the UKI `.initrd` (zstd → cpio) and enumerated it:
 
-```
+```text
 squashfs members:
    rootfs.sqsh        83,214,336   base Talos rootfs
    0.sqsh                565,248   <- our bluetooth extension
@@ -351,3 +369,11 @@ hoists firmware into the initramfs directly so the kernel firmware loader can re
 That is why `1.sqsh` looks almost empty; it is expected, not a packaging fault.
 
 `modules.dep.sqsh` confirms Talos ran depmod across the merged tree, as designed.
+
+---
+
+## Related Issues
+
+<!-- Beads tracking for this doc -->
+
+- TALOS-1mog — host Bluetooth enablement (the work this document plans)

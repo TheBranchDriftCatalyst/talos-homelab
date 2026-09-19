@@ -2,10 +2,18 @@ package main
 
 // The ruleset.
 //
-// Adding a rule means writing a func and registering it in Rules — that is the whole extension
-// contract. Severity comes from config, never from code, so a repo can adopt in warn-only mode
-// and promote rules as it cleans up. A linter that lands red on an existing codebase gets
-// switched off; one that lands yellow and is promoted deliberately survives.
+// Adding a rule means writing a func and registering it in Rules with the facts it needs — that
+// is the whole extension contract. Severity comes from config, never from code, so a repo can
+// adopt in warn-only mode and promote rules as it cleans up. A linter that lands red on an
+// existing codebase gets switched off; one that lands yellow and is promoted deliberately
+// survives.
+//
+// The facts are the other half of that: a rule declares what it MEASURES, the repo's component
+// strategy declares what it can SUPPLY, and a rule whose measurement is unavailable is reported
+// as skipped rather than run against a number that is zero for reasons having nothing to do
+// with the repository. Getting this wrong is not hypothetical — `component-shape` and
+// `component-path` passed cleanly under `components.kind: dirs` for their whole existence,
+// because neither can fire there at all.
 
 import (
 	"encoding/json"
@@ -27,16 +35,53 @@ type Finding struct {
 
 type RuleFunc func(*Ctx) []Finding
 
-var Rules = map[string]RuleFunc{
-	"broken-links":       ruleBrokenLinks,
-	"frontmatter-schema": ruleFrontmatterSchema,
-	"covers-resolves":    ruleCoversResolves,
-	"component-path":     ruleComponentPath,
-	"component-shape":    ruleComponentShape,
-	"colocation":         ruleColocation,
-	"tickets-in-body":    ruleTicketsInBody,
-	"tickets-exist":      ruleTicketsExist,
-	"taxonomy-structure": ruleTaxonomyStructure,
+// RuleSkip is one rule that was enabled, selected, and then NOT RUN — because the repo's
+// component strategy cannot supply a fact the rule measures.
+//
+// The name is RuleSkip rather than the obvious `Skip` for one compiler reason: the unit specs
+// are IN-PACKAGE (package main) and dot-import Ginkgo, which exports `Skip`. A package-level
+// `Skip` here collides with that file-level import in every one of those files and the package
+// stops compiling. The field names and the rendered output are exactly what they would be
+// either way; only the type's spelling moved.
+//
+// A skip is part of the lint ANSWER, not a diagnostic about it. `component-shape` counts nested
+// kustomizations; under `components.kind: dirs` that count is structurally always zero, so the
+// rule found nothing and reported a clean pass in a repo it had never been able to examine. A
+// rule that silently never fires is worse than an absent one, because the report reads as
+// coverage. Missing is carried alongside the rendered Why so a caller can act on the facts
+// rather than re-parse the sentence.
+type RuleSkip struct {
+	Rule    string
+	Missing []Fact
+	Why     string
+}
+
+// Check is one registered rule: what it needs, and what it does.
+//
+// Requires is the DEMAND side of the fact vocabulary, and it has to exist for Provides() to be
+// worth anything: a capability nobody consults changes no behaviour. The alternative — a rule
+// reading `cfg.Components.Kind` and returning early — is what config.go forbids by name, and
+// for a good reason: it puts the knowledge of which strategies exist inside every rule that
+// cares, so adding a strategy means auditing the ruleset instead of adding one file.
+//
+// Requires names the fact a rule MEASURES, never every field it happens to touch. Every rule
+// reads Component.Path; only `component-path` treats that path as a DECLARATION that might be
+// wrong, which is the fact `dirs` cannot supply.
+type Check struct {
+	Requires []Fact
+	Fn       RuleFunc
+}
+
+var Rules = map[string]Check{
+	"broken-links":       {Fn: ruleBrokenLinks},
+	"frontmatter-schema": {Fn: ruleFrontmatterSchema},
+	"covers-resolves":    {Fn: ruleCoversResolves},
+	"component-path":     {Requires: []Fact{FactPathIsDeclared}, Fn: ruleComponentPath},
+	"component-shape":    {Requires: []Fact{FactSubUnits}, Fn: ruleComponentShape},
+	"colocation":         {Fn: ruleColocation},
+	"tickets-in-body":    {Fn: ruleTicketsInBody},
+	"tickets-exist":      {Fn: ruleTicketsExist},
+	"taxonomy-structure": {Fn: ruleTaxonomyStructure},
 }
 
 func find(ctx *Ctx, rule, path, msg string) Finding {
@@ -492,8 +537,20 @@ func proseWords(body string) int {
 	return len(strings.Fields(s))
 }
 
-// Run executes the enabled rules in a stable order.
-func Run(ctx *Ctx, only string) []Finding {
+// Run executes the enabled rules in a stable order, and returns the ones that could not run
+// alongside the findings.
+//
+// TWO RETURN VALUES, not one. A rule whose facts are unavailable contributes nothing to
+// `[]Finding`, which is indistinguishable from a rule that ran and found nothing — so folding
+// the two together would leave the caller unable to tell coverage from silence no matter how
+// carefully it printed the result. The skip has to survive as far as the report.
+//
+// The order of the three gates is the order of intent. `only` is the operator saying which rule
+// they want; `Enabled` is the repo saying which rules it has adopted; Requires is the tool
+// saying which of those it is actually able to answer. A rule the operator did not select and a
+// rule the repo switched off are both DELIBERATE absences and are not reported — only the third
+// case is a surprise.
+func Run(ctx *Ctx, only string) ([]Finding, []RuleSkip) {
 	names := make([]string, 0, len(Rules))
 	for n := range Rules {
 		names = append(names, n)
@@ -501,6 +558,7 @@ func Run(ctx *Ctx, only string) []Finding {
 	sort.Strings(names)
 
 	var all []Finding
+	var skipped []RuleSkip
 	for _, n := range names {
 		if only != "" && n != only {
 			continue
@@ -508,7 +566,30 @@ func Run(ctx *Ctx, only string) []Finding {
 		if !ctx.Cfg.RuleFor(n).Enabled {
 			continue
 		}
-		all = append(all, Rules[n](ctx)...)
+		check := Rules[n]
+		// Missing() sorts, so the message is stable between runs; names is already sorted, so
+		// the skips come out in rule order without a second sort.
+		if missing := ctx.Facts.Missing(check.Requires); len(missing) > 0 {
+			skipped = append(skipped, RuleSkip{Rule: n, Missing: missing, Why: skipReason(ctx.Cfg, missing)})
+			continue
+		}
+		all = append(all, check.Fn(ctx)...)
 	}
-	return all
+	return all, skipped
+}
+
+// skipReason renders the one sentence a reader needs: which measurement is unavailable, and
+// whose fault that is.
+//
+// It names `components.kind` explicitly because the remedy is a config decision, not a code one
+// — the reader's next move is either to accept that this repo shape cannot answer the question
+// or to change how components are enumerated. "component-shape was skipped" on its own sends
+// them looking for a bug.
+func skipReason(cfg *Config, missing []Fact) string {
+	names := make([]string, len(missing))
+	for i, f := range missing {
+		names[i] = string(f)
+	}
+	return fmt.Sprintf("needs %s, which components.kind `%s` does not report",
+		strings.Join(names, ", "), cfg.Components.Kind)
 }

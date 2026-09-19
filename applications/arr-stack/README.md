@@ -57,10 +57,13 @@ Media automation stack including indexers, download clients, and media servers f
   referenced by `base/kustomization.yaml`. Book / comic / audiobook managers now live in
   `applications/media-experimental/` as a "Readarr-replacement bake-off"
   (chaptarr, bindery, librarr, livrarr, mylar3).
-- **PostgreSQL** - there is no shared Postgres in this stack. The \*arr apps use SQLite
-  (see [Database & Storage Layout](#database--storage-layout)). `base/sonarr/db-config.yaml`
-  and `base/migration/` are leftovers from the abandoned Postgres attempt and are not
-  referenced by any kustomization.
+- **PostgreSQL** - the stack now _does_ have a shared Postgres: `base/postgres/` declares the
+  `arr-postgres` `CatalystCNPGAppDB` (3 instances, `local-path`) plus the per-application
+  `Database` CRs, and Sonarr, Radarr and Prowlarr point at `arr-postgres-rw` via their
+  `*__POSTGRES__HOST` env (TALOS-eaa4 / TALOS-l4uo). `base/migration/` is the retired one-shot
+  cutover job and is still not referenced by any kustomization. The
+  [Database & Storage Layout](#database--storage-layout) section below has **not** been
+  updated for this and still describes the pre-cutover SQLite-only layout.
 - **Exportarr** - `base/exportarr/` exists on disk but is **not** referenced by
   `base/kustomization.yaml`; nothing is deployed and no exportarr ServiceMonitors exist.
 
@@ -68,7 +71,7 @@ Media automation stack including indexers, download clients, and media servers f
 
 ## Directory Structure
 
-```
+```text
 arr-stack/
 ├── Tiltfile                  # Tilt attach/observe config (Flux owns deploys)
 ├── dashboard.sh              # Passthrough to scripts/namespace-dashboard.sh media
@@ -79,11 +82,13 @@ arr-stack/
 │   ├── kustomization.yaml    # Main kustomization (namespace: media)
 │   ├── common-env.yaml       # arr-common-env ConfigMap (PUID/PGID/TZ)
 │   ├── shared/               # sqlite-db-migration ConfigMap + arr-stack-secrets ExternalSecret
+│   ├── postgres/             # arr-postgres CatalystCNPGAppDB + per-app Database CRs
 │   ├── prowlarr/  sonarr/  radarr/
 │   ├── sabnzbd/  qbittorrent/
 │   ├── seerr/  pulsarr/  maintainerr/
 │   ├── plex/  jellyfin/
 │   ├── tautulli/  kometa/  posterizarr/  posterr/
+│   ├── stackarr/             # stackarr dashboard (stackarr.talos00)
 │   ├── readarr/              # NOT in kustomization (not deployed)
 │   ├── exportarr/            # NOT in kustomization (not deployed)
 │   └── migration/            # NOT in kustomization (legacy one-shot job)
@@ -386,7 +391,7 @@ Cluster metrics land in Mimir and are visualised in Grafana; logs go to Loki.
 ## Related Documentation
 
 - [Dual GitOps Pattern](../../docs/02-architecture/dual-gitops.md)
-- [Networking & Ingress](../../docs/02-architecture/networking.md)
+- [Traefik ingress](../../docs/02-architecture/traefik.md)
 - [Homepage dashboard](../homepage/) — migrated out of this stack (ns `homepage`)
 - [Tdarr](../tdarr/) — migrated out of this stack (ns `tdarr`)
 - [Media experimental (book/comic/audiobook bake-off)](../media-experimental/)

@@ -1,3 +1,12 @@
+---
+type: nav
+status: current
+covers:
+  - path:docs/03-operations
+freshness: tracks-code
+bluf: Index of the day-to-day operational docs — node maintenance, etcd backup and restore, and how this repo tests its own infrastructure.
+---
+
 # Operations
 
 > Parent: [docs/INDEX.md](../INDEX.md)
@@ -8,82 +17,53 @@ This section covers operational procedures, cluster management, and development 
 
 ## Quick Navigation
 
-| Topic                                                    | Description                                                                | When to Read                                                    |
-| -------------------------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [provisioning.md](provisioning.md)                       | Complete step-by-step cluster provisioning guide from bare metal to GitOps | Setting up a fresh cluster or understanding provisioning levels |
-| [node-shutdown-procedure.md](node-shutdown-procedure.md) | Safe procedures for node shutdown, restart, and maintenance                | Before any hardware maintenance or planned downtime             |
-| [local-development-eso.md](local-development-eso.md)     | Local development workflow for External Secrets Operator — **stale**, see the Local Testing note below | Historical reference only; the local cluster it assumes no longer exists |
-| [development-tools.md](development-tools.md)             | Git hooks, linters, formatters, and code quality automation                | Initial development environment setup                           |
-| [etcd-backup-restore.md](etcd-backup-restore.md)         | How hourly etcd snapshots work + control-plane restore procedure           | Recovering from EPHEMERAL/etcd corruption (e.g. UPS-fault scenario) |
-| [RESOURCE-OPTIMIZATION.md](RESOURCE-OPTIMIZATION.md)     | Point-in-time request/limit right-sizing analysis (dated 2025-12-02, single-node `talos00` era) | Historical reference when re-tuning resource requests           |
+<!-- docs:gen:nav -->
+
+| Doc                                                      | What it covers                                                                                                                                                                                      |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [etcd-backup-restore.md](etcd-backup-restore.md)         | etcd snapshots land in MinIO on a schedule; recovering a dead control plane means reset the node, re-apply its generated machine config, then bootstrap with `--recover-from`.                      |
+| [node-shutdown-procedure.md](node-shutdown-procedure.md) | Drain, shut down through the Talos API rather than the power button, then verify etcd quorum before uncordoning — and never re-bootstrap a node that still has surviving peers.                     |
+| [testing.md](testing.md)                                 | Four test layers all run under one pytest, selected by suite marker, and all are safe/offline by default — anything that touches the live cluster or destroys something is behind an explicit flag. |
+
+<!-- /docs:gen:nav -->
 
 ## Key Concepts
 
-- **Provisioning Levels**: Cluster setup follows a structured approach from Level 0 (base Talos) through Level 4 (GitOps)
-- **Graceful Shutdown**: Talos nodes require proper shutdown procedures to avoid etcd corruption and ensure clean restarts
-- **Development Tools**: Automated code quality via lefthook (`lefthook.yaml`) — gitleaks, yamllint, shellcheck, shfmt, markdownlint, plus kustomize/kubectl dry-run validation
-- **Local Testing (retired)**: The Docker-based local Talos cluster was removed on 2025-12-20 (commit `b2130815`) and `scripts/provision-local.sh` is now the disabled `scripts/__provision-local.sh`. There is no supported local cluster workflow; validate at the manifest level instead. The root `Tiltfile` is an observe-only ops dashboard pointed at the live `admin@catalyst-cluster` context — it deploys nothing.
-- **Conventional Commits**: All commits follow conventional commit format, enforced by the lefthook `commit-msg` hook. (No automated changelog generator is wired up — the files in `docs/changelogs/` are hand-written.)
+- **Graceful shutdown**: stop nodes through the Talos API, never the power button — a hard cut risks etcd corruption on EPHEMERAL.
+- **etcd is the one thing Velero cannot save**: it needs a snapshot taken off-node, which is why the CronJob exists.
+- **Code quality** is enforced by lefthook (`lefthook.yaml`): gitleaks, yamllint, shellcheck, shfmt, markdownlint, kustomize and `kubectl --dry-run`. Commit messages are checked by its `commit-msg` hook.
+- **No local cluster.** No Talos-in-Docker workflow, no `provision-local` script or task; validate at the manifest level. The root `Tiltfile` observes the live cluster and deploys nothing — Flux owns deployment.
 
 ## Common Tasks
 
-### Cluster Provisioning
-
-- [Fresh cluster setup](provisioning.md#level-0-base-infrastructure--completed) - Bootstrap Talos and Kubernetes
-- [Deploy core services](provisioning.md#level-1-core-services--completed) - Namespaces, storage, Traefik
-- [Deploy applications](provisioning.md#level-2-applications--next) - Arr stack deployment
-- [Setup monitoring](provisioning.md#level-3-monitoring-stack--pending) - Prometheus, Grafana, observability
-- [Bootstrap GitOps](provisioning.md#level-4-gitops--pending) - FluxCD and ArgoCD setup
-
-> The `✅ / 🔄 / ⏳` status markers baked into those `provisioning.md` headings (and therefore into
-> the anchors above) are stale — Levels 2-4 are all deployed today. Fixing the headings will also
-> require updating these anchors.
-
 ### Node Management
 
-- [Safe node shutdown](node-shutdown-procedure.md) - Graceful shutdown procedure
-- [Node restart](node-shutdown-procedure.md) - Clean restart after maintenance
-- [Emergency recovery](node-shutdown-procedure.md) - Troubleshooting boot and etcd issues
-
-### Development Workflow
-
-- [Setup development tools](development-tools.md#quick-start) - One-command dev environment setup
-- [Git hooks overview](development-tools.md#git-hooks) - Pre-commit, commit-msg, pre-push hooks
-- [Linting and formatting](development-tools.md#linters) - YAML, shell, markdown, secret scanning
-- [Kubernetes validation](development-tools.md#kubernetes-validation) - Kustomize and kubectl dry-run
-
-### Local Testing
-
-> **The local Talos-in-Docker workflow was removed** (see `docs/01-getting-started/README.md`).
-> `docs/01-getting-started/local-testing.md` no longer exists and `scripts/provision-local.sh` is
-> retired as `scripts/__provision-local.sh`. `task dev:local-up` and `task talos:provision-local`
-> still exist in the Taskfiles but point at the missing script and will fail.
-> [local-development-eso.md](local-development-eso.md) is kept as historical reference only —
-> ESO itself is live in-cluster (`external-secrets` namespace, with `onepassword-connect`).
-
-- Validate all kustomizations - `task dev:validate`
-- Validate a single component - `kubectl apply -k <path> --dry-run=client`
-- Lint YAML / shell / secrets before committing - `task dev:lint`
+- [Shutdown, restart and emergency recovery](node-shutdown-procedure.md) — draining, powering down through the Talos API, and what not to do to etcd on the way back up.
 
 ### Disaster Recovery
 
-- [Restore etcd from snapshot](etcd-backup-restore.md#restore-procedure) - Rebuild control plane after EPHEMERAL/etcd loss
-- [Verify backup health](etcd-backup-restore.md#verify-its-working) - Check hourly snapshot pipeline
+- [Restore etcd from snapshot](etcd-backup-restore.md#restore-procedure) — rebuild the control plane after EPHEMERAL/etcd loss.
+- [Verify backup health](etcd-backup-restore.md#verify-its-working) — check the snapshot pipeline before you need it.
 
-### Troubleshooting
+### Validation before committing
 
-- [Provisioning issues](provisioning.md#notes-and-lessons-learned) - Hostname changes, storage, multi-environment setup
-- [Shutdown/startup problems](node-shutdown-procedure.md) - Node not responding, etcd corruption
-- [Linter failures](development-tools.md#troubleshooting) - YAML, secrets, kustomize build errors
+```bash
+task dev:validate                         # every kustomization
+kubectl apply -k <path> --dry-run=client  # one component
+task dev:lint                             # YAML / shell / markdown / secrets
+```
+
+See [testing.md](testing.md) for the four test layers and how to add to them, and
+[07-reference/taskfile-organization.md](../07-reference/taskfile-organization.md) for the full
+task catalogue.
 
 ## Related Sections
 
-| Section                                                            | Why                                                                       |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| [05-runbooks](../05-runbooks/README.md)                            | High-risk, low-frequency procedures: bootstrap, HA CP migration, Velero restore |
-| [06-troubleshooting](../06-troubleshooting/README.md)              | Post-mortems for cluster-wide incidents                                   |
-| [07-reference/taskfile-organization.md](../07-reference/taskfile-organization.md) | Full `task` command reference (incl. known-broken tasks)     |
-| [CONTRIBUTING.md](../../CONTRIBUTING.md)                           | Dev environment setup that `development-tools.md` assumes                 |
+| Section                                                                           | Why                                                                             |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [05-runbooks](../05-runbooks/README.md)                                           | High-risk, low-frequency procedures: bootstrap, HA CP migration, Velero restore |
+| [07-reference/taskfile-organization.md](../07-reference/taskfile-organization.md) | Full `task` command reference (incl. known-broken tasks)                        |
+| [CONTRIBUTING.md](../../CONTRIBUTING.md)                                          | Dev environment setup that `development-tools.md` assumes                       |
 
 ---
 
@@ -91,5 +71,4 @@ This section covers operational procedures, cluster management, and development 
 
 <!-- Beads tracking for this section -->
 
-- `CILIUM-kkw` - Initial creation of section README (stale reference: the beads prefix is now
-  `TALOS-`, and no issue resolves under either prefix - the original was closed and compacted)
+- `CILIUM-kkw` — section README origin. Dangling: the prefix is now `TALOS-` and no issue resolves under either.

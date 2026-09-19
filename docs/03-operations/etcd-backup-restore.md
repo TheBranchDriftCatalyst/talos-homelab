@@ -1,50 +1,62 @@
+---
+type: runbook
+status: current
+covers:
+  - backup
+  - path:configs/talconfig.yaml
+freshness: tracks-code
+tickets:
+  - TALOS-a8g
+  - TALOS-asv
+bluf: etcd snapshots land in MinIO on a schedule; recovering a dead control plane means reset the node, re-apply its generated machine config, then bootstrap with `--recover-from`.
+---
+
 # etcd Backup & Restore
 
 How automated etcd snapshots work in this cluster, and how to recover the control plane from one when the etcd state is gone (e.g. the 2026-05-09 UPS-fault scenario).
 
 ## TL;DR
 
-- **Snapshots**: hourly via in-cluster CronJob `backup/etcd-backup` to MinIO `s3://backups/etcd/` (NFS-backed)
-- **Retention**: last 168 (1 week at hourly cadence), tunable via ConfigMap
-- **Restore**: bootstrap a fresh control plane node with `talosctl bootstrap --recover-from=<snapshot>`
-- **Restore time**: ~10 minutes from running `bootstrap` to a healthy API server
+1. Confirm etcd is actually gone — a single lagging member in a multi-member cluster is repairable without a restore.
+2. Pull the newest snapshot from before the corruption out of MinIO.
+3. `talosctl reset` the control-plane node, wiping `EPHEMERAL` and `STATE`.
+4. Regenerate configs and re-apply **that node's** machine config.
+5. `talosctl bootstrap --recover-from=<snapshot>`.
+6. Let Flux and ArgoCD reconcile the drift between snapshot time and now.
+
+Budget roughly ten minutes from `bootstrap` to a healthy API server.
 
 ## Why this exists
 
 etcd holds all Kubernetes API state — every object, secret, ConfigMap, RBAC binding, scheduling history. On Talos, etcd lives on the EPHEMERAL XFS partition. If that partition corrupts (UPS fault, disk failure, kernel panic mid-write), the control plane is unrecoverable without a snapshot. Velero does NOT cover this — Velero needs a working API server to restore.
 
+The snapshot target is MinIO rather than a node-local path for exactly this reason: the failure being insured against destroys EPHEMERAL, so a copy sitting on EPHEMERAL insures nothing. MinIO's own storage is NFS-backed, i.e. off-node.
+
 ## How it works
 
-| Component | Path | Purpose |
-|---|---|---|
-| CronJob | `backup/etcd-backup` | Hourly snapshot job |
-| ConfigMap | `backup/etcd-backup-config` | Tunables: `TALOS_NODE`, `RETENTION_COUNT`, S3 target |
-| Secret | `backup/talosconfig` | Restricted talosconfig with `os:etcd:backup` role only |
-| Secret | `backup/minio-root-credentials` | MinIO credentials (reflected from ns `minio` via emberstack/reflector; source ES in `infrastructure/base/minio/tenant.yaml`) |
-| PrometheusRule | `monitoring/etcd-backup-alerts` | Alerts on job failure / not running / missing CronJob |
-| Storage | `s3://backups/etcd/` (MinIO, NFS-backed) | Survives EPHEMERAL XFS loss |
+| Object                                         | What it is for                                                                                                         |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| CronJob `backup/etcd-backup`                   | Takes the snapshot and uploads it                                                                                      |
+| ConfigMap `backup/etcd-backup-config`          | Tunables: target node, retention count, S3 target                                                                      |
+| Secret `backup/talosconfig`                    | Restricted talosconfig — `os:etcd:backup` role only, so a leak cannot run arbitrary Talos API calls                    |
+| Secret `backup/minio-root-credentials`         | Reflected from ns `minio` by emberstack/reflector; source ExternalSecret is in `infrastructure/base/minio/tenant.yaml` |
+| PrometheusRule `monitoring/etcd-backup-alerts` | Alerts on job failure, job not running, and CronJob missing entirely                                                   |
 
 Each run:
-1. initContainer (`talosctl:v1.11.1`) calls `talosctl etcd snapshot` against the control plane node, writes to a shared emptyDir
-2. main container (`mc`) uploads to MinIO with timestamp suffix
-3. main container prunes oldest snapshots beyond `RETENTION_COUNT`
 
-Source: `infrastructure/base/backup/etcd-backup.yaml`
+1. An initContainer running `talosctl` calls `talosctl etcd snapshot` against the control-plane node and writes to a shared `emptyDir`.
+2. The main container (`mc`) uploads it to MinIO with a timestamp suffix.
+3. The same container prunes the oldest snapshots beyond the retention count.
+
+Source of truth for schedule, retention and S3 target: `infrastructure/base/backup/etcd-backup.yaml`. They are deliberately not repeated here — the retention window only has to outlive the time it takes a human to _notice_ corruption, and that judgement belongs next to the value.
 
 ## Tuning
 
-Edit the ConfigMap to change cadence/retention/target:
+Both knobs live in the manifest and should be changed there, not live — Flux reverts a `kubectl edit`. To see what is currently in force:
 
 ```bash
-kubectl edit configmap -n backup etcd-backup-config
-# RETENTION_COUNT: "168"   # 1 week hourly. Bump to 720 for 30 days.
-```
-
-Schedule lives on the CronJob itself (cron format):
-
-```bash
-kubectl edit cronjob -n backup etcd-backup
-# spec.schedule: "0 * * * *"   # hourly at :00
+kubectl get configmap -n backup etcd-backup-config -o yaml   # retention, target node, S3 target
+kubectl get cronjob -n backup etcd-backup -o jsonpath='{.spec.schedule}{"\n"}'
 ```
 
 ## Verify it's working
@@ -57,7 +69,7 @@ kubectl get jobs -n backup -l app.kubernetes.io/name=etcd-backup
 kubectl get cronjob -n backup etcd-backup \
   -o jsonpath='{.status.lastSuccessfulTime}{"\n"}'
 
-# Snapshot list (open MinIO browser at nexus.talos00 or use mc)
+# Snapshot list
 kubectl run mc-check --rm -it --restart=Never \
   --image=minio/mc:latest --namespace=backup \
   --command -- /bin/sh -c '
@@ -70,7 +82,9 @@ kubectl run mc-check --rm -it --restart=Never \
   '
 ```
 
-Expect ~one snapshot per hour, sizes climbing slowly (etcd state grows with cluster activity — currently ~60-65 MiB).
+Expect one snapshot per scheduled interval, with sizes climbing slowly — etcd state grows with cluster activity, so a snapshot that suddenly shrinks is a signal, not a saving.
+
+The `etcd-dr` suite (`tests/etcd-dr/test_etcd_dr.py`) asserts the same things automatically: the machinery exists, the CronJob is healthy, the newest snapshot is fresh, and a freshly taken snapshot loads and hashes cleanly. Run it with `task test:dr`.
 
 ## Restore procedure
 
@@ -87,7 +101,7 @@ talosctl -n $TALOS_NODE etcd status
 talosctl -n $TALOS_NODE service kubelet logs | tail
 ```
 
-If etcd is just slow or one member is behind, see [Talos etcd recovery docs](https://www.talos.dev/v1.11/advanced/etcd-maintenance/) — single-member loss in a multi-member cluster is repairable without a snapshot restore.
+If etcd is just slow or one member is behind, see [Talos etcd recovery docs](https://www.talos.dev/v1.11/advanced/etcd-maintenance/) — single-member loss in a multi-member cluster is repairable without a snapshot restore. This cluster declares three control planes in `configs/talconfig.yaml`, so that is the likely case, not the total loss this procedure addresses.
 
 ### Step 2: pick the snapshot
 
@@ -125,13 +139,15 @@ Wait for the node to reboot in maintenance mode (no API, no etcd, just `talosctl
 # Machine configs are GENERATED — regenerate first so you re-apply what the repo
 # currently declares, and use the file for THIS node. They are not interchangeable:
 # each node has its own install disk, schematic and patches.
-(cd configs && talhelper genconfig)
+task talos:gen-config
 talosctl apply-config --insecure -n $TALOS_NODE \
   --file configs/clusterconfig/catalyst-cluster-<node>.yaml
 
 # Bootstrap etcd FROM THE SNAPSHOT (this is the magic flag)
 talosctl bootstrap -n $TALOS_NODE --recover-from=./db.snapshot
 ```
+
+`configs/talsecret.yaml` must be present before `gen-config` — it holds the cluster CA and is gitignored, so a fresh clone will not have it. See [talsecret-1password-backup.md](../05-runbooks/talsecret-1password-backup.md).
 
 Talos will start etcd from the snapshot data instead of an empty DB. All API objects, secrets, ConfigMaps, RBAC, etc. from the snapshot moment are restored.
 
@@ -151,7 +167,8 @@ talosctl -n $TALOS_NODE etcd status
 ### Step 6: reconcile drift
 
 State that changed between snapshot time and disaster will need reconciling:
-- **Flux Kustomizations** auto-reconcile from git on their interval (~5-10 min)
+
+- **Flux Kustomizations** auto-reconcile from git on their interval
 - **ArgoCD Applications** auto-sync from git
 - **PVCs** are unaffected (data is on the PV, not in etcd) — pods will mount existing data
 - **Pods scheduled after the snapshot** will be re-scheduled by their controllers
@@ -159,14 +176,16 @@ State that changed between snapshot time and disaster will need reconciling:
 
 ## Caveats
 
-- **Single-CP cluster**: if you only have one control plane node and it's dead-dead (hardware failure, not just corruption), you need replacement hardware before this procedure helps. Work from a spare node with the same machine config.
-- **Multi-CP cluster**: don't restore from a snapshot if the *cluster* is healthy — it'll create split-brain. Use Talos's etcd member replacement procedure instead.
+- **Multi-CP cluster**: do not restore from a snapshot while the _cluster_ is healthy — it creates split-brain. Use Talos's etcd member replacement procedure instead. With three control planes declared, member replacement is the normal repair and this runbook is the exception.
+- **Dead hardware, not dead data**: if the control-plane hardware itself is gone you need replacement hardware before this procedure helps. Work from a spare node with the same machine config.
 - **Snapshot age vs. PVC drift**: if the snapshot is days old, controllers will re-create things. If apps stored runtime state in a PVC AND in etcd (e.g., some operators), you may get inconsistency. The snapshot wins; the PVC may need reconciliation.
-- **Secrets**: any secret created/rotated after the snapshot is gone. ESO will re-pull from upstream sources on reconcile, but bootstrap-time secrets (Vault/AWS creds) need to exist before ESO can run.
+- **Secrets**: any secret created/rotated after the snapshot is gone. ESO will re-pull from upstream sources on reconcile, but bootstrap-time secrets need to exist before ESO can run.
 
-## Test restores
+## Why the restore path is not tested end-to-end
 
-Not yet performed against this cluster. Filed as a follow-up — needs a non-prod target or a deliberate planned outage. Until tested, treat the restore procedure as untested-but-correct based on Talos docs.
+The `etcd-dr` suite proves the snapshot half: a freshly taken snapshot loads and passes its hash check, and the newest stored snapshot is fresh. It deliberately stops there — `test_restore_into_canary_documented_noop` is an explicit no-op, because a real `talosctl bootstrap --recover-from=` REPLACES live etcd and there is no spare Talos node to aim it at.
+
+So the restore steps above are correct per Talos documentation and have never been executed against this cluster. Treat them accordingly: read them before you need them, not during.
 
 ---
 

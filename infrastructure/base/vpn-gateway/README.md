@@ -16,23 +16,38 @@ Pod-based VPN gateway using gluetun with ProtonVPN WireGuard. Provides anonymous
 Change this dir structure a bit:
 
 vpn-gateway/
-  ├── README.md
-  ├── apps/
+├── README.md
+├── apps/
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    svc["Service gluetun (ClusterIP)<br/>1080 to 1080 · 8080 to 8888<br/>9999 to 9999 · 8000 to 8000"]
+
+    subgraph pod["VPN gateway pod — ns vpn-gateway, one shared network namespace"]
+        direction TB
+        gluetun["gluetun (qmcgaw/gluetun:v3.41.3)<br/>WireGuard client + killswitch<br/>HTTP proxy :8888 · control :8000 · health :9999"]
+        socks["socks5-proxy<br/>SOCKS5 :1080, REQUIRE_AUTH=false"]
+        exporter["gluetun-exporter<br/>metrics :9091"]
+        tun["tun0<br/>WireGuard tunnel"]
+        gluetun --> tun
+        socks --> tun
+        exporter -->|"polls control API :8000"| gluetun
+    end
+
+    proton["ProtonVPN exit"]
+    svc --> gluetun
+    svc --> socks
+    tun --> proton
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                          VPN Gateway Pod                              │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────────┐   │
-│  │   gluetun   │  │ socks5-proxy│  │        tun0 interface       │   │
-│  │ (WireGuard) │──│  (SOCKS5)   │──│   → ProtonVPN Netherlands   │   │
-│  │             │  └─────────────┘  │      Exit IP: 212.92.x.x    │   │
-│  │ HTTP Proxy  │                   └─────────────────────────────┘   │
-│  │ Shadowsocks │                                                      │
-│  └─────────────┘                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
+
+- `SHADOWSOCKS` is `off`; only the HTTP proxy and the sidecar SOCKS5 proxy are live.
+- `SERVER_COUNTRIES: Netherlands` in `deployment.yaml` is only the starting exit. The
+  `rotation/` CronJob re-points gluetun every 35 minutes across eight ProtonVPN countries
+  (Belgium, Germany, India, Netherlands, Switzerland, Iceland, Sweden, Norway), so neither
+  the country nor the exit IP is fixed.
+- The proxies are reachable only through the ClusterIP Service — see the security note above.
 
 ## Connection Methods
 
@@ -41,6 +56,7 @@ vpn-gateway/
 Standard HTTP/HTTPS proxy. Most compatible option.
 
 **From within cluster:**
+
 ```bash
 export http_proxy=http://gluetun.vpn-gateway.svc.cluster.local:8080
 export https_proxy=http://gluetun.vpn-gateway.svc.cluster.local:8080
@@ -48,6 +64,7 @@ curl ifconfig.me  # Returns VPN exit IP
 ```
 
 **From external network (via Traefik):**
+
 ```bash
 export http_proxy=http://192.168.1.54:8080
 export https_proxy=http://192.168.1.54:8080
@@ -55,12 +72,13 @@ curl ifconfig.me
 ```
 
 **Configure applications:**
+
 ```yaml
 env:
   - name: HTTP_PROXY
-    value: "http://gluetun.vpn-gateway.svc.cluster.local:8080"
+    value: 'http://gluetun.vpn-gateway.svc.cluster.local:8080'
   - name: HTTPS_PROXY
-    value: "http://gluetun.vpn-gateway.svc.cluster.local:8080"
+    value: 'http://gluetun.vpn-gateway.svc.cluster.local:8080'
 ```
 
 ### 2. SOCKS5 Proxy (Port 1080)
@@ -68,16 +86,19 @@ env:
 Native SOCKS5 protocol. Better for applications that support it.
 
 **From within cluster:**
+
 ```bash
 curl --socks5 gluetun.vpn-gateway.svc.cluster.local:1080 ifconfig.me
 ```
 
 **From external network (via Traefik):**
+
 ```bash
 curl --socks5 192.168.1.54:1080 ifconfig.me
 ```
 
 **Firefox/Browser configuration:**
+
 - Settings → Network Settings → Manual proxy configuration
 - SOCKS Host: `192.168.1.54`, Port: `1080`
 - SOCKS v5: checked
@@ -90,11 +111,13 @@ Encrypted SOCKS proxy. Use when you need encryption between client and proxy.
 **Password:** Configured in gluetun deployment (default: auto-generated)
 
 **Get password:**
+
 ```bash
 kubectl logs -n vpn-gateway deploy/gluetun -c gluetun | grep -i shadowsocks
 ```
 
 **Client configuration:**
+
 - Server: `192.168.1.54`
 - Port: `8388`
 - Encryption: `chacha20-ietf-poly1305`
@@ -107,6 +130,7 @@ Deploy gluetun as a sidecar container. All pod traffic routes through VPN automa
 See `securexng.yaml` for a complete example.
 
 **Key configuration:**
+
 ```yaml
 spec:
   containers:
@@ -117,16 +141,16 @@ spec:
           add: [NET_ADMIN]
       env:
         - name: VPN_SERVICE_PROVIDER
-          value: "protonvpn"
+          value: 'protonvpn'
         - name: VPN_TYPE
-          value: "wireguard"
+          value: 'wireguard'
         - name: WIREGUARD_PRIVATE_KEY
           valueFrom:
             secretKeyRef:
               name: protonvpn-credentials
-              key: nl-free-176  # Or other server
+              key: nl-free-176 # Or other server
         - name: FIREWALL_INPUT_PORTS
-          value: "8080"  # Ports your app needs
+          value: '8080' # Ports your app needs
 
     - name: your-app
       image: your-app:latest
@@ -137,20 +161,20 @@ spec:
 
 Multiple ProtonVPN servers configured for different use cases:
 
-| Key | Location | Use Case |
-|-----|----------|----------|
-| `nl-free-176` | Netherlands | Default gateway (primary) |
-| `se-de-1` | Germany | SecureXNG (different exit) |
+| Key           | Location    | Use Case                   |
+| ------------- | ----------- | -------------------------- |
+| `nl-free-176` | Netherlands | Default gateway (primary)  |
+| `se-de-1`     | Germany     | SecureXNG (different exit) |
 
 ## Services
 
-| Service | Internal URL | External URL | Protocol |
-|---------|--------------|--------------|----------|
-| HTTP Proxy | `gluetun.vpn-gateway:8080` | `192.168.1.54:8080` | HTTP |
-| SOCKS5 | `gluetun.vpn-gateway:1080` | `192.168.1.54:1080` | SOCKS5 |
+| Service     | Internal URL               | External URL        | Protocol    |
+| ----------- | -------------------------- | ------------------- | ----------- |
+| HTTP Proxy  | `gluetun.vpn-gateway:8080` | `192.168.1.54:8080` | HTTP        |
+| SOCKS5      | `gluetun.vpn-gateway:1080` | `192.168.1.54:1080` | SOCKS5      |
 | Shadowsocks | `gluetun.vpn-gateway:8388` | `192.168.1.54:8388` | Shadowsocks |
-| Health | `gluetun.vpn-gateway:9999` | - | HTTP |
-| Control API | `gluetun.vpn-gateway:8000` | - | HTTP |
+| Health      | `gluetun.vpn-gateway:9999` | -                   | HTTP        |
+| Control API | `gluetun.vpn-gateway:8000` | -                   | HTTP        |
 
 ## SecureXNG
 
@@ -165,6 +189,7 @@ VPN-protected SearXNG instance with mTLS client authentication.
 **Client certificates location:** `configs/securexng-mtls/`
 
 **Using with curl:**
+
 ```bash
 curl --cert configs/securexng-mtls/client.crt \
      --key configs/securexng-mtls/client.key \
@@ -172,6 +197,7 @@ curl --cert configs/securexng-mtls/client.crt \
 ```
 
 **Browser setup:**
+
 1. Create PKCS12 bundle: `openssl pkcs12 -export -in client.crt -inkey client.key -out client.p12`
 2. Import `client.p12` into browser certificate store
 3. Navigate to `https://securexng.talos00`
@@ -184,11 +210,13 @@ curl --cert configs/securexng-mtls/client.crt \
 Gluetun exposes a control API for runtime management.
 
 **Get VPN status:**
+
 ```bash
 kubectl exec -n vpn-gateway deploy/gluetun -c gluetun -- wget -qO- http://localhost:8000/v1/vpn/status
 ```
 
 **Get public IP:**
+
 ```bash
 kubectl exec -n vpn-gateway deploy/gluetun -c gluetun -- wget -qO- http://localhost:8000/v1/publicip/ip
 ```
@@ -196,6 +224,7 @@ kubectl exec -n vpn-gateway deploy/gluetun -c gluetun -- wget -qO- http://localh
 ## Monitoring
 
 A Grafana dashboard is available at `grafana.talos00` → "VPN Gateway" showing:
+
 - VPN tunnel bandwidth (tun0 interface)
 - Pod network traffic
 - Container resource usage
@@ -204,22 +233,26 @@ A Grafana dashboard is available at `grafana.talos00` → "VPN Gateway" showing:
 ## Troubleshooting
 
 **Check VPN connection:**
+
 ```bash
 kubectl exec -n vpn-gateway deploy/gluetun -c gluetun -- wget -qO- https://ifconfig.me
 ```
 
 **View gluetun logs:**
+
 ```bash
 kubectl logs -n vpn-gateway deploy/gluetun -c gluetun
 ```
 
 **Check proxy accessibility from test pod:**
+
 ```bash
 kubectl run test --rm -it --restart=Never --image=curlimages/curl -- \
   curl -x http://gluetun.vpn-gateway.svc.cluster.local:8080 ifconfig.me
 ```
 
 **Verify Traefik entrypoints:**
+
 ```bash
 kubectl get ingressroutetcp -n vpn-gateway
 ```

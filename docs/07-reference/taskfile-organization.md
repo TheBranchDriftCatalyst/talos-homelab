@@ -1,21 +1,35 @@
+---
+type: reference
+status: current
+covers:
+  - repo
+freshness: tracks-code
+bluf: Why the task automation is split into per-domain Taskfiles under dev/, what each domain owns, and which variables each one declares.
+---
+
 # Taskfile Organization
 
 This repository uses a modular Taskfile structure with domain-specific task files to improve organization and maintainability.
 
 ## Structure
 
-```
+```text
 .
-├── Taskfile.yaml          # Root orchestrator with common shortcuts
+├── Taskfile.yaml              # Root orchestrator with common shortcuts
 ├── dev/Taskfile.talos.yaml    # Talos Linux operations
 ├── dev/Taskfile.k8s.yaml      # Kubernetes operations
 ├── dev/Taskfile.dev.yaml      # Development tools (linting, formatting, hooks, Tilt)
 ├── dev/Taskfile.infra.yaml    # Infrastructure deployment
 ├── dev/Taskfile.security.yaml # CrowdSec decisions/bans + honeypot visibility
-└── dev/Taskfile.certs.yaml    # cert-manager PKI + local CA trust
+├── dev/Taskfile.test.yaml     # Test suites (pytest markers + the Go docsgen suite)
+├── dev/Taskfile.certs.yaml    # cert-manager PKI + local CA trust
+└── dev/Taskfile.docs.yaml     # Documentation generation and linting
 ```
 
-All six domain files are wired up via `includes:` in the root `Taskfile.yaml`.
+Every domain file is wired up via `includes:` in the root `Taskfile.yaml`, which is the only
+Taskfile at the repo root. Task resolves include paths relative to that file while included tasks
+still run from the repo root, so the `./scripts/...` paths inside them are unaffected by the move
+into `dev/`.
 
 ## Task Domains
 
@@ -212,6 +226,19 @@ Run `task security:` (or `task --list`) for the current task list.
 cert-manager PKI operations and local CA trust (`trust-cert`, `untrust-cert`, `export-ca`, `list`,
 `check-expiry`, `status`, `renew`, `issuers`). Run `task certs:` (or `task --list`) for details.
 
+### Test Domain (`task test:<command>`)
+
+The consolidated test suites under `tests/`. Suites are pytest markers rather than directories, so
+a suite is selected by name (`task test:security`, `task test:ingress`, …) and each has a `-live`
+variant that is allowed to touch the running cluster — the bare name is the safe one. Run
+`task test:list` for the current suites.
+
+### Documentation Domain (`task docs:<command>`)
+
+Wraps `dev/docs-generator`: `docs:build` regenerates the generated artifacts, `docs:check` verifies
+they are current without writing, and `docs:lint` / `docs:links` / `docs:frontmatter` / `docs:stale`
+run the linter whole or one rule at a time. Run `task docs:` for details.
+
 ## Task/Script Path Reconciliation
 
 Reconciled 2026-08-22. An audit found 12 tasks pointing at scripts that no longer existed at the
@@ -221,29 +248,29 @@ different root causes, so two different fixes.
 **Repointed** - the script still exists, the caller drifted when `scripts/` was reorganized into
 subdirectories:
 
-| Task | Now runs |
-| ---- | -------- |
-| `k8s:kubeconfig-merge` | `scripts/developer/kubeconfig-merge.sh` |
-| `k8s:kubeconfig-unmerge` | `scripts/developer/kubeconfig-unmerge.sh` |
-| `k8s:dashboard-token` | `scripts/kube-dashboard-token.sh` |
-| `dev:eso-debug` | `scripts/external-secrets/onepassword-debug.sh` |
-| `infra:dashboard-arr-stack` | `applications/arr-stack/dashboard.sh` |
-| `infra:registry-port-forward` | `svc/zot` (the registry Service was renamed) |
+| Task                          | Now runs                                        |
+| ----------------------------- | ----------------------------------------------- |
+| `k8s:kubeconfig-merge`        | `scripts/developer/kubeconfig-merge.sh`         |
+| `k8s:kubeconfig-unmerge`      | `scripts/developer/kubeconfig-unmerge.sh`       |
+| `k8s:dashboard-token`         | `scripts/kube-dashboard-token.sh`               |
+| `dev:eso-debug`               | `scripts/external-secrets/onepassword-debug.sh` |
+| `infra:dashboard-arr-stack`   | `applications/arr-stack/dashboard.sh`           |
+| `infra:registry-port-forward` | `svc/zot` (the registry Service was renamed)    |
 
 **Removed** - the work these tasks did is now Flux's, or the workflow was retired and its script
 and manifests deleted. Restoring them would have meant `kubectl apply`-ing over Flux, which is the
 anti-pattern this repo's `CLAUDE.md` warns about:
 
-| Task | Why removed |
-| ---- | ----------- |
-| `infra:setup` | `scripts/setup-infrastructure.sh` deleted; Traefik and metrics-server are Flux-managed |
-| `infra:deploy-stack`, root `deploy-stack` | script is legacy pre-Flux, parked at `infrastructure/_scripts/deploy-stack.sh` |
-| `infra:deploy-observability` | deleted as obsolete in `e5eda33f`; the OpenSearch/Graylog stack is gone |
-| `infra:deploy-tdarr` | disabled as `scripts/__deploy-tdarr.sh`; tdarr is Flux-managed via `clusters/catalyst-cluster/tdarr.yaml` |
-| `infra:deploy-arr-stack` | arr-stack is Flux-managed; the referenced `overlays/dev/` never existed |
-| `infra:bootstrap-flux` | no such script; Flux is bootstrapped with `flux bootstrap github` per `bootstrap/flux/README.md` |
-| `infra:deploy-infra-testing`, `infra:infra-testing-*` | `infrastructure/base/infra-testing/` was deleted |
-| `infra:deploy-all`, `infra:redeploy` | called the removed tasks and deleted manifest directories |
+| Task                                                                             | Why removed                                                                                                                          |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `infra:setup`                                                                    | `scripts/setup-infrastructure.sh` deleted; Traefik and metrics-server are Flux-managed                                               |
+| `infra:deploy-stack`, root `deploy-stack`                                        | script is legacy pre-Flux, parked at `infrastructure/_scripts/deploy-stack.sh`                                                       |
+| `infra:deploy-observability`                                                     | deleted as obsolete in `e5eda33f`; the OpenSearch/Graylog stack is gone                                                              |
+| `infra:deploy-tdarr`                                                             | disabled as `scripts/__deploy-tdarr.sh`; tdarr is Flux-managed via `clusters/catalyst-cluster/tdarr.yaml`                            |
+| `infra:deploy-arr-stack`                                                         | arr-stack is Flux-managed; the referenced `overlays/dev/` never existed                                                              |
+| `infra:bootstrap-flux`                                                           | no such script; Flux is bootstrapped with `flux bootstrap github` per `bootstrap/flux/README.md`                                     |
+| `infra:deploy-infra-testing`, `infra:infra-testing-*`                            | `infrastructure/base/infra-testing/` was deleted                                                                                     |
+| `infra:deploy-all`, `infra:redeploy`                                             | called the removed tasks and deleted manifest directories                                                                            |
 | `dev:local-up`, `dev:local-down`, `talos:provision-local`, `talos:destroy-local` | the Docker-based local cluster was retired in `b2130815`; `scripts/provision-local.sh` is disabled as `scripts/__provision-local.sh` |
 
 `scripts/deploy-infra-testing.sh` is still on disk but inert - every path it applies was deleted.
@@ -344,15 +371,15 @@ task k8s:audit                # Generate audit report
 
 Variables are declared per Taskfile, not globally:
 
-| Taskfile                 | Variables                                                                                                                                                                                                                  |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Taskfile.yaml` (root)   | `TALOS_NODE` (default `192.168.1.54`), `TALOSCONFIG` (`./configs/talosconfig`), `KUBECONFIG` (`./.output/kubeconfig`)                                                                                                       |
+| Taskfile                     | Variables                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Taskfile.yaml` (root)       | `TALOS_NODE` (default `192.168.1.54`), `TALOSCONFIG` (`./configs/talosconfig`), `KUBECONFIG` (`./.output/kubeconfig`)                                                                                                                                                                                                                       |
 | `dev/Taskfile.talos.yaml`    | the above, plus `CLUSTER_NAME` (`catalyst-cluster`), `CLUSTER_ENDPOINT` (`https://{{.TALOS_NODE}}:6443`). `CONTROLPLANE_CONFIG` and `WORKER_CONFIG` were removed in the talhelper cutover — machine configs are generated from `configs/talconfig.yaml` into `configs/clusterconfig/`, so there is no single hardcoded config path any more |
-| `dev/Taskfile.k8s.yaml`      | `TALOS_NODE`, `TALOSCONFIG`, `KUBECONFIG`                                                                                                                                                                                  |
-| `dev/Taskfile.infra.yaml`    | `KUBECONFIG`                                                                                                                                                                                                               |
-| `dev/Taskfile.security.yaml` | `KUBECONFIG`, `NS` (`crowdsec`), `LAPI` (`deploy/crowdsec-lapi`)                                                                                                                                                           |
-| `dev/Taskfile.certs.yaml`    | `CA_SECRET` (`homelab-ca-secret`), `CA_NS` (`cert-manager`), `CA_FILE` (`$HOME/homelab-ca.crt`)                                                                                                                             |
-| `dev/Taskfile.dev.yaml`      | none                                                                                                                                                                                                                       |
+| `dev/Taskfile.k8s.yaml`      | `TALOS_NODE`, `TALOSCONFIG`, `KUBECONFIG`                                                                                                                                                                                                                                                                                                   |
+| `dev/Taskfile.infra.yaml`    | `KUBECONFIG`                                                                                                                                                                                                                                                                                                                                |
+| `dev/Taskfile.security.yaml` | `KUBECONFIG`, `NS` (`crowdsec`), `LAPI` (`deploy/crowdsec-lapi`)                                                                                                                                                                                                                                                                            |
+| `dev/Taskfile.certs.yaml`    | `CA_SECRET` (`homelab-ca-secret`), `CA_NS` (`cert-manager`), `CA_FILE` (`$HOME/homelab-ca.crt`)                                                                                                                                                                                                                                             |
+| `dev/Taskfile.dev.yaml`      | none                                                                                                                                                                                                                                                                                                                                        |
 
 `TALOS_NODE` is the control-plane node (`talos00`). Tasks that target it explicitly hit only that
 node; the cluster also runs `talos01`, `talos02-gpu`, `talos03` and `talos06`.
@@ -367,6 +394,27 @@ process environment:
 ```bash
 export TALOS_NODE=192.168.1.177
 task talos:health
+```
+
+## How this is regenerated
+
+`task --list` is authoritative and always current; this document is not, and is not trying to be a
+copy of it. What belongs here is the part `task --list` cannot tell you: **why** the domains are cut
+where they are, which variables each Taskfile declares, and which paths a task resolves against.
+
+So when a Taskfile changes:
+
+- a new or renamed **task** needs no edit here — the per-domain sections deliberately point at
+  `task --list` rather than enumerating, and the sections that still enumerate are the ones most
+  likely to have rotted;
+- a new or removed **domain file**, or a change to a Taskfile's `vars:`, does need an edit — those
+  are the two claims this document makes that nothing else states.
+
+Check both with:
+
+```bash
+task --list                       # the authoritative task inventory
+yq '.includes' Taskfile.yaml      # the domain list this document's Structure section mirrors
 ```
 
 ---

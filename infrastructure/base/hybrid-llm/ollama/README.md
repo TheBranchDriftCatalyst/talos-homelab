@@ -2,6 +2,11 @@
 
 > Self-hosted large language model inference on GPU
 
+**STATUS — NOT DEPLOYED.** This directory holds only `kustomization.yaml` (with
+`resources: []` and a TODO) and this README. None of the manifests named below exist, and
+`infrastructure/base/hybrid-llm/kustomization.yaml` keeps `ollama/` commented out, so no
+Flux Kustomization ever reaches it. Everything here describes the **intended** design.
+
 ## Overview
 
 Ollama provides a simple way to run large language models locally. In this setup:
@@ -12,62 +17,39 @@ Ollama provides a simple way to run large language models locally. In this setup
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    HOMELAB CLUSTER                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  IngressRoute: ollama.talos00                                    │
-│       │                                                          │
-│       ▼                                                          │
-│  Service: ollama (ClusterIP)                                     │
-│       │                                                          │
-│       │  Liqo Network Fabric                                     │
-│       │  (Transparent cross-cluster routing)                     │
-│       ▼                                                          │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────────┐
-│                    AWS GPU CLUSTER                               │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  Pod: ollama-xxxxx                                               │
-│  ├── Container: ollama (ollama/ollama:latest)                   │
-│  │   ├── Port: 11434                                            │
-│  │   ├── GPU: nvidia.com/gpu: 1                                 │
-│  │   └── Model Dir: /root/.ollama                               │
-│  │                                                               │
-│  └── Volumes:                                                    │
-│      ├── models (S3 Mountpoint) → /root/.ollama/models          │
-│      └── cache (emptyDir NVMe) → /var/cache/ollama              │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    S3 INTELLIGENT-TIERING                        │
-│              s3://ollama-models-<account-id>                     │
-├─────────────────────────────────────────────────────────────────┤
-│  llama2/                                                         │
-│  ├── manifest                                                    │
-│  └── blobs/                                                      │
-│      └── sha256-xxxxx (model weights)                           │
-│                                                                  │
-│  codellama/                                                      │
-│  mistral/                                                        │
-│  ...                                                             │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph home["HOMELAB CLUSTER"]
+        direction TB
+        ing["IngressRoute: ollama.talos00"]
+        svc["Service: ollama (ClusterIP)"]
+        ing --> svc
+    end
+
+    subgraph awsgpu["AWS GPU CLUSTER"]
+        direction TB
+        pod["Pod: ollama<br/>container ollama/ollama:latest<br/>port 11434 · nvidia.com/gpu: 1<br/>model dir /root/.ollama"]
+        volm["volume: models — S3 Mountpoint PVC<br/>mounted at /root/.ollama/models"]
+        volc["volume: cache — emptyDir on NVMe<br/>mounted at /var/cache/ollama"]
+        pod --- volm
+        pod --- volc
+    end
+
+    s3["S3 Intelligent-Tiering<br/>s3://ollama-models-ACCOUNT_ID<br/>llama2/ = manifest + blobs/sha256-...<br/>codellama/, mistral/, ..."]
+
+    svc -->|"Liqo network fabric<br/>transparent cross-cluster routing"| pod
+    volm --> s3
 ```
 
 ## Components
 
-| File                 | Description                  |
-| -------------------- | ---------------------------- |
-| `kustomization.yaml` | Kustomize entrypoint         |
-| `deployment.yaml`    | Ollama deployment with GPU   |
-| `service.yaml`       | ClusterIP service            |
-| `ingressroute.yaml`  | Traefik IngressRoute         |
-| `pvc-models.yaml`    | S3 Mountpoint PVC for models |
+| File                 | Status  | Description                                     |
+| -------------------- | ------- | ----------------------------------------------- |
+| `kustomization.yaml` | present | Kustomize entrypoint, currently `resources: []` |
+| `deployment.yaml`    | planned | Ollama deployment with GPU                      |
+| `service.yaml`       | planned | ClusterIP service                               |
+| `ingressroute.yaml`  | planned | Traefik IngressRoute                            |
+| `pvc-models.yaml`    | planned | S3 Mountpoint PVC for models                    |
 
 ## Prerequisites
 

@@ -16,7 +16,7 @@ Edit dashboards in **Grafana UI** or **JSON files** - your choice. Changes sync 
 
 ### Directory Structure
 
-```
+```text
 grafana-dashboards/
 ├── json/                    # Editable JSON files (custom dashboards)
 │   ├── tdarr-transcoding.json
@@ -24,9 +24,10 @@ grafana-dashboards/
 │   └── ...
 ├── resources/               # GrafanaDashboard CRs (reference ConfigMaps)
 ├── external/                # Community dashboards (Grafana.com IDs)
+├── folders/                 # GrafanaFolder CRs: ops, apps, compositions
 ├── scripts/
 │   └── extract-dashboards.py
-└── kustomization.yaml       # ConfigMapGenerator for JSON files
+└── kustomization.yaml       # ConfigMapGenerator for JSON files + the folder/CR resources
 ```
 
 ### Option A: Edit in Grafana UI
@@ -54,17 +55,18 @@ git push
 ### Sync Commands
 
 ```bash
+
 ```
 
 ### Tilt Integration
 
 Run `tilt up` and find **grafana-dashboards** in the `3-infra-observe` group:
 
-| Button | Action |
-|--------|--------|
+| Button                | Action                          |
+| --------------------- | ------------------------------- |
 | **Pull from Grafana** | Export UI changes to JSON files |
-| **Push to Cluster** | Apply JSON files via kustomize |
-| **List Dashboards** | Show all dashboards in Grafana |
+| **Push to Cluster**   | Apply JSON files via kustomize  |
+| **List Dashboards**   | Show all dashboards in Grafana  |
 
 ### How It Works
 
@@ -75,6 +77,7 @@ Run `tilt up` and find **grafana-dashboards** in the `3-infra-observe` group:
 5. **Flux** watches git and applies changes automatically
 
 Benefits:
+
 - Clean git diffs (JSON files vs embedded YAML strings)
 - Edit in Grafana UI when visual editing is easier
 - Edit in code when bulk changes or version control is needed
@@ -254,7 +257,7 @@ spec:
     matchLabels:
       dashboards: 'grafana'
   grafanaCom:
-    id: 12345  # Dashboard ID from grafana.com URL
+    id: 12345 # Dashboard ID from grafana.com URL
   datasources:
     - inputName: 'DS_PROMETHEUS'
       datasourceName: 'Mimir'
@@ -479,8 +482,7 @@ The former `./scripts/deploy-observability.sh` and `./scripts/deploy-stack.sh` n
 
 ## Related Documentation
 
-- **Full Dashboard Reference:** [docs/GRAFANA-DASHBOARDS.md](/Users/panda/catalyst-devspace/workspace/talos-homelab/docs/GRAFANA-DASHBOARDS.md)
-- **Monitoring Stack:** [infrastructure/base/monitoring/kube-prometheus-stack/README.md](/Users/panda/catalyst-devspace/workspace/talos-homelab/infrastructure/base/monitoring/kube-prometheus-stack/README.md)
+- **Monitoring Stack:** [docs/08-monitoring/observability.md](../../../../docs/08-monitoring/observability.md) — the OTEL stack that replaced kube-prometheus-stack
 - **Grafana Operator:** https://grafana.github.io/grafana-operator/
 - **Dashboard Gallery:** https://grafana.com/grafana/dashboards/
 

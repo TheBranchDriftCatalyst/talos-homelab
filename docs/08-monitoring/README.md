@@ -1,15 +1,28 @@
+---
+type: nav
+status: current
+covers:
+  - monitoring
+freshness: tracks-code
+bluf: Index of the dashboard-level monitoring references; observability.md is the entry point for the stack itself.
+pinned: covers resolves to infrastructure/base/monitoring, but this is the section index for docs/08-monitoring and belongs beside the document it indexes.
+---
+
 # Monitoring Reference
 
-Dashboard-level reference for the observability stack. The stack itself is documented in the root
-[OBSERVABILITY.md](observability.md) (Alloy / Mimir / Loki / Tempo / ClickStack, all in the
-`monitoring` namespace).
+Dashboard-level reference for the observability stack. The stack itself — Alloy / Mimir / Loki /
+Tempo / ClickStack, all in the `monitoring` namespace — is documented in
+[observability.md](observability.md) alongside this file.
 
 ## Quick Navigation
 
-| Document                                                                 | Description                                                                                                | When to Read                                     |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| [GRAFANA-DASHBOARDS.md](GRAFANA-DASHBOARDS.md)                           | Index of every Grafana dashboard in the cluster, by folder and purpose                                     | Finding or adding a dashboard                    |
-| [GRAFANA-DASHBOARD-QUERY-AUDIT.md](GRAFANA-DASHBOARD-QUERY-AUDIT.md)     | Generated per-panel query verification for every live `GrafanaDashboard` CR; `EMPTY` = review item          | Auditing dashboards after a metrics-stack change |
+<!-- docs:gen:nav -->
+
+| Doc                                  | What it covers                                                                                                                                                                           |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [observability.md](observability.md) | An OTEL-native LGTM stack in one namespace — Alloy collects everything and fans out to Mimir, Loki, Tempo and ClickStack — and this explains why each backend is deployed the way it is. |
+
+<!-- /docs:gen:nav -->
 
 ## Key Concepts
 

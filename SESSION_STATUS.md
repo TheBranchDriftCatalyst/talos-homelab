@@ -1,8 +1,9 @@
 # Session Status — talos-homelab
 
 <!-- closeout:header -->
-**Kind:** Talos Kubernetes homelab · infra + GitOps  ·  **Tracker:** beads (`bd`)  ·  **Updated:** 2026-09-18
-**Pick up here:** `TALOS-kll3` (docs generator, in flight) · **Deadline item:** `TALOS-sahd` (~2026-09-20 03:35 UTC)
+
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-09-19
+**Pick up here:** `TALOS-f0sd` (review the 98-file diff first — nothing is committed) · **Deadline item:** `TALOS-sahd` (~2026-09-20 03:35 UTC)
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -18,11 +19,11 @@ Multi-node Talos cluster, dual GitOps (Flux for infra, ArgoCD for apps). Everyth
 
 **Two efforts are open, and they are unrelated to each other.**
 
-1. **Docs as projection** (`TALOS-f0sd`) — *in flight, this is the live one*. Docs were the only
+1. **Docs as projection** (`TALOS-f0sd`) — _in flight, this is the live one_. Docs were the only
    projection of the code that nothing kept honest, so they drifted: 154 broken links and a
    tree that had grown to 105 files. The tree is pruned to 37 and `docsgen` (a portable Go
    linter at `dev/docs-generator/`) now reports drift. Next step is the generator half.
-2. **Security campaign** (`TALOS-a13n`) — *paused deliberately, not finished*. A principal
+2. **Security campaign** (`TALOS-a13n`) — _paused deliberately, not finished_. A principal
    review recommended stopping rather than continuing into cosmetic work. Two items have real
    dates this weekend; see Now/next.
 
@@ -30,6 +31,7 @@ If you are here to do something else entirely, that is fine and probably correct
 [Standing gotchas](#standing-gotchas) first — most of them cost real outages to learn.
 
 <!-- closeout:next -->
+
 ## Now / next
 
 Two independent efforts are live. The docs one is mid-flight; the security one is paused with
@@ -37,28 +39,65 @@ two dated items.
 
 ### In flight — docs as projection (`TALOS-f0sd`)
 
-| | |
-|---|---|
-| **Next action** | `TALOS-kll3` (E2) — the generator half. First artifact: `docs/07-reference/component-inventory.md`. Chosen as the first thing that *writes* because it needs no frontmatter, its input is 65 machine-authored Flux CRs, and nobody depended on it yesterday — so a wrong design is wrong in exactly one file. |
-| **Done** | `TALOS-hadr` (E1 phase 0) — `docsgen` builds, runs, is on `PATH` in the dev shell. First run: **108 broken links, 15 component-shape warnings**. |
-| **Sequenced after** | E3 frontmatter (`TALOS-0hlo`) → E4 enforcement (`TALOS-c0hj`) → E5 folder migration (`TALOS-osdj`) → E7 namespace migration (`TALOS-mpbu`). E6 mermaid (`TALOS-05xr`) rides along. |
+|                     |                                                                                                                                                                                                                                                                                                               |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Next action**     | `TALOS-kll3` (E2) — the generator half. First artifact: `docs/07-reference/component-inventory.md`. Chosen as the first thing that _writes_ because it needs no frontmatter, its input is 65 machine-authored Flux CRs, and nobody depended on it yesterday — so a wrong design is wrong in exactly one file. |
+| **Done**            | `TALOS-hadr` (E1 phase 0) — `docsgen` builds, runs, is on `PATH` in the dev shell. First run: **108 broken links, 15 component-shape warnings**.                                                                                                                                                              |
+| **Sequenced after** | E3 frontmatter (`TALOS-0hlo`) → E4 enforcement (`TALOS-c0hj`) → E5 folder migration (`TALOS-osdj`) → E7 namespace migration (`TALOS-mpbu`). E6 mermaid (`TALOS-05xr`) rides along.                                                                                                                            |
 
 ### Paused — security campaign (`TALOS-a13n`)
 
-| | |
-|---|---|
-| **Deadline** | `TALOS-sahd` (P1) — a CrowdSec GC reap fires **unattended ~09-20 03:35 UTC** against a key-holding bouncer row. Whether enforcement survives it was *reasoned about, never tested*. ~15 min in a watched window. |
-| **Same weekend** | `TALOS-a83x` (P3) — falcosidekick redis reaches its 512 MB ceiling ~09-20. |
-| **Highest leverage** | `TALOS-kb2f` (P1) — pytest half of the tripwire canary: assert `container.name` is a *name*, not a 12-hex ID, **per node**. |
-| **Explicitly not next** | Adding more to the security tree. A principal review said stop; three passes found the campaign's centre of gravity had drifted into repairing controls that only watch other controls. |
+|                         |                                                                                                                                                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Deadline**            | `TALOS-sahd` (P1) — a CrowdSec GC reap fires **unattended ~09-20 03:35 UTC** against a key-holding bouncer row. Whether enforcement survives it was _reasoned about, never tested_. ~15 min in a watched window. |
+| **Same weekend**        | `TALOS-a83x` (P3) — falcosidekick redis reaches its 512 MB ceiling ~09-20.                                                                                                                                       |
+| **Highest leverage**    | `TALOS-kb2f` (P1) — pytest half of the tripwire canary: assert `container.name` is a _name_, not a 12-hex ID, **per node**.                                                                                      |
+| **Explicitly not next** | Adding more to the security tree. A principal review said stop; three passes found the campaign's centre of gravity had drifted into repairing controls that only watch other controls.                          |
+
 <!-- /closeout:next -->
 
 ---
 
 <!-- closeout:sessions -->
+
 ## Sessions
 
+### 2026-09-19 — Docs as projection: the tool, the sections, and what grounding found
+
+**Commits:** 25 (+98 files uncommitted for one review pass) · **Scope:** `dev/docs-generator/`, `docs/**`, `infrastructure/base/security/**`, lint config
+
+**Filed:** `TALOS-f0sd.1`–`.11`, `TALOS-0n61`, `TALOS-0l0m`, plus the `websecurelan` and honeypot-test bugs
+**Closed:** `TALOS-hadr` (E1 linter), `TALOS-f0sd.2` (config-driven artifacts)
+**Docs touched:** every section — frontmatter 12/91 → 42/91; 8 nav tables now generated; `pihole-ha-pattern.md` → `infrastructure/base/pihole/README.md`
+**Carried:** `TALOS-f0sd.1` slice 4 (model renames), `.9` (derive grouping_roots), `.11` spec landed but corpus split open
+
+**Broken links 120 → 0.** 93 of the original 120 were in six hand-maintained nav tables whose
+targets had been _deleted_, not moved — so generation was the only correct fix. The rest were
+one-offs. `docsgen` grew from a linter into a generator: config-driven artifacts, scoping,
+marker regions, a strategy registry, and a pre-write gate that makes it structurally impossible
+to emit a document its own linter rejects.
+
+**What grounding found was worth more than what got built.** Verified, not inferred:
+`websecurelan :8443` is WAN-forwarded while its manifest states the opposite (one of two
+isolation layers gone); `svc/traefik` is ClusterIP, so six docs asserted a VIP it cannot hold;
+`arr-stack` claimed no shared Postgres while running a 3-instance CNPG cluster; a Velero restore
+command that matches nothing and _reports success_; two Taskfile tasks invoking a deleted
+script; a honeypot security suite that had been globbing a path that stopped existing — its
+`assert cnps` guard is the only reason it failed loudly instead of passing green.
+
+**Four instances of one pattern: a reference validated for shape but never existence.** Bare
+`covers:` slugs were checked; `path:` covers were trusted unconditionally; ticket IDs were
+regex-only; and file-valued `path:` covers were _half-wired_ — moving the colocation verdict
+while contributing nothing to staleness. That last one punished precision: nine covers naming
+the exact file that invalidates a doc, four of them `configs/talconfig.yaml`, all inert.
+
+**Cost.** Three fixtures cured their own defects by naming the literal they were meant to omit.
+Two rules were tautologies. The anti-vacuity gate contained the bug it existed to catch
+(`"10 components"` contains `"0 components"`). Eight golden files were silently untracked behind
+a blanket `*.txt` gitignore. None of it was visible as failure — everything reported success.
+
 ### 2026-09-18 (part 2) — Docs as projection: prune, then build the machinery
+
 **Commits:** ~10 · **Scope:** `docs/**`, `dev/docs-generator/`, `flake.nix`, `Taskfile.yaml`
 
 **Filed:** `TALOS-f0sd` (parent epic) + `TALOS-hadr` `TALOS-kll3` `TALOS-0hlo` `TALOS-c0hj`
@@ -68,8 +107,8 @@ two dated items.
 
 **Pruned `docs/` 105 → 37 files, 33k → 7.3k lines.** Nothing deleted; 67 files `git mv`'d to
 `docs/_archive/`. Two distinct removals, and conflating them is how the tree got that big:
-*episodic* material (audits, retros, completed migration plans — true on their date, not
-drifted) and *actively misleading* docs (`networking.md` told you to `helm install traefik`,
+_episodic_ material (audits, retros, completed migration plans — true on their date, not
+drifted) and _actively misleading_ docs (`networking.md` told you to `helm install traefik`,
 bypassing Flux; `gitops-responsibilities.md` asserted "FluxCD NOT YET DEPLOYED" for ten months;
 `infrastructure-diagrams.md` had 14 authoritative diagrams of a cluster with TrueNAS and Nebula
 that does not exist).
@@ -82,13 +121,14 @@ their own `kustomization.yaml` meant "the tree is wrong". The data says the oppo
 with `crowdsec`/`falco`/`honeypots`/`iocaine` each being their own Flux Kustomization is the
 **correct** pattern. The real smell is one slug wrapping many deployable units —
 `monitoring/v2-otel` (16 nested), `media-experimental` (15), `operators` (8). The tool now
-*measures* that rather than working around it.
+_measures_ that rather than working around it.
 
 **Design record:** `docs/06-project-management/memory-knowledge-architecture.md` — the
 projection model (every layer is a lossy view of the one below; drift is a projection diverging
 from its source; read downward only as far as the question needs).
 
 ### 2026-09-18 (part 1) — Security campaign + three adversarial validation passes
+
 **Commits:** 43 · **Scope:** `infrastructure/base/security/**`, traefik, monitoring, CNPG fleet
 
 **Filed:** `TALOS-a13n` (resume epic), `TALOS-sahd`, `TALOS-kb2f`, `TALOS-9vb9`, `TALOS-d811`,
@@ -99,11 +139,11 @@ from its source; read downward only as far as the question needs).
 **Carried:** `TALOS-cscw` (Wave 2 remainder), `TALOS-4ca6` (Wave 3, deferred on purpose)
 
 Three isolated auditors swept the security tree; remediation ran all day; then three review
-passes, each of which found the *previous* round's fix hadn't worked.
+passes, each of which found the _previous_ round's fix hadn't worked.
 
 **Landed:** Falco least-privilege (`privileged` → 4 caps, hostPaths 12→8); every CrowdSec LAPI
 hop now verifies TLS (PKI moved onto the shared homelab CA trust-manager already distributes);
-special-use IP filtering rewritten to CIDR *overlap* matching; decision exporter given its own
+special-use IP filtering rewritten to CIDR _overlap_ matching; decision exporter given its own
 credential and made rotation-proof; CNPG 17.0 → 17.6 across all seven clusters; honeypot breach
 tripwire made **continuously self-testing** (canary CronJob + `HoneypotTripwireNotFiring`).
 
@@ -112,10 +152,11 @@ against its own 8 MB cap and had **stopped enforcing entirely**; the honeypot br
 blind for most of the day (gotcha #1).
 
 **Cost:** the campaign drifted into repairing controls that exist to watch other controls. The
-two worst self-inflicted outages were *optional tidying nothing asked for*, done mid-campaign
+two worst self-inflicted outages were _optional tidying nothing asked for_, done mid-campaign
 on the enforcement path.
 
 ### 2026-09-17/18 (overnight) — Flake + direnv migration, root cleanup
+
 **Filed:** `TALOS-pmbi`, `TALOS-ewlf`, `TALOS-p4qu`, `TALOS-pmnc`, `TALOS-90pl`
 **Closed:** `TALOS-hdw8`, `TALOS-9vtw`
 
@@ -127,6 +168,7 @@ suppression scenario (`homelab/cowrie-replay-drop`), still in simulation.
 ---
 
 <!-- closeout:gotchas -->
+
 ## Standing gotchas
 
 Durable lessons. These **survive archival** — when a session entry is archived, any lesson
@@ -135,7 +177,7 @@ worth keeping is distilled up into this list first. Fuller detail lives in
 
 1. **Never verify a detection control by checking an intermediate field.** The honeypot
    tripwire was blind three times in 24 h; each fix checked the field it had just changed.
-   `container.name` resolving to a 12-hex container ID is a *broken* state and is **not null**,
+   `container.name` resolving to a 12-hex container ID is a _broken_ state and is **not null**,
    so a null-check sails past it. Fire the rule; see the alert arrive.
 2. **`kustomize build` passing is not validation for a HelmRelease.** It never reads the
    chart's `values.schema.json`. Use `helm template`. Two separate bugs shipped through that gap.
@@ -144,23 +186,37 @@ worth keeping is distilled up into this list first. Fuller detail lives in
 4. **The honeypot namespace has a strict egress quarantine** that blocks the apiserver. That is
    correct — move your pod, don't widen the policy.
 5. **The Traefik CrowdSec bouncer is fail-closed.** Breaking its TLS or LAPI reachability takes
-   down *every* HTTP route, and Traefik pods stay Ready while it rejects traffic.
+   down _every_ HTTP route, and Traefik pods stay Ready while it rejects traffic.
 6. **`cscli decisions list --scope range` silently returns nothing**, and a negative duration
-   means *expired*, not active. Parse `-a -o json`.
+   means _expired_, not active. Parse `-a -o json`.
 7. **`title:` must never appear in markdown frontmatter here.** Verified against the repo's
-   pinned markdownlint 0.41.1: it silently disables MD041 *and* turns every existing H1 into an
+   pinned markdownlint 0.41.1: it silently disables MD041 _and_ turns every existing H1 into an
    MD025 duplicate-heading error. Frontmatter itself is fine — front matter is stripped before
    parsing, so `---` before the H1 does not trip MD041.
 8. **`task lint` is already red** — `prettier --check .` fails on 611 files. Any new gate wired
    into `dev:ci` is born ignored. Scope new checks to their own regions and land enforcement
    separately.
 9. **`mise` exports a global `GOROOT`.** Inherited into the flake shell it makes the flake's `go`
-   drive a *different* toolchain: `compile: version "go1.22.1" does not match go tool version
-   "go1.26.7"`. The flake's shellHook now `unset GOROOT`; also `GOWORK=off`, or a parent
+   drive a _different_ toolchain: `compile: version "go1.22.1" does not match go tool version
+"go1.26.7"`. The flake's shellHook now `unset GOROOT`; also `GOWORK=off`, or a parent
    `go.work` drags sibling workspace modules into the build.
 10. **A grouping directory with no `kustomization.yaml` is the CORRECT pattern**, not a defect —
     its children are each their own component. The actual smell is the inverse: one slug wrapping
     many nested kustomizations, which makes "component = directory = doc home" untrue.
+11. **A check that reports success is not a check that ran.** Every significant defect this
+    session reported green: a dead glob with 4 collected tests, an untracked golden, a rule
+    searching text containing its own needle. Verify the check _fires_, not that it passes.
+    `[enforced: mutation proofs required on every new spec]`
+12. **`git ls-files` and the filesystem disagree, and docsgen uses both.** `components` stats
+    the disk; `lint` walks git. An untracked README is documented in one command and
+    non-existent in the other. `[unenforced — TALOS-f0sd filed]`
+13. **Prettier dedents YAML inside fences.** Running it repo-wide breaks snippets deliberately
+    indented to show where they slot into a parent manifest. Scope it to files you edited.
+    `[unenforced]`
+14. **The pre-commit chain did not block until 2026-09-19.** The beads wrapper discarded
+    lefthook's exit code, so every failing job passed silently — `markdownlint` had never once
+    run. `[enforced: exit code now propagated; proven both directions]`
+
 <!-- /closeout:gotchas -->
 
 ---
@@ -180,8 +236,8 @@ oldest out to the archive. Editing by hand is fine; keep the shape.
   lifted into [Standing gotchas](#standing-gotchas) first. Episodes decay; invariants persist.
 - **Record decisions and direction, never live health.** "We chose X because Y" ages well;
   "component Z is currently failing" is wrong within a day and misleads the next person
-  debugging. Health belongs in alerts. *(This rule exists because a doc in this repo made
-  exactly that mistake and had to be corrected.)*
+  debugging. Health belongs in alerts. _(This rule exists because a doc in this repo made
+  exactly that mistake and had to be corrected.)_
 - **Link to beads, don't duplicate it.** Ticket bodies are the source of truth; this is
   orientation and a pointer.
 - **Keep the `<!-- closeout:* -->` anchors.** The command edits between them; the header block

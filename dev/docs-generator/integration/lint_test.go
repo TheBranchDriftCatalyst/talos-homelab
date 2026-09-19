@@ -1,6 +1,8 @@
 package integration_test
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -50,6 +52,10 @@ var _ = Describe("the ruleset", Label("integration"), func() {
 			ContainSubstring("handbook/design/out-of-order.md: key `type` should come before `status`"),
 			Equal("handbook/design/storage-layout.md: status: superseded requires superseded_by"),
 			Equal("handbook/process/missing-covers.md: missing required `covers`"),
+			// The nav fixture's dead-end: superseded with nowhere to go. It is BOTH a schema
+			// finding and a row the nav must skip, and the two are independent — a nav that
+			// silently dropped every superseded doc would still leave this finding standing.
+			Equal("handbook/reference/superseded-no-successor.md: status: superseded requires superseded_by"),
 			ContainSubstring("handbook/reference/scalar-covers.md: covers must be a block sequence"),
 			Equal("handbook/reference/unterminated.md: unterminated frontmatter block"),
 		))
@@ -215,4 +221,92 @@ func sortedCopy(in []string) []string {
 		}
 	}
 	return out
+}
+
+// The per-rule truncation cap, and the flag that lifts it.
+//
+// The cap exists because a fresh adoption produces a wall — talos-homelab's own broken-links
+// rule was 154 findings on day one — and a report nobody can read is a report nobody runs. But
+// the cap is also how a rule with 120 findings becomes untriageable: you cannot act on what the
+// tool will not print. Both halves are asserted, because a change that "fixed" either one by
+// deleting the other would be a regression wearing a fix.
+var _ = Describe("finding truncation", Label("integration"), func() {
+	// manyFindings plants `n` dead links in one document, which is the cheapest way to get a
+	// single rule over the cap without inventing a whole sample.
+	manyFindings := func(fx *fixture, n int) {
+		var b strings.Builder
+		b.WriteString("# Wall\n\nA document that trips one rule many times.\n\n")
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(&b, "- [gone %02d](./gone-%02d.md)\n", i, i)
+		}
+		fx.write("handbook/reference/wall.md", b.String())
+		runGit(fx.Root, nil, "add", "-A")
+		runGit(fx.Root, dateEnv(bumpDate), "commit", "-q", "-m", "plant a wall of findings")
+	}
+
+	const planted = 45
+
+	It("truncates by default and SAYS how many it withheld, so the report stays readable "+
+		"without lying about being complete", func() {
+		fx := newFixture(fluxCluster)
+		manyFindings(fx, planted)
+
+		out := fx.run("lint", "-rule", "broken-links").Out
+		found := findingsFor(out, "broken-links")
+
+		// 20 findings plus the elision notice. The notice is part of the block, which is why it
+		// is counted here rather than asserted around.
+		Expect(found).To(HaveLen(21), "default truncation changed:\n%s", out)
+		Expect(found[20]).To(HavePrefix("... and "))
+		Expect(out).To(ContainSubstring("re-run with -all"),
+			"the elision notice must name the escape hatch, or nobody finds it")
+		// The SUMMARY still counts every finding. A truncated body over a truncated count would
+		// under-report the defect and read as progress.
+		Expect(out).To(ContainSubstring("finding(s):"))
+		Expect(countFindings(out)).To(BeNumerically(">=", planted))
+	})
+
+	It("prints every finding under -all, and does not then claim some were hidden", func() {
+		fx := newFixture(fluxCluster)
+		manyFindings(fx, planted)
+
+		out := fx.run("lint", "-rule", "broken-links", "-all").Out
+		found := findingsFor(out, "broken-links")
+
+		Expect(len(found)).To(BeNumerically(">=", planted),
+			"-all withheld findings; a flag whose whole promise is completeness truncated anyway:\n%s", out)
+		Expect(len(found)).To(Equal(countFindings(out)),
+			"the printed findings and the summary count disagree")
+		Expect(out).NotTo(ContainSubstring("... and "),
+			"-all printed everything and still announced an elision")
+	})
+
+	It("applies to `links` too, since it is the same report under a shorter name", func() {
+		fx := newFixture(fluxCluster)
+		manyFindings(fx, planted)
+
+		Expect(findingsFor(fx.run("links").Out, "broken-links")).To(HaveLen(21))
+		Expect(len(findingsFor(fx.run("links", "-all").Out, "broken-links"))).
+			To(BeNumerically(">=", planted))
+	})
+
+	It("is inert for a rule that never reaches the cap, so -all is not a second output format", func() {
+		fx := newFixture(fluxCluster)
+		Expect(fx.run("lint", "-all").Out).To(Equal(fx.run("lint").Out),
+			"-all changed output for a repo with no truncated rule; the flag must lift a cap, "+
+				"not render differently")
+	})
+})
+
+// countFindings reads the total off the summary line, which is the number CI gates read.
+func countFindings(out string) int {
+	for _, line := range strings.Split(out, "\n") {
+		if i := strings.Index(line, " finding(s):"); i > 0 {
+			n, err := strconv.Atoi(strings.TrimSpace(line[:i]))
+			if err == nil {
+				return n
+			}
+		}
+	}
+	return -1
 }

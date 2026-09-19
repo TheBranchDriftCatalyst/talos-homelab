@@ -1,3 +1,12 @@
+---
+type: guide
+status: current
+covers:
+  - repo
+freshness: tracks-code
+bluf: Get the toolchain from the flake, plan a rebuild with `task talos:provision`, then merge the kubeconfig — this covers bringing nodes up, not the full Flux/secrets bootstrap.
+---
+
 # Quick Start Guide
 
 ## TL;DR
@@ -102,15 +111,15 @@ task k8s:kubeconfig-merge
 
 <!-- -->
 
-> **The node will stay `NotReady` until a CNI is installed.** The machine config
-> sets `cluster.network.cni.name: none`; Cilium is delivered by Flux
+> **The node will stay `NotReady` until a CNI is installed.** `configs/talconfig.yaml`
+> sets `cniConfig: name: none` on purpose; Cilium is delivered by Flux
 > (`infrastructure/base/cilium/`). Bootstrap Flux next - see
-> [docs/04-deployment/flux-setup.md](../04-deployment/flux-setup.md).
+> [cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md#step-4--bootstrap-flux).
 
 ## Access Kubernetes Dashboard
 
 ```bash
-# Terminal 1: Get the token
+# Terminal 1: Get the token (task k8s:dashboard-token runs the same script)
 ./scripts/kube-dashboard-token.sh
 
 # Terminal 2: Start the proxy
@@ -120,9 +129,10 @@ task k8s:dashboard-proxy
 http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
 ```
 
-> **Broken task**: `task k8s:dashboard-token` invokes `./scripts/dashboard-token.sh`,
-> which does not exist in the repo. The working script is
-> `scripts/kube-dashboard-token.sh` (it also prints tokens for the other cluster UIs).
+> **Nothing in this repo deploys the Kubernetes Dashboard.** The script asks the cluster for a
+> token in the `kubernetes-dashboard` namespace and says so plainly when there is nobody home,
+> so a blank token here means the Dashboard is not installed, not that the script failed. It
+> prints tokens for the other cluster UIs in the same run.
 
 ## Common Commands
 
@@ -148,19 +158,18 @@ task talos:service-logs -- SERVICE=kubelet
 Straight out of `provision.sh` you get Talos + a bootstrapped control plane +
 CoreDNS. Everything else (CNI, ingress, monitoring, dashboards) arrives via Flux.
 
-Current cluster (verify with `kubectl get nodes -o wide`):
+Versions are not repeated here, because a doc cannot be the source of truth for a pin:
 
-- **Talos v1.13.2** - Immutable Linux OS
-- **Kubernetes v1.34.10** - Container orchestration
-- **Cilium v1.20.0** - CNI networking (Helm chart via Flux; Talos ships `cni: none`)
-- **CoreDNS** - DNS resolution
-- **Kubernetes Dashboard** - Web UI (deployed separately, *not* by `provision.sh`)
-- **5 nodes** - talos00 (control plane, tainted `NoSchedule`) + workers talos01,
-  talos02-gpu, talos03, talos06
+- **Talos and Kubernetes** - `talosVersion` / `kubernetesVersion` in `configs/talconfig.yaml`
+- **Cilium** - the HelmRelease in `infrastructure/base/cilium/`
+- **Node roles** - the `controlPlane:` flag per node in `configs/talconfig.yaml`. Three of the
+  five nodes are control plane; only `talos00` is hard-tainted, and `talos01`/`talos03` carry a
+  soft `PreferNoSchedule` memory taint (`configs/patches/memory-constrained-taint.yaml`)
+- **Kubernetes Dashboard** - not deployed from this repo at all
 
 ## Project Structure
 
-```
+```text
 configs/          # Talos machine configs (sensitive files gitignored)
 infrastructure/   # Platform manifests (Flux-managed)
 applications/     # Application manifests
@@ -203,7 +212,7 @@ Deploy a test application to verify everything works:
 - Ensure `kubectl proxy` is running: `task k8s:dashboard-proxy`
 - Verify the proxy is listening on localhost:8001
 - URL must be `localhost:8001`, NOT the node IP
-- Get fresh token: `./scripts/kube-dashboard-token.sh` (the `task k8s:dashboard-token` shortcut is currently broken)
+- Get fresh token: `./scripts/kube-dashboard-token.sh` (or `task k8s:dashboard-token`)
 
 ### Can't connect to Talos API?
 
@@ -264,8 +273,8 @@ task talos:provision
 After your cluster is running:
 
 1. **Full rebuild path**: See [docs/05-runbooks/cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md) (authoritative)
-2. **Deploy Infrastructure**: See [docs/04-deployment/flux-setup.md](../04-deployment/flux-setup.md)
-3. **Configure GitOps**: See [docs/02-architecture/gitops-responsibilities.md](../02-architecture/gitops-responsibilities.md)
+2. **Deploy Infrastructure**: See [cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md#step-4--bootstrap-flux)
+3. **Configure GitOps**: See [docs/02-architecture/dual-gitops.md](../02-architecture/dual-gitops.md)
 4. **Add Monitoring**: the monitoring stack is Flux-managed — see
    `clusters/catalyst-cluster/monitoring.yaml`; force a sync with `task infra:flux-reconcile`
 5. **Explore Docs**: See [docs/INDEX.md](../INDEX.md) and [README.md](../../README.md)

@@ -68,6 +68,9 @@ integration/
     fixture_test.go             copy + git init + commit, the runner, tree hashing
     invariants_test.go          strategy-agnostic invariants, run against EVERY sample
     lint_test.go                the ruleset and component enumeration, pinned per finding
+                                + the per-rule truncation cap and the `-all` flag that lifts it
+    nav_test.go                 marker-region ownership: derived rows, the description key,
+                                byte-identical prose, and a refusal for every broken marker state
     declarations_test.go        declared-vs-actual reconciliation, per sample
     cli_test.go                 exit-code contract, usage, path leaks, prettier agreement
     golden_test.go              byte-exact comparison, and -update-golden
@@ -202,6 +205,28 @@ satisfying — or provoking — a rule, it goes red and names the path.
 4. **A file declaring `EXPECT: none` produces nothing** — an over-reporting rule gets switched
    off just as fast as one that misses.
 
+## Marker-region ownership, and why its negative specs are the valuable half
+
+`nav_test.go` covers artifacts that write **one span inside a hand-written document** rather than
+the whole file. Each sample declares one (`NavRel`, `NavRegion`, `NavRows`, `NavExcludes`,
+`NavDescribed`, `NavFallback`); `assertSamplesAreReal` refuses a sample that does not, for the
+same reason it refuses one with no scoped artifact — a table-driven suite whose table has an
+empty slot runs those specs against nothing and reports them green.
+
+The positive specs assert the obvious things: rows come from the tree, a deleted target stops
+producing a row, the description column is the target's own frontmatter key with an H1 fallback.
+
+The **negative** specs are the ones that justify the feature existing. docsgen writes into files
+carrying editorial prose no generator can reproduce, so every way the markers can be wrong —
+absent, unbalanced, nested, inverted, file missing — is asserted to be a refusal (exit 2) that
+names the file, writes nothing, and leaves the tree hash unchanged. Each carries an explicit
+anti-append assertion, because the failure being refused is not "docsgen errored", it is "docsgen
+helpfully appended the table to the end of somebody's prose". A nav that renders beautifully and
+eats a paragraph on a bad marker is strictly worse than no nav at all.
+
+One spec clobbers the region body with garbage, regenerates, and asserts that everything
+*outside* the markers comes back byte-for-byte. That is the invariant the whole design rests on.
+
 ## What the goldens pin
 
 Goldens are a tripwire, not a definition of correct: one tells you something changed, never that
@@ -251,15 +276,38 @@ These are real assertions carrying an extra `known-gap` label, not specs blessin
 behaviour — a spec that documents a defect as correct is how a defect becomes a requirement.
 Drop a spec's label the moment its defect is fixed; that is the ratchet.
 
-1. **`component-shape` and `component-path` cannot fire under `dirs`.** `Nested` counts
-   `kustomization.yaml` files, so it is structurally always zero in a repo with no kustomize; and
-   `loadDirs` only ever emits directories that exist, so the path check has nothing to catch. A
-   rule that silently never fires is worse than an absent one, because you believe you are
-   covered. Whether these should skip-with-a-reason or be strategy-gated is an architecture call.
+**There are none right now.** The container in `known_gaps_test.go` is deliberately empty rather
+than deleted, so the convention and its instructions stay in front of whoever finds the next
+one. The full suite and the promotable gate
+(`--label-filter='integration && !known-gap'`) are currently the same set.
 
 ### Closed gaps
 
 Recorded rather than deleted, because each closure changed how the suite is read.
+
+- **`component-shape` and `component-path` could not fire under `dirs`** (closed 2026-09-19).
+  One spec delabelled: *measures component shape in terms the strategy actually supplies*.
+
+  `Nested` counts `kustomization.yaml` files, so it is structurally always zero in a repo with
+  no kustomize; and the `dirs` strategy only ever emits directories that exist, so the path
+  check had nothing to catch. Both rules ran, found nothing, and were reported as a clean pass —
+  a rule that silently never fires is worse than an absent one, because the report reads as
+  coverage.
+
+  The fix is not a better measurement; there is no honest number to print. Each rule now
+  declares the facts it MEASURES (`Check.Requires`) against what the strategy declares it can
+  SUPPLY (`ComponentStrategy.Provides`), and `Run` returns the rules it could not run alongside
+  the findings. `docsgen lint` prints them on stdout with a leading `skipped` token — not as
+  `component-shape  [skipped]`, which `findingsFor()` would read as a rule block and swallow,
+  recreating the exact ambiguity being removed. `docsgen components` prints `n/a` in the
+  unavailable columns rather than a `0` that would claim a measurement nobody made.
+
+  Skips contribute nothing to the exit code and there is no `-strict` flag: a repo whose
+  strategy is narrower than Flux's must be able to adopt the tool without landing red, and a
+  flag nobody sets is a feature nobody tests.
+
+  The `plain-dirs` goldens `lint.txt` and `components.txt` moved; `flux-cluster` is
+  byte-identical, because that strategy supplies every fact.
 
 - **docsgen generated a document docsgen itself rejects** (closed 2026-09-19). One cause with
   three faces, and three specs delabelled at once:

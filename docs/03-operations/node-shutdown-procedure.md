@@ -1,38 +1,60 @@
+---
+type: runbook
+status: current
+covers:
+  - path:configs/talconfig.yaml
+  - path:dev/Taskfile.talos.yaml
+freshness: tracks-code
+bluf: Drain, shut down through the Talos API rather than the power button, then verify etcd quorum before uncordoning — and never re-bootstrap a node that still has surviving peers.
+---
+
 # Talos Node Shutdown & Restart Procedure
 
-This guide covers safely shutting down your Talos node for hardware maintenance and bringing it back online.
+How to take a single Talos node down for hardware maintenance and bring it back, without losing etcd.
+
+## TL;DR
+
+1. Drain the node so its workloads move elsewhere.
+2. Shut it down through the Talos API (`task talos:shutdown`), never by holding the power button.
+3. Do the hardware work.
+4. Power on and wait for the Talos API to answer.
+5. Verify node health and etcd membership.
+6. Uncordon.
+
+**The one rule that matters:** this cluster declares multiple control planes in `configs/talconfig.yaml`. Taking one down is routine; `talosctl bootstrap` on a node whose peers are still alive is not a repair, it is a second cluster. See [Troubleshooting](#troubleshooting).
 
 ## Prerequisites
 
 - `talosctl` configured and working
 - `kubectl` access to the cluster
-- Node IP exported: `export TALOS_NODE=192.168.1.54`
+- Node IP exported: `export TALOS_NODE=<node-ip>` (the control-plane addresses are declared in `configs/talconfig.yaml`)
+- You know whether the node you are taking down is a control plane. `kubectl get nodes -l node-role.kubernetes.io/control-plane` answers it.
 
 ## Safe Shutdown Procedure
 
-### Step 1: Drain the Node (Recommended)
+### Step 1: Drain the Node
 
-Draining the node ensures workloads are migrated to other nodes and pods terminate gracefully:
+Draining migrates workloads to other nodes and lets pods terminate gracefully:
 
 ```bash
-kubectl drain talos00 --ignore-daemonsets --delete-emptydir-data
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
 ```
 
-**Note:** For single-node clusters or when shutting down the entire cluster, you can skip this step since there's nowhere else for pods to go.
+**Note:** drain cannot help volumes that are pinned to this node. `local-path` PVs are `WaitForFirstConsumer` and live on the node's disk — their pods will go `Pending` rather than migrate, and that is expected. A graceful shutdown preserves the data; only a `reset` destroys it.
 
 ### Step 2: Shutdown via Talos
 
-Use `talosctl` to safely shutdown the node:
+```bash
+task talos:shutdown           # targets TALOS_NODE, with a confirmation prompt
+```
+
+Equivalent explicit form — note that the node is named explicitly, because `talosctl` with no `--nodes` uses whatever the talosconfig defaults to and that is not necessarily the node you meant:
 
 ```bash
-export TALOS_NODE=192.168.1.54
-
-# Graceful shutdown (recommended)
-talosctl shutdown
-
-# OR force shutdown if needed
-talosctl shutdown --force
+talosctl --nodes <node-ip> shutdown
 ```
+
+To take the _whole_ cluster down (workers in parallel, control planes last) use `task talos:shutdown-cluster`, which runs `scripts/shutdown-cluster.sh` — it sequences the nodes so etcd loses quorum last.
 
 **What happens:**
 
@@ -43,121 +65,95 @@ talosctl shutdown --force
 
 ### Step 3: Perform Hardware Changes
 
-With the system powered off, perform your hardware maintenance:
-
-- RAM upgrades
-- Disk additions/replacements
-- Network card changes
-- etc.
+With the system powered off, perform your hardware maintenance: RAM, disks, NICs, and so on.
 
 ## Startup Procedure
 
 ### Step 4: Power On & Wait for Boot
 
-1. **Power on the physical machine** via BIOS/UEFI
-2. **Wait for Talos to boot** (typically 30-60 seconds)
-3. **Verify Talos API responds:**
+1. **Power on the physical machine.**
+2. **Wait for Talos to boot** (tens of seconds on this hardware).
+3. **Verify the Talos API responds:**
 
 ```bash
-export TALOS_NODE=192.168.1.54
-
-# Check Talos version (verifies API is up)
-talosctl version
-
-# Check system health
-talosctl health --wait-timeout=5m
+export TALOS_NODE=<node-ip>
+talosctl version                # API is up
+task talos:health               # cluster-level health check
 ```
 
 ### Step 5: Verify Cluster Health
 
-Check that Kubernetes services are starting:
-
 ```bash
-# Check node status
 kubectl get nodes
-
-# Verify Talos services
-talosctl services
-
-# Check all pods are starting
+task talos:services             # Talos services on the node
 kubectl get pods -A
-
-# Verify etcd cluster
-talosctl etcd status
+task talos:etcd-status
+task talos:etcd-members         # on a control plane: confirm the member rejoined
 ```
 
-### Step 6: Uncordon Node (If Drained)
-
-If you drained the node in Step 1, make it schedulable again:
+### Step 6: Uncordon Node
 
 ```bash
-kubectl uncordon talos00
+kubectl uncordon <node>
 ```
 
 ## Quick Command Reference
 
-### Complete Shutdown Sequence
-
 ```bash
-export TALOS_NODE=192.168.1.54
-kubectl drain talos00 --ignore-daemonsets --delete-emptydir-data  # Optional
-talosctl shutdown
-```
+# Down
+export TALOS_NODE=<node-ip>
+kubectl drain <node> --ignore-daemonsets --delete-emptydir-data
+task talos:shutdown
 
-### After Hardware Changes and Power-On
-
-```bash
-export TALOS_NODE=192.168.1.54
-talosctl health --wait-timeout=5m
+# Up
+export TALOS_NODE=<node-ip>
+task talos:health
 kubectl get nodes
-kubectl get pods -A
-kubectl uncordon talos00  # If you drained
+task talos:etcd-members
+kubectl uncordon <node>
 ```
 
 ## Expected Behavior
 
 After powering on the node:
 
-1. **Talos boots** (30-60 seconds)
-2. **Kubelet starts** automatically
-3. **Control plane pods restart** (kube-apiserver, etcd, kube-controller-manager, kube-scheduler)
-4. **All application pods restart** automatically
-5. **Cluster fully operational** within 2-3 minutes
+1. **Talos boots.**
+2. **Kubelet starts** automatically.
+3. On a control plane, the **static pods restart** (kube-apiserver, etcd, kube-controller-manager, kube-scheduler) and the etcd member rejoins.
+4. **Application pods restart** automatically.
+5. **Node is fully operational** within a few minutes.
 
 ## Troubleshooting
 
-### Cluster Not Coming Back
-
-#### Check Talos Services
+### Node not coming back
 
 ```bash
-talosctl services
-talosctl logs kubelet
-talosctl dmesg | tail -50
+task talos:services
+task talos:service-logs -- SERVICE=kubelet
+task talos:dmesg
 ```
 
-#### Check etcd Health
+### etcd
 
 ```bash
-talosctl etcd status
-talosctl etcd members
+task talos:etcd-status
+task talos:etcd-members
 ```
 
-#### Force Recovery (If Needed)
+> ⚠️ **Do not run `talosctl bootstrap` to "fix" etcd on this cluster.**
+> `bootstrap` initialises a _new_ etcd cluster. Multiple control planes are declared in
+> `configs/talconfig.yaml`, so a surviving peer almost always exists, and bootstrapping
+> against it produces a split brain that is far worse than the outage you started with.
+> A single lost member is repaired by removing and re-adding it — see the Talos etcd
+> maintenance docs. `bootstrap` is correct only during first provisioning
+> ([cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md)) or when every control plane
+> is gone and you are restoring from a snapshot
+> ([etcd-backup-restore.md](etcd-backup-restore.md)).
 
-```bash
-# Bootstrap etcd if it's stuck
-talosctl bootstrap
-
-# Restart kubelet service
-talosctl service kubelet restart
-```
-
-#### Check API Server
+### API server
 
 ```bash
 kubectl get --raw /healthz
-kubectl get componentstatuses
 ```
 
 ### Common Issues
@@ -165,75 +161,58 @@ kubectl get componentstatuses
 **Issue:** Node shows `NotReady`
 
 ```bash
-# Check kubelet logs
-talosctl logs kubelet
-
-# Restart kubelet if needed
-talosctl service kubelet restart
-```
-
-**Issue:** etcd won't start
-
-```bash
-# Check etcd status
-talosctl etcd status
-
-# Re-bootstrap etcd (CAUTION: only for single control-plane clusters or when all control planes are down)
-talosctl bootstrap
+task talos:service-logs -- SERVICE=kubelet
+talosctl --nodes <node-ip> service kubelet restart
 ```
 
 **Issue:** Pods stuck in `Pending` or `ContainerCreating`
 
 ```bash
-# Check pod events
 kubectl describe pod <pod-name> -n <namespace>
-
-# Check if storage mounts are working
 kubectl get pv
 kubectl get pvc -A
 
-# Verify NFS provisioner is running
+# NFS provisioner runs in kube-system (infrastructure/base/storage/nfs-provisioner/)
 kubectl get pods -n kube-system | grep nfs
 ```
 
+If the pod's PVC is on `local-path`, check it is scheduled to the node that holds the volume — `local-path` PVs cannot move.
+
 ## Alternative: Reboot Instead of Shutdown
 
-If you only need a reboot (not full power-off for hardware changes):
+If you only need a reboot (not a power-off for hardware changes):
 
 ```bash
-talosctl reboot
+task talos:reboot
 ```
 
-This performs a clean reboot cycle automatically without manual power cycling.
+This performs a clean reboot cycle without manual power cycling.
 
 ## Important Notes
 
-### Multi-Node Cluster Considerations
+### Control plane vs. worker
 
-- **Worker node maintenance** - Workloads will migrate to other nodes automatically
-- **Control plane maintenance** - If shutting down talos00, control plane will be unavailable unless you have multiple control plane nodes
-- **Plan maintenance windows** accordingly for control plane operations
+- **Worker** — workloads migrate automatically; nothing cluster-wide is at risk.
+- **Control plane** — you are spending one unit of etcd fault tolerance for the duration. Take one down at a time, confirm the member rejoined with `task talos:etcd-members` before touching the next, and never have two down simultaneously.
 
 ### Data Persistence
 
-- **Local-path storage (PostgreSQL)** - Data persists on disk, no data loss
-- **NFS mounts** - Automatically reconnect when pods restart
-- **Talos state** - Configuration persists in `/system/state` partition
-- **Machine config backup** - Declared in `configs/talconfig.yaml` (git-tracked) and regenerated into `configs/clusterconfig/` by `task talos:gen-config`. The CA and bootstrap tokens live in `configs/talsecret.yaml`, which is gitignored and backed up in 1Password - see [talsecret-1password-backup.md](../05-runbooks/talsecret-1password-backup.md).
+- **`local-path` volumes** — persist on the node's disk across a graceful shutdown. They do **not** survive a `talosctl reset`, which wipes EPHEMERAL.
+- **NFS mounts** — reconnect automatically when pods restart.
+- **Talos machine state** — persists in the `STATE` partition; the node comes back with the config it had.
+- **Machine config source** — declared in `configs/talconfig.yaml` (git-tracked) and regenerated into `configs/clusterconfig/` by `task talos:gen-config`. The CA and bootstrap tokens live in `configs/talsecret.yaml`, which is gitignored and backed up in 1Password — see [talsecret-1password-backup.md](../05-runbooks/talsecret-1password-backup.md).
 
 ### Post-Restart Validation Checklist
 
 - [ ] Node status is `Ready`
-- [ ] All system pods running (kube-system namespace)
-- [ ] etcd cluster healthy
-- [ ] Monitoring stack operational (Prometheus, Grafana)
-- [ ] Observability stack operational (Graylog, OpenSearch)
-- [ ] Media stack operational (arr-stack, Plex, etc.)
-- [ ] Ingress accessible (Traefik responding)
+- [ ] etcd member count back to the declared control-plane count
+- [ ] All `kube-system` pods running
+- [ ] Flux reconciling (`flux get kustomizations`)
+- [ ] Ingress responding (Traefik)
 
 ## Emergency Recovery
 
-If the cluster fails to start after hardware changes:
+If the node fails to start after hardware changes:
 
 ### 1. Check BIOS/Boot Settings
 
@@ -244,50 +223,49 @@ If the cluster fails to start after hardware changes:
 ### 2. Verify Talos Installation
 
 ```bash
-# Check Talos version on boot
-talosctl version
-
-# Verify machine config applied
-talosctl get machineconfig -o yaml
+talosctl --nodes <node-ip> version
+talosctl --nodes <node-ip> get machineconfig -o yaml
 ```
 
 ### 3. Re-apply Machine Config (If Needed)
 
-```bash
-# Regenerate first, then apply THIS node's config - they are not interchangeable.
-cd configs && talhelper genconfig && cd ..
-talosctl apply-config --file configs/clusterconfig/catalyst-cluster-<node>.yaml
-
-# Or, equivalently:
-task talos:apply-config NODE=<node>
-```
-
-Check what it would do first - this is read-only and safe at any time:
+Check what it would do first — this is read-only and safe at any time:
 
 ```bash
 task talos:verify-dry-run
 ```
 
-### 4. Complete Cluster Reset (LAST RESORT)
-
-If the cluster is completely broken and you have backups:
+Then, if the diff is what you expect:
 
 ```bash
-# Reset the node (DESTRUCTIVE)
-talosctl reset --graceful=false --reboot
-
-# Re-provision the cluster
-./scripts/provision.sh
+task talos:gen-config
+task talos:apply-config NODE=<hostname>
 ```
 
-**WARNING:** This will destroy all data. Only use if you have backups of:
+`NODE=` takes a **hostname**, not an IP, and is required — each node has its own install disk, schematic and patch set, so the generated configs are not interchangeable. Note there is no `--` before `NODE=`; go-task only binds variables in the bare form.
 
-- etcd data
-- Application data
-- Configuration files
+### 4. Complete Cluster Reset (LAST RESORT)
+
+This destroys the node's data. Only do it if you have verified backups, and prefer the
+full rebuild path in [cluster-bootstrap.md](../05-runbooks/cluster-bootstrap.md) over
+improvising:
+
+```bash
+talosctl reset --graceful=false --reboot --nodes <node-ip>
+```
+
+Before you do: `local-path` PVs on that node are gone afterwards, and Velero does **not**
+cover them — see the standing gotcha in [docs/05-runbooks](../05-runbooks/README.md).
 
 ## Related Documentation
 
-- [Provisioning Guide](provisioning.md) - Complete cluster setup
-- [Quick Start Guide](../01-getting-started/quickstart.md) - Common operational commands
-- [Dual GitOps Architecture](../02-architecture/dual-gitops.md) - Understanding the deployment model
+- [Cluster Bootstrap Runbook](../05-runbooks/cluster-bootstrap.md) — bare metal to reconciling GitOps
+- [etcd Backup & Restore](etcd-backup-restore.md) — recovering the control plane from a snapshot
+- [Quick Start Guide](../01-getting-started/quickstart.md) — common operational commands
+- [Dual GitOps Architecture](../02-architecture/dual-gitops.md) — understanding the deployment model
+
+---
+
+## Related Issues
+
+<!-- Beads tracking for this doc -->

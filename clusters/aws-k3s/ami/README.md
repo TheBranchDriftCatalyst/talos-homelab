@@ -4,21 +4,23 @@ Packer templates for building pre-baked AMIs for the Catalyst hybrid cluster.
 
 ## AMI Types
 
-| AMI | Description | Instance Types |
-|-----|-------------|----------------|
-| `base` | Common foundation (Nebula + worker-agent) | t3.medium |
-| `lighthouse` | k3s server + Liqo + Nebula lighthouse | t3.medium |
-| `gpu-worker` | NVIDIA drivers + Ollama + k3s agent | g4dn.xlarge, g5.xlarge |
+| AMI          | Description                               | Instance Types         |
+| ------------ | ----------------------------------------- | ---------------------- |
+| `base`       | Common foundation (Nebula + worker-agent) | t3.medium              |
+| `lighthouse` | k3s server + Liqo + Nebula lighthouse     | t3.medium              |
+| `gpu-worker` | NVIDIA drivers + Ollama + k3s agent       | g4dn.xlarge, g5.xlarge |
 
 ## Prerequisites
 
 1. **Build the Go binaries first:**
+
    ```bash
    # From .scratch/carrierarr/ (untracked archive)
    make build-linux
    ```
 
 2. **Install Packer:**
+
    ```bash
    brew install packer
    ```
@@ -49,14 +51,14 @@ packer build -only=gpu-worker.* -var 'aws_region=us-west-2' .
 
 ## Variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `aws_region` | us-east-1 | AWS region to build in |
-| `nebula_version` | 1.9.0 | Nebula VPN version |
-| `k3s_version` | v1.31.2+k3s1 | k3s version |
-| `nvidia_driver_version` | 550 | NVIDIA driver major version |
-| `ollama_version` | latest | Ollama version |
-| `ami_prefix` | catalyst | AMI name prefix |
+| Variable                | Default      | Description                 |
+| ----------------------- | ------------ | --------------------------- |
+| `aws_region`            | us-east-1    | AWS region to build in      |
+| `nebula_version`        | 1.9.0        | Nebula VPN version          |
+| `k3s_version`           | v1.31.2+k3s1 | k3s version                 |
+| `nvidia_driver_version` | 550          | NVIDIA driver major version |
+| `ollama_version`        | latest       | Ollama version              |
+| `ami_prefix`            | catalyst     | AMI name prefix             |
 
 ## Runtime Configuration
 
@@ -70,9 +72,10 @@ See `userdata/` for the bootstrap scripts used at instance launch.
 
 ## Directory Structure
 
-```
+```text
 ami/
 ├── variables.pkr.hcl     # Shared variables
+├── versions.pkr.hcl      # Required Packer plugin versions
 ├── base.pkr.hcl          # Base AMI template
 ├── lighthouse.pkr.hcl    # Lighthouse AMI template
 ├── gpu-worker.pkr.hcl    # GPU worker AMI template
@@ -81,20 +84,21 @@ ami/
 │   └── gpu-worker.sh     # GPU worker bootstrap script
 ├── base/scripts/         # Base provisioner scripts
 ├── lighthouse/scripts/   # Lighthouse provisioner scripts
-└── gpu-worker/scripts/   # GPU worker provisioner scripts
+├── gpu-worker/scripts/   # GPU worker provisioner scripts
+└── manifest-lighthouse.json  # Packer build output (last lighthouse build)
 ```
 
 ## Cold Start Time Comparison
 
-| Stage | Before (userdata) | After (AMI) |
-|-------|-------------------|-------------|
-| Instance start | 30s | 30s |
-| Package install | 120s | 0s |
-| NVIDIA drivers | 180s | 0s |
-| Ollama install | 30s | 0s |
-| k3s install | 60s | 0s |
-| Config + secrets | 30s | 30s |
-| **Total** | **~8 min** | **~1 min** |
+| Stage            | Before (userdata) | After (AMI) |
+| ---------------- | ----------------- | ----------- |
+| Instance start   | 30s               | 30s         |
+| Package install  | 120s              | 0s          |
+| NVIDIA drivers   | 180s              | 0s          |
+| Ollama install   | 30s               | 0s          |
+| k3s install      | 60s               | 0s          |
+| Config + secrets | 30s               | 30s         |
+| **Total**        | **~8 min**        | **~1 min**  |
 
 ## Security Notes
 

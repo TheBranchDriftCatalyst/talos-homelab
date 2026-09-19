@@ -1,8 +1,21 @@
-# Authentication Implementation Guide
+---
+type: architecture
+status: current
+covers:
+  - authentik
+freshness: tracks-code
+tickets:
+  - TALOS-xgrl.18
+  - TALOS-xgrl.17
+  - TALOS-kmjc.1
+  - TALOS-eao7
+bluf: Authentik is the only identity store — Traefik ForwardAuth for apps with no login of their own, native OIDC for apps that do their own role mapping, and no LDAP anywhere.
+pinned: >-
+  Subject is infrastructure/base/authentik, but wiring a service into SSO also depends on the
+  Traefik middleware and two Kyverno policies; relocation is deferred to the colocation slice.
+---
 
-> **Status:** Implemented — Authentik
-> **Priority:** Low (maintenance; coverage gaps tracked in beads)
-> **Last Updated:** 2026-08-22 (re-grounded against repo + live cluster)
+# Authentication Implementation Guide
 
 This document describes the authentication stack for the Talos homelab cluster: what was
 evaluated (LDAP, Kerberos, auth gateways), what was actually built, and how to wire a new
@@ -11,32 +24,34 @@ service into it.
 ## TL;DR
 
 - **Authentik is the auth gateway.** Deployed by Flux from `infrastructure/base/authentik/`,
-  namespace `authentik`, Helm chart from `https://charts.goauthentik.io`
-  (HelmRelease pins `>=2025.10.0 <2026.0.0`; live: `2025.12.4`).
+  namespace `authentik`, Helm chart from `https://charts.goauthentik.io`. The version pin is in
+  the HelmRelease; it is not repeated here.
 - **Two integration styles.** Traefik **ForwardAuth** (Middleware `authentik/authentik`) for apps
   with no login of their own, and native **OIDC** for apps that do their own user/role mapping
   (Grafana, Forgejo, MinIO, litellm, Immich, boomtime, ...).
 - **No LDAP, no Kerberos.** Authentik's built-in user DB is the directory. There is no
   LLDAP/OpenLDAP anywhere in the repo or the cluster.
 - **Authelia was never deployed.** The 2024 plan below called for it; Authentik was built instead.
-- **State lives in CNPG + Dragonfly.** Sessions/identities in the `authentik-postgres` CNPG
-  cluster (3 instances, `local-path`); cache in the `authentik-cache` Dragonfly (ephemeral).
+- **State lives in CNPG + Dragonfly.** Sessions and identities go to `authentik-postgres`,
+  declared as a `CatalystCNPGAppDB` composite (`infrastructure/base/authentik/appdb.yaml`) — so
+  you change it through the composite, never by editing a CNPG `Cluster` that does not exist in
+  git. Cache is the `authentik-cache` Dragonfly, and it is ephemeral by design.
 
 ## Quick Reference
 
-| Thing | Value |
-| ----- | ----- |
-| Namespace | `authentik` |
-| Manifests | `infrastructure/base/authentik/` |
-| Portal (LAN) | `http://auth.talos00`, `https://auth.priv.talos00` |
-| Portal (public) | `https://auth.knowledgedump.space` (Cloudflare-proxied) |
-| ForwardAuth middleware | `name: authentik`, `namespace: authentik` |
-| ForwardAuth address | `http://authentik-server.authentik.svc.cluster.local/outpost.goauthentik.io/auth/traefik` |
-| Identity DB | CNPG `authentik-postgres` → svc `authentik-postgres-rw:5432` |
-| Cache | Dragonfly `authentik-cache:6379` (no auth, cache-only) |
-| Secrets | ExternalSecret `authentik-secrets` ← 1Password (`onepassword` ClusterSecretStore) |
-| Access groups | `cluster-admin` (superset) + `talos-admin`, `talos-apps`, `talos-gaming`, `talos-home`, `talos-media`, `talos-private` |
-| Config as code | Authentik **blueprints** as ConfigMaps, mounted via chart-native `blueprints.configMaps` |
+| Thing                  | Value                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Namespace              | `authentik`                                                                                                            |
+| Manifests              | `infrastructure/base/authentik/`                                                                                       |
+| Portal (LAN)           | `http://auth.talos00`, `https://auth.priv.talos00`                                                                     |
+| Portal (public)        | `https://auth.knowledgedump.space` (Cloudflare-proxied)                                                                |
+| ForwardAuth middleware | `name: authentik`, `namespace: authentik`                                                                              |
+| ForwardAuth address    | `http://authentik-server.authentik.svc.cluster.local/outpost.goauthentik.io/auth/traefik`                              |
+| Identity DB            | `CatalystCNPGAppDB/authentik-postgres` → svc `authentik-postgres-rw:5432`                                              |
+| Cache                  | Dragonfly `authentik-cache:6379` (no auth, cache-only)                                                                 |
+| Secrets                | ExternalSecret `authentik-secrets` ← 1Password (`onepassword` ClusterSecretStore)                                      |
+| Access groups          | `cluster-admin` (superset) + `talos-admin`, `talos-apps`, `talos-gaming`, `talos-home`, `talos-media`, `talos-private` |
+| Config as code         | Authentik **blueprints** as ConfigMaps, mounted via chart-native `blueprints.configMaps`                               |
 
 ```bash
 # Health
@@ -49,35 +64,20 @@ grep -rn -A2 "middlewares:" --include="*.yaml" infrastructure/ applications/ | g
 
 ## Overview
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        AUTHENTICATION STACK                              │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  USER → Browser/App                                                      │
-│           │                                                              │
-│           ▼                                                              │
-│  ┌─────────────────────────────────────────┐                            │
-│  │  AUTH GATEWAY — Authentik  [DEPLOYED]   │  ← Layer 7 (HTTP)          │
-│  │  - SSO for web apps                     │    "Who are you?" via      │
-│  │  - OAuth2/OIDC + proxy (ForwardAuth)    │    browser redirects       │
-│  │  - MFA capable (TOTP/WebAuthn)          │                            │
-│  │  - Session management (DB-backed)       │                            │
-│  └─────────────────┬───────────────────────┘                            │
-│                    │ validates against                                   │
-│                    ▼                                                     │
-│  ┌─────────────────────────────────────────┐                            │
-│  │  Authentik built-in user DB             │  ← Directory Service       │
-│  │  (CloudNativePG `authentik-postgres`)   │    "Source of truth"       │
-│  │  - Users, groups, policy bindings       │    for identities          │
-│  └─────────────────────────────────────────┘                            │
-│                                                                          │
-│  ┌─────────────────────────────────────────┐                            │
-│  │  LDAP (OpenLDAP/LLDAP/AD)   [NOT USED]  │  ← Evaluated, skipped      │
-│  │  KERBEROS                   [NOT USED]  │    (see Decisions below)   │
-│  └─────────────────────────────────────────┘                            │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+  U["USER — browser / app"]
+
+  subgraph STACK["Authentication stack"]
+    direction TB
+    GW["AUTH GATEWAY — Authentik  [DEPLOYED]<br/>Layer 7 (HTTP): 'who are you?' via browser redirects<br/>SSO for web apps · OAuth2/OIDC + proxy (ForwardAuth)<br/>MFA capable (TOTP / WebAuthn) · DB-backed sessions"]
+    DIR["Authentik built-in user DB — directory service<br/>CloudNativePG 'authentik-postgres'<br/>users, groups, policy bindings — source of truth for identities"]
+    GW -->|"validates against"| DIR
+  end
+
+  SKIP["LDAP (OpenLDAP / LLDAP / AD)  [NOT USED]<br/>KERBEROS  [NOT USED]<br/>evaluated, skipped — see Decisions below"]
+
+  U --> GW
 ```
 
 ## Technology Comparison
@@ -99,37 +99,32 @@ grep -rn -A2 "middlewares:" --include="*.yaml" infrastructure/ applications/ | g
 
 ## Authentication Flow (As Deployed)
 
-```
-User visits sonarr.talos00
-         │
-         ▼
-    ┌─────────┐  LoadBalancer VIP 192.168.1.251
-    │ Traefik │ ──► Middleware `authentik` (ns authentik) — forwardAuth
-    └────┬────┘
-         │
-         ▼
-    ┌───────────────────────────┐  "Is this user authenticated?"
-    │ authentik-server          │ ◄── embedded outpost checks session cookie
-    │ /outpost.goauthentik.io/  │     at .../auth/traefik
-    └────┬──────────────────────┘
-         │ No session? 302 to the Authentik login flow
-         ▼
-    ┌────────────────────────────────┐  "Valid credentials?"
-    │ Authentik built-in user DB     │ ◄── CNPG `authentik-postgres`
-    │ (+ Dragonfly `authentik-cache`)│     (NO LDAP backend)
-    └────┬───────────────────────────┘
-         │ PolicyBindings: the app's own group OR cluster-admin
-         ▼
-    Session created → X-authentik-* headers injected → Access granted
+```mermaid
+flowchart TD
+  U["User visits sonarr.talos00"]
+  T["Traefik<br/>Middleware 'authentik' (ns authentik) — forwardAuth"]
+  O["authentik-server<br/>/outpost.goauthentik.io/auth/traefik<br/>embedded outpost checks the session cookie"]
+  D["Authentik built-in user DB — CNPG 'authentik-postgres'<br/>(+ Dragonfly 'authentik-cache')<br/>NO LDAP backend"]
+  G["Session created → X-authentik-* headers injected → access granted"]
+
+  U --> T
+  T -->|"is this user authenticated?"| O
+  O -->|"no session: 302 to the Authentik login flow"| D
+  D -->|"valid credentials? then PolicyBindings:<br/>the app's own group OR cluster-admin"| G
 ```
 
 Two details that are easy to miss and are load-bearing:
 
 1. **The callback path needs its own route.** Every forward-auth app's
    `/outpost.goauthentik.io/*` must reach `authentik-server`, not the app. That is handled by a
-   **single** regexp IngressRoute in `infrastructure/base/authentik/ingressroute.yaml`
-   (`HostRegexp(^[a-z0-9.-]+\.talos00$) && PathPrefix(/outpost.goauthentik.io/)`, `priority: 20`,
-   no auth middleware). Adding a new forward-auth app requires **no edit** there.
+   **single** regexp IngressRoute (`authentik-outpost-priv` in
+   `infrastructure/base/authentik/ingressroute.yaml`) matching a disjunction of two host
+   patterns — `*.talos00` and `*.priv.knowledgedump.space` — under
+   `PathPrefix(/outpost.goauthentik.io/)`, with no auth middleware. It carries a **very high
+   `priority`** on purpose: Traefik picks the longest/highest-priority match, and without that
+   the app's own catch-all `Host()` router would swallow the callback and the login loop would
+   never close. Adding a new forward-auth app on either host pattern requires **no edit** here;
+   adding one on a _third_ pattern does.
 2. **Server-side OIDC callers need the hostAlias.** Pods that make their own OIDC
    discovery/token/JWKS calls to `auth.knowledgedump.space` get blocked by Cloudflare bot
    protection. Label the pod `catalyst.io/oidc: "true"` and the Kyverno ClusterPolicy
@@ -149,7 +144,7 @@ Two details that are easy to miss and are load-bearing:
 ### Auth Gateway — Implemented (Authentik)
 
 - Protects `*.talos00` / `*.priv.talos00` services with one login
-- MFA capable (see the caveat under *Known Gaps*)
+- MFA capable (see the caveat under _Known Gaps_)
 - SSO across the *arr stack, Tdarr, Homepage, Headlamp, KubeView, Grafana, Forgejo, MinIO, ...
 
 ### Kerberos — Skipped
@@ -160,32 +155,22 @@ Two details that are easy to miss and are load-bearing:
 
 ## Deployed Architecture
 
+As built, re-read from `infrastructure/base/authentik/` on 2026-09-19.
+
+```mermaid
+flowchart TD
+  T["Traefik"] --> A["Authentik"]
+  A --> FA["ForwardAuth — proxy provider, forward_single<br/>declared in the in-repo blueprints"]
+  A --> OI["OIDC — oauth2provider<br/>grafana, forgejo, minio, zot, litellm, linkwarden, manyfold,<br/>immich, boomtime, zipline, audiobookshelf, komga, kavita"]
+  FA --> APPS["Your apps<br/>sonarr, tdarr, headlamp, homepage, …"]
+  OI --> APPS
+
+  A --> DB["Built-in user DB<br/>CatalystCNPGAppDB 'authentik-postgres'<br/>local-path NVMe, barman-cloud → MinIO"]
+  A --> CA["Cache — Dragonfly 'authentik-cache' (ephemeral)"]
+  A --> SE["Secrets — ExternalSecret ← 1Password"]
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                       As Built (2026-08)                         │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   Traefik ──► Authentik ──► Your Apps                            │
-│   (LB VIP     │            (sonarr, tdarr, headlamp, homepage…)  │
-│    .1.251)    │                                                  │
-│               ├── ForwardAuth (proxy provider, forward_single)   │
-│               │   54 providers declared in in-repo blueprints    │
-│               │                                                  │
-│               └── OIDC (oauth2provider) — 12 providers:          │
-│                   grafana, forgejo, minio, zot, litellm,         │
-│                   linkwarden, manyfold, immich, boomtime,        │
-│                   audiobookshelf, komga, kavita                  │
-│                    │                                             │
-│                    ▼                                             │
-│   Built-in user DB → CNPG `authentik-postgres` (3 instances,     │
-│                       local-path NVMe, barman-cloud → MinIO)     │
-│   Cache            → Dragonfly `authentik-cache` (ephemeral)     │
-│   Secrets          → ExternalSecret ← 1Password                  │
-│                                                                  │
-│   NOT deployed: LLDAP / OpenLDAP / Kerberos / Authelia           │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
-```
+
+Not deployed: **LLDAP / OpenLDAP / Kerberos / Authelia**.
 
 ## Auth Gateway Options (2024 evaluation)
 
@@ -308,27 +293,58 @@ Notes:
 # infrastructure/base/authentik/talos-private-blueprint.yaml (abridged)
 - model: authentik_providers_proxy.proxyprovider
   id: p-headlamp
-  identifiers: {name: headlamp}
+  identifiers: { name: headlamp }
   attrs:
     name: headlamp
     mode: forward_single
     external_host: https://headlamp.priv.talos00
     access_token_validity: hours=24
-    authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
-    invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
-- {model: authentik_core.application, id: a-headlamp, identifiers: {slug: headlamp},
-   attrs: {name: Headlamp, slug: headlamp, group: talos-admin, provider: !KeyOf p-headlamp,
-           policy_engine_mode: any}}
-- {model: authentik_policies.policybinding, id: b-headlamp-own,
-   identifiers: {target: !KeyOf a-headlamp, group: !KeyOf g-talos-admin, order: 0}, attrs: {enabled: true}}
-- {model: authentik_policies.policybinding, id: b-headlamp-ca,
-   identifiers: {target: !KeyOf a-headlamp, group: !KeyOf g-cluster-admin, order: 1}, attrs: {enabled: true}}
+    authorization_flow:
+      !Find [
+        authentik_flows.flow,
+        [slug, default-provider-authorization-implicit-consent],
+      ]
+    invalidation_flow:
+      !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+- {
+    model: authentik_core.application,
+    id: a-headlamp,
+    identifiers: { slug: headlamp },
+    attrs:
+      {
+        name: Headlamp,
+        slug: headlamp,
+        group: talos-admin,
+        provider: !KeyOf p-headlamp,
+        policy_engine_mode: any,
+      },
+  }
+- {
+    model: authentik_policies.policybinding,
+    id: b-headlamp-own,
+    identifiers:
+      { target: !KeyOf a-headlamp, group: !KeyOf g-talos-admin, order: 0 },
+    attrs: { enabled: true },
+  }
+- {
+    model: authentik_policies.policybinding,
+    id: b-headlamp-ca,
+    identifiers:
+      { target: !KeyOf a-headlamp, group: !KeyOf g-cluster-admin, order: 1 },
+    attrs: { enabled: true },
+  }
 ```
 
 Blueprint ConfigMaps must be listed **twice**: as resources in
 `infrastructure/base/authentik/kustomization.yaml`, and by name under
 `spec.values.blueprints.configMaps` in `helmrelease.yaml`. There is no label auto-discovery.
 The chart mounts them on the **worker** pod (the component that reconciles blueprints).
+
+> **The two lists can drift apart, and nothing reports it.** A name in
+> `blueprints.configMaps` with no matching resource is a mount of a ConfigMap that does not
+> exist. One such entry is legitimate — `authentik-media-blueprint` is owned by the
+> talos-private repo and created by ArgoCD, which the HelmRelease comments say. Any _other_
+> unmatched name is a bug; check both lists when a blueprint mysteriously fails to apply.
 
 ### Native OIDC Instead of ForwardAuth
 
@@ -437,7 +453,7 @@ Verified against the repo and the live cluster on 2026-08-22.
 - [x] Sonarr, Radarr, Prowlarr — ForwardAuth (`talos-media`), with `/api` + `/feed` bypass routes
 - [x] Seerr (the Overseerr successor, `seerr.talos00`) — ForwardAuth, with a `/api` bypass route.
       Note: Seerr keeps its own Plex login for per-user request identity, so users see the SSO
-      gate *and then* Seerr's sign-in. Expected.
+      gate _and then_ Seerr's sign-in. Expected.
 - [x] Tdarr (`tdarr.talos00`) — ForwardAuth; the external-node port 8266 (NodePort 30266) is off
       this HTTP route and is unaffected
 - [x] qBittorrent, SABnzbd, Tautulli, Maintainerr, Posterr, Posterizarr, Pulsarr — ForwardAuth
@@ -487,35 +503,35 @@ Verified against the repo and the live cluster on 2026-08-22.
 
 ## Glossary
 
-| Term                | Definition                                                                        |
-| ------------------- | --------------------------------------------------------------------------------- |
-| **LDAP**            | Lightweight Directory Access Protocol - protocol for accessing directory services |
-| **OIDC**            | OpenID Connect - authentication layer on top of OAuth 2.0                         |
-| **SAML**            | Security Assertion Markup Language - XML-based auth standard                      |
-| **SSO**             | Single Sign-On - one login for multiple services                                  |
-| **ForwardAuth**     | Traefik middleware that delegates auth to external service                        |
-| **2FA/MFA**         | Two-Factor/Multi-Factor Authentication                                            |
-| **TOTP**            | Time-based One-Time Password (e.g., Google Authenticator)                         |
-| **WebAuthn**        | Web Authentication API (hardware keys, biometrics)                                |
-| **Outpost**         | Authentik component that terminates proxy/ForwardAuth requests. We use the *embedded* outpost in `authentik-server` |
-| **forward_single**  | Proxy-provider mode: one Authentik Application per host → one launcher tile       |
-| **forward_domain**  | Proxy-provider mode: one Application covering a whole cookie domain. Retired here in favour of `forward_single` |
-| **Blueprint**       | Authentik's declarative config format (YAML), delivered as ConfigMaps             |
+| Term               | Definition                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| **LDAP**           | Lightweight Directory Access Protocol - protocol for accessing directory services                                   |
+| **OIDC**           | OpenID Connect - authentication layer on top of OAuth 2.0                                                           |
+| **SAML**           | Security Assertion Markup Language - XML-based auth standard                                                        |
+| **SSO**            | Single Sign-On - one login for multiple services                                                                    |
+| **ForwardAuth**    | Traefik middleware that delegates auth to external service                                                          |
+| **2FA/MFA**        | Two-Factor/Multi-Factor Authentication                                                                              |
+| **TOTP**           | Time-based One-Time Password (e.g., Google Authenticator)                                                           |
+| **WebAuthn**       | Web Authentication API (hardware keys, biometrics)                                                                  |
+| **Outpost**        | Authentik component that terminates proxy/ForwardAuth requests. We use the _embedded_ outpost in `authentik-server` |
+| **forward_single** | Proxy-provider mode: one Authentik Application per host → one launcher tile                                         |
+| **forward_domain** | Proxy-provider mode: one Application covering a whole cookie domain. Retired here in favour of `forward_single`     |
+| **Blueprint**      | Authentik's declarative config format (YAML), delivered as ConfigMaps                                               |
 
 ## Decision Log
 
-| Date       | Decision                                 | Rationale                                                                 |
-| ---------- | ---------------------------------------- | ------------------------------------------------------------------------- |
-| 2024-11-28 | Skip LDAP initially                      | Small homelab, unnecessary complexity                                     |
-| 2024-11-28 | Skip Kerberos                            | Enterprise/Windows focused, not applicable                                |
-| 2024-11-28 | Plan for Authelia                        | Lightweight, simple config, low resource usage — **later reversed**       |
-| 2024-11-28 | File-based users first                   | Simplest starting point — **never implemented**                           |
-| ~2026-05   | Deploy Authentik instead of Authelia     | Needed a real OIDC provider + per-app launcher tiles; blueprints gave the GitOps story |
-| 2026-08-06 | `talos-private` group model (TALOS-h4j)  | Replace the hand-made `kelsboi` setup with fully-IaC groups + forward-auth |
-| 2026-08-09 | Authentik Postgres → CNPG (TALOS-fijt)   | Retire the bundled single-replica subchart; 3-instance HA + object backups |
-| 2026-08-10 | Redis → Dragonfly (TALOS-5aop)           | Chart 2025.12.x stopped rendering the bundled redis; the cache had silently fallen back to local |
-| 2026-08-10 | ONE regexp outpost route (TALOS-xgrl.13) | New forward-auth apps need no per-app `/outpost.goauthentik.io/` edit     |
-| 2026-08-10 | Blueprints via `blueprints.configMaps`   | Chart-native mount replaces hand-written volume/volumeMount pairs (TALOS-xgrl.16) |
+| Date       | Decision                                 | Rationale                                                                                                            |
+| ---------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| 2024-11-28 | Skip LDAP initially                      | Small homelab, unnecessary complexity                                                                                |
+| 2024-11-28 | Skip Kerberos                            | Enterprise/Windows focused, not applicable                                                                           |
+| 2024-11-28 | Plan for Authelia                        | Lightweight, simple config, low resource usage — **later reversed**                                                  |
+| 2024-11-28 | File-based users first                   | Simplest starting point — **never implemented**                                                                      |
+| ~2026-05   | Deploy Authentik instead of Authelia     | Needed a real OIDC provider + per-app launcher tiles; blueprints gave the GitOps story                               |
+| 2026-08-06 | `talos-private` group model (TALOS-h4j)  | Replace the hand-made `kelsboi` setup with fully-IaC groups + forward-auth                                           |
+| 2026-08-09 | Authentik Postgres → CNPG (TALOS-fijt)   | Retire the bundled single-replica subchart; 3-instance HA + object backups                                           |
+| 2026-08-10 | Redis → Dragonfly (TALOS-5aop)           | Chart 2025.12.x stopped rendering the bundled redis; the cache had silently fallen back to local                     |
+| 2026-08-10 | ONE regexp outpost route (TALOS-xgrl.13) | New forward-auth apps need no per-app `/outpost.goauthentik.io/` edit                                                |
+| 2026-08-10 | Blueprints via `blueprints.configMaps`   | Chart-native mount replaces hand-written volume/volumeMount pairs (TALOS-xgrl.16)                                    |
 | 2026-08-21 | `authentik-postgres` on `local-path`     | 20 tx/s (every SSO check writes a session); the NFS fsync round trip was the bottleneck. Safe only at `instances: 3` |
 
 ---

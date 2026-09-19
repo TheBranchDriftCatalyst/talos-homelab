@@ -1,18 +1,42 @@
+---
+type: architecture
+status: current
+covers:
+  - traefik
+freshness: tracks-code
+tickets:
+  - TALOS-sa0n
+  - TALOS-pbn
+  - TALOS-a38d
+  - TALOS-6vf
+bluf: Traefik runs as a DaemonSet binding hostPorts on every node and routes purely on `Host()`, with TLS served by SNI from one default TLSStore so an IngressRoute never has to name a certificate.
+pinned: >-
+  Subject is infrastructure/base/traefik, but this is a fleet-wide ingress contract that every
+  namespace writes IngressRoutes against; relocation is deferred to the colocation slice.
+---
+
 # Traefik Ingress Controller
 
 ## TL;DR
 
-Traefik is our cluster's HTTP router and ingress controller, managing all external access to services. Deployed as a DaemonSet (one pod per node) via a Flux HelmRelease, binding hostPorts 80/443 on every node and additionally fronted by a Cilium LB-IPAM VIP. TLS is active: a default `TLSStore` serves wildcard certs by SNI, so `websecure` routes need only `tls: {}`. Internal services use the `*.talos00` hostname pattern; public services use `*.knowledgedump.space`.
+Traefik is the cluster's HTTP router. It runs as a **DaemonSet** — a pod on every node binding
+the hostPorts directly — rather than behind a Service. That is why any node IP is a working
+ingress address, and why a rollout has to avoid ever scheduling two pods on one node. Routing is
+by `Host()` and **not** by the entrypoint a request arrived on; that single fact drives both the
+SSO design and the LAN-entrypoint work below. TLS is served by SNI from one default `TLSStore`,
+so an IngressRoute names a certificate only when it wants a non-default one.
 
 **Quick Facts:**
 
 - Dashboard: http://traefik.talos00 (no auth — `--api.insecure=true`, homelab only)
-- ~190 IngressRoutes + 4 IngressRouteTCP across 32 namespaces
-- EntryPoints: web (80), websecure (443), traefik (9000), metrics (9100), httpproxy (8080), socks (1080), bolt (7687)
-- Chart `traefik/traefik` v41.x (pinned `>=41.0.0 <42.0.0`), image `traefik:v3.7.x`
-- Security: TLS terminated on `websecure` (wildcard certs via cert-manager); CrowdSec bouncer bound globally to both `web` and `websecure`
-- Status: Healthy, 5 pods in DaemonSet (talos00, talos01, talos02-gpu, talos03, talos06)
-- `svc/traefik` carries LoadBalancer VIP **192.168.1.251** (Cilium LB-IPAM + L2 announcement, TALOS-sa0n)
+- The chart pin, image tag, every entrypoint and the plugin list live in
+  `infrastructure/base/traefik/helmrelease.yaml`. They are deliberately not repeated here — a
+  version number in prose is a version number that lies.
+- EntryPoints **with** a hostPort: `web` 80, `websecure` 443, `weblan` 8081, `websecurelan`
+  8443, `bolt` 7687. Cluster-internal only, no hostPort: `traefik` 9000, `metrics` 9100.
+- Global middleware chain on `web`/`websecure`: `strip-authentik-headers`, then the CrowdSec
+  `bouncer`. The LAN entrypoints add `lan-only` on top of those two.
+- Internal services use `*.talos00`; public ones `*.knowledgedump.space`.
 
 ## Quick Reference
 
@@ -159,18 +183,19 @@ spec:
 
 ### Hostname Patterns
 
-Four hierarchies are in use:
+| Pattern                 | Purpose                                        |
+| ----------------------- | ---------------------------------------------- |
+| `*.talos00`             | LAN-internal services                          |
+| `*.priv.talos00`        | LAN-only / SSO cookie domain                   |
+| `*.homepage.talos00`    | Multi-instance Homepage boards (2-label hosts) |
+| `*.knowledgedump.space` | Publicly reachable services                    |
 
-| Pattern                  | Purpose                                       | Cert                            |
-| ------------------------ | --------------------------------------------- | ------------------------------- |
-| `*.talos00`              | LAN-internal services                         | `talos00-wildcard-tls` (homelab-CA) |
-| `*.priv.talos00`         | LAN-only / SSO cookie domain                  | `priv-talos00-wildcard-tls` (homelab-CA) |
-| `*.homepage.talos00`     | Multi-instance Homepage boards (2-label hosts) | `homepage-talos00-wildcard-tls` (homelab-CA) |
-| `*.knowledgedump.space`  | Publicly reachable services                   | `knowledgedump-wildcard-tls` (Let's Encrypt) |
-
-All four are registered in the default `TLSStore`
-(`infrastructure/base/traefik/tlsstore.yaml`) and served by SNI, so an IngressRoute never
-needs an explicit `secretName`.
+The `*.talos00` hierarchies are issued by the homelab CA; the public zones come from Let's
+Encrypt. Every wildcard is registered in the default `TLSStore`
+(`infrastructure/base/traefik/tlsstore.yaml`) and served by SNI, which is the whole reason an
+IngressRoute never needs an explicit `secretName`. Read the current certificate list from that
+file rather than from here — it has grown past these four patterns (the `amberdark` and
+`priv.knowledgedump.space` zones are in it too) and it will grow again.
 
 ### DNS
 
@@ -184,17 +209,21 @@ address=/pihole.talos00/192.168.1.240    # more-specific: Pi-hole VIP directly
 address=/knowledgedump.space/192.168.1.54 # split-horizon *.knowledgedump.space -> Traefik
 ```
 
-> **Note:** `svc/traefik` also holds a dedicated LoadBalancer VIP **192.168.1.251** (Cilium
-> LB-IPAM + L2/ARP announcement) which fails over automatically between nodes. The Pi-hole
-> wildcards still point at the talos00 node IP (`192.168.1.54`); repointing them at the VIP
-> is the pending half of TALOS-sa0n. Until then, LAN ingress depends on the talos00 node.
+> **The ingress VIP is provisioned but unclaimed (TALOS-sa0n).** A Cilium LB-IPAM pool
+> `lan-traefik-pool` (`.251`–`.252`, selector `app.kubernetes.io/name: traefik`) and its L2
+> announcement policy exist in `infrastructure/base/cilium/lb-ipam.yaml` — but
+> `infrastructure/base/traefik/helmrelease.yaml` still sets `service.type: ClusterIP`, and a
+> ClusterIP Service is never assigned an LB-IPAM address. So on the evidence in this repo
+> nothing holds `192.168.1.251`, and the Pi-hole wildcards correctly still point at the
+> `talos00` node IP. **Until both halves land, LAN ingress depends on the talos00 node** —
+> which is precisely the single point of failure TALOS-sa0n was opened to remove.
 
 ### /etc/hosts Fallback
 
 For a machine not using Pi-hole as its resolver:
 
 ```bash
-# Traefik ingress target (node IP today; 192.168.1.251 once the VIP cutover lands)
+# Traefik ingress target — the talos00 node IP, until the TALOS-sa0n VIP cutover completes
 192.168.1.54  traefik.talos00 argocd.talos00 grafana.talos00 mimir.talos00 \
               loki.talos00 hyperdx.talos00 registry.talos00 crowdsec.talos00 \
               whoami.talos00 homepage.talos00 headlamp.priv.talos00 \
@@ -219,19 +248,26 @@ sudo brew services start dnsmasq
 
 Defined in `infrastructure/base/traefik/helmrelease.yaml`.
 
-| EntryPoint  | Port | hostPort | Protocol  | Purpose                                      |
-| ----------- | ---- | -------- | --------- | -------------------------------------------- |
-| `web`       | 80   | 80       | HTTP      | Primary HTTP traffic                         |
-| `websecure` | 443  | 443      | HTTPS     | TLS termination (active — 79 live routes)    |
-| `traefik`   | 9000 | —        | HTTP      | Dashboard / API (cluster-internal only)      |
-| `metrics`   | 9100 | —        | HTTP      | Prometheus metrics (cluster-internal only)   |
-| `httpproxy` | 8080 | 8080     | TCP       | VPN gateway HTTP proxy (gluetun)             |
-| `socks`     | 1080 | 1080     | TCP       | VPN gateway SOCKS proxy (gluetun)            |
-| `bolt`      | 7687 | 7687     | TCP       | Neo4j Bolt for catalyst-data (IngressRouteTCP) |
+| EntryPoint     | Port | hostPort | Purpose                                        |
+| -------------- | ---- | -------- | ---------------------------------------------- |
+| `web`          | 80   | 80       | WAN-facing HTTP                                |
+| `websecure`    | 443  | 443      | WAN-facing HTTPS, TLS terminated here          |
+| `weblan`       | 8081 | 8081     | LAN-only HTTP (see p0-4-lan-entrypoint-design) |
+| `websecurelan` | 8443 | 8443     | LAN-only HTTPS                                 |
+| `traefik`      | 9000 | —        | Dashboard / API, cluster-internal only         |
+| `metrics`      | 9100 | —        | Prometheus metrics, cluster-internal only      |
+| `bolt`         | 7687 | 7687     | Neo4j Bolt for catalyst-data (IngressRouteTCP) |
 
-`web` and `websecure` both trust Cloudflare + pod CIDRs via `forwardedHeaders.trustedIPs`
-so `ClientHost` is the real visitor IP (feeds CrowdSec), and both carry the
-`traefik-bouncer@kubernetescrd` middleware globally via `additionalArguments`.
+The `httpproxy` (8080) and `socks` (1080) entrypoints that used to sit here were **removed**
+under TALOS-a8vo: they published the VPN gateway's proxies on every node's hostPort, which is
+attack surface nobody was using.
+
+`forwardedHeaders.trustedIPs` on `web`/`websecure` lists **Cloudflare ranges only**. The pod
+CIDR was deliberately taken out (TALOS-lxz5.1.4) — trusting it let any pod in the cluster forge
+`X-Forwarded-For` and therefore forge the IP that CrowdSec decides to ban. Both entrypoints
+carry `strip-authentik-headers` then `bouncer` globally via `additionalArguments`; see
+[p0-4-lan-entrypoint-design.md](p0-4-lan-entrypoint-design.md) for why that chain cannot simply
+be extended with `lan-only`.
 
 ## Troubleshooting
 
@@ -287,7 +323,7 @@ open http://localhost:9000/dashboard/
 ### 3. Docker Registry Push Fails (registry.talos00)
 
 > **RESOLVED / obsolete.** The old workaround was `kubectl port-forward -n registry
-> svc/nexus-docker 5000:5000`. **Nexus has been removed** — the registry is now **Zot**
+svc/nexus-docker 5000:5000`. **Nexus has been removed** — the registry is now **Zot**
 > (`infrastructure/base/registry/zot/`, `svc/zot:5000`), and the 404-on-push was root-caused
 > and fixed: Docker and containerd both probe `https://` first and never fall back, so a
 > `websecure` route (`zot-talos00-tls`) was added alongside the `web` one. Push over
@@ -347,14 +383,14 @@ open http://grafana.talos00
 
 **Symptoms:** Service accessible from control plane but not workers
 
-**Cause:** Traefik runs as a DaemonSet — it should be on all 5 nodes (talos00, talos01,
-talos02-gpu, talos03, talos06). talos00 carries the control-plane `NoSchedule` taint, which
-the HelmRelease tolerates explicitly.
+**Cause:** Traefik is a DaemonSet, so it should have a pod on **every** node — including
+`talos00`, whose control-plane `NoSchedule` taint the HelmRelease tolerates explicitly. A
+missing pod means a node whose taints the DaemonSet does not tolerate.
 
 **Solutions:**
 
 ```bash
-# Check Traefik pods on all nodes (expect 5/5)
+# Check Traefik pods on all nodes (expect desired == ready == node count)
 kubectl get pods -n traefik -o wide
 
 # Verify DaemonSet status
@@ -368,25 +404,26 @@ kubectl describe nodes | grep Taints
 `maxSurge: 1` schedules the new pod alongside the old one on the same node and deadlocks on
 the hostPort 80/443 collision.
 
-**Prefer the VIP:** hitting an individual node IP is a single point of failure — that is
-exactly the failure TALOS-sa0n was opened for (a talos00 reboot left its Traefik pod with no
-routes, 404ing every `.talos00` host while talos01/talos06 served 200). Use
-`192.168.1.251`.
+**Why the VIP matters:** hitting one node IP is a single point of failure — exactly the
+failure TALOS-sa0n was opened for, when a talos00 reboot left its Traefik pod with no routes
+and 404'd every `.talos00` host while other nodes served 200. The pool for `192.168.1.251`
+exists; the Service that would claim it does not yet (see the DNS note above). Until it does,
+this failure mode is still live.
 
 ## Deep Dive
 
 The **manifests are the source of truth** — they carry extensive inline rationale:
 
-| File                                                              | Contains                                                                     |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `infrastructure/base/traefik/helmrelease.yaml`                     | Chart pin, all entrypoints, hostPort/rollout strategy, CrowdSec + Yaegi plugins |
-| `infrastructure/base/traefik/tlsstore.yaml`                        | Default TLSStore + the four wildcard certs served by SNI                      |
-| `infrastructure/base/traefik/middlewares.yaml`                     | `redirect-https`, `security-headers`, `lan-only`, `bot-wrangler`              |
-| `infrastructure/base/traefik/service-internal.yaml`                | `svc/traefik-internal` (dashboard/API on 9000)                                |
-| `infrastructure/base/cilium/lb-ipam.yaml`                          | The 192.168.1.251 VIP pool + L2 announcement policy                           |
-| `infrastructure/base/kyverno-policies/ingressroute-tls-default.yaml` | Auto-`tls: {}` on websecure routes (TALOS-a38d)                             |
-| `infrastructure/base/kyverno-policies/homepage-annotation-derivation.yaml` | Derived `siteMonitor` / `href` / `widget.url`                        |
-| `clusters/catalyst-cluster/traefik.yaml`                           | Flux Kustomization + `${DOMAIN}` postBuild substitution                       |
+| File                                                                       | Contains                                                                                                                                                                           |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `infrastructure/base/traefik/helmrelease.yaml`                             | Chart pin, all entrypoints, hostPort/rollout strategy, CrowdSec + Yaegi plugins                                                                                                    |
+| `infrastructure/base/traefik/tlsstore.yaml`                                | Default TLSStore + the four wildcard certs served by SNI                                                                                                                           |
+| `infrastructure/base/traefik/middlewares.yaml`                             | The shared middlewares: `redirect-https`, `security-headers`, `lan-only`, `bot-wrangler`, `strip-authentik-headers`, `private-domain-redirect`, `rate-limit`, `request-body-limit` |
+| `infrastructure/base/traefik/service-internal.yaml`                        | `svc/traefik-internal` (dashboard/API on 9000)                                                                                                                                     |
+| `infrastructure/base/cilium/lb-ipam.yaml`                                  | The 192.168.1.251 VIP pool + L2 announcement policy                                                                                                                                |
+| `infrastructure/base/kyverno-policies/ingressroute-tls-default.yaml`       | Auto-`tls: {}` on websecure routes (TALOS-a38d)                                                                                                                                    |
+| `infrastructure/base/kyverno-policies/homepage-annotation-derivation.yaml` | Derived `siteMonitor` / `href` / `widget.url`                                                                                                                                      |
+| `clusters/catalyst-cluster/traefik.yaml`                                   | Flux Kustomization + `${DOMAIN}` postBuild substitution                                                                                                                            |
 
 Traefik plugins are Yaegi-loaded **from GitHub at pod startup** — a rollout needs egress to
 github.com. Enabled: `rewritebody` + `rewriteHeaders` (analytics injection, TALOS-4gg),
@@ -403,7 +440,7 @@ github.com. Enabled: `rewritebody` + `rewriteHeaders` (analytics injection, TALO
 - [Traefik Official Documentation](https://doc.traefik.io/traefik/)
 - [IngressRoute CRD Reference](https://doc.traefik.io/traefik/routing/providers/kubernetes-crd/)
 - [Middleware Reference](https://doc.traefik.io/traefik/middlewares/overview/)
-- [Dual GitOps Architecture](gitops-responsibilities.md)
+- [Dual GitOps Architecture](dual-gitops.md) — how a manifest change here reaches the cluster
 
 ---
 
@@ -412,14 +449,10 @@ github.com. Enabled: `rewritebody` + `rewriteHeaders` (analytics injection, TALO
 <!-- Beads tracking for this documentation domain -->
 
 - [CILIUM-7w6] - Initial creation of root-level TRAEFIK.md (pre-`TALOS-` prefix rename)
-- [TALOS-sa0n] - Traefik ingress VIP via Cilium LB-IPAM (open — DNS cutover pending)
+- [TALOS-sa0n] - Traefik ingress VIP via Cilium LB-IPAM (open — the pool exists, but `svc/traefik` is still `ClusterIP`, so nothing claims the VIP yet)
 - [TALOS-pbn] - CrowdSec IPS for Traefik ingress (bouncer + AppSec + Console)
 - [TALOS-h8l0] - HTTP→HTTPS: entrypoint redirect OR Kyverno generate twin (retire 12 dup routes)
 - [TALOS-zadf.19] - Traefik v3.6.2 → v3.7.10 / chart 41.x (closed)
 - [TALOS-a38d] - DRY-up audit: Kyverno `ingressroute-tls-default` (auto `tls: {}`)
 - [TALOS-6vf] - Replace Nexus with Zot (registry.talos00 routing)
 - [TALOS-mko] - Bot Wrangler + iocaine tarpit middleware (closed)
-
-**Last Updated:** 2026-08-22
-**Status:** Active - TLS terminated on `websecure`; CrowdSec bouncer bound globally
-**Owner:** Infrastructure Team

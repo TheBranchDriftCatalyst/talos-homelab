@@ -49,7 +49,7 @@ task infra:infra-control-delete
 
 ## Directory Structure
 
-```
+```text
 infra-control/
 ├── namespace/           # Namespace definition
 ├── headlamp/           # Modern K8s UI

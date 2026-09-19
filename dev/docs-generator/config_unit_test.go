@@ -82,7 +82,9 @@ var _ = Describe("LoadConfig", Label("unit"), func() {
 		Expect(err).NotTo(HaveOccurred(), "a missing config must never be fatal")
 		Expect(cfg).NotTo(BeNil())
 		Expect(cfg.Components.Kind).To(Equal("dirs"), "the default enumerator works without a GitOps controller")
-		Expect(cfg.Components.Glob).To(Equal("*"))
+		Expect(cfg.Components.Glob).To(BeEmpty(),
+			"the glob default belongs to the STRATEGY, not to LoadConfig; an empty value here means "+
+				"`not configured` and is resolved by ComponentStrategy.DefaultGlob at enumeration time")
 		Expect(cfg.TicketPattern).NotTo(BeEmpty())
 	})
 
@@ -124,16 +126,27 @@ var _ = Describe("LoadConfig", Label("unit"), func() {
 		Expect(cfg.RuleFor("broken-links")).To(Equal(Rule{Enabled: true, Severity: "error"}))
 	})
 
-	It("backfills an omitted components.glob with `*`, so a half-specified components block still enumerates something instead of matching nothing", func() {
-		dir := GinkgoT().TempDir()
-		Expect(os.WriteFile(filepath.Join(dir, "config.yaml"),
-			[]byte("components:\n  kind: dirs\n  path: infrastructure/base\n"), 0o644)).To(Succeed())
+	// LoadConfig used to backfill `*` for EVERY kind, which is `dirs`' default wearing a
+	// global: a flux repo omitting `glob:` then handed README.md to a Kustomization decoder.
+	// The backfill is per-strategy now (ComponentStrategy.DefaultGlob, asserted for both kinds
+	// in strategy_unit_test.go), so what LoadConfig must do is leave the field alone.
+	//
+	// Both kinds are spelled out, because an assertion on `dirs` alone would still pass if the
+	// old global `*` came back — `*` is what dirs wants.
+	DescribeTable("leaves an omitted components.glob empty rather than backfilling one default across every kind",
+		func(kind string) {
+			dir := GinkgoT().TempDir()
+			Expect(os.WriteFile(filepath.Join(dir, "config.yaml"),
+				[]byte("components:\n  kind: "+kind+"\n  path: infrastructure/base\n"), 0o644)).To(Succeed())
 
-		cfg, err := LoadConfig(dir)
+			cfg, err := LoadConfig(dir)
 
-		Expect(err).NotTo(HaveOccurred())
-		Expect(cfg.Components.Glob).To(Equal("*"))
-	})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(cfg.Components.Glob).To(BeEmpty())
+		},
+		Entry("dirs", "dirs"),
+		Entry("flux", "flux"),
+	)
 
 	It("lets an empty config file fall through to the defaults rather than zeroing the ticket pattern", func() {
 		dir := GinkgoT().TempDir()

@@ -6,6 +6,7 @@ covers:
 freshness: live
 tickets:
   - PD-05
+summary: The one note in this sample that carries a summary, so the nav table has exactly one non-fallback description.
 ---
 
 # Deploying

@@ -60,7 +60,7 @@ because they are bulk and historical and belong in the metrics store rather than
 
 **The observer is not part of enforcement.** It holds a read-only bouncer credential of its
 own, has no Kubernetes API access, and has no public route — see
-[README.md](README.md#observability-is-deliberately-not-enforcement) for why that separation
+[README.md](../README.md#observability-is-deliberately-not-enforcement) for why that separation
 matters.
 
 ## The posture suite
@@ -139,7 +139,7 @@ creation over the WAN, coverage of every ingress node, or enforcement during a c
 security-service outage. The `--ha` option samples one-replica replacement; it does not test
 database promotion or a whole-node outage. Honeypot event processing is covered separately by
 its own parser and scenario tests, and public forwarding is staged in
-[the honeypot exposure runbook](../honeypots/cowrie-public-exposure.md).
+[the honeypot exposure runbook](../../honeypots/docs/cowrie-public-exposure.md).
 
 ## Reference run
 
@@ -150,9 +150,10 @@ is consistent with the bouncer's stream polling interval — **that timing is wh
 looks like**, so a run that blocks instantly or takes several minutes is worth investigating
 rather than accepting. Both test resources were cleaned up.
 
-The audit that produced that run, including the defects it found and repaired, is archived at
-[crowdsec-audit-2026-09-07.md](../../../../docs/_archive/05-runbooks/crowdsec-audit-2026-09-07.md).
-It is evidence of recovery from specific faults, not a guarantee against all outages.
+The audit that produced that run, including the defects it found and repaired, was written up
+as `docs/_archive/05-runbooks/crowdsec-audit-2026-09-07.md`; that file has since been removed
+from the tree and now exists only in git history. It was evidence of recovery from specific
+faults, not a guarantee against all outages.
 
 ## Related Issues
 

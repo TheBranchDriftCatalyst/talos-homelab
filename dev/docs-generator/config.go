@@ -25,12 +25,13 @@ import (
 // wrapping many nested ones (which is not). Flux names the real deployable boundary; the
 // filesystem does not.
 //
-// kind: dirs is the fallback for repos with no GitOps controller. Add a new kind in collect.go
-// when a repo needs one — never special-case inside a rule.
+// kind: dirs is the fallback for repos with no GitOps controller. Adding a kind is adding one
+// strategy_<kind>.go that registers itself — never a switch here and never a special case
+// inside a rule.
 type ComponentSource struct {
-	Kind     string `yaml:"kind"`      // flux | dirs
+	Kind     string `yaml:"kind"`      // one of the registered strategy names; see strategyNames
 	Path     string `yaml:"path"`      // where to look
-	Glob     string `yaml:"glob"`      // what to match
+	Glob     string `yaml:"glob"`      // what to match; empty means the strategy's DefaultGlob
 	SlugFrom string `yaml:"slug_from"` // filename | metadata.name
 }
 
@@ -99,6 +100,22 @@ type ArtifactSpec struct {
 	// is reported; the second is "cover everything" and is the default.
 	Scope *ArtifactScope `yaml:"scope"`
 
+	// Region switches the artifact from WHOLE-FILE to MARKER-REGION ownership, naming the
+	// region. Absent means whole-file, which is what keeps every pre-region artifact
+	// byte-identical.
+	//
+	// It is a separate key from `renderer` because ownership and rendering are orthogonal: the
+	// question "does this artifact own the file or a span inside it?" has nothing to do with
+	// which table it draws, and folding the two together would mean every new renderer had to
+	// re-decide it. See region.go for what a marker region is and why a bad one is fatal.
+	Region string `yaml:"region"`
+
+	// Nav configures the `nav` renderer. A renderer-specific block, because the alternative —
+	// hoisting `entries`/`dir`/`description_key` onto every ArtifactSpec — puts keys on the
+	// component inventory that it can never read, and dead config is indistinguishable from
+	// config that stopped working.
+	Nav *NavSource `yaml:"nav"`
+
 	// Front is rendered by renderFrontMatter in Config.KeyOrder. It is map[string]any and NOT a
 	// struct: the moment one key is special to Go, that key is a constant again.
 	Front map[string]any `yaml:"front"`
@@ -140,6 +157,31 @@ func (s *ArtifactScope) Matches(c Component) bool {
 	}
 	p := strings.TrimSuffix(c.Path, "/")
 	return p == prefix || strings.HasPrefix(p, prefix+"/")
+}
+
+// NavSource describes how a navigation table finds its rows.
+//
+// The rows come from the TREE, never from this block: that is the entire point, because a row
+// somebody typed is a claim nothing revalidates, and the 58 rows in this repo's nav tables that
+// pointed at documents deleted along with `docs/_archive/` are what that costs. What is
+// configured here is only WHERE to look and WHICH frontmatter key carries the one-liner.
+type NavSource struct {
+	// Entries is the enumeration kind: `siblings` (the documents in a directory) or `sections`
+	// (the subdirectories of one that carry a README). Validated by name against
+	// navEntryKinds() — an unknown value is a config error, never an empty table.
+	Entries string `yaml:"entries"`
+
+	// Dir is the repo-relative directory to enumerate, defaulting to the directory the artifact
+	// itself lives in. The default is what makes a section README's nav declaration-free.
+	Dir string `yaml:"dir"`
+
+	// DescriptionKey names the frontmatter key holding each target's one-sentence summary —
+	// `bluf` in this repo.
+	//
+	// NO DEFAULT, for the same reason `type:` and `status:` have none: a default is the same
+	// constant wearing a config key, and against a repo whose key is `summary` it would make
+	// every description silently fall back to the H1 while looking like it worked.
+	DescriptionKey string `yaml:"description_key"`
 }
 
 type Config struct {
@@ -224,9 +266,13 @@ func (c *Config) Has(list []string, want string) bool {
 // failure here would make the tool unusable in exactly the repo where someone is trying to adopt
 // it for the first time.
 func LoadConfig(dir string) (*Config, error) {
+	// No default glob. It used to be `*` here, which is `dirs`' default applied to every kind —
+	// so a flux repo that omitted `glob:` handed README.md to a Kustomization decoder. The
+	// default is the STRATEGY's (ComponentStrategy.DefaultGlob), resolved at enumeration time,
+	// and an empty Glob below means exactly "not configured".
 	cfg := &Config{
 		TicketPattern: `\b[A-Z]{2,10}-[0-9a-z]{2,6}(?:\.\d+)*\b`,
-		Components:    ComponentSource{Kind: "dirs", Glob: "*"},
+		Components:    ComponentSource{Kind: "dirs"},
 	}
 	path := filepath.Join(dir, "config.yaml")
 	raw, err := os.ReadFile(path)
@@ -236,9 +282,6 @@ func LoadConfig(dir string) (*Config, error) {
 	}
 	if err := yaml.Unmarshal(raw, cfg); err != nil {
 		return cfg, fmt.Errorf("%s: %w", filepath.Base(path), err)
-	}
-	if cfg.Components.Glob == "" {
-		cfg.Components.Glob = "*"
 	}
 	return cfg, nil
 }

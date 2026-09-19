@@ -227,7 +227,7 @@ kubectl describe pod -n <namespace> <pod-name> | grep -A 10 Events
 ## Related Documentation
 
 - **[Dual GitOps Pattern](../../../docs/02-architecture/dual-gitops.md)** - Critical: Understand ArgoCD vs Flux roles
-- **[ArgoCD Setup](../../../docs/04-deployment/argocd-setup.md)** - Bootstrap and application deployment setup
+- **`scripts/bootstrap-argocd.sh`** - the one-time bootstrap; the script is the procedure
 - **[ArgoCD Official Docs](https://argo-cd.readthedocs.io/)** - Upstream documentation
 
 ---

@@ -42,9 +42,16 @@ type sample struct {
 	ReadmeFile  string
 
 	// NestedDir belongs to NestedOwner: dropping a kustomization.yaml in it must raise that
-	// component's nested count by exactly one.
+	// component's nested count by exactly one — WHEN the count exists at all.
 	NestedOwner string
 	NestedDir   string
+
+	// CountsSubUnits is whether this sample's components.kind can count deployable sub-units
+	// (nested kustomizations) at all. It is a KNOWN ANSWER about the repo shape, declared here
+	// and never read off the report: a spec that branched on what the tool happened to print
+	// would follow the tool into whichever answer it gave. That is exactly how "cannot measure
+	// shape" and "measured a shape of zero" became indistinguishable in the first place.
+	CountsSubUnits bool
 
 	// CleanDoc has valid frontmatter and produces no findings, so a mutation applied to it
 	// produces exactly one new finding and nothing else moves.
@@ -83,6 +90,34 @@ type sample struct {
 	// are present would pass for an artifact that ignored the filter entirely.
 	ScopeSlugs    []string
 	ScopeExcludes []string
+
+	// --- the marker-region nav ----------------------------------------------------------
+	//
+	// Every sample declares one, and assertSamplesAreReal refuses a sample that does not — for
+	// the same reason it refuses a sample with no scoped artifact: a table-driven suite whose
+	// table has an empty slot runs those specs against nothing and reports them green.
+
+	// NavRel is the marker-owned document and NavRegion is the region inside it, spelled
+	// exactly as it appears in the sample's config.yaml so a spec can edit that line.
+	NavRel    string
+	NavRegion string
+
+	// NavDescKey is the sample's `nav.description_key`. It differs between samples on purpose:
+	// a key hardcoded in Go would pass against whichever sample happened to share its spelling.
+	NavDescKey string
+
+	// NavRows is every link text the generated table must contain, and NavExcludes is every
+	// document in the same directory that must NOT appear. Both are required and both are
+	// checked: asserting only the included rows would pass for a nav that listed everything.
+	NavRows     []string
+	NavExcludes []string
+
+	// NavDescribed is one row whose description comes from the frontmatter key, paired with the
+	// exact text that key holds. NavFallback is one row that has no such key, paired with the H1
+	// the description must fall back to. Without BOTH, a nav that ignored the key entirely and
+	// always used the H1 would satisfy every other assertion here.
+	NavDescribed, NavDescribedText string
+	NavFallback, NavFallbackH1     string
 
 	// WarnOnlyRule fires in this sample at warn severity; ErrorRule fires at error severity.
 	// Together they pin the half of the exit-code contract that severity drives.
@@ -141,8 +176,9 @@ var fluxCluster = &sample{
 	ReadmeOwner: "gateway",
 	ReadmeFile:  "platform/gateway/README.md",
 
-	NestedOwner: "telemetry",
-	NestedDir:   "platform/telemetry",
+	NestedOwner:    "telemetry",
+	NestedDir:      "platform/telemetry",
+	CountsSubUnits: true, // a Flux repo IS a kustomize repo; the count means something
 
 	CleanDoc: "handbook/README.md",
 
@@ -158,6 +194,29 @@ var fluxCluster = &sample{
 	ScopePrefix:   "platform",
 	ScopeSlugs:    []string{"gateway", "legacy-cache", "secrets-operator", "secrets-store", "storage", "telemetry"},
 	ScopeExcludes: []string{"orchard-api", "orchard-web"},
+
+	NavRel:     "handbook/reference/README.md",
+	NavRegion:  "nav",
+	NavDescKey: "summary",
+	// Sorted by repo-relative target path, which is how renderNav orders rows. The two
+	// generated inventories also land in handbook/reference/ but are written AFTER the fixture
+	// commit, so `git ls-files` — docsgen's walker — never sees them and they produce no rows.
+	NavRows: []string{
+		"dead-links.md",
+		"no-frontmatter.md",
+		"scalar-covers.md",
+		"superseded-with-successor.md",
+		"unknown-covers.md",
+		"unterminated.md",
+	},
+	NavExcludes: []string{
+		"README.md",                  // a nav that listed itself is a loop
+		"superseded-no-successor.md", // superseded with nowhere to go
+	},
+	NavDescribed:     "dead-links.md",
+	NavDescribedText: "Link handling, pinned in both directions.",
+	NavFallback:      "no-frontmatter.md",
+	NavFallbackH1:    "Environment Variables",
 
 	WarnOnlyRule: "component-shape", // platform/storage wraps 5 nested kustomizations
 	ErrorRule:    "broken-links",    // handbook/reference/dead-links.md has exactly two
@@ -199,6 +258,9 @@ var plainDirs = &sample{
 
 	NestedOwner: "catalog",
 	NestedDir:   "services/catalog",
+	// No kustomize anywhere in this sample, so the count is structurally zero and reporting it
+	// as a number would be an invention. The `components` report must say `n/a`.
+	CountsSubUnits: false,
 
 	CleanDoc: "notes/README.md",
 
@@ -215,6 +277,27 @@ var plainDirs = &sample{
 	ScopePrefix:   "services/search",
 	ScopeSlugs:    []string{"search"},
 	ScopeExcludes: []string{"billing", "catalog", "identity", "notifications"},
+
+	NavRel:     "notes/README.md",
+	NavRegion:  "nav",
+	NavDescKey: "summary",
+	// notes/archive/ is excluded by this sample's `exclude:`, so its document produces no row —
+	// which is the property that keeps a published index from leaking a deliberately hidden tree.
+	NavRows: []string{
+		"deploying.md",
+		"no-footer.md",
+		"rule-sweep.md",
+		"superseded-forwarded.md",
+	},
+	NavExcludes: []string{
+		"README.md",
+		"superseded-dead-end.md",
+		"old-plan.md", // notes/archive/, excluded by config
+	},
+	NavDescribed:     "deploying.md",
+	NavDescribedText: "The one note in this sample that carries a summary, so the nav table has exactly one non-fallback description.",
+	NavFallback:      "no-footer.md",
+	NavFallbackH1:    "Release Log",
 
 	WarnOnlyRule: "colocation",   // notes/deploying.md covers catalog but lives in notes/
 	ErrorRule:    "broken-links", // notes/rule-sweep.md links at ./vanished.md

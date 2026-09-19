@@ -226,3 +226,104 @@ artifacts:
       bluf: The Flux Kustomizations whose manifests live under infrastructure/base/security, with whether each has a colocated README and how many nested kustomizations it wraps.
     ticket_notes:
       TALOS-f0sd.5: artifact scoping, which is what makes a per-section inventory possible
+
+  # ---------------------------------------------------------------------------------------------
+  # Navigation tables — MARKER-REGION artifacts
+  # ---------------------------------------------------------------------------------------------
+  # Everything below writes ONE SPAN inside a hand-written document, delimited by
+  #
+  #   <!-- docs:gen:<region> -->   …   <!-- /docs:gen:<region> -->
+  #
+  # and copies every other byte through untouched. That is not a convenience: INDEX.md and the
+  # section READMEs carry editorial prose — a grounding-pass note, "Key Concepts", a list of known
+  # contradictions between docs — that no generator can reproduce and nobody can reconstruct. A
+  # whole-file artifact pointed at one of these would delete it on the first run.
+  #
+  # A marker-owned file whose markers are missing, unbalanced or nested is a HARD ERROR naming the
+  # file. docsgen never appends and never falls back to whole-file ownership; see region.go.
+  #
+  # These entries carry no `front:` and no `ticket_notes:` — a region writes no frontmatter and no
+  # footer, and the validator refuses both rather than accept config that renders nowhere.
+  #
+  # WHY THIS EXISTS: 58 rows across these nine files pointed at documents that were DELETED with
+  # `docs/_archive/`. Not moved — deleted, with nothing to repoint them at. A row derived from the
+  # tree cannot reach that state, and the `bluf:` in each target's own frontmatter is what carries
+  # the curated one-liner through a regeneration.
+
+  # docs/README.md — the section table, and nothing else in the file.
+  nav-docs-root:
+    renderer: nav
+    path: README.md
+    region: nav-sections
+    nav:
+      entries: sections
+      dir: docs
+      description_key: bluf
+
+  # docs/INDEX.md owns TWO regions, because it indexes two different things: the sections, and
+  # the loose documents at the top of the tree. Two enumerations, two tables, two regions — which
+  # is exactly the case validateArtifactOwnership allows and the same-region case it refuses.
+  nav-index-sections:
+    renderer: nav
+    path: INDEX.md
+    region: nav-sections
+    nav:
+      entries: sections
+      dir: docs
+      description_key: bluf
+
+  nav-index-root-docs:
+    renderer: nav
+    path: INDEX.md
+    region: nav-root-docs
+    nav:
+      # `siblings` skips every README.md: a section's README is its own nav and is indexed by the
+      # sections table above, where it stands for the whole section.
+      entries: siblings
+      dir: docs
+      description_key: bluf
+
+  # The section READMEs. Each omits `nav.dir` on purpose — it defaults to the directory the
+  # artifact itself lives in, so a section indexes itself and there is no path in config that can
+  # disagree with where the file actually is.
+  nav-getting-started:
+    renderer: nav
+    path: 01-getting-started/README.md
+    region: nav
+    nav: { entries: siblings, description_key: bluf }
+
+  nav-architecture:
+    renderer: nav
+    path: 02-architecture/README.md
+    region: nav
+    nav: { entries: siblings, description_key: bluf }
+
+  nav-operations:
+    renderer: nav
+    path: 03-operations/README.md
+    region: nav
+    nav: { entries: siblings, description_key: bluf }
+
+  nav-project-management:
+    renderer: nav
+    path: 06-project-management/README.md
+    region: nav
+    nav: { entries: siblings, description_key: bluf }
+
+  nav-reference:
+    renderer: nav
+    path: 07-reference/README.md
+    region: nav
+    nav: { entries: siblings, description_key: bluf }
+
+  nav-monitoring:
+    renderer: nav
+    path: 08-monitoring/README.md
+    region: nav
+    nav: { entries: siblings, description_key: bluf }
+
+  nav-patterns:
+    renderer: nav
+    path: patterns/README.md
+    region: nav
+    nav: { entries: siblings, description_key: bluf }

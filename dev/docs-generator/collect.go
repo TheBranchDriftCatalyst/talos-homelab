@@ -15,6 +15,12 @@ package main
 //
 // Loaders warn and skip. One malformed manifest must never abort a whole-tree scan — otherwise
 // a typo in one file makes the linter useless in exactly the moment you want it.
+//
+// Component ENUMERATION no longer lives here. It is a registry of strategies — strategy.go for
+// the contract, strategy_registry.go for the lookup, strategy_flux.go and strategy_dirs.go for
+// the two implementations — because a switch over `components.kind` in this file made "porting
+// is a config edit" true only for another Flux repo. What stays here is everything shared: the
+// git walker, the markdown corpus, countNested, and Build.
 
 import (
 	"fmt"
@@ -23,8 +29,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 type Ctx struct {
@@ -34,6 +38,15 @@ type Ctx struct {
 	Components []Component
 	BySlug     map[string]Component
 	Dates      map[string]string
+
+	// Facts is what this repo's component strategy can actually SAY about a component, carried
+	// on the model rather than re-derived, so the rule runner and the `components` report
+	// cannot disagree about it.
+	//
+	// The zero value — a nil FactSet — supplies nothing, which is the honest default for a Ctx
+	// assembled by hand: it reports every fact-dependent rule as unable to run rather than
+	// running it against fields nobody populated. Build always fills this in.
+	Facts FactSet
 }
 
 func warnf(format string, a ...any) {
@@ -116,123 +129,6 @@ func countNested(root, rel string) int {
 	return n
 }
 
-type fluxDoc struct {
-	Kind     string `yaml:"kind"`
-	Metadata struct {
-		Name string `yaml:"name"`
-	} `yaml:"metadata"`
-	Spec struct {
-		Path      string `yaml:"path"`
-		Suspend   bool   `yaml:"suspend"`
-		DependsOn []struct {
-			Name string `yaml:"name"`
-		} `yaml:"dependsOn"`
-	} `yaml:"spec"`
-}
-
-func loadFlux(root string, cfg *Config) []Component {
-	var out []Component
-	dir := filepath.Join(root, cfg.Components.Path)
-	entries, err := filepath.Glob(filepath.Join(dir, cfg.Components.Glob))
-	if err != nil || len(entries) == 0 {
-		warnf("%s: no component manifests matched %q", cfg.Components.Path, cfg.Components.Glob)
-		return out
-	}
-	sort.Strings(entries)
-	for _, f := range entries {
-		raw, err := os.ReadFile(f)
-		if err != nil {
-			warnf("%s: %v", f, err)
-			continue
-		}
-		// A single file may hold several documents; decoding only the first would silently
-		// drop components. At least one file in this repo does exactly that.
-		dec := yaml.NewDecoder(strings.NewReader(string(raw)))
-		var inFile []fluxDoc
-		for {
-			var fd fluxDoc
-			if err := dec.Decode(&fd); err != nil {
-				break
-			}
-			if fd.Kind != "Kustomization" {
-				continue
-			}
-			if strings.TrimPrefix(strings.TrimPrefix(fd.Spec.Path, "."), "/") == "" {
-				warnf("%s: Kustomization with no spec.path", filepath.Base(f))
-				continue
-			}
-			inFile = append(inFile, fd)
-		}
-		base := strings.TrimSuffix(filepath.Base(f), filepath.Ext(f))
-		for _, fd := range inFile {
-			var deps []string
-			for _, d := range fd.Spec.DependsOn {
-				if d.Name != "" {
-					deps = append(deps, d.Name)
-				}
-			}
-			rel := strings.TrimPrefix(strings.TrimPrefix(fd.Spec.Path, "."), "/")
-			out = append(out, Component{
-				Slug:      slugFor(cfg, base, fd, len(inFile)),
-				Name:      fd.Metadata.Name,
-				Path:      rel,
-				DependsOn: deps,
-				Suspend:   fd.Spec.Suspend,
-				Source:    mustRel(root, f),
-				Nested:    countNested(root, rel),
-			})
-		}
-	}
-	return out
-}
-
-// slugFor picks the stable handle for one component.
-//
-// The filename is preferred, because metadata.name drifts from it in this repo and a slug that
-// changes when someone renames a field is not a slug. But the filename is only a handle while it
-// identifies ONE thing: external-secrets.yaml declares both `external-secrets-operator` and
-// `external-secrets`, so under filename-slugging both collapsed to `external-secrets` and
-// Ctx.BySlug silently kept whichever decoded last. That made `covers: external-secrets` resolve
-// to an arbitrary one of two different paths — and therefore produced an arbitrary colocation
-// verdict — with nothing reporting it.
-//
-// So: filename while the file declares exactly one Kustomization, metadata.name the moment it
-// declares more. Uniqueness is the property that matters; the filename is just the usual way to
-// get it.
-func slugFor(cfg *Config, base string, fd fluxDoc, inFile int) string {
-	if cfg.Components.SlugFrom == "metadata.name" && fd.Metadata.Name != "" {
-		return fd.Metadata.Name
-	}
-	if inFile > 1 && fd.Metadata.Name != "" {
-		return fd.Metadata.Name
-	}
-	return base
-}
-
-func loadDirs(root string, cfg *Config) []Component {
-	var out []Component
-	entries, _ := filepath.Glob(filepath.Join(root, cfg.Components.Path, cfg.Components.Glob))
-	sort.Strings(entries)
-	for _, e := range entries {
-		if fi, err := os.Stat(e); err == nil && fi.IsDir() {
-			rel := mustRel(root, e)
-			out = append(out, Component{Slug: filepath.Base(e), Path: rel, Source: rel, Nested: countNested(root, rel)})
-		}
-	}
-	return out
-}
-
-func LoadComponents(root string, cfg *Config) []Component {
-	switch cfg.Components.Kind {
-	case "flux":
-		return loadFlux(root, cfg)
-	case "dirs":
-		return loadDirs(root, cfg)
-	}
-	warnf("unknown components.kind %q; no components loaded", cfg.Components.Kind)
-	return nil
-}
-
 func LastCommitDates(root string) map[string]string {
 	dates := map[string]string{}
 	current := ""
@@ -252,7 +148,17 @@ func LastCommitDates(root string) map[string]string {
 }
 
 func Build(root string, cfg *Config) *Ctx {
-	comps := LoadComponents(root, cfg)
+	// The strategy returns its warnings rather than printing them, so Build drains them here —
+	// to the same stderr the loaders always wrote to, in the same order, before the duplicate
+	// slug check below adds its own.
+	enum, err := EnumerateComponents(root, cfg)
+	if err != nil {
+		warnf("%v; no components loaded", err)
+	}
+	for _, w := range enum.Warnings {
+		warnf("%s", w)
+	}
+	comps := enum.Components
 	// A collapsed slug is invisible corruption rather than a missing feature: BySlug keeps the
 	// last writer, so every cover/colocation/staleness answer for that slug silently describes
 	// the wrong component. slugFor removes the known cause; this catches the rest loudly.
@@ -271,6 +177,7 @@ func Build(root string, cfg *Config) *Ctx {
 		Components: comps,
 		BySlug:     bySlug,
 		Dates:      LastCommitDates(root),
+		Facts:      FactsFor(cfg),
 	}
 }
 

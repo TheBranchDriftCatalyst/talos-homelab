@@ -1,6 +1,13 @@
 package main
 
-// Unit specs for collect.go — slug identity, exclusion matching, and the loaders.
+// Unit specs for collect.go and the two enumeration strategies — slug identity, exclusion
+// matching, and the loaders.
+//
+// The loader specs stayed here when loadFlux/loadDirs moved into strategy_flux.go and
+// strategy_dirs.go; only the call form changed, from a free function to the strategy's
+// Enumerate. Specs for the SEAM itself — the registry, the fact vocabulary, the per-strategy
+// glob defaults — are in strategy_unit_test.go, which also carries the registry-pollution
+// warning anyone adding a strategy spec needs to read first.
 //
 // Nothing here reads the real repo. Filesystem cases build a throwaway tree under
 // GinkgoT().TempDir(); the two git-backed cases initialise a scratch repository in that temp
@@ -65,6 +72,16 @@ func unitCommit(dir, message, isoDate string) {
 	env := []string{"GIT_AUTHOR_DATE=" + isoDate, "GIT_COMMITTER_DATE=" + isoDate}
 	Expect(unitRunGit(dir, nil, "add", "-A")).To(Succeed())
 	Expect(unitRunGit(dir, env, "commit", "-q", "--no-verify", "-m", message)).To(Succeed())
+}
+
+// unitEnumerate runs one strategy and returns just its components, so a spec that is about
+// enumeration is not also about error handling. Warnings are asserted separately, in
+// strategy_unit_test.go, which is the point of returning them instead of printing them.
+func unitEnumerate(s ComponentStrategy, root string, cfg *Config) []Component {
+	GinkgoHelper()
+	enum, err := s.Enumerate(root, cfg)
+	Expect(err).NotTo(HaveOccurred())
+	return enum.Components
 }
 
 func unitFlux(name, path string) string {
@@ -180,9 +197,9 @@ var _ = Describe("countNested", Label("unit"), func() {
 	})
 })
 
-// --- loadFlux / loadDirs ---------------------------------------------------------------------
+// --- fluxStrategy / dirsStrategy ---------------------------------------------------------------------
 
-var _ = Describe("loadFlux", Label("unit"), func() {
+var _ = Describe("fluxStrategy.Enumerate", Label("unit"), func() {
 	var root string
 	var cfg *Config
 
@@ -196,7 +213,7 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 			unitFlux("external-secrets-operator", "./infrastructure/base/external-secrets/operator")+
 				"---\n"+unitFlux("external-secrets", "./infrastructure/base/external-secrets/stores"))
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(2), "decoding only the first document would silently drop a deployed unit")
 		Expect([]string{comps[0].Slug, comps[1].Slug}).To(ConsistOf("external-secrets-operator", "external-secrets"))
@@ -208,7 +225,7 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 	It("strips the leading ./ from spec.path so the stored path is repo-relative and joinable with Root", func() {
 		unitWrite(root, "clusters/test/cilium.yaml", unitFlux("cilium-cni", "./infrastructure/base/cilium"))
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(1))
 		Expect(comps[0].Path).To(Equal("infrastructure/base/cilium"))
@@ -222,7 +239,7 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 			unitFlux("traefik-ingress", "./infrastructure/base/traefik")+
 				"---\napiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: traefik\n")
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(1))
 		Expect(comps[0].Slug).To(Equal("traefik"))
@@ -233,7 +250,7 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 			"kind: Kustomization\nmetadata:\n  name: broken\nspec:\n  path: ./\n"+
 				"---\n"+unitFlux("good", "./infrastructure/base/good"))
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(1))
 		Expect(comps[0].Name).To(Equal("good"))
@@ -243,7 +260,7 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 		unitWrite(root, "clusters/test/apps.yaml",
 			unitFlux("apps", "./applications")+"  dependsOn:\n    - name: cilium\n    - name: \"\"\n    - name: traefik\n")
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(1))
 		Expect(comps[0].DependsOn).To(Equal([]string{"cilium", "traefik"}))
@@ -253,14 +270,14 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 		unitWrite(root, "clusters/test/paused.yaml",
 			unitFlux("paused", "./infrastructure/base/paused")+"  suspend: true\n")
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(1))
 		Expect(comps[0].Suspend).To(BeTrue())
 	})
 
 	// Nested is the ONLY input to component-shape, and nothing else in this suite observed it
-	// coming out of loadFlux — the rule's own specs build Component{Nested: n} by hand. That
+	// coming out of the flux strategy — the rule's own specs build Component{Nested: n} by hand. That
 	// left the wiring untested: dropping the countNested call here silently disabled the rule
 	// for every Flux component in the repo while every shape spec stayed green.
 	It("counts the nested kustomizations under spec.path, which is the only thing that feeds component-shape", func() {
@@ -271,7 +288,7 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 		unitWrite(root, "infrastructure/base/monitoring/mimir/deep/kustomization.yml", "resources: []\n")
 		unitWrite(root, "infrastructure/base/monitoring/README.md", "# not a kustomization\n")
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(1))
 		Expect(comps[0].Nested).To(Equal(4),
@@ -282,7 +299,7 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 		unitWrite(root, "clusters/test/cilium.yaml", unitFlux("cilium", "./infrastructure/base/cilium"))
 		unitWrite(root, "infrastructure/base/cilium/README.md", "# no kustomization here\n")
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(1))
 		Expect(comps[0].Nested).To(Equal(0))
@@ -298,7 +315,7 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 		unitWrite(root, "infrastructure/base/external-secrets/stores/b/kustomization.yaml", "resources: []\n")
 
 		byName := map[string]int{}
-		for _, c := range loadFlux(root, cfg) {
+		for _, c := range unitEnumerate(fluxStrategy{}, root, cfg) {
 			byName[c.Name] = c.Nested
 		}
 
@@ -307,20 +324,20 @@ var _ = Describe("loadFlux", Label("unit"), func() {
 	})
 
 	It("warns and returns nothing when no manifest matches, instead of aborting — an unadopted repo must still get a usable lint run", func() {
-		Expect(loadFlux(root, cfg)).To(BeEmpty())
+		Expect(unitEnumerate(fluxStrategy{}, root, cfg)).To(BeEmpty())
 	})
 
 	It("returns components in a deterministic filename order, so report output does not churn between runs", func() {
 		unitWrite(root, "clusters/test/zeta.yaml", unitFlux("zeta", "./z"))
 		unitWrite(root, "clusters/test/alpha.yaml", unitFlux("alpha", "./a"))
 
-		comps := loadFlux(root, cfg)
+		comps := unitEnumerate(fluxStrategy{}, root, cfg)
 
 		Expect([]string{comps[0].Slug, comps[1].Slug}).To(Equal([]string{"alpha", "zeta"}))
 	})
 })
 
-var _ = Describe("loadDirs and LoadComponents", Label("unit"), func() {
+var _ = Describe("dirsStrategy.Enumerate and EnumerateComponents", Label("unit"), func() {
 	It("treats each directory as a component and ignores loose files, which is the fallback for a repo with no GitOps controller", func() {
 		root := GinkgoT().TempDir()
 		unitWrite(root, "infrastructure/base/alpha/kustomization.yaml", "resources: []\n")
@@ -328,7 +345,7 @@ var _ = Describe("loadDirs and LoadComponents", Label("unit"), func() {
 		unitWrite(root, "infrastructure/base/notes.md", "# loose file\n")
 		cfg := &Config{Components: ComponentSource{Kind: "dirs", Path: "infrastructure/base", Glob: "*"}}
 
-		comps := LoadComponents(root, cfg)
+		comps := unitEnumerate(dirsStrategy{}, root, cfg)
 
 		Expect(comps).To(HaveLen(2))
 		Expect([]string{comps[0].Slug, comps[1].Slug}).To(Equal([]string{"alpha", "beta"}))
@@ -340,21 +357,26 @@ var _ = Describe("loadDirs and LoadComponents", Label("unit"), func() {
 	// returns nil — falling through to loadDirs, falling through to loadFlux, or returning nil
 	// deliberately — so the assertion held no matter what the switch did. Two component
 	// directories make the dirs fallback observable: it would return two, and nil is then a
-	// statement about the switch rather than about the fixture.
-	It("warns and loads nothing for an unknown components.kind, so a config typo degrades to an empty model rather than a panic", func() {
+	// statement about the lookup rather than about the fixture.
+	It("errors and loads nothing for an unknown components.kind, so a config typo degrades to an empty model rather than a panic", func() {
 		root := GinkgoT().TempDir()
 		unitWrite(root, "infrastructure/base/alpha/kustomization.yaml", "resources: []\n")
 		unitWrite(root, "infrastructure/base/beta/kustomization.yaml", "resources: []\n")
 		cfg := &Config{Components: ComponentSource{Kind: "helmfile", Path: "infrastructure/base", Glob: "*"}}
 
-		Expect(LoadComponents(root, cfg)).To(BeNil(),
-			"an unrecognised kind must not quietly fall through to the dirs loader, which would "+
+		enum, err := EnumerateComponents(root, cfg)
+
+		Expect(err).To(HaveOccurred())
+		Expect(enum.Components).To(BeNil(),
+			"an unrecognised kind must not quietly fall through to the dirs strategy, which would "+
 				"report two components a config typo never asked for")
 
 		// Proof the fixture can actually produce a non-nil answer, which is what makes the
 		// assertion above mean something.
 		dirsCfg := &Config{Components: ComponentSource{Kind: "dirs", Path: "infrastructure/base", Glob: "*"}}
-		Expect(LoadComponents(root, dirsCfg)).To(HaveLen(2))
+		ok, err := EnumerateComponents(root, dirsCfg)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(ok.Components).To(HaveLen(2))
 	})
 })
 
