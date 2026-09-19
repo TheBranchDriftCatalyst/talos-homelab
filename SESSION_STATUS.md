@@ -34,25 +34,34 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-Two independent efforts are live. The docs one is mid-flight; the security one is paused with
-two dated items.
+### ⏱ Time-boxed — fires in ~10 hours
 
-### In flight — docs as projection (`TALOS-f0sd`)
+|                       |                                                                                                                                                                                                                                                                                                     |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`TALOS-sahd`** (P1) | A CrowdSec GC reap fires **unattended ~2026-09-20 03:35 UTC** against a key-holding bouncer row. Whether enforcement survives it was _reasoned about, never tested_. ~15 min inside a watched window. This has been carried for a day; after it fires, the question is answered for you either way. |
+| `TALOS-a83x` (P3)     | falcosidekick-ui redis reaches its 512 MB ceiling in the same window.                                                                                                                                                                                                                               |
 
-|                     |                                                                                                                                                                                                                                                                                                               |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Next action**     | `TALOS-kll3` (E2) — the generator half. First artifact: `docs/07-reference/component-inventory.md`. Chosen as the first thing that _writes_ because it needs no frontmatter, its input is 65 machine-authored Flux CRs, and nobody depended on it yesterday — so a wrong design is wrong in exactly one file. |
-| **Done**            | `TALOS-hadr` (E1 phase 0) — `docsgen` builds, runs, is on `PATH` in the dev shell. First run: **108 broken links, 15 component-shape warnings**.                                                                                                                                                              |
-| **Sequenced after** | E3 frontmatter (`TALOS-0hlo`) → E4 enforcement (`TALOS-c0hj`) → E5 folder migration (`TALOS-osdj`) → E7 namespace migration (`TALOS-mpbu`). E6 mermaid (`TALOS-05xr`) rides along.                                                                                                                            |
+### Immediate — 98 files are uncommitted on purpose
 
-### Paused — security campaign (`TALOS-a13n`)
+|                     |                                                                                                                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Review the diff** | One review pass was requested, so nothing from 2026-09-19 is committed. Verified green before it was left: unit + integration pass, 0 known gaps, `docsgen check` reports all 12 artifacts `unchanged`, markdownlint 0, broken links **0**. `git status` is the worklist. |
+| After review        | Commit, then `flux reconcile` is **not** needed — the day's changes are docs, tooling and one already-applied CNP narrowing.                                                                                                                                              |
 
-|                         |                                                                                                                                                                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Deadline**            | `TALOS-sahd` (P1) — a CrowdSec GC reap fires **unattended ~09-20 03:35 UTC** against a key-holding bouncer row. Whether enforcement survives it was _reasoned about, never tested_. ~15 min in a watched window. |
-| **Same weekend**        | `TALOS-a83x` (P3) — falcosidekick redis reaches its 512 MB ceiling ~09-20.                                                                                                                                       |
-| **Highest leverage**    | `TALOS-kb2f` (P1) — pytest half of the tripwire canary: assert `container.name` is a _name_, not a 12-hex ID, **per node**.                                                                                      |
-| **Explicitly not next** | Adding more to the security tree. A principal review said stop; three passes found the campaign's centre of gravity had drifted into repairing controls that only watch other controls.                          |
+### Then — docs as projection (`TALOS-f0sd`)
+
+|                     |                                                                                                                                                                                                 |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Highest value       | `TALOS-f0sd.9` — derive `grouping_roots` instead of hand-typing it. Read the ticket first: the obvious derivation (README presence alone) is **circular** and the correction is recorded there. |
+| Also open           | The corpus split (`components` stats the filesystem, `lint` walks `git ls-files`), nav-by-convention, and slice 4 model renames.                                                                |
+| Security follow-ups | `websecurelan :8443` is WAN-forwarded while its manifest claims otherwise; four honeypot tests assert a superseded architecture and are failing **on purpose**.                                 |
+
+### Explicitly not next
+
+|                         |                                                                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Slice 4 (model renames) | Most churn, least behaviour. `Nested`→`SubUnits` improves nothing a doc reader would notice, and it would bury the review diff. |
+| Hand-fixing nav tables  | They are generated now. A hand edit is reverted by the next `docsgen generate`, and the rows exist only because the tree does.  |
 
 <!-- /closeout:next -->
 
