@@ -991,12 +991,201 @@
       }
     },
     {
+      "id": 54,
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 35
+      },
+      "title": "Non-ban enforcement \u00b7 silent drop (honeypot-local, never reaches Traefik)"
+    },
+    {
+      "id": 55,
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 5,
+        "x": 0,
+        "y": 36
+      },
+      "title": "Active silent drops",
+      "description": "Decisions with action=silentdrop, consumed ONLY by the haproxy-novelty-bouncer sidecar in the honeypot namespace. They never reach the Traefik bouncer, so nothing here changes what is blocked at ingress.\n\nThis is a SECOND enforcement plane and it is deliberately separate from the ban counts above: a silent drop kills the TCP connection at the honeypot front so a replay bot stops being fed, rather than banning the IP cluster-wide.\n\nZero is not automatically healthy. The scenario needs >=30 commands with <=8 distinct from ONE IP inside the leak window, so quiet periods are normal -- but a persistent zero while the honeypot is busy means the plane has stopped enforcing (it sat in simulation, enforcing nothing, until 2026-09-19).",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "count(max by (decision_id) (crowdsec_local_decision_expires_timestamp_seconds{job=\"crowdsec/crowdsec-decisions\",action=\"silentdrop\"} > time())) or vector(0)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              },
+              {
+                "color": "blue",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 56,
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 5,
+        "y": 36
+      },
+      "title": "Silent-dropped IPs \u00b7 scenario and expiry",
+      "description": "Each row is one live silentdrop decision. `value` is the attacker IP that the honeypot haproxy front is dropping at connection time. Cross-check against the honeypot-ops dashboard: a dropped IP should stop appearing in the haproxy tcplog entirely, because silent-drop kills the connection before any backend is chosen and therefore before any log line is written.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "format": "table",
+          "instant": true,
+          "expr": "max by (value, scenario, decision_id) (crowdsec_local_decision_expires_timestamp_seconds{job=\"crowdsec/crowdsec-decisions\",action=\"silentdrop\"} > time())"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "decision_id": true
+            },
+            "renameByName": {
+              "value": "attacker IP",
+              "scenario": "scenario",
+              "Value": "expires (unix)"
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "expires (unix)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 57,
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 9,
+        "x": 15,
+        "y": 36
+      },
+      "title": "Silent drops over time \u00b7 vs honeypot command volume",
+      "description": "Rising line = the replay-drop scenario is engaging. Flat zero while the honeypot is taking traffic is the condition worth investigating: either no bot is replaying, or the plane stopped enforcing.",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "legendFormat": "active silent drops",
+          "expr": "count(max by (decision_id) (crowdsec_local_decision_expires_timestamp_seconds{job=\"crowdsec/crowdsec-decisions\",action=\"silentdrop\"} > time())) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 18,
+            "lineWidth": 2,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
       "id": 16,
       "title": "Detection \u00b7 activity does not necessarily create a ban",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 35,
+        "y": 44,
         "w": 24,
         "h": 1
       },
@@ -1023,7 +1212,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 45,
         "w": 12,
         "h": 8
       },
@@ -1073,7 +1262,7 @@
       "type": "table",
       "gridPos": {
         "x": 12,
-        "y": 36,
+        "y": 45,
         "w": 12,
         "h": 8
       },
@@ -1137,7 +1326,7 @@
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 44,
+        "y": 53,
         "w": 24,
         "h": 1
       },
@@ -1164,7 +1353,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 45,
+        "y": 54,
         "w": 12,
         "h": 8
       },
@@ -1214,7 +1403,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 45,
+        "y": 54,
         "w": 12,
         "h": 8
       },
@@ -1264,7 +1453,7 @@
       "type": "table",
       "gridPos": {
         "x": 0,
-        "y": 53,
+        "y": 62,
         "w": 12,
         "h": 8
       },
@@ -1331,7 +1520,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 53,
+        "y": 62,
         "w": 12,
         "h": 8
       },
@@ -1381,7 +1570,7 @@
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 61,
+        "y": 70,
         "w": 24,
         "h": 1
       },
@@ -1408,7 +1597,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 62,
+        "y": 71,
         "w": 12,
         "h": 8
       },
@@ -1458,7 +1647,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 12,
-        "y": 62,
+        "y": 71,
         "w": 12,
         "h": 8
       },
@@ -1508,7 +1697,7 @@
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 70,
+        "y": 79,
         "w": 12,
         "h": 8
       },
@@ -1558,7 +1747,7 @@
       "type": "table",
       "gridPos": {
         "x": 12,
-        "y": 70,
+        "y": 79,
         "w": 12,
         "h": 8
       },
@@ -1628,7 +1817,7 @@
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 78,
+        "y": 87,
         "w": 24,
         "h": 1
       },
@@ -1655,7 +1844,7 @@
       "type": "logs",
       "gridPos": {
         "x": 0,
-        "y": 79,
+        "y": 88,
         "w": 24,
         "h": 8
       },
@@ -1700,7 +1889,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 102
+        "y": 111
       },
       "panels": []
     },
@@ -1717,7 +1906,7 @@
         "h": 7,
         "w": 6,
         "x": 0,
-        "y": 103
+        "y": 112
       },
       "targets": [
         {
@@ -1766,7 +1955,7 @@
         "h": 7,
         "w": 6,
         "x": 6,
-        "y": 103
+        "y": 112
       },
       "targets": [
         {
@@ -1815,7 +2004,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 103
+        "y": 112
       },
       "targets": [
         {

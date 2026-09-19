@@ -655,13 +655,17 @@ spec:
       # Keep the LAPI OFF the small control-plane node (talos00): NO toleration → talos00's taint
       # blocks it → schedules on a worker. LAPI is now stateless (Postgres-backed), so it reschedules
       # freely; the machines/decisions DB persists in CNPG across any reschedule. (TALOS-pbn)
+      # NO prometheus.io/* annotations here ON PURPOSE. podmonitor.yaml already scrapes :6060 on
+      # every component sharing `k8s-app: crowdsec` (lapi, agent, appsec -- verified: all 9 pods),
+      # producing job="crowdsec/crowdsec". Annotating the pods ALSO enrols them in Alloy's generic
+      # `kubernetes-pods` job, so every cs_* series was ingested TWICE under two job labels with
+      # identical values. Latent rather than live -- the crowdsec-ops panels pin
+      # job="crowdsec/crowdsec" and use max by(...) -- but any unpinned sum() silently doubles.
+      # Same class as the kube-state-metrics dual-scrape trap. One scrape path, declared.
       podAnnotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "6060"
-        prometheus.io/path: "/metrics"
         backup.velero.io/backup-volumes: data
       metrics:
-        enabled: true # exposes :6060 (Alloy scrapes via the annotations above)
+        enabled: true # exposes :6060; podmonitor.yaml is the scrape path
       resources:
         requests: {cpu: 100m, memory: 200Mi}
         limits: {memory: 500Mi}
@@ -824,10 +828,13 @@ spec:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
-      podAnnotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "6060"
-        prometheus.io/path: "/metrics"
+      # NO prometheus.io/* annotations here ON PURPOSE. podmonitor.yaml already scrapes :6060 on
+      # every component sharing `k8s-app: crowdsec` (lapi, agent, appsec -- verified: all 9 pods),
+      # producing job="crowdsec/crowdsec". Annotating the pods ALSO enrols them in Alloy's generic
+      # `kubernetes-pods` job, so every cs_* series was ingested TWICE under two job labels with
+      # identical values. Latent rather than live -- the crowdsec-ops panels pin
+      # job="crowdsec/crowdsec" and use max by(...) -- but any unpinned sum() silently doubles.
+      # Same class as the kube-state-metrics dual-scrape trap. One scrape path, declared.
       metrics:
         enabled: true
       resources:
@@ -900,10 +907,13 @@ spec:
       env:
         - name: COLLECTIONS
           value: "crowdsecurity/appsec-virtual-patching crowdsecurity/appsec-crs"
-      podAnnotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "6060"
-        prometheus.io/path: "/metrics"
+      # NO prometheus.io/* annotations here ON PURPOSE. podmonitor.yaml already scrapes :6060 on
+      # every component sharing `k8s-app: crowdsec` (lapi, agent, appsec -- verified: all 9 pods),
+      # producing job="crowdsec/crowdsec". Annotating the pods ALSO enrols them in Alloy's generic
+      # `kubernetes-pods` job, so every cs_* series was ingested TWICE under two job labels with
+      # identical values. Latent rather than live -- the crowdsec-ops panels pin
+      # job="crowdsec/crowdsec" and use max by(...) -- but any unpinned sum() silently doubles.
+      # Same class as the kube-state-metrics dual-scrape trap. One scrape path, declared.
       metrics:
         enabled: true
       resources:
