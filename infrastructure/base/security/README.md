@@ -157,32 +157,22 @@ distinguishes them is
 
 ## Why there is no shared `security` namespace
 
-Kubernetes namespaces are flat — there is no nesting — so this directory is a **grouping
-directory**, never a namespace. Each component owns its own namespace, and the grouping is
-carried by a label every one of them declares:
+Kubernetes namespaces are flat, so this directory is a **grouping directory**, never a
+namespace. Each component owns its namespace; the grouping is the label every one of them
+declares:
 
 ```yaml
 app.kubernetes.io/part-of: security
 ```
 
-Policy selects the group by that label instead of enumerating members, so a fifth component
+Policy selects the group by that label rather than enumerating members, so a fifth component
 inherits by being labelled.
 
-A shared `security` namespace was scaffolded and then **abandoned**, for a reason worth not
-re-litigating: Pod Security Admission is enforced **per namespace, not per pod**, so a merged
-namespace has to sit at the most permissive level any member needs — `privileged`, for falco's
-eBPF driver. That would drag `honeypot` and `iocaine` down from `baseline`. The honeypots are
-the one workload here deliberately built to be compromised, so the cost lands precisely on the
-component least able to absorb it.
-
-Dropping the move also retires its risks rather than deferring them: the CrowdSec decisions
-database (CNPG, with volumes) never needs a data migration, LAPI machine/bouncer registrations
-never invalidate, and Traefik's cross-namespace references never need repointing.
-
-HNC (`kubernetes-sigs/hierarchical-namespaces`) was considered. It would add a second operator
-and a second admission webhook to synthesise grouping the label already expresses. It becomes
-the right answer if **propagation** — RBAC, NetworkPolicies, secrets flowing down a tree — or
-delegated namespace creation is the need, rather than grouping.
+A shared `security` namespace was scaffolded and then abandoned, because Pod Security Admission
+is enforced per namespace: merging would force `privileged` for falco's eBPF driver and demote
+the honeypots from `baseline`. The full reasoning, the risks that decision retires, and why HNC
+was rejected are in
+[`_namespace-migration/README.md`](_namespace-migration/README.md).
 
 ## Related Issues
 
