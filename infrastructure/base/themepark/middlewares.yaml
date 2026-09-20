@@ -1,235 +1,42 @@
 ---
-# Catalyst theme injection. Replaces the arr-stack DOCKER_MODS overlay: instead of
-# mutating HTML inside each container at startup, Traefik injects the stylesheet
-# link on the way out. That makes theming a property of the ingress path, so it
-# reaches apps whose images have no s6-overlay (seerr) and apps that cannot fetch
-# a mod at all (qbittorrent, behind gluetun's killswitch).
+# Catalyst injection: ONE middleware per app, ONE body-rewriting pass.
 #
-# Opt an app in with ONE middleware ref on its IngressRoute's DEFAULT route:
-#     middlewares:
-#       - name: authentik          # FIRST  — see ordering note below
-#         namespace: authentik
-#       - name: theme-sonarr       # SECOND
-#         namespace: traefik
+# This deliberately does NOT use the themepark plugin any more. Both it and
+# rewriteBody are body rewriters, and chaining them put two buffering rewrites
+# on the same response — they nest, and the outer one discards what the inner
+# one wrote. It only showed up when the client sent more than one
+# Accept-Encoding value, which every real browser does: with a bare
+# `Accept-Encoding: gzip` both injections landed, with Chrome's
+# `gzip, deflate, br, zstd` the nav script silently vanished while the theme
+# survived. A single middleware with two rewrites has no such interaction.
 #
-# ORDERING: Traefik runs middlewares forward on the request and REVERSE on the
-# response. With authentik first, injection happens on the way out, and the theme
-# plugin never sees an unauthenticated request — when forward-auth 302s to the SSO
-# login, the theme middleware downstream is never invoked at all.
+# The two anchors are chosen so they can never collide with each other:
+#   <head>    -> the nav script, deferred (downloads in parallel, runs after parse)
+#   </head> or </body> -> the theme stylesheet
 #
-# NEVER attach these to the priority-100 /api + /feed routes. Those exist so
-# nzb360 / LunaSea / RSS clients bypass auth, and they must stay untouched.
-# (Belt and braces: the plugin only acts on GET + `Accept: text/html` + a
-# `Content-Type: text/html` response, so an API client would be a no-op anyway.)
+# That second choice mirrors what the themepark plugin did and it matters: the
+# servarr family gets the stylesheet before </body> so it lands AFTER the app's
+# own late-loaded CSS. Putting a Servarr theme in </head> renders half-themed.
 #
-# One Middleware per app is unavoidable — the theme.park app slug is baked into
-# the plugin config and cannot be shared. `theme` and `baseUrl` are repeated
-# deliberately: they are the two values you will ever want to change fleet-wide,
-# and a grep-and-replace over THIS ONE FILE is the intended edit.
-
----
-# CSP relaxation, additive only, modelled on infrastructure/base/analytics
-# `analytics-csp`. An app that sends NO Content-Security-Policy needs nothing and
-# this is a no-op on it — which, verified live, is every media app except
-# qBittorrent. Attach only where a policy actually exists.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-csp
-  namespace: traefik
-spec:
-  plugin:
-    rewriteHeaders:
-      rewrites:
-        - header: "Content-Security-Policy"
-          regex: "style-src ([^;]*)"
-          replacement: "style-src $1 https://theme.${CLUSTER_DOMAIN}"
-        - header: "Content-Security-Policy"
-          regex: "font-src ([^;]*)"
-          replacement: "font-src $1 data:"
-
----
-# Sonarr. theme.park slug `sonarr`; the plugin targets </body> for the servarr
-# family (its app regex is vuetorrent|qbittorrent|emby|jellyfin|radarr|prowlarr|
-# sonarr|readarr|lidarr|whisparr), which is correct — a Servarr link injected into
-# </head> loads before the app's own late CSS and renders half-themed.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-sonarr
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: sonarr
-      theme: catalyst
-      # ROOT-RELATIVE on purpose. The plugin string-concatenates baseUrl into
-      # href="{baseUrl}/css/base/{app}/{theme}.css", so "/catalyst" yields
-      # href="/catalyst/css/base/sonarr/catalyst.css" — resolved by the browser against
-      # whatever origin the app is on.
-      #
-      # This is not a cosmetic choice. A cross-origin stylesheet (theme.talos00)
-      # requires every client to trust the homelab CA, and when one does not the
-      # browser refuses the subresource SILENTLY: no console error, no request,
-      # nothing in the Traefik log. Same-origin means the theme rides the exact
-      # certificate the app itself is already loading over, on every device, with
-      # no trust step — and no CORS or mixed-content surface either.
-      #
-      # Requires a PathPrefix(`/catalyst/`) route on each themed app's IngressRoute
-      # pointing at the themepark Service. Identical for every app, since there
-      # is no hostname in it.
-      baseUrl: /catalyst
-
----
-# radarr. theme.park slug `radarr`; plugin targets </body>.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-radarr
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: radarr
-      theme: catalyst
-      baseUrl: /catalyst
-
----
-# prowlarr. theme.park slug `prowlarr`; plugin targets </body>.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-prowlarr
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: prowlarr
-      theme: catalyst
-      baseUrl: /catalyst
-
----
-# sabnzbd. theme.park slug `sabnzbd`; plugin targets </head>.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-sabnzbd
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: sabnzbd
-      theme: catalyst
-      baseUrl: /catalyst
-
----
-# tautulli. theme.park slug `tautulli`; plugin targets </head>.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-tautulli
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: tautulli
-      theme: catalyst
-      baseUrl: /catalyst
-
----
-# qbittorrent. theme.park slug `qbittorrent`; plugin targets </body>.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-qbittorrent
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: qbittorrent
-      theme: catalyst
-      baseUrl: /catalyst
-
----
-# jellyfin. theme.park slug `jellyfin`; plugin targets </body>.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-jellyfin
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: jellyfin
-      theme: catalyst
-      baseUrl: /catalyst
-
----
-# plex. theme.park slug `plex`; plugin targets </head>.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-plex
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: plex
-      theme: catalyst
-      baseUrl: /catalyst
-
----
-# seerr. theme.park slug is `overseerr`, NOT the deployment name — the slug
-# selects the upstream base stylesheet, and a wrong one 404s silently.
-# Plugin targets </head>.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: theme-seerr
-  namespace: traefik
-spec:
-  plugin:
-    themepark:
-      app: overseerr
-      theme: catalyst
-      baseUrl: /catalyst
-
----
-# The cross-app nav bar. ONE middleware, shared by every themed app — unlike the
-# theme middlewares above it carries nothing app-specific, because the script
-# discovers where it is from location.hostname and discovers where it can go
-# from catalyst-nav.json (built by the discovery sidecar from the cluster's own
-# gethomepage.dev annotations). No app is named anywhere in this file.
+# Both URLs are ROOT-RELATIVE, served from the app's own origin via its
+# PathPrefix(`/catalyst/`) route. Beyond avoiding cross-origin certificate
+# trust, that is what makes qBittorrent work: it ships `script-src 'self'`,
+# which a same-origin script satisfies with no CSP rewriting at all.
 #
-# ANCHORED ON THE OPENING <head> TAG, and that choice is load-bearing.
-#
-# The themepark plugin rewrites </body> for servarr-family apps and </head> for
-# the rest. If this middleware targets either of those it competes with the
-# theme plugin for the same token on the same response, and only one injection
-# survives — which is exactly what happened: Plex got both tags (theme on
-# </head>, nav on </body>) while Jellyfin got only the theme, because for
-# Jellyfin both plugins wanted </body>.
-#
-# The opening <head> is touched by neither plugin and appears exactly once in
-# every app checked (sonarr, prowlarr, jellyfin, plex). A deferred script in
-# <head> is also the canonical placement: it downloads in parallel and runs
-# after the document is parsed.
-#
-# The src is ROOT-RELATIVE, so it loads from the app's own origin via that app's
-# PathPrefix(`/catalyst/`) route. That matters beyond certificates here:
-# qBittorrent ships a `script-src 'self'` CSP, and a same-origin script
-# satisfies it with no CSP rewriting at all.
+# Adding an app: copy a block, change the two slugs. Nothing else.
+
+---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: catalyst-nav
+  name: catalyst-jellyfin
   namespace: traefik
 spec:
   plugin:
     rewriteBody:
       lastModified: true
       # Gate before buffering: only GET + text/html is ever touched, so video,
-      # API traffic and websocket upgrades pass through on the original writer.
+      # API traffic and websocket upgrades pass straight through untouched.
       monitor:
         types:
           - text/html
@@ -238,3 +45,190 @@ spec:
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/jellyfin/catalyst.css"></body>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-plex
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass straight through untouched.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/plex/catalyst.css"></head>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-prowlarr
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass straight through untouched.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/prowlarr/catalyst.css"></body>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-qbittorrent
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass straight through untouched.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/qbittorrent/catalyst.css"></body>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-radarr
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass straight through untouched.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/radarr/catalyst.css"></body>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-sabnzbd
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass straight through untouched.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sabnzbd/catalyst.css"></head>'
+
+---
+# NOTE: theme.park slug is `overseerr`, not the deployment name.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-seerr
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass straight through untouched.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/overseerr/catalyst.css"></head>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-sonarr
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass straight through untouched.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sonarr/catalyst.css"></body>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-tautulli
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass straight through untouched.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/tautulli/catalyst.css"></head>'
