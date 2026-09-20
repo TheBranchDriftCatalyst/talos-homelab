@@ -36,9 +36,21 @@
 # answers `Content-Encoding: br` and the plugin passes the body through
 # untouched. Silent: no error, no log, just an unthemed app.
 #
-# Pinning to gzip rather than the `identity` the analytics chain uses keeps
-# responses compressed, so there is no bandwidth cost to this — it only takes
-# brotli off the table for these hosts.
+# `identity`, not `gzip`. The plugin advertises gzip support and it does work
+# for some backends (Plex), but Jellyfin answers gzip + chunked with no
+# Content-Length and the plugin then bails before rewriting — NEITHER injection
+# fires, silently. Rather than depend on which backend happens to be
+# decodable, ask for no compression on the documents we rewrite.
+#
+# This is the same conclusion infrastructure/base/analytics reached with its
+# `strip-accept-encoding` middleware, for the same reason.
+#
+# COST, stated plainly: this applies to the whole route, so an app's JS/CSS
+# bundles also transfer uncompressed — roughly 4-6x on a first load (Jellyfin's
+# web bundle is the worst case at ~2MB -> ~10MB). Those assets are
+# browser-cached afterwards, and this is a LAN. If that first load ever
+# matters, the fix is a higher-priority route covering just the HTML document
+# paths so only those drop compression.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -47,7 +59,7 @@ metadata:
 spec:
   headers:
     customRequestHeaders:
-      Accept-Encoding: 'gzip'
+      Accept-Encoding: 'identity'
 
 ---
 apiVersion: traefik.io/v1alpha1
