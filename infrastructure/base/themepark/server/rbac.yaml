@@ -1,0 +1,37 @@
+---
+# Read-only access to IngressRoutes cluster-wide, for the nav-discovery sidecar.
+#
+# The nav bar is DERIVED, never hardcoded: it is built from the gethomepage.dev/*
+# annotations already present on 65 IngressRoutes (and maintained by the Kyverno
+# `homepage-annotation-derivation` policy). Adding an app to the cluster adds it
+# to the nav; removing it removes it. There is no list to maintain.
+#
+# get/list only. This never writes to the API — it writes a JSON file into the
+# pod's own emptyDir.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: themepark-nav
+  namespace: themepark
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: themepark-nav-reader
+rules:
+  - apiGroups: ['traefik.io']
+    resources: ['ingressroutes']
+    verbs: ['get', 'list']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: themepark-nav-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: themepark-nav-reader
+subjects:
+  - kind: ServiceAccount
+    name: themepark-nav
+    namespace: themepark

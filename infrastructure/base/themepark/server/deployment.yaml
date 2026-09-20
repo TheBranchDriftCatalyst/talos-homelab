@@ -31,6 +31,7 @@ spec:
         app.kubernetes.io/name: themepark
         app: themepark
     spec:
+      serviceAccountName: themepark-nav
       containers:
         - name: themepark
           # Pinned by digest, not :latest. There are no semver tags on this repo,
@@ -89,6 +90,12 @@ spec:
             # it, so /config MUST be writable. Contents are fully regenerated on
             # every boot -- there is nothing to persist, hence emptyDir and not a
             # PVC. This is also why readOnlyRootFilesystem is not set.
+            # Same subPath reasoning as the CSS above: drop one file into the
+            # image's resources/ without clobbering what is already there.
+            - name: catalyst-nav
+              mountPath: /app/themepark/resources/catalyst-nav.js
+              subPath: catalyst-nav.js
+              readOnly: true
             - name: config
               mountPath: /config
           resources:
@@ -115,10 +122,57 @@ spec:
               port: http
             initialDelaySeconds: 30
             periodSeconds: 30
+        # Nav discovery. Writes catalyst-nav.json into the SAME emptyDir nginx
+        # serves from, so the manifest is published at
+        # /catalyst/resources/catalyst-nav.json with no extra nginx config and
+        # no pod restart when apps come or go.
+        #
+        # The nav is DERIVED, never hardcoded: it is built from the
+        # gethomepage.dev/* annotations already on the cluster's IngressRoutes.
+        # Theme a new app and it joins the nav on the next refresh.
+        - name: nav-discovery
+          image: alpine/k8s:1.34.9
+          imagePullPolicy: IfNotPresent
+          command: ['/bin/sh', '/nav/discover.sh']
+          env:
+            - name: NAV_REFRESH_SECONDS
+              value: '300'
+            # 'themed' (default) lists only apps carrying the Catalyst theme, so
+            # every destination looks like the one you came from. 'all' would
+            # advertise every gethomepage.dev-enabled route.
+            - name: NAV_SCOPE
+              value: themed
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ['ALL']
+          volumeMounts:
+            - name: nav-discovery
+              mountPath: /nav
+              readOnly: true
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
       volumes:
         - name: catalyst-theme
           configMap:
             name: themepark-catalyst-css
+        - name: catalyst-nav
+          configMap:
+            name: themepark-catalyst-nav
+        - name: nav-discovery
+          configMap:
+            name: themepark-nav-discovery
+            defaultMode: 0755
+        # Shared between nginx and the discovery sidecar: nginx serves from it,
+        # the sidecar writes the nav manifest into it.
         - name: config
           emptyDir: {}
 ---

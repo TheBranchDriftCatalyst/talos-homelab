@@ -13,6 +13,7 @@ namespace: themepark
 
 resources:
   - namespace.yaml
+  - rbac.yaml
   - deployment.yaml
   - ingressroute.yaml
   - cilium-network-policy.yaml
@@ -26,3 +27,15 @@ configMapGenerator:
   - name: themepark-catalyst-css
     files:
       - css/catalyst.css
+  # The nav script. Lands in resources/, which the image's init copies into the
+  # served tree — a new top-level directory would NOT be copied, so it has to
+  # live under css/ or resources/.
+  - name: themepark-catalyst-nav
+    files:
+      - resources/catalyst-nav.js
+  # Discovery sidecar. Builds the nav manifest from the cluster's own
+  # gethomepage.dev annotations, so no app is ever named in this repo.
+  - name: themepark-nav-discovery
+    files:
+      - nav/discover.sh
+      - nav/build_nav.py

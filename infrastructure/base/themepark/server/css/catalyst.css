@@ -793,3 +793,208 @@ td.error,       .error       { color: var(--neon-red) !important; }
   box-shadow: var(--shadow-neon-md);
   transform: translateY(-2px);
 }
+
+
+/* ============================================================================
+ * CATALYST — 60 nav
+ * ----------------------------------------------------------------------------
+ * Styles for the cross-app nav bar built by resources/catalyst-nav.js.
+ *
+ * The markup does not exist until that script runs, so nothing here matches on
+ * an app without it — this layer is inert by default and costs nothing.
+ *
+ * Everything is scoped under .catalyst-nav. These stylesheets are injected into
+ * nine different applications with nine different CSS frameworks, so a loose
+ * selector here would wreck somebody's layout. No bare element selectors, no
+ * utility class names that an app might also use.
+ * ========================================================================== */
+
+.catalyst-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Above the app chrome, but BELOW the scanline overlay (9999) so the CRT
+   * mask still reads across it. */
+  z-index: 9998;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 38px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  font-family: var(--cat-font-body, ui-sans-serif, system-ui, sans-serif);
+  font-size: 13px;
+  background: rgba(10, 10, 15, 0.82);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border-bottom: 1px solid rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.18);
+  box-shadow: 0 2px 18px -6px rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.35);
+  /* Auto-hide: translateY is GPU-composited, so the slide never forces layout
+   * in the host app. Only this bar moves; the app below is untouched. */
+  transform: translateY(0);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.catalyst-nav--hidden {
+  transform: translateY(-100%);
+}
+
+.catalyst-nav__brand {
+  font-family: var(--cat-font-display, ui-sans-serif, sans-serif);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-right: 10px;
+  padding-right: 12px;
+  border-right: 1px solid rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.2);
+  background: var(--cat-grad, linear-gradient(135deg, #00fcd6, #c026d3, #00fcd6));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  white-space: nowrap;
+}
+
+/* -- Groups --------------------------------------------------------------- */
+.catalyst-nav__group {
+  position: relative;
+}
+
+.catalyst-nav__label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 38px;
+  padding: 0 11px;
+  color: var(--text-muted, #a1a1aa);
+  cursor: default;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+
+.catalyst-nav__group:hover > .catalyst-nav__label,
+.catalyst-nav__group--active > .catalyst-nav__label {
+  color: var(--neon-cyan, #00fcd6);
+  border-bottom-color: var(--neon-cyan, #00fcd6);
+}
+
+.catalyst-nav__caret {
+  font-size: 9px;
+  opacity: 0.65;
+}
+
+/* -- Dropdown -------------------------------------------------------------
+ * Opened on :hover AND on .is-open, which the script toggles for keyboard and
+ * touch. visibility (not display) so the fade can animate, and so the panel
+ * stays focusable for tab navigation. */
+.catalyst-nav__menu {
+  position: absolute;
+  top: 38px;
+  left: 0;
+  min-width: 190px;
+  margin: 0;
+  padding: 5px;
+  list-style: none;
+  background: rgba(16, 16, 23, 0.97);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.2);
+  border-radius: 7px;
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.6),
+              0 0 26px rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.12);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-5px);
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
+}
+
+.catalyst-nav__group:hover > .catalyst-nav__menu,
+.catalyst-nav__group.is-open > .catalyst-nav__menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.catalyst-nav__link {
+  display: block;
+  padding: 7px 11px;
+  border-radius: 5px;
+  color: var(--text, #e4e4e7);
+  text-decoration: none;
+  white-space: nowrap;
+  /* The theme's global anchor glow would smear these at 13px. */
+  text-shadow: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.catalyst-nav__link:hover {
+  background: rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.12);
+  color: var(--neon-cyan, #00fcd6);
+  text-shadow: none;
+}
+
+/* The app you are currently looking at. */
+.catalyst-nav__link--current {
+  color: var(--neon-cyan, #00fcd6);
+  background: rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.09);
+  box-shadow: inset 2px 0 0 var(--neon-cyan, #00fcd6);
+}
+
+/* Destinations that do not carry the theme yet — dimmed so it is obvious you
+ * are about to land somewhere that looks different. */
+.catalyst-nav__link--unthemed {
+  opacity: 0.62;
+}
+
+.catalyst-nav__spacer {
+  flex: 1;
+}
+
+.catalyst-nav__here {
+  font-family: var(--cat-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #a1a1aa);
+  white-space: nowrap;
+}
+
+@media (max-width: 820px) {
+  .catalyst-nav__here { display: none; }
+  .catalyst-nav__label { padding: 0 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .catalyst-nav,
+  .catalyst-nav__menu { transition: none; }
+}
+
+/* -- Flat row -------------------------------------------------------------
+ * Used when discovery returns a single group, where one lone dropdown would be
+ * worse than just showing the links. The script picks this from the data, so it
+ * switches to grouped dropdowns on its own once a second group appears. */
+.catalyst-nav__link--flat {
+  padding: 0 10px;
+  height: 38px;
+  line-height: 38px;
+  border-radius: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted, #a1a1aa);
+}
+
+.catalyst-nav__link--flat:hover {
+  background: rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.08);
+  border-bottom-color: rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.5);
+}
+
+.catalyst-nav__link--flat.catalyst-nav__link--current {
+  color: var(--neon-cyan, #00fcd6);
+  background: rgba(var(--neon-cyan-rgb, 0, 252, 214), 0.1);
+  border-bottom-color: var(--neon-cyan, #00fcd6);
+  box-shadow: none;
+}
+
+@media (max-width: 1100px) {
+  .catalyst-nav__link--flat { padding: 0 7px; font-size: 12px; }
+}

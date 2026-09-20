@@ -193,3 +193,37 @@ spec:
       app: overseerr
       theme: catalyst
       baseUrl: /catalyst
+
+---
+# The cross-app nav bar. ONE middleware, shared by every themed app — unlike the
+# theme middlewares above it carries nothing app-specific, because the script
+# discovers where it is from location.hostname and discovers where it can go
+# from catalyst-nav.json (built by the discovery sidecar from the cluster's own
+# gethomepage.dev annotations). No app is named anywhere in this file.
+#
+# Injected before </body> for every app, including the ones whose THEME goes in
+# </head> — a deferred script belongs at the end of the body regardless.
+#
+# The src is ROOT-RELATIVE, so it loads from the app's own origin via that app's
+# PathPrefix(`/catalyst/`) route. That matters beyond certificates here:
+# qBittorrent ships a `script-src 'self'` CSP, and a same-origin script
+# satisfies it with no CSP rewriting at all.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-nav
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      # Gate before buffering: only GET + text/html is ever touched, so video,
+      # API traffic and websocket upgrades pass through on the original writer.
+      monitor:
+        types:
+          - text/html
+        methods:
+          - GET
+      rewrites:
+        - regex: '</body>'
+          replacement: '<script defer src="/catalyst/resources/catalyst-nav.js"></script></body>'
