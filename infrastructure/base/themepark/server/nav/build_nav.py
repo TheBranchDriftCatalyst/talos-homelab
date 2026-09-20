@@ -44,9 +44,19 @@ def main() -> int:
         spec = item.get("spec", {})
         routes = spec.get("routes", []) or []
 
-        # Themed iff some route pulls in a theme-* middleware.
+        # Themed iff some route pulls in a per-app catalyst-* middleware.
+        #
+        # SHARED is excluded deliberately: catalyst-accept-encoding is a helper
+        # attached alongside the real one, and counting it would make the test
+        # tautological. The per-app middleware is the actual signal.
+        #
+        # This check is why the nav silently emptied once when the middlewares
+        # were renamed from theme-* to catalyst-*: the prefix here and the names
+        # in middlewares.yaml have to move together.
+        SHARED = {"catalyst-accept-encoding"}
         themed = any(
-            (mw.get("name") or "").startswith("theme-")
+            (mw.get("name") or "").startswith("catalyst-")
+            and (mw.get("name") not in SHARED)
             for r in routes
             for mw in (r.get("middlewares") or [])
         )
