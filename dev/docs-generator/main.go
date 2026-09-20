@@ -97,6 +97,14 @@ func main() {
 		os.Exit(reportStale(ctx))
 	case "claims":
 		os.Exit(reportClaims(ctx, *propose, *all))
+	case "extract":
+		// os.Args[2:] is what fs parsed, so the document is Arg(0) — the subcommand was
+		// already consumed at os.Args[1] and never reaches the flag set.
+		if fs.NArg() < 1 {
+			fmt.Fprintln(os.Stderr, "extract needs a document path")
+			os.Exit(2)
+		}
+		os.Exit(reportExtract(ctx, fs.Arg(0), *all))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

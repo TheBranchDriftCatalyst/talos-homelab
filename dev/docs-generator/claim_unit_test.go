@@ -3,6 +3,7 @@ package main
 import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"strings"
 )
 
 // Specs for the claim engine.
@@ -220,5 +221,56 @@ var _ = Describe("knowledge projection", Label("unit"), func() {
 		Expect(out).To(ContainSubstring("No claims are recorded"))
 		Expect(out).NotTo(ContainSubstring("| --- |"),
 			"an empty table reads as 'nothing is known', which is indistinguishable from a broken scope filter")
+	})
+})
+
+var _ = Describe("claim extraction from prose", Label("unit"), func() {
+	It("ranks a DEFINITION site above a rarer incidental mention", func() {
+		// The first real extraction was mis-filed: ranking purely by occurrence count sent a
+		// claim about `customRules` to a dashboard JSON where it appears once, instead of the
+		// helmrelease where it is defined and appears several times. Rarity is not relevance —
+		// the canonical site usually has MORE occurrences.
+		text := "a: 1\nb: mentions customRules once\n"
+		_, def := definitionSite(text, "customRules")
+		Expect(def).To(BeFalse(), "a mention is not a definition")
+
+		text2 := "intro customRules here\ncustomRules:\n  - rule\n"
+		off, def2 := definitionSite(text2, "customRules")
+		Expect(def2).To(BeTrue())
+		Expect(strings.Count(text2[:off], "\n")).To(Equal(1), "must point at the KEY line, not the earlier mention")
+	})
+
+	It("treats a list-dashed key as a definition too", func() {
+		_, def := definitionSite("  - thing: value\n", "thing")
+		Expect(def).To(BeTrue())
+	})
+
+	It("requires a named subject — an assertion with no anchor cannot be filed", func() {
+		// Prose that asserts something but names nothing has no destination. Emitting it would
+		// convert a documentation problem into a filing problem, which is the failure this
+		// command exists to avoid.
+		d := MakeDoc("x.md", "---\ntype: reference\nstatus: current\ncovers:\n  - repo\n---\n\n# H\n\nThis must never happen because it breaks things.\n")
+		Expect(ExtractFromDoc(&Ctx{Cfg: &Config{}, Root: "."}, d, "nowhere")).To(BeEmpty())
+	})
+})
+
+var _ = Describe("destination ranking", Label("unit"), func() {
+	It("puts a definition site above a rarer mention — the actual mis-filing bug", func() {
+		// Guards the BEHAVIOUR, not the helper. The previous spec tested definitionSite() only,
+		// so removing the ranking left the suite green while reintroducing the bug that sent a
+		// `customRules` claim to a dashboard JSON instead of the helmrelease.
+		hits := []DestHit{
+			{Token: "customRules", File: "dashboards/falco-ops.json", Count: 1, Def: false},
+			{Token: "customRules", File: "helmrelease.yaml", Count: 4, Def: true},
+		}
+		rankHits(hits)
+		Expect(hits[0].File).To(Equal("helmrelease.yaml"),
+			"the definition must outrank a rarer incidental mention")
+	})
+
+	It("falls back to rarity when neither hit is a definition", func() {
+		hits := []DestHit{{File: "a", Count: 9}, {File: "b", Count: 2}}
+		rankHits(hits)
+		Expect(hits[0].File).To(Equal("b"))
 	})
 })
