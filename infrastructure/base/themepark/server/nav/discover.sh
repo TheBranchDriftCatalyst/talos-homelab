@@ -13,7 +13,14 @@
 # Writes into the SAME emptyDir nginx serves from, so the file is published at
 # /catalyst/resources/catalyst-nav.json with no extra nginx config and no pod
 # restart when the cluster changes.
-set -eu
+# NOT `set -e`. This is a supervision loop sharing a pod with the thing that
+# actually serves the theme: any non-zero command — a failed kubectl during an
+# API blip, a failed write — would exit the script, exit the container, and
+# restart the WHOLE pod, taking nginx and the theme down with it. That is
+# exactly how a permission error on the manifest write produced five restarts
+# and a stretch of unthemed apps. Failures here are logged and retried; the
+# previous manifest keeps being served.
+set -u
 
 OUT=/config/www/resources/catalyst-nav.json
 INTERVAL="${NAV_REFRESH_SECONDS:-300}"

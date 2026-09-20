@@ -21,7 +21,16 @@ metadata:
     app.kubernetes.io/name: themepark
     app.kubernetes.io/part-of: themepark
 spec:
-  replicas: 1
+  # Two replicas, because this serves a SUBRESOURCE. When it is briefly
+  # unavailable the apps do not fail loudly — they just render unthemed, which
+  # reads as "the theme broke" rather than "a pod is restarting". A single
+  # replica means every rollout is a visible outage.
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: themepark
