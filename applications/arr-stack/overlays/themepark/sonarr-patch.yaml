@@ -1,4 +1,16 @@
 ---
+# Sonarr is the canary for Traefik-side theme injection (TALOS-1xcd).
+#
+# DOCKER_MODS is REMOVED here: the theme now arrives as a <link> that Traefik
+# injects on the way out (middleware `theme-sonarr@traefik`), not by rewriting
+# HTML inside the container at startup. Leaving the mod on as well would stack
+# two themes — the mod's dracula links then the injected catalyst one — which
+# still renders correctly (catalyst loads last and wins) but makes it impossible
+# to tell whether injection is actually working.
+#
+# envFrom stays: arr-common-env carries PUID/PGID/TZ. themepark-env (TP_THEME)
+# is inert without the mod and goes away with the rest of the overlay when the
+# other apps migrate.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -8,9 +20,6 @@ spec:
     spec:
       containers:
         - name: sonarr
-          env:
-            - name: DOCKER_MODS
-              value: 'ghcr.io/themepark-dev/theme.park:sonarr'
           envFrom:
             - configMapRef:
                 name: arr-common-env
