@@ -143,6 +143,14 @@ spec:
             - name: NAV_SCOPE
               value: themed
           securityContext:
+            # Must match PUID/PGID above. The s6 init chowns /config to abc
+            # (1000:1000), and this container drops ALL capabilities — which
+            # removes CAP_DAC_OVERRIDE, the thing that normally lets root ignore
+            # file permissions. So running as root here gets "Permission denied"
+            # writing the manifest. Owning the uid is the fix; re-adding
+            # DAC_OVERRIDE would also work and is strictly worse.
+            runAsUser: 1000
+            runAsGroup: 1000
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
             capabilities:
