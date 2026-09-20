@@ -142,6 +142,11 @@ func LoadClaimSources(root string, cfg *Config) []SourceFile {
 		if rel == "" || matchAny(rel, cfg.Exclude) {
 			continue
 		}
+		// Test files carry claim FIXTURES, not claims. Including them let x1/x3 from
+		// claim_unit_test.go show up in the live inventory.
+		if strings.HasSuffix(rel, "_test.go") || strings.Contains(rel, "/testdata/") {
+			continue
+		}
 		ok := false
 		for _, e := range claimSourceExts {
 			if strings.HasSuffix(rel, e) {

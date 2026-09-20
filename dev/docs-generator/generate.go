@@ -70,6 +70,7 @@ type Artifact struct {
 var renderers = map[string]func(*Ctx, ArtifactSpec) string{
 	"component-inventory": renderComponentInventory,
 	"nav":                 renderNav,
+	"knowledge":           renderKnowledge,
 }
 
 func rendererNames() []string {

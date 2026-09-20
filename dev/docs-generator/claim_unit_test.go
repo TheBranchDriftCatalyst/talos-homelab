@@ -148,3 +148,77 @@ var _ = Describe("claim decay", Label("unit"), func() {
 		Expect(dec).To(BeFalse())
 	})
 })
+
+var _ = Describe("claim examples vs claims", Label("unit"), func() {
+	It("ignores a claim inside a backtick span, because that is a demonstration", func() {
+		// This file's own doc comment demonstrates the grammar. Without the guard the parser
+		// registered the DEMONSTRATION as a live claim: the documentation of the format,
+		// parsed by the format. Test fixtures did the same from _test.go.
+		cs := ParseClaims("doc.go", "// see `# claim(verified@2026-01-01) demo: a shown example` for the shape\n", "slash")
+		Expect(cs).To(BeEmpty())
+	})
+
+	It("still parses a real claim on a line that also contains backticks elsewhere", func() {
+		// The guard must key on whether the CLAIM is inside a span, not on the line having
+		// backticks at all — otherwise any claim quoting a command would vanish.
+		cs := ParseClaims("a.yaml", "# claim(asserted) real: the value is set in `helmrelease.yaml`\n", "hash")
+		Expect(cs).To(HaveLen(1))
+		Expect(cs[0].ID).To(Equal("real"))
+	})
+})
+
+var _ = Describe("claim scope rule", Label("unit"), func() {
+	ctx := &Ctx{Cfg: &Config{}}
+
+	It("flags a verified claim with no scope — it can neither decay nor project", func() {
+		f := ruleClaimScope(ctx, []Claim{{ID: "a", Mode: Verified, J: "x", F: "y"}})
+		Expect(f).To(HaveLen(1))
+		Expect(f[0].Rule).To(Equal("claim-scope"))
+	})
+
+	It("exempts asserted, which legitimately concerns no particular file", func() {
+		Expect(ruleClaimScope(ctx, []Claim{{ID: "a", Mode: Asserted}})).To(BeEmpty())
+	})
+})
+
+var _ = Describe("knowledge projection", Label("unit"), func() {
+	claims := []Claim{
+		{ID: "in", Says: "inside", Mode: Verified, At: "2026-09-20", F: "x",
+			Scope: []string{"path:infrastructure/base/security/crowdsec/helmrelease.yaml"}},
+		{ID: "out", Says: "elsewhere", Mode: Verified, F: "x",
+			Scope: []string{"path:infrastructure/base/traefik"}},
+		{ID: "none", Says: "unscoped", Mode: Verified, F: "x"},
+	}
+
+	It("selects only claims whose scope is under the artifact root", func() {
+		got := claimsUnder(claims, "infrastructure/base/security/crowdsec", nil)
+		Expect(got).To(HaveLen(1))
+		Expect(got[0].ID).To(Equal("in"))
+	})
+
+	It("excludes unscoped claims rather than showing them everywhere", func() {
+		// A scopeless claim can never decay. Projecting it into every document would spread a
+		// permanently fresh-looking assertion across the tree, which is the opposite of what
+		// the modality system is for.
+		got := claimsUnder(claims, "", nil)
+		for _, c := range got {
+			Expect(c.ID).NotTo(Equal("none"))
+		}
+	})
+
+	It("does not treat a sibling directory with a shared prefix as inside", func() {
+		// `crowdsec-extra` must not match root `crowdsec`; prefix matching has to be
+		// path-segment aware or scoping silently over-selects.
+		got := claimsUnder([]Claim{{ID: "sib", Mode: Verified, F: "x",
+			Scope: []string{"path:infrastructure/base/security/crowdsec-extra/x.yaml"}}},
+			"infrastructure/base/security/crowdsec", nil)
+		Expect(got).To(BeEmpty())
+	})
+
+	It("says so when a region has no claims instead of rendering an empty table", func() {
+		out := renderKnowledge(&Ctx{Cfg: &Config{}}, ArtifactSpec{Root: "nowhere"})
+		Expect(out).To(ContainSubstring("No claims are recorded"))
+		Expect(out).NotTo(ContainSubstring("| --- |"),
+			"an empty table reads as 'nothing is known', which is indistinguishable from a broken scope filter")
+	})
+})

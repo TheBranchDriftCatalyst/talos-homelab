@@ -156,6 +156,19 @@ func ParseClaims(file, text, carrier string) []Claim {
 		if m == nil {
 			continue
 		}
+		// A claim inside a backtick span is an EXAMPLE, not a claim.
+		//
+		// Found the moment the scope rule went live: this file's own doc comment demonstrates
+		// the grammar, and the parser dutifully registered the demonstration as a real claim
+		// with no scope. The documentation OF the format was parsed BY the format. Test
+		// fixtures did the same thing from _test.go.
+		//
+		// Backticks are the right discriminator rather than a path exclusion list, because
+		// they already mean "a literal being shown" in both markdown and godoc, and a list of
+		// excluded files is one more hand-maintained thing to forget.
+		if inBacktickSpan(lines[i], strings.Index(lines[i], "claim(")) {
+			continue
+		}
 		c := Claim{
 			ID: m[3], Mode: Modality(m[1]), At: m[2], Says: m[4],
 			File: file, Line: i + 1, Carrier: carrier,
@@ -306,4 +319,12 @@ func CollectClaims(ctx *Ctx) []Claim {
 		out = append(out, ParseClaims(f.Path, f.Text, carrier)...)
 	}
 	return out
+}
+
+// inBacktickSpan reports whether position pos falls inside a `...` span on the line.
+func inBacktickSpan(line string, pos int) bool {
+	if pos < 0 {
+		return false
+	}
+	return strings.Count(line[:pos], "`")%2 == 1
 }

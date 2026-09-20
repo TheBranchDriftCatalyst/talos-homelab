@@ -157,6 +157,36 @@ func ruleClaimSuperseded(ctx *Ctx, claims []Claim) []Finding {
 	return out
 }
 
+// ruleClaimScope: a claim above `asserted` must say what code it is about.
+//
+// FOUND BY USING THE THING. The knowledge renderer projects a claim into the document whose root
+// contains its scope, and a superseded claim written without one simply never appeared — the
+// "do not retry this" record, invisible. Then the same missing field turned out to disable
+// decay too, since Decayed() has nothing to compare git dates against and returns false
+// forever.
+//
+// One omitted field, two silent failures, in opposite subsystems: the claim is permanently
+// fresh AND permanently unpublished. Neither surfaces as an error, which is exactly the shape
+// this engine exists to make noisy.
+//
+// `asserted` stays exempt for the same reason it is exempt from the falsifier rule: design
+// rationale legitimately concerns no particular file, and forcing a scope would produce fake
+// ones.
+func ruleClaimScope(ctx *Ctx, claims []Claim) []Finding {
+	var out []Finding
+	for _, c := range claims {
+		if c.Mode == Asserted || len(c.Scope) > 0 {
+			continue
+		}
+		out = append(out, Finding{
+			Rule: "claim-scope", Path: c.Ref(),
+			Message: fmt.Sprintf("claim %q is %s with no scope — it can never decay and will "+
+				"never be projected into any document", c.ID, c.Mode),
+		})
+	}
+	return out
+}
+
 // RunClaimRules evaluates every rule and returns findings in a stable order.
 func RunClaimRules(ctx *Ctx, claims []Claim) []Finding {
 	var out []Finding
@@ -167,6 +197,7 @@ func RunClaimRules(ctx *Ctx, claims []Claim) []Finding {
 		ruleClaimDecayed,
 		ruleClaimContradiction,
 		ruleClaimSuperseded,
+		ruleClaimScope,
 	} {
 		out = append(out, r(ctx, claims)...)
 	}

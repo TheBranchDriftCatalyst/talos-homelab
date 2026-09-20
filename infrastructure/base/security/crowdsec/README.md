@@ -187,3 +187,14 @@ to rotate an observer.
 - TALOS-y260 — operator SSO lockout; the static plus dynamic allowlist pair
 - TALOS-k5vm — sign the crowdsec PKI with the shared homelab CA so the LAPI cert is verifiable
 - TALOS-cscw — least-privilege and fail-closed hardening pass
+
+## What is known here
+
+<!-- docs:gen:knowledge -->
+
+| What is known                                                                                                               | Basis               | What would falsify it                                                                                                                               | Source                                                                            |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| **traefik-gc-null** — the traefik bouncer row has last_pull NULL, so the GC flush's LastPullLTE comparison never matches it | verified 2026-09-20 | last_pull becomes non-NULL, or upstream starts GC-ing never-pulled rows by created_at -- the index bouncer_last_pull_created_at already covers that | [helmrelease.yaml:479](helmrelease.yaml#L479)                                     |
+| **cowrie-agents-gc-uses-api-key** — agents_autodelete reads api_key, so login_password is the ignored key                   | superseded          | n/a                                                                                                                                                 | [README.md](../../../../infrastructure/base/security/honeypots/honeyfs/README.md) |
+
+<!-- /docs:gen:knowledge -->

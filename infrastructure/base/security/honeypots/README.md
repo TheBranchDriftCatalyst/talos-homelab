@@ -202,3 +202,14 @@ ConfigMaps without adding a checksum annotation to each pod template.
 - TALOS-cscw — hardening pass: PSA, socket bounds, health listener, digest pinning
 - TALOS-3qe4 — cowrie traceback storm traced to backend health checks
 - TALOS-ybtm — restore cowrie's state layout so captures and the backup both work
+
+## What is known here
+
+<!-- docs:gen:knowledge -->
+
+| What is known                                                                                                                       | Basis    | What would falsify it                                                                   | Source                         |
+| ----------------------------------------------------------------------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------- | ------------------------------ |
+| **honeyfs-attaches-only-to-existing-nodes** — init_honeyfs sets A_REALFILE on nodes already in fs.pickle and cannot create new ones | verified | a file placed in honeyfs at a path absent from the pickle becomes readable in a session | [README.md](honeyfs/README.md) |
+| **honeyfs-beats-zero-size** — file_contents checks A_REALFILE before the zero-size short-circuit, so honeyfs wins                   | verified | cowrie reorders file_contents to test A_SIZE first, or drops A_REALFILE                 | [README.md](honeyfs/README.md) |
+
+<!-- /docs:gen:knowledge -->

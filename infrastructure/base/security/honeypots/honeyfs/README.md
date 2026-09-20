@@ -27,6 +27,8 @@ claims:
     successor: cowrie-agents-gc-uses-login-password
     j: "cscli config show left AgentsGC.Api nil"
     f: n/a
+    scope:
+      - path:infrastructure/base/security/crowdsec/helmrelease.yaml
 ---
 
 # honeyfs — real contents for files the stock pickle leaves EMPTY
