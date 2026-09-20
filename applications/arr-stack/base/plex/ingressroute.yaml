@@ -20,8 +20,23 @@ spec:
   entryPoints:
     - web
   routes:
+    # Catalyst theme assets, served from this app's OWN origin so the stylesheet
+    # rides the same certificate the app already loads over. Cross-origin would
+    # require every client to trust the homelab CA, and a client that does not
+    # refuses the subresource SILENTLY. NO auth: a subresource carries no session
+    # and cannot follow a 302 to SSO. Serves static CSS only. TALOS-1xcd.
+    - match: Host(`plex.${CLUSTER_DOMAIN}`) && PathPrefix(`/catalyst/`)
+      kind: Rule
+      priority: 110
+      services:
+        - name: themepark
+          namespace: themepark
+          port: 80
     - match: Host(`plex.${CLUSTER_DOMAIN}`)
       kind: Rule
+      middlewares:
+        - name: theme-plex
+          namespace: traefik
       services:
         - name: plex
           port: 32400

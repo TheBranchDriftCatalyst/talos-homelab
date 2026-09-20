@@ -49,11 +49,25 @@ spec:
   routes:
     # Single route: EVERYTHING (incl. /api/v2) goes through Authentik forward-auth.
     # The old priority-100 /api bypass was removed (TALOS-lxz5.2 / 5.2.2).
+    # Catalyst theme assets, served from this app's OWN origin so the stylesheet
+    # rides the same certificate the app already loads over. Cross-origin would
+    # require every client to trust the homelab CA, and a client that does not
+    # refuses the subresource SILENTLY. NO auth: a subresource carries no session
+    # and cannot follow a 302 to SSO. Serves static CSS only. TALOS-1xcd.
+    - match: Host(`qbittorrent.talos00`) && PathPrefix(`/catalyst/`)
+      kind: Rule
+      priority: 110
+      services:
+        - name: themepark
+          namespace: themepark
+          port: 80
     - match: Host(`qbittorrent.talos00`)
       kind: Rule
       middlewares:
         - name: authentik
           namespace: authentik
+        - name: theme-qbittorrent
+          namespace: traefik
       services:
         - name: qbittorrent
           port: 8080

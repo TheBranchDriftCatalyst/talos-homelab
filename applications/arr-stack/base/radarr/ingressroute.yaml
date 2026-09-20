@@ -25,6 +25,18 @@ spec:
   entryPoints:
     - websecure
   routes:
+    # Catalyst theme assets, served from this app's OWN origin so the stylesheet
+    # rides the same certificate the app already loads over. Cross-origin would
+    # require every client to trust the homelab CA, and a client that does not
+    # refuses the subresource SILENTLY. NO auth: a subresource carries no session
+    # and cannot follow a 302 to SSO. Serves static CSS only. TALOS-1xcd.
+    - match: Host(`radarr.talos00`) && PathPrefix(`/catalyst/`)
+      kind: Rule
+      priority: 110
+      services:
+        - name: themepark
+          namespace: themepark
+          port: 80
     - match: Host(`radarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))
       kind: Rule
       priority: 100
@@ -36,6 +48,8 @@ spec:
       middlewares:
         - name: authentik
           namespace: authentik
+        - name: theme-radarr
+          namespace: traefik
       services:
         - name: radarr
           port: 7878

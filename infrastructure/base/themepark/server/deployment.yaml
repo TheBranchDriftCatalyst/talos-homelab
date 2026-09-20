@@ -54,15 +54,22 @@ spec:
               value: theme.${CLUSTER_DOMAIN}
             - name: TP_SCHEME
               value: https
-            # Serve the tree under /tp/ IN ADDITION to /. The init script seds
-            # the nginx conf, giving `location /tp/` plus the sub_filter that
-            # rewrites the generated stubs' ROOT-relative imports:
-            #     url("/css/  ->  url("/tp/css/
-            # That rewrite is the whole reason subfolder serving works — without
-            # it a stub served at /tp/ would @import /css/... from the APP's
+            # Serve the tree under /catalyst/ IN ADDITION to /. The init script
+            # seds the nginx conf, giving `location /catalyst/` plus the sub_filter
+            # that rewrites the generated stubs' ROOT-relative imports:
+            #     url("/css/  ->  url("/catalyst/css/
+            # That rewrite is the whole reason subfolder serving works — without it
+            # a stub served under the prefix would @import /css/... from the APP's
             # origin, where nothing answers.
+            #
+            # DO NOT shorten this to something like `tp`. The init script guards
+            # the rewrite with `grep -q "$TP_URLBASE"` against the nginx conf, and
+            # `tp` is a substring of `http2 on;` — so it concludes the rewrite has
+            # already happened and silently skips it, leaving the prefix at the
+            # default /themepark/ with no error anywhere. Any value that appears
+            # as a substring of the stock config is a silent no-op.
             - name: TP_URLBASE
-              value: tp
+              value: catalyst
           ports:
             - name: http
               containerPort: 80
