@@ -41,3 +41,58 @@ spec:
               so one node is all that matters): are k8s.ns.name AND container.name both
               resolving to real values? A 12-hex container ID in container.name is the broken
               state and is NOT null, so a null-check will pass over it.
+
+        # ---- cowrie parser blow-up (TALOS-0s46) -------------------------------------------
+        # cowrie#40597: the Earley shell parser grows superlinearly on nested $(...). Upstream
+        # measured a 3 KB command taking >1 minute to parse and one instance reaching ~118.9 GB
+        # before crashing. Fixed by PR #40611 (merged 2026-09-15) -- which is in NO RELEASE:
+        # the newest published image is sha-6f06998 from 2026-09-14, one day earlier, and that
+        # is the digest we run.
+        #
+        # We are NOT building a bespoke image for this. The 512Mi limit already bounds a
+        # blow-up to an OOMKill of one pod rather than a node-level memory event, upstream
+        # ships every 2-3 weeks, and a private image would add a build pipeline plus permanent
+        # upstream-tracking burden for a bug that has not yet fired. So: detect it instead, and
+        # bump the digest when the fix ships.
+        #
+        # This matters because the ~590-hits/week fingerprinting harness IS the pathological
+        # input class -- a ~3 KB command built almost entirely of nested $(...).
+        - alert: CowrieOOMKilled
+          # job="kube-state-metrics" is mandatory, not decoration: KSM is scraped twice on this
+          # cluster and the second job overwrites `namespace` with "monitoring", so an unpinned
+          # selector silently reports the wrong namespace on any lookback.
+          expr: |
+            (sum(increase(kube_pod_container_status_restarts_total{
+                   job="kube-state-metrics", namespace="honeypot", container="cowrie"}[1h])) or vector(0)) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cowrie restarted — check for a parser blow-up OOMKill (TALOS-0s46)"
+            description: >-
+              The cowrie container restarted. Baseline is ZERO: cowrie is not crash-prone and a
+              restart here is either a deliberate roll or a fault. If it is an OOMKill, the
+              first suspect is cowrie#40597 — a fingerprinting command built from nested $(...)
+              exhausting the 512Mi limit during parse.
+              CHECK: kubectl get pod -n honeypot -l app=cowrie -o jsonpath=
+              '{.items[*].status.containerStatuses[*].lastState.terminated.reason}'
+              — OOMKilled confirms it. Then find the command: the parse happens BEFORE
+              cowrie.command.input is logged, so the triggering input may never appear in Loki;
+              correlate on the session that was open at the restart timestamp instead.
+              If confirmed, bump the cowrie image to a build containing 861b840.
+        - alert: CowrieMemoryNearLimit
+          # Early warning: a parse blow-up climbs fast, but sustained growth toward the ceiling
+          # is also how we would notice a slow leak before it becomes a restart.
+          expr: |
+            max(container_memory_working_set_bytes{namespace="honeypot", container="cowrie"})
+              / max(kube_pod_container_resource_limits{
+                    job="kube-state-metrics", namespace="honeypot", container="cowrie", resource="memory"}) > 0.85
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cowrie memory >85% of its 512Mi limit for 15m"
+            description: >-
+              Steady state is ~300Mi (~59%). Sustained time above 85% means either a slow leak
+              or repeated expensive parses. See TALOS-0s46; this is the warning that precedes
+              CowrieOOMKilled rather than a duplicate of it.
