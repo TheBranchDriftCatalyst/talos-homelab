@@ -37,8 +37,16 @@ spec:
     - match: Host(`sonarr.talos00`)
       kind: Rule
       middlewares:
+        # Order matters: Traefik runs middlewares forward on the request and
+        # REVERSE on the response. authentik first means the theme is injected on
+        # the way OUT, and the theme plugin never sees an unauthenticated request
+        # (forward-auth's 302 to SSO short-circuits before reaching it).
+        # Deliberately NOT on the priority-100 /api + /feed route above — that
+        # exists so nzb360 / LunaSea / RSS clients bypass auth. TALOS-1xcd.
         - name: authentik
           namespace: authentik
+        - name: theme-sonarr
+          namespace: traefik
       services:
         - name: sonarr
           port: 8989
