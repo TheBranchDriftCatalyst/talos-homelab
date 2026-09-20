@@ -48,6 +48,15 @@ type Ctx struct {
 	// running it against fields nobody populated. Build always fills this in.
 	Facts FactSet
 
+	// ClaimSources is the NON-markdown corpus: yaml, go and python files, scanned for claims
+	// written as comments.
+	//
+	// Measured on one day of work here: ~1,016 lines of code comments and ~194 lines of YAML
+	// comments were added, against far fewer lines under docs/. Knowledge in this repo lives
+	// next to the thing that drifts. A claim engine that read only markdown would manage the
+	// minority of it, which is why this exists alongside Docs rather than Docs being widened.
+	ClaimSources []SourceFile
+
 	// tracked is the set of doc paths LoadDocs actually admitted, so that "does this component
 	// have a README" is answered from the SAME corpus the linter reads.
 	//
@@ -108,6 +117,53 @@ func TrackedMarkdown(root string, cfg *Config) []string {
 		out = append(out, line)
 	}
 	sort.Strings(out)
+	return out
+}
+
+// SourceFile is a non-markdown file scanned for claims written as comments.
+type SourceFile struct {
+	Path string
+	Text string
+}
+
+// claimSourceExts are the carriers worth scanning. Deliberately narrow: every extension added
+// here is a file every `docsgen claims` run must read, and the point is the comment-bearing
+// config and code where this repo's knowledge actually accumulates — not maximal coverage.
+var claimSourceExts = []string{".yaml", ".yml", ".go", ".py", ".sh"}
+
+// LoadClaimSources reads the tracked non-markdown corpus.
+//
+// Uses `git ls-files` for the same reason LoadDocs does: a raw filesystem walk here finds ~10
+// full repo copies under .claude/worktrees/ and would report every claim ten times.
+func LoadClaimSources(root string, cfg *Config) []SourceFile {
+	var out []SourceFile
+	for _, line := range strings.Split(git(root, "ls-files"), "\n") {
+		rel := strings.TrimSpace(line)
+		if rel == "" || matchAny(rel, cfg.Exclude) {
+			continue
+		}
+		ok := false
+		for _, e := range claimSourceExts {
+			if strings.HasSuffix(rel, e) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			continue // unreadable is not a claim problem; LoadDocs already warns for markdown
+		}
+		// Cheap prefilter: the vast majority of files carry no claim, and skipping them keeps
+		// a full-repo scan proportional to the claims rather than to the tree.
+		if !strings.Contains(string(b), "claim(") {
+			continue
+		}
+		out = append(out, SourceFile{Path: rel, Text: string(b)})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
 
@@ -192,14 +248,15 @@ func Build(root string, cfg *Config) *Ctx {
 		tracked[d.Path] = true
 	}
 	return &Ctx{
-		Root:       root,
-		Cfg:        cfg,
-		Docs:       docs,
-		tracked:    tracked,
-		Components: comps,
-		BySlug:     bySlug,
-		Dates:      LastCommitDates(root),
-		Facts:      FactsFor(cfg),
+		Root:         root,
+		Cfg:          cfg,
+		Docs:         docs,
+		ClaimSources: LoadClaimSources(root, cfg),
+		tracked:      tracked,
+		Components:   comps,
+		BySlug:       bySlug,
+		Dates:        LastCommitDates(root),
+		Facts:        FactsFor(cfg),
 	}
 }
 

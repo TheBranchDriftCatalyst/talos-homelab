@@ -61,6 +61,7 @@ func main() {
 	root := fs.String("root", "", "repo root")
 	confDir := fs.String("config", "", "directory holding config.yaml")
 	rule := fs.String("rule", "", "run a single rule")
+	propose := fs.Bool("propose", false, "claims: print assertion-shaped prose not yet recorded as a claim")
 	all := fs.Bool("all", false, "print every finding instead of the first 20 per rule")
 	_ = fs.Parse(os.Args[2:])
 
@@ -94,6 +95,8 @@ func main() {
 		os.Exit(reportFrontmatter(ctx))
 	case "stale":
 		os.Exit(reportStale(ctx))
+	case "claims":
+		os.Exit(reportClaims(ctx, *propose, *all))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

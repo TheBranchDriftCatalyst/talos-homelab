@@ -476,6 +476,13 @@ spec:
               # fails OPEN, so the blast radius of the gap is "no silent-drop at the honeypot",
               # never a lockout.
               #
+              # claim(verified@2026-09-20) traefik-gc-null: the traefik bouncer row has last_pull
+              # NULL, so the GC flush's LastPullLTE comparison never matches it
+              #   j: cscli bouncers list | awk '$1=="traefik" && $4==""'
+              #   f: last_pull becomes non-NULL, or upstream starts GC-ing never-pulled rows by
+              #      created_at -- the index bouncer_last_pull_created_at already covers that
+              #   scope: path:infrastructure/base/security/crowdsec/helmrelease.yaml
+              #
               # WHY traefik SURVIVES THIS, and why that is luck rather than design: the traefik
               # parent's last_pull is NULL, and LastPullLTE never matches NULL. That bouncer is
               # fail-closed cluster-wide ingress. Note the GC index is already

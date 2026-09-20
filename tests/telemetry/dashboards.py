@@ -143,6 +143,13 @@ EXPECTED_EMPTY = {
         "falcoctl polls upstream every 168h and logs only on a real publish -- no in-cluster "
         "actor produces this, so absence is the normal state, not a fault", "TALOS-slbn"),
 
+    # claim(enforced) breach-panels-not-allowlisted: the falco breach panels are deliberately
+    # absent from EXPECTED_EMPTY, so the live audit FAILS when they are empty
+    #   j: test_every_curated_dashboard_is_actually_discovered
+    #   f: someone re-adds an Empty() entry for a breach panel, or the canary stops firing and
+    #      the audit is then made to tolerate it
+    #   scope: path:tests/telemetry/dashboards.py
+
     # Falco honeypot-breach tripwires.
     #
     # EMPTY IS THE ALARM HERE, NOT HEALTH -- the opposite of what these entries used to say.

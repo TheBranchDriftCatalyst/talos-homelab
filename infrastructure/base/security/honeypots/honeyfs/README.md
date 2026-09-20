@@ -1,3 +1,34 @@
+---
+type: reference
+status: current
+covers:
+  - path:infrastructure/base/security/honeypots/honeyfs
+bluf: "Real contents for fs.pickle nodes that ship as zero-byte files."
+claims:
+  - id: honeyfs-attaches-only-to-existing-nodes
+    says: init_honeyfs sets A_REALFILE on nodes already in fs.pickle and cannot create new ones
+    mode: verified
+    at: 2026-09-20
+    j: "python3 -c 'load fs.pickle; assert /etc/machine-id not in nodes' inside the cowrie pod"
+    f: a file placed in honeyfs at a path absent from the pickle becomes readable in a session
+    scope:
+      - path:infrastructure/base/security/honeypots/honeyfs
+  - id: honeyfs-beats-zero-size
+    says: file_contents checks A_REALFILE before the zero-size short-circuit, so honeyfs wins
+    mode: verified
+    at: 2026-09-20
+    j: "fs.file_contents('/proc/cpuinfo') returns 4060 B in the running pod"
+    f: cowrie reorders file_contents to test A_SIZE first, or drops A_REALFILE
+    scope:
+      - path:infrastructure/base/security/honeypots/honeyfs
+  - id: cowrie-agents-gc-uses-api-key
+    says: agents_autodelete reads api_key, so login_password is the ignored key
+    mode: superseded
+    successor: cowrie-agents-gc-uses-login-password
+    j: "cscli config show left AgentsGC.Api nil"
+    f: n/a
+---
+
 # honeyfs — real contents for files the stock pickle leaves EMPTY
 
 `[honeypot] contents_path` points here. At startup `FileSystem.init_honeyfs()` walks this tree
