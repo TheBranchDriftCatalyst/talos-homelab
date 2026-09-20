@@ -28,3 +28,15 @@ every doc covering `gateway` goes stale together, which is four of them.
 ## Tracking
 
 - ORCH-103 — gateway design
+
+## What is known here
+
+<!-- docs:gen:knowledge -->
+
+<!-- /docs:gen:knowledge -->
+
+## Inline reference
+
+<!-- docs:gen:inline-docs -->
+
+<!-- /docs:gen:inline-docs -->

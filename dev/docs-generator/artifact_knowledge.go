@@ -70,9 +70,10 @@ func renderKnowledge(ctx *Ctx, spec ArtifactSpec) string {
 		}
 		f := c.F
 		if strings.TrimSpace(f) == "" {
-			// `asserted` legitimately has none. Saying so is more useful than an empty cell,
-			// which reads as an omission rather than a property of the claim.
-			f = "_n/a — asserted_"
+			// asserted and superseded legitimately have none. Naming WHICH is the point:
+			// an empty cell reads as an omission rather than a property of the claim, and
+			// labelling a superseded claim "asserted" is simply wrong.
+			f = fmt.Sprintf("_n/a — %s_", c.Mode)
 		}
 		fmt.Fprintf(&b, "| **%s** — %s | %s | %s | [%s](%s) |\n",
 			c.ID, cellEscape(c.Says), basis, cellEscape(f),
