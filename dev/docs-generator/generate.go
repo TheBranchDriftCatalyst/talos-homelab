@@ -71,6 +71,7 @@ var renderers = map[string]func(*Ctx, ArtifactSpec) string{
 	"component-inventory": renderComponentInventory,
 	"nav":                 renderNav,
 	"knowledge":           renderKnowledge,
+	"folder-readme":       renderFolderReadme,
 }
 
 func rendererNames() []string {
@@ -574,6 +575,10 @@ func resolveContent(ctx *Ctx, a Artifact, old string, absent bool) (string, erro
 	}
 	if a.Region == "" {
 		return body, nil
+	}
+	if absent && a.Spec.Scaffold {
+		// Opted in: there is no prose to lose, and the scaffold announces itself.
+		return normalizeMarkdownChecked(scaffoldReadme(ctx, a.Spec, a.Region))
 	}
 	if absent {
 		openMarker, closeMarker := regionMarkers(a.Region)

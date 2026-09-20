@@ -1,5 +1,20 @@
 """haproxy-novelty-bouncer — a CrowdSec remediation component for the honeypot front.
 
+# doc() bouncer-role: What this sidecar does
+#   section: Overview
+#   order: 10
+#   Polls the CrowdSec LAPI for `silentdrop` decisions and maintains haproxy's replay.map
+#   over the admin socket with `add map` / `del map`. The map lives ONLY in haproxy's memory,
+#   so a haproxy restart empties it until the next reconcile — there is no file on disk.
+#
+# diagram() bouncer-flow: Decision path
+#   section: Overview
+#   order: 20
+#   flowchart LR
+#     lapi[(CrowdSec LAPI)] -->|poll 30s| sc[novelty-bouncer]
+#     sc -->|add map / del map| hap[haproxy admin socket]
+#     hap --> drop["tcp-request connection silent-drop"]
+
 The honeypot is reached over raw TCP (VIP -> haproxy -> cowrie), which no CrowdSec
 bouncer touches, so decisions have never had any effect there. That is deliberate for
 `ban`: an attacker must keep reaching the honeypot while being blocked everywhere else.

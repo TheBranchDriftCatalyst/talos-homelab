@@ -213,3 +213,55 @@ ConfigMaps without adding a checksum annotation to each pod template.
 | **honeyfs-beats-zero-size** — file_contents checks A_REALFILE before the zero-size short-circuit, so honeyfs wins                   | verified | cowrie reorders file_contents to test A_SIZE first, or drops A_REALFILE                 | [README.md](honeyfs/README.md) |
 
 <!-- /docs:gen:knowledge -->
+
+## Inline reference
+
+<!-- docs:gen:inline-docs -->
+
+### Architecture
+
+#### How a connection reaches an emulator <a id="honeypot-ingress"></a>
+
+```mermaid
+flowchart LR
+  net[Internet] --> vip["VIP :22 / :23"]
+  vip --> hap[haproxy front]
+  hap -->|weight 80| cow[cowrie]
+  hap -->|weight 20| bee[beelzebub]
+  hap -.->|tcplog| loki[(Loki)]
+  cow -.->|PROXY decoded| cow
+```
+
+<sub>source: [haproxy.yaml:13](haproxy.yaml)</sub>
+
+#### Why a load balancer sits in front at all <a id="why-haproxy-front"></a>
+
+Two emulators need one public port, and the split has to be weighted rather than
+round-robin per connection. The front also becomes the single place the REAL attacker IP
+is observable: cowrie decodes PROXY protocol and sees it, beelzebub cannot, so anything
+keyed on beelzebub's own source IP is reading a pod address.
+
+<sub>source: [haproxy.yaml:24](haproxy.yaml)</sub>
+
+### Overview
+
+#### What this sidecar does <a id="bouncer-role"></a>
+
+Polls the CrowdSec LAPI for `silentdrop` decisions and maintains haproxy's replay.map
+over the admin socket with `add map` / `del map`. The map lives ONLY in haproxy's memory,
+so a haproxy restart empties it until the next reconcile — there is no file on disk.
+
+<sub>source: [bouncer.py:3](haproxy-novelty-bouncer/bouncer.py)</sub>
+
+#### Decision path <a id="bouncer-flow"></a>
+
+```mermaid
+flowchart LR
+  lapi[(CrowdSec LAPI)] -->|poll 30s| sc[novelty-bouncer]
+  sc -->|add map / del map| hap[haproxy admin socket]
+  hap --> drop["tcp-request connection silent-drop"]
+```
+
+<sub>source: [bouncer.py:10](haproxy-novelty-bouncer/bouncer.py)</sub>
+
+<!-- /docs:gen:inline-docs -->

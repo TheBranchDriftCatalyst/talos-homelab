@@ -57,6 +57,10 @@ type Ctx struct {
 	// minority of it, which is why this exists alongside Docs rather than Docs being widened.
 	ClaimSources []SourceFile
 
+	// BlockSources is the same corpus prefiltered for doc()/diagram() blocks. Separate from
+	// ClaimSources only because the prefilter string differs; both are the non-markdown tree.
+	BlockSources []SourceFile
+
 	// tracked is the set of doc paths LoadDocs actually admitted, so that "does this component
 	// have a README" is answered from the SAME corpus the linter reads.
 	//
@@ -135,7 +139,7 @@ var claimSourceExts = []string{".yaml", ".yml", ".go", ".py", ".sh"}
 //
 // Uses `git ls-files` for the same reason LoadDocs does: a raw filesystem walk here finds ~10
 // full repo copies under .claude/worktrees/ and would report every claim ten times.
-func LoadClaimSources(root string, cfg *Config) []SourceFile {
+func LoadClaimSources(root string, cfg *Config, marker string) []SourceFile {
 	var out []SourceFile
 	for _, line := range strings.Split(git(root, "ls-files"), "\n") {
 		rel := strings.TrimSpace(line)
@@ -163,10 +167,11 @@ func LoadClaimSources(root string, cfg *Config) []SourceFile {
 		}
 		// Cheap prefilter: the vast majority of files carry no claim, and skipping them keeps
 		// a full-repo scan proportional to the claims rather than to the tree.
-		if !strings.Contains(string(b), "claim(") {
+		t := string(b)
+		if !strings.Contains(t, marker) {
 			continue
 		}
-		out = append(out, SourceFile{Path: rel, Text: string(b)})
+		out = append(out, SourceFile{Path: rel, Text: t})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
@@ -256,7 +261,8 @@ func Build(root string, cfg *Config) *Ctx {
 		Root:         root,
 		Cfg:          cfg,
 		Docs:         docs,
-		ClaimSources: LoadClaimSources(root, cfg),
+		ClaimSources: LoadClaimSources(root, cfg, "claim("),
+		BlockSources: loadBlockSources(root, cfg),
 		tracked:      tracked,
 		Components:   comps,
 		BySlug:       bySlug,
@@ -270,4 +276,20 @@ func mustRel(root, p string) string {
 		return r
 	}
 	return p
+}
+
+// loadBlockSources unions the doc() and diagram() carriers, deduped by path.
+func loadBlockSources(root string, cfg *Config) []SourceFile {
+	seen := map[string]bool{}
+	var out []SourceFile
+	for _, m := range []string{"doc(", "diagram("} {
+		for _, f := range LoadClaimSources(root, cfg, m) {
+			if !seen[f.Path] {
+				seen[f.Path] = true
+				out = append(out, f)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
 }

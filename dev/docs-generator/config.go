@@ -78,6 +78,20 @@ type ArtifactSpec struct {
 	// precisely the "adding an artifact costs a Go edit" defect config.yaml exists to remove.
 	Renderer string `yaml:"renderer"`
 
+	// Scaffold permits creating the document when it does not exist.
+	//
+	// OFF BY DEFAULT, and the default is the important part. A marker-owned artifact normally
+	// REFUSES to create its file, because a generated document wearing a hand-written
+	// document's name is what marker ownership exists to prevent, and the next run would then
+	// "preserve" the emptiness around it forever.
+	//
+	// The folder-readme case is the one legitimate exception: a folder with no README cannot
+	// acquire one otherwise, and there is no prose at risk precisely because the file is
+	// absent. The scaffold therefore writes a banner saying what is generated and what is not,
+	// so the document is honest about its own origin from the first commit — which is the
+	// concern the refusal was protecting, addressed directly rather than bypassed.
+	Scaffold bool `yaml:"scaffold"`
+
 	// Root is the repo-relative directory Path is resolved against, defaulting to
 	// Config.DocsRoot.
 	//
