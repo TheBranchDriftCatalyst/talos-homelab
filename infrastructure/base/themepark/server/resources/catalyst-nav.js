@@ -163,11 +163,23 @@
     }, { passive: true });
   }
 
-  function start() {
-    fetch(MANIFEST, { credentials: 'omit' })
-      .then(function (r) { return r.ok ? r.json() : null; })
+  // The manifest is written by a sidecar into the same volume nginx serves, so
+  // for a few seconds after a pod rolls the theme is already up while the
+  // manifest is not. Without a retry, anyone loading in that window gets no nav
+  // and no reason why. Three tries with backoff covers it; after that we stay
+  // quiet, because the nav is cosmetic and must never surface an error into a
+  // third-party app.
+  function start(attempt) {
+    attempt = attempt || 0;
+    fetch(MANIFEST, { credentials: 'omit', cache: 'no-store' })
+      .then(function (r) {
+        if (r.ok) return r.json();
+        throw new Error('manifest ' + r.status);
+      })
       .then(function (d) { if (d) build(d); })
-      .catch(function () { /* nav is cosmetic; never surface an error */ });
+      .catch(function () {
+        if (attempt < 2) setTimeout(function () { start(attempt + 1); }, 1000 * (attempt + 1));
+      });
   }
 
   if (document.readyState === 'loading') {
