@@ -26,6 +26,30 @@
 # Adding an app: copy a block, change the two slugs. Nothing else.
 
 ---
+# Force a decodable response encoding. MUST be listed BEFORE the per-app
+# middleware on every themed route.
+#
+# rewriteBody can decode gzip, deflate and identity — never brotli, which Yaegi
+# has no implementation for. The plugin is supposed to narrow the request's
+# Accept-Encoding itself, and it does for short lists, but with the header a
+# real browser sends (`gzip, deflate, br, zstd`) brotli survives; Jellyfin then
+# answers `Content-Encoding: br` and the plugin passes the body through
+# untouched. Silent: no error, no log, just an unthemed app.
+#
+# Pinning to gzip rather than the `identity` the analytics chain uses keeps
+# responses compressed, so there is no bandwidth cost to this — it only takes
+# brotli off the table for these hosts.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-accept-encoding
+  namespace: traefik
+spec:
+  headers:
+    customRequestHeaders:
+      Accept-Encoding: 'gzip'
+
+---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
