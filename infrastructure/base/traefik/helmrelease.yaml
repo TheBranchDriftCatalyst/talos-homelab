@@ -383,3 +383,24 @@ spec:
         botWrangler:
           moduleName: github.com/holysoles/bot-wrangler-traefik-plugin
           version: v0.10.2
+        # theme.park CSS injection — powers the Catalyst theme middlewares in
+        # infrastructure/base/themepark/middlewares.yaml, replacing the arr-stack
+        # DOCKER_MODS overlay. TALOS-1xcd.
+        #
+        # NOT `rewritebody` for this job, deliberately. plugin-rewritebody v0.3.1
+        # implements no Hijack(), so websocket upgrades 500 — that would silently
+        # kill Servarr SignalR (the live queue/activity panel), Jellyfin's /socket
+        # and Plex's notification socket. It also buffers EVERY response with no
+        # method/Accept/content-type gate, so a Range request for video would
+        # accumulate in a bytes.Buffer inside a pod pinned at requests==limits==512Mi.
+        # This plugin short-circuits non-GET, non-text/html and websocket-upgrade
+        # requests onto the ORIGINAL ResponseWriter with zero buffering, and
+        # decompresses gzip/deflate itself.
+        #
+        # v1.4.2 is vendored (vendor/modules.txt present), which is what makes it
+        # Yaegi-loadable. Added in its OWN commit with no Middleware referencing it,
+        # same discipline as the crowdsec-lapi-ca mount: a plugin Yaegi rejects
+        # takes the Traefik process down at start.
+        themepark:
+          moduleName: github.com/packruler/traefik-themepark
+          version: v1.4.2
