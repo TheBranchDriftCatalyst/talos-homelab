@@ -404,3 +404,20 @@ spec:
         themepark:
           moduleName: github.com/packruler/traefik-themepark
           version: v1.4.2
+
+        # Generic HTML-body rewriting, for the cross-app Catalyst nav bar
+        # (infrastructure/base/themepark/middlewares.yaml). The themepark plugin
+        # above can only emit <link> tags, and a nav needs real <a href> elements
+        # — which CSS cannot create — so the nav ships as a <script> injected here.
+        #
+        # This is the SAME engine that traefik-themepark vendors internally, so it
+        # carries the same safety properties that ruled out traefik/plugin-rewritebody
+        # for these apps: it implements Hijack() (Servarr SignalR, Jellyfin's
+        # /socket and Plex's notification socket keep working) and gates on
+        # GET + text/html before buffering anything, so video is never buffered.
+        #
+        # No vendor/ directory, but go.mod declares zero external dependencies —
+        # stdlib and its own subpackages only — so Yaegi resolves it fine.
+        rewriteBody:
+          moduleName: github.com/packruler/rewrite-body
+          version: v1.2.0
