@@ -54,6 +54,15 @@ spec:
               value: theme.${CLUSTER_DOMAIN}
             - name: TP_SCHEME
               value: https
+            # Serve the tree under /tp/ IN ADDITION to /. The init script seds
+            # the nginx conf, giving `location /tp/` plus the sub_filter that
+            # rewrites the generated stubs' ROOT-relative imports:
+            #     url("/css/  ->  url("/tp/css/
+            # That rewrite is the whole reason subfolder serving works — without
+            # it a stub served at /tp/ would @import /css/... from the APP's
+            # origin, where nothing answers.
+            - name: TP_URLBASE
+              value: tp
           ports:
             - name: http
               containerPort: 80

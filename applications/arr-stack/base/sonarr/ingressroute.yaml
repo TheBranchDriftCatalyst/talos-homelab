@@ -28,6 +28,20 @@ spec:
   entryPoints:
     - websecure
   routes:
+    # Catalyst theme assets, served from Sonarr's OWN origin so the stylesheet
+    # rides the same certificate the app is already loading over. Cross-origin
+    # would require every client to trust the homelab CA, and a client that does
+    # not refuses the subresource SILENTLY — no console error, no request, nothing
+    # in the Traefik log. NO auth middleware: browsers fetch this as a subresource
+    # with no session and cannot follow a 302 to SSO. It serves static CSS only.
+    # priority 110 > the /api route's 100 so it is matched first. TALOS-1xcd.
+    - match: Host(`sonarr.talos00`) && PathPrefix(`/tp/`)
+      kind: Rule
+      priority: 110
+      services:
+        - name: themepark
+          namespace: themepark
+          port: 80
     - match: Host(`sonarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))
       kind: Rule
       priority: 100

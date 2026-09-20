@@ -63,4 +63,19 @@ spec:
     themepark:
       app: sonarr
       theme: catalyst
-      baseUrl: https://theme.${CLUSTER_DOMAIN}
+      # ROOT-RELATIVE on purpose. The plugin string-concatenates baseUrl into
+      # href="{baseUrl}/css/base/{app}/{theme}.css", so "/tp" yields
+      # href="/tp/css/base/sonarr/catalyst.css" — resolved by the browser against
+      # whatever origin the app is on.
+      #
+      # This is not a cosmetic choice. A cross-origin stylesheet (theme.talos00)
+      # requires every client to trust the homelab CA, and when one does not the
+      # browser refuses the subresource SILENTLY: no console error, no request,
+      # nothing in the Traefik log. Same-origin means the theme rides the exact
+      # certificate the app itself is already loading over, on every device, with
+      # no trust step — and no CORS or mixed-content surface either.
+      #
+      # Requires a PathPrefix(`/tp/`) route on each themed app's IngressRoute
+      # pointing at the themepark Service. Identical for every app, since there
+      # is no hostname in it.
+      baseUrl: /tp
