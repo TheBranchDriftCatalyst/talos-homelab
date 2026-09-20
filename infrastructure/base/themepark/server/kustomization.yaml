@@ -1,0 +1,28 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# namespace MUST be set here, and this subdirectory MUST exist separately from
+# the parent. Two constraints collide:
+#   - kustomize only rewrites a generated ConfigMap reference when the
+#     kustomization's namespace matches the consuming object's (same reasoning as
+#     infrastructure/base/authentik/login-background/kustomization.yaml).
+#   - the Traefik Middlewares in ../middlewares.yaml must live in ns `traefik`.
+# One kustomization cannot set both namespaces, so the server gets its own.
+namespace: themepark
+
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - ingressroute.yaml
+  - cilium-network-policy.yaml
+
+# Generated, NOT a static ConfigMap. css/catalyst.css is mounted with subPath,
+# and a subPath mount is FROZEN at pod start -- kubelet never propagates
+# ConfigMap updates into one. With a stable name an edited theme would never
+# reach the running pod, silently. The hash suffix makes an edit change the CM
+# name -> the podTemplate -> roll the pod -> re-run themes.py.
+configMapGenerator:
+  - name: themepark-catalyst-css
+    files:
+      - css/catalyst.css

@@ -1,0 +1,31 @@
+---
+# Self-hosted theme.park server + the per-app Traefik injection middlewares that
+# replace the arr-stack DOCKER_MODS overlay (TALOS-1xcd).
+#
+# dependsOn traefik: the Middleware CRD must exist, and experimental.plugins.themepark
+# must be loaded by Traefik, before any Middleware references the plugin.
+#
+# wait:false, matching iocaine/analytics. A theme server that crashloops must never
+# deadlock Flux — the failure mode here is an unstyled page, not an outage, and this
+# must not be able to block anything downstream.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: themepark
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/themepark
+  prune: true
+  wait: false
+  dependsOn:
+    - name: traefik
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

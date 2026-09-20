@@ -1,0 +1,55 @@
+---
+# theme.${CLUSTER_DOMAIN} — the origin every themed app loads its stylesheet from.
+#
+# THREE PROPERTIES THAT MUST NOT CHANGE, each of which silently unthemes the
+# entire media stack if got wrong:
+#
+#  1. NO forward-auth. Browsers fetch this as a SUBRESOURCE, with no session and
+#     no ability to follow a 302 to an SSO login. Adding the `authentik`
+#     middleware here breaks theming on every app at once, with no error the
+#     user can see. This route is anonymous on purpose.
+#  2. BOTH entrypoints SERVE. The `web` route must NOT redirect to https.
+#     Jellyfin and Plex are served on plain HTTP, and while an http page may load
+#     an https subresource, keeping a working http origin means the stylesheet
+#     never depends on the client trusting the homelab CA -- a subresource from
+#     an untrusted CA hard-fails with no interstitial.
+#  3. Two separate IngressRoute objects. Kyverno `ingressroute-no-combined-
+#     entrypoints` denies a single route listing both web and websecure.
+#
+# DNS needs no work: Pi-hole publishes a wildcard address=/${CLUSTER_DOMAIN}/<node-ip>
+# to Traefik, and the default TLSStore serves the *.${CLUSTER_DOMAIN} wildcard via SNI.
+# `tls` is omitted -- Kyverno `ingressroute-tls-default` injects it.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: themepark
+  namespace: themepark
+  labels:
+    app.kubernetes.io/name: themepark
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`theme.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      services:
+        - name: themepark
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: themepark-http
+  namespace: themepark
+  labels:
+    app.kubernetes.io/name: themepark
+spec:
+  entryPoints:
+    - web
+  routes:
+    # Deliberately NOT redirect-https. See (2) above.
+    - match: Host(`theme.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      services:
+        - name: themepark
+          port: 80

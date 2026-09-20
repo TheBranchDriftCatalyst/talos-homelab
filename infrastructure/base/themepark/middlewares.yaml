@@ -1,0 +1,66 @@
+---
+# Catalyst theme injection. Replaces the arr-stack DOCKER_MODS overlay: instead of
+# mutating HTML inside each container at startup, Traefik injects the stylesheet
+# link on the way out. That makes theming a property of the ingress path, so it
+# reaches apps whose images have no s6-overlay (seerr) and apps that cannot fetch
+# a mod at all (qbittorrent, behind gluetun's killswitch).
+#
+# Opt an app in with ONE middleware ref on its IngressRoute's DEFAULT route:
+#     middlewares:
+#       - name: authentik          # FIRST  — see ordering note below
+#         namespace: authentik
+#       - name: theme-sonarr       # SECOND
+#         namespace: traefik
+#
+# ORDERING: Traefik runs middlewares forward on the request and REVERSE on the
+# response. With authentik first, injection happens on the way out, and the theme
+# plugin never sees an unauthenticated request — when forward-auth 302s to the SSO
+# login, the theme middleware downstream is never invoked at all.
+#
+# NEVER attach these to the priority-100 /api + /feed routes. Those exist so
+# nzb360 / LunaSea / RSS clients bypass auth, and they must stay untouched.
+# (Belt and braces: the plugin only acts on GET + `Accept: text/html` + a
+# `Content-Type: text/html` response, so an API client would be a no-op anyway.)
+#
+# One Middleware per app is unavoidable — the theme.park app slug is baked into
+# the plugin config and cannot be shared. `theme` and `baseUrl` are repeated
+# deliberately: they are the two values you will ever want to change fleet-wide,
+# and a grep-and-replace over THIS ONE FILE is the intended edit.
+
+---
+# CSP relaxation, additive only, modelled on infrastructure/base/analytics
+# `analytics-csp`. An app that sends NO Content-Security-Policy needs nothing and
+# this is a no-op on it — which, verified live, is every media app except
+# qBittorrent. Attach only where a policy actually exists.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: theme-csp
+  namespace: traefik
+spec:
+  plugin:
+    rewriteHeaders:
+      rewrites:
+        - header: "Content-Security-Policy"
+          regex: "style-src ([^;]*)"
+          replacement: "style-src $1 https://theme.${CLUSTER_DOMAIN}"
+        - header: "Content-Security-Policy"
+          regex: "font-src ([^;]*)"
+          replacement: "font-src $1 data:"
+
+---
+# Sonarr. theme.park slug `sonarr`; the plugin targets </body> for the servarr
+# family (its app regex is vuetorrent|qbittorrent|emby|jellyfin|radarr|prowlarr|
+# sonarr|readarr|lidarr|whisparr), which is correct — a Servarr link injected into
+# </head> loads before the app's own late CSS and renders half-themed.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: theme-sonarr
+  namespace: traefik
+spec:
+  plugin:
+    themepark:
+      app: sonarr
+      theme: catalyst
+      baseUrl: https://theme.${CLUSTER_DOMAIN}

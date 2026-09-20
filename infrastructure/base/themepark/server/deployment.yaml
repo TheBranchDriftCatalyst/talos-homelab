@@ -1,0 +1,123 @@
+---
+# Self-hosted theme.park static server. Serves the CSS that Traefik injects into
+# the media apps (see ../middlewares.yaml).
+#
+# WHY THE STOCK UPSTREAM IMAGE, UNMODIFIED:
+# On boot the image's s6 init copies /app/themepark/css -> /config/www/css and
+# then runs `python3 themes.py`, which generates a two-line @import stub at
+# css/base/<app>/<theme>.css for EVERY (app x theme) pair it finds by listing
+# css/theme-options/. So mounting ONE file into that directory yields a
+# `catalyst` theme for all ~60 supported apps, generated at runtime, with no
+# image build, no registry push and no fork to rebase.
+#
+# The theme itself is authored in the sister repo workspace/catalyst-themepark
+# and vendored here as css/catalyst.css. Do not hand-edit it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: themepark
+  namespace: themepark
+  labels:
+    app.kubernetes.io/name: themepark
+    app.kubernetes.io/part-of: themepark
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: themepark
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: themepark
+        app: themepark
+    spec:
+      containers:
+        - name: themepark
+          # Pinned by digest, not :latest. There are no semver tags on this repo,
+          # and the image CONTENTS determine which themes exist and what the
+          # generated stubs @import -- so a silent upstream change could alter or
+          # break the rendered theme with no manifest diff. version-checker will
+          # flag the pin; that is the intended trade.
+          image: ghcr.io/themepark-dev/theme.park:latest@sha256:c8a01c56d27f2e07336e4762fa1bba061c45e054701366fa1ba8d3840d724dfd
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PUID
+              value: '1000'
+            - name: PGID
+              value: '1000'
+            - name: TZ
+              value: America/Los_Angeles
+            # themes.py writes absolute URLs into themes.json from this. The
+            # generated per-app stubs use ROOT-relative @imports and do not care,
+            # but the addon/favicon lookup path does.
+            - name: TP_DOMAIN
+              value: theme.${CLUSTER_DOMAIN}
+            - name: TP_SCHEME
+              value: https
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            # subPath: drop our theme into the image's theme-options directory
+            # WITHOUT clobbering the ~30 upstream themes that live alongside it.
+            # A subPath mount is frozen at pod start and never sees ConfigMap
+            # updates -- which is fine here and in fact required, because
+            # themes.py only runs at init. The configMapGenerator hash suffix is
+            # what makes an edit roll the pod. See ../server/kustomization.yaml.
+            - name: catalyst-theme
+              mountPath: /app/themepark/css/theme-options/catalyst.css
+              subPath: catalyst.css
+              readOnly: true
+            # s6 init copies the whole css tree here and runs themes.py against
+            # it, so /config MUST be writable. Contents are fully regenerated on
+            # every boot -- there is nothing to persist, hence emptyDir and not a
+            # PVC. This is also why readOnlyRootFilesystem is not set.
+            - name: config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          # Probe the GENERATED file, not `/`. `/` is served straight from the
+          # image and would report healthy even if themes.py failed and the
+          # catalyst theme did not exist -- which is the only failure that
+          # actually matters here.
+          readinessProbe:
+            httpGet:
+              path: /css/base/sonarr/catalyst.css
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /css/theme-options/catalyst.css
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: catalyst-theme
+          configMap:
+            name: themepark-catalyst-css
+        - name: config
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: themepark
+  namespace: themepark
+  labels:
+    app.kubernetes.io/name: themepark
+spec:
+  selector:
+    app.kubernetes.io/name: themepark
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
