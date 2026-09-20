@@ -201,8 +201,19 @@ spec:
 # from catalyst-nav.json (built by the discovery sidecar from the cluster's own
 # gethomepage.dev annotations). No app is named anywhere in this file.
 #
-# Injected before </body> for every app, including the ones whose THEME goes in
-# </head> — a deferred script belongs at the end of the body regardless.
+# ANCHORED ON THE OPENING <head> TAG, and that choice is load-bearing.
+#
+# The themepark plugin rewrites </body> for servarr-family apps and </head> for
+# the rest. If this middleware targets either of those it competes with the
+# theme plugin for the same token on the same response, and only one injection
+# survives — which is exactly what happened: Plex got both tags (theme on
+# </head>, nav on </body>) while Jellyfin got only the theme, because for
+# Jellyfin both plugins wanted </body>.
+#
+# The opening <head> is touched by neither plugin and appears exactly once in
+# every app checked (sonarr, prowlarr, jellyfin, plex). A deferred script in
+# <head> is also the canonical placement: it downloads in parallel and runs
+# after the document is parsed.
 #
 # The src is ROOT-RELATIVE, so it loads from the app's own origin via that app's
 # PathPrefix(`/catalyst/`) route. That matters beyond certificates here:
@@ -225,5 +236,5 @@ spec:
         methods:
           - GET
       rewrites:
-        - regex: '</body>'
-          replacement: '<script defer src="/catalyst/resources/catalyst-nav.js"></script></body>'
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
