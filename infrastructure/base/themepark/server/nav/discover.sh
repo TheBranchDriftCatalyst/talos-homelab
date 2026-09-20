@@ -33,8 +33,13 @@ while :; do
     else
       echo "[nav] kubectl list failed; keeping the previous manifest" >&2
     fi
+    SLEEP="$INTERVAL"
   else
+    # The s6 init has not built the served tree yet. Retry quickly rather than
+    # burning a full refresh interval on a cold start — this sidecar reliably
+    # wins the race with init on a fresh pod.
     echo "[nav] waiting for /config/www/resources"
+    SLEEP=5
   fi
-  sleep "$INTERVAL"
+  sleep "$SLEEP"
 done
