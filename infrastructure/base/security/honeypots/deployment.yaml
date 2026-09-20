@@ -135,6 +135,23 @@ spec:
               mountPath: /cowrie/cowrie-git/etc/cowrie.cfg
               subPath: cowrie.cfg
               readOnly: true
+            # etc_path resolves to `etc` relative to WORKDIR, so cowrie looks for
+            # /cowrie/cowrie-git/etc/userdb.txt. If it is missing cowrie logs
+            # "Could not read etc/userdb.txt, default database activated" and silently reverts
+            # to the accept-anything default -- grep for that line after any change here.
+            - name: cowrie-config
+              mountPath: /cowrie/cowrie-git/etc/userdb.txt
+              subPath: userdb.txt
+              readOnly: true
+            # honeyfs (contents_path=/cowrie/honeyfs). Each file attaches to an EXISTING pickle
+            # node via A_REALFILE at startup; it cannot create nodes. /etc/os-release is a
+            # symlink in the pickle, so the file goes at its target, usr/lib/os-release.
+            - {name: cowrie-honeyfs, mountPath: /cowrie/honeyfs/proc/cpuinfo, subPath: cpuinfo, readOnly: true}
+            - {name: cowrie-honeyfs, mountPath: /cowrie/honeyfs/proc/version, subPath: version, readOnly: true}
+            - {name: cowrie-honeyfs, mountPath: /cowrie/honeyfs/proc/uptime, subPath: uptime, readOnly: true}
+            - {name: cowrie-honeyfs, mountPath: /cowrie/honeyfs/proc/loadavg, subPath: loadavg, readOnly: true}
+            - {name: cowrie-honeyfs, mountPath: /cowrie/honeyfs/etc/hostname, subPath: hostname, readOnly: true}
+            - {name: cowrie-honeyfs, mountPath: /cowrie/honeyfs/usr/lib/os-release, subPath: os-release, readOnly: true}
             # Fingerprint hardening (TALOS-a8kx): override the stock txtcmds output for the
             # commands botnet recon runs to detect a honeypot. Default cowrie ships a dated
             # 2-core "Model 23" (2008-era) lscpu + nproc=2 — a tell. These replace them with a
@@ -197,6 +214,9 @@ spec:
         - name: cowrie-config
           configMap:
             name: cowrie-config
+        - name: cowrie-honeyfs
+          configMap:
+            name: cowrie-honeyfs
         - name: cowrie-fs-hardening
           configMap:
             name: cowrie-fs-hardening

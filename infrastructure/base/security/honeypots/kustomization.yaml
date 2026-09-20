@@ -43,12 +43,25 @@ configMapGenerator:
   - name: cowrie-config
     files:
       - cfg/cowrie.cfg
+      # Without this cowrie falls back to _USERDB_DEFAULTS, which rejects root:root and
+      # root:123456 while accepting root:<anything else> -- a one-connection pre-auth tell.
+      - userdb.txt
   - name: beelzebub-core
     files:
       - cfg/beelzebub.yaml
   - name: beelzebub-services-tmpl
     files:
       - cfg/ssh-2222.yaml
+  # Cowrie honeyfs: real contents for pickle nodes that ship as ZERO-BYTE files, which cowrie
+  # otherwise serves as b"". Keys are basenames, so every filename here must stay unique.
+  - name: cowrie-honeyfs
+    files:
+      - honeyfs/proc/cpuinfo
+      - honeyfs/proc/version
+      - honeyfs/proc/uptime
+      - honeyfs/proc/loadavg
+      - honeyfs/etc/hostname
+      - honeyfs/usr/lib/os-release
   # Cowrie fingerprint-hardening txtcmds (TALOS-a8kx): realistic lscpu/nproc so botnet recon sees a
   # plausible modern box. Hash-suffixed so editing rolls the pod.
   - name: cowrie-fs-hardening
