@@ -37,9 +37,34 @@ tasks:
         echo "→ homelab CA SHA-1: $FPR"
         # Idempotent: skip (no sudo) if a cert with this exact fingerprint is already trusted.
         # Comparing by fingerprint also means a rotated/renewed CA is re-added automatically.
+        # Prune superseded copies BEFORE deciding there is nothing to do.
+        #
+        # This used to only ever ADD. Comparing by fingerprint meant a rotated CA
+        # was installed alongside the old one, leaving two roots that both claim
+        # CN=homelab-ca with different keys — and then re-running this task
+        # reported "already trusted" forever while the stale twin sat there
+        # confusing chain building. Found exactly that: a Dec-2025 CA still
+        # present next to the live May-2026 one.
+        STALE="$(security find-certificate -a -c homelab-ca -Z /Library/Keychains/System.keychain 2>/dev/null \
+                  | awk '/^SHA-1 hash:/ {print $NF}' | grep -vi "^$FPR$" || true)"
+        if [ -n "$STALE" ]; then
+          echo "→ found superseded homelab-ca cert(s) in the System keychain:"
+          for h in $STALE; do echo "    $h"; done
+          if [ ! -t 0 ]; then
+            echo "⚠ removing them needs sudo in an interactive terminal. Run in Terminal.app:"
+            for h in $STALE; do
+              echo "  sudo security delete-certificate -Z $h /Library/Keychains/System.keychain"
+            done
+          else
+            for h in $STALE; do
+              echo "→ removing stale CA $h (sudo / Touch ID) …"
+              sudo security delete-certificate -Z "$h" /Library/Keychains/System.keychain || true
+            done
+          fi
+        fi
         if security find-certificate -a -Z /Library/Keychains/System.keychain 2>/dev/null \
              | grep -qi "SHA-1 hash: $FPR"; then
-          echo "✅ already trusted — nothing to do."
+          echo "✅ current CA already trusted — nothing to add."
           exit 0
         fi
         if [ ! -t 0 ]; then
@@ -51,7 +76,16 @@ tasks:
         fi
         echo "→ adding to the System keychain as a trusted root (sudo / Touch ID) …"
         sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "{{.CA_FILE}}"
-        echo "✅ homelab CA trusted. Fully quit + reopen Chrome/Safari → *.talos00 / *.priv.talos00 get the padlock."
+        echo "✅ homelab CA trusted. Fully quit + reopen Chrome/Safari (not just the tab)."
+        echo ""
+        echo "ℹ  NOTE: trusting the CA does NOT fix single-label hosts like sonarr.talos00."
+        echo "   Apple rejects a wildcard whose parent is one label (same rule as '*.com'),"
+        echo "   so '*.talos00' always reports a host-name mismatch no matter what is trusted."
+        echo "   Those hosts are covered by EXPLICIT SANs on the talos00-wildcard certificate,"
+        echo "   derived hourly from the cluster's IngressRoutes by the talos00-san-discovery"
+        echo "   CronJob. If a brand-new host warns, that job has not run for it yet:"
+        echo "     kubectl -n cert-manager create job --from=cronjob/talos00-san-discovery san-now"
+        echo "   (*.priv.talos00 and *.homepage.talos00 are fine — two-label parents are legal.)"
         echo "   Firefox uses its own store — import {{.CA_FILE}}"
         echo "   (Settings → Privacy & Security → Certificates → Import)."
 

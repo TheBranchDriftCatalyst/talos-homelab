@@ -1,0 +1,59 @@
+---
+# Read IngressRoutes cluster-wide, write exactly one ConfigMap.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: talos00-san-discovery
+  namespace: cert-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: talos00-san-discovery
+rules:
+  - apiGroups: ['traefik.io']
+    resources: ['ingressroutes']
+    verbs: ['get', 'list']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: talos00-san-discovery
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: talos00-san-discovery
+subjects:
+  - kind: ServiceAccount
+    name: talos00-san-discovery
+    namespace: cert-manager
+---
+# Namespaced, and scoped by resourceNames to the single ConfigMap it owns.
+# This job must never be able to touch flux-system's other config.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: talos00-san-discovery
+  namespace: flux-system
+rules:
+  - apiGroups: ['']
+    resources: ['configmaps']
+    verbs: ['create']
+  - apiGroups: ['']
+    resources: ['configmaps']
+    resourceNames: ['talos00-cert-sans']
+    verbs: ['get', 'update', 'patch']
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: talos00-san-discovery
+  namespace: flux-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: talos00-san-discovery
+subjects:
+  - kind: ServiceAccount
+    name: talos00-san-discovery
+    namespace: cert-manager

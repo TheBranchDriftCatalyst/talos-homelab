@@ -23,3 +23,16 @@ spec:
     - name: cert-manager
     - name: external-secrets
     - name: traefik  # traefik namespace must exist (certs are created there)
+  postBuild:
+    substituteFrom:
+      # Supplies TALOS00_DNSNAMES for the talos00 wildcard certificate. Written
+      # by the san-discovery CronJob from the cluster's own IngressRoutes, so
+      # the 93 explicit hostnames Apple requires are never hand-maintained.
+      #
+      # optional: the Certificate carries a `:=` default, so a missing ConfigMap
+      # (first bootstrap, or before the job's first run) renders a valid
+      # wildcard-only certificate instead of failing this Kustomization — which
+      # would otherwise take every certificate in the cluster down with it.
+      - kind: ConfigMap
+        name: talos00-cert-sans
+        optional: true

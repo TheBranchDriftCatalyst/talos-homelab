@@ -1,0 +1,61 @@
+---
+# Derives the talos00 certificate's SAN list from the cluster's own IngressRoutes.
+#
+# A `*.talos00` wildcard is unusable on Apple platforms: macOS and iOS reject a
+# wildcard whose parent is a single label — the same rule that forbids `*.com` —
+# so every single-label host under it fails with "Host name mismatch" no matter
+# how thoroughly the CA is trusted. Explicit SANs are the only fix, and 93
+# hardcoded hostnames would rot immediately. So they are discovered.
+#
+# Hourly is deliberate, not conservative. Each change to the list reissues the
+# certificate, so this should react to new apps in a reasonable time without
+# turning routine churn into certificate churn.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: talos00-san-discovery
+  namespace: cert-manager
+spec:
+  schedule: '17 * * * *'
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 300
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: talos00-san-discovery
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: derive
+              image: alpine/k8s:1.34.9
+              command: ['/bin/sh', '/sans/refresh_sans.sh']
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: false
+                capabilities:
+                  drop: ['ALL']
+              volumeMounts:
+                - name: sans
+                  mountPath: /sans
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi
+          volumes:
+            - name: sans
+              configMap:
+                name: talos00-san-scripts
+                defaultMode: 0755

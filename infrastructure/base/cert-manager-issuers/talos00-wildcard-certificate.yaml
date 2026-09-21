@@ -23,8 +23,22 @@ spec:
   issuerRef:
     name: homelab-ca-issuer
     kind: ClusterIssuer
-  dnsNames:
-    - "*.talos00"
-    - "talos00"
+  # DERIVED, not hardcoded. The san-discovery CronJob lists the cluster's
+  # IngressRoutes and writes the list to the flux-system/talos00-cert-sans
+  # ConfigMap; Flux substitutes it here at reconcile time. The job only ever
+  # writes that ConfigMap, never this resource, so Flux remains the sole writer
+  # of the Certificate and there is nothing to fight over.
+  #
+  # WHY explicit names at all, when there is a wildcard right there: macOS and
+  # iOS reject a wildcard whose parent is a single label — the same rule that
+  # forbids `*.com` — so `*.talos00` fails with "Host name mismatch" on every
+  # Apple device regardless of CA trust. That is why re-running trust-cert never
+  # fixed it. The wildcard is KEPT for non-Apple clients and for any host that
+  # appears between refreshes.
+  #
+  # The `:=` default is load-bearing: if the ConfigMap is missing (first
+  # bootstrap, or the job has never run) this still renders a valid certificate
+  # instead of failing the whole Kustomization.
+  dnsNames: ${TALOS00_DNSNAMES:=["*.talos00","talos00"]}
   duration: 8760h # 1 year
   renewBefore: 720h # 30 days before expiry
