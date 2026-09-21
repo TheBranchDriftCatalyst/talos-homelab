@@ -76,6 +76,28 @@ spec:
             # Local storage for SQLite databases (symlinked from /config)
             - name: db-local
               mountPath: /db-local
+          # startupProbe, so liveness cannot engage until Jellyfin has actually
+          # started. Without one, liveness began at 120s and killed the pod
+          # ~4.5 minutes in — which is fine against a healthy NAS and fatally
+          # short when it is not.
+          #
+          # Proven during the 2026-09-20 Synology outage: the NAS came back but
+          # ran a post-unclean-shutdown RAID parity check, so every NFS read was
+          # slow for hours. Jellyfin's /health went slow with it, liveness killed
+          # the container mid-scan, and the restart put it back at the start of
+          # the same slow scan. Saturation was being converted into a crash loop.
+          #
+          # 10s x 60 = 10 minutes of startup budget. Liveness keeps its tight
+          # settings afterwards, where they are correct — a running Jellyfin that
+          # stops answering /health SHOULD be restarted.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /health
