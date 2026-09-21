@@ -23,6 +23,16 @@
 # trust, that is what makes qBittorrent work: it ships `script-src 'self'`,
 # which a same-origin script satisfies with no CSP rewriting at all.
 #
+# TWO links, not the generated per-app stub. The stub is a 400-byte file whose
+# entire content is two @import lines — so pointing at it cost a full extra
+# round trip before the browser even learned what to fetch. Measured on
+# Jellyfin: a 4-level serialized waterfall, 348ms wall-clock for the theme, of
+# which the first 58ms was just retrieving that stub.
+#
+# Naming both files directly deletes that level and starts the real fetches in
+# parallel. Order matters: the app base sheet first, ours second, so our
+# variables win.
+#
 # Adding an app: copy a block, change the two slugs. Nothing else.
 
 ---
@@ -131,7 +141,7 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/jellyfin/catalyst.css"></body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/jellyfin/jellyfin-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -154,7 +164,7 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</head>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/plex/catalyst.css"></head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/plex/plex-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -177,7 +187,7 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/prowlarr/catalyst.css"></body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/prowlarr/prowlarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -200,7 +210,7 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/qbittorrent/catalyst.css"></body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/qbittorrent/qbittorrent-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -223,7 +233,7 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/radarr/catalyst.css"></body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/radarr/radarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -246,7 +256,7 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</head>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sabnzbd/catalyst.css"></head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sabnzbd/sabnzbd-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 
 ---
 # NOTE: theme.park slug is `overseerr`, not the deployment name.
@@ -270,7 +280,7 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</head>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/overseerr/catalyst.css"></head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/overseerr/overseerr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -293,7 +303,7 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sonarr/catalyst.css"></body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sonarr/sonarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -316,4 +326,4 @@ spec:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</head>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/tautulli/catalyst.css"></head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/tautulli/tautulli-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
