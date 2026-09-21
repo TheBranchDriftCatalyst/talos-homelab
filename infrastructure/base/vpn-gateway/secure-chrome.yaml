@@ -212,34 +212,7 @@ spec:
 ---
 # TCP IngressRoute for HTTPS passthrough (Kasm requires its own HTTPS/WSS)
 apiVersion: traefik.io/v1alpha1
-kind: ServersTransport
-metadata:
-  name: secure-chrome-tls
-  namespace: vpn-gateway
-spec:
-  # KasmVNC serves HTTPS on 6901 with a SELF-SIGNED certificate and refuses
-  # plain HTTP, so Traefik has to speak TLS to it and cannot verify that cert.
-  # insecureSkipVerify applies to this ONE backend, inside the cluster, over
-  # the pod network — not to anything a client sees.
-  insecureSkipVerify: true
-
----
-# HTTP route, NOT the IngressRouteTCP + tls.passthrough this used to be.
-#
-# WHY THE CHANGE: passthrough hands Traefik a raw TCP stream, so there is no
-# HTTP layer to attach anything to — no forward-auth, no headers, no SSO. It is
-# why this app had its own separate login. Terminating TLS here is the only way
-# to put Authentik in front of it.
-#
-# Two things improve as a side effect: the browser now gets the homelab-CA
-# *.talos00 certificate instead of KasmVNC's self-signed one (securechrome.talos00
-# is already an explicit SAN), and the VNC websocket is proxied normally —
-# forwardAuth does not buffer, so the stream is unaffected.
-#
-# VNC_IP_ALLOW still matches: with Traefik proxying, KasmVNC sees a 10.244.0.0/16
-# pod address, which is already in its allow list.
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
+kind: IngressRouteTCP
 metadata:
   name: secure-chrome
   namespace: vpn-gateway
@@ -250,22 +223,12 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`securechrome.talos00`)
-      kind: Rule
-      middlewares:
-        # PHASE 1: SSO gate only. You will still see KasmVNC's own prompt after
-        # signing in — phase 2 swaps this for `authentik-basic`, which forwards
-        # an Authorization header Authentik generates, removing that second
-        # prompt. That step is held until the 1Password credential exists,
-        # because enabling it early would send an EMPTY Basic header and lock
-        # the app out rather than falling back to a prompt.
-        - name: authentik
-          namespace: authentik
+    - match: HostSNI(`securechrome.talos00`)
       services:
         - name: secure-chrome
           port: 6901
-          scheme: https
-          serversTransport: secure-chrome-tls
+  tls:
+    passthrough: true
 ---
 # HTTP redirect to HTTPS
 apiVersion: traefik.io/v1alpha1
