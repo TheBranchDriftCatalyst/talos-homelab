@@ -75,6 +75,30 @@ spec:
           memory: 192Mi
         limits:
           memory: 384Mi
+      # The chart ships livenessProbe with timeoutSeconds: 1 against
+      # /healthz?full=true. That endpoint does the DEEP check — it exercises
+      # the repo cache and manifest generation — and one second is not a
+      # realistic budget for it. With period 10 and threshold 3, the container
+      # was killed after 30s of being merely slow.
+      #
+      # Result: 55 restarts in 2d18h, 720 Unhealthy events, every one of them
+      # "context deadline exceeded" on a 1s timeout, every termination exit 0
+      # (a graceful SIGTERM — the process was healthy, just not fast). It is
+      # the same shape as jellyfin and authentik-server: a probe tuned for the
+      # best case turning slowness into restarts.
+      #
+      # 10s timeout, 15s period, 6 failures = 90s of sustained failure before a
+      # kill, against a check that legitimately takes seconds under load.
+      # Readiness is deliberately untouched: it hits the SHALLOW /healthz, 1s is
+      # right there, and taking a busy repo-server out of rotation briefly is
+      # correct behaviour rather than a bug.
+      #
+      # Verified with `helm template` that this deep-merges rather than
+      # replacing — the ?full=true path survives.
+      livenessProbe:
+        timeoutSeconds: 10
+        periodSeconds: 15
+        failureThreshold: 6
     # Application Controller
     controller:
       replicas: 1
