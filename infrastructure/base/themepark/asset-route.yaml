@@ -1,0 +1,71 @@
+---
+# ONE route publishes /catalyst/ on EVERY host in the cluster.
+#
+# This replaces a per-app `Host(x) && PathPrefix(/catalyst/)` route that had to
+# be copied into every themed app's IngressRoute. That did not scale: theming a
+# new app meant editing its manifest in two places and getting both right.
+# Here, the assets are simply available everywhere, and theming an app is one
+# middleware reference and nothing else.
+#
+# NO Host matcher on purpose — the rule matches on path alone, so it applies to
+# any hostname Traefik serves. Hosts that are not themed simply never request
+# these paths.
+#
+# priority must beat the apps' own catch-all Host() rules, which would otherwise
+# swallow /catalyst/ and hand it to the application. Traefik derives priority
+# from rule length when unset, and `Host(...)` is longer than this rule, so it
+# has to be stated explicitly.
+#
+# NO auth, deliberately: browsers fetch these as subresources with no session
+# and cannot follow a redirect to SSO. It serves static CSS and one script.
+#
+# Two objects because Kyverno's ingressroute-no-combined-entrypoints denies a
+# single route listing both entrypoints, and because Plex and Jellyfin are
+# served on plain HTTP while everything else is HTTPS.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalyst-assets
+  namespace: themepark
+  labels:
+    app.kubernetes.io/name: themepark
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: PathPrefix(`/catalyst/`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        - name: catalyst-compress
+          namespace: traefik
+        - name: catalyst-asset-cache
+          namespace: traefik
+      services:
+        - name: themepark
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalyst-assets-http
+  namespace: themepark
+  labels:
+    app.kubernetes.io/name: themepark
+spec:
+  entryPoints:
+    - web
+  routes:
+    # Deliberately NOT redirect-https: Plex and Jellyfin are served over plain
+    # HTTP, and an HTTPS-only asset origin would leave them unthemed.
+    - match: PathPrefix(`/catalyst/`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        - name: catalyst-compress
+          namespace: traefik
+        - name: catalyst-asset-cache
+          namespace: traefik
+      services:
+        - name: themepark
+          port: 80

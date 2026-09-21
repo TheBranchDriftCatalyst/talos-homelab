@@ -28,27 +28,6 @@ spec:
   entryPoints:
     - websecure
   routes:
-    # Catalyst theme assets, served from Sonarr's OWN origin so the stylesheet
-    # rides the same certificate the app is already loading over. Cross-origin
-    # would require every client to trust the homelab CA, and a client that does
-    # not refuses the subresource SILENTLY — no console error, no request, nothing
-    # in the Traefik log. NO auth middleware: browsers fetch this as a subresource
-    # with no session and cannot follow a 302 to SSO. It serves static CSS only.
-    # priority 110 > the /api route's 100 so it is matched first. TALOS-1xcd.
-    - match: Host(`sonarr.talos00`) && PathPrefix(`/catalyst/`)
-      kind: Rule
-      priority: 110
-      middlewares:
-        # compress FIRST: these routes had no middlewares at all, so the 94KB
-        # stylesheet was being served uncompressed on every cold fetch.
-        - name: catalyst-compress
-          namespace: traefik
-        - name: catalyst-asset-cache
-          namespace: traefik
-      services:
-        - name: themepark
-          namespace: themepark
-          port: 80
     - match: Host(`sonarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))
       kind: Rule
       priority: 100
@@ -66,10 +45,6 @@ spec:
         # exists so nzb360 / LunaSea / RSS clients bypass auth. TALOS-1xcd.
         - name: authentik
           namespace: authentik
-        - name: catalyst-compress
-          namespace: traefik
-        - name: catalyst-accept-encoding
-          namespace: traefik
         - name: catalyst-sonarr
           namespace: traefik
       services:

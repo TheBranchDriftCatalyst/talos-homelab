@@ -1,95 +1,39 @@
 ---
-# Catalyst injection: ONE middleware per app, ONE body-rewriting pass.
+# Catalyst theming — injected at Traefik, never inside the apps.
 #
-# This deliberately does NOT use the themepark plugin any more. Both it and
-# rewriteBody are body rewriters, and chaining them put two buffering rewrites
-# on the same response — they nest, and the outer one discards what the inner
-# one wrote. It only showed up when the client sent more than one
-# Accept-Encoding value, which every real browser does: with a bare
-# `Accept-Encoding: gzip` both injections landed, with Chrome's
-# `gzip, deflate, br, zstd` the nav script silently vanished while the theme
-# survived. A single middleware with two rewrites has no such interaction.
+# HOW TO THEME AN APP: put ONE middleware reference on the route that serves its
+# HTML. That is the whole contract.
 #
-# The two anchors are chosen so they can never collide with each other:
-#   <head>    -> the nav script, deferred (downloads in parallel, runs after parse)
-#   </head> or </body> -> the theme stylesheet
+#     middlewares:
+#       - name: authentik            # only if the app already had it
+#         namespace: authentik
+#       - name: catalyst-sonarr      # theme.park supports this app
+#         namespace: traefik
+#   or
+#       - name: catalyst-nav         # nav bar only, app left unstyled
+#         namespace: traefik
 #
-# That second choice mirrors what the themepark plugin did and it matters: the
-# servarr family gets the stylesheet before </body> so it lands AFTER the app's
-# own late-loaded CSS. Putting a Servarr theme in </head> renders half-themed.
+# Those two names are CHAINS. Everything shared — response compression, the
+# encoding pin the rewriter needs — lives inside them, so a route never repeats
+# the plumbing and changing the plumbing changes every app at once.
 #
-# Both URLs are ROOT-RELATIVE, served from the app's own origin via its
-# PathPrefix(`/catalyst/`) route. Beyond avoiding cross-origin certificate
-# trust, that is what makes qBittorrent work: it ships `script-src 'self'`,
-# which a same-origin script satisfies with no CSP rewriting at all.
+# Never attach these to a route that only redirects, or to an /api or /feed
+# bypass. The plugin no-ops there anyway (it acts only on GET + text/html), but
+# a reference that does nothing is a lie in the manifest.
 #
-# TWO links, not the generated per-app stub. The stub is a 400-byte file whose
-# entire content is two @import lines — so pointing at it cost a full extra
-# round trip before the browser even learned what to fetch. Measured on
-# Jellyfin: a 4-level serialized waterfall, 348ms wall-clock for the theme, of
-# which the first 58ms was just retrieving that stub.
+# Asset serving is NOT per app: one cluster-wide route publishes /catalyst/ on
+# every host. See asset-route.yaml.
 #
-# Naming both files directly deletes that level and starts the real fetches in
-# parallel. Order matters: the app base sheet first, ours second, so our
-# variables win.
-#
-# Adding an app: copy a block, change the two slugs. Nothing else.
+# ── WHY TWO KINDS ────────────────────────────────────────────────────────────
+# `catalyst-<slug>`  full theme + nav. Only for apps theme.park ships a base
+#                    stylesheet for, since that sheet is what maps the app's DOM
+#                    onto our variables. Without one an app is half-themed, which
+#                    looks worse than not themed at all.
+# `catalyst-nav`     the cross-app bar and nothing else. The app keeps its own
+#                    look entirely. One shared middleware, any number of apps.
 
 ---
-# Force a decodable response encoding. MUST be listed BEFORE the per-app
-# middleware on every themed route.
-#
-# rewriteBody can decode gzip, deflate and identity — never brotli, which Yaegi
-# has no implementation for. The plugin is supposed to narrow the request's
-# Accept-Encoding itself, and it does for short lists, but with the header a
-# real browser sends (`gzip, deflate, br, zstd`) brotli survives; Jellyfin then
-# answers `Content-Encoding: br` and the plugin passes the body through
-# untouched. Silent: no error, no log, just an unthemed app.
-#
-# `identity`, not `gzip`. The plugin advertises gzip support and it does work
-# for some backends (Plex), but Jellyfin answers gzip + chunked with no
-# Content-Length and the plugin then bails before rewriting — NEITHER injection
-# fires, silently. Rather than depend on which backend happens to be
-# decodable, ask for no compression on the documents we rewrite.
-#
-# This is the same conclusion infrastructure/base/analytics reached with its
-# `strip-accept-encoding` middleware, for the same reason.
-#
-# COST, stated plainly: this applies to the whole route, so an app's JS/CSS
-# bundles also transfer uncompressed — roughly 4-6x on a first load (Jellyfin's
-# web bundle is the worst case at ~2MB -> ~10MB). Those assets are
-# browser-cached afterwards, and this is a LAN. If that first load ever
-# matters, the fix is a higher-priority route covering just the HTML document
-# paths so only those drop compression.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: catalyst-asset-cache
-  namespace: traefik
-spec:
-  # Make the theme assets cacheable. Attach to each app's PathPrefix(`/catalyst/`)
-  # route ONLY — never to an app route.
-  #
-  # The upstream theme.park nginx hardcodes
-  #   Cache-Control: no-store, no-cache, must-revalidate, max-age=0
-  # with `etag off` and `if_modified_since off`, for EVERYTHING it serves. That
-  # is a sane default for a theme-preview site and awful for us: the 94KB
-  # stylesheet and 6KB nav script were being re-fetched in full on every page
-  # navigation, in all nine apps, with no revalidation possible.
-  #
-  # 5 minutes is the deliberate compromise. Long enough that navigating between
-  # apps costs nothing, short enough that a theme edit shows up without anyone
-  # clearing a cache — which matters because the URLs are stable and the server
-  # offers no ETag to revalidate against.
-  headers:
-    customResponseHeaders:
-      Cache-Control: 'public, max-age=300, stale-while-revalidate=3600'
-      # nginx also sends `Pragma: no-cache` and `Expires: -1`; both would
-      # override the header above in some caches, so clear them explicitly.
-      Pragma: ''
-      Expires: ''
-
----
+# ── shared plumbing (referenced only through the chains below) ────────────────
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -97,16 +41,10 @@ metadata:
   namespace: traefik
 spec:
   # Re-compress on the way OUT, restoring what catalyst-accept-encoding gives up.
-  #
-  # Must be listed BEFORE catalyst-accept-encoding on the route. Traefik runs
-  # middlewares forward on the request and in reverse on the response, so this
-  # ordering means: this sees the client's real Accept-Encoding on the way in,
-  # the backend is still asked for identity so the rewrite can read the body,
-  # and then this compresses the already-rewritten response before it goes to
-  # the browser.
-  #
-  # Without it, forcing identity applied to the WHOLE route — every JS and CSS
-  # bundle transferred uncompressed, which is what made the UIs crawl.
+  # Ordered BEFORE it in every chain, which is the only correct order: Traefik
+  # runs middlewares forward on the request and in reverse on the response, so
+  # this captures the client's real Accept-Encoding before it is overwritten,
+  # and compresses the already-rewritten body on the way back.
   compress: {}
 
 ---
@@ -116,6 +54,14 @@ metadata:
   name: catalyst-accept-encoding
   namespace: traefik
 spec:
+  # The rewriter decodes gzip, deflate and identity — never brotli, which Yaegi
+  # has no implementation for. Its own Accept-Encoding narrowing lets brotli
+  # through on the header a real browser sends, and it also bails on gzip with
+  # chunked transfer (Jellyfin) while coping fine with identity (Plex). Rather
+  # than depend on which backend happens to be decodable, ask for none.
+  #
+  # catalyst-compress above puts the compression back, so this costs nothing on
+  # the wire.
   headers:
     customRequestHeaders:
       Accept-Encoding: 'identity'
@@ -124,25 +70,186 @@ spec:
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: catalyst-jellyfin
+  name: catalyst-asset-cache
+  namespace: traefik
+spec:
+  # For the /catalyst/ asset route only. The upstream theme.park nginx hardcodes
+  # no-store with etag off for everything it serves, so the stylesheet and nav
+  # script were refetched in full on every page navigation with revalidation
+  # impossible. 5 minutes: navigation is free, and a theme edit still appears
+  # without anyone clearing a cache, which matters because the URLs are stable
+  # and there is no ETag to revalidate against.
+  headers:
+    customResponseHeaders:
+      Cache-Control: 'public, max-age=300, stale-while-revalidate=3600'
+      # nginx also sends these two, and they would override the above.
+      Pragma: ''
+      Expires: ''
+
+---
+# ── nav-only injector: the cross-app bar WITHOUT restyling the app ───────────
+#
+# This is what most of the cluster gets. It adds the nav bar and nothing else:
+# no typography changes, no component restyling, no scanlines. Its stylesheet is
+# tokens + one font face + the bar (21KB raw, 11KB on the wire) rather than the
+# full 93KB theme.
+#
+# Use this for any app that should be reachable from the bar but left looking
+# like itself — which is most of them, and all of media-experimental and
+# media-private.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-nav
   namespace: traefik
 spec:
   plugin:
     rewriteBody:
       lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/catalyst-nav.css"></head>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-nav
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-nav
+
+---
+# ── per-app injectors: theme.park HAS a base stylesheet for these ────────────
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-audiobookshelf
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/audiobookshelf/audiobookshelf-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-audiobookshelf
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-audiobookshelf
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-jellyfin
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
           replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/jellyfin/jellyfin-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
-
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-jellyfin
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-jellyfin
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-mylar3
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/mylar3/mylar3-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-mylar3
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-mylar3
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-overseerr
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/overseerr/overseerr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-overseerr
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-overseerr
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-plex
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/plex/plex-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -150,22 +257,26 @@ metadata:
   name: catalyst-plex
   namespace: traefik
 spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-plex
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-prowlarr
+  namespace: traefik
+spec:
   plugin:
     rewriteBody:
       lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
-        - regex: '</head>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/plex/plex-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
-
+        - regex: '</body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/prowlarr/prowlarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -173,22 +284,26 @@ metadata:
   name: catalyst-prowlarr
   namespace: traefik
 spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-prowlarr
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-qbittorrent
+  namespace: traefik
+spec:
   plugin:
     rewriteBody:
       lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/prowlarr/prowlarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
-
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/qbittorrent/qbittorrent-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -196,22 +311,26 @@ metadata:
   name: catalyst-qbittorrent
   namespace: traefik
 spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-qbittorrent
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-radarr
+  namespace: traefik
+spec:
   plugin:
     rewriteBody:
       lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/qbittorrent/qbittorrent-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
-
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/radarr/radarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -219,22 +338,26 @@ metadata:
   name: catalyst-radarr
   namespace: traefik
 spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-radarr
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-sabnzbd
+  namespace: traefik
+spec:
   plugin:
     rewriteBody:
       lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
-        - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/radarr/radarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
-
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sabnzbd/sabnzbd-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -242,46 +365,26 @@ metadata:
   name: catalyst-sabnzbd
   namespace: traefik
 spec:
-  plugin:
-    rewriteBody:
-      lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
-      rewrites:
-        - regex: '<head>'
-          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
-        - regex: '</head>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sabnzbd/sabnzbd-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
-
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-sabnzbd
 ---
-# NOTE: theme.park slug is `overseerr`, not the deployment name.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: catalyst-seerr
+  name: catalyst-inject-sonarr
   namespace: traefik
 spec:
   plugin:
     rewriteBody:
       lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
-        - regex: '</head>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/overseerr/overseerr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
-
+        - regex: '</body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sonarr/sonarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -289,22 +392,26 @@ metadata:
   name: catalyst-sonarr
   namespace: traefik
 spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-sonarr
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-tautulli
+  namespace: traefik
+spec:
   plugin:
     rewriteBody:
       lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
-        - regex: '</body>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/sonarr/sonarr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
-
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/tautulli/tautulli-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
@@ -312,18 +419,35 @@ metadata:
   name: catalyst-tautulli
   namespace: traefik
 spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-tautulli
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-whisparr
+  namespace: traefik
+spec:
   plugin:
     rewriteBody:
       lastModified: true
-      # NO explicit `monitor:` block. The plugin's EnsureDefaults() already
-      # sets exactly types=[text/html], methods=[GET] — and spelling it out in
-      # the CRD broke gzip handling entirely: Jellyfin (gzip) stopped being
-      # injected while Plex (identity) kept working. Nested lists inside a
-      # plugin struct do not survive the CRD -> Yaegi round-trip reliably; the
-      # same quirk is why this plugin family ships a delimiter workaround for
-      # its addons list. Leave the defaults alone.
       rewrites:
         - regex: '<head>'
           replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
-        - regex: '</head>'
-          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/tautulli/tautulli-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
+        - regex: '</body>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/whisparr/whisparr-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></body>'
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-whisparr
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-whisparr

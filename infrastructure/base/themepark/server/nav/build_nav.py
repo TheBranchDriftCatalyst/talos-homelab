@@ -28,12 +28,11 @@ def main() -> int:
     doc = json.load(sys.stdin)
     entries = {}
 
-    # Scope. Default is "themed": only apps that actually carry the Catalyst
-    # theme appear in the nav, so every destination looks like the place you
-    # came from. That is a DERIVED filter, not a list — theme another app and it
-    # joins the nav on the next refresh with nothing to edit here.
+    # Scope. Default lists only apps that actually carry Catalyst injection —
+    # a DERIVED filter, not a list. Add the middleware to an app and it joins
+    # the bar on the next refresh with nothing to edit here.
     # Set NAV_SCOPE=all to advertise every gethomepage.dev-enabled route.
-    only_themed = os.environ.get("NAV_SCOPE", "themed").lower() != "all"
+    only_injected = os.environ.get("NAV_SCOPE", "themed").lower() != "all"
 
     for item in doc.get("items", []):
         meta = item.get("metadata", {})
@@ -44,22 +43,30 @@ def main() -> int:
         spec = item.get("spec", {})
         routes = spec.get("routes", []) or []
 
-        # Themed iff some route pulls in a per-app catalyst-* middleware.
+        # Two distinct questions, and conflating them emptied the nav once
+        # already when middlewares were renamed:
         #
-        # SHARED is excluded deliberately: catalyst-accept-encoding is a helper
-        # attached alongside the real one, and counting it would make the test
-        # tautological. The per-app middleware is the actual signal.
+        #   injected — does this app carry ANY catalyst injection? That decides
+        #              whether it belongs in the bar at all.
+        #   themed   — does it carry a per-app FULL theme (catalyst-<slug>), as
+        #              opposed to catalyst-nav which adds the bar and leaves the
+        #              app's own styling alone? That decides whether the entry is
+        #              dimmed, so it is visible up front that the destination
+        #              will not look like where you came from.
         #
-        # This check is why the nav silently emptied once when the middlewares
-        # were renamed from theme-* to catalyst-*: the prefix here and the names
-        # in middlewares.yaml have to move together.
-        SHARED = {"catalyst-accept-encoding"}
-        themed = any(
-            (mw.get("name") or "").startswith("catalyst-")
-            and (mw.get("name") not in SHARED)
+        # SHARED is excluded from both: those ride along inside every chain, so
+        # counting them would make the test tautological.
+        #
+        # The prefix here and the names in middlewares.yaml must move together.
+        SHARED = {"catalyst-compress", "catalyst-accept-encoding",
+                  "catalyst-asset-cache"}
+        names = {
+            (mw.get("name") or "")
             for r in routes
             for mw in (r.get("middlewares") or [])
-        )
+        } - SHARED
+        injected = any(n.startswith("catalyst") for n in names)
+        themed = any(n.startswith("catalyst-") and n != "catalyst-nav" for n in names)
 
         # Prefer a host from a plain route over one carrying a PathPrefix: the
         # asset route we add for the theme also matches Host(), and picking it
@@ -79,7 +86,7 @@ def main() -> int:
         if not host:
             continue
 
-        if only_themed and not themed:
+        if only_injected and not injected:
             continue
 
         # Private/internal hostnames are reachable but not somewhere a nav
