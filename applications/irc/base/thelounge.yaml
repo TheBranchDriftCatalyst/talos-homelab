@@ -47,6 +47,18 @@ spec:
       labels:
         app.kubernetes.io/name: thelounge
         app: thelounge
+      annotations:
+        # Velero's daily-all schedule is OPT-IN (defaultVolumesToFsBackup:
+        # false), so without this annotation the PVC's CONTENTS are never
+        # backed up — only the PVC object is, which restores an empty volume.
+        # That was the state this deployment shipped in.
+        #
+        # What this protects: users/<name>.json holds the accounts, saved
+        # networks and settings, and is plain JSON that backs up cleanly.
+        # logs/ holds the SQLite scrollback, which is copied live and so could
+        # be captured mid-write — SQLite usually recovers from that, but treat
+        # scrollback as best-effort and the account files as the real backup.
+        backup.velero.io/backup-volumes: "data"
     spec:
       securityContext:
         runAsNonRoot: true
