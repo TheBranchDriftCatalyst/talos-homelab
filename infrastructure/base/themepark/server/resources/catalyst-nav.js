@@ -128,39 +128,82 @@
     autoHide(nav);
   }
 
-  // Auto-hide on scroll down, reveal on scroll up. rAF-throttled so it cannot
-  // become a scroll-performance problem inside a host app.
+  // HIDDEN BY DEFAULT, REVEALED BY THE POINTER.
+  //
+  // The previous behaviour was scroll-coupled: hide on scroll down, reveal on scroll up. It
+  // never hid in the arr apps, and the reason is written in its own comment. It listened in the
+  // CAPTURE phase specifically because "many of these apps scroll an inner element rather than
+  // the window" — and then read `window.pageYOffset`, which stays 0 forever when an inner
+  // element is the thing scrolling. The listener fired on every scroll and computed 0 every
+  // time, so `y > 90` was never true and the bar never moved.
+  //
+  // Rather than only repair that, the resting state is now HIDDEN. A persistent bar spends the
+  // whole session covering 38px of an app we did not write, to show navigation the user needs
+  // for a few seconds at a time. Reveal-on-approach costs nothing when unused and is the
+  // behaviour that was actually wanted.
+  //
+  // Scroll still reveals, because a user who scrolls up is usually heading for navigation — and
+  // that path now reads the scroll position off whichever element scrolled.
   function autoHide(nav) {
-    var last = 0;
-    var ticking = false;
+    var HIDDEN = C + '--hidden';
 
-    function onScroll() {
-      var y = window.pageYOffset || document.documentElement.scrollTop || 0;
-      // Never hide near the top, and ignore sub-pixel jitter.
-      if (y > 90 && y - last > 4) {
-        nav.classList.add(C + '--hidden');
-      } else if (last - y > 4 || y <= 90) {
-        nav.classList.remove(C + '--hidden');
+    // Hysteresis, not a single threshold. One boundary makes the bar flicker when the pointer
+    // sits near it: every sub-pixel jitter across the line toggles a 280ms transition. Reveal
+    // at 48px, hide only past 90px, and the dead band between them absorbs the jitter.
+    var REVEAL_AT = 48;
+    var HIDE_PAST = 90;
+
+    // The bar itself occupies the top 38px, so a pointer ON the bar is inside REVEAL_AT and it
+    // stays open while in use. No separate mouseenter handling is needed for that.
+    nav.classList.add(HIDDEN);
+
+    document.addEventListener('mousemove', function (ev) {
+      if (ev.clientY < REVEAL_AT) {
+        nav.classList.remove(HIDDEN);
+      } else if (ev.clientY > HIDE_PAST) {
+        nav.classList.add(HIDDEN);
       }
-      last = y;
+    }, { passive: true });
+
+    // Touch has no hover. A tap in the top strip toggles instead, so the bar is reachable on a
+    // tablet without making it permanent for everyone else.
+    document.addEventListener('touchstart', function (ev) {
+      var t = ev.touches && ev.touches[0];
+      if (t && t.clientY < REVEAL_AT) nav.classList.remove(HIDDEN);
+    }, { passive: true });
+
+    // Leaving the window entirely re-hides: otherwise the bar stays open behind whatever the
+    // user switched to and is still open when they come back.
+    document.addEventListener('mouseleave', function () {
+      nav.classList.add(HIDDEN);
+    }, { passive: true });
+
+    var ticking = false;
+    var pending = 0;
+
+    function apply() {
+      // Near the top of ANY scroller, reveal. This is the fix for the original bug: the
+      // position comes from the element that scrolled, not from the window.
+      if (pending <= 90) nav.classList.remove(HIDDEN);
       ticking = false;
     }
 
-    // Many of these apps scroll an inner element rather than the window, so
-    // listen in the CAPTURE phase to catch scroll from any scroller.
-    function schedule() {
+    function schedule(ev) {
+      // Read synchronously — by the time the rAF callback runs, `ev` is gone.
+      var t = ev && ev.target;
+      if (t && t !== document && t !== window && typeof t.scrollTop === 'number') {
+        pending = t.scrollTop;
+      } else {
+        pending = window.pageYOffset || document.documentElement.scrollTop || 0;
+      }
       if (!ticking) {
         ticking = true;
-        window.requestAnimationFrame(onScroll);
+        window.requestAnimationFrame(apply);
       }
     }
-    window.addEventListener('scroll', schedule, { passive: true, capture: true });
 
-    // Pointer near the top always reveals it — otherwise a hidden bar in a
-    // non-window scroller could be hard to get back.
-    document.addEventListener('mousemove', function (ev) {
-      if (ev.clientY < 48) nav.classList.remove(C + '--hidden');
-    }, { passive: true });
+    // Capture phase so scroll from any inner scroller is seen; scroll does not bubble.
+    window.addEventListener('scroll', schedule, { passive: true, capture: true });
   }
 
   // No `cache: 'no-store'` here: it would defeat the Cache-Control the
