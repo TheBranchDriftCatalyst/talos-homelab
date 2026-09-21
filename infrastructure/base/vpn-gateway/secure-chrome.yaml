@@ -22,6 +22,19 @@ spec:
         app.kubernetes.io/component: vpn-browser
         vpn-gateway.io/rotation: disabled
     spec:
+      # fsGroup so the .cache emptyDir below is writable by kasm-user (1000).
+      # Without it an emptyDir mounts root-owned 0755 and Chrome cannot write
+      # its own cache — it would start and then behave worse than before.
+      #
+      # fsGroupChangePolicy: OnRootMismatch is REQUIRED, not decoration. The
+      # default (Always) recursively chowns every volume on every start, and one
+      # of them is a 2.2GB Chrome profile on NFS — a long pointless walk over the
+      # network each restart, brutal while the NAS is rebuilding parity.
+      # /home/kasm-user is already 1000:1000, so OnRootMismatch matches on the
+      # root and skips the recursion entirely.
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
       # Init containers for setup
       initContainers:
         # Clean up stale WireGuard routing rules before gluetun starts
@@ -165,13 +178,46 @@ spec:
             # dropped with it; 2500m reserved two and a half cores for something that idles.
             # (TALOS-ri7d)
             requests:
-              cpu: 500m
+              # 500m came from TALOS-ri7d, which correctly observed this idles and
+              # correctly refused to reserve 2.5 cores for that. But it measures
+              # 2415m while in USE — software-encoding the desktop with ffmpeg —
+              # so 500m understates the active case ~5x and the scheduler treats a
+              # browser as a half-core workload.
+              #
+              # 1000m, not 2000m, deliberately. This node is already at 81% of CPU
+              # requested, and over-declaring starves a node just as effectively as
+              # under-declaring lies about it — the same lesson TALOS-ri7d came
+              # from. The GPU offload below should also cut the active figure, so
+              # this is a modest step to be re-measured once hardware encoding is
+              # live, rather than a number picked before the thing that changes it.
+              #
+              # Still no CPU limit: bursting is what a browser needs.
+              cpu: 1000m
               memory: 2Gi
+            limits:
+              # Intel QuickSync for the KasmVNC encoder — the same pattern plex
+              # and jellyfin already use on this node, which advertises
+              # gpu.intel.com/i915: 10 with all 10 free. Device-plugin resources
+              # belong in limits; Kubernetes mirrors them into requests. NO
+              # cpu/memory limits here on purpose: adding them would change this
+              # pod's QoS class and make it OOM-killable mid-session.
+              gpu.intel.com/i915: 1
           volumeMounts:
             - name: shm
               mountPath: /dev/shm
             - name: chrome-data
               mountPath: /home/kasm-user
+            # Mounted INSIDE the NFS volume, shadowing it for this subtree.
+            # Chrome's cache is 1.9GB of pure churn — cache index updates and
+            # SQLite journalling — and NFS measured 1.5ms per small write against
+            # 0.12ms on tmpfs, 12x slower, thousands of times over. This keeps
+            # that churn local while .config (logins, bookmarks, extensions)
+            # stays on the PVC and survives restarts. Not a trade between speed
+            # and persistence — the ephemeral part stops pretending it persists.
+            - name: chrome-cache
+              mountPath: /home/kasm-user/.cache
+            - name: dri
+              mountPath: /dev/dri
           livenessProbe:
             tcpSocket:
               port: 6901
@@ -188,6 +234,17 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: 2Gi
+        # Chrome's disk cache — local and ephemeral by design. Node-local disk
+        # rather than tmpfs: 1.9GB of cache in RAM would compete with the browser
+        # itself, and this only has to beat NFS, which it does easily.
+        - name: chrome-cache
+          emptyDir:
+            sizeLimit: 4Gi
+        # Intel iGPU for hardware video encoding.
+        - name: dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
         # Persistent Chrome user data (logins, bookmarks, extensions)
         - name: chrome-data
           persistentVolumeClaim:
