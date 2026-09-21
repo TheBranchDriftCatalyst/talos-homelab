@@ -1,0 +1,74 @@
+---
+# One hostname, three routes. gamja and soju share an origin on purpose: the
+# client is served from / and talks to the bouncer at /socket, so the WebSocket
+# is same-origin (no CORS) and carries the same cookies as the page.
+#
+# Route ORDER matters here — the /socket and /uploads rules carry a higher
+# priority so the catch-all serving gamja cannot swallow them.
+#
+# NOTE ON AUTH: /socket and /uploads are deliberately NOT behind Authentik
+# forward-auth. soju authenticates the IRC connection itself (SASL/PASS against
+# its own accounts), and a WebSocket upgrade intercepted by forward-auth cannot
+# fall back to a login page — it just fails. The web UI is gated; the protocol
+# endpoint is authenticated by the protocol. Once soju's OAuth2 auth is wired to
+# Authentik, both ends become one login.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: irc
+  namespace: irc
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "IRC"
+    gethomepage.dev/description: "soju bouncer + gamja web client"
+    gethomepage.dev/group: "Apps"
+    gethomepage.dev/icon: "irc.png"
+    gethomepage.dev/siteMonitor: "http://gamja.irc.svc.cluster.local:80"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    # soju's IRCv3 WebSocket.
+    - match: Host(`irc.${CLUSTER_DOMAIN}`) && PathPrefix(`/socket`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: soju
+          port: 8080
+    # soju's file uploads.
+    - match: Host(`irc.${CLUSTER_DOMAIN}`) && PathPrefix(`/uploads`)
+      kind: Rule
+      priority: 100
+      services:
+        - name: soju
+          port: 8080
+    # The web client, gated by SSO, and carrying the Catalyst nav bar.
+    - match: Host(`irc.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+        - name: catalyst-nav
+          namespace: traefik
+      services:
+        - name: gamja
+          port: 80
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: irc-http
+  namespace: irc
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`irc.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: gamja
+          port: 80

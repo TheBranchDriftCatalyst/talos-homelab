@@ -1,0 +1,91 @@
+---
+# gamja — the web IRC client, by the same author as soju, so the IRCv3
+# extensions soju implements (bouncer-networks, chathistory) are actually used
+# rather than ignored.
+#
+# Served from the SAME host as soju's WebSocket (irc.talos00), which is what
+# lets the config below use a relative URL. Same-origin means no CORS, and the
+# browser sends cookies to /socket the same way it does to the page — which
+# matters if Authentik forward-auth is ever put in front of both.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gamja-config
+  namespace: irc
+data:
+  config.json: |
+    {
+      "server": {
+        "url": "/socket",
+        "auth": "mandatory"
+      }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gamja
+  namespace: irc
+  labels:
+    app.kubernetes.io/name: gamja
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gamja
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gamja
+        app: gamja
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gamja
+          image: codeberg.org/emersion/gamja:v1.0.0-beta.11@sha256:bb827a6fb3986587e671eac4265717dd7418bcb2f3ec8c8b306eec2f88760c1c
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: config
+              mountPath: /gamja-config.json
+              subPath: config.json
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: gamja-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gamja
+  namespace: irc
+spec:
+  selector:
+    app.kubernetes.io/name: gamja
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

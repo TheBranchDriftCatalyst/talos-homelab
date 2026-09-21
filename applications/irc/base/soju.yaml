@@ -1,0 +1,155 @@
+---
+# soju — IRC bouncer. Keeps you permanently present on Libera/OFTC with full
+# scrollback, so closing a browser tab is no longer the same as leaving.
+#
+# LISTENER CHOICE: http+insecure:// on 8080, NOT ircs:// on 6697.
+#
+# That one line is why this app needs no TCP routing. soju's http listener
+# serves BOTH the IRCv3 WebSocket (/socket) and file uploads (/uploads), so
+# ordinary HTTP routing reaches it — Traefik terminates TLS at the edge exactly
+# like every other app here. Exposing raw IRC would mean an IngressRouteTCP with
+# passthrough and soju holding its own certificate, which is the same shape that
+# had to be reverted on secure-chrome. Web (gamja) and mobile (Goguma) both
+# speak IRC-over-WebSocket, so nothing is lost until someone wants weechat.
+#
+# "insecure" names the LISTENER, not the connection: it means soju itself does
+# not terminate TLS. Traefik does, on the way in, with the homelab CA.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: soju-config
+  namespace: irc
+data:
+  config: |
+    # Advertised name; must match how clients reach it or IRCv3 gets confused.
+    hostname irc.talos00
+    title Catalyst IRC
+
+    listen http+insecure://:8080
+
+    db postgres "host=soju-postgres-rw.irc.svc.cluster.local user=soju dbname=soju sslmode=disable"
+
+    # `db` (not `fs`/`memory`) is what gives full-text search over scrollback.
+    message-store db
+
+    # Uploads land on a PVC; see the volume below.
+    file-upload fs /uploads
+
+    # Internal auth for now: soju keeps its own accounts, created with sojuctl.
+    # soju also supports `auth oauth2 <url>` with RFC 8414 discovery and RFC 7662
+    # introspection, both of which Authentik speaks — that is the path to a true
+    # single login, and it is deliberately a SEPARATE change so this one can be
+    # proven working first.
+    auth internal
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: soju-uploads
+  namespace: irc
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soju
+  namespace: irc
+  labels:
+    app.kubernetes.io/name: soju
+spec:
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate: soju holds long-lived TCP connections to
+    # upstream IRC networks and a single RWO uploads volume. Two instances would
+    # briefly double-connect to Libera under the same nick, which upstream
+    # networks treat as a ghost/collision.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: soju
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: soju
+        app: soju
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: soju
+          image: codeberg.org/emersion/soju:v0.10.1@sha256:c0473d8f19554a03790f2a475d59646600f2f384b07b296afa782aec4c40253d
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # soju reads the password from the connection string above; CNPG
+            # publishes it in this secret. Injected as PGPASSWORD so the
+            # credential never appears in the ConfigMap.
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: soju-postgres-app
+                  key: password
+          volumeMounts:
+            - name: config
+              mountPath: /soju-config
+              subPath: config
+              readOnly: true
+            - name: uploads
+              mountPath: /uploads
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          # No livenessProbe by design. soju's job is holding long-lived
+          # connections to upstream networks; a restart drops every one of them
+          # and re-announces the user joining. The startupprobe-from-liveness
+          # policy would also derive a probe from one if it existed. Readiness
+          # is enough to keep it out of rotation while starting.
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: soju-config
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: soju-uploads
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: soju
+  namespace: irc
+spec:
+  selector:
+    app.kubernetes.io/name: soju
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
