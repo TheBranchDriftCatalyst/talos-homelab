@@ -54,6 +54,52 @@
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
+  name: catalyst-asset-cache
+  namespace: traefik
+spec:
+  # Make the theme assets cacheable. Attach to each app's PathPrefix(`/catalyst/`)
+  # route ONLY — never to an app route.
+  #
+  # The upstream theme.park nginx hardcodes
+  #   Cache-Control: no-store, no-cache, must-revalidate, max-age=0
+  # with `etag off` and `if_modified_since off`, for EVERYTHING it serves. That
+  # is a sane default for a theme-preview site and awful for us: the 94KB
+  # stylesheet and 6KB nav script were being re-fetched in full on every page
+  # navigation, in all nine apps, with no revalidation possible.
+  #
+  # 5 minutes is the deliberate compromise. Long enough that navigating between
+  # apps costs nothing, short enough that a theme edit shows up without anyone
+  # clearing a cache — which matters because the URLs are stable and the server
+  # offers no ETag to revalidate against.
+  headers:
+    customResponseHeaders:
+      Cache-Control: 'public, max-age=300'
+      Pragma: ''
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-compress
+  namespace: traefik
+spec:
+  # Re-compress on the way OUT, restoring what catalyst-accept-encoding gives up.
+  #
+  # Must be listed BEFORE catalyst-accept-encoding on the route. Traefik runs
+  # middlewares forward on the request and in reverse on the response, so this
+  # ordering means: this sees the client's real Accept-Encoding on the way in,
+  # the backend is still asked for identity so the rewrite can read the body,
+  # and then this compresses the already-rewritten response before it goes to
+  # the browser.
+  #
+  # Without it, forcing identity applied to the WHOLE route — every JS and CSS
+  # bundle transferred uncompressed, which is what made the UIs crawl.
+  compress: {}
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
   name: catalyst-accept-encoding
   namespace: traefik
 spec:

@@ -398,10 +398,17 @@ spec:
             httpGet:
               path: /
               port: http
-            initialDelaySeconds: 30
-            periodSeconds: 30
+            initialDelaySeconds: 15
+            periodSeconds: 10
             timeoutSeconds: 10
-            failureThreshold: 60  # 30s × 60 = 30 min total budget for themepark
+            # 10s x 18 = 3 min. Was 30 MINUTES, sized purely to outlast the
+            # theme.park DOCKER_MODS rewriting thousands of HTML files on every
+            # start (TALOS-0dk). That mod is gone — the theme is injected at
+            # Traefik now and nothing is fetched or rewritten inside the
+            # container. Kept as a startupProbe rather than deleted because
+            # qbittorrent still waits on gluetun's tunnel before it can serve,
+            # and this is what defers the aggressive liveness probe until then.
+            failureThreshold: 18
           livenessProbe:
             httpGet:
               path: /
