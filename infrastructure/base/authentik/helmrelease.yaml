@@ -94,11 +94,42 @@ spec:
         - authentik-media-blueprint
 
     server:
-      replicas: 1
+      # 2, not 1 — and deliberately not 3.
+      #
+      # authentik-server serves the web UI AND the embedded forward-auth
+      # outpost, so EVERY proxied request in the cluster hits it, including each
+      # poster image in the arr apps. On a single replica it saturated: measured
+      # p50 forward-auth overhead of 98ms with multi-second outliers, liveness
+      # and readiness probes timing out, and 14 restarts in 22h. Each restart is
+      # a total SSO outage, because there was nothing else to serve.
+      #
+      # WHY NOT 3: that one pod holds 42 Postgres connections by itself (51 of
+      # 200 in use cluster-wide). Three replicas would be ~131/200 before any
+      # headroom for the worker, CNPG's own superuser/replication slots, or a
+      # rolling update briefly doubling pods. Connection exhaustion here is what
+      # caused the previous SSO-wide outage, so this stops at 2 (~89/200). Go to
+      # 3 only after raising max_connections, which needs a CNPG rolling restart.
+      replicas: 2
       resources:
         requests:
-          cpu: 100m
+          # 100m was far too low for the component every request passes through;
+          # it made the pod a scheduling afterthought and CPU-starved under
+          # contention. No limit on purpose — throttling this stalls all SSO.
+          cpu: 300m
           memory: 512Mi
+      # The chart's defaults (timeout 3s, failureThreshold 3, period 10s) kill
+      # the pod after ~30s of slow health responses. Under load the health
+      # endpoint is exactly what goes slow first, so saturation was being
+      # converted into a restart — which made the saturation worse. Give it room
+      # to be slow without being killed.
+      livenessProbe:
+        timeoutSeconds: 10
+        periodSeconds: 15
+        failureThreshold: 6
+      readinessProbe:
+        timeoutSeconds: 10
+        periodSeconds: 15
+        failureThreshold: 6
       ingress:
         enabled: false  # We'll use Traefik IngressRoute
       # Mount custom CSS + catalyst brand SVG assets. Blueprints are NO LONGER
