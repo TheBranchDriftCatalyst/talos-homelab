@@ -22,7 +22,7 @@ children that are each their own component, others are a single Kustomization wr
 nested ones, and nothing in the tree tells the two apart. So this table is built from the
 Kustomizations, never from the filesystem.
 
-65 components are declared across 64 manifest files. 19 have a colocated `README.md`,
+66 components are declared across 65 manifest files. 19 have a colocated `README.md`,
 which is the question this table really asks: a component with no README has no doc home,
 and whatever documents it lives somewhere that nothing keeps pointed at it.
 
@@ -85,6 +85,7 @@ and whatever documents it lives somewhere that nothing keeps pointed at it.
 | `storage`                    | `storage`                    | `infrastructure/base/storage`                         | yes     | -      | 2      | -         |
 | `tdarr`                      | `tdarr`                      | `applications/tdarr/base`                             | yes     | -      | 1      | -         |
 | `teak-talos-dev`             | `teak-talos-dev`             | `infrastructure/base/teak-talos-dev`                  | yes     | yes    | 3      | -         |
+| `themepark`                  | `themepark`                  | `infrastructure/base/themepark`                       | yes     | -      | 2      | -         |
 | `traefik`                    | `traefik`                    | `infrastructure/base/traefik`                         | yes     | -      | 2      | -         |
 | `tubesync`                   | `tubesync`                   | `applications/tubesync`                               | yes     | -      | 1      | -         |
 | `unifi-port-forward`         | `unifi-port-forward`         | `infrastructure/base/unifi-port-forward`              | yes     | -      | 1      | -         |
