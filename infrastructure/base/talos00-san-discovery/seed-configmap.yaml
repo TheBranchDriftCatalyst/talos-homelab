@@ -1,0 +1,25 @@
+---
+# Bootstrap value for the derived SAN list.
+#
+# Exists so cert-manager-issuers can ALWAYS resolve ${TALOS00_DNSNAMES}. Flux's
+# `${var:=default}` syntax was tried first and does not survive a default value
+# containing brackets and quotes — it was left verbatim in the output, which
+# applied the literal string to the Certificate and failed the whole
+# Kustomization. A guaranteed ConfigMap is the robust version of that idea.
+#
+# ssa: Ignore is what makes this work: Flux CREATES this if missing and then
+# never touches it again, so the hourly CronJob owns the real content and the
+# two never fight. Without it, every reconcile would reset the certificate to
+# wildcard-only and reissue it.
+#
+# The value here is intentionally minimal — just what the cert had before this
+# was derived. The CronJob replaces it within the hour.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: talos00-cert-sans
+  namespace: flux-system
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: Ignore
+data:
+  TALOS00_DNSNAMES: '["*.talos00","talos00"]'

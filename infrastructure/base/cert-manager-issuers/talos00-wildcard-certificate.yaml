@@ -36,9 +36,11 @@ spec:
   # fixed it. The wildcard is KEPT for non-Apple clients and for any host that
   # appears between refreshes.
   #
-  # The `:=` default is load-bearing: if the ConfigMap is missing (first
-  # bootstrap, or the job has never run) this still renders a valid certificate
-  # instead of failing the whole Kustomization.
-  dnsNames: ${TALOS00_DNSNAMES:=["*.talos00","talos00"]}
+  # No `${var:=default}` here: Flux's envsubst does not survive a default value
+  # containing brackets and quotes — it left the whole expression verbatim, the
+  # literal string was applied to this Certificate, and the Kustomization failed.
+  # The ConfigMap is guaranteed to exist instead (seeded by the
+  # talos00-san-discovery component, which this Kustomization dependsOn).
+  dnsNames: ${TALOS00_DNSNAMES}
   duration: 8760h # 1 year
   renewBefore: 720h # 30 days before expiry

@@ -13,20 +13,9 @@ resources:
   # (avoids the _acme-challenge DNS records). Re-enable on reactivation with the new domain.
   # - amber-wildcard-certificate.yaml # talos-private migration (TALOS-h4j) — *.amber.knowledgedump.space
   - talos00-wildcard-certificate.yaml
-  # Derives that certificate's SAN list from the cluster's IngressRoutes, so the
-  # Apple-incompatible `*.talos00` wildcard is backed by explicit names without
-  # anyone maintaining a list of 93 hostnames by hand.
-  - san-discovery/rbac.yaml
-  - san-discovery/cronjob.yaml
+  # The job that derives this certificate's SAN list lives in its OWN component
+  # (infrastructure/base/talos00-san-discovery) — it cannot ship here, because
+  # this Kustomization cannot build without the data that job produces.
   - wildcard-certificate.yaml
   - priv-knowledgedump-wildcard-certificate.yaml
   - amberdark-wildcard-certificate.yaml
-
-# The discovery scripts, shipped as a hashed ConfigMap so an edit rolls the
-# CronJob's next run rather than silently keeping the old logic.
-configMapGenerator:
-  - name: talos00-san-scripts
-    namespace: cert-manager
-    files:
-      - san-discovery/refresh_sans.sh
-      - san-discovery/derive_sans.py

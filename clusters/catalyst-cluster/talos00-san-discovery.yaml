@@ -1,0 +1,28 @@
+---
+# Derives the talos00 certificate's SAN list from the cluster's own IngressRoutes.
+#
+# Separate from cert-manager-issuers on purpose: that Kustomization CONSUMES the
+# ConfigMap this job produces (via postBuild substitution), so the producer
+# cannot live inside the consumer — it would never get a chance to run. It also
+# must stay free of postBuild, because Flux's envsubst rewrites generated
+# ConfigMap contents and would mangle the shell script's own `$VAR` and `$(...)`.
+#
+# wait:false — a failure here must never block certificates. The Certificate
+# carries a default, so the worst case is the wildcard-only cert it had before.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: talos00-san-discovery
+  namespace: flux-system
+spec:
+  interval: 1h
+  retryInterval: 5m
+  timeout: 3m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/talos00-san-discovery
+  prune: true
+  wait: false
+  dependsOn:
+    - name: cert-manager

@@ -1,0 +1,28 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Deliberately its own component, NOT part of cert-manager-issuers.
+#
+# Two reasons, both learned the hard way:
+#
+# 1. Chicken-and-egg. cert-manager-issuers consumes the ConfigMap this job
+#    writes, via postBuild substitution. Shipping the job inside that same
+#    Kustomization meant the thing that creates the data could never run,
+#    because the Kustomization carrying it failed to build without the data.
+#
+# 2. Flux's envsubst rewrites the WHOLE rendered output, including the contents
+#    of generated ConfigMaps. The shell script below is full of `$NEW`, `${CM}`
+#    and `$(...)`, which envsubst tried to resolve as Flux variables and choked
+#    on. This Kustomization has no postBuild at all, so the script is left alone.
+resources:
+  - seed-configmap.yaml
+  - rbac.yaml
+  - cronjob.yaml
+
+configMapGenerator:
+  - name: talos00-san-scripts
+    namespace: cert-manager
+    files:
+      - refresh_sans.sh
+      - derive_sans.py
