@@ -1,0 +1,114 @@
+---
+# The Lounge — web IRC client AND bouncer in one process.
+#
+# This replaced soju + gamja. soju is a good bouncer, but gamja is deliberately
+# minimal: no channel list, no previews, no uploads, no search. Splitting the
+# job across two services bought IRCv3 purity and cost the things that actually
+# make a client usable. The Lounge does both jobs in one container with one
+# login, and its private mode keeps IRC connections alive while no browser is
+# attached — which is the only property the bouncer was there to provide.
+#
+# It also drops the Postgres dependency: message storage is per-user SQLite on
+# the PVC below, so the CNPG cluster went away with soju.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: thelounge-data
+  namespace: irc
+spec:
+  accessModes: [ReadWriteOnce]
+  # local-path, NOT NFS: this is SQLite. Its locking is unreliable over NFS and
+  # the failure mode is a corrupted database, not a slow one.
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: thelounge
+  namespace: irc
+  labels:
+    app.kubernetes.io/name: thelounge
+spec:
+  replicas: 1
+  strategy:
+    # Recreate: it holds long-lived TCP connections to upstream networks and a
+    # single RWO volume. Two instances would double-connect under one nick,
+    # which networks treat as a collision.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: thelounge
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: thelounge
+        app: thelounge
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: thelounge
+          image: ghcr.io/thelounge/thelounge:4.5.2@sha256:79b02c2a8373063f300129729161ec75a26ea1881352845f01f12988075d378e
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+          env:
+            - name: THELOUNGE_HOME
+              value: /var/opt/thelounge
+          ports:
+            - name: http
+              containerPort: 9000
+          volumeMounts:
+            - name: data
+              mountPath: /var/opt/thelounge
+            - name: config
+              mountPath: /var/opt/thelounge/config.js
+              subPath: config.js
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          # No livenessProbe by design: a restart drops every upstream IRC
+          # connection and re-announces you joining every channel.
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: thelounge-data
+        - name: config
+          configMap:
+            name: thelounge-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: thelounge
+  namespace: irc
+spec:
+  selector:
+    app.kubernetes.io/name: thelounge
+  ports:
+    - name: http
+      port: 9000
+      targetPort: http

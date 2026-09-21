@@ -20,43 +20,30 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: "IRC"
-    gethomepage.dev/description: "soju bouncer + gamja web client"
+    gethomepage.dev/description: "The Lounge — IRC client + bouncer"
     gethomepage.dev/group: "Apps"
     gethomepage.dev/icon: "irc.png"
-    gethomepage.dev/siteMonitor: "http://gamja.irc.svc.cluster.local:80"
+    gethomepage.dev/siteMonitor: "http://thelounge.irc.svc.cluster.local:9000"
 spec:
   entryPoints:
     - websecure
   routes:
-    # soju's IRCv3 WebSocket.
-    - match: Host(`irc.${CLUSTER_DOMAIN}`) && PathPrefix(`/socket`)
-      kind: Rule
-      priority: 100
-      services:
-        - name: soju
-          port: 8080
-    # soju's file uploads.
-    - match: Host(`irc.${CLUSTER_DOMAIN}`) && PathPrefix(`/uploads`)
-      kind: Rule
-      priority: 100
-      services:
-        - name: soju
-          port: 8080
-    # The web client, gated by SSO, and carrying the Catalyst nav bar.
+    # One service now. The Lounge serves the UI and its own websocket on the
+    # same port, so the separate /socket and /uploads routes that soju needed
+    # are gone — and with them the reason any route had to skip forward-auth.
     - match: Host(`irc.${CLUSTER_DOMAIN}`)
       kind: Rule
       middlewares:
-        # Order matters: authentik FIRST, catalyst-nav SECOND. Traefik runs the
-        # list forward on the request and reverse on the response, so auth
-        # happens on the way in and nav injection on the way out — the nav
-        # middleware never sees an unauthenticated request.
+        # authentik FIRST, catalyst-nav SECOND: Traefik runs middlewares forward
+        # on the request and reverse on the response, so auth happens inbound
+        # and nav injection outbound.
         - name: authentik
           namespace: authentik
         - name: catalyst-nav
           namespace: traefik
       services:
-        - name: gamja
-          port: 80
+        - name: thelounge
+          port: 9000
 
 ---
 apiVersion: traefik.io/v1alpha1
@@ -74,5 +61,5 @@ spec:
         - name: redirect-https
           namespace: traefik
       services:
-        - name: gamja
-          port: 80
+        - name: thelounge
+          port: 9000

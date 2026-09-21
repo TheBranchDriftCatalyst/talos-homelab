@@ -4,21 +4,14 @@ kind: Kustomization
 namespace: irc
 resources:
   - namespace.yaml
-  - postgres.yaml
-  - soju.yaml
-  - gamja.yaml
+  - thelounge.yaml
   - ingressroute.yaml
 
-# configMapGenerator, NOT plain ConfigMaps. Both configs are mounted by subPath,
-# and a subPath mount is frozen at pod start — it never picks up a ConfigMap
-# edit. With a stable name the pod template also never changes, so Flux has
-# nothing to roll and the pod runs the old config forever. This is exactly how
-# the first soju config fix appeared to do nothing. The generated hash suffix
-# changes the pod template on every content change, forcing a rollout.
+# configMapGenerator, NOT a plain ConfigMap: config.js is mounted by subPath and
+# a subPath mount is FROZEN at pod start. With a stable name the pod template
+# never changes either, so Flux has nothing to roll and the old config runs
+# forever. The content hash is what actually triggers a rollout on edit.
 configMapGenerator:
-  - name: soju-config
+  - name: thelounge-config
     files:
-      - config=config/soju.conf
-  - name: gamja-config
-    files:
-      - config.json=config/gamja.json
+      - config.js=config/config.js
