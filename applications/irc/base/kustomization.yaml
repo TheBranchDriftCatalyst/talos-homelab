@@ -8,3 +8,17 @@ resources:
   - soju.yaml
   - gamja.yaml
   - ingressroute.yaml
+
+# configMapGenerator, NOT plain ConfigMaps. Both configs are mounted by subPath,
+# and a subPath mount is frozen at pod start — it never picks up a ConfigMap
+# edit. With a stable name the pod template also never changes, so Flux has
+# nothing to roll and the pod runs the old config forever. This is exactly how
+# the first soju config fix appeared to do nothing. The generated hash suffix
+# changes the pod template on every content change, forcing a rollout.
+configMapGenerator:
+  - name: soju-config
+    files:
+      - config=config/soju.conf
+  - name: gamja-config
+    files:
+      - config.json=config/gamja.json
