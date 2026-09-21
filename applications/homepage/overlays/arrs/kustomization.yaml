@@ -19,6 +19,15 @@ labels:
 patches:
   # NOTE: patches target the PRE-suffix names (kustomize applies patches
   # before the nameSuffix transformer in the same kustomization).
-  - path: patch-settings.yaml
   - path: patch-deployment.yaml
   - path: patch-host.yaml
+
+# behavior: merge replaces ONLY settings.yaml, keeping kubernetes.yaml from
+# base/instance. Generated (not a patch on a plain ConfigMap) so the content
+# hash lands in the pod template — a subPath mount is frozen at pod start, so
+# without that hash an edit here would never reach the running pod.
+configMapGenerator:
+  - name: homepage-settings
+    behavior: merge
+    files:
+      - settings.yaml=files/settings.yaml

@@ -9,7 +9,20 @@ kind: Kustomization
 # by NAME only from here.
 
 resources:
-  - configmap-settings.yaml
   - deployment.yaml
   - service.yaml
   - ingressroute.yaml
+
+# configMapGenerator, NOT a plain ConfigMap resource. Both keys are mounted by
+# subPath in deployment.yaml, and a subPath mount is FROZEN at pod start — it
+# never picks up a ConfigMap edit. With a stable name the pod template does not
+# change either, so Flux has nothing to roll and every instance keeps serving
+# the old settings indefinitely. The generated content hash changes the pod
+# template on every edit, which is the only thing that actually triggers a
+# rollout. Overlays override settings.yaml with `behavior: merge`, which
+# replaces that key while keeping kubernetes.yaml from here.
+configMapGenerator:
+  - name: homepage-settings
+    files:
+      - settings.yaml=files/settings.yaml
+      - kubernetes.yaml=files/kubernetes.yaml
