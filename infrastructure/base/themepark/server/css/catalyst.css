@@ -386,9 +386,12 @@ html::after {
   50%      { text-shadow: 0 0 12px rgba(var(--neon-cyan-rgb), 0.4); }
 }
 
-/* The display gradient drifts, so headings are never quite static. */
-h1,
-h2 {
+/* The display gradient is STATIC by default. Animating background-position
+ * repaints every heading on screen, every frame, forever — in a dense app UI
+ * that is continuous paint work for an effect nobody is looking at. It drifts
+ * on hover instead, where the motion is actually noticed. */
+h1:hover,
+h2:hover {
   animation: cat-gradient-shift 8s ease infinite;
 }
 
@@ -459,20 +462,31 @@ a:hover {
 /* -- Top bar: glass + drifting glow --------------------------------------
  * backdrop-filter needs a translucent background to do anything; the rgba()
  * here is the whole point, not a fallback. */
+/* NO backdrop-filter and NO animation here, both deliberately.
+ *
+ * This was `backdrop-filter: blur(20px)` plus `cat-header-glow-shift 8s
+ * infinite`. box-shadow is a PAINT property, so the header repainted every
+ * frame forever — and because it was also backdrop-filtered, every one of
+ * those repaints re-sampled and re-blurred everything behind it. Continuous
+ * GPU work on every page, which is what made navigation feel sluggish.
+ *
+ * A near-opaque background gets the same look with zero per-frame cost. The
+ * one blurred surface left in the stack is the nav bar; blurring the header
+ * and sidebar underneath it as well meant re-blurring three full-width
+ * surfaces on every scrolled frame. */
 [class*="PageHeader-header-"] {
-  background: rgba(10, 10, 15, 0.7) !important;
-  backdrop-filter: blur(20px) saturate(140%);
-  -webkit-backdrop-filter: blur(20px) saturate(140%);
-  border-bottom: 1px solid rgba(var(--neon-cyan-rgb), 0.15);
-  animation: cat-header-glow-shift 8s ease infinite;
+  background: rgba(13, 13, 20, 0.97) !important;
+  border-bottom: 1px solid rgba(var(--neon-cyan-rgb), 0.18);
+  box-shadow: 0 4px 18px -6px rgba(var(--neon-cyan-rgb), 0.55);
 }
 
 /* -- Sidebar -------------------------------------------------------------- */
+/* Near-opaque rather than blurred, same reasoning as the header above: the
+ * sidebar is full-height and always on screen, so blurring it meant re-blurring
+ * a full-height surface on every scrolled frame. */
 [class*="PageSidebar-sidebar-"] {
-  background: rgba(22, 22, 29, 0.75) !important;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-right: 1px solid rgba(var(--neon-cyan-rgb), 0.12);
+  background: rgba(20, 20, 27, 0.98) !important;
+  border-right: 1px solid rgba(var(--neon-cyan-rgb), 0.14);
 }
 
 [class*="PageSidebarItem-link-"] {
@@ -531,10 +545,14 @@ a:hover {
   pointer-events: none;
   background: linear-gradient(120deg, transparent, rgba(255, 255, 255, 0.28), transparent);
   background-size: 200% 100%;
-  animation: cat-shimmer 3s linear infinite;
 }
+/* The sweep starts ON HOVER. Previously it ran infinitely at opacity 0 on every
+ * primary button on the page — Chromium skips painting fully transparent
+ * elements so the cost was small, but paying anything for an invisible
+ * animation is silly. */
 [class*="Button-primary-"]:hover::before {
   opacity: 1;
+  animation: cat-shimmer 3s linear infinite;
 }
 
 [class*="IconButton-button-"]:hover,
@@ -725,20 +743,20 @@ textarea:focus {
   background: linear-gradient(90deg, var(--neon-cyan), var(--neon-purple)) !important;
   box-shadow: 0 0 10px rgba(var(--neon-cyan-rgb), 0.4);
 }
+/* Near-opaque, not blurred — this bar is always on screen, so a live
+ * backdrop-filter re-blurs it on every scrolled frame for no visible gain. */
 .navbar,
 #main-nav {
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: rgba(13, 13, 20, 0.97) !important;
 }
 
 /* ----------------------------------------------------------- QBITTORRENT -- */
 /* qBittorrent's WebUI is a jQuery/Dynaco app: #ids and generic classes. */
+/* Near-opaque, not blurred — always-visible chrome, see above. */
 #desktopNavbar,
 #mochaToolbar {
-  background: rgba(10, 10, 15, 0.8) !important;
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border-bottom: 1px solid rgba(var(--neon-cyan-rgb), 0.15) !important;
+  background: rgba(13, 13, 20, 0.97) !important;
+  border-bottom: 1px solid rgba(var(--neon-cyan-rgb), 0.18) !important;
 }
 #filtersColumn_container,
 #filtersColumn {
@@ -777,9 +795,10 @@ td.error,       .error       { color: var(--neon-red) !important; }
   color: var(--cat-bg) !important;
   box-shadow: var(--glow-primary);
 }
+/* Jellyfin's header is always on screen AND it sits over a poster backdrop —
+ * the most expensive place in the whole theme to run a live blur. */
 .skinHeader {
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  background: rgba(13, 13, 20, 0.96) !important;
 }
 
 /* ------------------------------------------------------------------ PLEX -- */

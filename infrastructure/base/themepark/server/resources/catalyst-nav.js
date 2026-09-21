@@ -163,6 +163,11 @@
     }, { passive: true });
   }
 
+  // No `cache: 'no-store'` here: it would defeat the Cache-Control the
+  // catalyst-asset-cache middleware sets on this route and refetch the manifest
+  // on every navigation. The sidecar refreshes it every 5 minutes and the cache
+  // max-age matches, so staleness is bounded to one refresh cycle.
+  //
   // The manifest is written by a sidecar into the same volume nginx serves, so
   // for a few seconds after a pod rolls the theme is already up while the
   // manifest is not. Without a retry, anyone loading in that window gets no nav
@@ -171,7 +176,7 @@
   // third-party app.
   function start(attempt) {
     attempt = attempt || 0;
-    fetch(MANIFEST, { credentials: 'omit', cache: 'no-store' })
+    fetch(MANIFEST, { credentials: 'omit' })
       .then(function (r) {
         if (r.ok) return r.json();
         throw new Error('manifest ' + r.status);
