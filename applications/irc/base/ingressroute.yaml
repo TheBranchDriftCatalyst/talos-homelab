@@ -46,8 +46,30 @@ spec:
     - match: Host(`irc.${CLUSTER_DOMAIN}`)
       kind: Rule
       middlewares:
-        - name: authentik
-          namespace: authentik
+        # NO authentik middleware, and that is currently forced rather than
+        # chosen. The forward-auth middleware hands the request to the embedded
+        # outpost, and the outpost answers 404 — not a login redirect — for any
+        # external_host it does not know. A provider for irc.talos00 now EXISTS
+        # (infrastructure/base/authentik/irc-blueprint.yaml, applied fine), but
+        # the outpost's provider list is REPLACE-not-merge and authoritative in
+        # talos-private-blueprint.yaml, and THAT blueprint currently fails
+        # validation outright:
+        #
+        #   Entry invalid: {'client_id': ['OAuth2/OpenID Provider with this
+        #   Client ID already exists.']}
+        #
+        # because it declares provider `zipline-oidc` with client_id `zipline`
+        # while zipline-blueprint.yaml already owns a provider `zipline` with
+        # the same client_id. One collision fails the whole blueprint, so the
+        # outpost union is frozen and nothing new can join it — irc included.
+        # Attaching the middleware here would serve a 404, which is precisely
+        # the bug this replaced.
+        #
+        # This is NOT unauthenticated access to IRC: soju authenticates every
+        # connection itself (SASL/PASS against its own accounts), so the web UI
+        # is only a client shell until you log in. Re-add the middleware once
+        # the zipline client_id collision is resolved and irc appears in the
+        # outpost.
         - name: catalyst-nav
           namespace: traefik
       services:
