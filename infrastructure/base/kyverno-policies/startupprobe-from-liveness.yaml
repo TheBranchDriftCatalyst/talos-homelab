@@ -1,0 +1,187 @@
+---
+# Give every container with a livenessProbe a startupProbe derived from it.
+#
+# THE FAILURE THIS PREVENTS: a livenessProbe answers the question "is this still
+# working", and it is the wrong question during startup. When a backend is slow
+# — an NFS server rebuilding parity, a cold cache, a large library scan — the
+# health endpoint goes slow with it, liveness kills the container mid-startup,
+# and the restart puts it back at the beginning of the same slow work. The
+# outage converts itself into a crash loop, and the crash loop outlives the
+# outage.
+#
+# This is not hypothetical. On 2026-09-20 the Synology at 192.168.1.36 was hard
+# rebooted and came back running a post-unclean-shutdown RAID parity check, so
+# every NFS read stayed slow for hours. media/jellyfin had a livenessProbe and
+# no startupProbe: liveness began at 120s and killed it roughly 4.5 minutes in,
+# three times, while it was scanning. It only recovered once a startupProbe was
+# added by hand, after which it came up in 6m06s — i.e. it had needed about
+# seven minutes and was being killed at four. authentik-server had produced the
+# same shape hours earlier for a different reason (saturation rather than slow
+# I/O), and qbittorrent already carried a hand-written startupProbe from
+# TALOS-0dk for the same reason again. Three instances, one missing primitive.
+#
+# A survey after that outage found 47 containers across 12 namespaces in the
+# same position: NFS-backed, livenessProbe, no startupProbe. Several had kill
+# budgets under a minute — media-private/hot-ones at 55s, media-private/stash-ai's
+# Postgres at 60s with its data directory on NFS.
+#
+# WHY A POLICY AND NOT 47 EDITS: ten of those containers live in the sister
+# repo talos-private, which this repo cannot edit — the same argument that made
+# cnpg-velero-exclude a ClusterPolicy. The rest are spread over a dozen
+# namespaces and several chart-managed workloads, and any hand-written set would
+# silently fail to cover the next workload somebody adds. The invariant belongs
+# in one place.
+#
+# WHY THIS IS SAFE TO APPLY BROADLY: a startupProbe only gates when liveness
+# STARTS. A container that is healthy passes it on the first check, so the cost
+# to a fast-starting workload is bounded by one period (10s) and is usually
+# zero. Nothing is loosened for a running container — liveness keeps its own
+# settings for afterwards, which is where they are correct: a process that has
+# started and then stops answering SHOULD be restarted.
+#
+# WHAT IT COSTS: a genuinely broken container takes longer to be killed during
+# startup — up to the budget below instead of the liveness budget. That is the
+# deliberate trade. Slow feedback on a broken deploy is cheaper than a crash
+# loop that cannot break out of itself.
+#
+# ADD-IF-ABSENT ONLY. Every rule's precondition requires startupProbe to be
+# absent, so a hand-written one always wins and this can never override a
+# deliberate choice. Workloads that already carry one — every CNPG instance
+# (fail=360, a one-hour budget, which is why no Postgres flapped during the
+# outage), qbittorrent, bookorbit, stash-box — are untouched.
+#
+# THE HANDLER IS COPIED, NOT INVENTED. A startupProbe has to ask the same
+# question liveness asks, or it proves nothing: jellyfin's port accepts TCP long
+# before /health answers, so a generic tcpSocket probe would have passed
+# immediately and handed the container straight back to the liveness probe that
+# was killing it. Hence one rule per handler kind, each copying the liveness
+# handler verbatim.
+#
+# Mutation applies to pods at ADMISSION, so existing pods are unaffected until
+# they are next recreated. That is intentional: it is a gradual rollout with no
+# mass restart, and it means installing this policy changes nothing about the
+# running cluster today.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: startupprobe-from-liveness
+  annotations:
+    policies.kyverno.io/title: Derive startupProbe from livenessProbe
+    policies.kyverno.io/category: Reliability
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+spec:
+  # FAIL OPEN. This is the single most important line in the file.
+  #
+  # Kyverno's default is failurePolicy: Fail, which means an error evaluating
+  # this policy BLOCKS POD CREATION. For a policy whose entire purpose is to
+  # improve resilience, that trade is backwards: the worst case of failing open
+  # is a pod that does not get a startupProbe, which is exactly the status quo,
+  # while the worst case of failing closed is nothing in the cluster being able
+  # to schedule because a JMESPath expression hit a shape it did not expect.
+  #
+  # A reliability enhancement must never be able to become an outage.
+  failurePolicy: Ignore
+  # Mutation only. background:false because this mutates on admission; a
+  # background scan cannot add a probe to an already-running pod anyway.
+  background: false
+  rules:
+    - name: startupprobe-from-httpget
+      match:
+        any:
+          - resources:
+              kinds: ['Pod']
+      exclude:
+        any:
+          # Kyverno cannot mutate kube-system and the other control-plane
+          # namespaces regardless (the webhook is not called there), so listing
+          # them is documentation rather than enforcement. flux-system and
+          # kyverno are excluded on purpose: the reconcilers must not have their
+          # own restart behaviour altered by a policy they themselves deliver.
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - kyverno
+                - flux-system
+      mutate:
+        foreach:
+          - list: 'request.object.spec.containers'
+            preconditions:
+              all:
+                - key: '{{ element.livenessProbe.httpGet || `""` }}'
+                  operator: NotEquals
+                  value: ''
+                - key: '{{ element.startupProbe || `""` }}'
+                  operator: Equals
+                  value: ''
+            patchesJson6902: |-
+              - op: add
+                path: /spec/containers/{{ elementIndex }}/startupProbe
+                value:
+                  httpGet: {{ element.livenessProbe.httpGet }}
+                  initialDelaySeconds: 10
+                  periodSeconds: 10
+                  timeoutSeconds: 10
+                  failureThreshold: 60
+
+    - name: startupprobe-from-tcpsocket
+      match:
+        any:
+          - resources:
+              kinds: ['Pod']
+      exclude:
+        any:
+          - resources:
+              namespaces: ['kube-system', 'kube-public', 'kube-node-lease', 'kyverno', 'flux-system']
+      mutate:
+        foreach:
+          - list: 'request.object.spec.containers'
+            preconditions:
+              all:
+                - key: '{{ element.livenessProbe.tcpSocket || `""` }}'
+                  operator: NotEquals
+                  value: ''
+                - key: '{{ element.startupProbe || `""` }}'
+                  operator: Equals
+                  value: ''
+            patchesJson6902: |-
+              - op: add
+                path: /spec/containers/{{ elementIndex }}/startupProbe
+                value:
+                  tcpSocket: {{ element.livenessProbe.tcpSocket }}
+                  initialDelaySeconds: 10
+                  periodSeconds: 10
+                  timeoutSeconds: 10
+                  failureThreshold: 60
+
+    - name: startupprobe-from-exec
+      match:
+        any:
+          - resources:
+              kinds: ['Pod']
+      exclude:
+        any:
+          - resources:
+              namespaces: ['kube-system', 'kube-public', 'kube-node-lease', 'kyverno', 'flux-system']
+      mutate:
+        foreach:
+          - list: 'request.object.spec.containers'
+            preconditions:
+              all:
+                - key: '{{ element.livenessProbe.exec || `""` }}'
+                  operator: NotEquals
+                  value: ''
+                - key: '{{ element.startupProbe || `""` }}'
+                  operator: Equals
+                  value: ''
+            patchesJson6902: |-
+              - op: add
+                path: /spec/containers/{{ elementIndex }}/startupProbe
+                value:
+                  exec: {{ element.livenessProbe.exec }}
+                  initialDelaySeconds: 10
+                  periodSeconds: 10
+                  timeoutSeconds: 10
+                  failureThreshold: 60
