@@ -1,0 +1,70 @@
+---
+# fchat.talos00 — one host, one service. The SPA and the API share an origin
+# (the image serves web/dist from the same uvicorn process), so there is nothing
+# to split by path.
+#
+# HOSTNAME IS LITERAL, NOT ${CLUSTER_DOMAIN}. That substitution is Flux's
+# postBuild envsubst. This tree is reconciled by ArgoCD, which has no equivalent
+# — a ${...} here would be applied verbatim and produce a route nobody can
+# reach.
+#
+# AUTHENTIK IS NOT OPTIONAL HERE. Attaching the `authentik` middleware requires
+# a matching proxy provider in Authentik, because the embedded outpost answers
+# 404 — not a login redirect — for any external_host it does not recognise.
+# The provider lives in talos-homelab:
+#   infrastructure/base/authentik/fchat-bouncer-blueprint.yaml
+# and MUST also appear in the embedded-outpost provider union in
+# talos-private-blueprint.yaml, which is REPLACE-not-merge.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: fchat-bouncer
+  namespace: fchat-bouncer
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "F-Chat Bouncer"
+    gethomepage.dev/description: "Always-on F-Chat bouncer + web chat UI"
+    gethomepage.dev/group: "Apps"
+    gethomepage.dev/icon: "chat.png"
+    gethomepage.dev/siteMonitor: "http://fchat-bouncer.fchat-bouncer.svc.cluster.local:8000/api/health"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`fchat.talos00`)
+      kind: Rule
+      middlewares:
+        # ORDER MATTERS. Traefik runs middlewares forward on the request and in
+        # reverse on the response, so authentik-first means auth happens inbound
+        # and catalyst-nav's HTML injection happens outbound, on an
+        # already-authorised response.
+        - name: authentik
+          namespace: authentik
+        - name: catalyst-nav
+          namespace: traefik
+      services:
+        - name: fchat-bouncer
+          port: 8000
+---
+# Separate object for the HTTP redirect, DELIBERATELY.
+# Combining `web` and `websecure` on one IngressRoute does not work here: a
+# Kyverno policy injects `tls: {}` into every IngressRoute, which makes the
+# whole router TLS-only, and the plain-HTTP route then 404s. It never shows up
+# as GitOps drift because the mutation is applied at admission.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: fchat-bouncer-http
+  namespace: fchat-bouncer
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`fchat.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: fchat-bouncer
+          port: 8000

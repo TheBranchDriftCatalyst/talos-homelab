@@ -1,0 +1,32 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fchat-bouncer
+
+resources:
+  - namespace.yaml
+  - postgres-cluster.yaml
+  - externalsecret.yaml
+  - registry-pull-secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml
+
+patches:
+  - path: patch-image.yaml
+
+# Pinned by DIGEST to the in-cluster Zot registry, not :latest. A mutable tag is
+# an upgrade trigger — it would fast-forward the app across every future push at
+# once — and this digest is the image that was actually built and smoke-tested
+# (healthy container, /api/health 200, SPA served from inside the image).
+#
+# Rebuild and repoint with:
+#   cd ~/catalyst-devspace/workspace/fchat-bouncer
+#   docker build -t fchat-bouncer:local .
+#   docker tag  fchat-bouncer:local registry.talos00/talos00-registry/fchat-bouncer:$(git rev-parse --short HEAD)
+#   docker push registry.talos00/talos00-registry/fchat-bouncer:$(git rev-parse --short HEAD)
+# then update the digest below.
+images:
+  - name: ghcr.io/thebranchdriftcatalyst/fchat-bouncer
+    newName: registry.talos00/talos00-registry/fchat-bouncer
+    digest: sha256:4ea24813c692ab8e19bc2ec8b18b9e9741ff0487936817e0b59ec5865edd2e31

@@ -1,0 +1,117 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fchat-bouncer
+  labels:
+    app.kubernetes.io/name: fchat-bouncer
+    app.kubernetes.io/part-of: catalyst
+spec:
+  # ONE. This is not a throughput decision, it is a correctness one: the pod
+  # holds a live F-Chat connection logged in as a real character. A second
+  # replica would log the same character in a second time, and F-List resolves
+  # that by disconnecting the first — two pods would kick each other in a loop
+  # forever. Scale this only if the connection manager is moved behind a lease.
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate, for the same reason: a rolling update would
+    # briefly run old and new pods together, which is the two-logins case above.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fchat-bouncer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fchat-bouncer
+        app.kubernetes.io/part-of: catalyst
+    spec:
+      # ghcr-secret is templated into every non-system namespace by the
+      # cluster-wide ClusterExternalSecret; nothing here creates it.
+      imagePullSecrets:
+        - name: ghcr-secret
+      containers:
+        - name: fchat-bouncer
+          # Overridden per-cluster by the overlay's `images:` block, which ArgoCD
+          # Image Updater rewrites to the immutable sha-<7c> tag on every push.
+          image: ghcr.io/thebranchdriftcatalyst/fchat-bouncer:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            # ---- database -------------------------------------------------
+            # Deliberately UNPREFIXED. Anything starting with FCHAT_ is parsed
+            # by pydantic-settings; these two are raw material for the URL
+            # below, not settings in their own right.
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: fchat-postgres-app
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fchat-postgres-app
+                  key: password
+            # Composed rather than taken from the CNPG `uri` key, because that
+            # key carries the bare `postgresql://` scheme and SQLAlchemy would
+            # then load psycopg2 (not installed) instead of asyncpg.
+            # $(VAR) is kubelet-side expansion of the two env vars above; it
+            # works because they are declared earlier in this list.
+            # Safe without URL-encoding: CNPG generates alphanumeric passwords.
+            - name: FCHAT_DATABASE_URL
+              value: postgresql+asyncpg://$(DB_USER):$(DB_PASSWORD)@fchat-postgres-rw.fchat-bouncer.svc.cluster.local:5432/fchat
+
+            # ---- behaviour ------------------------------------------------
+            # ON. This is the whole point of the deployment — the bouncer stays
+            # connected so scrollback and ad rotation continue while no browser
+            # is open. Set to "false" to park the app without deleting it.
+            - name: FCHAT_CONNECT_ENABLED
+              value: "true"
+            # The SPA is served from this same origin (see the Dockerfile), so
+            # there is no cross-origin request to allow. Pinned to the real host
+            # anyway so a misconfigured split deployment fails loudly.
+            - name: FCHAT_CORS_ORIGINS
+              value: https://fchat.talos00
+          envFrom:
+            # FCHAT_SESSION_SECRET, FCHAT_FLIST_ACCOUNT, FCHAT_FLIST_PASSWORD.
+            # NOT optional: without the session secret the app would silently
+            # fall back to the literal "dev-only-not-a-secret" default from
+            # config.py, and anyone could forge a session cookie. A missing
+            # secret must keep the pod from starting.
+            - secretRef:
+                name: fchat-bouncer-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 192Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          # startupProbe FIRST, and it is not optional boilerplate: the app runs
+          # create_all() against Postgres during lifespan startup. On a cold
+          # cluster CNPG can take a minute to elect a primary, and a liveness
+          # probe with no startup gate would kill the pod mid-wait and repeat
+          # that forever — a crash loop caused entirely by the probe.
+          # 30 x 5s = 150s of grace.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3

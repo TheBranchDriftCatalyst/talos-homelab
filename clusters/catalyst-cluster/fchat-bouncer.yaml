@@ -1,0 +1,55 @@
+---
+# fchat-bouncer — always-on bouncer, chat UI and ad scheduler for F-List's
+# F-Chat protocol. F-Chat is a bespoke WebSocket protocol, so no existing
+# bouncer speaks it and closing a client means leaving every channel.
+#
+# ⚠️ TEMPORARY HOME — same exception bt-radar documents next door.
+#
+# fchat-bouncer is an APPLICATION whose image we build, so under this cluster's
+# dual-GitOps split it belongs to ArgoCD from its own repo, not to Flux from
+# here. The ArgoCD Application already exists at
+# infrastructure/base/argocd/applications/fchat-bouncer.yaml and is live — but
+# it sits at Unknown because its repoURL
+# (github.com/TheBranchDriftCatalyst/fchat-bouncer) has not been created yet, so
+# there is nothing for it to sync and no CI to publish an image.
+#
+# This Kustomization is the bridge: it deploys the same manifests from here,
+# against a locally built image pushed to the in-cluster Zot registry, so the app
+# runs and can be iterated on while the repo and CI are still pending.
+#
+# MIGRATION, when the GitHub repo exists and CI has published to GHCR:
+#   1. delete this file and applications/fchat-bouncer/
+#   2. delete k8s/talos00/registry-pull-secret.yaml and patch-image.yaml, and
+#      the images: block in that overlay, in the fchat-bouncer repo
+#   3. the ArgoCD Application takes over unchanged, and the ImageUpdater CR
+#      starts bumping tags
+# Nothing else has to change — that is the point of keeping both paths valid.
+#
+# dependsOn: traefik for the IngressRoute CRD and the authentik/catalyst-nav
+# middlewares, external-secrets for the 1Password-backed pull secret, databases
+# for the CNPG operator that owns the Cluster CRD, and themepark for
+# catalyst-nav.
+#
+# wait:false — CNPG takes a while to bootstrap three instances and nothing
+# downstream depends on this being up. A chat app must never hold up a
+# reconciliation.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: fchat-bouncer
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/fchat-bouncer/base
+  prune: true
+  wait: false
+  dependsOn:
+    - name: traefik
+    - name: external-secrets
+    - name: databases
+    - name: themepark

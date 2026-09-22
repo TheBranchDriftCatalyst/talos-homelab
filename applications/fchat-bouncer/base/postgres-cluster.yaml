@@ -1,0 +1,82 @@
+---
+# Postgres for fchat-bouncer, via CloudNativePG.
+#
+# CNPG generates, and the Deployment consumes:
+#   Secret   fchat-postgres-app   (username, password, dbname, host, port, uri…)
+#   Service  fchat-postgres-rw    (always the primary — the app writes)
+#            fchat-postgres-ro/-r (replicas / any; unused, the app is one writer)
+#
+# NOTE ON THE URI KEY: CNPG's `uri` field is a plain `postgresql://` DSN.
+# SQLAlchemy needs `postgresql+asyncpg://` to pick the async driver, so the
+# Deployment composes its own URL from username/password rather than using it.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fchat-postgres
+  labels:
+    app.kubernetes.io/name: fchat-postgres
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: fchat-bouncer
+spec:
+  inheritedMetadata:
+    labels:
+      # CNPG owns its own backups (barman WAL archive + ScheduledBackup).
+      # Velero must not take a filesystem copy of a live PGDATA — that is a torn
+      # copy that restores as a corrupt database while looking like a backup.
+      velero.io/exclude-from-backup: "true"
+
+  # THREE. Not one, ever, on local-path.
+  # local-path is WaitForFirstConsumer, so each PV pins to whichever node first
+  # mounts it. A single instance means the only copy of the data is stranded if
+  # that node dies, AND CNPG gives a 1-instance cluster a PodDisruptionBudget
+  # with disruptionsAllowed=0, which deadlocks every node drain in the cluster.
+  # Three instances + CNPG's default pod anti-affinity puts three copies on
+  # three nodes and lets CNPG promote a survivor automatically.
+  instances: 3
+
+  # -standard-, not -minimal-: the standard operand carries the contrib
+  # extensions (pg_stat_statements among them). Tag-pinned rather than
+  # digest-pinned on purpose — CNPG parses the tag to gate major-version
+  # upgrades, and a bare digest defeats that check.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.5-standard-bookworm
+
+  bootstrap:
+    initdb:
+      database: fchat
+      owner: fchat
+      # PINNED COLLATION. initdb runs exactly ONCE, at cluster creation, and the
+      # CNPG default is the C locale. Under C, `ORDER BY` on text sorts by byte
+      # value — so scrollback and character lists would silently order
+      # differently here than in local dev (compose.yaml pins the same locale).
+      # There is no fixing this after the fact short of a dump/restore.
+      localeCollate: en_US.UTF-8
+      localeCType: en_US.UTF-8
+      postInitSQL:
+        - CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+
+  storage:
+    size: 5Gi
+    # local-path = the node's NVMe. Talos mounts its EPHEMERAL partition at
+    # /var, which is where local-path provisions. Postgres never goes on NFS in
+    # this cluster: a network round trip per WAL fsync, and NFS locking
+    # semantics that Postgres does not trust.
+    storageClass: local-path
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  monitoring:
+    # The cluster-wide PodMonitor already scrapes every CNPG pod. A per-cluster
+    # one would double-scrape the same series.
+    enablePodMonitor: false
+
+  postgresql:
+    parameters:
+      shared_buffers: "128MB"
+      effective_cache_size: "384MB"
+      log_min_duration_statement: "1000"
