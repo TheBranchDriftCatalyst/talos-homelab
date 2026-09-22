@@ -76,11 +76,14 @@ spec:
             - name: FCHAT_CORS_ORIGINS
               value: https://fchat.talos00
           envFrom:
-            # FCHAT_SESSION_SECRET, FCHAT_FLIST_ACCOUNT, FCHAT_FLIST_PASSWORD.
-            # NOT optional: without the session secret the app would silently
-            # fall back to the literal "dev-only-not-a-secret" default from
-            # config.py, and anyone could forge a session cookie. A missing
-            # secret must keep the pod from starting.
+            # FCHAT_SESSION_SECRET only — F-List credentials are entered in
+            # the app, not injected here. The app exchanges the password for a
+            # short-lived ticket and never persists it.
+            #
+            # NOT optional, deliberately: without it the app falls back to the
+            # literal "dev-only-not-a-secret" default in config.py and anyone
+            # could forge a session cookie. Failing to start is correct;
+            # starting insecurely is not.
             - secretRef:
                 name: fchat-bouncer-secrets
           resources:
