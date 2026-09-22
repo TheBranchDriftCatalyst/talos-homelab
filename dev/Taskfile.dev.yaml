@@ -69,7 +69,30 @@ tasks:
       - task: lint:markdown
       - task: lint:format
       - task: lint:secrets
+      - task: lint:theme-drift
       - echo "✅ All linters passed"
+
+  lint:theme-drift:
+    desc: Fail if the vendored theme assets have drifted from catalyst-themepark
+    # The themepark CSS and the nav script are BUILT ARTIFACTS, published here
+    # from the sister repo so kustomize's configMapGenerator can read them
+    # in-tree. They were once hand-copied, three copies existed, and all three
+    # had diverged -- with the DEPLOYED one a whole rewrite ahead of the file
+    # labelled "source". This check is what makes that unrepeatable.
+    #
+    # Skipped, not failed, when the sister repo is not checked out: this repo
+    # must stay lintable on its own.
+    cmds:
+      - |
+        set -eu
+        homelab="$(pwd)"
+        tp="${CATALYST_THEMEPARK_DIR:-../catalyst-themepark}"
+        if [ ! -f "$tp/build.sh" ]; then
+          echo "⏭  catalyst-themepark not checked out at $tp — skipping theme drift check"
+          exit 0
+        fi
+        cd "$tp"
+        HOMELAB_DIR="$homelab" bash build.sh --check
 
   lint:yaml:
     desc: Lint YAML files with yamllint

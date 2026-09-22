@@ -27,6 +27,24 @@ metadata:
     gethomepage.dev/group: "Apps"
     gethomepage.dev/icon: "chat.png"
     gethomepage.dev/siteMonitor: "http://fchat-bouncer.fchat-bouncer.svc.cluster.local:8000/api/health"
+    # PUSH, not the default overlay. This app's own tab strip (.tabbar) is the
+    # first thing in the layout, so it occupies y=0..35 — precisely where an
+    # overlay bar lands when it reveals, which made the tabs unclickable.
+    #
+    # Push works cleanly HERE specifically because the app is plain document
+    # flow: theme.css does `html, body, #root { height: 100% }` and `.app
+    # { height: 100% }`, with no `position: fixed` header (its only two fixed
+    # elements are the portalled character menu and the modal overlay). With
+    # box-sizing: border-box on <html>, the 38px reservation comes out of the
+    # percentage chain instead of adding to it. Measured in a headless browser
+    # against this exact root chain: nav 0-38, .tabbar 38-73, .app 675px of a
+    # 713px viewport, scroll overflow 0, and elementFromPoint at the tab strip's
+    # centre returns the tab, not the bar.
+    #
+    # Do NOT copy this annotation to an app whose own header is
+    # `position: fixed; top: 0` — padding on <html> does not move those. See the
+    # push-mode block in catalyst-themepark/src/60-nav.css.
+    catalyst.nav/mode: "push"
 spec:
   entryPoints:
     - websecure

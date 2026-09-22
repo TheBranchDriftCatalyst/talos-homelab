@@ -8,7 +8,7 @@
  *  a theme.park theme for the Catalyst homelab
  *
  * GENERATED — do not edit. Source: workspace/catalyst-themepark/src/*.css
- * Rebuild:   ./build.sh
+ * Rebuild:   ./build.sh            Publish: ./build.sh --publish
  *
  * Palette is catalyst-ui's `catalyst` dark theme (the design system of record).
  * Fonts are inlined as data: URIs so the whole theme is a single request with
@@ -839,7 +839,7 @@ td.error,       .error       { color: var(--neon-red) !important; }
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 38px;
+  height: var(--catalyst-nav-h, 38px);
   padding: 0 12px;
   box-sizing: border-box;
   font-family: var(--cat-font-body, ui-sans-serif, system-ui, sans-serif);
@@ -884,7 +884,7 @@ td.error,       .error       { color: var(--neon-red) !important; }
   display: flex;
   align-items: center;
   gap: 5px;
-  height: 38px;
+  height: var(--catalyst-nav-h, 38px);
   padding: 0 11px;
   color: var(--text-muted, #a1a1aa);
   cursor: default;
@@ -910,7 +910,7 @@ td.error,       .error       { color: var(--neon-red) !important; }
  * stays focusable for tab navigation. */
 .catalyst-nav__menu {
   position: absolute;
-  top: 38px;
+  top: var(--catalyst-nav-h, 38px);
   left: 0;
   min-width: 190px;
   margin: 0;
@@ -995,8 +995,8 @@ td.error,       .error       { color: var(--neon-red) !important; }
  * switches to grouped dropdowns on its own once a second group appears. */
 .catalyst-nav__link--flat {
   padding: 0 10px;
-  height: 38px;
-  line-height: 38px;
+  height: var(--catalyst-nav-h, 38px);
+  line-height: var(--catalyst-nav-h, 38px);
   border-radius: 0;
   border-bottom: 2px solid transparent;
   color: var(--text-muted, #a1a1aa);
@@ -1016,4 +1016,31 @@ td.error,       .error       { color: var(--neon-red) !important; }
 
 @media (max-width: 1100px) {
   .catalyst-nav__link--flat { padding: 0 7px; font-size: 12px; }
+}
+
+/* -- Push mode ------------------------------------------------------------
+ * Opt-in per app via the `catalyst.nav/mode: push` annotation. Instead of
+ * floating over the app, the bar reserves a strip and the page starts below it,
+ * so the app's own top nav is never covered and never has to compete for the
+ * pointer.
+ *
+ * The class is added to <html> BY THE SCRIPT, never by this stylesheet. That
+ * keeps the sheet inert on any page where the script did not build: if the
+ * manifest fetch fails, an app must not be left padded down with an empty gap
+ * where the bar should have been.
+ *
+ * KNOWN LIMIT, read before enabling this on an app: padding on <html> does not
+ * move a `position: fixed` element. Fixed elements resolve against the initial
+ * containing block — the viewport — so an app whose own header is
+ * `position: fixed; top: 0` will still sit under the bar even in push mode.
+ * Making <html> the containing block for them (transform/filter/contain on the
+ * root) does work, but it also breaks `position: sticky` and `100vh` math
+ * inside the app, which across fourteen third-party apps fails silently and in
+ * different ways each time. So push mode deliberately handles the
+ * normal-document-flow case only; anything with a fixed header should stay on
+ * overlay with a tight revealAt.
+ * ------------------------------------------------------------------------ */
+html.catalyst-nav-push {
+  padding-top: var(--catalyst-nav-h, 38px) !important;
+  box-sizing: border-box;
 }

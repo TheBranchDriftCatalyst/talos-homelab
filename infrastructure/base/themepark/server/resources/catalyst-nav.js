@@ -1,15 +1,37 @@
 /* ============================================================================
+ *  ____      _        _           _
+ * / ___|__ _| |_ __ _| |_   _ ___| |_
+ * | |   / _` | __/ _` | | | | / __| __|
+ * | |__| (_| | || (_| | | |_| \__ \ |_
+ * \____\__,_|\__\__,_|_|\__, |___/\__|
+ *                       |___/
+ *  a theme.park theme for the Catalyst homelab
+ *
+ * GENERATED — do not edit. Source: workspace/catalyst-themepark/src/60-nav.js
+ * Rebuild:   ./build.sh            Publish: ./build.sh --publish
+ *
+ * Palette is catalyst-ui's `catalyst` dark theme (the design system of record).
+ * Fonts are inlined as data: URIs so the whole theme is a single request with
+ * no cross-origin font fetch. See src/10-fonts.css.tmpl for why.
+ * ========================================================================== */
+
+/* ============================================================================
  * CATALYST — cross-app nav bar
  * ----------------------------------------------------------------------------
- * Injected into every themed app by the `catalyst-nav` Traefik middleware.
- * Styling lives in the theme (src/60-nav.css), already loaded on these pages.
+ * THE single source for the nav script. Paired with src/60-nav.css by layer
+ * number; build.sh emits dist/catalyst-nav.js and publishes it into the
+ * homelab repo. There were once THREE hand-maintained copies of this file and
+ * all three had drifted — the deployed one was a whole rewrite ahead of the one
+ * labelled "source". Do not reintroduce a copy: edit this file, run
+ * `./build.sh --publish`, and let `./build.sh --check` fail the build if a copy
+ * ever diverges again.
  *
- * NOTHING ABOUT ANY APP IS HARDCODED HERE. The link list is fetched from
- * catalyst-nav.json, which a sidecar regenerates from the gethomepage.dev/*
- * annotations on the cluster's IngressRoutes. Theme a new app and it appears
- * here on the next refresh; delete one and it disappears.
+ * NOTHING ABOUT ANY APP IS HARDCODED HERE. The link list AND the per-app
+ * behaviour both come from catalyst-nav.json, which a sidecar regenerates from
+ * annotations on the cluster's IngressRoutes. Theme a new app and it appears on
+ * the next refresh; tune one app's bar by annotating that app's own route.
  *
- * Defensive by design — this runs inside nine third-party applications:
+ * Defensive by design — this runs inside fourteen third-party applications:
  *   - every failure is silent, because a broken nav must never break the app
  *   - one namespaced class prefix, no globals beyond a single guard flag
  *   - re-entrant: SPAs re-run scripts, so it refuses to build twice
@@ -22,6 +44,64 @@
 
   var MANIFEST = '/catalyst/resources/catalyst-nav.json';
   var C = 'catalyst-nav';
+
+  /* -- Configuration --------------------------------------------------------
+   * Resolved per app, lowest precedence first:
+   *
+   *   DEFAULTS  <-  manifest.defaults  <-  manifest.hosts[location.hostname]
+   *
+   * Nothing here names an app. The sidecar fills `defaults` and `hosts` from
+   * `catalyst.nav/*` annotations, so an app's bar is tuned in the same file
+   * that already declares its homepage entry — one place, next to the app.
+   *
+   *   mode          'overlay' floats above the app, revealed by the pointer.
+   *                 'push'    reserves a strip so the app is never covered.
+   *                 'off'     no bar on this app at all.
+   *   revealAt      overlay: pointer must come within this many px of the top.
+   *   hidePast      overlay: pointer past this many px re-hides.
+   *   height        bar height; also drives the CSS via --catalyst-nav-h.
+   *   scrollReveal  overlay: also reveal near the top of any scroller.
+   *
+   * WHY revealAt defaults to 6 rather than something roomier: the app's own top
+   * nav lives in roughly the first 40px. A generous trigger meant that reaching
+   * for the app's menu summoned this bar on top of it at z-index 9998 and ate
+   * the click. The trigger has to be tighter than the thing it must not fight,
+   * so it is a deliberate jab at the very edge. hidePast sits just past the bar
+   * itself for the same reason — a wide dead band leaves the bar open exactly
+   * where the app's chrome is.
+   *
+   * scrollReveal is OFF by default for that same reason: scrolling a list back
+   * to the top is precisely when you then reach for the app's header, so
+   * revealing there recreated the problem through a second door.
+   * ------------------------------------------------------------------------ */
+  var DEFAULTS = {
+    mode: 'overlay',
+    revealAt: 6,
+    hidePast: 48,
+    height: 38,
+    scrollReveal: false
+  };
+
+  // Touch has no hover, so a 6px target is unusable. Deliberately NOT part of
+  // the config surface: it is a property of fingers, not of any one app.
+  var TOUCH_REVEAL_AT = 14;
+
+  // Copies only keys DEFAULTS declares, so a malformed or hostile manifest
+  // cannot inject arbitrary properties into the config object.
+  function assign(target, src) {
+    if (!src) return target;
+    for (var k in DEFAULTS) {
+      if (Object.prototype.hasOwnProperty.call(src, k)) target[k] = src[k];
+    }
+    return target;
+  }
+
+  function resolveConfig(data) {
+    var cfg = assign({}, DEFAULTS);
+    assign(cfg, data.defaults);
+    assign(cfg, (data.hosts || {})[location.hostname]);
+    return cfg;
+  }
 
   function el(tag, cls, text) {
     var n = document.createElement(tag);
@@ -102,8 +182,17 @@
   }
 
   function build(data) {
+    var cfg = resolveConfig(data);
+    if (cfg.mode === 'off') return;
+
     var groups = (data && data.groups) || [];
     if (!groups.length) return;
+
+    // One number, one place. The stylesheet reads --catalyst-nav-h for every
+    // height, offset and the push-mode reservation, so changing the bar's
+    // height never means hunting hardcoded 38s through a stylesheet.
+    document.documentElement.style.setProperty(
+      '--catalyst-nav-h', cfg.height + 'px');
 
     var nav = el('nav', C);
     nav.setAttribute('aria-label', 'Catalyst applications');
@@ -125,66 +214,72 @@
     nav.appendChild(el('div', C + '__here', location.hostname));
 
     document.body.appendChild(nav);
-    autoHide(nav);
+
+    if (cfg.mode === 'push') {
+      // Reserve the strip instead of floating over the app. The class goes on
+      // <html> from JS rather than living as a bare rule in the stylesheet, so
+      // the sheet stays inert on any page where the script did not build — a
+      // failed manifest fetch must never leave an app padded down with no bar
+      // in the gap.
+      document.documentElement.classList.add(C + '-push');
+      return;
+    }
+
+    autoHide(nav, cfg);
   }
 
-  // HIDDEN BY DEFAULT, REVEALED BY THE POINTER.
-  //
-  // The previous behaviour was scroll-coupled: hide on scroll down, reveal on scroll up. It
-  // never hid in the arr apps, and the reason is written in its own comment. It listened in the
-  // CAPTURE phase specifically because "many of these apps scroll an inner element rather than
-  // the window" — and then read `window.pageYOffset`, which stays 0 forever when an inner
-  // element is the thing scrolling. The listener fired on every scroll and computed 0 every
-  // time, so `y > 90` was never true and the bar never moved.
-  //
-  // Rather than only repair that, the resting state is now HIDDEN. A persistent bar spends the
-  // whole session covering 38px of an app we did not write, to show navigation the user needs
-  // for a few seconds at a time. Reveal-on-approach costs nothing when unused and is the
-  // behaviour that was actually wanted.
-  //
-  // Scroll still reveals, because a user who scrolls up is usually heading for navigation — and
-  // that path now reads the scroll position off whichever element scrolled.
-  function autoHide(nav) {
+  /* -- Overlay mode: hidden at rest, revealed by the pointer ----------------
+   * The resting state is HIDDEN. A persistent overlay bar would spend the whole
+   * session covering the top of an app we did not write, to show navigation
+   * needed for a few seconds at a time. Apps that would rather surrender the
+   * space permanently should use mode:'push' — then nothing is ever covered and
+   * none of this runs.
+   * ------------------------------------------------------------------------ */
+  function autoHide(nav, cfg) {
     var HIDDEN = C + '--hidden';
 
-    // Hysteresis, not a single threshold. One boundary makes the bar flicker when the pointer
-    // sits near it: every sub-pixel jitter across the line toggles a 280ms transition. Reveal
-    // at 48px, hide only past 90px, and the dead band between them absorbs the jitter.
-    var REVEAL_AT = 48;
-    var HIDE_PAST = 90;
-
-    // The bar itself occupies the top 38px, so a pointer ON the bar is inside REVEAL_AT and it
-    // stays open while in use. No separate mouseenter handling is needed for that.
+    // Hysteresis, not a single threshold: one boundary makes the bar flicker
+    // when the pointer sits near it, because every sub-pixel jitter across the
+    // line toggles a 280ms transition. The gap between revealAt and hidePast
+    // absorbs that.
     nav.classList.add(HIDDEN);
 
     document.addEventListener('mousemove', function (ev) {
-      if (ev.clientY < REVEAL_AT) {
+      // Never hide while the pointer is inside the bar or an open dropdown.
+      // Menus are several times taller than the bar, so a pure clientY test
+      // slid the whole thing away mid-hover the moment you reached for the
+      // third item in a list.
+      if (nav.contains(ev.target) || ev.clientY < cfg.revealAt) {
         nav.classList.remove(HIDDEN);
-      } else if (ev.clientY > HIDE_PAST) {
+      } else if (ev.clientY > cfg.hidePast) {
         nav.classList.add(HIDDEN);
       }
     }, { passive: true });
 
-    // Touch has no hover. A tap in the top strip toggles instead, so the bar is reachable on a
-    // tablet without making it permanent for everyone else.
+    // Touch has no hover. A tap in the top strip reveals, so the bar is
+    // reachable on a tablet without making it permanent for everyone else.
     document.addEventListener('touchstart', function (ev) {
       var t = ev.touches && ev.touches[0];
-      if (t && t.clientY < REVEAL_AT) nav.classList.remove(HIDDEN);
+      if (t && t.clientY < TOUCH_REVEAL_AT) nav.classList.remove(HIDDEN);
     }, { passive: true });
 
-    // Leaving the window entirely re-hides: otherwise the bar stays open behind whatever the
-    // user switched to and is still open when they come back.
+    // Leaving the window entirely re-hides: otherwise the bar stays open behind
+    // whatever the user switched to and is still open when they come back.
     document.addEventListener('mouseleave', function () {
       nav.classList.add(HIDDEN);
     }, { passive: true });
 
+    if (!cfg.scrollReveal) return;
+
+    // Opt-in only. Reads the scroll position off whichever element scrolled,
+    // because many of these apps scroll an inner element and window.pageYOffset
+    // stays 0 forever in that case — the bug that made an earlier
+    // scroll-coupled version never fire at all.
     var ticking = false;
     var pending = 0;
 
     function apply() {
-      // Near the top of ANY scroller, reveal. This is the fix for the original bug: the
-      // position comes from the element that scrolled, not from the window.
-      if (pending <= 90) nav.classList.remove(HIDDEN);
+      if (pending <= cfg.hidePast) nav.classList.remove(HIDDEN);
       ticking = false;
     }
 
@@ -202,7 +297,8 @@
       }
     }
 
-    // Capture phase so scroll from any inner scroller is seen; scroll does not bubble.
+    // Capture phase so scroll from any inner scroller is seen; scroll does not
+    // bubble.
     window.addEventListener('scroll', schedule, { passive: true, capture: true });
   }
 

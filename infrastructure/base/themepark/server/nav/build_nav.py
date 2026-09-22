@@ -14,6 +14,24 @@ Every field is derived from annotations that already exist in this cluster:
 The host comes from the route's own Host(`...`) rule, and "themed" is true when
 any route on that object references a middleware named theme-*. Nothing is
 hardcoded, so the nav tracks the cluster automatically.
+
+PER-APP BAR BEHAVIOUR is carried the same way, on the app's own route, so it
+lives next to the annotations that already describe that app rather than in a
+list of app names somewhere in the theme:
+
+    catalyst.nav/mode           overlay | push | off
+    catalyst.nav/reveal-at      px; overlay: how close to the top reveals it
+    catalyst.nav/hide-past      px; overlay: how far down re-hides it
+    catalyst.nav/height         px; bar height, also drives --catalyst-nav-h
+    catalyst.nav/scroll-reveal  true | false
+
+These land in the manifest under `hosts`, keyed by hostname, and the script
+resolves DEFAULTS <- defaults <- hosts[location.hostname]. Cluster-wide
+defaults come from the NAV_DEFAULTS env var as a JSON object using the same
+camelCase keys the script reads, e.g. NAV_DEFAULTS='{"revealAt":4}'.
+
+An app with no catalyst.nav/* annotations contributes nothing to `hosts`, so
+the common case costs zero bytes in the manifest.
 """
 import json
 import os
@@ -22,11 +40,70 @@ import sys
 
 HOST_RE = re.compile(r"Host\(`([^`]+)`\)")
 A = "gethomepage.dev/"
+NAV = "catalyst.nav/"
+
+
+def _as_bool(v):
+    return str(v).strip().lower() in ("true", "1", "yes", "on")
+
+
+# annotation suffix -> (manifest key, parser). ONE table: it validates the
+# annotations, names the manifest keys, and documents the surface. The script's
+# DEFAULTS object declares the same five keys and nothing else, so anything not
+# listed here can never reach it.
+CONFIG_KEYS = {
+    "mode": ("mode", lambda v: v if v in ("overlay", "push", "off") else None),
+    "reveal-at": ("revealAt", int),
+    "hide-past": ("hidePast", int),
+    "height": ("height", int),
+    "scroll-reveal": ("scrollReveal", _as_bool),
+}
+
+
+def nav_config(ann):
+    """Extract catalyst.nav/* into the manifest's camelCase config shape.
+
+    A malformed value is DROPPED, never allowed to propagate: this JSON is
+    consumed inside fourteen third-party apps, and a bad int there would throw
+    in the host page rather than here where it is merely logged.
+    """
+    cfg = {}
+    for suffix, (key, parse) in CONFIG_KEYS.items():
+        raw = ann.get(NAV + suffix)
+        if raw is None:
+            continue
+        try:
+            val = parse(raw)
+        except (TypeError, ValueError):
+            val = None
+        if val is None:
+            print(f"[nav] ignoring {NAV}{suffix}={raw!r}", file=sys.stderr)
+            continue
+        cfg[key] = val
+    return cfg
+
+
+def env_defaults():
+    """Cluster-wide defaults from NAV_DEFAULTS, filtered through the same table."""
+    raw = os.environ.get("NAV_DEFAULTS", "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        print(f"[nav] NAV_DEFAULTS is not valid JSON, ignoring: {raw!r}", file=sys.stderr)
+        return {}
+    if not isinstance(parsed, dict):
+        print("[nav] NAV_DEFAULTS must be a JSON object, ignoring", file=sys.stderr)
+        return {}
+    allowed = {key for key, _ in CONFIG_KEYS.values()}
+    return {k: v for k, v in parsed.items() if k in allowed}
 
 
 def main() -> int:
     doc = json.load(sys.stdin)
     entries = {}
+    host_cfg = {}
 
     # Scope. Default lists only apps that actually carry Catalyst injection —
     # a DERIVED filter, not a list. Add the middleware to an app and it joins
@@ -107,6 +184,12 @@ def main() -> int:
         if prev and prev["themed"] and not themed:
             continue
 
+        # Collected AFTER the dedup check, so the surviving route for a host is
+        # the one whose catalyst.nav/* annotations apply.
+        cfg = nav_config(ann)
+        if cfg:
+            host_cfg[host] = cfg
+
         entries[host] = {
             "name": name,
             "group": group,
@@ -137,7 +220,17 @@ def main() -> int:
         g["name"].lower(),
     ))
 
-    json.dump({"groups": groups}, sys.stdout, separators=(",", ":"))
+    out = {"groups": groups}
+    defaults = env_defaults()
+    if defaults:
+        out["defaults"] = defaults
+    # Only hosts that actually made it into the nav — an annotation on a route
+    # that was filtered out must not ship config for an app nobody can see.
+    live = {h: c for h, c in host_cfg.items() if h in entries}
+    if live:
+        out["hosts"] = live
+
+    json.dump(out, sys.stdout, separators=(",", ":"))
     return 0
 
 
