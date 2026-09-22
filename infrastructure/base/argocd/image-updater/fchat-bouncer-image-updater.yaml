@@ -1,0 +1,34 @@
+---
+# Auto-rolls the fchat-bouncer Deployment when a new image tag appears.
+# The tag list is intentionally narrow — we want deterministic writes:
+#   - `latest`     ← pushed only on default-branch (main) pushes
+#   - `main`       ← docker-publish workflow branch tag
+#   - `sha-<7c>`   ← immutable per-commit ref (drives per-commit auto-deploy)
+# Image Updater rewrites the pinned tag in the overlay's `images:` block, so
+# k8s/talos00/kustomization.yaml gets updated in git and Argo picks up the sync.
+#
+# NOTE: the app's Deployment is replicas:1 / strategy:Recreate on purpose (it
+# holds a single live F-Chat login). An image update is therefore a brief
+# outage, not a rolling swap — by design, since two pods would log the same
+# character in twice and kick each other in a loop.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: fchat-bouncer
+  namespace: argocd
+spec:
+  namespace: argocd
+  commonUpdateSettings:
+    updateStrategy: newest-build
+    allowTags: "regexp:^(latest|main|sha-[a-f0-9]{7,40})$"
+    pullSecret: pullsecret:argocd-image-updater-system/ghcr-secret
+  writeBackConfig:
+    method: argocd
+  applicationRefs:
+    - namePattern: fchat-bouncer
+      images:
+        - alias: fchat-bouncer
+          imageName: ghcr.io/thebranchdriftcatalyst/fchat-bouncer
+          manifestTargets:
+            kustomize:
+              name: ghcr.io/thebranchdriftcatalyst/fchat-bouncer

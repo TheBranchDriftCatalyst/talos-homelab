@@ -1,0 +1,89 @@
+---
+# fchat-bouncer — always-on F-Chat bouncer + web chat UI.
+#
+# WE BUILD THE IMAGE, SO THE MANIFESTS LIVE WITH THE CODE (docs/02-architecture/
+# dual-gitops.md). Everything this app is — Deployment, Service, CNPG Cluster,
+# ExternalSecret, IngressRoute — is in the fchat-bouncer repo under k8s/. This
+# file and the image-updater CR are the only pieces that belong here.
+#
+# The Authentik proxy provider is the exception: it is not a Kubernetes object
+# the app owns, it is configuration of a platform service, so it lives in
+# infrastructure/base/authentik/fchat-bouncer-blueprint.yaml. Without it the
+# `authentik` middleware on the app's IngressRoute makes fchat.talos00 answer
+# 404 rather than redirecting to login.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fchat-bouncer
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: fchat-bouncer
+    app.kubernetes.io/part-of: catalyst
+  annotations:
+    # Required for `managedFieldsManagers` in ignoreDifferences to actually
+    # take effect — without this, Argo does a legacy client-side diff that
+    # ignores managed-field ownership and CNPG-owned fields still show as drift.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+  # Image update config lives in
+  # infrastructure/base/argocd/image-updater/fchat-bouncer-image-updater.yaml.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  info:
+    - name: GitHub Repository
+      value: https://github.com/TheBranchDriftCatalyst/fchat-bouncer
+    - name: Container Registry
+      value: https://ghcr.io/thebranchdriftcatalyst/fchat-bouncer
+    - name: Application
+      value: https://fchat.talos00
+
+  source:
+    repoURL: https://github.com/TheBranchDriftCatalyst/fchat-bouncer.git
+    targetRevision: main
+    path: k8s/talos00
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fchat-bouncer
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ServerSideApply=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    # HPA / operator-managed replica count.
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+    # ESO injects conversionStrategy / decodingStrategy / metadataPolicy into
+    # spec.data[].remoteRef that aren't in git.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+    # CNPG operator defaults many spec fields at runtime (postgresUID, monitoring,
+    # replicationSlots, etc.). Ignore anything owned by its field manager.
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      managedFieldsManagers:
+        - manager

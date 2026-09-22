@@ -1,0 +1,64 @@
+---
+# Authentik Blueprint: fchat-bouncer (always-on F-Chat bouncer + web chat UI).
+#
+# WHY THIS EXISTS AT ALL: Traefik's `authentik` forward-auth middleware hands
+# the request to the embedded outpost, and the outpost answers 404 — not a login
+# redirect — for any external_host it does not recognise. So attaching the
+# middleware to a route with no provider behind it makes the app return 404 with
+# a perfectly valid IngressRoute and nothing in the Traefik logs. irc.talos00
+# presented exactly this way and cost an afternoon.
+#
+# THREE REGISTRATION POINTS, all required. This ConfigMap must be listed in:
+#   1. infrastructure/base/authentik/kustomization.yaml      (so it is applied)
+#   2. helmrelease.yaml → blueprints.configMaps              (so it is MOUNTED;
+#      there is no label auto-discovery)
+#   3. talos-private-blueprint.yaml → embedded-outpost providers union
+#      (so the OUTPOST can see it). That list is REPLACE-not-merge and
+#      authoritative in that one file: a provider defined only here is invisible
+#      to the outpost, which is the 404 above.
+#
+# Access = `talos-apps` OR `cluster-admin` (two PolicyBindings,
+# policy_engine_mode: any). Both groups are owned by other blueprints and
+# referenced here with !Find.
+#
+# THE WEBSOCKET IS FINE BEHIND THIS. /api/live rides the same route, and unlike
+# soju's /socket it needs no forward-auth bypass: the browser already holds the
+# Authentik session cookie from loading the page, so the upgrade passes the
+# forward-auth check like any other request. The app then authenticates the
+# socket against its OWN session cookie and closes it with 4401 before accepting
+# if that is missing — so the socket is gated twice, by two independent sessions.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-fchat-bouncer-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  fchat-bouncer.yaml: |
+    version: 1
+    metadata:
+      name: fchat-bouncer forward_single application
+      labels:
+        blueprints.goauthentik.io/description: "forward_single application for the F-Chat bouncer web UI (talos-apps group)"
+    entries:
+      # ========== fchat-bouncer ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-fchat
+        identifiers: {name: fchat-bouncer}
+        attrs:
+          name: fchat-bouncer
+          mode: forward_single
+          external_host: https://fchat.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-fchat, identifiers: {slug: fchat-bouncer}, attrs: {name: F-Chat Bouncer, slug: fchat-bouncer, group: talos-apps, provider: !KeyOf p-fchat, meta_launch_url: https://fchat.talos00, meta_description: "Always-on F-Chat bouncer, chat UI and ad scheduler", meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/chat.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-fchat-own, identifiers: {target: !KeyOf a-fchat, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-fchat-ca, identifiers: {target: !KeyOf a-fchat, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
