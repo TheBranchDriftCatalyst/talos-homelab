@@ -79,7 +79,15 @@
     revealAt: 6,
     hidePast: 48,
     height: 38,
-    scrollReveal: false
+    scrollReveal: false,
+    // intensity  amplitude of every animation in layer 45. 1 is full, 0 is
+    //            flat, above 1 is obnoxious and legal. Turn this down for an
+    //            app whose own UI is already busy.
+    // fx         false removes the injected atmosphere layers outright and
+    //            stops all animation. Distinct from intensity 0, which keeps
+    //            the horizon and bloom rendering as static texture.
+    intensity: 1,
+    fx: true
   };
 
   // Touch has no hover, so a 6px target is unusable. Deliberately NOT part of
@@ -101,6 +109,74 @@
     assign(cfg, data.defaults);
     assign(cfg, (data.hosts || {})[location.hostname]);
     return cfg;
+  }
+
+  /* -- The atmosphere layers ------------------------------------------------
+   * Layer 45 of the stylesheet draws a receding horizon, a bloom and a glitch
+   * slice. Each needs a real element: a pseudo-element cannot hold a child, and
+   * both the horizon and the glitch need one transform nested inside another
+   * (perspective on the parent, scroll on the child). html::before and
+   * html::after are already spoken for by layer 30, and body::before/::after by
+   * theme.park's own base sheets — so these three are injected here.
+   *
+   * DELIBERATELY NOT GATED ON THE NAV. This runs before the manifest is
+   * fetched and regardless of whether a bar is ever built: an app configured
+   * mode:'off', or one whose manifest request fails, still has the stylesheet
+   * and should still look like the theme. Config, when it arrives, is applied
+   * on top by applyFx().
+   * ---------------------------------------------------------------------- */
+  var FX = 'catalyst-fx';
+
+  function installFx() {
+    if (document.getElementById(FX)) return;         // SPA / double-call guard
+    if (!document.body) return;
+
+    var host = el('div', FX);
+    host.id = FX;
+    // Presentational in full. Screen readers must never announce it, and it
+    // must never take a tab stop or eat a click.
+    host.setAttribute('aria-hidden', 'true');
+    ['horizon', 'bloom', 'glitch'].forEach(function (part) {
+      host.appendChild(el('div', FX + '__' + part));
+    });
+    // FIRST child, not appended: these are backdrops, and the stylesheet keeps
+    // them out of the way by z-index rather than by document order — but a
+    // trailing element is one `position: static` regression away from sitting
+    // on top of the app.
+    document.body.insertBefore(host, document.body.firstChild);
+
+    // The boot cascade is gated on this class and the class is REMOVED once the
+    // sequence has played. Both halves matter. servarr is an SPA that swaps its
+    // content on every sidebar click, so a CRT power-on tied to element
+    // creation would re-fire forever; and while the class is present, a row's
+    // entry animation is re-declared every time :hover stops applying, so
+    // brushing the pointer across a table would deal each row back in. Removing
+    // it leaves no animation for hover to fall back to.
+    document.documentElement.classList.add('catalyst-boot');
+    setTimeout(function () {
+      document.documentElement.classList.remove('catalyst-boot');
+    }, 1600);
+  }
+
+  /* Applied once the manifest resolves. Split from installFx so the layers are
+   * never waiting on the network to appear. */
+  function applyFx(cfg) {
+    var root = document.documentElement;
+    // Number() rather than parseFloat: annotations arrive as strings, and
+    // parseFloat('0.5abc') is 0.5 while Number('0.5abc') is NaN. A malformed
+    // value should fall back to the default, not silently half-apply.
+    var n = Number(cfg.intensity);
+    if (!isFinite(n) || n < 0) n = DEFAULTS.intensity;
+    root.style.setProperty('--cat-anim', String(n));
+
+    // The attribute, not a class: it is a three-state switch in the stylesheet
+    // and reads clearly in devtools next to the other data-* the apps set.
+    if (cfg.fx === false || cfg.fx === 'false') {
+      root.setAttribute('data-catalyst-anim', 'off');
+      root.classList.remove('catalyst-boot');
+    } else {
+      root.removeAttribute('data-catalyst-anim');
+    }
   }
 
   function el(tag, cls, text) {
@@ -183,6 +259,12 @@
 
   function build(data) {
     var cfg = resolveConfig(data);
+
+    // BEFORE the early returns below. The atmosphere is a property of the
+    // theme, not of the nav bar: an app with mode:'off' or an empty manifest
+    // still gets its intensity applied.
+    applyFx(cfg);
+
     if (cfg.mode === 'off') return;
 
     var groups = (data && data.groups) || [];
@@ -326,9 +408,17 @@
       });
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', start);
-  } else {
+  function bootstrap() {
+    // Order matters: the layers go in first so the boot sequence begins at
+    // first paint rather than after a network round trip. start() then fetches
+    // the manifest and applyFx() tunes what is already on screen.
+    installFx();
     start();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrap);
+  } else {
+    bootstrap();
   }
 })();

@@ -24,6 +24,10 @@ list of app names somewhere in the theme:
     catalyst.nav/hide-past      px; overlay: how far down re-hides it
     catalyst.nav/height         px; bar height, also drives --catalyst-nav-h
     catalyst.nav/scroll-reveal  true | false
+    catalyst.nav/intensity      0..n; amplitude of every animation in the
+                                theme's layer 45. 1 is full, 0 is flat.
+    catalyst.nav/fx             true | false; false removes the injected
+                                atmosphere layers and stops all animation
 
 These land in the manifest under `hosts`, keyed by hostname, and the script
 resolves DEFAULTS <- defaults <- hosts[location.hostname]. Cluster-wide
@@ -47,16 +51,31 @@ def _as_bool(v):
     return str(v).strip().lower() in ("true", "1", "yes", "on")
 
 
+def _as_intensity(v):
+    """0..n animation amplitude. Rejects negatives, NaN and inf.
+
+    A negative value would not merely look wrong -- layer 45 multiplies
+    translate distances by it, so every animation would run backwards, and
+    `inf` would produce a transform the compositor cannot resolve.
+    """
+    n = float(v)
+    if n != n or n in (float("inf"), float("-inf")) or n < 0:
+        return None
+    return n
+
+
 # annotation suffix -> (manifest key, parser). ONE table: it validates the
 # annotations, names the manifest keys, and documents the surface. The script's
-# DEFAULTS object declares the same five keys and nothing else, so anything not
-# listed here can never reach it.
+# DEFAULTS object declares the same seven keys and nothing else, so anything
+# not listed here can never reach it.
 CONFIG_KEYS = {
     "mode": ("mode", lambda v: v if v in ("overlay", "push", "off") else None),
     "reveal-at": ("revealAt", int),
     "hide-past": ("hidePast", int),
     "height": ("height", int),
     "scroll-reveal": ("scrollReveal", _as_bool),
+    "intensity": ("intensity", _as_intensity),
+    "fx": ("fx", _as_bool),
 }
 
 
