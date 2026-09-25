@@ -2,7 +2,7 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-09-19
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-09-25
 **Pick up here:** `TALOS-f0sd` (review the 98-file diff first — nothing is committed) · **Deadline item:** `TALOS-sahd` (~2026-09-20 03:35 UTC)
 <!-- /closeout:header -->
 
@@ -34,12 +34,21 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-### ⏱ Time-boxed — fires in ~10 hours
+### ⏱ Time-boxed — both fired 2026-09-20; resolved 2026-09-25
 
-|                       |                                                                                                                                                                                                                                                                                                     |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`TALOS-sahd`** (P1) | A CrowdSec GC reap fires **unattended ~2026-09-20 03:35 UTC** against a key-holding bouncer row. Whether enforcement survives it was _reasoned about, never tested_. ~15 min inside a watched window. This has been carried for a day; after it fires, the question is answered for you either way. |
-| `TALOS-a83x` (P3)     | falcosidekick-ui redis reaches its 512 MB ceiling in the same window.                                                                                                                                                                                                                               |
+|                       |                                                                                                                                                                                                                                                              |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `TALOS-sahd` (P1)     | The unattended CrowdSec GC reap fired and **enforcement survived** — all crowdsec pods 0-restart. The question is answered. Still open: promote-or-delete the silentdrop plane, and the missing CA-rotation runbook.                                        |
+| **`TALOS-a83x`** (P2) | Prediction landed: redis was **OOMKilled 2026-09-20T15:27:31Z**. Bumped P3→P2 — it is an active degradation now, `ServiceDown falco-falcosidekick-ui` firing. Limit is 768 Mi, not 512 MB, and it OOMed anyway; the 7 d TTL claim is settled false. |
+
+### AWS — a broken credential was acting as an undeclared brake (2026-09-25)
+
+|                     |                                                                                                                                                                                                                                                                                       |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What happened       | `ExternalSecretNeverSynced` had been critical since the ProviderConfig was applied: the ES named 1Password item `aws-crossplane`, which never existed — the credentials are `aws-credentials`. Repointed in `bef5dddd`; `TALOS-3g8f` closed.                                       |
+| The trap            | Restoring the credential **immediately began creating real AWS resources** nobody had reviewed. Nothing had decided not to run them; they just could not act. Caught before either `g5.xlarge` launched (`vllm-8b` is **on-demand**, ~$1/hr); a 200 GB gp3 volume was created and pruned. |
+| Current state       | GPU stack **off** in `infrastructure/base/aws/apps/kustomization.yaml` (`1af0eb97`) — that file's idiom is "file = on-switch", so commented = off. S3 (`catalyst-tbdc-offsite-backups`, `catalyst-tbdc-models`) was never affected and stays Synced/Ready.                          |
+| Before re-enabling  | **Do not just uncomment.** Both claims still carry `vpcId: vpc-REPLACE-ME` / `subnetId: subnet-REPLACE-ME`. See `TALOS-455u` — and decide whether the POC is still wanted, given it sat inert 33 days unnoticed.                                                                    |
 
 ### Immediate — 98 files are uncommitted on purpose
 
