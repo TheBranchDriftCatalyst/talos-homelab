@@ -154,11 +154,19 @@ spec:
           command: [sh, -ceu]
           args:
             - |
-              echo "==> waiting for a ready forgejo pod"
-              kubectl -n forgejo wait --for=condition=ready pod \
-                -l app.kubernetes.io/name=forgejo --timeout=300s
+              # `!app.kubernetes.io/component` IS LOAD-BEARING. The admin
+              # bootstrap Job's pods carry app.kubernetes.io/name=forgejo too,
+              # and a Completed pod never reports Ready — so the obvious
+              # selector makes `kubectl wait` print "condition met" for the
+              # server and then block for the full timeout on a finished Job
+              # pod that is never going to satisfy it. Only the server's pods
+              # lack a component label.
+              SEL='app.kubernetes.io/name=forgejo,!app.kubernetes.io/component'
 
-              POD="$(kubectl -n forgejo get pods -l app.kubernetes.io/name=forgejo \
+              echo "==> waiting for a ready forgejo pod"
+              kubectl -n forgejo wait --for=condition=ready pod -l "$SEL" --timeout=300s
+
+              POD="$(kubectl -n forgejo get pods -l "$SEL" \
                 --field-selector=status.phase=Running \
                 -o jsonpath='{.items[0].metadata.name}')"
               echo "    using $POD"
