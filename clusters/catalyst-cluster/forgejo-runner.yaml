@@ -1,0 +1,36 @@
+---
+# Flux Kustomization for the Forgejo Actions runner.
+#
+# dependsOn forgejo because the runner's init container enrols against the
+# Forgejo API and a registration attempt against a forge that is not up yet
+# burns nothing but does CrashLoop until it is. external-secrets for the
+# registration token, namespaces for the privileged namespace it needs.
+#
+# wait:false, for the same reason forgejo.yaml and the Zot cutover before it
+# give: a first-boot dependency race must not be able to deadlock Flux. Nothing
+# downstream of this reconciles against it — a runner that comes up late means
+# a CI job queues, not that a deployment is blocked.
+#
+# NO postBuild/substituteFrom, unlike its siblings. Nothing here needs a
+# cluster-settings variable, and the runner's config.yml and the register
+# script both contain `$`-bearing shell — enabling substitution would make Flux
+# try to resolve those as variables and fail the whole Kustomization.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: forgejo-runner
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/forgejo-runner
+  prune: true
+  wait: false
+  timeout: 10m
+  dependsOn:
+    - name: namespaces
+    - name: storage
+    - name: external-secrets
+    - name: forgejo

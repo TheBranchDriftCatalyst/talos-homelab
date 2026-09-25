@@ -14,6 +14,24 @@ data:
         api_url: https://ghcr.io
         prefix: ghcr.io
         default: true
+      # Zot, the in-cluster OCI registry. Added for fchat-bouncer, the first
+      # app here that is published privately rather than to GHCR.
+      #
+      # HTTP AND THE INTERNAL HOSTNAME, on purpose. This controller runs in the
+      # cluster, so it has no reason to leave it — and `prefix` has to match the
+      # registry in the image reference the manifests carry
+      # (registry.talos00/...), or the updater simply never considers the image.
+      # `insecure: true` is what lets it speak plain HTTP to the `web`
+      # entrypoint; the public HTTPS host exists for pushes from outside.
+      #
+      # NO CREDENTIALS, and that is correct rather than an omission: Zot's
+      # accessControl sets defaultPolicy ["read"], so listing tags is anonymous.
+      # Only the kubelet's PULL needs a secret, and that is the app's own
+      # nexus-pull-dockercfg.
+      - name: Zot (in-cluster)
+        api_url: http://registry.talos00
+        prefix: registry.talos00
+        insecure: true
   # ArgoCD server address (use internal service)
   argocd.server_addr: argocd-server.argocd.svc.cluster.local:443
   argocd.insecure: 'true'

@@ -1,0 +1,18 @@
+---
+# Forgejo Actions runner — the CI half of the private build chain.
+#
+# Forgejo (infrastructure/base/forgejo) is the forge; this is the thing that
+# actually executes a workflow. Split into its own Kustomization rather than
+# folded into forgejo/ because it needs a namespace with a different Pod
+# Security Standard — see namespaces/forgejo-runner.yaml for why.
+#
+# First consumer: fchat-bouncer, whose .forgejo/workflows/docker-publish.yml
+# builds and pushes to Zot. Nothing about this component is specific to it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: forgejo-runner
+
+resources:
+  - externalsecret.yaml
+  - deployment.yaml # PVC + ConfigMap + Deployment (runner + DinD sidecar)

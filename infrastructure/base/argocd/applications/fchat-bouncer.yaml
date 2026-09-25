@@ -6,6 +6,20 @@
 # ExternalSecret, IngressRoute — is in the fchat-bouncer repo under k8s/. This
 # file and the image-updater CR are the only pieces that belong here.
 #
+# THE FIRST FULLY PRIVATE APPLICATION HERE. Every other ArgoCD app in this
+# cluster syncs from github.com and pulls from ghcr.io. This one syncs from
+# Forgejo and pulls from Zot, both of which run in this cluster, so nothing
+# about it — source, CI, image, deployment — leaves the homelab.
+#
+# That was not the original plan. This Application sat at Unknown for its whole
+# life because its repoURL pointed at github.com/TheBranchDriftCatalyst/
+# fchat-bouncer, which was never created: no repo, nothing to sync, no CI, no
+# image. A Flux Kustomization at clusters/catalyst-cluster/fchat-bouncer.yaml
+# stood in as a temporary bridge, deploying a second copy of these manifests
+# against a hand-built image pinned by digest. Rather than create the GitHub
+# repo, the chain moved onto infrastructure already running here. The bridge
+# and its duplicate manifests are gone; this Application owns the app.
+#
 # The Authentik proxy provider is the exception: it is not a Kubernetes object
 # the app owns, it is configuration of a platform service, so it lives in
 # infrastructure/base/authentik/fchat-bouncer-blueprint.yaml. Without it the
@@ -31,16 +45,21 @@ metadata:
 spec:
   project: default
 
+  # Human-facing links: the PUBLIC hostnames, unlike spec.source.repoURL.
   info:
-    - name: GitHub Repository
-      value: https://github.com/TheBranchDriftCatalyst/fchat-bouncer
-    - name: Container Registry
-      value: https://ghcr.io/thebranchdriftcatalyst/fchat-bouncer
+    - name: Source (Forgejo)
+      value: https://forge.knowledgedump.space/panda/fchat-bouncer
+    - name: Container Registry (Zot)
+      value: https://registry.knowledgedump.space/talos00-registry/fchat-bouncer
     - name: Application
       value: https://fchat.talos00
 
   source:
-    repoURL: https://github.com/TheBranchDriftCatalyst/fchat-bouncer.git
+    # The IN-CLUSTER Forgejo service. Credentials come from the `repo-creds`
+    # secret at infrastructure/base/argocd/externalsecret-forgejo-repo.yaml,
+    # whose url prefix must keep matching this one. See that file for why this
+    # is the service address rather than forge.knowledgedump.space.
+    repoURL: http://forgejo.forgejo.svc.cluster.local:3000/panda/fchat-bouncer.git
     targetRevision: main
     path: k8s/talos00
 

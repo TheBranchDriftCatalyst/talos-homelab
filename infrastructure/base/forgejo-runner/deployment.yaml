@@ -1,0 +1,172 @@
+---
+# Runner state: /data/.runner (the durable credential register() writes) and the
+# action cache. RWO + Recreate, single replica — two runners sharing one .runner
+# file would both answer as the same registered runner.
+#
+# local-path rather than NFS: this is a build cache and a small credential file,
+# both rewritten constantly, and the volume is worthless if the node it was
+# scheduled on goes away. Nothing here is worth replicating; a lost cache costs
+# one slow build, and .runner can be re-registered with a fresh token.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-runner-data
+  namespace: forgejo-runner
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+---
+# The runner's own config — NOT the workflow's.
+#
+# LABELS ARE THE CONTRACT between this file and `runs-on:` in a workflow. A job
+# whose `runs-on` matches no label here is not rejected; it sits queued forever
+# with no error anywhere, which is the single most confusing failure this
+# component has. `docker` and `ubuntu-latest` both map to the same image so that
+# a workflow copied from a GitHub repo runs unmodified.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forgejo-runner-config
+  namespace: forgejo-runner
+data:
+  config.yml: |
+    log:
+      level: info
+    runner:
+      capacity: 1
+      timeout: 30m
+      # The job container image, per label. node:22-bookworm is what the
+      # upstream default uses and it carries git + node, which is all
+      # actions/checkout needs; everything else our workflow does is shelled
+      # out to the docker CLI against the sidecar daemon.
+      labels:
+        - "docker:docker://node:22-bookworm"
+        - "ubuntu-latest:docker://node:22-bookworm"
+    cache:
+      enabled: true
+      dir: /data/cache
+    container:
+      # Talk to the DinD sidecar over the socket they share. Without this the
+      # runner tries to mount the HOST's /var/run/docker.sock, which on Talos
+      # does not exist at all.
+      docker_host: unix:///var/run/docker.sock
+      network: bridge
+      privileged: false
+      valid_volumes:
+        - /data/cache
+---
+# Forgejo Actions runner + a Docker daemon for it to build with.
+#
+# WHY DinD AND NOT THE HOST SOCKET: Talos has no host Docker — containerd is the
+# runtime and there is no /var/run/docker.sock to bind-mount. A build needs a
+# daemon, so the pod brings its own. The sidecar is `privileged: true`, which is
+# the whole reason this lives in its own namespace; see namespaces/forgejo-runner.yaml.
+#
+# TLS IS OFF between the two containers (DOCKER_TLS_CERTDIR=""). They share a
+# process namespace boundary and an emptyDir socket inside ONE pod — the traffic
+# never leaves it — and the alternative is provisioning and rotating certs for a
+# localhost link. The socket directory is an emptyDir, not hostPath, so nothing
+# outside the pod can reach the daemon either.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo-runner
+  namespace: forgejo-runner
+  labels:
+    app.kubernetes.io/name: forgejo-runner
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # RWO PVC, and one .runner credential
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo-runner
+    spec:
+      securityContext:
+        fsGroup: 1000
+      initContainers:
+        # Enrol once, then never again. The guard is not a nicety: the
+        # registration token is spent by a successful register, so an
+        # unconditional re-run turns every pod restart into a CrashLoop whose
+        # message ("runner already registered" / 401) points at the token
+        # rather than at this container.
+        - name: register
+          image: code.forgejo.org/forgejo/runner:13.2.0
+          command: [sh, -ceu]
+          args:
+            - |
+              if [ -f /data/.runner ]; then
+                echo "already registered; leaving /data/.runner alone"
+                exit 0
+              fi
+              # The IN-CLUSTER service, not forge.knowledgedump.space: this hop
+              # never needs to leave the cluster, and routing it through
+              # Traefik and back would make the runner's enrolment depend on
+              # ingress and public DNS being healthy.
+              forgejo-runner register --no-interactive \
+                --instance "http://forgejo.forgejo.svc.cluster.local:3000" \
+                --token "${REGISTRATION_TOKEN}" \
+                --name "talos00-k8s" \
+                --labels "docker:docker://node:22-bookworm,ubuntu-latest:docker://node:22-bookworm"
+          env:
+            - name: REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef: { name: forgejo-runner-secrets, key: registration-token }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+          workingDir: /data
+      containers:
+        - name: dind
+          image: docker:29.8-dind
+          securityContext:
+            privileged: true
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: "" # see the note above
+          volumeMounts:
+            - { name: docker-sock, mountPath: /var/run }
+            # The build cache and the checkout live here, and the daemon has to
+            # see the same paths the runner does or a bind-mounted job volume
+            # resolves to an empty directory on the daemon side.
+            - { name: data, mountPath: /data }
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 4Gi }
+          # `docker info` rather than a TCP probe: the socket answering is the
+          # only thing the runner actually needs, and it is the thing that is
+          # slow to come up on a cold start.
+          readinessProbe:
+            exec: { command: [docker, info] }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+        - name: runner
+          image: code.forgejo.org/forgejo/runner:13.2.0
+          command: [forgejo-runner, daemon, --config, /config/config.yml]
+          env:
+            - name: DOCKER_HOST
+              value: unix:///var/run/docker.sock
+          volumeMounts:
+            - { name: docker-sock, mountPath: /var/run }
+            - { name: data, mountPath: /data }
+            - { name: config, mountPath: /config }
+          workingDir: /data
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+      volumes:
+        - name: docker-sock
+          emptyDir: {}
+        - name: data
+          persistentVolumeClaim:
+            claimName: forgejo-runner-data
+        - name: config
+          configMap:
+            name: forgejo-runner-config

@@ -1,11 +1,24 @@
 ---
-# Auto-rolls the fchat-bouncer Deployment when a new image tag appears.
+# Auto-rolls the fchat-bouncer Deployment when a new image tag appears in ZOT.
+#
+# Unlike every other ImageUpdater CR here, this one watches the in-cluster
+# registry rather than GHCR — see the Zot entry added to registries.conf in
+# configmap-patch.yaml. It is published to by Forgejo Actions, in this cluster,
+# from a Forgejo repo. Nothing in this app's chain is off-site.
+#
 # The tag list is intentionally narrow — we want deterministic writes:
 #   - `latest`     ← pushed only on default-branch (main) pushes
 #   - `main`       ← docker-publish workflow branch tag
 #   - `sha-<7c>`   ← immutable per-commit ref (drives per-commit auto-deploy)
-# Image Updater rewrites the pinned tag in the overlay's `images:` block, so
-# k8s/talos00/kustomization.yaml gets updated in git and Argo picks up the sync.
+#
+# WHAT IT ACTUALLY WRITES. This used to claim the updater "rewrites the pinned
+# tag in the overlay's `images:` block, so k8s/talos00/kustomization.yaml gets
+# updated in git". It does not, and believing that sends you looking for a
+# commit that is never coming. `writeBackConfig.method: argocd` patches
+# spec.source.kustomize.images on the ArgoCD Application object — a live
+# override that does not touch the repo. The tag committed in the overlay is a
+# starting hint and stays behind on purpose; `argocd app get fchat-bouncer` is
+# where the deployed tag is true.
 #
 # NOTE: the app's Deployment is replicas:1 / strategy:Recreate on purpose (it
 # holds a single live F-Chat login). An image update is therefore a brief
@@ -21,14 +34,19 @@ spec:
   commonUpdateSettings:
     updateStrategy: newest-build
     allowTags: "regexp:^(latest|main|sha-[a-f0-9]{7,40})$"
-    pullSecret: pullsecret:argocd-image-updater-system/ghcr-secret
+    # No pullSecret: Zot allows anonymous reads (defaultPolicy ["read"]), so tag
+    # discovery needs no credential. The kubelet still authenticates for the
+    # actual pull with the app's nexus-pull-dockercfg.
   writeBackConfig:
     method: argocd
   applicationRefs:
     - namePattern: fchat-bouncer
       images:
         - alias: fchat-bouncer
-          imageName: ghcr.io/thebranchdriftcatalyst/fchat-bouncer
+          # This name must match THREE places or the updater no-ops in silence:
+          # here, the `images:` key in the app's k8s/talos00/kustomization.yaml,
+          # and the image in k8s/base/deployment.yaml.
+          imageName: registry.talos00/talos00-registry/fchat-bouncer
           manifestTargets:
             kustomize:
-              name: ghcr.io/thebranchdriftcatalyst/fchat-bouncer
+              name: registry.talos00/talos00-registry/fchat-bouncer

@@ -1,0 +1,21 @@
+---
+# The Forgejo Actions runner, in a namespace of its own.
+#
+# WHY NOT IN `forgejo`: that namespace enforces the `baseline` Pod Security
+# Standard, and baseline forbids privileged containers. The runner needs one —
+# it carries a Docker-in-Docker sidecar so `docker buildx` has a daemon to talk
+# to. Relabelling the forgejo namespace to `privileged` would buy that by
+# weakening the git server that lives next to it, which is the wrong trade: the
+# forge holds the source, the runner is a build sandbox executing whatever a
+# workflow file says. They get different blast radii.
+#
+# Precedent for a privileged namespace here: registry.yaml (Zot) and
+# crossplane-demo.yaml.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: forgejo-runner
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged
