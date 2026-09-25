@@ -1,0 +1,1134 @@
+{
+  "uid": "catalyst-rum-ops",
+  "title": "Catalyst RUM Ops",
+  "description": "Browser real-user monitoring for the Catalyst apps, fused with Traefik server-side latency.\n\nBrowser signals come from Alloy's faro.receiver -> Loki, labelled {app, kind}. Server signals come from Traefik -> Mimir. Sibling of 'Analytics Ops', which covers the Plausible stack.",
+  "tags": [
+    "analytics",
+    "rum",
+    "faro",
+    "frontend",
+    "ops"
+  ],
+  "editable": true,
+  "schemaVersion": 39,
+  "graphTooltip": 1,
+  "timezone": "",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "app",
+        "label": "App",
+        "type": "query",
+        "datasource": {
+          "type": "loki",
+          "uid": "loki-v2"
+        },
+        "includeAll": true,
+        "multi": true,
+        "query": {
+          "label": "app",
+          "stream": "{kind=\"measurement\"}",
+          "type": 1
+        },
+        "refresh": 2,
+        "sort": 1,
+        "description": "Apps currently reporting browser telemetry."
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Core Web Vitals \u2014 what users actually experienced",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "p75 FCP",
+      "description": "First Contentful Paint. Good <1.8s, poor >3s (web.dev). p75 is the reporting convention \u2014 the experience of the slowest quarter of loads.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_fcp != \"\" | unwrap value_fcp [$__range])",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1800
+              },
+              {
+                "color": "red",
+                "value": 3000
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "p75 LCP",
+      "description": "Largest Contentful Paint. Good <2.5s, poor >4s.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_lcp != \"\" | unwrap value_lcp [$__range])",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2500
+              },
+              {
+                "color": "red",
+                "value": 4000
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "p75 CLS",
+      "description": "Cumulative Layout Shift. Good <0.1, poor >0.25. Unitless.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_cls != \"\" | unwrap value_cls [$__range])",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.25
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 3
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "p75 INP",
+      "description": "Interaction to Next Paint. Good <200ms, poor >500ms.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_inp != \"\" | unwrap value_inp [$__range])",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 200
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "p75 TTFB",
+      "description": "Time To First Byte as the BROWSER saw it \u2014 includes DNS, TLS and queueing that server-side Traefik metrics cannot see.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_ttfb != \"\" | unwrap value_ttfb [$__range])",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 800
+              },
+              {
+                "color": "red",
+                "value": 1800
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Exceptions / min",
+      "description": "Uncaught errors and React render failures reaching the collector.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({app=~\"$app\", kind=\"exception\"} [1m]))",
+          "refId": "A",
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "type": "row",
+      "title": "Vitals over time \u2014 per app",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "FCP p75",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_fcp != \"\" | unwrap value_fcp [$__auto]) by (app)",
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{app}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "LCP p75",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_lcp != \"\" | unwrap value_lcp [$__auto]) by (app)",
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{app}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "INP p75",
+      "description": "",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_inp != \"\" | unwrap value_inp [$__auto]) by (app)",
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{app}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Data fusion \u2014 where the time actually goes",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Browser TTFB vs Traefik service duration (p75, same axis)",
+      "description": "THE FUSION PANEL. Both series are milliseconds, so they share one axis \u2014 this is not a dual-axis chart.\n\nTraefik measures only its own proxy+backend time. The browser's TTFB additionally contains DNS, TLS, connection setup and client-side queueing. The GAP between the two lines is everything Traefik structurally cannot see, and it is where 'the homelab feels slow' usually lives.\n\nNB: this comparison only became possible on 2026-09-25 \u2014 before that Traefik's histogram buckets were 0.1/0.3/1.2/5.0 and 94% of requests fell in the first one, so every server-side quantile pinned at ~0.1s (TALOS-xfjl.8).",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 14,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_ttfb != \"\" | unwrap value_ttfb [$__auto])",
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "browser TTFB (p75)"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "histogram_quantile(0.75, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{service=~\"catalyst.*\"}[$__rate_interval]))) * 1000",
+          "refId": "B",
+          "legendFormat": "traefik service (p75)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Client render time (FCP \u2212 TTFB)",
+      "description": "FCP p75 per app. Read against TTFB on the left: FCP minus TTFB is the browser's own work \u2014 parse, CSS, fonts, first paint. A large gap here points at the injected theme payload rather than the network.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "quantile_over_time(0.75, {app=~\"$app\", kind=\"measurement\"} | logfmt | value_fcp != \"\" | unwrap value_fcp [$__auto]) by (app)",
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{app}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Traffic & errors",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Page views",
+      "description": "Derived page_view events, per app.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 25
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({app=~\"$app\", kind=\"event\"} | logfmt | event_name=\"page_view\" [$__auto])) by (app)",
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{app}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Exceptions by type",
+      "description": "Grouped by exception class.",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 25
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "sum(count_over_time({app=~\"$app\", kind=\"exception\"} | logfmt [$__auto])) by (type)",
+          "refId": "A",
+          "queryType": "range",
+          "legendFormat": "{{type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "logs",
+      "title": "Recent exceptions",
+      "datasource": {
+        "type": "loki",
+        "uid": "loki-v2"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 25
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki-v2"
+          },
+          "expr": "{app=~\"$app\", kind=\"exception\"}",
+          "refId": "A",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      },
+      "description": "URLs here are reduced to their path before egress (TALOS-xfjl.22.4) \u2014 no query string, no fragment, so an OAuth ?code= or #access_token= cannot appear."
+    },
+    {
+      "type": "row",
+      "title": "Collector health \u2014 is the pipeline even receiving?",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Faro receiver ingest rate by signal",
+      "description": "From Alloy's own metrics. A flat zero here with traffic on the dashboards above means the browser is not reaching /catalyst-rum/collect at all.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(rate(faro_receiver_measurements_total[$__rate_interval]))",
+          "refId": "A",
+          "legendFormat": "measurements"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(rate(faro_receiver_logs_total[$__rate_interval]))",
+          "refId": "B",
+          "legendFormat": "logs"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(rate(faro_receiver_events_total[$__rate_interval]))",
+          "refId": "C",
+          "legendFormat": "events"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(rate(faro_receiver_exceptions_total[$__rate_interval]))",
+          "refId": "D",
+          "legendFormat": "exceptions"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Loki write \u2014 sent vs dropped",
+      "description": "Drops are usually 'timestamp too old' from pod-log replay after an Alloy restart, not RUM loss.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(rate(loki_write_sent_entries_total{component_id=\"loki.write.default\"}[$__rate_interval]))",
+          "refId": "A",
+          "legendFormat": "sent"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(rate(loki_write_dropped_entries_total{component_id=\"loki.write.default\"}[$__rate_interval])) by (reason)",
+          "refId": "B",
+          "legendFormat": "dropped \u2014 {{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "last",
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}

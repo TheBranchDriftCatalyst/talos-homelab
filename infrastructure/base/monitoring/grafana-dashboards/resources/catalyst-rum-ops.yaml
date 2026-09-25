@@ -1,0 +1,39 @@
+---
+# Catalyst RUM Ops — browser real-user monitoring, fused with server-side Traefik latency.
+#
+# Sibling of analytics-ops.yaml: that one covers the PLAUSIBLE stack (server-observed,
+# all Mimir). This one covers what the BROWSER measured, and is the only dashboard here
+# that reads from two datasources at once.
+#
+#   browser signals : Alloy faro.receiver -> loki.process.faro -> Loki, labelled {app, kind}
+#                     where kind is one of measurement | event | exception | log
+#   server signals  : Traefik -> Mimir (traefik_service_request_duration_seconds_bucket)
+#   collector health: Alloy's own faro_receiver_*_total and loki_write_* counters, via Mimir
+#
+# THE POINT OF THE FUSION PANEL: Traefik can only measure its own proxy+backend time. The
+# browser's TTFB additionally contains DNS, TLS, connection setup and client-side queueing.
+# The gap between the two lines is everything server-side metrics structurally cannot see.
+#
+# That comparison only became meaningful on 2026-09-25. Before TALOS-xfjl.8 the Traefik
+# histogram buckets were 0.1/0.3/1.2/5.0 and 94% of requests landed in the first one, so
+# every server-side quantile pinned at ~0.1s and nothing below 100ms was distinguishable.
+#
+# Vitals are reported at p75, the Core Web Vitals convention — the experience of the
+# slowest quarter of loads, not the average. Thresholds are web.dev canonical:
+#   FCP 1.8s/3s   LCP 2.5s/4s   CLS 0.1/0.25   INP 200ms/500ms   TTFB 800ms/1.8s
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: catalyst-rum-ops
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folderRef: ops-analytics
+  instanceSelector:
+    matchLabels:
+      dashboards: "grafana"
+  configMapRef:
+    name: dashboard-catalyst-rum-ops
+    key: catalyst-rum-ops.json
