@@ -337,8 +337,28 @@ spec:
         addEntryPointsLabels: true
         addRoutersLabels: true
         addServicesLabels: true
-        # Request duration histogram buckets (comma-separated string)
-        buckets: "0.1,0.3,1.2,5.0"
+        # Request duration histogram buckets (comma-separated string).
+        #
+        # The previous value was "0.1,0.3,1.2,5.0" and it made this histogram
+        # BLIND. Measured 2026-09-25 before the change:
+        #
+        #   sum by (le) (rate(traefik_entrypoint_request_duration_seconds_bucket
+        #                     {entrypoint="websecure"}[1h]))
+        #     le=0.1  -> 0.827      le=0.3 -> 0.847
+        #     le=1.2  -> 0.870      le=5.0 -> 0.873    +Inf -> 0.877
+        #
+        # 94% of requests landed in the FIRST bucket, so p50, p90 and p99 all
+        # reported ~0.1s and nothing below 100ms was distinguishable. That made
+        # every latency question about the middleware chain unanswerable -- you
+        # could not tell 5ms of body-injection from 80ms of it.
+        #
+        # CARDINALITY, since addEntryPointsLabels + addRoutersLabels +
+        # addServicesLabels are all on above and this cluster has a history of
+        # series-count trouble. Measured before: 798 label combinations
+        # (198 entrypoint + 358 router + 242 service) x 5 series each = 3,990.
+        # After: 798 x 12 = 9,576, so +5,586 series. Against a ~731k-series
+        # remote-write WAL that is under 1%. Verified acceptable, not assumed.
+        buckets: "0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5,5,10"
         service:
           enabled: true
         # ServiceMonitor for Alloy/Mimir (not kube-prometheus-stack)
