@@ -4,55 +4,94 @@
 # ---------------------------------------------------------------------------
 # WHY THIS EXISTS
 # ---------------------------------------------------------------------------
-# The runner needs a registration token, and the only documented way to get one
-# is a human opening Site Administration -> Actions -> Runners and copying a
-# string into a password manager. That is a bad dependency for a GitOps cluster
-# in three separate ways: the cluster cannot be rebuilt from git alone, the
-# value drifts from whatever Forgejo currently considers valid, and the failure
-# it produces when wrong is "runner registration token not found" — which reads
-# as a broken runner rather than a stale secret. All three were observed.
+# The runner needs a registration token, and the documented way to get one is a
+# human opening Site Administration -> Actions -> Runners and copying a string
+# into a password manager. That is a bad dependency for a GitOps cluster in
+# three separate ways: the cluster cannot be rebuilt from git alone, the value
+# drifts from whatever Forgejo currently considers valid, and when it is wrong
+# the runner reports "runner registration token not found" — which reads as a
+# broken runner rather than a stale secret. All three were observed here: the
+# value that reached 1Password was a 40-character hex PAT, and a registration
+# token is 43 characters of something else entirely.
+#
+# ---------------------------------------------------------------------------
+# WHY IT EXECS INTO THE SERVER INSTEAD OF DOING IT ITSELF
+# ---------------------------------------------------------------------------
+# `forgejo actions generate-runner-token` looks like a CLI command that talks to
+# the database, the way `forgejo admin user create` next door does. It is not.
+# It POSTs to the server's own /api/internal/ endpoint, so a standalone pod gets
+# `connection refused` on localhost:3000 — and once pointed at the Service with
+# LOCAL_ROOT_URL, `Forbidden`, because that endpoint is authenticated with the
+# server's INTERNAL_TOKEN. Both measured, in that order.
+#
+# INTERNAL_TOKEN is generated on first run and lives only in the server's
+# app.ini on its RWO PVC. Getting at it from another pod means either mounting
+# that PVC (RWO, so it would have to land on the same node — fragile) or making
+# the token declarative, which trades this manual step for a different one.
+# Writing the row into action_runner_token directly was the other candidate and
+# is the kind of thing that breaks silently on a Forgejo upgrade.
+#
+# So this runs the command where it works: inside the server pod. That costs a
+# `pods/exec` grant in the forgejo namespace, and it is worth being honest that
+# this is a strong permission — it is arbitrary command execution in the forge.
+# It is namespace-scoped and held by a ServiceAccount that does nothing else,
+# and the alternative on the table was a long-lived admin PAT with comparable
+# reach and no expiry.
 #
 # ---------------------------------------------------------------------------
 # WHY IT IS SAFE TO RUN OVER AND OVER
 # ---------------------------------------------------------------------------
-# `forgejo actions generate-runner-token` does NOT mint a new token per call. It
-# returns the current active global token and only creates one when none exists
-# — measured: three consecutive calls returned byte-identical output and left
-# exactly one row in action_runner_token. So this Job needs no "has it already
-# run?" guard, no marker file and no conditional: it converges on every run, and
-# the Secret it writes has stable content, so repeated applies are no-ops rather
+# The command does NOT mint a new token per call: it returns the current active
+# global token and creates one only when none exists. Measured before relying on
+# it — three consecutive calls returned byte-identical output and left exactly
+# one row in action_runner_token. So this Job needs no "has it already run?"
+# guard, no marker file and no conditional. It converges on every run, and the
+# Secret it writes has stable content, so repeated applies are no-ops rather
 # than churn.
 #
-# It re-runs roughly hourly (ttlSecondsAfterFinished + Flux's reconcile), which
-# is what makes it self-healing: if an admin resets the token in the UI, the
-# Secret catches up on its own instead of the runner silently failing to
-# re-register the next time it is rebuilt.
-#
-# ---------------------------------------------------------------------------
-# WHY THE JOB IS IN THE forgejo NAMESPACE
-# ---------------------------------------------------------------------------
-# It needs the CNPG database credentials, and those are a Secret in `forgejo`.
-# Secrets do not cross namespaces. So the Job runs there and writes its result
-# into `forgejo-runner` through the API, which is what the RoleBinding below is
-# for. It is applied by the forgejo-runner Kustomization rather than the forgejo
-# one so that it lands together with the RBAC it depends on — the other ordering
-# fails on first boot and retries its way to success, which is noise.
-#
-# NOTE ON `$`: this file is applied by the forgejo-runner Kustomization, which
-# has NO postBuild/substituteFrom, so shell variables are written with a SINGLE
-# $. Its sibling infrastructure/base/forgejo/admin-job.yaml doubles every one of
-# them ($$) because the forgejo Kustomization DOES substitute. If this file is
-# ever moved there, every $ below has to be doubled or the app.ini comes out
-# empty and the error you get is "dbname is empty".
+# It re-runs roughly hourly (ttlSecondsAfterFinished plus Flux's reconcile),
+# which is what makes it self-healing: if an admin resets the token in the UI,
+# the Secret catches up on its own instead of the breakage surfacing weeks later
+# as a runner that cannot re-register.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: forgejo-runner-token
   namespace: forgejo
 ---
-# Namespace-scoped, and only over Secrets. `create` cannot be restricted by
-# resourceName (the name does not exist yet at admission time), so it is granted
-# for the namespace; get/patch are pinned to the one Secret this writes.
+# Exec into the forgejo pod. resourceNames cannot pin this to one pod — the name
+# carries a generated suffix that changes on every rollout — so it is scoped by
+# namespace and by a ServiceAccount with no other binding.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: forgejo-runner-token-exec
+  namespace: forgejo
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: forgejo-runner-token-exec
+  namespace: forgejo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: forgejo-runner-token-exec
+subjects:
+  - kind: ServiceAccount
+    name: forgejo-runner-token
+    namespace: forgejo
+---
+# Write the result next door. `create` cannot be restricted by resourceName (the
+# object does not exist at admission time), so it is granted for the namespace;
+# everything else is pinned to the one Secret this maintains.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -88,7 +127,7 @@ metadata:
   namespace: forgejo
 spec:
   backoffLimit: 20
-  # Deleted an hour after it finishes, so Flux recreates and re-runs it on a
+  # Deleted an hour after it finishes so Flux recreates and re-runs it on a
   # later reconcile. That is the refresh mechanism; see the idempotency note.
   ttlSecondsAfterFinished: 3600
   template:
@@ -99,82 +138,46 @@ spec:
     spec:
       restartPolicy: OnFailure
       serviceAccountName: forgejo-runner-token
-      securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
       containers:
         - name: mint
-          # Same image and the same throwaway-app.ini approach as
-          # forgejo/admin-job.yaml: talk to the CNPG database directly rather
-          # than depending on the server pod's entrypoint or its PVC. Runs as
-          # 1000 because forgejo refuses to start as root.
-          image: codeberg.org/forgejo/forgejo:16.0.3
+          image: registry.k8s.io/kubectl:v1.36.4
           env:
-            - name: DB_NAME
-              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: dbname } }
-            - name: DB_USER
-              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: username } }
-            - name: DB_PASSWD
-              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: password } }
-          command:
-            - sh
-            - -c
+            # kubectl writes a discovery cache under $HOME; the image's default
+            # home is not writable and the failure is an unhelpful permissions
+            # error long before anything interesting happens.
+            - name: HOME
+              value: /tmp
+          command: [sh, -ceu]
+          args:
             - |
-              set -eu
-              mkdir -p /tmp/forgejo/conf
-              cat > /tmp/forgejo/conf/app.ini <<EOF
-              APP_NAME = Forgejo
-              WORK_PATH = /tmp/forgejo
-              RUN_MODE = prod
-              [security]
-              INSTALL_LOCK = true
-              [database]
-              DB_TYPE  = postgres
-              HOST     = forgejo-postgres-rw.forgejo.svc.cluster.local:5432
-              NAME     = ${DB_NAME}
-              USER     = ${DB_USER}
-              PASSWD   = ${DB_PASSWD}
-              SSL_MODE = require
-              EOF
-              CFG=/tmp/forgejo/conf/app.ini
+              echo "==> waiting for a ready forgejo pod"
+              kubectl -n forgejo wait --for=condition=ready pod \
+                -l app.kubernetes.io/name=forgejo --timeout=300s
 
+              POD="$(kubectl -n forgejo get pods -l app.kubernetes.io/name=forgejo \
+                --field-selector=status.phase=Running \
+                -o jsonpath='{.items[0].metadata.name}')"
+              echo "    using $POD"
+
+              # su-exec because forgejo refuses to run as root, and `kubectl
+              # exec` lands as root in this image's container.
               echo "==> reading the active global runner token"
-              TOKEN="$(forgejo -c "$CFG" actions generate-runner-token | tr -d '\r\n')"
+              TOKEN="$(kubectl -n forgejo exec "$POD" -c forgejo -- \
+                su-exec 1000:1000 forgejo actions generate-runner-token \
+                | tr -d '\r\n')"
+
               # A registration token is 43 characters. Anything else means the
-              # CLI printed a log line or an error where the token should be,
-              # and writing that into the Secret would produce the exact
-              # "registration token not found" confusion this Job exists to end.
+              # command printed a log line or an error where the token should
+              # be, and storing that produces exactly the "registration token
+              # not found" confusion this Job exists to end.
               if [ "${#TOKEN}" -ne 43 ]; then
                 echo "    refusing to store a ${#TOKEN}-character value as a token" >&2
                 exit 1
               fi
               echo "    got a token (${#TOKEN} chars)"
 
-              B64="$(printf '%s' "$TOKEN" | base64 | tr -d '\n')"
-              SA=/var/run/secrets/kubernetes.io/serviceaccount
-              API="https://kubernetes.default.svc"
-              NS=forgejo-runner
-              NAME=forgejo-runner-registration
-              AUTH="Authorization: Bearer $(cat $SA/token)"
-
-              echo "==> upserting $NS/$NAME"
-              CODE="$(curl -sS -o /tmp/resp -w '%{http_code}' \
-                --cacert "$SA/ca.crt" -H "$AUTH" \
-                -H 'Content-Type: application/merge-patch+json' -X PATCH \
-                --data "{\"data\":{\"registration-token\":\"$B64\"}}" \
-                "$API/api/v1/namespaces/$NS/secrets/$NAME")"
-
-              if [ "$CODE" = "404" ]; then
-                echo "    not there yet; creating"
-                CODE="$(curl -sS -o /tmp/resp -w '%{http_code}' \
-                  --cacert "$SA/ca.crt" -H "$AUTH" \
-                  -H 'Content-Type: application/json' -X POST \
-                  --data "{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$NAME\",\"namespace\":\"$NS\"},\"type\":\"Opaque\",\"data\":{\"registration-token\":\"$B64\"}}" \
-                  "$API/api/v1/namespaces/$NS/secrets")"
-              fi
-
-              case "$CODE" in
-                200|201) echo "==> done (HTTP $CODE)" ;;
-                *) echo "    API returned $CODE:" >&2; cat /tmp/resp >&2; exit 1 ;;
-              esac
+              echo "==> upserting forgejo-runner/forgejo-runner-registration"
+              kubectl -n forgejo-runner create secret generic forgejo-runner-registration \
+                --from-literal=registration-token="$TOKEN" \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "==> done"
