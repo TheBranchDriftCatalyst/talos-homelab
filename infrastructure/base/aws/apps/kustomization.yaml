@@ -6,6 +6,21 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - hello-whoami.yaml
-  - vllm-8b.yaml # POC-DEMO: spot-ish GPU vLLM box (file = on-switch)
-  - gpu-test-rig.yaml # POC-DEMO: XGPUInstance — S3 library → EBS cache → vLLM (TALOS-455u)
+  # OFF (2026-09-25). Both are commented out deliberately -- per this file's own
+  # "file = on-switch" idiom, that is the off position. Uncomment to spin up.
+  #
+  # These never ran: the AWS ProviderConfig had no credentials for 33+ days
+  # (its ExternalSecret named a 1Password item that did not exist, fixed in
+  # bef5dddd), so the whole stack sat SYNCED=False. The missing credential was
+  # acting as an undeclared brake -- restoring it immediately began creating real
+  # AWS resources that nobody had actually decided to run.
+  #
+  # Caught before either g5.xlarge launched (vllm-8b is ON-DEMAND, ~$1/hr), but a
+  # 200GB gp3 volume was created first and is removed by pruning these.
+  #
+  # NOT READY TO ENABLE AS-IS: both claims still carry vpcId: vpc-REPLACE-ME and
+  # subnetId: subnet-REPLACE-ME, so they could not have come up correctly anyway.
+  # Fill those in before flipping the switch.
+  # - vllm-8b.yaml # POC-DEMO: spot-ish GPU vLLM box (file = on-switch)
+  # - gpu-test-rig.yaml # POC-DEMO: XGPUInstance — S3 library → EBS cache → vLLM (TALOS-455u)
   # - talos-worker-poc.yaml # POC-DEMO: KubeSpan hybrid worker — needs machineconfig secret plumbing first (see file header)
