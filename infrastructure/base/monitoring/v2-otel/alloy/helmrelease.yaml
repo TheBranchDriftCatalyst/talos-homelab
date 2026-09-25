@@ -106,18 +106,20 @@ spec:
               listen_address = "0.0.0.0"
               listen_port    = 12347
 
-              // POC set - one app per injection invariant (TALOS-xfjl.22).
-              // plex is listed twice because it serves both schemes and the
-              // browser puts the scheme in Origin.
-              cors_allowed_origins = [
-                "https://catalyst.talos00",
-                "https://fchat.talos00",
-                "https://boomtime.talos00",
-                "https://sonarr.talos00",
-                "https://qbittorrent.talos00",
-                "https://plex.talos00",
-                "http://plex.talos00",
-              ]
+              // NO cors_allowed_origins, deliberately. PROBED on the live
+              // receiver 2026-09-25: the allowlist does NOT gate the POST.
+              // /collect returned 202 for an allowlisted origin, a
+              // non-allowlisted one, AND a request with no Origin header at
+              // all; the list only decides whether the preflight grants
+              // Access-Control-Allow-Origin. Since this is reached
+              // same-origin (see above) the browser never preflights, so the
+              // list would protect nothing while silently rotting every time
+              // an app is added - and a stale entry fails CLOSED in the
+              // browser with no server-side signal, which is exactly the
+              // silent-failure class this workstream exists to remove.
+              //
+              // Access control is therefore the IngressRoute's lan-only
+              // middleware plus the rate limit below, not CORS.
 
               // Default is 5MiB. A web-vitals batch is well under 1KiB; the
               // ceiling only matters for stack traces and resolved sourcemaps.

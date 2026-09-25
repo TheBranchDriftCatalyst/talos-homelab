@@ -1,0 +1,108 @@
+---
+# ONE route publishes /catalyst-rum/ on EVERY host, so the browser RUM beacon is
+# always SAME-ORIGIN with the page that emits it.
+#
+# This is the same shape as themepark's asset route
+# (infrastructure/base/themepark/asset-route.yaml) and for the same reason: a
+# hostless PathPrefix rule applies to any hostname Traefik serves, so adding an
+# app to the POC is one middleware reference and nothing else.
+#
+# Same-origin is not a convenience here, it is what makes four separate problems
+# disappear:
+#
+#   - No CORS. The browser never preflights a same-origin POST. (And PROBED on
+#     the live receiver: cors_allowed_origins does not gate the POST anyway --
+#     /collect returned 202 for an allowlisted origin, a non-allowlisted one,
+#     and no Origin at all. The list only decides preflight response headers,
+#     so it would have protected nothing while rotting on every app added.)
+#   - No CSP edit on any app. connect-src falls back to default-src, and a
+#     same-origin POST is 'self' -- so qBittorrent's bare `default-src 'self'`
+#     and bookorbit's explicit `connect-src 'self' ws: wss: ...` both already
+#     permit it, with no per-app middleware.
+#   - No mixed content. Plex and Jellyfin are served over plain HTTP as well as
+#     HTTPS; the beacon follows whichever scheme the page used.
+#   - No new DNS name or certificate SAN. `*.talos00` is a single-label parent,
+#     which Apple clients reject outright, so a dedicated faro.talos00 would
+#     have been its own project.
+#
+# ACCESS CONTROL is lan-only plus the receiver's own rate limit (100/s, burst
+# 200), NOT CORS -- see above. lan-only is imperfect (its 10.0.0.0/8 range
+# contains the pod CIDR, TALOS-a8vo.5), but this is a write-only,
+# rate-limited, unauthenticated-by-design ingest endpoint: the same reasoning
+# that keeps the /catalyst/ asset route open, since a browser fetches these
+# with no session and cannot follow a 302 to SSO.
+#
+# priority must beat the apps' own catch-all Host() rules, which would otherwise
+# swallow /catalyst-rum/ and hand it to the application. Traefik derives priority
+# from rule length when unset, and Host(...) is longer than this rule.
+#
+# Two objects because Kyverno's ingressroute-no-combined-entrypoints (Enforce)
+# denies a single route listing both entrypoints.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-rum-strip
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alloy
+spec:
+  # The receiver's endpoint is POST /collect -- CONFIRMED by probing port 12347
+  # on the running pod (202 on /collect; 404 on /, /faro, /api/events,
+  # /v1/collect). `strings` is unavailable in the distroless Alloy image, so
+  # this was established empirically rather than read off the binary.
+  # Clients therefore POST to /catalyst-rum/collect.
+  stripPrefix:
+    prefixes:
+      - /catalyst-rum
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalyst-rum
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alloy
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: PathPrefix(`/catalyst-rum/`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: catalyst-rum-strip
+          namespace: monitoring
+      services:
+        - name: alloy
+          port: 12347
+  tls: {}
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalyst-rum-http
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: alloy
+spec:
+  entryPoints:
+    - web
+  routes:
+    # Deliberately NOT redirect-https, matching the asset route: Plex and
+    # Jellyfin are served over plain HTTP, and an HTTPS-only ingest origin would
+    # make their beacons mixed-content and silently dropped by the browser.
+    - match: PathPrefix(`/catalyst-rum/`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: catalyst-rum-strip
+          namespace: monitoring
+      services:
+        - name: alloy
+          port: 12347
