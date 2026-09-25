@@ -192,7 +192,23 @@ spec:
 
         - name: runner
           image: code.forgejo.org/forgejo/runner:13.2.0
-          command: [forgejo-runner, daemon, --config, /config/config.yml]
+          # WAIT FOR THE DAEMON FIRST. The runner starts faster than dockerd and
+          # exits 1 with "cannot ping the docker daemon", so without this it
+          # CrashLoops three or four times on every rollout before settling.
+          # That is self-correcting and it is also indistinguishable, at a
+          # glance, from the permission fault it looked like the first time.
+          #
+          # Uses the CLI the init container staged — this image has no docker
+          # binary of its own, which is the same reason job containers get one
+          # bind-mounted.
+          command: [sh, -ceu]
+          args:
+            - |
+              until /data/bin/docker info >/dev/null 2>&1; do
+                echo "waiting for the docker daemon"
+                sleep 2
+              done
+              exec forgejo-runner daemon --config /config/config.yml
           env:
             - name: DOCKER_HOST
               value: unix:///var/run/docker.sock
