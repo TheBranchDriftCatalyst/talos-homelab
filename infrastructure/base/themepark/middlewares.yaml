@@ -290,6 +290,58 @@ spec:
       - name: catalyst-accept-encoding
       - name: catalyst-inject-prowlarr
 ---
+# ── CSP repair: qBittorrent blocks our fonts ──────────────────────────────────
+#
+# qBittorrent is the ONE injected app whose own CSP is strict enough to break the
+# theme, and it did so silently for the theme's whole life. It sends:
+#
+#     default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;
+#     script-src 'self' 'unsafe-inline'; object-src 'none'; form-action 'self';
+#     frame-src 'self' blob:; frame-ancestors 'self';
+#
+# There is no font-src, so default-src 'self' is the fallback and every
+# `src: url(data:font/woff2;...)` in the theme is refused. Measured on the live
+# app: all eight @font-face declarations report status 'error' in document.fonts,
+# and ~50KB of base64 is downloaded and thrown away on every page load. Nothing
+# reported it — the page renders, just in fallback type.
+#
+# The theme's own header comments and README both claimed a `theme-csp-qbittorrent`
+# middleware handled this. No such object has ever existed in this repo.
+#
+# WHY THIS IS PER-APP and not a shared `catalyst-csp`. The rewriteHeaders plugin
+# does regex replacement with no conditionals, so a rule can either EXTEND a
+# directive that is already present or PREPEND a new one — not "add it only if
+# missing". Prepending is safe here because the first occurrence of a directive
+# wins, but that is exactly why it is unsafe in general: bookorbit already sends
+# `font-src 'self' data: blob: https://fonts.gstatic.com`, and prepending a
+# narrower font-src ahead of it would silently break its Google fonts. bookorbit
+# needs no fix (it already permits data:), so the correct scope is this one app.
+# infrastructure/base/analytics/middlewares.yaml reaches the same conclusion for
+# the same reason: "Apps whose CSP uses only default-src won't match — handle
+# those per-app."
+#
+# The rewrite captures default-src's source list and reuses it, so the new
+# directive is exactly as permissive as the policy already was, plus data:.
+# Nothing else is weakened.
+#
+# NOTE for the Faro beacon (TALOS-xfjl.11): our scripts and stylesheets are all
+# same-origin — the /catalyst/ asset route is a hostless PathPrefix published on
+# every host — so script-src 'self' already covers them and needs no change. The
+# beacon POST does not: when the collector host is settled, add a connect-src
+# rule here the same way.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-csp-qbittorrent
+  namespace: traefik
+spec:
+  plugin:
+    rewriteHeaders:
+      rewrites:
+        - header: 'Content-Security-Policy'
+          regex: "default-src ([^;]*)"
+          replacement: "default-src $1; font-src $1 data:"
+---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -315,6 +367,10 @@ spec:
     middlewares:
       - name: catalyst-compress
       - name: catalyst-accept-encoding
+      # Response middlewares unwind in reverse, so header repair and body
+      # injection cannot race each other — they touch different things. Listed
+      # csp-then-inject to match the analytics chain's convention.
+      - name: catalyst-csp-qbittorrent
       - name: catalyst-inject-qbittorrent
 ---
 apiVersion: traefik.io/v1alpha1
