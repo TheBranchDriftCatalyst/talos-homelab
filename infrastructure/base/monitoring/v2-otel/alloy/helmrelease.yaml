@@ -133,11 +133,49 @@ spec:
             }
 
             output {
-              logs   = [
-                loki.write.default.receiver,
-                otelcol.receiver.loki.clickstack.receiver,
-              ]
+              // Logs go through loki.process.faro first, NOT straight to
+              // loki.write -- see that component for why.
+              logs   = [loki.process.faro.receiver]
               traces = [otelcol.processor.batch.default.input]
+            }
+          }
+
+          // Promote two Faro fields to Loki labels.
+          //
+          // WHY THIS EXISTS. faro.receiver emits a logfmt line and attaches NO
+          // stream labels, so every browser payload from every app landed in
+          // ONE stream, {service_name="unknown_service"}, shared with anything
+          // else lacking a service name. Verified on the live cluster before
+          // this component existed: finding a single known beacon required
+          // {service_name="unknown_service"} |= "faroprobe" and scanned 824
+          // lines to return 1. Per-app FCP/LCP panels are not buildable on
+          // that, and query cost is driven by the stream selector, so a line
+          // filter does not help.
+          //
+          // CARDINALITY IS DELIBERATELY BOUNDED. Only two fields are promoted:
+          //   app  <- app_name, bounded by the POC app list
+          //   kind <- one of log | measurement | event | exception
+          // That is a small, fixed number of streams. Do NOT promote
+          // session_id, user_id, url or anything else per-visitor -- that is
+          // unbounded and is how a Loki install falls over.
+          loki.process "faro" {
+            forward_to = [
+              loki.write.default.receiver,
+              otelcol.receiver.loki.clickstack.receiver,
+            ]
+
+            stage.logfmt {
+              mapping = {
+                "app_name" = "",
+                "kind"     = "",
+              }
+            }
+
+            stage.labels {
+              values = {
+                app  = "app_name",
+                kind = "kind",
+              }
             }
           }
 
