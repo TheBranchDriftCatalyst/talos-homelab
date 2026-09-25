@@ -156,6 +156,13 @@ spec:
       containers:
         - name: dind
           image: docker:29.8-dind
+          # dockerd creates the socket root:docker, and `docker` is a GID that
+          # exists only inside this Alpine image — the runner container next to
+          # it is not in that group and gets "permission denied while trying to
+          # connect to the docker API". Handing the socket to GID 1000 fixes it
+          # for every container in the pod at once, because `fsGroup: 1000`
+          # above is already in each one's supplementary groups.
+          args: ["--group", "1000"]
           securityContext:
             privileged: true
           env:
