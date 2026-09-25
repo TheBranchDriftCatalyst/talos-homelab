@@ -801,6 +801,22 @@ spec:
         - source: file
           filenames:
             - /var/log/containers/cowrie-*_honeypot_logship-*.log
+          # The ONLY container source that lacked these, and the only one that went
+          # deaf. Without them the tail does not survive kubelet log rotation: parser
+          # hits froze at 31,571 on 2026-09-21 23:00 UTC and stayed flat for 94h while
+          # logship kept writing (live SSH attacks visible in the file the whole time).
+          # CowrieCrowdSecIngestionStalled fired correctly -- for four days -- and the
+          # honeypot contributed no bans in that window.
+          #
+          # Proven by differential, not inference: on the SAME node, SAME agent, SAME
+          # directory, haproxy kept ingesting (37.7k lines, climbing) with 0 rotations
+          # while cowrie had 4 rotated files and was frozen. cscli acquisition metrics
+          # showed cowrie stuck at exactly its last pre-rotation count.
+          #
+          # haproxy was not immune, merely younger -- it rotates at the same 10MB
+          # threshold and would have gone the same way.
+          force_inotify: true
+          poll_without_inotify: true
           labels:
             type: containerd
             program: cowrie
