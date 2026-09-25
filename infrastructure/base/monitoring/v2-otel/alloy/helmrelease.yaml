@@ -72,6 +72,74 @@ spec:
           }
 
           // ============================================
+          // Grafana Faro receiver - browser RUM (TALOS-xfjl.10)
+          // ============================================
+          // Ingests web-vitals measurements, errors and events - and optionally
+          // browser traces - from the catalyst nav/RUM bundles injected into the
+          // themed apps.
+          //
+          // REACHED SAME-ORIGIN, not on a hostname of its own. A companion
+          // IngressRoute publishes PathPrefix(/catalyst-rum/) on EVERY host,
+          // exactly like themepark's /catalyst/ asset route. That one decision
+          // removes four separate problem classes at once:
+          //   - no CORS preflight to get wrong across 14+ app origins
+          //   - no CSP connect-src edit per app; 'self' already covers it, which
+          //     matters because qbittorrent sends bare default-src 'self'
+          //   - no mixed content on plex/jellyfin, which are served plain HTTP
+          //   - no new DNS name or certificate SAN (and *.talos00 is a
+          //     single-label parent, which Apple clients reject outright)
+          // The origin list below is therefore belt-and-braces: browsers still
+          // send Origin on a POST, so the receiver must recognise it.
+          //
+          // WHY logs go straight to loki.write and NOT via otelcol.processor.batch:
+          // faro.receiver's output.logs is typed loki.LogsReceiver, not an otelcol
+          // consumer, so it cannot feed the otelcol pipeline directly. Forwarding
+          // to otelcol.receiver.loki.clickstack.receiver alongside it preserves the
+          // dual-write this cluster does for every other log source (TALOS-cjny) -
+          // that component is itself a loki.LogsReceiver, so it is type-compatible.
+          //
+          // Traces DO go through the batch processor, so browser spans reach Tempo
+          // and ClickStack like every other trace and can be correlated with the
+          // Traefik spans from TALOS-xfjl.9.
+          faro.receiver "browser" {
+            server {
+              listen_address = "0.0.0.0"
+              listen_port    = 12347
+
+              // POC set - one app per injection invariant (TALOS-xfjl.22).
+              // plex is listed twice because it serves both schemes and the
+              // browser puts the scheme in Origin.
+              cors_allowed_origins = [
+                "https://catalyst.talos00",
+                "https://fchat.talos00",
+                "https://boomtime.talos00",
+                "https://sonarr.talos00",
+                "https://qbittorrent.talos00",
+                "https://plex.talos00",
+                "http://plex.talos00",
+              ]
+
+              // Default is 5MiB. A web-vitals batch is well under 1KiB; the
+              // ceiling only matters for stack traces and resolved sourcemaps.
+              max_allowed_payload_size = "2MiB"
+
+              rate_limiting {
+                enabled    = true
+                rate       = 100
+                burst_size = 200
+              }
+            }
+
+            output {
+              logs   = [
+                loki.write.default.receiver,
+                otelcol.receiver.loki.clickstack.receiver,
+              ]
+              traces = [otelcol.processor.batch.default.input]
+            }
+          }
+
+          // ============================================
           // Processors
           // ============================================
           otelcol.processor.batch "default" {
@@ -1113,6 +1181,13 @@ spec:
         - name: otlp-http
           port: 4318
           targetPort: 4318
+          protocol: TCP
+        # Browser RUM ingest (faro.receiver "browser"). Reached through the
+        # PathPrefix(/catalyst-rum/) IngressRoute in faro-route.yaml, never
+        # directly - see the receiver's comment for why same-origin matters.
+        - name: faro-http
+          port: 12347
+          targetPort: 12347
           protocol: TCP
 
     # Controller settings
