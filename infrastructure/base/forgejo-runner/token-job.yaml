@@ -1,0 +1,180 @@
+---
+# Mint the runner's registration token, in-cluster, with no human in the loop.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS EXISTS
+# ---------------------------------------------------------------------------
+# The runner needs a registration token, and the only documented way to get one
+# is a human opening Site Administration -> Actions -> Runners and copying a
+# string into a password manager. That is a bad dependency for a GitOps cluster
+# in three separate ways: the cluster cannot be rebuilt from git alone, the
+# value drifts from whatever Forgejo currently considers valid, and the failure
+# it produces when wrong is "runner registration token not found" — which reads
+# as a broken runner rather than a stale secret. All three were observed.
+#
+# ---------------------------------------------------------------------------
+# WHY IT IS SAFE TO RUN OVER AND OVER
+# ---------------------------------------------------------------------------
+# `forgejo actions generate-runner-token` does NOT mint a new token per call. It
+# returns the current active global token and only creates one when none exists
+# — measured: three consecutive calls returned byte-identical output and left
+# exactly one row in action_runner_token. So this Job needs no "has it already
+# run?" guard, no marker file and no conditional: it converges on every run, and
+# the Secret it writes has stable content, so repeated applies are no-ops rather
+# than churn.
+#
+# It re-runs roughly hourly (ttlSecondsAfterFinished + Flux's reconcile), which
+# is what makes it self-healing: if an admin resets the token in the UI, the
+# Secret catches up on its own instead of the runner silently failing to
+# re-register the next time it is rebuilt.
+#
+# ---------------------------------------------------------------------------
+# WHY THE JOB IS IN THE forgejo NAMESPACE
+# ---------------------------------------------------------------------------
+# It needs the CNPG database credentials, and those are a Secret in `forgejo`.
+# Secrets do not cross namespaces. So the Job runs there and writes its result
+# into `forgejo-runner` through the API, which is what the RoleBinding below is
+# for. It is applied by the forgejo-runner Kustomization rather than the forgejo
+# one so that it lands together with the RBAC it depends on — the other ordering
+# fails on first boot and retries its way to success, which is noise.
+#
+# NOTE ON `$`: this file is applied by the forgejo-runner Kustomization, which
+# has NO postBuild/substituteFrom, so shell variables are written with a SINGLE
+# $. Its sibling infrastructure/base/forgejo/admin-job.yaml doubles every one of
+# them ($$) because the forgejo Kustomization DOES substitute. If this file is
+# ever moved there, every $ below has to be doubled or the app.ini comes out
+# empty and the error you get is "dbname is empty".
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: forgejo-runner-token
+  namespace: forgejo
+---
+# Namespace-scoped, and only over Secrets. `create` cannot be restricted by
+# resourceName (the name does not exist yet at admission time), so it is granted
+# for the namespace; get/patch are pinned to the one Secret this writes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: forgejo-runner-token-writer
+  namespace: forgejo-runner
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [forgejo-runner-registration]
+    verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: forgejo-runner-token-writer
+  namespace: forgejo-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: forgejo-runner-token-writer
+subjects:
+  - kind: ServiceAccount
+    name: forgejo-runner-token
+    namespace: forgejo # the Job lives next door; see the note above
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: forgejo-runner-token
+  namespace: forgejo
+spec:
+  backoffLimit: 20
+  # Deleted an hour after it finishes, so Flux recreates and re-runs it on a
+  # later reconcile. That is the refresh mechanism; see the idempotency note.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo-runner
+        app.kubernetes.io/component: token-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: forgejo-runner-token
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: mint
+          # Same image and the same throwaway-app.ini approach as
+          # forgejo/admin-job.yaml: talk to the CNPG database directly rather
+          # than depending on the server pod's entrypoint or its PVC. Runs as
+          # 1000 because forgejo refuses to start as root.
+          image: codeberg.org/forgejo/forgejo:16.0.3
+          env:
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: dbname } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: username } }
+            - name: DB_PASSWD
+              valueFrom: { secretKeyRef: { name: forgejo-postgres-app, key: password } }
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              mkdir -p /tmp/forgejo/conf
+              cat > /tmp/forgejo/conf/app.ini <<EOF
+              APP_NAME = Forgejo
+              WORK_PATH = /tmp/forgejo
+              RUN_MODE = prod
+              [security]
+              INSTALL_LOCK = true
+              [database]
+              DB_TYPE  = postgres
+              HOST     = forgejo-postgres-rw.forgejo.svc.cluster.local:5432
+              NAME     = ${DB_NAME}
+              USER     = ${DB_USER}
+              PASSWD   = ${DB_PASSWD}
+              SSL_MODE = require
+              EOF
+              CFG=/tmp/forgejo/conf/app.ini
+
+              echo "==> reading the active global runner token"
+              TOKEN="$(forgejo -c "$CFG" actions generate-runner-token | tr -d '\r\n')"
+              # A registration token is 43 characters. Anything else means the
+              # CLI printed a log line or an error where the token should be,
+              # and writing that into the Secret would produce the exact
+              # "registration token not found" confusion this Job exists to end.
+              if [ "${#TOKEN}" -ne 43 ]; then
+                echo "    refusing to store a ${#TOKEN}-character value as a token" >&2
+                exit 1
+              fi
+              echo "    got a token (${#TOKEN} chars)"
+
+              B64="$(printf '%s' "$TOKEN" | base64 | tr -d '\n')"
+              SA=/var/run/secrets/kubernetes.io/serviceaccount
+              API="https://kubernetes.default.svc"
+              NS=forgejo-runner
+              NAME=forgejo-runner-registration
+              AUTH="Authorization: Bearer $(cat $SA/token)"
+
+              echo "==> upserting $NS/$NAME"
+              CODE="$(curl -sS -o /tmp/resp -w '%{http_code}' \
+                --cacert "$SA/ca.crt" -H "$AUTH" \
+                -H 'Content-Type: application/merge-patch+json' -X PATCH \
+                --data "{\"data\":{\"registration-token\":\"$B64\"}}" \
+                "$API/api/v1/namespaces/$NS/secrets/$NAME")"
+
+              if [ "$CODE" = "404" ]; then
+                echo "    not there yet; creating"
+                CODE="$(curl -sS -o /tmp/resp -w '%{http_code}' \
+                  --cacert "$SA/ca.crt" -H "$AUTH" \
+                  -H 'Content-Type: application/json' -X POST \
+                  --data "{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"$NAME\",\"namespace\":\"$NS\"},\"type\":\"Opaque\",\"data\":{\"registration-token\":\"$B64\"}}" \
+                  "$API/api/v1/namespaces/$NS/secrets")"
+              fi
+
+              case "$CODE" in
+                200|201) echo "==> done (HTTP $CODE)" ;;
+                *) echo "    API returned $CODE:" >&2; cat /tmp/resp >&2; exit 1 ;;
+              esac

@@ -1,0 +1,68 @@
+---
+# Registry credentials for EVERY job this runner executes.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS IS NOT A PER-REPO FORGEJO SECRET
+# ---------------------------------------------------------------------------
+# The obvious way to let CI push to Zot is two Actions secrets on the repo
+# (ZOT_USERNAME/ZOT_PASSWORD) and a `docker login` step in the workflow. That
+# works, and it is the wrong shape here:
+#
+#   * it is per-repo, so every new repo that wants to publish repeats the
+#     ceremony, and one of them always gets it slightly wrong;
+#   * the value is pasted by hand into a web form, so it has already drifted
+#     from 1Password the moment the credential rotates, with nothing anywhere
+#     positioned to notice;
+#   * it puts a registry password somewhere git cannot see and ESO does not
+#     manage, in a cluster whose whole premise is that secrets come from
+#     1Password through ESO.
+#
+# So the credential lives here instead — once, for the runner — and is mounted
+# into every job container as a docker config. A workflow just pushes: no login
+# step, no repo secrets, and nothing to copy when the next repo wants CI.
+#
+# BOTH HOSTNAMES ARE LISTED because they are one registry reached two ways, and
+# a docker config matches on the exact host string. CI pushes to
+# registry.knowledgedump.space (public, DNS-only, so Cloudflare's 100MB body cap
+# cannot truncate a layer push) and the cluster pulls registry.talos00. A config
+# naming only one of them fails on whichever operation it left out.
+#
+# Same 1Password item the cluster's own pull secrets use — `nexus-admin`, still
+# named for the registry Zot replaced on that hostname.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: zot-dockerconfig
+  namespace: forgejo-runner
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword
+    kind: ClusterSecretStore
+  target:
+    name: zot-dockerconfig
+    creationPolicy: Owner
+    template:
+      engineVersion: v2
+      # NOT type kubernetes.io/dockerconfigjson, and not key .dockerconfigjson:
+      # this is not an imagePullSecret. It is mounted as a plain file that the
+      # docker CLI reads via DOCKER_CONFIG, and that expects it to be named
+      # exactly config.json.
+      type: Opaque
+      data:
+        config.json: |
+          {
+            "auths": {
+              "registry.knowledgedump.space": {
+                "auth": "{{ printf "%s:%s" .username .password | b64enc }}"
+              },
+              "registry.talos00": {
+                "auth": "{{ printf "%s:%s" .username .password | b64enc }}"
+              }
+            }
+          }
+  data:
+    - secretKey: username
+      remoteRef: { key: nexus-admin, property: username }
+    - secretKey: password
+      remoteRef: { key: nexus-admin, property: password }

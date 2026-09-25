@@ -6,13 +6,19 @@
 # folded into forgejo/ because it needs a namespace with a different Pod
 # Security Standard — see namespaces/forgejo-runner.yaml for why.
 #
+# NO BLANKET `namespace:` HERE, deliberately, where there used to be one.
+# token-job.yaml spans two namespaces on purpose: the Job runs in `forgejo`,
+# because that is where the CNPG database credentials live, and writes its
+# Secret into `forgejo-runner`. A kustomization-wide namespace would rewrite
+# that Job into the wrong one, and it would fail with "secret
+# forgejo-postgres-app not found". Every manifest here names its own namespace.
+#
 # First consumer: fchat-bouncer, whose .forgejo/workflows/docker-publish.yml
 # builds and pushes to Zot. Nothing about this component is specific to it.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: forgejo-runner
-
 resources:
-  - externalsecret.yaml
+  - token-job.yaml # SA + RBAC + Job that mints the registration token
+  - zot-dockerconfig.yaml # registry creds handed to every job container
   - deployment.yaml # PVC + ConfigMap + Deployment (runner + DinD sidecar)
