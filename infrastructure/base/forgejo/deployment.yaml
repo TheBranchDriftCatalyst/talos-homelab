@@ -56,7 +56,18 @@ data:
   FORGEJO__security__INSTALL_LOCK: "true"
   FORGEJO__service__DISABLE_REGISTRATION: "true"
   FORGEJO__packages__ENABLED: "true"
-  FORGEJO__actions__ENABLED: "false"
+  # Actions ON (was "false"). This is what lets a repo here run CI at all; the
+  # runner that picks the jobs up is infrastructure/base/forgejo-runner.
+  #
+  # DEFAULT_ACTIONS_URL is deliberately left at its default (code.forgejo.org)
+  # and NOT pointed at github. That default is what keeps a build private: a
+  # workflow's `uses:` clauses resolve against code.forgejo.org, which mirrors
+  # actions/checkout. The cost is that third-party GitHub actions
+  # (docker/build-push-action and the like) do NOT resolve — a workflow here
+  # has to shell out to the tool rather than borrow someone's action. For a
+  # chain whose point is that nothing leaves the homelab that is the feature,
+  # and fchat-bouncer's workflow is written that way deliberately.
+  FORGEJO__actions__ENABLED: "true"
   # OIDC (Authentik) — auto-create a Forgejo account on first SSO login and map
   # the username from the token's preferred_username claim. The auth SOURCE
   # itself is a DB record added by the bootstrap Job (admin auth add-oauth).
