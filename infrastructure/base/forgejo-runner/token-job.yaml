@@ -140,7 +140,11 @@ spec:
       serviceAccountName: forgejo-runner-token
       containers:
         - name: mint
-          image: registry.k8s.io/kubectl:v1.36.4
+          # alpine/kubectl, NOT registry.k8s.io/kubectl. The upstream one is
+          # distroless and has no shell, so the script below dies at
+          # `exec: "sh": executable file not found in $PATH` before it runs a
+          # single line — the version pin matches the cluster either way.
+          image: alpine/kubectl:1.36.4
           env:
             # kubectl writes a discovery cache under $HOME; the image's default
             # home is not writable and the failure is an unhelpful permissions
