@@ -22,6 +22,15 @@ spec:
   routes:
     - match: Host(`argocd.talos00`)
       kind: Rule
+      # lan-only, added 2026-09-26 after an EXTERNAL true-cold pentest (AWS EC2,
+      # egress 34.222.37.226) reached this UI 200 by sending `Host: argocd.talos00`
+      # to https://108.64.138.156/ -- the confirmed P0 core of the TALOS-a8vo.4
+      # host-spoof class. .talos00 is a naming convention, not a boundary: Traefik
+      # routes on the Host header regardless of entrypoint and :443 is WAN-forwarded.
+      # Targeted fix so the P0 does not wait on the full entrypoint-default inversion.
+      middlewares:
+        - name: lan-only
+          namespace: traefik
       services:
         - name: argocd-server
           port: 80

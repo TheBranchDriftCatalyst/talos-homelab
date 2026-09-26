@@ -45,12 +45,19 @@ try:
 except Exception:  # the report still works without the registry
     allowlists = None
 
-# Entrypoints reachable from outside the LAN. The a8vo.4 finding is that Traefik routes
-# on the Host header REGARDLESS of entrypoint, and :80/:443 are WAN-forwarded -- so a
-# route on these is Host-spoofable from the internet unless it carries an IP restriction.
-WAN_ENTRYPOINTS = {"web", "websecure"}
-# Deliberately LAN-scoped listeners (different ports, not WAN-forwarded).
-LAN_ENTRYPOINTS = {"weblan", "websecurelan"}
+# Entrypoints reachable from outside the LAN. Traefik routes on the Host header
+# REGARDLESS of entrypoint, and these ports are WAN-forwarded -- so a route on any of
+# them is Host-spoofable from the internet unless it carries an IP restriction.
+#
+# websecurelan (:8443) is in this set on EVIDENCE, not intent. An external true-cold
+# pentest (2026-09-26, AWS EC2, egress 34.222.37.226) completed a TLS handshake to
+# 108.64.138.156:8443 and got a served 404 -- the port IS WAN-forwarded despite the
+# "LAN-only" naming. Classifying it as LAN understated the exposure surface. weblan
+# (:8081) returned 000 in the same pass (NOT forwarded), so it stays LAN-scoped until
+# evidence says otherwise.
+WAN_ENTRYPOINTS = {"web", "websecure", "websecurelan"}
+# :8081 weblan -- pentest-confirmed NOT WAN-forwarded (000 from off-net 2026-09-26).
+LAN_ENTRYPOINTS = {"weblan"}
 
 # Middleware spec keys that constitute real protection, vs ones that only shape traffic.
 PROTECTION_KINDS = {"forwardAuth": "sso", "ipAllowList": "ip-allowlist", "basicAuth": "basic-auth",

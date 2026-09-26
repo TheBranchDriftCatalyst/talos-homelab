@@ -30,6 +30,15 @@ spec:
     - match: Host(`tautulli.talos00`) && PathPrefix(`/api`)
       kind: Rule
       priority: 100
+      # lan-only, added 2026-09-26. An EXTERNAL true-cold pentest (AWS EC2) hit this
+      # /api 200 from off-net, while sonarr/radarr/prowlarr /api all returned 401 --
+      # Tautulli enforces no app-key, so this priority-100 carve-out was the one arr
+      # /api route actually leaking a 200 to the internet (TALOS-a8vo.7). Same frigate
+      # lan-only one-liner the ticket prescribes for all 6 arr /api routes; tautulli
+      # is prioritised because it is the confirmed leak.
+      middlewares:
+        - name: lan-only
+          namespace: traefik
       services:
         - name: tautulli
           port: 8181
