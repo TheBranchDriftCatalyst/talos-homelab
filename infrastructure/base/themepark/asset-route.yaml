@@ -19,6 +19,29 @@
 # NO auth, deliberately: browsers fetch these as subresources with no session
 # and cannot follow a redirect to SSO. It serves static CSS and one script.
 #
+# ── LAN-ONLY, ADDED 2026-09-26 AFTER A LIVE DISCLOSURE ───────────────────────
+# Because this route carries no Host matcher it was served on all 28 PUBLIC
+# hostnames too, and /catalyst/resources/catalyst-nav.json enumerates every
+# internal *.talos00 host. Verified from the public internet, not inferred:
+#
+#   dig @1.1.1.1 forge.knowledgedump.space        -> 108.64.138.156
+#   curl --resolve forge.knowledgedump.space:443:108.64.138.156 \
+#        https://forge.knowledgedump.space/catalyst/resources/catalyst-nav.json
+#   -> HTTP 200, 25 internal hostnames
+#
+# The CSS and JS leak nothing (nav.js embeds no hostnames; the only .talos00
+# string in catalyst.css is a code comment) — the manifest is the whole
+# exposure. Gating the entire prefix rather than just the manifest costs
+# nothing today because NO public host is themed, and it makes public theming
+# a deliberate decision instead of an accident. If a public host is ever
+# themed, the manifest needs a public/private split first — not a relaxation
+# of this rule.
+#
+# lan-only is ipAllowList 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+# 127.0.0.1/32. LAN clients (192.168.x) and in-cluster pods (10.244.x) pass;
+# an internet client presents its real public IP here (the public routes are
+# cloudflare-proxied=false) and is refused.
+#
 # Two objects because Kyverno's ingressroute-no-combined-entrypoints denies a
 # single route listing both entrypoints, and because Plex and Jellyfin are
 # served on plain HTTP while everything else is HTTPS.
@@ -37,6 +60,10 @@ spec:
       kind: Rule
       priority: 10000
       middlewares:
+        # FIRST: refuse non-LAN clients before anything else runs. See the
+        # disclosure note in the header.
+        - name: lan-only
+          namespace: traefik
         - name: catalyst-compress
           namespace: traefik
         - name: catalyst-asset-cache
@@ -62,6 +89,10 @@ spec:
       kind: Rule
       priority: 10000
       middlewares:
+        # FIRST: refuse non-LAN clients before anything else runs. See the
+        # disclosure note in the header.
+        - name: lan-only
+          namespace: traefik
         - name: catalyst-compress
           namespace: traefik
         - name: catalyst-asset-cache
