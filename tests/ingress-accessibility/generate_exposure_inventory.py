@@ -57,7 +57,15 @@ PROTECTION_KINDS = {"forwardAuth": "sso", "ipAllowList": "ip-allowlist", "basicA
                     "digestAuth": "digest-auth"}
 # A route whose ONLY middleware is a redirect is not "unguarded" in a meaningful sense:
 # it never reaches a backend. Tracked separately so it cannot inflate the risk count.
-REDIRECT_KINDS = {"redirectScheme", "redirectRegex"}
+# redirectScheme rewrites unconditionally -> the request never reaches a backend.
+# redirectRegex does NOT: Traefik's Host() matcher is case-INSENSITIVE while the regex
+# is case-SENSITIVE, so a case-varied Host matches the router but misses the redirect and
+# FALLS THROUGH to the service. Proven live: `Host: Auth.priv.talos00` returned 200 with
+# 33KB of the authentik login flow where `auth.priv.talos00` returned 302.
+# Keeping these in one bucket hid 5 WAN-reachable backends.
+UNCONDITIONAL_REDIRECT_KINDS = {"redirectScheme"}
+FALLTHROUGH_REDIRECT_KINDS = {"redirectRegex"}
+REDIRECT_KINDS = UNCONDITIONAL_REDIRECT_KINDS | FALLTHROUGH_REDIRECT_KINDS
 
 PATH_RE = re.compile(r"Path(?:Prefix|Regexp)?\(`([^`]+)`\)")
 PUBLIC_TLD_RE = re.compile(r"\.[a-z]{2,}$", re.I)
@@ -78,6 +86,36 @@ def git_dirty():
         return bool(out.strip())
     except Exception:
         return False
+
+
+def live_docs():
+    """Every IngressRoute/IngressRouteTCP + Middleware from the LIVE cluster.
+
+    WHY THIS MODE EXISTS: the repo corpus renders the Flux tree only, and an audit
+    measured the gap at 79 of 239 live IngressRoutes (33%) -- because ArgoCD manages
+    sister repos (arr-stack-private) and because kustomize rendering never sees
+    HelmRelease-generated routes (traefik-dashboard is Flux-managed and still invisible).
+    The invisible set includes auth.amberdark.net and the amberdark outpost callbacks,
+    i.e. exactly the SSO plane whose loss is the blast radius of the a8vo.4 inversion.
+    Deriving an exemption list from the repo alone would therefore omit the routes most
+    dangerous to omit.
+
+    Read-only. Returns [] and a reason if the cluster is unreachable, so --live degrades
+    to the repo view rather than failing.
+    """
+    out, why = [], None
+    for kind in ("ingressroute", "ingressroutetcp", "middleware"):
+        try:
+            raw = subprocess.run(["kubectl", "get", kind, "-A", "-o", "json"],
+                                 capture_output=True, text=True, timeout=90)
+            if raw.returncode != 0:
+                why = (raw.stderr or "").strip().splitlines()[-1:] or ["kubectl failed"]
+                why = why[0][:120]
+                continue
+            out += json.loads(raw.stdout).get("items", [])
+        except Exception as e:
+            why = f"{type(e).__name__}: {e}"[:120]
+    return out, why
 
 
 def build_middleware_index(docs):
@@ -128,11 +166,14 @@ def accepted_for(ns, name):
         for key, val in table.items():
             k = key[:2] if isinstance(key, tuple) and len(key) >= 2 else key
             if k == (ns, name):
+                # Accepted = namedtuple("Accepted", "reason issue reviewed").
+                # Reading .ticket/.since silently yielded "" for all 39 rows, so the
+                # report advertised an audit trail while carrying no tickets at all.
                 found.append({
                     "registry": reg,
                     "reason": getattr(val, "reason", str(val)),
-                    "ticket": getattr(val, "ticket", ""),
-                    "since": getattr(val, "since", getattr(val, "date", "")),
+                    "ticket": getattr(val, "issue", getattr(val, "ticket", "")),
+                    "since": getattr(val, "reviewed", getattr(val, "since", "")),
                 })
     return sorted(found, key=lambda f: (f["registry"], f["reason"]))
 
@@ -153,7 +194,11 @@ def classify(route, idx):
 
     kinds = sorted({k for _, _, k in leaves})
     protections = sorted({PROTECTION_KINDS[k] for k in kinds if k in PROTECTION_KINDS})
-    redirect_only = bool(kinds) and all(k in REDIRECT_KINDS for k in kinds)
+    redirect_only = bool(kinds) and all(k in UNCONDITIONAL_REDIRECT_KINDS for k in kinds)
+    # A regex-redirect route reaches its backend on any Host casing the regex misses.
+    regex_redirect_fallthrough = (bool(kinds)
+                                  and all(k in REDIRECT_KINDS for k in kinds)
+                                  and any(k in FALLTHROUGH_REDIRECT_KINDS for k in kinds))
 
     # Host-spoofable: on a WAN entrypoint, not IP-restricted, and actually serves content.
     on_wan = bool(set(eps) & WAN_ENTRYPOINTS)
@@ -166,8 +211,10 @@ def classify(route, idx):
     lan_intent = bool(hosts) and all(h.endswith(".talos00") for h in hosts)
     public_dns = sorted(h for h in hosts if not h.endswith(".talos00") and PUBLIC_TLD_RE.search(h))
 
-    if missing:
+    if missing or cyclic:
         verdict = "BROKEN-ROUTER"       # Traefik drops it; silent 404
+    elif regex_redirect_fallthrough:
+        verdict = "REDIRECT-FALLTHROUGH"
     elif redirect_only:
         verdict = "redirect-only"
     elif not protections:
@@ -193,6 +240,7 @@ def classify(route, idx):
         "wan_exposed": wan_exposed,
         "lan_intent_host": lan_intent,
         "public_dns_hosts": public_dns,
+        "regex_redirect_fallthrough": regex_redirect_fallthrough,
         "lan_only_alone": ip_restricted and not authed,
         "api_carveout": any(p.startswith("/api") for p in paths),
         "accepted": accepted_for(ns, name),
@@ -209,6 +257,7 @@ def build(records):
         "wan_exposed": wan,
         "undocumented_unguarded_wan": undoc_wan,
         "broken_routers": [r for r in records if r["verdict"] == "BROKEN-ROUTER"],
+        "regex_redirect_fallthrough": [r for r in records if r.get("regex_redirect_fallthrough")],
         "lan_only_alone": [r for r in records if r["lan_only_alone"]],
         "api_carveouts": [r for r in records if r["api_carveout"] and not r["protections"]],
         "public_dns": sorted({h for r in records for h in r["public_dns_hosts"]}),
@@ -229,8 +278,24 @@ def markdown(records, agg, meta, sha, dirty):
 
     A("# Ingress Exposure Inventory")
     A("")
-    A(f"**Source:** repo Flux tree at `{sha}`" + ("  ⚠️ **working tree dirty**" if dirty else "") +
+    src = ("repo Flux tree **+ live cluster**" if meta.get("live_merged")
+           else "repo Flux tree **only**")
+    A(f"**Source:** {src} at `{sha}`" + ("  ⚠️ **working tree dirty — corresponds to no commit**"
+                                         if dirty else "") +
       f" · **Routes:** {total} · **Middlewares:** {meta.get('mw_count', '?')}")
+    if meta.get("live_merged"):
+        A("")
+        A(f"Includes **{meta.get('live_only_routes', 0)} live-only route(s)** that exist in the "
+          f"cluster but not in the Flux tree (ArgoCD sister repos, and Helm-generated routes the "
+          f"kustomize render never sees).")
+        if meta.get("live_error"):
+            A(f"⚠️ live read was partial: `{meta['live_error']}`")
+    else:
+        A("")
+        A("> ⚠️ **Repo-only. Do NOT derive the final exemption list from this run.** An audit "
+          "measured 79 of 239 live IngressRoutes (33%) invisible here, and the invisible set "
+          "includes `auth.amberdark.net` and the amberdark outpost callbacks — the SSO plane "
+          "whose loss is the blast radius of the a8vo.4 inversion. Re-run with `--live`.")
     A("")
     A("Regenerate with `task test:ingress-inventory`. Deterministic: renders the repo (never the "
       "live cluster), sorts every collection, and stamps the commit rather than a timestamp — so "
@@ -268,13 +333,14 @@ def markdown(records, agg, meta, sha, dirty):
     A("The actual deliverable: every WAN-exposed unguarded route, with what it serves. Mark each "
       "**KEEP PUBLIC** or **LOCK DOWN** before the entrypoint default is inverted.")
     A("")
-    A("| ns/name | hosts | paths | service | decision |")
-    A("|---|---|---|---|---|")
+    A("| ns/name | src | hosts | paths | service | decision |")
+    A("|---|---|---|---|---|---|")
     for r in sorted(undoc, key=lambda x: (x["namespace"], x["name"], x["hosts"])):
         hosts = "<br>".join(f"`{h}`" for h in r["hosts"]) or "_(no Host predicate)_"
         paths = ", ".join(f"`{p}`" for p in r["paths"]) or "—"
         svc = ", ".join(f"`{s}`" for s in r["services"]) or "—"
-        A(f"| `{r['namespace']}/{r['name']}` | {hosts} | {paths} | {svc} | ☐ |")
+        A(f"| `{r['namespace']}/{r['name']}` | {r.get('source','repo')} | {hosts} | "
+          f"{paths} | {svc} | ☐ |")
     A("")
 
     # ---- risk flags ----
@@ -289,6 +355,18 @@ def markdown(records, agg, meta, sha, dirty):
         A("")
     else:
         A("- ✅ No broken routers: every middleware reference resolves.")
+    if agg.get("regex_redirect_fallthrough"):
+        A("")
+        A(f"### 🔴 `redirectRegex`-only routes that reach their backend "
+          f"({len(agg['regex_redirect_fallthrough'])} routes)")
+        A("")
+        A("Traefik's `Host()` matcher is case-**in**sensitive; these regexes are "
+          "case-**sensitive**. A case-varied Host header matches the router, misses the "
+          "redirect, and falls through to the service. Proven live: `Host: Auth.priv.talos00` "
+          "returned 200 with the authentik login flow where the lowercase form returned 302.")
+        A("")
+        for r in sorted(agg["regex_redirect_fallthrough"], key=lambda x: (x["namespace"], x["name"])):
+            A(f"- `{r['namespace']}/{r['name']}` → {', '.join(r['services']) or '—'}")
     if agg["api_carveouts"]:
         A("")
         A("### ⚠️ Unprotected `/api` carve-outs")
@@ -376,16 +454,64 @@ def main():
     ap.add_argument("--json", default=str(ROOT / ".output" / "ingress-exposure-inventory.json"))
     ap.add_argument("--markdown", default=str(ROOT / ".output" / "ingress-exposure-inventory.md"))
     ap.add_argument("--stdout", action="store_true", help="print the markdown instead of writing")
+    ap.add_argument("--live", action="store_true",
+                    help="MERGE live-cluster routes (ArgoCD + Helm-generated) into the "
+                         "inventory. Required for a cluster-complete exemption list; the "
+                         "repo view alone misses ~33%% of routes.")
     args = ap.parse_args()
 
     docs, meta = corpus.render()
+    repo_keys = set()
+    live_only_count, live_why = 0, None
+
+    if args.live:
+        ldocs, live_why = live_docs()
+        # Identify repo-sourced routes first so live-only ones can be labelled.
+        for r in corpus.routes(docs):
+            repo_keys.add((r["namespace"], r["name"], r.get("match", "")))
+        docs = docs + ldocs
+        live_only_count = len(ldocs)
+
     idx = build_middleware_index(docs)
     raw = corpus.routes(docs)
-    records = sorted((classify(r, idx) for r in raw),
-                     key=lambda r: (r["namespace"], r["name"], r["hosts"], r["paths"]))
+    # De-duplicate: a route present in both repo and live must be counted once.
+    seen_keys, uniq = set(), []
+    for r in raw:
+        k = (r["namespace"], r["name"], r.get("match", ""), tuple(sorted(r.get("entryPoints") or [])))
+        if k in seen_keys:
+            continue
+        seen_keys.add(k)
+        uniq.append(r)
+    records = []
+    for r in uniq:
+        rec = classify(r, idx)
+        rec["source"] = ("repo" if (not args.live or
+                                    (r["namespace"], r["name"], r.get("match", "")) in repo_keys)
+                         else "live-only")
+        records.append(rec)
+    records = sorted(records, key=lambda r: (r["namespace"], r["name"], r["hosts"], r["paths"]))
     agg = build(records)
     meta = dict(meta or {})
     meta["mw_count"] = len(idx)
+    meta["allowlists_loaded"] = allowlists is not None
+    meta["live_merged"] = bool(args.live)
+    meta["live_docs"] = live_only_count
+    meta["live_error"] = live_why
+    meta["live_only_routes"] = sum(1 for r in records if r.get("source") == "live-only")
+
+    # FAIL LOUD. Audited failure mode: with kustomize off PATH every Flux path fails to
+    # render, the headline reads "0 routes are Host-spoofable", and the process exits 0 --
+    # the safest possible number produced by total breakage. A security report that cannot
+    # see anything must not look clean.
+    fatal = []
+    if not records:
+        fatal.append("rendered ZERO routes — the corpus produced nothing")
+    if meta.get("failed"):
+        fatal.append(f"{len(meta['failed'])} Flux path(s) FAILED to render "
+                     f"(is kustomize on PATH?)")
+    if allowlists is None:
+        fatal.append("ingress_allowlists failed to import — every documented exception "
+                     "is being counted as an undocumented exposure")
     sha, dirty = git_sha(), git_dirty()
     md = markdown(records, agg, meta, sha, dirty)
 
@@ -406,8 +532,13 @@ def main():
 
     print(f"  routes={len(records)} wan_exposed={len(agg['wan_exposed'])} "
           f"undocumented_unguarded_wan={len(agg['undocumented_unguarded_wan'])} "
-          f"broken_routers={len(agg['broken_routers'])}")
-    return 0
+          f"broken_routers={len(agg['broken_routers'])} "
+          f"regex_redirect_fallthrough={len(agg['regex_redirect_fallthrough'])}")
+    if dirty:
+        print("  NOTE: working tree is DIRTY — this report does not correspond to any commit.")
+    for f in fatal:
+        print(f"  FATAL: {f}", file=sys.stderr)
+    return 2 if fatal else 0
 
 
 if __name__ == "__main__":
