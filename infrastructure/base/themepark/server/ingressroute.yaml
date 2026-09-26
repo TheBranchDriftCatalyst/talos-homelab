@@ -15,6 +15,21 @@
 #     an untrusted CA hard-fails with no interstitial.
 #  3. Two separate IngressRoute objects. Kyverno `ingressroute-no-combined-
 #     entrypoints` denies a single route listing both web and websecure.
+#  4. lan-only ON BOTH, added 2026-09-26. This route had NO middlewares at all
+#     and serves the theme.park document root, so the nav manifest was reachable
+#     here at /resources/catalyst-nav.json — OUTSIDE /catalyst/ entirely, so both
+#     the Host gate and the lan-only on asset-route.yaml miss it. Traefik routes
+#     on the client-supplied Host header and :443 on the WAN IP is
+#     internet-reachable, so this was measured against the WAN address:
+#       curl -k -H 'Host: theme.talos00' https://<wan-ip>/resources/catalyst-nav.json
+#         -> 200, 2118B, all 25 internal hostnames
+#     lan-only does NOT violate (1): it is an ipAllowList, not forward-auth, so it
+#     never issues a redirect a subresource cannot follow, and every legitimate
+#     client is on the LAN or in-cluster. Confirmed nothing loads from this origin
+#     as a subresource anyway — every inject middleware in ../middlewares.yaml
+#     uses root-relative /catalyst/... paths served by asset-route.yaml, and no
+#     manifest contains an absolute theme.${CLUSTER_DOMAIN} URL. This origin is
+#     for humans browsing the theme index.
 #
 # DNS needs no work: Pi-hole publishes a wildcard address=/${CLUSTER_DOMAIN}/<node-ip>
 # to Traefik, and the default TLSStore serves the *.${CLUSTER_DOMAIN} wildcard via SNI.
@@ -32,6 +47,8 @@ spec:
   routes:
     - match: Host(`theme.${CLUSTER_DOMAIN}`)
       kind: Rule
+      middlewares:
+        - { name: lan-only, namespace: traefik }
       services:
         - name: themepark
           port: 80
@@ -50,6 +67,8 @@ spec:
     # Deliberately NOT redirect-https. See (2) above.
     - match: Host(`theme.${CLUSTER_DOMAIN}`)
       kind: Rule
+      middlewares:
+        - { name: lan-only, namespace: traefik }
       services:
         - name: themepark
           port: 80

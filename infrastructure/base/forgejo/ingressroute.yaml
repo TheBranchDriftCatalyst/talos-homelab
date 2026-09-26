@@ -45,7 +45,68 @@ spec:
         - name: forgejo
           port: 3000
 ---
-# Internal: forge.talos00 (LAN + in-cluster, HTTP).
+# Internal: forge.talos00 (LAN, HTTP). TWO routers on one entrypoint.
+#
+# WHY IT IS SPLIT BY `Accept`, AND NOT A BLANKET HOST REDIRECT
+#
+# Browsers cannot use this hostname at all: ROOT_URL is
+# https://forge.knowledgedump.space/, so [session] COOKIE_SECURE derives true
+# and every session cookie is discarded over plaintext http, and the OAuth2
+# redirect_uri is built from ROOT_URL regardless of the request Host (both
+# verified live — see the forge-canonical-redirect middleware comment). So HTML
+# navigation is redirected to the canonical host, which kills Forgejo's
+# canonical-URL banner and makes login possible.
+#
+# NON-BROWSER CLIENTS MUST NOT BE REDIRECTED. A cross-host 3xx is destructive to
+# authenticated writes and Traefik's redirectRegex can only emit 301/302, never
+# 307/308:
+#   - requests.Session.rebuild_auth DELETES Authorization on a hostname change
+#     => `twine upload`, authenticated pip => 401
+#   - npm's make-fetch-happen strips authorization on origin change, and
+#     _authToken in .npmrc is keyed by registry URI => `npm publish` => 401
+#   - 301 and 302 both permit POST->GET method rewriting with body loss
+#   - maven-resolver does not follow redirects for PUT at all
+# Nobody is known to use this host that way today (no .npmrc/.netrc/pip entry
+# references it), but the fall-through costs one route and removes the class.
+#
+# `Accept` is the discriminator because it is the one already PROVEN on this
+# exact route: the rewriteBody plugin gates on text/html, measured here as
+#   Accept: */*        -> 0 catalyst injections
+#   Accept: text/html  -> 2 catalyst injections
+# Browsers navigating send text/html; git sends */* then
+# application/x-git-upload-pack-result; npm application/json; twine */*; docker
+# application/vnd.oci.image.manifest.v1+json.
+#
+# Do NOT switch this to `Sec-Fetch-Mode: navigate`. Fetch Metadata headers are
+# only attached to potentially-trustworthy URLs, and http://forge.talos00 is not
+# one, so browsers send no Sec-Fetch-* here and the rule would never match.
+#
+# Method(GET) so a stray browser form POST is never body-stripped by the 302.
+#
+# Priorities are EXPLICIT on both. Traefik derives priority from rule length
+# when unset, and the fall-through rule is the shorter of the two — leaving them
+# implicit makes which one wins an accident of string length.
+#
+# lan-only ON BOTH. Traefik routes on the Host header, not DNS, and :80/:443 on
+# the WAN IP are internet-reachable, so `curl -H 'Host: forge.talos00'
+# http://<wan-ip>/` returned 200 with a full unauthenticated copy of the forge —
+# with neither rate-limit nor bot-wrangler, both of which the public route above
+# carries precisely because it faces the internet. lan-only closes that: Traefik
+# sees genuine external source addresses (its access log on the ingress node
+# carries 193.46.255.72, 80.94.95.226, 45.141.235.110, 20.169.88.77 and other
+# real off-net clients), forwardedHeaders.trustedIPs is Cloudflare-only, and the
+# ipAllowList default ipStrategy reads RemoteAddr, so no header can launder it.
+#
+# THEMING IS DELIBERATELY GONE FROM THIS ROUTE. catalyst-gitea was replaced, not
+# moved. It cannot move to forge.knowledgedump.space: the asset route is gated
+# HostRegexp(`^[a-z0-9-]+\.talos00$`), so /catalyst/* on the public host returns
+# 404 (verified), and theming the public route would inject three subresources
+# that all 404 on every page view. Re-theming the forge requires a public/private
+# split of the nav manifest first. Consequence to accept meanwhile:
+# build_nav.py's derived `injected` filter (NAV_SCOPE=themed) drops any route
+# with no catalyst injection, so Forgejo leaves the cross-app nav bar on the next
+# refresh. The homepage tile is unaffected — the gethomepage.dev annotations stay
+# here and its href was already the public URL.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -60,21 +121,25 @@ metadata:
 spec:
   entryPoints: [web]
   routes:
+    # Browser navigation -> the canonical host. Banner gone, login possible.
+    - match: Host(`forge.talos00`) && Method(`GET`) && HeaderRegexp(`Accept`, `text/html`)
+      kind: Rule
+      priority: 200
+      middlewares:
+        - { name: lan-only, namespace: traefik }
+        - { name: forge-canonical-redirect, namespace: traefik }
+      services:
+        # Never reached — the redirect short-circuits — but the CRD requires it,
+        # exactly as the 11 private-domain-redirect routes do.
+        - name: forgejo
+          port: 3000
+    # Everything else reaches Forgejo untouched: git smart-HTTP, LFS, npm/PyPI,
+    # OCI, /api. No redirect, so no Authorization stripping and no method rewrite.
     - match: Host(`forge.talos00`)
       kind: Rule
+      priority: 100
       middlewares:
-        # Full Catalyst theme + the cross-app nav bar. Forgejo is a Gitea fork,
-        # so it rides theme.park's `gitea` base sheet — that sheet consumes 37
-        # CSS variables and the theme now defines all 37 (TALOS-343d.1); before
-        # that it supplied 15 and the undefined ones fell back to stock Gitea.
-        #
-        # LAN ROUTE ONLY, deliberately. The nav manifest enumerates every
-        # *.talos00 hostname in the cluster, so injecting it into the public
-        # forge.knowledgedump.space route above would publish the internal
-        # topology to the internet. If the public route is ever themed, the
-        # manifest needs a public/private split first.
-        - name: catalyst-gitea
-          namespace: traefik
+        - { name: lan-only, namespace: traefik }
       services:
         - name: forgejo
           port: 3000

@@ -19,33 +19,60 @@
 # NO auth, deliberately: browsers fetch these as subresources with no session
 # and cannot follow a redirect to SSO. It serves static CSS and one script.
 #
-# ── HOST-GATED, 2026-09-26, AFTER A CONFIRMED PUBLIC DISCLOSURE ──────────────
+# ── TWO CONTROLS, 2026-09-26, AFTER A CONFIRMED PUBLIC DISCLOSURE ───────────
 # Because this route carried no Host matcher it was served on all 28 PUBLIC
-# hostnames, and /catalyst/resources/catalyst-nav.json enumerates every
-# internal *.talos00 host. Proven from OUTSIDE the network (not from the LAN,
-# where router hairpinning makes any test look local): an external fetch of
+# hostnames, and /catalyst/resources/catalyst-nav.json enumerates every internal
+# *.talos00 host. Proven from outside the network: an external fetch of
 # https://forge.knowledgedump.space/catalyst/resources/catalyst-nav.json
 # returned HTTP 200 with all 25 hostnames.
 #
-# THE FIRST FIX WAS WRONG AND IS RECORDED HERE SO IT IS NOT RETRIED. Adding the
-# `lan-only` ipAllowList middleware did NOT work, because the edge router
-# source-NATs inbound WAN traffic: Traefik's own access log shows that external
-# request as ClientHost=192.168.1.33 against Host=forge.knowledgedump.space.
-# An RFC1918 source check therefore cannot distinguish WAN from LAN anywhere on
-# this network, and any route relying on lan-only as its network control is
-# relying on nothing. See the separate ticket for the fleet-wide consequences.
+# BOTH controls are here on purpose, because each defeats the other's bypass:
 #
-# The working control is the REQUESTED HOST, which the client cannot launder
-# through NAT. HostRegexp keeps the route hostless in spirit — any *.talos00
-# host still gets assets with no per-app route — while public hostnames simply
-# do not match and fall through to the app's own router.
+#   HostRegexp — a public hostname does not match, so the accidental exposure
+#   above is closed structurally and cannot be laundered through NAT. But
+#   Traefik routes on the Host HEADER, which the CLIENT supplies, and :443 on
+#   the WAN IP is internet-reachable. Measured against this very rule:
+#     curl -k -H 'Host: sonarr.talos00' https://<wan-ip>/catalyst/resources/catalyst-nav.json
+#       -> 200, 2118B, the full manifest
+#   Host-scoping alone is therefore NOT a network control.
 #
-# The CSS and JS leak nothing (nav.js embeds no hostnames; the only .talos00
-# string in catalyst.css is a code comment) — the manifest was the whole
-# exposure. Gating the entire prefix anyway costs nothing today because NO
-# public host is themed, and it makes public theming a deliberate decision. If
-# a public host is ever themed, the manifest needs a public/private split
-# first, not a relaxation of this rule.
+#   lan-only — closes that Host-spoof path, because the source address is the
+#   one thing the client cannot choose.
+#
+# A PREVIOUS REVISION REMOVED lan-only ON A FALSE PREMISE. It claimed the edge
+# router source-NATs inbound WAN traffic, citing ClientHost=192.168.1.33 for a
+# request believed to be external, and concluded "lan-only provides no network
+# control anywhere on this network". THAT IS WRONG, and it was wrong about 27
+# other routes too. Traefik's access log on the ingress node carries genuine
+# off-net clients at their real public addresses — 193.46.255.72, 80.94.95.226,
+# 45.141.235.110, 20.169.88.77, 43.132.214.228, 106.75.184.142 — so inbound WAN
+# traffic is DNAT-only and the source address survives. 192.168.1.33 is a LAN
+# host (1560 requests in the same log); what the router does SNAT is HAIRPINNED
+# traffic, which appears as 192.168.1.1 or as the WAN IP 108.64.138.156. That is
+# why a `curl --resolve` test run from the LAN passes lan-only unconditionally
+# and reads as "the gate is broken".
+#
+# SO: never verify an IP gate with a --resolve test from the LAN. Assert on
+# Traefik's own logged ClientHost, or test from a genuinely off-net vantage
+# (a phone on cellular).
+#
+# NOT the whole exposure, and previous revisions of this comment said otherwise:
+#   - catalyst.css (server/css/catalyst.css:274) contains a code comment reading
+#     "A font at theme.talos00 loaded by sonarr.talos00 fails". That discloses
+#     two internal hostnames AND the <app>.talos00 naming convention, which
+#     combined with the ~60 app slugs enumerable under /catalyst/css/base/ turns
+#     a gated host list into a guessable one.
+#   - /catalyst/themes.json is a SECOND manifest-grade leak, 66,055B, in which
+#     nearly every line is an absolute https://theme.talos00/css/... URL.
+#   - nginx `alias /config/www/` under `location /catalyst/` publishes all 2887
+#     files / 108MB the image ships, including themes.py, not just what we
+#     inject. Allowlisting the four paths we actually reference is a separate,
+#     independent win — see the follow-up ticket.
+#
+# Gating the entire prefix costs nothing today because NO public host is themed,
+# and it makes public theming a deliberate decision. If a public host is ever
+# themed, the manifest needs a public/private split first, not a relaxation of
+# this rule.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -61,6 +88,9 @@ spec:
       kind: Rule
       priority: 10000
       middlewares:
+        # FIRST: reject before any body/cache work happens.
+        - name: lan-only
+          namespace: traefik
         - name: catalyst-compress
           namespace: traefik
         - name: catalyst-asset-cache
@@ -86,6 +116,9 @@ spec:
       kind: Rule
       priority: 10000
       middlewares:
+        # FIRST: reject before any body/cache work happens.
+        - name: lan-only
+          namespace: traefik
         - name: catalyst-compress
           namespace: traefik
         - name: catalyst-asset-cache

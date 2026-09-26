@@ -114,6 +114,49 @@ spec:
     replacement: 'https://$${1}.amberdark.net$${2}'
     permanent: false
 ---
+# Forge canonical-URL redirect. Forgejo has ONE global ROOT_URL
+# (https://forge.knowledgedump.space/) and derives three things from it that the
+# LAN hostname cannot satisfy:
+#
+#   1. [session] COOKIE_SECURE defaults to strings.HasPrefix(ROOT_URL,"https://")
+#      => true. Verified live: `http://forge.talos00/user/login` returns
+#      `Set-Cookie: persistent=; HttpOnly; Secure; SameSite=Lax`. A browser
+#      discards a Secure cookie from a plaintext origin, so NO session of any
+#      kind — OIDC, local, admin — can exist on forge.talos00.
+#   2. The OAuth2 redirect_uri, which is built from ROOT_URL and is INDEPENDENT
+#      of the request Host. Verified live on forge.talos00:
+#        307 -> .../authorize?...&redirect_uri=https%3A%2F%2Fforge.knowledgedump
+#        .space%2Fuser%2Foauth2%2Fauthentik%2Fcallback
+#      Authentik registers exactly that URI, matching_mode: strict. So login
+#      already relocates to the public host, mid-flow, having dropped the
+#      host-only state+PKCE cookie from (1).
+#   3. The OCI token realm, also hardcoded to ROOT_URL.
+#
+# That is what Forgejo's canonical-URL banner is warning about. Forgejo has no
+# per-request URL detection (Gitea's PUBLIC_URL_DETECTION is not ported), so a
+# redirect to the canonical host is the only available fix.
+#
+# permanent: false (302) DELIBERATELY. forge.talos00 is the path that works when
+# the public name does not; a 301 is cached by browsers indefinitely with no
+# invalidation handle, which would convert the LAN fallback into a hard
+# dependency on the public hostname's cert and DNS. Matches
+# private-domain-redirect above.
+#
+# $${N} not ${N}: Flux envsubst runs over this path
+# (clusters/catalyst-cluster/traefik.yaml postBuild.substituteFrom
+# cluster-settings). A bare ${1} is substituted to empty and the path is
+# silently dropped.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: forge-canonical-redirect
+  namespace: traefik
+spec:
+  redirectRegex:
+    regex: '^https?://forge\.(?:priv\.)?talos00(?::[0-9]+)?(.*)$'
+    replacement: 'https://forge.knowledgedump.space$${1}'
+    permanent: false
+---
 # Per-source request rate limit for PUBLIC (internet-facing) routes
 # (TALOS-lxz5.4.2 / finding 009).
 #
