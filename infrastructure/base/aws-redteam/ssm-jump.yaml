@@ -1,0 +1,117 @@
+---
+# ssm-jump — interactive SSM launcher ("where do you want to go?").
+#
+# Phase 2 of aws-redteam: a genuine off-net shell on ANY of our EC2 instances,
+# with NO inbound and NO SSH key, via AWS Session Manager. On exec it lists every
+# SSM-registered instance (those launched with spec.instanceProfileName:
+# catalyst-ssm — see infrastructure/base/aws/apps/ssm-instance-profile.yaml),
+# lets you pick one, and drops you into a shell (or a port-forward, e.g. vLLM).
+#
+# MANUAL — like retrieve-console.yaml this is NOT in kustomization.yaml. It mounts
+# the account creds, so it should exist only while you are actively using it:
+#   kubectl apply   -f infrastructure/base/aws-redteam/ssm-jump.yaml
+#   kubectl wait -n crossplane-system --for=condition=ready pod/ssm-jump --timeout=60s
+#   kubectl exec -it -n crossplane-system ssm-jump -- bash /scripts/jump.sh
+#   kubectl delete  -f infrastructure/base/aws-redteam/ssm-jump.yaml   # when done
+#
+# A target only appears once it has (a) the catalyst-ssm profile, (b) the SSM
+# agent running (AL2023 / DL AMI ship it enabled), and (c) egress to the SSM
+# endpoints — which the default public subnet gives via its IGW.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ssm-jump-script
+  namespace: crossplane-system
+data:
+  jump.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    export AWS_REGION="${AWS_REGION:-us-west-2}"
+    command -v session-manager-plugin >/dev/null 2>&1 || {
+      echo "installing session-manager-plugin..."
+      dnf install -y https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm >/dev/null
+    }
+
+    echo "Discovering SSM-managed instances in ${AWS_REGION}..."
+    mapfile -t IDS < <(aws ssm describe-instance-information \
+      --query 'InstanceInformationList[?PingStatus==`Online`].InstanceId' \
+      --output text | tr '\t' '\n' | sed '/^$/d')
+
+    if [ "${#IDS[@]}" -eq 0 ]; then
+      echo
+      echo "No SSM-managed instances are Online."
+      echo "A box needs spec.instanceProfileName: catalyst-ssm and a few minutes to register."
+      echo "Current EC2 instances (any state):"
+      aws ec2 describe-instances \
+        --query 'Reservations[].Instances[].[InstanceId,State.Name,InstanceType,Tags[?Key==`Name`]|[0].Value]' \
+        --output table || true
+      exit 1
+    fi
+
+    echo
+    echo "SSM-reachable instances:"
+    declare -A PICK
+    i=1
+    for id in "${IDS[@]}"; do
+      meta=$(aws ec2 describe-instances --instance-ids "$id" \
+        --query 'Reservations[0].Instances[0].[InstanceType,State.Name,Tags[?Key==`Name`]|[0].Value]' \
+        --output text 2>/dev/null || echo "? ? ?")
+      printf "  %2d) %s   %s\n" "$i" "$id" "$meta"
+      PICK[$i]="$id"; i=$((i+1))
+    done
+    echo
+    read -rp "Pick a number (q to quit): " n
+    [ "$n" = q ] && exit 0
+    TARGET="${PICK[$n]:-}"
+    [ -z "$TARGET" ] && { echo "invalid choice"; exit 1; }
+
+    echo
+    echo "  1) interactive shell"
+    echo "  2) port-forward a remote port onto this pod (then kubectl port-forward ssm-jump)"
+    read -rp "Mode [1]: " mode; mode="${mode:-1}"
+    if [ "$mode" = 2 ]; then
+      read -rp "remote port (e.g. 8000 for vLLM): " rport
+      read -rp "local port on this pod [${rport}]: " lport; lport="${lport:-$rport}"
+      echo "Forwarding ${TARGET}:${rport} -> pod:${lport}. In another terminal:"
+      echo "  kubectl port-forward -n crossplane-system pod/ssm-jump ${lport}:${lport}"
+      exec aws ssm start-session --target "$TARGET" \
+        --document-name AWS-StartPortForwardingSession \
+        --parameters "portNumber=[${rport}],localPortNumber=[${lport}]"
+    fi
+    exec aws ssm start-session --target "$TARGET"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ssm-jump
+  namespace: crossplane-system
+  labels: {app.kubernetes.io/part-of: aws-ssm-interactive}
+spec:
+  restartPolicy: Never
+  securityContext:
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: aws
+      image: amazon/aws-cli:2.31.24
+      # runs as root (uid 0) so it can dnf-install the plugin; baseline PSA allows it.
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities: {drop: ["ALL"]}
+      env:
+        - {name: AWS_SHARED_CREDENTIALS_FILE, value: /creds/creds}
+        - {name: AWS_REGION, value: us-west-2}
+      command: ["/bin/sh", "-c"]
+      # Pre-install the plugin at boot so the first `jump.sh` exec is instant, then idle.
+      args:
+        - |
+          dnf install -y https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm >/dev/null 2>&1 || true
+          echo "ssm-jump ready — exec: kubectl exec -it -n crossplane-system ssm-jump -- bash /scripts/jump.sh"
+          sleep infinity
+      # dnf peaks a few hundred MB installing the plugin rpm; 256Mi OOMKills it.
+      resources: {requests: {cpu: 10m, memory: 128Mi}, limits: {memory: 768Mi}}
+      volumeMounts:
+        - {name: creds, mountPath: /creds, readOnly: true}
+        - {name: script, mountPath: /scripts, readOnly: true}
+  volumes:
+    - {name: creds, secret: {secretName: aws-credentials}}
+    - {name: script, configMap: {name: ssm-jump-script}}

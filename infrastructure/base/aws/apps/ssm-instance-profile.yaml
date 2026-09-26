@@ -1,0 +1,55 @@
+---
+# catalyst-ssm — the shared IAM instance profile that gives an EC2 box SSM
+# interactive access (Session Manager: shell + port-forward, no inbound, no SSH
+# key). This is Phase 2 of aws-redteam ("interactive mode"), generalized: any
+# XInstance/XGPUInstance opts in with `spec.instanceProfileName: catalyst-ssm`.
+#
+# ALWAYS-ON (uncommented in aws/apps/kustomization.yaml): IAM roles/profiles cost
+# nothing and start no controllers, and the profile must exist before any box can
+# reference it. Off-ness of a box is still governed by that box's own on-switch.
+#
+# Three MRs, exactly what the README's Phase 2 note named ("iam role/policy/
+# instanceprofile MRDs"); instanceprofiles.iam.aws.upbound.io is activated in
+# aws-providers/activation-policy.yaml (roles + rolepolicyattachments already were).
+# IAM is global — no region. providerConfigRef defaults to `default`.
+#
+# NOTE creds are currently the account ROOT keys (TALOS-lq5y). The scoped IAM
+# user that replaces them will need iam:PassRole for this profile's role so an
+# instance can actually assume it.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: catalyst-ssm
+  labels: {app.kubernetes.io/part-of: aws-ssm-interactive, catalyst.io/stage: poc-demo}
+  annotations:
+    crossplane.io/external-name: catalyst-ssm
+spec:
+  forProvider:
+    # EC2 assumes this role at launch (that is what an instance profile is for).
+    assumeRolePolicy: |
+      {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: catalyst-ssm-ssmcore
+  labels: {app.kubernetes.io/part-of: aws-ssm-interactive, catalyst.io/stage: poc-demo}
+spec:
+  forProvider:
+    # The AWS-managed policy that lets the SSM agent register + run sessions.
+    # It is intentionally the ONLY policy — least privilege for a jump target.
+    policyArn: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+    roleRef: {name: catalyst-ssm}
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: InstanceProfile
+metadata:
+  name: catalyst-ssm
+  labels: {app.kubernetes.io/part-of: aws-ssm-interactive, catalyst.io/stage: poc-demo}
+  annotations:
+    # external-name IS the profile name an instance references via
+    # spec.instanceProfileName -> spec.forProvider.iamInstanceProfile.
+    crossplane.io/external-name: catalyst-ssm
+spec:
+  forProvider:
+    roleRef: {name: catalyst-ssm}

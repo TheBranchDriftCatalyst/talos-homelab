@@ -43,6 +43,34 @@ flux reconcile kustomization aws-redteam --with-source
 kubectl get xinstance,instance.ec2.aws.upbound.io -A | grep -i redteam || echo "clean"
 ```
 
+## Interactive mode (SSM) — Phase 2, built
+
+A genuine off-net **shell** on any of our EC2 boxes, still with **no inbound and no SSH key**,
+via AWS Session Manager. This is the counterpart to the autonomous probe-and-halt mode.
+
+How it fits together:
+
+- `spec.instanceProfileName: catalyst-ssm` on an XInstance/XGPUInstance attaches the shared IAM
+  instance profile (`infrastructure/base/aws/apps/ssm-instance-profile.yaml`:
+  Role + `AmazonSSMManagedInstanceCore` + InstanceProfile). The XRD field is optional and unset by
+  default, so nothing changes for boxes that do not ask for it.
+- `ssm-jump.yaml` is a **manual** in-cluster launcher (not in `kustomization.yaml`, same as
+  `retrieve-console.yaml`). Exec into it and it lists every SSM-registered instance, you pick one,
+  and it opens a shell (or a port-forward, e.g. vLLM `:8000`).
+
+```sh
+kubectl apply  -f infrastructure/base/aws-redteam/ssm-jump.yaml
+kubectl wait -n crossplane-system --for=condition=ready pod/ssm-jump --timeout=60s
+kubectl exec -it -n crossplane-system ssm-jump -- bash /scripts/jump.sh
+# ... pick a target, get a shell ...
+kubectl delete -f infrastructure/base/aws-redteam/ssm-jump.yaml   # when done (it mounts creds)
+```
+
+A target appears in the menu only once it has the `catalyst-ssm` profile, the SSM agent running
+(AL2023 / DL GPU AMI ship it enabled), and egress to the SSM endpoints (the default public subnet
+provides this via its IGW). The autonomous `redteam-vantage` box does NOT set `instanceProfileName`,
+so it stays SSM-less by design; add the field to a claim to make it interactively reachable.
+
 ## Re-embedding probe.sh after an edit
 
 ```sh
@@ -69,8 +97,10 @@ EC2 IP for a functional pass) is in scope — snapshot and restore decisions.
 
 ## Known gaps / follow-ups
 
-- **Interactive mode (SSM) is not built yet** — needs an optional `instanceProfileName` on the
-  XInstance XRD/composition + activating the iam role/policy/instanceprofile MRDs. Phase 2.
+- **Interactive mode (SSM) — BUILT** (2026-09-26, see "Interactive mode" above). Optional
+  `instanceProfileName` is on both the XInstance and XGPUInstance XRD/composition, the shared
+  `catalyst-ssm` role/policy/instanceprofile MRs live in `aws/apps/ssm-instance-profile.yaml`, and
+  `instanceprofiles.iam.aws.upbound.io` is activated. `ssm-jump.yaml` is the launcher.
 - **Credentials are the AWS account ROOT keys** (`arn:...:root`) — over-privileged; rotate to a
-  scoped IAM user with just EC2 + (phase 2) iam:PassRole. Filed.
+  scoped IAM user with just EC2 + `iam:PassRole` for the catalyst-ssm role. Filed as TALOS-lq5y.
 - The AMI id is pinned; re-run the preflight to refresh it if the launch fails on a deregistered AMI.
