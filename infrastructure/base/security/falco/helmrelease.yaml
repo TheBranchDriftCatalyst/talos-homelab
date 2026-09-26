@@ -166,9 +166,27 @@ spec:
             - maxmemory 512mb
             - maxmemory-policy allkeys-lru
             - save ""
+          # 1Gi, not 768Mi. The reasoning above -- "the memory limit sits ABOVE
+          # maxmemory so redis evicts rather than being OOM-killed" -- is right in
+          # principle and still lost: redis was OOMKilled 2026-09-20T15:27:31Z
+          # (exit 137) with maxmemory 512mb under a 768Mi limit.
+          #
+          # maxmemory caps `used_memory`, which does NOT account for the RediSearch
+          # `eventIndex` that falcosidekick-ui creates, nor for allocator
+          # fragmentation. So redis can sit at its 512mb ceiling never evicting while
+          # RSS -- the number the kernel kills on -- climbs past 768Mi. 256Mi of
+          # headroom had to cover both index and fragmentation, and did not.
+          #
+          # The damage was not the lost events (ephemeral by design; Loki is
+          # authoritative). It was the lost INDEX: with storageEnabled:false there is
+          # nothing to reload, and falcosidekick-ui only creates eventIndex at
+          # STARTUP. The UI pods were older than the redis restart, so they never
+          # re-created it -- "[ERROR]: [0] Unknown index name" every few seconds for
+          # five days against an empty keyspace, while both pods showed 1/1 Running.
+          # Recovered by restarting the UI, which recreated eventIndex.
           resources:
             requests: {cpu: 50m, memory: 128Mi}
-            limits: {memory: 768Mi}
+            limits: {memory: 1Gi}
       config:
         # The webhook URL is NEVER in git: this secret is the ESO-managed copy of the same
         # 1Password item CrowdSec posts its bans to. The chart reads every UPPERCASE key in
