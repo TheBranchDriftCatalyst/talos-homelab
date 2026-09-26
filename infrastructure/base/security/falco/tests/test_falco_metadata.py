@@ -45,6 +45,11 @@ pytestmark = pytest.mark.integration
 NS = os.environ.get("FALCO_NS", "falco")
 # How many recent log lines to scan per pod for events carrying container context.
 SAMPLE_LINES = int(os.environ.get("FALCO_SAMPLE_LINES", "400"))
+# --tail alone gives an UNKNOWABLE window: measured on this cluster, 400 lines spans
+# 124h on a chatty node and the honeypot node's entire servable log is 74 lines (Falco
+# logs rotate). Pairing it with --since bounds the window in time so "quiet" and
+# "rotated away" stop looking identical, and coverage is printed either way.
+SAMPLE_SINCE = os.environ.get("FALCO_SAMPLE_SINCE", "24h")
 DESTRUCTIVE_ENV = "FALCO_DR_DESTRUCTIVE"
 
 HONEYPOT_NS = os.environ.get("HONEYPOT_NS", "honeypot")
@@ -59,7 +64,29 @@ TRIPWIRE_CMD = ["getent", "passwd", "root"]
 # (pre-existing breach events here are minutes to hours old).
 CLOCK_SKEW_TOLERANCE_S = float(os.environ.get("FALCO_SKEW_TOLERANCE", "10"))
 
-CONTAINER_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+# 12-hex is the shape round 2 produced, but it is not the only useless value. Falco
+# writes "<NA>" when it cannot resolve a field, and null/empty are equally broken --
+# an adversarial audit fed each of these through this suite and every one PASSED while
+# the metadata was 100% unresolved. Matching only 12-hex reproduced the very mistake
+# this file was written to prevent: checking one shape instead of asserting usability.
+CONTAINER_ID_RE = re.compile(r"^[0-9a-f]{12}$|^[0-9a-f]{64}$")
+UNRESOLVED_VALUES = {"", "<na>", "n/a", "null", "none", "<none>", "unknown", "-"}
+
+
+def is_unusable_name(value):
+    """True when container.name is missing, a placeholder, or a raw container ID.
+
+    The question is "could an operator act on this?", not "is the field present".
+    """
+    if value is None:
+        return True
+    v = str(value).strip()
+    if v.lower() in UNRESOLVED_VALUES:
+        return True
+    if CONTAINER_ID_RE.match(v):
+        return True
+    # a bare hex blob of any length is an id, not a name
+    return bool(re.fullmatch(r"[0-9a-f]{8,}", v))
 # Fail a node only when unresolved metadata is SYSTEMIC, not incidental.
 # Round 1 was 299/299 events = 100%. Against that, a short-lived container whose exec
 # Falco sees before its container cache catches up is a different animal: measured
@@ -148,7 +175,7 @@ def container_events(pod):
     activity legitimately has no container name or namespace to resolve, and
     counting those as failures would make this test permanently red.
     """
-    raw = dr.kubectl(f"logs -n {NS} {pod} -c falco --tail={SAMPLE_LINES}",
+    raw = dr.kubectl(f"logs -n {NS} {pod} -c falco --tail={SAMPLE_LINES} --since={SAMPLE_SINCE}",
                      check=False, timeout=90) or ""
     events = []
     for line in raw.splitlines():
@@ -189,7 +216,7 @@ def test_container_name_is_a_name_not_a_hex_id():
             (e.get("output_fields", {}).get("container.name"),
              e.get("output_fields", {}).get("container.id"))
             for e in evs
-            if CONTAINER_ID_RE.match(str(e.get("output_fields", {}).get("container.name") or ""))
+            if is_unusable_name(e.get("output_fields", {}).get("container.name"))
         ]
         if bad:
             broken.append((node, pod, len(bad), len(evs), bad[0]))
@@ -202,9 +229,9 @@ def test_container_name_is_a_name_not_a_hex_id():
         print(f"  no container events sampled on: {sorted(no_data)} "
               f"(not a failure, but nothing was verified there)")
 
-    M.record("nodes with hex-id container.name", len(broken), 0, not broken)
+    M.record("nodes with unusable container.name", len(broken), 0, not broken)
     assert not broken, (
-        f"container.name is resolving to the container ID on {len(broken)} node(s): "
+        f"container.name is unusable (id/null/placeholder) on {len(broken)} node(s): "
         f"{[b[0] for b in broken]} — this is the round-2 failure, and a null-check "
         f"would pass straight over it"
     )
@@ -240,6 +267,13 @@ def test_k8s_namespace_resolves():
     if no_data:
         print(f"  no container events sampled on: {sorted(no_data)}")
 
+    # Without this the round-1 check (null on 299/299) passes having verified NOTHING.
+    # An audit proved it: FALCO_SAMPLE_LINES=0 made this test green while the hex-id test
+    # correctly failed. A test that cannot see data must not report success.
+    assert len(no_data) < len(pods), (
+        f"no container-context events on ANY of {len(pods)} nodes — this test verified "
+        f"nothing. Either Falco is not emitting or the sample window is too small."
+    )
     M.record("nodes above unresolved-ns threshold", len(broken), 0, not broken)
     assert not broken, (
         f"k8s.ns.name is SYSTEMICALLY unresolved on {len(broken)} node(s): "
@@ -327,7 +361,8 @@ def test_tripwire_fires_end_to_end():
     print(f"  fired in {elapsed:.0f}s: rule={rule} container={cname} ns={ns} proc={proc}")
     # The metadata has to be usable, not merely present — a breach event naming a
     # 12-hex id is what round 2 looked like.
-    assert not CONTAINER_ID_RE.match(str(cname or "")), (
-        f"breach event resolved container.name to a hex id ({cname}) — round 2 again"
+    assert not is_unusable_name(cname), (
+        f"breach event's container.name is unusable ({cname!r}) — an operator could not act "
+        f"on this. Round 2 was the 12-hex spelling; null/<NA> are the same failure."
     )
     assert ns == HONEYPOT_NS, f"breach event ns={ns}, expected {HONEYPOT_NS}"
