@@ -42,6 +42,13 @@ data:
       labels:
         - "docker:docker://node:22-bookworm"
         - "ubuntu-latest:docker://node:22-bookworm"
+        # A Python job image. Added because actions/setup-python cannot work
+        # on a private runner: it resolves its code from the mirror and then
+        # downloads the interpreter from GitHub, which this chain deliberately
+        # cannot reach. An image that already IS 3.12 needs no action at all.
+        # It has no node, so a workflow using this label cannot use JavaScript
+        # actions — actions/checkout included — and has to `git fetch`.
+        - "python:docker://python:3.12-bookworm"
       # Handed to every job. DOCKER_CONFIG points at the read-only mount below,
       # so `docker push` is already authenticated to Zot and a workflow needs no
       # login step and no repo secrets — see zot-dockerconfig.yaml.
@@ -145,7 +152,7 @@ spec:
                 --instance "http://forgejo.forgejo.svc.cluster.local:3000" \
                 --token "${REGISTRATION_TOKEN}" \
                 --name "talos00-k8s" \
-                --labels "docker:docker://node:22-bookworm,ubuntu-latest:docker://node:22-bookworm"
+                --labels "docker:docker://node:22-bookworm,ubuntu-latest:docker://node:22-bookworm,python:docker://python:3.12-bookworm"
           env:
             - name: REGISTRATION_TOKEN
               valueFrom:
