@@ -1,0 +1,19 @@
+---
+# aws-redteam — on-demand external pentest vantage. OFF by default.
+#
+# "file = on-switch": the XInstance claim is commented out below, so Flux
+# reconciles this component to EMPTY and provisions nothing. To run a pass:
+#   1. uncomment redteam-auto.yaml, commit, push
+#   2. flux reconcile kustomization aws-redteam --with-source
+#   3. wait ~3 min; retrieve results (see README.md → get-console-output)
+#   4. RE-COMMENT redteam-auto.yaml, commit, push  → Flux prunes the EC2 box
+# The reaper CronJob is a cost backstop only (age>2h); git-off is the real teardown.
+#
+# probe.sh and README.md are docs/scripts, not applied to the cluster.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: crossplane-system
+resources:
+  - reaper-cronjob.yaml
+  # ── ON-SWITCHES (uncomment to spin up, re-comment to tear down) ──
+  # - redteam-auto.yaml          # AUTONOMOUS: boot → probe → console → halt

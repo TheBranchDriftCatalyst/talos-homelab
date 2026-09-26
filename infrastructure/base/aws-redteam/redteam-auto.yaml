@@ -1,0 +1,48 @@
+---
+# ██ AUTONOMOUS red-team vantage ██ — OFF by default (commented out of
+# kustomization.yaml). Flip on = git-commit; flip off = comment + commit (Flux
+# prunes). See README.md.
+#
+# A genuine off-net EC2 box that, on boot, runs the framework's external probe
+# battery against the home WAN origin, writes the summary to the SERIAL CONSOLE
+# (retrievable via 'aws ec2 get-console-output' — no inbound, no key, no SSM),
+# then halts. This is the "deferred true-cold pass" the 2026-09-09 engagement
+# could not do from the NAT-hairpinned VPN.
+#
+# Zero composition change: uses XInstance as-is with openPort:0 (no ingress).
+# Values below are from the read-only preflight (redteam-preflight Job), region
+# us-west-2: default VPC vpc-3536d651, public subnet subnet-36191741,
+# AL2023 x86_64 AMI ami-075d448db8fb256af (dnf; curl/dig/jq installable).
+#
+# userData embeds infrastructure/base/aws-redteam/probe.sh VERBATIM (base64).
+# Keep them identical — probe.sh is the canonical source.
+apiVersion: aws.catalyst.io/v1alpha1
+kind: XInstance
+metadata:
+  name: redteam-vantage
+  labels:
+    app.kubernetes.io/part-of: aws-redteam
+    catalyst.io/stage: redteam
+spec:
+  instanceName: redteam-vantage
+  instanceType: t3.micro
+  ami: ami-075d448db8fb256af
+  region: us-west-2
+  vpcId: vpc-3536d651
+  subnetId: subnet-36191741
+  rootVolumeGb: 8
+  openPort: 0            # NO inbound — probes dial OUT; results via serial console
+  userData: |
+    #!/bin/bash
+    exec > >(tee /dev/console) 2>&1
+    echo "=== CATALYST-REDTEAM cloud-init start $(date -u +%FT%TZ) ==="
+    dnf install -y bind-utils jq >/dev/null 2>&1 || yum install -y bind-utils jq >/dev/null 2>&1
+    echo "IyEvdXNyL2Jpbi9lbnYgYmFzaAojIOKUgOKUgCBDYXRhbHlzdCBleHRlcm5hbCByZWQtdGVhbSBwcm9iZSBiYXR0ZXJ5IOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgOKUgAojIFRoZSBmcmFtZXdvcmsncyBQTEFZQk9PSy5tZCBtZXRob2RvbG9neSwgc2VsZi1jb250YWluZWQuIFJ1biBmcm9tIGEgR0VOVUlORQojIG9mZi1uZXQgaG9zdCAoYW4gQVdTIEVDMiBib3gpIOKAlCBOT1QgdGhlIExBTiBhbmQgTk9UIHRoZSBnbHVldHVuIFZQTiwgYm90aCBvZgojIHdoaWNoIE5BVC1oYWlycGluIHRvIHRoZSBzYW1lIGhvbWUgV0FOIElQIGFuZCBjYW5ub3Qgc2VlIHdoYXQgYSByZWFsIGF0dGFja2VyCiMgc2VlcyAoc2VlIHBlbnRlc3QgZXZpZGVuY2UvZXh0ZXJuYWxfcGFzc19ub3Rlcy50eHQsIHRoZSBkZWZlcnJlZCBjb2xkIHBhc3MpLgojCiMgQ2Fub25pY2FsIHNvdXJjZS4gcmVkdGVhbS1hdXRvLnlhbWwgZW1iZWRzIHRoaXMgdmVyYmF0aW0gaW4gaXRzIGNsb3VkLWluaXQ7CiMga2VlcCB0aGUgdHdvIGlkZW50aWNhbC4gUmV1c2VzIHRhbG9zLWluZ3Jlc3MgY29uZmlnOiByYXRlX2xpbWl0IDEwLCBmcmFtZXdvcmsgVUEuCiMKIyBOb24tZGVzdHJ1Y3RpdmU6IHJlYWQtb25seSBwcm9iZXMgb25seS4gUk9FOiBwZW50ZXN0L3RhcmdldC1wYWNrYWdlcy90YWxvcy1pbmdyZXNzL3Njb3BlLm1kLgpzZXQgLXUKVUE9Ik1vemlsbGEvNS4wIChYMTE7IExpbnV4IHg4Nl82NCkgQXBwbGVXZWJLaXQvNTM3LjM2IChLSFRNTCwgbGlrZSBHZWNrbykgcGVudGVzdC90YWxvcy1pbmdyZXNzIgpDKCkgeyBjdXJsIC1zayAtLW1heC10aW1lIDEyIC1BICIkVUEiICIkQCI7IH0gICAgICAgICMgb25lIHByb2JlIGF0IGEgdGltZSwgfnN1Yi0xMC9zClNFTEZfSVA9IiQoQyBodHRwczovL2FwaS5pcGlmeS5vcmcgfHwgZWNobyB1bmtub3duKSIKT1JJR0lOPSIkKGRpZyArc2hvcnQgb3JpZ2luLmFtYmVyZGFyay5uZXQgMj4vZGV2L251bGwgfCB0YWlsIC0xKSIKWyAteiAiJE9SSUdJTiIgXSAmJiBPUklHSU49IjEwOC42NC4xMzguMTU2IiAgICAgICAgICAjIGZhbGxiYWNrOyBjb25maWcgc2F5cyBjb25maXJtIGF0IHBoYXNlIDAKCmNvZGUoKSB7IEMgLW8gL2Rldi9udWxsIC13ICcle2h0dHBfY29kZX0nICIkQCI7IH0Kc3ooKSAgIHsgQyAtbyAvZGV2L251bGwgLXcgJyV7c2l6ZV9kb3dubG9hZH0nICIkQCI7IH0KCnsKZWNobyAiRVhURVJOQUwgVkFOVEFHRSBDT05GSVJNQVRJT04g4oCUICQoZGF0ZSAtdSArJUZUJVRaKSwgQVdTIEVDMiBlZ3Jlc3MgJHtTRUxGX0lQfSAoZ2VudWluZSBvZmYtbmV0KSIKZWNobyAiT1JJR0lOICR7T1JJR0lOfSAgKGRpZyBvcmlnaW4uYW1iZXJkYXJrLm5ldCkiCmVjaG8gIi0tLSByZWFjaGFiaWxpdHkgb2YgdGhlIFdBTiBlbnRyeXBvaW50cyAtLS0iCmVjaG8gIiAgOjgwICByb290ICAtPiAkKGNvZGUgLUggJ0hvc3Q6IHdob2FtaS50YWxvczAwJyAiaHR0cDovLyR7T1JJR0lOfS8iKSIKZWNobyAiICA6NDQzIHJvb3QgIC0+ICQoY29kZSAtSCAnSG9zdDogd2hvYW1pLnRhbG9zMDAnICJodHRwczovLyR7T1JJR0lOfS8iKSIKZWNobyAiLS0tIDAwMSBUcmFlZmlrIGRhc2hib2FyZCAvIGFwaUBpbnRlcm5hbCAodW5hdXRoIG9uIDo4MCkgLS0tIgplY2hvICIgIC9kYXNoYm9hcmQvICAtPiAkKGNvZGUgLUggJ0hvc3Q6IHRyYWVmaWsudGFsb3MwMCcgImh0dHA6Ly8ke09SSUdJTn0vZGFzaGJvYXJkLyIpIgplY2hvICIgIC9hcGkvcmF3ZGF0YSAtPiAkKGNvZGUgLUggJ0hvc3Q6IHRyYWVmaWsudGFsb3MwMCcgImh0dHA6Ly8ke09SSUdJTn0vYXBpL3Jhd2RhdGEiKSAoJChzeiAtSCAnSG9zdDogdHJhZWZpay50YWxvczAwJyAiaHR0cDovLyR7T1JJR0lOfS9hcGkvcmF3ZGF0YSIpIGJ5dGVzKSIKZWNobyAiLS0tIDAwNiBvcmlnaW4gaG9zdC1zcG9vZiBvZiBpbnRlcm5hbCBhZG1pbiBVSXMgLS0tIgpmb3IgaCBpbiBncmFmYW5hIGFyZ29jZCBtaW5pbyByYWJiaXRtcTsgZG8KICBlY2hvICIgICR7aH0udGFsb3MwMCA6NDQzIC0+ICQoY29kZSAtSCAiSG9zdDogJHtofS50YWxvczAwIiAiaHR0cHM6Ly8ke09SSUdJTn0vIikiCmRvbmUKZWNobyAiLS0tIDAwNSBhcnIgL2FwaSBjYXJ2ZS1vdXRzIChwcmlvcml0eS0xMDAsIG5vIGxhbi1vbmx5KSAtLS0iCmVjaG8gIiAgcWJpdHRvcnJlbnQgL2FwaS92Mi9hcHAvcHJlZmVyZW5jZXMgOjQ0MyAtPiAkKGNvZGUgLUggJ0hvc3Q6IHFiaXR0b3JyZW50LnRhbG9zMDAnICJodHRwczovLyR7T1JJR0lOfS9hcGkvdjIvYXBwL3ByZWZlcmVuY2VzIikiCmVjaG8gIiAgcWJpdHRvcnJlbnQgL2FwaS92Mi90b3JyZW50cy9pbmZvICAgOjgwICAtPiAkKGNvZGUgLUggJ0hvc3Q6IHFiaXR0b3JyZW50LnRhbG9zMDAnICJodHRwOi8vJHtPUklHSU59L2FwaS92Mi90b3JyZW50cy9pbmZvIikiCmZvciBoIGluIHNvbmFyciByYWRhcnIgcHJvd2xhcnIgdGF1dHVsbGk7IGRvCiAgZWNobyAiICAke2h9LnRhbG9zMDAgL2FwaSA6NDQzIC0+ICQoY29kZSAtSCAiSG9zdDogJHtofS50YWxvczAwIiAiaHR0cHM6Ly8ke09SSUdJTn0vYXBpL3YzL2hlYWx0aCIpIChjb250cm9sOiA0MDE9YXBwLWtleSBlbmZvcmNlZCkiCmRvbmUKZWNobyAiLS0tIDAwMiBGcmlnYXRlIGZvcndhcmQtYXV0aCBoZWFkZXIgYnlwYXNzIC0tLSIKZWNobyAiICBmcmlnYXRlIC9hcGkvY29uZmlnICtmb3JnZWQgWC1hdXRoZW50aWstdXNlcm5hbWUgLT4gJChjb2RlIC1IICdIb3N0OiBmcmlnYXRlLnRhbG9zMDAnIC1IICdYLWF1dGhlbnRpay11c2VybmFtZTogYWRtaW4nICJodHRwczovLyR7T1JJR0lOfS9hcGkvY29uZmlnIikiCmVjaG8gIi0tLSAwMTIgY2F0YWx5c3QtbmF2IG1hbmlmZXN0IGRpc2Nsb3N1cmUgKGZpeGVkIDIwMjYtMDktMjYpIC0tLSIKZWNobyAiICAvY2F0YWx5c3QvcmVzb3VyY2VzL2NhdGFseXN0LW5hdi5qc29uIC0+ICQoY29kZSAtSCAnSG9zdDogZm9yZ2Uua25vd2xlZGdlZHVtcC5zcGFjZScgImh0dHBzOi8vJHtPUklHSU59L2NhdGFseXN0L3Jlc291cmNlcy9jYXRhbHlzdC1uYXYuanNvbiIpIChleHBlY3QgTk9UIDIwMCkiCmVjaG8gIi0tLSAwMDcgcHVibGljIHJvdXRlIHRocm91Z2ggQ2xvdWRmbGFyZSAoY29udHJvbCkgLS0tIgplY2hvICIgIHppcGxpbmUuYW1iZXJkYXJrLm5ldCAtPiAkKGNvZGUgaHR0cHM6Ly96aXBsaW5lLmFtYmVyZGFyay5uZXQvKSIKZWNobyAiUFJPQkUgRE9ORSDigJQgJChkYXRlIC11ICslRlQlVFopIgp9IDI+JjEK" | base64 -d > /root/probe.sh
+    chmod +x /root/probe.sh
+    echo "=== CATALYST-REDTEAM PROBE BEGIN ==="
+    /root/probe.sh
+    echo "=== CATALYST-REDTEAM PROBE END ==="
+    # Cost backstop: halt in 20 min regardless. Primary teardown is git-off; the
+    # reaper CronJob is the cluster backstop. A halted EBS box is retrievable via
+    # get-console-output and cheap; delete the claim to terminate.
+    shutdown -h +20

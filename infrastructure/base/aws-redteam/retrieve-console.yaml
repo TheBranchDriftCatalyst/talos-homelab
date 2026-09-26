@@ -1,0 +1,39 @@
+---
+# Pull the autonomous box's probe results back from the EC2 serial console.
+# Run AFTER the box has booted+probed (~2-3 min). No inbound to the box needed.
+#   kubectl apply -f infrastructure/base/aws-redteam/retrieve-console.yaml
+#   kubectl logs -n crossplane-system job/redteam-console -f
+# Then paste the CATALYST-REDTEAM PROBE block into
+# pentest/target-packages/talos-ingress/evidence/finding013_EXTERNAL_aws.txt
+# This is a MANUAL Job (not in kustomization.yaml) — apply/delete by hand.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redteam-console
+  namespace: crossplane-system
+spec:
+  ttlSecondsAfterFinished: 1800
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: aws
+          image: amazon/aws-cli:2.31.24
+          env:
+            - {name: AWS_SHARED_CREDENTIALS_FILE, value: /creds/creds}
+            - {name: AWS_REGION, value: us-west-2}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              IID=$(aws ec2 describe-instances --region us-west-2 \
+                --filters Name=tag:Name,Values=redteam-vantage Name=instance-state-name,Values=running,stopping,stopped \
+                --query 'Reservations[0].Instances[0].InstanceId' --output text)
+              echo "instance: $IID"
+              [ "$IID" = "None" ] && { echo "no redteam-vantage instance found"; exit 1; }
+              aws ec2 get-console-output --region us-west-2 --instance-id "$IID" \
+                --query Output --output text | sed -n '/CATALYST-REDTEAM PROBE BEGIN/,/CATALYST-REDTEAM PROBE END/p'
+          volumeMounts: [{name: creds, mountPath: /creds, readOnly: true}]
+      volumes:
+        - {name: creds, secret: {secretName: aws-credentials}}
