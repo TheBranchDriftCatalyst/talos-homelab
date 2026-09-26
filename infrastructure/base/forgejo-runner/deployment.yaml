@@ -62,7 +62,15 @@ data:
       # runner looks for the HOST's /var/run/docker.sock, which on Talos does
       # not exist at all — containerd is the runtime and there is no dockerd.
       docker_host: unix:///var/run/docker.sock
-      network: bridge
+      # EMPTY, so act_runner creates a network per job — not "bridge".
+      #
+      # Naming the default bridge looked harmless and broke service
+      # containers. Docker's default bridge has no embedded DNS, so a job
+      # cannot resolve its own services by name: a Postgres service reported
+      # healthy while the job got "could not translate host name db to
+      # address". A per-job user-defined network provides that resolution, and
+      # it also isolates concurrent jobs from each other.
+      network: ""
       privileged: false
       # THE JOB IMAGE HAS NO DOCKER CLI. node:22-bookworm carries node and git
       # (which actions/checkout needs) and nothing else, so a workflow that
