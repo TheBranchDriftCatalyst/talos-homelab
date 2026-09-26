@@ -34,9 +34,11 @@ spec:
   commonUpdateSettings:
     updateStrategy: newest-build
     allowTags: "regexp:^(latest|main|sha-[a-f0-9]{7,40})$"
-    # No pullSecret: Zot allows anonymous reads (defaultPolicy ["read"]), so tag
-    # discovery needs no credential. The kubelet still authenticates for the
-    # actual pull with the app's nexus-pull-dockercfg.
+    # Zot DOES need a credential, despite defaultPolicy ["read"]. That policy
+    # covers repositories; the updater's first call is the /v2/ base endpoint,
+    # which challenges anyway — measured 401 from inside the cluster. Dropping
+    # this on the strength of that policy is exactly why no tag was ever seen.
+    pullSecret: pullsecret:argocd-image-updater-system/zot-secret
   writeBackConfig:
     method: argocd
   applicationRefs:

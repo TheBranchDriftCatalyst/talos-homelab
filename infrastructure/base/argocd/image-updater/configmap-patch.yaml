@@ -29,7 +29,14 @@ data:
       # Only the kubelet's PULL needs a secret, and that is the app's own
       # nexus-pull-dockercfg.
       - name: Zot (in-cluster)
-        api_url: http://registry.talos00
+        # THE SERVICE, not registry.talos00. That hostname is a LAN name served
+        # by Pi-hole for browsers and nodes; pods resolve through CoreDNS, which
+        # has never heard of it — "lookup registry.talos00 on 10.96.0.10:53: no
+        # such host", which reads as the registry being down rather than
+        # unresolvable. `prefix` still has to be registry.talos00, because that
+        # is what the image references in the manifests say and it is what the
+        # updater matches on; api_url is only where it dials.
+        api_url: http://zot.registry.svc.cluster.local:5000
         prefix: registry.talos00
         insecure: true
   # ArgoCD server address (use internal service)
