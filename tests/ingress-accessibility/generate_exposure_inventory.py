@@ -278,11 +278,17 @@ def markdown(records, agg, meta, sha, dirty):
 
     A("# Ingress Exposure Inventory")
     A("")
-    src = ("repo Flux tree **+ live cluster**" if meta.get("live_merged")
-           else "repo Flux tree **only**")
-    A(f"**Source:** {src} at `{sha}`" + ("  ⚠️ **working tree dirty — corresponds to no commit**"
-                                         if dirty else "") +
-      f" · **Routes:** {total} · **Middlewares:** {meta.get('mw_count', '?')}")
+    if meta.get("live_only_mode"):
+        src = "**live cluster only** (kubectl; no repo render)"
+    elif meta.get("live_merged"):
+        src = "repo Flux tree **+ live cluster**"
+    else:
+        src = "repo Flux tree **only**"
+    stamp = ("captured from the running cluster" if meta.get("live_only_mode")
+             else f"at `{sha}`" + ("  ⚠️ **working tree dirty — corresponds to no commit**"
+                                   if dirty else ""))
+    A(f"**Source:** {src} {stamp} · **Routes:** {total} · "
+      f"**Middlewares:** {meta.get('mw_count', '?')}")
     if meta.get("live_merged"):
         A("")
         A(f"Includes **{meta.get('live_only_routes', 0)} live-only route(s)** that exist in the "
@@ -456,15 +462,29 @@ def main():
     ap.add_argument("--stdout", action="store_true", help="print the markdown instead of writing")
     ap.add_argument("--live", action="store_true",
                     help="MERGE live-cluster routes (ArgoCD + Helm-generated) into the "
-                         "inventory. Required for a cluster-complete exemption list; the "
+                         "repo inventory. Required for a cluster-complete exemption list; the "
                          "repo view alone misses ~33%% of routes.")
+    ap.add_argument("--live-only", action="store_true",
+                    help="Audit the LIVE CLUSTER ALONE — no repo render, no kustomize needed. "
+                         "This is the true ground truth of what is serving RIGHT NOW; use it "
+                         "for the pentest target list. Cannot attribute repo-vs-live because it "
+                         "never reads the repo.")
     args = ap.parse_args()
 
-    docs, meta = corpus.render()
+    if args.live_only:
+        ldocs, live_why = live_docs()
+        docs, meta = ldocs, {"live_only_mode": True, "missing": [], "failed": []}
+        repo_keys, live_only_count = set(), len(ldocs)
+        if not ldocs:
+            print(f"  FATAL: --live-only got no objects from the cluster "
+                  f"({live_why or 'is kubectl configured?'})", file=sys.stderr)
+            return 2
+    else:
+        docs, meta = corpus.render()
     repo_keys = set()
-    live_only_count, live_why = 0, None
+    live_only_count, live_why = (live_only_count if args.live_only else 0),                                 (live_why if args.live_only else None)
 
-    if args.live:
+    if args.live and not args.live_only:
         ldocs, live_why = live_docs()
         # Identify repo-sourced routes first so live-only ones can be labelled.
         for r in corpus.routes(docs):
@@ -485,7 +505,8 @@ def main():
     records = []
     for r in uniq:
         rec = classify(r, idx)
-        rec["source"] = ("repo" if (not args.live or
+        rec["source"] = ("cluster" if args.live_only else
+                         "repo" if (not args.live or
                                     (r["namespace"], r["name"], r.get("match", "")) in repo_keys)
                          else "live-only")
         records.append(rec)
@@ -494,7 +515,8 @@ def main():
     meta = dict(meta or {})
     meta["mw_count"] = len(idx)
     meta["allowlists_loaded"] = allowlists is not None
-    meta["live_merged"] = bool(args.live)
+    meta["live_merged"] = bool(args.live) or bool(args.live_only)
+    meta["live_only_mode"] = bool(args.live_only)
     meta["live_docs"] = live_only_count
     meta["live_error"] = live_why
     meta["live_only_routes"] = sum(1 for r in records if r.get("source") == "live-only")
@@ -534,7 +556,7 @@ def main():
           f"undocumented_unguarded_wan={len(agg['undocumented_unguarded_wan'])} "
           f"broken_routers={len(agg['broken_routers'])} "
           f"regex_redirect_fallthrough={len(agg['regex_redirect_fallthrough'])}")
-    if dirty:
+    if dirty and not args.live_only:
         print("  NOTE: working tree is DIRTY — this report does not correspond to any commit.")
     for f in fatal:
         print(f"  FATAL: {f}", file=sys.stderr)
