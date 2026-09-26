@@ -29,6 +29,24 @@ kind: ImageUpdater
 metadata:
   name: fchat-bouncer
   namespace: argocd
+  # DECLARED, because the controller cannot add it itself.
+  #
+  # argocd-image-updater v1.2.2 fails its own finalizer-add with
+  # "ImageUpdater ... is invalid: [spec.namespace: Required value]" — on an
+  # object that plainly has spec.namespace. Whatever it sends loses the spec,
+  # and the reconcile then aborts before any registry work happens, so the CR
+  # sits with no status and drops out of the reconcile set entirely.
+  #
+  # The other three ImageUpdaters here do not hit it: they were created in May
+  # and July, already carry the finalizer, and so never take the add path. This
+  # one was created after the controller was upgraded and is the only CR that
+  # exercises it.
+  #
+  # Adding it by hand works and then Flux prunes it straight back, because it
+  # was not in git. So it is in git. Remove this once the upstream add path is
+  # fixed; keeping it costs nothing but a line.
+  finalizers:
+    - resources-finalizer.argocd-image-updater.argoproj.io
 spec:
   namespace: argocd
   commonUpdateSettings:
