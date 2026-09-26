@@ -155,6 +155,43 @@ spec:
       - name: catalyst-accept-encoding
       - name: catalyst-inject-audiobookshelf
 ---
+# Forgejo rides theme.park's `gitea` base sheet — Forgejo is a Gitea fork and the
+# upstream sheet maps the same DOM. Injecting at </head> rather than </body>: the
+# Gitea template emits a literal </head>, so the theme lands before first paint
+# instead of repainting the page after it (TALOS-xfjl.3).
+#
+# This required 22 new variables in 00-tokens.css first. gitea-base.css consumes
+# 37 and the theme only supplied 15, and an undefined custom property does not
+# fall back to the theme — it falls back to STOCK GITEA, which is how you get an
+# app that is half Catalyst and half upstream. All 37 are defined as of the
+# token commit that precedes this one.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-gitea
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/gitea/gitea-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-gitea
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-gitea
+---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:

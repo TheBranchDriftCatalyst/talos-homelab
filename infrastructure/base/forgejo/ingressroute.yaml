@@ -62,6 +62,19 @@ spec:
   routes:
     - match: Host(`forge.talos00`)
       kind: Rule
+      middlewares:
+        # Full Catalyst theme + the cross-app nav bar. Forgejo is a Gitea fork,
+        # so it rides theme.park's `gitea` base sheet — that sheet consumes 37
+        # CSS variables and the theme now defines all 37 (TALOS-343d.1); before
+        # that it supplied 15 and the undefined ones fell back to stock Gitea.
+        #
+        # LAN ROUTE ONLY, deliberately. The nav manifest enumerates every
+        # *.talos00 hostname in the cluster, so injecting it into the public
+        # forge.knowledgedump.space route above would publish the internal
+        # topology to the internet. If the public route is ever themed, the
+        # manifest needs a public/private split first.
+        - name: catalyst-gitea
+          namespace: traefik
       services:
         - name: forgejo
           port: 3000
