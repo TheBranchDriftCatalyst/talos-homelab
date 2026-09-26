@@ -11,12 +11,13 @@ metadata:
   labels: {catalyst.io/stage: poc-demo}
 spec:
   instanceName: gpu-test-rig
-  instanceType: g5.xlarge
-  models: "llama-3.1-8b-instruct"   # space-separated prefixes in the library bucket
+  instanceType: g6e.xlarge          # 1x L40S 48GB (4 vCPU) — biggest that fits the 8-vCPU G/VT spot quota (TALOS-nxt4 tracks the 96GB bump)
+  models: "qwen3-32b-awq"           # staged into the S3 library 2026-09-26; Qwen3-32B AWQ (~19.3GB) fits 48GB w/ large ctx
   modelsBucket: catalyst-tbdc-models
   cacheVolumeGb: 200
   servePort: "8000"
   region: us-west-2
-  availabilityZone: us-west-2a      # HUMAN: must match the subnet below
-  vpcId: vpc-REPLACE-ME
-  subnetId: subnet-REPLACE-ME
+  availabilityZone: us-west-2a      # matches subnet-36191741 (us-west-2a, public-IP-on-launch)
+  vpcId: vpc-3536d651
+  subnetId: subnet-36191741
+  instanceProfileName: catalyst-ssm # SSM interactive access — SG is egress-only, this is the ONLY way in (jump pod → shell / vLLM port-forward)
