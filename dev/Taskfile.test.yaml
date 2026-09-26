@@ -68,6 +68,27 @@ tasks:
     cmds:
       - python3 -m pytest -m disaster_recovery --destructive {{.CLI_ARGS}}
 
+  ingress-inventory:
+    desc: "Generate the ingress exposure inventory (deterministic; basis for the TALOS-a8vo.4 audit)"
+    summary: |
+      Renders the repo's Flux tree and classifies every IngressRoute by what actually
+      protects it, expanding `chain` middlewares recursively -- 17 of 53 middlewares are
+      chains, so flat name matching misreads them in BOTH directions (a route protected
+      only via a chain reads as unguarded; a chain with no protection reads as guarded).
+
+      Deterministic by construction: repo-only (never the live cluster), every collection
+      sorted, stamped with the commit rather than a timestamp -- so two reports diff
+      cleanly to show what a change did to the exposure surface.
+
+      Writes .output/ingress-exposure-inventory.{md,json}. The markdown carries the
+      exemption decision table TALOS-a8vo.4 needs signed off BEFORE the Traefik entrypoint
+      default is inverted; the json is for diffing and assertions.
+
+        task test:ingress-inventory
+        task test:ingress-inventory -- --stdout
+    cmds:
+      - python3 tests/ingress-accessibility/generate_exposure_inventory.py {{.CLI_ARGS}}
+
   vpn-rotation-soak:
     desc: "VPN rotation SOAK — repeated real rotations on the throwaway canary, measures downtime"
     summary: |
