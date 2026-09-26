@@ -2,8 +2,8 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-09-25
-**Pick up here:** `TALOS-f0sd` (review the 98-file diff first — nothing is committed) · **Deadline item:** `TALOS-sahd` (~2026-09-20 03:35 UTC)
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-09-26
+**Pick up here:** `TALOS-a8vo.4` (P0 — start with the exemption inventory, not the entrypoint flip) · **Deadline item:** none outstanding
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -34,43 +34,29 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-### ⏱ Time-boxed — both fired 2026-09-20; resolved 2026-09-25
+### P0 — `TALOS-a8vo.4`, Host-spoof reaches everything
 
-|                       |                                                                                                                                                                                                                                                              |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `TALOS-sahd` (P1)     | The unattended CrowdSec GC reap fired and **enforcement survived** — all crowdsec pods 0-restart. The question is answered. Still open: promote-or-delete the silentdrop plane, and the missing CA-rotation runbook.                                        |
-| **`TALOS-a83x`** (P2) | Prediction landed: redis was **OOMKilled 2026-09-20T15:27:31Z**. Bumped P3→P2 — it is an active degradation now, `ServiceDown falco-falcosidekick-ui` firing. Limit is 768 Mi, not 512 MB, and it OOMed anyway; the 7 d TTL claim is settled false. |
+|                        |                                                                                                                                                                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Do this first**      | Produce the **exemption inventory**: every route, what it is, whether it is genuinely public, what breaks if locked down. This is the half that makes the risky half safe, and it is reviewable on its own.                                                   |
+| The fix, after that    | Invert the Traefik entrypoint default from allow-all to `lan-only` (`web` first, then `websecure`), exempting the genuinely-public routes. Collapses the exposed surface to a handful.                                                                        |
+| Why it needs care      | Authentik alone has 6+ routes including outpost callbacks. Get the exemptions wrong and you lock yourself out of the SSO that guards everything else. Also: it cannot be verified from the LAN — proving the hole is shut needs an off-LAN vantage point.      |
 
-### AWS — a broken credential was acting as an undeclared brake (2026-09-25)
+### Then — security campaign (`TALOS-a13n`, 4/20)
 
-|                     |                                                                                                                                                                                                                                                                                       |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| What happened       | `ExternalSecretNeverSynced` had been critical since the ProviderConfig was applied: the ES named 1Password item `aws-crossplane`, which never existed — the credentials are `aws-credentials`. Repointed in `bef5dddd`; `TALOS-3g8f` closed.                                       |
-| The trap            | Restoring the credential **immediately began creating real AWS resources** nobody had reviewed. Nothing had decided not to run them; they just could not act. Caught before either `g5.xlarge` launched (`vllm-8b` is **on-demand**, ~$1/hr); a 200 GB gp3 volume was created and pruned. |
-| Current state       | GPU stack **off** in `infrastructure/base/aws/apps/kustomization.yaml` (`1af0eb97`) — that file's idiom is "file = on-switch", so commented = off. S3 (`catalyst-tbdc-offsite-backups`, `catalyst-tbdc-models`) was never affected and stays Synced/Ready.                          |
-| Before re-enabling  | **Do not just uncomment.** Both claims still carry `vpcId: vpc-REPLACE-ME` / `subnetId: subnet-REPLACE-ME`. See `TALOS-455u` — and decide whether the POC is still wanted, given it sat inert 33 days unnoticed.                                                                    |
-
-### Immediate — 98 files are uncommitted on purpose
-
-|                     |                                                                                                                                                                                                                                                                           |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Review the diff** | One review pass was requested, so nothing from 2026-09-19 is committed. Verified green before it was left: unit + integration pass, 0 known gaps, `docsgen check` reports all 12 artifacts `unchanged`, markdownlint 0, broken links **0**. `git status` is the worklist. |
-| After review        | Commit, then `flux reconcile` is **not** needed — the day's changes are docs, tooling and one already-applied CNP narrowing.                                                                                                                                              |
-
-### Then — docs as projection (`TALOS-f0sd`)
-
-|                     |                                                                                                                                                                                                 |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Highest value       | `TALOS-f0sd.9` — derive `grouping_roots` instead of hand-typing it. Read the ticket first: the obvious derivation (README presence alone) is **circular** and the correction is recorded there. |
-| Also open           | The corpus split (`components` stats the filesystem, `lint` walks `git ls-files`), nav-by-convention, and slice 4 model renames.                                                                |
-| Security follow-ups | `websecurelan :8443` is WAN-forwarded while its manifest claims otherwise; four honeypot tests assert a superseded architecture and are failing **on purpose**.                                 |
+|                     |                                                                                                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Next P1             | `TALOS-sahd` — promote-or-delete the silentdrop plane (it enforces zero decisions while carrying a sidecar, registrar, two secrets and a canary), and the missing CA-rotation runbook. Needs a decision, not code. |
+| Highest value after | `TALOS-eecg` — nothing detects a dependency restarting under a live consumer. Three cases in one day, one self-inflicted. Comparing pod ages is the cheap generic version.                          |
+| Also open           | `TALOS-uy6a` (analytics injects nothing on **any** site — decisive test is whether themepark's nav injects on the same engine), `TALOS-z16b` (gluetun wedges on settings PUT), `TALOS-soub` (needs 2–4 more ProtonVPN keys).                     |
 
 ### Explicitly not next
 
-|                         |                                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Slice 4 (model renames) | Most churn, least behaviour. `Nested`→`SubUnits` improves nothing a doc reader would notice, and it would bury the review diff. |
-| Hand-fixing nav tables  | They are generated now. A hand edit is reverted by the next `docsgen generate`, and the rows exist only because the tree does.  |
+|                                    |                                                                                                                                                                      |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flipping the entrypoint default    | Not before the inventory exists. A wrong exemption list is an outage of everything public, including your own SSO.                                                 |
+| Re-enabling VPN rotation           | `TALOS-c4l1`/`TALOS-cdec` are blocked on `TALOS-soub` (only 2 spare ProtonVPN keys, both tiny countries). qBittorrent is pinned and healthy; leave it.              |
+| `TALOS-f0sd` (docs as projection)  | Still open and still worthwhile, but a P0 with a live external attack surface outranks it. It was the live effort on 2026-09-19; it is not any more.                |
 
 <!-- /closeout:next -->
 
@@ -79,6 +65,46 @@ If you are here to do something else entirely, that is fine and probably correct
 <!-- closeout:sessions -->
 
 ## Sessions
+
+### 2026-09-25/26 — Three silent failures found by reading the alert list
+
+**Commits:** 22 · **Scope:** `infrastructure/base/{security,aws,analytics,traefik,forgejo-runner,themepark,monitoring}`
+
+**Filed:** `TALOS-uy6a`, `TALOS-eecg`, `TALOS-soub`, `TALOS-cdec`, `TALOS-z16b`, `TALOS-c4l1`
+**Closed:** `TALOS-a8vo.1` (P0), `TALOS-kb2f` (P1), `TALOS-1gp`, `TALOS-a83x`, `TALOS-3g8f`, `TALOS-2o6e`, `TALOS-y7qg`, `TALOS-0jx`
+**Carried:** `TALOS-a8vo.4` (P0 — Host-spoof reaches everything; the exemption inventory is the safe first half), `TALOS-uy6a` (analytics injects nothing), `TALOS-eecg` (the class behind two of today's outages)
+
+Three things had been broken for days while every dashboard looked fine, and all three were
+sitting in the firing-criticals list unread. **CrowdSec had ingested no cowrie logs for 94
+hours** — the tail does not survive kubelet log rotation without `poll_without_inotify`, and it
+was the only container source missing it, so the honeypot contributed zero bans while attacks
+landed and were written to disk unparsed. **boomtime served a bare 404 for five days** because
+two Traefik plugin keys differed by one capital letter (`rewritebody` vs `rewriteBody`); Traefik
+logged `Plugins loaded.` with five plugins, silently dropped the sixth, and disabled every router
+referencing it. **falcosidekick-ui errored every few seconds for five days** showing `1/1 Running,
+0 restarts` — its redis OOMed, and with no persistence the RediSearch index went with it, which
+the UI only creates at startup.
+
+The AWS work produced the sharpest lesson. An ExternalSecret named a 1Password item that never
+existed (`aws-crossplane`; the credentials are `aws-credentials`), so the ProviderConfig had no
+credentials for 33 days and every AWS managed resource sat `SYNCED=False`. **That broken
+credential was acting as an undeclared brake.** Repointing it — a one-string fix — immediately
+began creating real infrastructure nobody had reviewed: caught before either `g5.xlarge` launched
+(`vllm-8b` is on-demand, ~$1/hr), after a 200 GB gp3 volume had already been created. The POC GPU
+stack is now switched off via the kustomization's own "file = on-switch" idiom, and both claims
+still carry `vpc-REPLACE-ME`, so they could never have come up anyway.
+
+Costs, stated plainly. Two tickets' premises were wrong and so was my own advice: `TALOS-a83x`
+claimed the 7 d TTL was unreachable (it is applied — measured 7.0 d) and I recommended setting
+`allkeys-lru` before checking that it was already set. Deleting the "orphaned" PVC in
+`TALOS-y7qg` **re-broke the UI minutes after I documented that exact failure class** — no pod
+mounted it, but the StatefulSet still owned it via `volumeClaimTemplates`. And the new Falco
+test false-passed on its first run, matching a pre-existing breach event and reporting "fired in
+0s", then failed for a second reason that was also mine: a 63 ms node-vs-workstation clock skew.
+
+`TALOS-a8vo.1` (P0) turned out to be already remediated and was closed with live proof rather
+than on the ticket's word. Its sibling `TALOS-a8vo.4` is the carried P0 and the surface has grown
+since it was written — a broader sweep now counts 182 of 263 routes without `lan-only`/auth.
 
 ### 2026-09-19 — Docs as projection: the tool, the sections, and what grounding found
 
@@ -234,6 +260,28 @@ worth keeping is distilled up into this list first. Fuller detail lives in
 14. **The pre-commit chain did not block until 2026-09-19.** The beads wrapper discarded
     lefthook's exit code, so every failing job passed silently — `markdownlint` had never once
     run. `[enforced: exit code now propagated; proven both directions]`
+
+15. **A "plugins loaded" line is not proof your plugin loaded.** Traefik cannot hold two
+    plugin keys differing only by case: it loaded five, silently dropped `rewritebody` in favour
+    of `rewriteBody`, and disabled every router referencing the loser. The only symptom was a
+    404 on a healthy app. Check the loaded list against what your middlewares reference.
+16. **A dependency restarting under a live consumer leaves the consumer Running and broken.**
+    falcosidekick-ui creates its RediSearch index only at startup, so a redis restart orphans it
+    permanently while both pods stay `1/1 Ready, 0 restarts`. Compare pod ages before trusting
+    health. (`TALOS-eecg`)
+17. **"No pod mounts it" does not make a StatefulSet PVC safe to delete.** The StatefulSet still
+    owns it through `volumeClaimTemplates`; deleting the claim forces a pod replacement. Check
+    ownership, not just mounts.
+18. **A broken credential is an undeclared brake.** While an ExternalSecret was unresolvable,
+    every AWS resource in git sat `SYNCED=False` — not because anyone decided against them, but
+    because they could not act. Fixing the credential starts creating them. Review intent before
+    restoring credentials that have been broken a long time.
+19. **CrowdSec file tails do not survive kubelet log rotation** without
+    `force_inotify` + `poll_without_inotify`. The agent stays Running and its metric stays
+    frozen at the last pre-rotation value, which reads as "quiet", not "broken".
+20. **Event timestamps come from the node's clock, `t0` from yours.** A genuinely fresh event
+    can timestamp _before_ the action that caused it (measured: 63 ms). Any test comparing the
+    two needs a skew tolerance, or it will report a working control as blind.
 
 <!-- /closeout:gotchas -->
 
