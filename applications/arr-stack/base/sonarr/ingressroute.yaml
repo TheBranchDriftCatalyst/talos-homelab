@@ -31,6 +31,15 @@ spec:
     - match: Host(`sonarr.talos00`) && (PathPrefix(`/api`) || PathPrefix(`/feed`))
       kind: Rule
       priority: 100
+      # lan-only, added 2026-09-26 (TALOS-a8vo.7 defense-in-depth). This
+      # priority-100 /api carve-out has no forward-auth so *arr clients keep
+      # working. An external pentest found this route enforces app-key only
+      # (401 off-net) -- not leaking like tautulli's did, but the ticket wants
+      # lan-only on all six as a second layer. off-net is blocked; the pod-CIDR
+      # east-west residue on lan-only is the separate a8vo P1.
+      middlewares:
+        - name: lan-only
+          namespace: traefik
       services:
         - name: sonarr
           port: 8989
