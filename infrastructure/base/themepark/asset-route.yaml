@@ -19,32 +19,33 @@
 # NO auth, deliberately: browsers fetch these as subresources with no session
 # and cannot follow a redirect to SSO. It serves static CSS and one script.
 #
-# ── LAN-ONLY, ADDED 2026-09-26 AFTER A LIVE DISCLOSURE ───────────────────────
-# Because this route carries no Host matcher it was served on all 28 PUBLIC
-# hostnames too, and /catalyst/resources/catalyst-nav.json enumerates every
-# internal *.talos00 host. Verified from the public internet, not inferred:
+# ── HOST-GATED, 2026-09-26, AFTER A CONFIRMED PUBLIC DISCLOSURE ──────────────
+# Because this route carried no Host matcher it was served on all 28 PUBLIC
+# hostnames, and /catalyst/resources/catalyst-nav.json enumerates every
+# internal *.talos00 host. Proven from OUTSIDE the network (not from the LAN,
+# where router hairpinning makes any test look local): an external fetch of
+# https://forge.knowledgedump.space/catalyst/resources/catalyst-nav.json
+# returned HTTP 200 with all 25 hostnames.
 #
-#   dig @1.1.1.1 forge.knowledgedump.space        -> 108.64.138.156
-#   curl --resolve forge.knowledgedump.space:443:108.64.138.156 \
-#        https://forge.knowledgedump.space/catalyst/resources/catalyst-nav.json
-#   -> HTTP 200, 25 internal hostnames
+# THE FIRST FIX WAS WRONG AND IS RECORDED HERE SO IT IS NOT RETRIED. Adding the
+# `lan-only` ipAllowList middleware did NOT work, because the edge router
+# source-NATs inbound WAN traffic: Traefik's own access log shows that external
+# request as ClientHost=192.168.1.33 against Host=forge.knowledgedump.space.
+# An RFC1918 source check therefore cannot distinguish WAN from LAN anywhere on
+# this network, and any route relying on lan-only as its network control is
+# relying on nothing. See the separate ticket for the fleet-wide consequences.
+#
+# The working control is the REQUESTED HOST, which the client cannot launder
+# through NAT. HostRegexp keeps the route hostless in spirit — any *.talos00
+# host still gets assets with no per-app route — while public hostnames simply
+# do not match and fall through to the app's own router.
 #
 # The CSS and JS leak nothing (nav.js embeds no hostnames; the only .talos00
-# string in catalyst.css is a code comment) — the manifest is the whole
-# exposure. Gating the entire prefix rather than just the manifest costs
-# nothing today because NO public host is themed, and it makes public theming
-# a deliberate decision instead of an accident. If a public host is ever
-# themed, the manifest needs a public/private split first — not a relaxation
-# of this rule.
-#
-# lan-only is ipAllowList 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
-# 127.0.0.1/32. LAN clients (192.168.x) and in-cluster pods (10.244.x) pass;
-# an internet client presents its real public IP here (the public routes are
-# cloudflare-proxied=false) and is refused.
-#
-# Two objects because Kyverno's ingressroute-no-combined-entrypoints denies a
-# single route listing both entrypoints, and because Plex and Jellyfin are
-# served on plain HTTP while everything else is HTTPS.
+# string in catalyst.css is a code comment) — the manifest was the whole
+# exposure. Gating the entire prefix anyway costs nothing today because NO
+# public host is themed, and it makes public theming a deliberate decision. If
+# a public host is ever themed, the manifest needs a public/private split
+# first, not a relaxation of this rule.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -56,14 +57,10 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: PathPrefix(`/catalyst/`)
+    - match: PathPrefix(`/catalyst/`) && HostRegexp(`^[a-z0-9-]+\.talos00$`)
       kind: Rule
       priority: 10000
       middlewares:
-        # FIRST: refuse non-LAN clients before anything else runs. See the
-        # disclosure note in the header.
-        - name: lan-only
-          namespace: traefik
         - name: catalyst-compress
           namespace: traefik
         - name: catalyst-asset-cache
@@ -85,14 +82,10 @@ spec:
   routes:
     # Deliberately NOT redirect-https: Plex and Jellyfin are served over plain
     # HTTP, and an HTTPS-only asset origin would leave them unthemed.
-    - match: PathPrefix(`/catalyst/`)
+    - match: PathPrefix(`/catalyst/`) && HostRegexp(`^[a-z0-9-]+\.talos00$`)
       kind: Rule
       priority: 10000
       middlewares:
-        # FIRST: refuse non-LAN clients before anything else runs. See the
-        # disclosure note in the header.
-        - name: lan-only
-          namespace: traefik
         - name: catalyst-compress
           namespace: traefik
         - name: catalyst-asset-cache
