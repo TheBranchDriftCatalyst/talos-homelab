@@ -69,7 +69,23 @@ kubectl delete -f infrastructure/base/aws-redteam/ssm-jump.yaml   # when done (i
 A target appears in the menu only once it has the `catalyst-ssm` profile, the SSM agent running
 (AL2023 / DL GPU AMI ship it enabled), and egress to the SSM endpoints (the default public subnet
 provides this via its IGW). The autonomous `redteam-vantage` box does NOT set `instanceProfileName`,
-so it stays SSM-less by design; add the field to a claim to make it interactively reachable.
+so it stays SSM-less by design.
+
+`redteam-interactive.yaml` is the ready-made interactive box (a second on-switch in
+`kustomization.yaml`): it sets `instanceProfileName: catalyst-ssm`, installs the pentest toolkit
+(`curl`/`dig`/`jq`/`nmap`/`ncat`), and **stays up** (no probe→halt) so you can `ssm-jump` in and run
+probes by hand. Flip it on the same way as the autonomous box:
+
+```sh
+# edit kustomization.yaml → uncomment "- redteam-interactive.yaml"
+git commit -am "redteam: interactive vantage up" && git push
+flux reconcile kustomization aws-redteam --with-source
+# ~3 min for boot + SSM registration, then:
+kubectl apply -f infrastructure/base/aws-redteam/ssm-jump.yaml
+kubectl exec -it -n crossplane-system ssm-jump -- bash /scripts/jump.sh   # → pick redteam-interactive → shell
+# ... probe by hand (see the box's MOTD) ...
+# TEAR DOWN: re-comment redteam-interactive.yaml, commit, push, reconcile (self-halts in 2h regardless)
+```
 
 ## Re-embedding probe.sh after an edit
 

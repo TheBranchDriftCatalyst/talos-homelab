@@ -1,0 +1,57 @@
+---
+# ██ INTERACTIVE red-team vantage ██ — OFF by default (commented out of
+# kustomization.yaml). The counterpart to redteam-auto.yaml: instead of booting →
+# running the fixed probe battery → halting, this box boots, attaches the
+# catalyst-ssm instance profile, installs the pentest toolkit, and STAYS UP so you
+# SSM in (no inbound, no SSH key) and run probes BY HAND from a genuine off-net
+# vantage. This is what "interactive mode" means for the red-team pod.
+#
+# Flip on  = uncomment in kustomization.yaml, commit, push, flux reconcile.
+# Get in   = kubectl apply -f infrastructure/base/aws-redteam/ssm-jump.yaml
+#            kubectl exec -it -n crossplane-system ssm-jump -- bash /scripts/jump.sh
+#            → pick redteam-interactive → shell. Run /root/probe.sh or ad-hoc curls.
+# Flip off = re-comment, commit, push, reconcile (Flux prunes). redteam-reaper (2h)
+#            + the in-box self-halt (+120) are cost backstops; git-off is the real teardown.
+#
+# openPort:0 — SSM dials OUT to the SSM endpoints; nothing inbound. Reuses the same
+# us-west-2 preflight values as redteam-auto (re-resolve the AMI before a run; AMIs rotate).
+apiVersion: aws.catalyst.io/v1alpha1
+kind: XInstance
+metadata:
+  name: redteam-interactive
+  labels:
+    app.kubernetes.io/part-of: aws-redteam   # redteam-reaper reaps this at >2h
+    catalyst.io/stage: redteam
+    catalyst.io/cloud: aws
+spec:
+  instanceName: redteam-interactive
+  instanceType: t3.small            # 2 vCPU / 2GB — a bit more headroom than the autonomous t3.micro for interactive work
+  ami: ami-075d448db8fb256af        # AL2023 x86_64 us-west-2 (re-resolve before launch)
+  region: us-west-2
+  vpcId: vpc-3536d651
+  subnetId: subnet-36191741
+  rootVolumeGb: 8
+  openPort: 0                       # NO inbound — reach it via SSM (catalyst-ssm) only
+  instanceProfileName: catalyst-ssm # ← the interactive enabler: SSM shell, no key, no inbound
+  userData: |
+    #!/bin/bash
+    exec > >(tee /dev/console) 2>&1
+    echo "=== CATALYST-REDTEAM interactive vantage boot $(date -u +%FT%TZ) ==="
+    dnf install -y bind-utils jq nmap nmap-ncat >/dev/null 2>&1 || yum install -y bind-utils jq nmap nmap-ncat >/dev/null 2>&1
+    ORIGIN="$(dig +short origin.amberdark.net 2>/dev/null | tail -1)"; [ -z "$ORIGIN" ] && ORIGIN=108.64.138.156
+    SELF="$(curl -s --max-time 8 https://api.ipify.org || echo unknown)"
+    cat > /etc/motd <<MOTD
+    =======================================================================
+     CATALYST red-team INTERACTIVE vantage — genuine off-net (AWS EC2)
+       egress : ${SELF}
+       ORIGIN : ${ORIGIN}   (dig origin.amberdark.net)
+     ROE: pentest/target-packages/talos-ingress/scope.md — NON-DESTRUCTIVE, read-only.
+     Tools: curl dig jq nmap ncat.  Example host-spoof probe:
+       curl -sk -H 'Host: argocd.talos00' https://${ORIGIN}/ -o /dev/null -w '%{http_code}\n'
+     ⚠ This box SELF-HALTS in ~2h (cost backstop). Actively working?  sudo shutdown -c
+        Real teardown = re-comment the on-switch in git (Flux prunes). redteam-reaper caps at 2h.
+    =======================================================================
+    MOTD
+    echo "interactive vantage ready — SSM in via the ssm-jump pod (see file header)."
+    # cost backstop: self-halt in 2h regardless (git-off is primary; reaper is the cluster backstop)
+    shutdown -h +120
