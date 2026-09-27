@@ -1,0 +1,85 @@
+---
+# Scoped IAM user for the Crossplane AWS provider (TALOS-lq5y) — the intended
+# replacement for the account ROOT access keys the ProviderConfig uses today.
+#
+# PHASE 1 (this file): create the user + scoped policy + access key. The AccessKey
+# writes its credentials into the Secret `aws-scoped-provider-creds`. This does NOT
+# touch the live ProviderConfig `default` — the provider keeps using the root keys
+# until a deliberate, TESTED cutover (Phase 2): build a shared-credentials-file
+# Secret from this key, point a ProviderConfig at it, verify every composition
+# still reconciles (no AccessDenied), then repoint `default` and retire the root
+# keys in 1Password. Cutover is the only step that can break the AWS stack.
+#
+# SCOPE: full EC2 / S3 / ECS / CloudWatch Logs + IAM role/instance-profile/policy
+# management + PassRole — exactly what the compositions in this repo create.
+# Deliberately NO IAM user/group/accesskey management (limits self-escalation;
+# user changes stay with root / break-glass). CAVEAT: PassRole + role/policy mgmt
+# is inherently powerful (could craft an admin role and pass it to an instance) —
+# accepted for a homelab; tighten Resource ARNs later.
+#
+# Root creates this user (these MRs default to providerConfigRef `default` = root).
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: User
+metadata:
+  name: crossplane-provider
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: provider-identity}
+  annotations:
+    crossplane.io/external-name: crossplane-provider
+spec:
+  forProvider:
+    path: /catalyst/
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: crossplane-provider
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: provider-identity}
+  annotations:
+    crossplane.io/external-name: crossplane-provider
+spec:
+  forProvider:
+    path: /catalyst/
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {"Sid": "Compute",    "Effect": "Allow", "Action": ["ec2:*"],  "Resource": "*"},
+          {"Sid": "Storage",    "Effect": "Allow", "Action": ["s3:*"],   "Resource": "*"},
+          {"Sid": "Containers", "Effect": "Allow", "Action": ["ecs:*"],  "Resource": "*"},
+          {"Sid": "Logs",       "Effect": "Allow", "Action": ["logs:*"], "Resource": "*"},
+          {"Sid": "IamRolesProfilesPolicies", "Effect": "Allow", "Action": [
+            "iam:GetRole","iam:CreateRole","iam:DeleteRole","iam:TagRole","iam:UntagRole","iam:ListRoleTags",
+            "iam:UpdateAssumeRolePolicy","iam:ListRoles","iam:ListRolePolicies","iam:ListAttachedRolePolicies",
+            "iam:AttachRolePolicy","iam:DetachRolePolicy","iam:PutRolePolicy","iam:DeleteRolePolicy","iam:GetRolePolicy",
+            "iam:CreatePolicy","iam:DeletePolicy","iam:GetPolicy","iam:GetPolicyVersion","iam:ListPolicyVersions",
+            "iam:CreatePolicyVersion","iam:DeletePolicyVersion","iam:ListPolicies","iam:TagPolicy","iam:UntagPolicy",
+            "iam:CreateInstanceProfile","iam:DeleteInstanceProfile","iam:GetInstanceProfile","iam:ListInstanceProfiles",
+            "iam:AddRoleToInstanceProfile","iam:RemoveRoleFromInstanceProfile","iam:ListInstanceProfilesForRole",
+            "iam:TagInstanceProfile","iam:UntagInstanceProfile","iam:PassRole"
+          ], "Resource": "*"}
+        ]
+      }
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: UserPolicyAttachment
+metadata:
+  name: crossplane-provider
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: provider-identity}
+spec:
+  forProvider:
+    userRef: {name: crossplane-provider}
+    policyArnRef: {name: crossplane-provider}
+---
+# Generates the access key + secret; Crossplane writes them to the Secret below.
+# UNUSED until the Phase 2 cutover — it is a dormant scoped credential until then.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: AccessKey
+metadata:
+  name: crossplane-provider
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: provider-identity}
+spec:
+  forProvider:
+    userRef: {name: crossplane-provider}
+  writeConnectionSecretToRef:
+    namespace: crossplane-system
+    name: aws-scoped-provider-creds
