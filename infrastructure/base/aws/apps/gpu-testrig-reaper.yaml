@@ -1,6 +1,6 @@
 ---
 # Cost backstop for the poc-demo GPU test rig (gpu-test-rig.yaml). Deletes any
-# XGPUInstance labelled catalyst.io/stage=poc-demo older than 2h.
+# XGPUInstance labelled catalyst.io/stage=poc-demo older than 6h.
 #
 # WHY a separate reaper: the gpu-inference tier-1 reaper (gpu-instance-reaper)
 # only targets part-of=gpu-inference and also reaps on "gateway at 0 replicas",
@@ -10,7 +10,7 @@
 # SAME Flux tension as redteam-reaper: while the rig's on-switch is UNCOMMENTED in
 # git, deleting the XR here just makes Flux recreate it next reconcile — so this
 # only truly reaps once the switch is re-commented. While ON it caps a single
-# box's age (churns at 2h). Git-off is the real teardown; this is belt, not braces.
+# box's age (churns at 6h). Git-off is the real teardown; this is belt, not braces.
 # g6e.xlarge spot is ~$1.86/hr, so do not rely on this — turn it OFF when done.
 apiVersion: v1
 kind: ServiceAccount
@@ -63,7 +63,7 @@ spec:
                 - |
                   set -eu
                   kubectl get crd xgpuinstances.aws.catalyst.io >/dev/null 2>&1 || { echo "no XGPUInstance CRD; nothing to reap"; exit 0; }
-                  NOW=$(date +%s); MAX=7200
+                  NOW=$(date +%s); MAX=21600  # 6h — generous window for an active test session; git-off is the real teardown
                   kubectl get xgpuinstance -l catalyst.io/stage=poc-demo \
                     -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.creationTimestamp}{"\n"}{end}' | while read -r name ts; do
                     [ -z "$name" ] && continue
