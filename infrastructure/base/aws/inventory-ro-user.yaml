@@ -1,0 +1,65 @@
+---
+# Read-only IAM user for the aws-inventory-exporter (TALOS-iymy hardening).
+# Replaces the exporter's use of the over-privileged root aws-credentials with a scoped
+# READ-ONLY identity: describe/list only, no writes, no s3:GetObject, no secrets. The AccessKey
+# writes its creds straight into the monitoring namespace where the exporter consumes them.
+# Root creates this (MRs default to providerConfigRef `default` = root).
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: User
+metadata:
+  name: catalyst-aws-inventory-ro
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: inventory-exporter}
+  annotations:
+    crossplane.io/external-name: catalyst-aws-inventory-ro
+spec:
+  forProvider:
+    path: /catalyst/
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: catalyst-aws-inventory-ro
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: inventory-exporter}
+  annotations:
+    crossplane.io/external-name: catalyst-aws-inventory-ro
+spec:
+  forProvider:
+    path: /catalyst/
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {"Sid": "Ec2ReadOnly", "Effect": "Allow", "Action": ["ec2:Describe*"], "Resource": "*"},
+          {"Sid": "S3Inventory", "Effect": "Allow",
+           "Action": ["s3:ListAllMyBuckets", "s3:GetBucketLocation"], "Resource": "*"},
+          {"Sid": "CloudWatchS3Size", "Effect": "Allow",
+           "Action": ["cloudwatch:GetMetricStatistics"], "Resource": "*"},
+          {"Sid": "IamReadOnly", "Effect": "Allow",
+           "Action": ["iam:ListUsers", "iam:ListRoles", "iam:ListPolicies", "iam:ListInstanceProfiles"],
+           "Resource": "*"}
+        ]
+      }
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: UserPolicyAttachment
+metadata:
+  name: catalyst-aws-inventory-ro
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: inventory-exporter}
+spec:
+  forProvider:
+    userRef: {name: catalyst-aws-inventory-ro}
+    policyArnRef: {name: catalyst-aws-inventory-ro}
+---
+# Generates the access key + secret; Crossplane writes them into monitoring/aws-inventory-ro-creds
+# (keys: username=access key id, password=secret access key) — consumed by the exporter Deployment.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: AccessKey
+metadata:
+  name: catalyst-aws-inventory-ro
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: inventory-exporter}
+spec:
+  forProvider:
+    userRef: {name: catalyst-aws-inventory-ro}
+  writeConnectionSecretToRef:
+    namespace: monitoring
+    name: aws-inventory-ro-creds
