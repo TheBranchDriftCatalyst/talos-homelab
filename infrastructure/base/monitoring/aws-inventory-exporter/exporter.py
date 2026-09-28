@@ -12,7 +12,8 @@ Plus an estimated RUNNING $/hr and an estimated IDLE storage $/mo (volumes/snaps
 unassociated EIPs — the "not on but still billing" spend), and an "unmanaged" flag for
 resources with no crossplane tag (orphans / raw run-instances that live outside GitOps).
 
-Read-only: only describe_*/list_*/get_* calls. Creds from the mounted aws-credentials secret.
+Read-only: only describe_*/list_*/get_* calls. Creds from the scoped read-only IAM user
+(catalyst-aws-inventory-ro) via env AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
 Mirrors the cf-records-exporter shape: a background refresh thread + a stdlib HTTP server
 serving the last snapshot, scraped by a PodMonitor. boto3 only (no prometheus_client).
 """
