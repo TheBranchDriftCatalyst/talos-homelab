@@ -32,11 +32,15 @@ CHAT_TIMEOUT = int(os.environ.get("GPU_LLM_TIMEOUT", "120"))      # 235B can be 
 IMAGE_TIMEOUT = int(os.environ.get("GPU_IMAGE_TIMEOUT", "240"))   # diffusion is slow
 
 _THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_THINK_OPEN = re.compile(r"<think>.*$", re.DOTALL | re.IGNORECASE)
 
 
 def strip_think(text: str) -> str:
-    """Qwen3 is a reasoning model; drop any <think>…</think> before content assertions."""
-    return _THINK.sub("", text or "").strip()
+    """Qwen3 is a reasoning model; drop <think>…</think> — and a trailing UNCLOSED <think>
+    (a reasoning block truncated by max_tokens) — before content assertions."""
+    t = _THINK.sub("", text or "")
+    t = _THINK_OPEN.sub("", t)
+    return t.strip()
 
 
 def _headers(key: str) -> dict:
@@ -83,7 +87,12 @@ class LLMClient:
 
     def chat(self, messages, max_tokens=512, temperature=0.2, **extra):
         body = {"model": self.model, "messages": messages,
-                "max_tokens": max_tokens, "temperature": temperature, **extra}
+                "max_tokens": max_tokens, "temperature": temperature,
+                # Qwen3 (and other reasoning models) emit <think> by default, which burns the
+                # whole token budget before the answer. These are functional/capability checks,
+                # not reasoning-depth benchmarks -> disable thinking for determinism. Harmless to
+                # models that don't read it. Override via extra if a test wants thinking on.
+                "chat_template_kwargs": {"enable_thinking": False}, **extra}
         status, parsed, raw = post_json(f"{self.base}/chat/completions", self.key, body, CHAT_TIMEOUT)
         assert status == 200, f"chat/completions -> HTTP {status}: {raw[:300]!r}"
         return parsed
