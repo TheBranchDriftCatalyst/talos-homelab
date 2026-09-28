@@ -113,27 +113,41 @@ spec:
               - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.publicIp, toFieldPath: status.publicIp}
               - type: CombineFromComposite
                 combine:
+                  # %s order MUST match this list: models, modelsBucket, servePort, servePort, models
                   variables:
-                    - {fromFieldPath: spec.modelsBucket}
                     - {fromFieldPath: spec.models}
                     - {fromFieldPath: spec.modelsBucket}
                     - {fromFieldPath: spec.servePort}
                     - {fromFieldPath: spec.servePort}
+                    - {fromFieldPath: spec.models}
                   strategy: string
                   string:
                     fmt: |
                       #!/bin/bash
-                      set -eu
-                      # --- mount the ephemeral model cache (gp3 @ /dev/sdf -> nvme alias) ---
-                      DEV=$(readlink -f /dev/sdf || echo /dev/nvme1n1)
-                      blkid "$DEV" >/dev/null 2>&1 || mkfs.xfs "$DEV"
-                      mkdir -p /cache && mount "$DEV" /cache
-                      # --- seed ONLY the requested models from the S3 library (bucket: %s) ---
-                      curl -sL https://github.com/peak/s5cmd/releases/latest/download/s5cmd_Linux-64bit.tar.gz | tar xz -C /usr/local/bin s5cmd
-                      for m in %s; do s5cmd sync "s3://%s/$m/*" "/cache/$m/"; done
-                      # --- serve the first cached model on :%s (reach it over your tunnel) ---
-                      FIRST=$(ls /cache | head -1)
-                      docker run -d --gpus all -p %s:8000 \
-                        -v /cache:/cache -e HF_HOME=/cache/hf \
-                        vllm/vllm-openai:latest --model "/cache/$FIRST" --max-model-len 8192
+                      # TALOS-iymy MVP serving (vllm-single): the big model on vLLM TP4 + ComfyUI sharing VRAM.
+                      # NO `set -eu` (lesson: it aborted before vLLM ever started on any transient error).
+                      # Logs to /var/log/gpu-init.log; inspect via SSM. Mesh-join is a Phase-3 follow-on — a
+                      # first launch is reachable via `aws ssm start-session ... AWS-StartPortForwardingSession`.
+                      exec > >(tee /var/log/gpu-init.log) 2>&1; set -x
+                      # --- mount the model cache (gp3; Nitro renames /dev/sdf -> /dev/nvmeXn1; wait for attach) ---
+                      for i in $(seq 1 40); do D=$(readlink -f /dev/sdf 2>/dev/null || true); [ -b "$D" ] && break; [ -b /dev/nvme1n1 ] && { D=/dev/nvme1n1; break; }; sleep 5; done
+                      blkid "$D" >/dev/null 2>&1 || mkfs.xfs "$D"
+                      mkdir -p /cache && mount "$D" /cache || true
+                      # --- s5cmd (PINNED: the /latest/download/s5cmd_Linux-64bit.tar.gz asset 404s -> silent no-binary) ---
+                      curl -fsSL https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz | tar xz -C /usr/local/bin s5cmd
+                      # --- same-region S3 -> /cache (fast; the big GPU never touches HuggingFace) ---
+                      for m in %s; do /usr/local/bin/s5cmd sync "s3://%s/$m/*" "/cache/$m/"; done
+                      # --- LLM: vLLM GPTQ-Int4, TP4 across all 4 L40S, util 0.78 (leaves VRAM for ComfyUI), on :%s ---
+                      docker run -d --restart=always --name vllm --gpus all -p %s:8000 \
+                        -v /cache:/cache -e HF_HOME=/cache/hf vllm/vllm-openai:latest \
+                        --model "/cache/%s" --served-model-name qwen3-235b \
+                        --tensor-parallel-size 4 --quantization gptq_marlin \
+                        --gpu-memory-utilization 0.78 --max-model-len 32768 --trust-remote-code
+                      # --- Image gen: ComfyUI + comfyui-shim (OpenAI /v1/images on :8012), sharing VRAM.
+                      #     `|| true`: runpod-mac-bundle is built+pushed separately; a launch before it exists
+                      #     still brings up vLLM. Ollama/Whisper disabled — vLLM owns the LLM path. ---
+                      docker run -d --restart=always --name comfy --gpus all -p 8012:8012 -p 8188:8188 \
+                        -v /cache:/workspace -e ENABLE_OLLAMA=false -e ENABLE_WHISPER=false \
+                        -e ENABLE_COMFYUI=true -e ENABLE_COMFYUI_SHIM=true \
+                        ghcr.io/thebranchdriftcatalyst/runpod-mac-bundle:latest || true
                 toFieldPath: spec.forProvider.userData
