@@ -138,7 +138,7 @@ spec:
                       # --- same-region S3 -> /cache (fast; the big GPU never touches HuggingFace) ---
                       for m in %s; do /usr/local/bin/s5cmd sync "s3://%s/$m/*" "/cache/$m/"; done
                       # --- LLM: vLLM GPTQ-Int4, TP4 across all 4 L40S, util 0.78 (leaves VRAM for ComfyUI), on :%s ---
-                      docker run -d --restart=always --name vllm --gpus all -p %s:8000 \
+                      docker run -d --restart=always --name vllm --gpus all --ipc=host -p %s:8000 \
                         -v /cache:/cache -e HF_HOME=/cache/hf vllm/vllm-openai:latest \
                         --model "/cache/%s" --served-model-name qwen3-235b \
                         --tensor-parallel-size 4 --quantization gptq_marlin \
