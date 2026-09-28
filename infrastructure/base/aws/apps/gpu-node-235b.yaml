@@ -1,0 +1,26 @@
+---
+# ██ MVP / TALOS-iymy ██ The SOTA GPU node: spot g6e.12xlarge (4× L40S = 192GB VRAM) in
+# us-east-2 serving Qwen3-235B-A22B-GPTQ-Int4 via vLLM TP4 + ComfyUI (comfyui-shim :8012)
+# sharing VRAM. THE FILE'S LINE IN kustomization.yaml IS THE ON-SWITCH — it is HELD OFF
+# pending an explicit go (~$5.1/hr spot; on-demand ~$10). The cache is seeded same-region
+# from catalyst-tbdc-models-use2 (the pre-init seeder staged the ~123GB there), so the box
+# does a fast S3->/cache at boot and never touches HuggingFace. Reach it via SSM
+# port-forward for the first bring-up (mesh-join is a Phase-3 follow-on).
+apiVersion: aws.catalyst.io/v1alpha1
+kind: XGPUInstance
+metadata:
+  name: gpu-node-235b
+  labels: {catalyst.io/stage: poc-demo}
+spec:
+  instanceName: gpu-node-235b
+  instanceType: g6e.12xlarge          # 4× L40S = 192GB VRAM. Spot ~$5.1/hr (us-east-2c cheapest), score 9/10.
+  ami: ami-07173ded18b6f3a7b          # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA), resolved 2026-09-27. Region-specific (upjet rejects resolve:ssm).
+  models: "qwen3-235b-gptq-int4"      # official Qwen GPTQ-Int4, ~123GB/32 shards; seeded to S3 by the pre-init seeder.
+  modelsBucket: catalyst-tbdc-models-use2  # us-east-2 replica -> same-region S3->/cache (fast, free egress).
+  cacheVolumeGb: 200                  # 123GB model + headroom.
+  servePort: "8000"
+  region: us-east-2
+  availabilityZone: us-east-2c        # g6e.12xlarge offered here + spot cheapest; same AZ as the seeder.
+  vpcId: vpc-0fa8197c81c9c151f        # us-east-2 default VPC
+  subnetId: subnet-030ae60367ab837fe  # default subnet for us-east-2c (public-IP-on-launch)
+  instanceProfileName: catalyst-gpu-seeder  # SSM + S3 read for the boot-time s5cmd S3->/cache. Switch to catalyst-ssm when the Phase-4 snapshot pre-seed lands.
