@@ -56,7 +56,10 @@ def _esc(v):
 
 
 def _managed(tags):
-    return "1" if any(k.startswith("crossplane.io/") for k in tags) else "0"
+    # upjet/Crossplane tag managed resources with crossplane-kind/-name/-providerconfig
+    # (NOT crossplane.io/ — that was the bug that flagged every managed resource as an orphan).
+    return "1" if any(k in ("crossplane-kind", "crossplane-name", "crossplane-providerconfig")
+                      or k.startswith("crossplane.io/") for k in tags) else "0"
 
 
 def _tagmap(taglist):
