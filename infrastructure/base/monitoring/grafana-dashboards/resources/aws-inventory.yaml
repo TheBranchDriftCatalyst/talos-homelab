@@ -1,0 +1,31 @@
+---
+# GrafanaDashboard CR: "AWS Inventory & Status" (TALOS-iymy).
+#
+# Cost + orphan visibility for the AWS footprint that nothing else in Grafana sees:
+# EC2/EBS/S3/IAM across ALL regions, estimated $/hr of running instances, an
+# "unmanaged/orphan" panel (live resources with no crossplane tag — the transient
+# seeders/builders/red-team boxes launched outside GitOps), plus a reaper-activity row
+# (when each cost-backstop reaper last fired + how many it reaped).
+#
+# Data: the aws-inventory-exporter (../../aws-inventory-exporter, PodMonitor -> Mimir) +
+# kube-state-metrics (reaper CronJob schedule/fire) + pushgateway (reaper_last_* from the
+# instrumented reapers). All targets use the Mimir datasource (uid "mimir").
+#
+# JSON at ../json/aws-inventory.json -> ConfigMap dashboard-aws-inventory
+# (configMapGenerator, disableNameSuffixHash). uid "aws-inventory" is stable.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: aws-inventory
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/component: dashboard
+    dashboard-category: infrastructure
+spec:
+  folderRef: ops-cluster
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  configMapRef:
+    name: dashboard-aws-inventory
+    key: aws-inventory.json

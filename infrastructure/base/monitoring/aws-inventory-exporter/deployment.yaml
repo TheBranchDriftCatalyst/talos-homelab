@@ -1,0 +1,71 @@
+---
+# AWS inventory + status exporter (TALOS-iymy follow-on). Sweeps EVERY enabled region
+# for EC2/EBS/S3/IAM + estimated $/hr + an unmanaged/orphan flag, served at /metrics for
+# Alloy to scrape. boto3 is pip-installed into a writable /tmp emptyDir at start (keeps the
+# root FS read-only). Read-only AWS creds via the mirrored aws-credentials secret.
+# NOTE: reuses the (root) aws-credentials for now — over-privileged for read-only describe;
+# a dedicated read-only IAM user is the hardening follow-up.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aws-inventory-exporter
+  namespace: monitoring
+  labels:
+    app: aws-inventory-exporter
+    app.kubernetes.io/component: exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aws-inventory-exporter
+  template:
+    metadata:
+      labels:
+        app: aws-inventory-exporter
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: exporter
+          image: python:3.12-slim
+          command: ["sh", "-c"]
+          args:
+            - pip install --no-cache-dir --target /tmp/pylib boto3 >/tmp/pip.log 2>&1
+              && PYTHONPATH=/tmp/pylib exec python /app/exporter.py
+          env:
+            - {name: AWS_SHARED_CREDENTIALS_FILE, value: /creds/creds}
+            - {name: AWS_DEFAULT_REGION, value: us-east-1}   # base client / global S3+IAM
+            - {name: SCRAPE_INTERVAL, value: "600"}          # AWS state is slow-moving
+            - {name: HOME, value: /tmp}                       # pip + boto config land in /tmp
+            - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
+            # AWS_REGIONS unset => sweep ALL enabled regions (orphan-catcher)
+          ports:
+            - {name: metrics, containerPort: 9100}
+          readinessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 30   # pip install boto3 + server start
+            periodSeconds: 30
+          livenessProbe:
+            httpGet: {path: /metrics, port: metrics}
+            initialDelaySeconds: 60
+            periodSeconds: 60
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 20m, memory: 96Mi}
+            limits: {memory: 256Mi}
+          volumeMounts:
+            - {name: script, mountPath: /app, readOnly: true}
+            - {name: creds, mountPath: /creds, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: script, configMap: {name: aws-inventory-exporter-script, defaultMode: 0555}}
+        - {name: creds, secret: {secretName: aws-credentials}}
+        - {name: tmp, emptyDir: {}}

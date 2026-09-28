@@ -1,0 +1,19 @@
+---
+# Scrape the AWS inventory exporter → Mimir (Alloy scrapes any PodMonitor). /metrics serves a
+# cached snapshot refreshed every SCRAPE_INTERVAL (10m), so a 60s scrape just re-reads the cache
+# (no AWS API calls per scrape — the sweep is on the exporter's own timer).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: aws-inventory-exporter
+  namespace: monitoring
+  labels:
+    app: aws-inventory-exporter
+spec:
+  selector:
+    matchLabels:
+      app: aws-inventory-exporter
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 60s
