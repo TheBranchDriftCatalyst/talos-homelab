@@ -72,7 +72,7 @@ spec:
                     name=${row%,*}; ts=${row#*,}
                     [ -z "$name" ] && continue
                     age=$(( NOW - $(date -u -D '%Y-%m-%dT%H:%M:%SZ' -d "$ts" +%s) ))  # busybox date needs -D fmt for RFC3339
-                    if [ "$age" -gt "$MAX" ]; then echo "reaping $name (age ${age}s > ${MAX}s)"; kubectl delete xinstance "$name" && REAPED=$((REAPED+1)); fi
+                    if [ "$age" -gt "$MAX" ]; then echo "reaping $name (age ${age}s > ${MAX}s)"; kubectl delete xinstance "$name" --wait=false && REAPED=$((REAPED+1)); fi  # --wait=false: SA has no watch verb
                   done
                   echo "reaper done (reaped ${REAPED})"
                   # reaper activity -> pushgateway (dashboard reaper row); || true so a metrics blip never fails the reaper
