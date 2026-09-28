@@ -33,15 +33,18 @@ spec:
               value: "1000"
             - name: TZ
               value: America/Los_Angeles
-          # Measured 24h to 2026-08-24: p50 62Mi, peak 194Mi (3.1x) — the
-          # spikes are yt-dlp muxing. BURSTABLE with the limit at 2x peak;
-          # a limit near p50 would kill mid-download.
+          # Measured 24h to 2026-08-24: p50 62Mi, peak 194Mi — spikes are yt-dlp
+          # muxing. 384Mi (2x that peak) was NOT enough: OOMKilled (exit 137)
+          # 2026-09-28, twice, mid-download — muxing larger videos now bursts past
+          # 384Mi and each kill drops metube for ~30s (the "metube not working"
+          # symptom). Raised to 768Mi; still burstable (idle ~89Mi, request 96Mi),
+          # now with real headroom over the new peak.
           resources:
             requests:
               cpu: 25m
               memory: 96Mi
             limits:
-              memory: 384Mi
+              memory: 768Mi
           volumeMounts:
             - name: downloads
               mountPath: /downloads
