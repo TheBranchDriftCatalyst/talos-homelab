@@ -2068,7 +2068,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Reaped count per run",
+      "title": "Seconds since last fire (drops = a reaper fired; flat climb = STOPPED firing)",
       "id": 40,
       "datasource": {
         "type": "prometheus",
@@ -2082,7 +2082,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "none",
+          "unit": "s",
           "custom": {
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -2106,9 +2106,9 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "reaper_last_reaped_count",
+          "expr": "time() - kube_cronjob_status_last_schedule_time{job=\"kube-state-metrics\",cronjob=~\".*reaper.*\"}",
           "refId": "A",
-          "legendFormat": "{{job}}"
+          "legendFormat": "{{cronjob}}"
         }
       ]
     },
@@ -2232,7 +2232,7 @@
     },
     {
       "type": "timeseries",
-      "title": "Reaper fires (schedule time)",
+      "title": "Reaped per run (empty until a reaper actually reaps something)",
       "id": 43,
       "datasource": {
         "type": "prometheus",
@@ -2270,9 +2270,9 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "kube_cronjob_status_last_schedule_time{job=\"kube-state-metrics\",cronjob=~\".*reaper.*\"}",
+          "expr": "max by (job) (reaper_last_reaped_count)",
           "refId": "A",
-          "legendFormat": "{{cronjob}}"
+          "legendFormat": "{{job}}"
         }
       ]
     }
