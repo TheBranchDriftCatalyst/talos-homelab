@@ -1,0 +1,21 @@
+---
+# mesh — self-hosted Headscale WireGuard mesh control plane (TALOS-iymy).
+# The Mac, the cluster (via a later subnet-router/operator), and off-net GPU boxes
+# join ONE private tailnet; no public inbound to the GPU services. Only the
+# headscale control endpoint is public (ingressroute.yaml).
+#
+# BOOTSTRAP (one-time, after the pod is Ready) — headscale users/keys are runtime,
+# not declarative:
+#   kubectl -n mesh exec deploy/headscale -- headscale users create catalyst
+#   kubectl -n mesh exec deploy/headscale -- headscale preauthkeys create --user catalyst --reusable --expiration 720h
+# Stash that key (1Password / an SSM param) as the box join key (Phase 2 userData
+# does `tailscale up --login-server https://headscale.knowledgedump.space --authkey ...`).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: mesh
+resources:
+  - configmap.yaml
+  - pvc.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingressroute.yaml

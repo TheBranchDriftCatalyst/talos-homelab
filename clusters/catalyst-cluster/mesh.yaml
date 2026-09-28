@@ -1,0 +1,23 @@
+---
+# Flux Kustomization for the self-hosted Headscale mesh (TALOS-iymy).
+# NO postBuild.substituteFrom on purpose: the headscale ConfigMap carries an ACL in
+# HuJSON ({ } braces), and Flux envsubst mangles brace/quote-heavy ConfigMaps
+# (see the flux-envsubst gotcha). This component hardcodes its domain, so it needs
+# no substitution. wait:false so a first-boot PVC/DB race can't deadlock Flux.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: mesh
+  namespace: flux-system
+spec:
+  interval: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/mesh
+  prune: true
+  wait: false
+  timeout: 10m
+  dependsOn:
+    - name: namespaces
+    - name: storage

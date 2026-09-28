@@ -1,0 +1,75 @@
+---
+# Headscale v0.29.x config (schema pulled from the v0.29.4 config-example.yaml).
+# TLS is terminated by Traefik (see ingressroute.yaml) so headscale runs plain HTTP
+# on :8080; server_url is the PUBLIC https host the off-net GPU box dials to join.
+# DERP relay uses Tailscale's public relays (control plane + keys stay OURS — that
+# is what "own the mesh" means; DERP only relays already-encrypted packets, and
+# most links go direct WireGuard anyway). Self-hosting DERP is a later hardening step.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headscale-config
+  namespace: mesh
+data:
+  config.yaml: |
+    server_url: https://headscale.knowledgedump.space
+    listen_addr: 0.0.0.0:8080
+    metrics_listen_addr: 0.0.0.0:9090
+    grpc_listen_addr: 0.0.0.0:50443
+    grpc_allow_insecure: false
+    # Traefik/pod networks — trust their X-Forwarded-For for correct client IPs.
+    trusted_proxies:
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+    noise:
+      private_key_path: /var/lib/headscale/noise_private.key
+    prefixes:
+      v4: 100.64.0.0/10
+      v6: fd7a:115c:a1e0::/48
+      allocation: sequential
+    derp:
+      server:
+        enabled: false
+      urls:
+        - https://controlplane.tailscale.com/derpmap/default
+      auto_update_enabled: true
+      update_frequency: 24h
+    disable_check_updates: true
+    node:
+      expiry: 0
+      ephemeral:
+        inactivity_timeout: 30m
+    database:
+      type: sqlite
+      sqlite:
+        path: /var/lib/headscale/db.sqlite
+        write_ahead_log: true
+    log:
+      level: info
+      format: text
+    policy:
+      mode: file
+      path: /etc/headscale/acl.hujson
+    dns:
+      magic_dns: true
+      # MUST NOT be a suffix of server_url's domain. Nodes become <name>.mesh.catalyst.
+      base_domain: mesh.catalyst
+      override_local_dns: false
+      nameservers:
+        global:
+          - 1.1.1.1
+          - 1.0.0.1
+    tls_cert_path: ""
+    tls_key_path: ""
+    unix_socket: /var/run/headscale/headscale.sock
+    unix_socket_permission: "0770"
+    logtail:
+      enabled: false
+  # Permissive MVP policy — one trusted tailnet (Mac + cluster + GPU boxes). Tighten
+  # to tag-scoped ACLs later (e.g. tag:gpu can only expose :8000/:8188/:11434).
+  acl.hujson: |
+    {
+      "acls": [
+        { "action": "accept", "src": ["*"], "dst": ["*:*"] }
+      ]
+    }
