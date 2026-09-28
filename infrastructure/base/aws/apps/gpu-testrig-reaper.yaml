@@ -66,15 +66,16 @@ spec:
                   # customresourcedefinitions RBAC, so `kubectl get crd` always failed silently and the
                   # reaper NEVER reaped (this is why the 9h g6e box was never backstopped). CRD absent => errors => exit 0.
                   kubectl get xgpuinstance >/dev/null 2>&1 || { echo "no XGPUInstance CRD / no access; nothing to reap"; exit 0; }
-                  NOW=$(date +%s); MAX=21600  # 6h — generous window for an active test session; git-off is the real teardown
-                  R=$(mktemp)  # tally reaped names across the pipe subshell (count survives in the file)
-                  kubectl get xgpuinstance -l catalyst.io/stage=poc-demo \
-                    -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.creationTimestamp}{"\n"}{end}' | while read -r name ts; do
+                  NOW=$(date +%s); MAX=21600; REAPED=0  # 6h window; git-off is the real teardown
+                  # for-loop over a compact "name,ts name,ts" list runs in the MAIN shell (no pipe
+                  # subshell) so REAPED survives, and needs NO temp file (reaper root FS is read-only).
+                  for row in $(kubectl get xgpuinstance -l catalyst.io/stage=poc-demo \
+                    -o jsonpath='{range .items[*]}{.metadata.name},{.metadata.creationTimestamp} {end}'); do
+                    name=${row%,*}; ts=${row#*,}
                     [ -z "$name" ] && continue
                     age=$(( NOW - $(date -d "$ts" +%s) ))
-                    if [ "$age" -gt "$MAX" ]; then echo "reaping $name (age ${age}s > ${MAX}s)"; kubectl delete xgpuinstance "$name" && echo 1 >> "$R"; fi
+                    if [ "$age" -gt "$MAX" ]; then echo "reaping $name (age ${age}s > ${MAX}s)"; kubectl delete xgpuinstance "$name" && REAPED=$((REAPED+1)); fi
                   done
-                  N=$(wc -l < "$R" 2>/dev/null | tr -d " "); rm -f "$R"; N=${N:-0}
-                  echo "reaper done (reaped ${N})"
-                  # reaper activity -> pushgateway (dashboard-aws-inventory reaper row); || true so a metrics blip never fails the reaper
-                  printf 'reaper_last_run_timestamp_seconds %s\nreaper_last_reaped_count %s\n' "$(date +%s)" "${N}" | curl -s --max-time 10 --data-binary @- http://prometheus-pushgateway.monitoring:9091/metrics/job/gpu-testrig-reaper || true
+                  echo "reaper done (reaped ${REAPED})"
+                  # reaper activity -> pushgateway (dashboard reaper row); || true so a metrics blip never fails the reaper
+                  printf 'reaper_last_run_timestamp_seconds %s\nreaper_last_reaped_count %s\n' "$(date +%s)" "${REAPED}" | curl -s --max-time 10 --data-binary @- http://prometheus-pushgateway.monitoring:9091/metrics/job/gpu-testrig-reaper || true
