@@ -2,8 +2,8 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-09-26
-**Pick up here:** `TALOS-a8vo.4` (P0 — start with the exemption inventory, not the entrypoint flip) · **Deadline item:** none outstanding
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-09-27
+**Pick up here:** `TALOS-iymy` (SOTA GPU node — resume from the `_SEED_COMPLETE` marker; the g6e.12xlarge launch is held for an explicit go) · **Deadline item:** none outstanding
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -17,15 +17,16 @@
 Multi-node Talos cluster, dual GitOps (Flux for infra, ArgoCD for apps). Everything under
 `infrastructure/` and `applications/` deploys by committing to git; there is no deploy script.
 
-**Two efforts are open, and they are unrelated to each other.**
+**The live effort is the SOTA GPU node; two older efforts remain open.**
 
-1. **Docs as projection** (`TALOS-f0sd`) — _in flight, this is the live one_. Docs were the only
-   projection of the code that nothing kept honest, so they drifted: 154 broken links and a
-   tree that had grown to 105 files. The tree is pruned to 37 and `docsgen` (a portable Go
-   linter at `dev/docs-generator/`) now reports drift. Next step is the generator half.
-2. **Security campaign** (`TALOS-a13n`) — _paused deliberately, not finished_. A principal
-   review recommended stopping rather than continuing into cosmetic work. Two items have real
-   dates this weekend; see Now/next.
+1. **SOTA GPU inference node** (`TALOS-iymy`) — _the live one_. A us-east-2 `g6e.12xlarge` (4× L40S)
+   serving Qwen3-235B + ComfyUI on a self-hosted Headscale mesh, model cached from S3. Phases 0–1
+   (mesh + AWS prereqs) and the pytest acceptance suite are in; the model is seeding to S3. See Now/next.
+2. **Docs as projection** (`TALOS-f0sd`) — open; was the live effort on 2026-09-19. The tree is pruned
+   from 105 to 37 files and `docsgen` (a portable Go linter at `dev/docs-generator/`) reports drift; the
+   generator half remains.
+3. **Security campaign** (`TALOS-a13n`) — paused deliberately after a principal review. `a8vo.4` (P0) is
+   the one live thread — partly remediated this session, entrypoint-default finish outstanding.
 
 If you are here to do something else entirely, that is fine and probably correct. Read
 [Standing gotchas](#standing-gotchas) first — most of them cost real outages to learn.
@@ -34,29 +35,29 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-### P0 — `TALOS-a8vo.4`, Host-spoof reaches everything
+### Active — `TALOS-iymy`, SOTA GPU inference node (mesh + 235B + ComfyUI)
 
-|                        |                                                                                                                                                                                                                                                                  |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Do this first**      | Produce the **exemption inventory**: every route, what it is, whether it is genuinely public, what breaks if locked down. This is the half that makes the risky half safe, and it is reviewable on its own.                                                   |
-| The fix, after that    | Invert the Traefik entrypoint default from allow-all to `lan-only` (`web` first, then `websecure`), exempting the genuinely-public routes. Collapses the exposed surface to a handful.                                                                        |
-| Why it needs care      | Authentik alone has 6+ routes including outpost callbacks. Get the exemptions wrong and you lock yourself out of the SSO that guards everything else. Also: it cannot be verified from the LAN — proving the hole is shut needs an off-LAN vantage point.      |
+|                       |                                                                                                                                                                                                       |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Resume here**       | A seeder EC2 is streaming Qwen3-235B-A22B-GPTQ-Int4 (~123GB) into `s3://catalyst-tbdc-models-use2/`. Check the `_SEED_COMPLETE` marker (an aws Job in `crossplane-system`, region `us-east-2`), then continue. |
+| Next, in order        | Build `runpod-ollama`+`runpod-mac-bundle` → GHCR; rewrite the XGPUInstance userData (mesh-join from secret `mesh/headscale-join-key` + `s5cmd` S3→`/cache` + `docker run` **upstream** `vllm/vllm-openai` 235B TP4 `gptq_marlin` + ComfyUI); add the `us-east-2` `g6e.12xlarge` claim. |
+| Held for explicit go  | The `g6e.12xlarge` **launch** (~$5–10/hr) — the only real spend. Confirm quota+capacity with `scripts/aws-gpu-report.sh` first. Full plan: `~/.claude/plans/…-snazzy-starlight.md`; state in `bd remember sota-gpu-node-state` + `qwen-seeder-inflight`. |
 
-### Then — security campaign (`TALOS-a13n`, 4/20)
+### Still P0 — `TALOS-a8vo.4`, host-spoof reaches everything (partly remediated)
 
-|                     |                                                                                                                                                                                                       |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Next P1             | `TALOS-sahd` — promote-or-delete the silentdrop plane (it enforces zero decisions while carrying a sidecar, registrar, two secrets and a canary), and the missing CA-rotation runbook. Needs a decision, not code. |
-| Highest value after | `TALOS-eecg` — nothing detects a dependency restarting under a live consumer. Three cases in one day, one self-inflicted. Comparing pod ages is the cheap generic version.                          |
-| Also open           | `TALOS-uy6a` (analytics injects nothing on **any** site — decisive test is whether themepark's nav injects on the same engine), `TALOS-z16b` (gluetun wedges on settings PUT), `TALOS-soub` (needs 2–4 more ProtonVPN keys).                     |
+|             |                                                                                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| What moved  | The deferred **off-net cold pass** ran from a real AWS vantage and confirmed the live exposures; the concurrent session landed `lan-only` on the worst surfaces (`a8vo.7` **closed**; 6 admin/AI surfaces in `9e464b32`). |
+| Still to do | The full **exemption inventory** + the Traefik entrypoint-default inversion are the careful finish. `a8vo.4` is still open (P0).                                                                       |
 
 ### Explicitly not next
 
-|                                    |                                                                                                                                                                      |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Flipping the entrypoint default    | Not before the inventory exists. A wrong exemption list is an outage of everything public, including your own SSO.                                                 |
-| Re-enabling VPN rotation           | `TALOS-c4l1`/`TALOS-cdec` are blocked on `TALOS-soub` (only 2 spare ProtonVPN keys, both tiny countries). qBittorrent is pinned and healthy; leave it.              |
-| `TALOS-f0sd` (docs as projection)  | Still open and still worthwhile, but a P0 with a live external attack surface outranks it. It was the live effort on 2026-09-19; it is not any more.                |
+|                                       |                                                                                                                                                                      |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Launching the `g6e.12xlarge` unprompted | It's the only real spend in the GPU effort. Confirm `_SEED_COMPLETE` + capacity + an explicit go first.                                                            |
+| Flipping the Traefik entrypoint default | Not before the exemption inventory exists — a wrong list locks out your own SSO.                                                                                   |
+| `TALOS-lq5y` provider-cred cutover      | The scoped IAM user is created (phase 1), but repointing the live ProviderConfig off the root keys can break the whole AWS stack — do it tested + deliberately, not casually. |
+| `TALOS-f0sd` (docs) · `TALOS-a13n` (security campaign) | Both still open + worthwhile, but the GPU effort and the a8vo.4 P0 outrank them right now.                                                          |
 
 <!-- /closeout:next -->
 
@@ -65,6 +66,22 @@ If you are here to do something else entirely, that is fine and probably correct
 <!-- closeout:sessions -->
 
 ## Sessions
+
+### 2026-09-26/27 — SOTA GPU inference node: mesh, the quota fight, interactive SSM
+
+**Commits:** ~15 (this session; a concurrent session added ~10 more) · **Scope:** `infrastructure/base/{aws,aws-redteam,aws-providers,mesh,namespaces}`, `scripts/`, `tests/gpu-inference/`, `clusters/catalyst-cluster/`
+
+**Filed:** `TALOS-iymy` (epic), `TALOS-x9db` (epic), `TALOS-nxt4`
+**Closed:** none by this session (the concurrent session closed `TALOS-a8vo.7`)
+**Carried:** `TALOS-iymy` (pick up here — 235B model seeding to S3 in-flight at close), `TALOS-x9db` (images→Zot), `TALOS-nxt4` (GPU quota), `TALOS-3hjh` (XGPUInstance correctness), `TALOS-lq5y` (scoped IAM: phase-1 user created, cutover carried), `TALOS-a8vo.4` (P0, partly remediated)
+
+Shipped **interactive SSM access** for the AWS boxes (`ee67bd57`): `instanceProfileName` on XInstance/XGPUInstance + a `catalyst-ssm` profile + an `ssm-jump` picker pod — a real off-net shell, no inbound, no key. Also ran the deferred **true-cold external pentest** from a real AWS vantage; it confirmed the host-spoof exposures were live (argocd apex→200, tautulli `/api`→200, `:8443` WAN-forwarded). The concurrent session remediated from that evidence — `a8vo.7` closed, `a8vo.4` `lan-only` fixes landed; `a8vo.4` stays P0-open for the entrypoint-default finish.
+
+Opened the big effort **`TALOS-iymy`**: a SOTA GPU node — Qwen3-235B-A22B-GPTQ-Int4 (official, ungated) on vLLM TP4 + ComfyUI sharing a us-east-2 `g6e.12xlarge` (4× L40S, 192GB), on a self-hosted Headscale mesh. Landed Phase 0 (`dd92f4c7`: XGPUInstance `ami`/`cacheSnapshotId` fields, `catalyst-gpu-seeder` IAM, us-east-2 model bucket), Phase 1 (`29f0a5e8`: Headscale live + WAN-reachable at `headscale.knowledgedump.space`, join key in secret `mesh/headscale-join-key`), and a pytest acceptance suite (`150f7d0d`: `tests/gpu-inference/`). A seeder EC2 is streaming the ~123GB model into us-east-2 S3 at close.
+
+**The quota+capacity fight was the hidden cost.** g6e/L40S spot is dry in us-west-2 (placement score 1/10): the 32B/14B test-rig launches (`874f1a91`, `014bb205`) died on `InsufficientInstanceCapacity`, and only g5.xlarge/A10G + Qwen3-14B actually served (verified over SSM before teardown). The new `scripts/aws-gpu-report.sh` (`2dbb143f`) found us-east-2 is the one region with both quota and g6e.12xlarge spot capacity — which moved the whole plan there. `TALOS-nxt4` tracks the ask; on-demand G/VT went 0→48, spot to 32/48.
+
+**Found, not built (the costly lessons):** upjet provider-aws rejects `resolve:ssm:` AMI aliases (needs a concrete region ami-id) and the DL GPU AMI needs a ≥75GB root; the dual-layer **S3→EBS cache never actually worked** (instance role had no S3 read → `s5cmd` AccessDenied → `set -eu` aborted before vLLM; the "successful" 14B run had silently bypassed S3 via HF-direct); and bulk HF→S3 must run on an in-AWS EC2, never the on-prem cluster (123GB over the home uplink = hours). Caught pre-build: `mac-sdlc-node` had no `.dockerignore`, so the ComfyUI image would have baked a 32M host-venv into public GHCR — added one. Cost: several short EC2 launches (~a few dollars), all torn down/self-terminating; only the ~$0.34 seeder + ~$3/mo S3 remain. No GPU is billing. Mid-effort reversal: dropped the EBS-snapshot pre-seed from the MVP (same-region S3→EBS at boot is ~1-2 min) — snapshot is now Phase 4.
 
 ### 2026-09-25/26 — Three silent failures found by reading the alert list
 
@@ -282,6 +299,18 @@ worth keeping is distilled up into this list first. Fuller detail lives in
 20. **Event timestamps come from the node's clock, `t0` from yours.** A genuinely fresh event
     can timestamp _before_ the action that caused it (measured: 63 ms). Any test comparing the
     two needs a skew tolerance, or it will report a working control as blind.
+
+21. **`quota` is not `capacity`, and GPU spot capacity is region-specific.** us-west-2 g6e/L40S
+    spot is dry (placement score 1/10) even with quota granted — launches fail
+    `InsufficientInstanceCapacity`. Check `scripts/aws-gpu-report.sh` (score **and** quota per
+    region) before choosing a region or launching; as of 2026-09 us-east-2 is the one with both.
+22. **upjet provider-aws rejects `resolve:ssm:` AMI aliases** — pass a concrete region-specific
+    `ami-` id (make it a spec field, since it changes per region). Separately, the AWS Deep
+    Learning GPU AMI's root snapshot is 75GB, so the root volume must be ≥75GB or the instance
+    fails `InvalidBlockDeviceMapping`.
+23. **Bulk model staging (HF→S3) must run on an in-AWS EC2, never the on-prem cluster.** The
+    download is fast anywhere, but uploading ~123GB to S3 over the home uplink takes hours. An
+    EC2 in the target region does HF→S3 (and S3→EBS) on the AWS backbone in minutes.
 
 <!-- /closeout:gotchas -->
 
