@@ -59,7 +59,10 @@ spec:
                 - |
                   set -eu
                   # CRD may be absent when the AWS chain is off — exit clean.
-                  kubectl get crd xinstances.aws.catalyst.io >/dev/null 2>&1 || { echo "no XInstance CRD; nothing to reap"; exit 0; }
+                  # Guard on the RESOURCE (SA has xinstances list), NOT the CRD object — the SA has no
+                  # customresourcedefinitions RBAC, so `kubectl get crd` always failed silently and the
+                  # reaper NEVER reaped (the cost backstop was dead). CRD absent => this errors => exit 0.
+                  kubectl get xinstance >/dev/null 2>&1 || { echo "no XInstance CRD / no access; nothing to reap"; exit 0; }
                   NOW=$(date +%s); MAX=7200
                   R=$(mktemp)  # tally reaped names across the pipe subshell (count survives in the file)
                   kubectl get xinstance -l app.kubernetes.io/part-of=aws-redteam \

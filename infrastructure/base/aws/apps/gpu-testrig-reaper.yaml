@@ -62,7 +62,10 @@ spec:
               args:
                 - |
                   set -eu
-                  kubectl get crd xgpuinstances.aws.catalyst.io >/dev/null 2>&1 || { echo "no XGPUInstance CRD; nothing to reap"; exit 0; }
+                  # Guard on the RESOURCE (SA has xgpuinstances list), NOT the CRD object — the SA has no
+                  # customresourcedefinitions RBAC, so `kubectl get crd` always failed silently and the
+                  # reaper NEVER reaped (this is why the 9h g6e box was never backstopped). CRD absent => errors => exit 0.
+                  kubectl get xgpuinstance >/dev/null 2>&1 || { echo "no XGPUInstance CRD / no access; nothing to reap"; exit 0; }
                   NOW=$(date +%s); MAX=21600  # 6h — generous window for an active test session; git-off is the real teardown
                   R=$(mktemp)  # tally reaped names across the pipe subshell (count survives in the file)
                   kubectl get xgpuinstance -l catalyst.io/stage=poc-demo \
