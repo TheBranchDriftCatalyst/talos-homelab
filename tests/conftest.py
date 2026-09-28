@@ -31,6 +31,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "telemetry: Telemetry/Observability suite — audit Grafana dashboards panel-by-panel")
     config.addinivalue_line("markers", "disaster_recovery: Disaster Recovery suite — recovery machinery + fault injection")
     config.addinivalue_line("markers", "integration: Integration suite — end-to-end wiring of a subsystem against the live cluster")
+    config.addinivalue_line("markers", "gpu_inference: SOTA GPU node suite — live LLM (multi-prompt) + ComfyUI image-gen functional/integration checks")
     config.addinivalue_line("markers", "live: requires --live (running cluster/LAN)")
     config.addinivalue_line("markers", "destructive: destructive DR chaos — only runs with --destructive (or the per-suite <SUITE>_DR_DESTRUCTIVE=1)")
     # propagate --live to the env flag the suites + helpers read
