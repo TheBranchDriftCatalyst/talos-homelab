@@ -73,7 +73,7 @@ spec:
                     -o jsonpath='{range .items[*]}{.metadata.name},{.metadata.creationTimestamp} {end}'); do
                     name=${row%,*}; ts=${row#*,}
                     [ -z "$name" ] && continue
-                    age=$(( NOW - $(date -d "$ts" +%s) ))
+                    age=$(( NOW - $(date -u -D '%Y-%m-%dT%H:%M:%SZ' -d "$ts" +%s) ))  # busybox date needs -D fmt for RFC3339
                     if [ "$age" -gt "$MAX" ]; then echo "reaping $name (age ${age}s > ${MAX}s)"; kubectl delete xgpuinstance "$name" && REAPED=$((REAPED+1)); fi
                   done
                   echo "reaper done (reaped ${REAPED})"
