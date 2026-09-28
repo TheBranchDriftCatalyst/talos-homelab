@@ -34,6 +34,14 @@ spec:
                 models: {type: string, description: "SPACE-separated s3 prefixes under the models bucket, e.g. 'llama-3.1-8b qwen-32b-awq'"}
                 modelsBucket: {type: string, default: catalyst-tbdc-models}
                 cacheVolumeGb: {type: integer, default: 200, description: "gp3 hot-cache — size for the models under test, NOT the library"}
+                # Pre-seeded cache (TALOS-iymy): create /cache FROM this EBS snapshot instead of a blank
+                # volume, so the (expensive) GPU box boots warm with the model already present and never
+                # spends its clock on the ~120GB download. The small GPU-less seeder builds the snapshot.
+                # Optional: unset => blank volume (falls back to on-box s5cmd/HF seeding).
+                cacheSnapshotId: {type: string, description: "EBS snapshot id to restore /cache from (pre-seeded model). Omit for a blank cache."}
+                # AMI is region-specific and upjet does NOT accept resolve:ssm aliases, so it must be a
+                # concrete ami-... id per region. Optional: unset => composition default (us-west-2 DL GPU AMI).
+                ami: {type: string, description: "Concrete AMI id (region-specific DL Base GPU AMI). Omit to use the composition default."}
                 servePort: {type: string, default: "8000"}
                 region: {type: string, default: us-west-2}
                 availabilityZone: {type: string, description: "MUST match the subnet's AZ (e.g. us-west-2a)"}

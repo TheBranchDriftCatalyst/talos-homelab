@@ -1,0 +1,79 @@
+---
+# catalyst-gpu-seeder — the SMALL, cheap seeder's IAM identity (TALOS-iymy).
+#
+# The expensive 4x L40S box must NEVER download models. A tiny GPU-less seeder does it:
+# pulls HF -> the S3 model library, writes the weights onto a gp3 volume, and SNAPSHOTS it.
+# The XGPUInstance /cache is then created fromSnapshot (spec.cacheSnapshotId) => warm boot,
+# no on-box download. S3 access + snapshot rights live HERE (least-privilege), not on catalyst-ssm.
+#
+# ALWAYS-ON (free IAM). instanceprofiles/policies/rolepolicyattachments MRDs already activated
+# in aws-providers/activation-policy.yaml. IAM is global; providerConfigRef defaults to `default`.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: catalyst-gpu-seeder
+  labels: {app.kubernetes.io/part-of: aws-gpu-seeder, catalyst.io/stage: poc-demo, catalyst.io/cloud: aws}
+  annotations:
+    crossplane.io/external-name: catalyst-gpu-seeder
+spec:
+  forProvider:
+    assumeRolePolicy: |
+      {"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}
+---
+# SSM so we can drive/inspect the seeder without inbound (same pattern as catalyst-ssm).
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: catalyst-gpu-seeder-ssm
+  labels: {app.kubernetes.io/part-of: aws-gpu-seeder, catalyst.io/cloud: aws}
+spec:
+  forProvider:
+    policyArn: arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+    roleRef: {name: catalyst-gpu-seeder}
+---
+# Scoped policy: S3 get/put/list on the model buckets (HF->S3 + S3->volume) + EBS snapshot rights
+# (build the pre-seeded /cache snapshot). Deliberately narrow — buckets + snapshots only.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: catalyst-gpu-seeder
+  labels: {app.kubernetes.io/part-of: aws-gpu-seeder, catalyst.io/cloud: aws}
+  annotations:
+    crossplane.io/external-name: catalyst-gpu-seeder
+spec:
+  forProvider:
+    path: /catalyst/
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {"Sid": "ModelBucketsList", "Effect": "Allow", "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+           "Resource": ["arn:aws:s3:::catalyst-tbdc-models", "arn:aws:s3:::catalyst-tbdc-models-use2"]},
+          {"Sid": "ModelObjectsRW", "Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+           "Resource": ["arn:aws:s3:::catalyst-tbdc-models/*", "arn:aws:s3:::catalyst-tbdc-models-use2/*"]},
+          {"Sid": "EbsSnapshotBuild", "Effect": "Allow", "Action": [
+            "ec2:CreateSnapshot", "ec2:CreateTags", "ec2:DescribeSnapshots", "ec2:DescribeVolumes", "ec2:DescribeTags"
+          ], "Resource": "*"}
+        ]
+      }
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: catalyst-gpu-seeder-scoped
+  labels: {app.kubernetes.io/part-of: aws-gpu-seeder, catalyst.io/cloud: aws}
+spec:
+  forProvider:
+    roleRef: {name: catalyst-gpu-seeder}
+    policyArnRef: {name: catalyst-gpu-seeder}
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: InstanceProfile
+metadata:
+  name: catalyst-gpu-seeder
+  labels: {app.kubernetes.io/part-of: aws-gpu-seeder, catalyst.io/cloud: aws}
+  annotations:
+    crossplane.io/external-name: catalyst-gpu-seeder
+spec:
+  forProvider:
+    roleRef: {name: catalyst-gpu-seeder}

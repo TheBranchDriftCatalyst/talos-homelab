@@ -61,6 +61,9 @@ spec:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.availabilityZone, toFieldPath: spec.forProvider.availabilityZone}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.cacheVolumeGb, toFieldPath: spec.forProvider.size}
+              # Pre-seeded warm cache (TALOS-iymy): restore /cache from a snapshot the small seeder built,
+              # so the GPU box never downloads models. Optional — unset => blank gp3 volume.
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.cacheSnapshotId, toFieldPath: spec.forProvider.snapshotId, policy: {fromFieldPath: Optional}}
           - name: cache-attachment
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
@@ -99,6 +102,9 @@ spec:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceType, toFieldPath: spec.forProvider.instanceType}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.subnetId, toFieldPath: spec.forProvider.subnetId}
+              # Region-specific AMI (TALOS-iymy). Optional patch overrides the us-west-2 default above with a
+              # concrete per-region DL GPU AMI (e.g. us-east-2). upjet rejects resolve:ssm: so it must be an id.
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.ami, toFieldPath: spec.forProvider.ami, policy: {fromFieldPath: Optional}}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceName, toFieldPath: "spec.forProvider.tags[Name]"}
               # SSM interactive mode. Optional patch — no-op when spec.instanceProfileName
               # is unset. This SG is egress-only, so attaching the profile is the ONLY

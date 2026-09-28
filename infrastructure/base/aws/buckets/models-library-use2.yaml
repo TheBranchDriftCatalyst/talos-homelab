@@ -1,0 +1,18 @@
+---
+# us-east-2 replica of the model LIBRARY (TALOS-iymy). The SOTA GPU node runs in us-east-2
+# (only region with g6e.12xlarge quota + capacity), so the model library must live there too —
+# a us-west-2 bucket would make every S3->EBS seed a cross-region pull ($0.02/GB + slow), breaking
+# the "same-region S3->EC2 = free/fast" premise of the dual-layer cache. The small GPU-less seeder
+# pulls HF -> this bucket, then builds the pre-seeded EBS snapshot from it.
+apiVersion: aws.catalyst.io/v1alpha1
+kind: XBucket
+metadata:
+  name: models-library-use2
+  labels: {catalyst.io/stage: poc-demo, catalyst.io/cloud: aws}
+spec:
+  bucketName: catalyst-tbdc-models-use2
+  region: us-east-2
+  versioning: false
+  standardIaAfterDays: 30
+  glacierAfterDays: 3650
+  tags: {purpose: model-library}
