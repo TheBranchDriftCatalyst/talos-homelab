@@ -544,3 +544,34 @@ spec:
       - name: catalyst-compress
       - name: catalyst-accept-encoding
       - name: catalyst-inject-whisparr
+---
+# Public-safe gitea theme injection (TALOS-6nf). CSS ONLY — no nav.js/nav.json,
+# so nothing served here enumerates internal *.talos00 hosts. Used on the PUBLIC
+# forge route (forge.knowledgedump.space), where the cross-app nav bar's manifest
+# cannot be served without a public/private split (see asset-route.yaml + the
+# nav-split epic). Same two stylesheets as catalyst-inject-gitea, minus the nav
+# script; both are served by the tightly-allowlisted public asset route.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-gitea-public
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/base/gitea/gitea-base.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-gitea-public
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-gitea-public

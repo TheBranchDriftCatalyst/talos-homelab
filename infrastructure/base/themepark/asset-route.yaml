@@ -126,3 +126,48 @@ spec:
       services:
         - name: themepark
           port: 80
+---
+# ── PUBLIC forge theme assets (TALOS-6nf) — TIGHT ALLOWLIST ──────────────────
+# The gated routes above serve the WHOLE /catalyst/ tree, but ONLY on *.talos00
+# + lan-only (nav.json/themes.json enumerate internal hosts — see the disclosure
+# writeup above). To theme the PUBLIC forge (forge.knowledgedump.space) WITHOUT
+# reopening that, serve ONLY the two stylesheets catalyst-inject-gitea-public
+# injects, by EXACT Path (never PathPrefix) — so nav.json, themes.json and the
+# rest of the 108MB tree stay 404 on the public host. NO nav bar here (needs the
+# manifest public/private split — tracked as the nav-split epic). NO lan-only:
+# deliberately internet-facing; CSS carries no host data (catalyst.css's one
+# internal-host comment was scrubbed). Verify from off-net that ONLY these two
+# paths answer on the public host.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalyst-assets-forge-public
+  namespace: themepark
+  labels:
+    app.kubernetes.io/name: themepark
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`forge.knowledgedump.space`) && Path(`/catalyst/css/base/gitea/gitea-base.css`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        - name: catalyst-compress
+          namespace: traefik
+        - name: catalyst-asset-cache
+          namespace: traefik
+      services:
+        - name: themepark
+          port: 80
+    - match: Host(`forge.knowledgedump.space`) && Path(`/catalyst/css/theme-options/catalyst.css`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        - name: catalyst-compress
+          namespace: traefik
+        - name: catalyst-asset-cache
+          namespace: traefik
+      services:
+        - name: themepark
+          port: 80
