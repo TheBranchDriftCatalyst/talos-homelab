@@ -149,18 +149,14 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`forge.knowledgedump.space`) && Path(`/catalyst/css/base/gitea/gitea-base.css`)
-      kind: Rule
-      priority: 10000
-      middlewares:
-        - name: catalyst-compress
-          namespace: traefik
-        - name: catalyst-asset-cache
-          namespace: traefik
-      services:
-        - name: themepark
-          port: 80
-    - match: Host(`forge.knowledgedump.space`) && Path(`/catalyst/css/theme-options/catalyst.css`)
+    # EXACTLY the 6 files in the gitea theme's @import closure, anchored (^…$) so
+    # a ../ path can't match. Verified in-pod: gitea-base.css @imports chroma +
+    # monaco_vs_dark (css/base/gitea/) and placeholders + transparent
+    # (css/defaults/); catalyst.css is the color theme; none @import further, and
+    # all six were leak-scanned clean (no talos00/priv/knowledgedump). Everything
+    # else under /catalyst/ — nav.json, themes.json, other theme-options, the rest
+    # of the 108MB tree — is NOT matched here and stays 404 on the public host.
+    - match: Host(`forge.knowledgedump.space`) && PathRegexp(`^/catalyst/css/(base/gitea/(gitea-base|chroma|monaco_vs_dark)|defaults/(placeholders|transparent)|theme-options/catalyst)\.css$`)
       kind: Rule
       priority: 10000
       middlewares:
