@@ -9,8 +9,10 @@ metadata:
   name: lan-pihole-pool
 spec:
   blocks:
+    # Shrunk .250 -> .248 to free .249 for the forgejo-ssh VIP (no cross-pool block overlap).
+    # Pi-hole only uses .240; .240-.248 is ample headroom.
     - start: "192.168.1.240"
-      stop: "192.168.1.250"
+      stop: "192.168.1.248"
   serviceSelector:
     matchLabels:
       app: pihole
@@ -114,16 +116,17 @@ spec:
 
 ---
 # Forgejo git-over-SSH VIP (TALOS-6nf). Traefik only fronts HTTP, so git+ssh needs a raw-TCP
-# LoadBalancer. .239 is the slot just below the pihole pool (.240+), contiguous with the honeypot
-# .238 carve-out. ⚠ MUST be outside the router's DHCP range (same as .238) — verify before relying.
+# LoadBalancer. .249 sits in the .240-.250 band that's RESERVED OUTSIDE DHCP at the gateway (same
+# carve-out as the pihole pool, which was shrunk to .240-.248 to free this IP). Verified: only .240
+# (pihole) is assigned in 240-249.
 apiVersion: cilium.io/v2alpha1
 kind: CiliumLoadBalancerIPPool
 metadata:
   name: lan-forgejo-pool
 spec:
   blocks:
-    - start: "192.168.1.239"
-      stop: "192.168.1.239"
+    - start: "192.168.1.249"
+      stop: "192.168.1.249"
   serviceSelector:
     matchLabels:
       app: forgejo-ssh
