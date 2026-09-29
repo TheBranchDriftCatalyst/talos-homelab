@@ -9,8 +9,8 @@ metadata:
   name: lan-pihole-pool
 spec:
   blocks:
-  - start: "192.168.1.240"
-    stop: "192.168.1.250"
+    - start: "192.168.1.240"
+      stop: "192.168.1.250"
   serviceSelector:
     matchLabels:
       app: pihole
@@ -55,8 +55,8 @@ spec:
   blocks:
   # .240-.250 belongs to the Pi-hole pool above; .251 is verified free.
   # .252 kept spare for a future LAN-facing LoadBalancer.
-  - start: "192.168.1.251"
-    stop: "192.168.1.252"
+    - start: "192.168.1.251"
+      stop: "192.168.1.252"
   serviceSelector:
     matchLabels:
       app.kubernetes.io/name: traefik
@@ -89,8 +89,8 @@ metadata:
   name: lan-honeypot-pool
 spec:
   blocks:
-  - start: "192.168.1.238"
-    stop: "192.168.1.238"
+    - start: "192.168.1.238"
+      stop: "192.168.1.238"
   serviceSelector:
     matchLabels:
       app: honeypot-vip
@@ -109,5 +109,34 @@ spec:
   nodeSelector:
     matchLabels:
       kubernetes.io/hostname: talos02-gpu
+  loadBalancerIPs: true
+  externalIPs: false
+
+---
+# Forgejo git-over-SSH VIP (TALOS-6nf). Traefik only fronts HTTP, so git+ssh needs a raw-TCP
+# LoadBalancer. .239 is the slot just below the pihole pool (.240+), contiguous with the honeypot
+# .238 carve-out. ⚠ MUST be outside the router's DHCP range (same as .238) — verify before relying.
+apiVersion: cilium.io/v2alpha1
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: lan-forgejo-pool
+spec:
+  blocks:
+    - start: "192.168.1.239"
+      stop: "192.168.1.239"
+  serviceSelector:
+    matchLabels:
+      app: forgejo-ssh
+---
+apiVersion: cilium.io/v2alpha1
+kind: CiliumL2AnnouncementPolicy
+metadata:
+  name: lan-forgejo-l2
+spec:
+  serviceSelector:
+    matchLabels:
+      app: forgejo-ssh
+  # No nodeSelector: svc/forgejo-ssh is externalTrafficPolicy:Cluster (git-SSH authenticates by
+  # SSH key, not client IP), so any elected node can announce + route to the single Forgejo pod.
   loadBalancerIPs: true
   externalIPs: false
