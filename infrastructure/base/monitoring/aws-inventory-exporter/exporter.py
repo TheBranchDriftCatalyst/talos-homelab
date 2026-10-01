@@ -503,6 +503,65 @@ def tagging_api_scan(region, errors):
         return [], False
 
 
+# ── tag enrichment: types the inventory APIs return WITHOUT tags ────────────────────
+# Neither inventory API gives us tags for every type, and a row with no tags classifies
+# as "unmanaged" — which is an assertion that git does not know about the resource. For
+# a type whose tags we simply could not read, that assertion is false.
+#
+# Measured on this account 2026-10-01:
+#   iam:policy, iam:instance-profile  tagging API returns them WITH crossplane tags  -> classified correctly
+#   iam:role, iam:user                Resource Explorer indexes them but returns an
+#                                     EMPTY Properties array, and the tagging API does
+#                                     not return them at all -> every one of them was
+#                                     being reported as unmanaged, including
+#                                     catalyst-gpu-seeder and catalyst-ssm, which carry
+#                                     correct crossplane-kind/crossplane-name tags.
+#
+# That is a FALSE UNMANAGED, which is the dangerous direction twice over: it puts
+# git-managed identities in the human review pile, and it makes an orphaned IAM role
+# undetectable, because a row with no tags can never reach the orphan branch.
+#
+# So for these types we go and read the tags from the owning service. N is small (the
+# inventory already bounds it to resources that exist) and it only fires on rows that
+# arrived with no crossplane tag at all, so a correctly-tagged row costs nothing.
+#
+# Needs iam:ListRoleTags + iam:ListUserTags, both reads, both added to
+# infrastructure/base/aws/inventory-ro-user.yaml.
+TAG_BLIND_TYPES = {
+    "iam:role": ("iam", "list_role_tags", "RoleName"),
+    "iam:user": ("iam", "list_user_tags", "UserName"),
+}
+
+
+def enrich_tags(merged, errors):
+    """Fill in tags for TAG_BLIND_TYPES rows. -> (enriched_count, all_ok).
+
+    all_ok=False feeds the authoritative gate: if we could not read the tags, a zero
+    orphan count is not something we are entitled to publish.
+    """
+    targets = [(arn, row) for arn, row in merged.items()
+               if row["type"] in TAG_BLIND_TYPES
+               and not any(k.startswith("crossplane-") for k in row["tags"])]
+    if not targets:
+        return 0, True
+    clients, enriched, all_ok = {}, 0, True
+    for arn, row in targets:
+        service, op, param = TAG_BLIND_TYPES[row["type"]]
+        try:
+            if service not in clients:
+                clients[service] = boto3.client(service, config=_boto)
+            # ARN tail is the resource name; IAM paths mean it can contain slashes.
+            resp = getattr(clients[service], op)(**{param: arn.split("/")[-1]})
+            tags = {t["Key"]: t["Value"] for t in resp.get("Tags", [])}
+            if tags:
+                row["tags"].update(tags)
+                enriched += 1
+        except Exception as exc:  # noqa: BLE001
+            errors.record(service, row["region"], f"{op}:{row['type']}", exc)
+            all_ok = False
+    return enriched, all_ok
+
+
 # ── classification ───────────────────────────────────────────────────────────────────
 def classify(tags, mr_index, mr_ok):
     """-> (management, crossplane_kind, crossplane_name)."""
@@ -640,6 +699,17 @@ def inventory(m, errors, mr_index, mr_ok, regions):
 
     rollup, orphan_rollup, unmanaged_rollup = {}, {}, {}
     emitted, truncated = 0, False
+    # Read tags the inventory APIs withheld, BEFORE classifying — otherwise a
+    # git-managed IAM role is reported as unmanaged. See TAG_BLIND_TYPES.
+    matched_pairs = set()
+    enriched, tags_ok = enrich_tags(merged, errors)
+    m.declare("aws_inventory_tag_enrichment",
+              "Rows whose tags the inventory APIs omitted and we fetched from the "
+              "owning service (see TAG_BLIND_TYPES). complete=0 means some could not "
+              "be read, so classification for those types is not trustworthy.")
+    m.add("aws_inventory_tag_enrichment", {"result": "enriched"}, enriched)
+    m.add("aws_inventory_tag_enrichment", {"result": "complete"}, 1 if tags_ok else 0)
+
     for arn in sorted(merged):
         row = merged[arn]
         management, kind, name = classify(row["tags"], mr_index, mr_ok)
@@ -659,6 +729,8 @@ def inventory(m, errors, mr_index, mr_ok, regions):
         else:
             truncated = True
 
+        if management == MANAGED:
+            matched_pairs.add((kind, name))
         key = (row["service"], row["type"], row["region"], management)
         rollup[key] = rollup.get(key, 0) + 1
         if management == ORPHANED:
@@ -676,6 +748,32 @@ def inventory(m, errors, mr_index, mr_ok, regions):
                 "allowlisted": "1" if allow else "0"})
             akey = (row["service"], "1" if allow else "0")
             unmanaged_rollup[akey] = unmanaged_rollup.get(akey, 0) + 1
+
+    # ── what drift detection is BLIND to ────────────────────────────────────────────
+    # An MR exists in the cluster but nothing in the merged inventory carries its
+    # crossplane-name. Three different reasons, and the distinction matters:
+    #   * the resource is a CONFIGURATION SUB-RESOURCE with no ARN or tags of its own
+    #     (BucketVersioning, BucketPublicAccessBlock, RolePolicyAttachment, AccessKey) —
+    #     expected and permanent, nothing to fix
+    #   * NO inventory API indexes the type at all (measured: ecs:service returns 0 from
+    #     both Resource Explorer and the tagging API) — a genuine blind spot: an orphan
+    #     of that type could never be detected
+    #   * the MR never created anything (no status.atProvider.id), so there is correctly
+    #     nothing to find
+    # Informational, never alertable — most entries are the first case. It exists so the
+    # blind spots are COUNTABLE instead of being discovered by accident.
+    m.declare("aws_inventory_mr_unmatched",
+              "Managed resources with no matching inventory row, by kind. Expected for "
+              "non-taggable sub-resources; for a taggable type it means orphans of that "
+              "type are undetectable.")
+    matched_names = {(k, n) for (k, n) in matched_pairs}
+    unmatched = {}
+    for kind, names in mr_index.items():
+        for name in names:
+            if (kind, name) not in matched_names:
+                unmatched[kind] = unmatched.get(kind, 0) + 1
+    for kind, count in sorted(unmatched.items()):
+        m.add("aws_inventory_mr_unmatched", {"crossplane_kind": kind}, count)
 
     for (service, rtype, region, management), count in sorted(rollup.items()):
         m.add("aws_resource_count", {"service": service, "type": rtype,
@@ -703,7 +801,9 @@ def inventory(m, errors, mr_index, mr_ok, regions):
     # honest answer in that state, so the whole family is withheld.
     inventory_clean = (len(errors) == err_before and bool(scanned) and complete_all
                        and all(r in scanned for r in regions))
-    authoritative = mr_ok and inventory_clean
+    # tags_ok matters as much as mr_ok: a type whose tags we could not read can never
+    # reach the orphan branch, so a zero would be a lower bound presented as a fact.
+    authoritative = mr_ok and inventory_clean and tags_ok
     m.declare("aws_inventory_orphan_detection_authoritative",
               "1 if a ZERO orphan count can be believed: MR index read in full AND every "
               "enabled region swept cleanly with no truncation. 0 means the orphan count "
