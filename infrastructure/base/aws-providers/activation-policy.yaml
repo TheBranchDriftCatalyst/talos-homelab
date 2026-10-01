@@ -52,11 +52,22 @@ spec:
     - bucketlifecycleconfigurations.s3.aws.upbound.io
 
     # --- ec2: XInstance + XGPUInstance (x{gpu,}instance-composition.yaml) ---
+    # instances: still required — aws-redteam's XInstance composes one directly.
+    # XGPUInstance no longer does; it goes through the fleet pair below.
     - instances.ec2.aws.upbound.io
     - securitygroups.ec2.aws.upbound.io
     - securitygrouprules.ec2.aws.upbound.io
+    # ebsvolumes/volumeattachments: XGPUInstance dropped both in TALOS-rkg0 (/cache is
+    # instance-store NVMe now). Left activated for XInstance and ad-hoc use.
     - ebsvolumes.ec2.aws.upbound.io
     - volumeattachments.ec2.aws.upbound.io
+    # launchtemplates + fleets: XGPUInstance composes an EC2 Fleet rather than a single
+    # Instance, so AWS can pick whichever instance-type pool has capacity (TALOS-i91u).
+    # Without BOTH of these the composition renders kinds the API server does not serve
+    # and every claim fails — these two lines are the difference between the fleet
+    # working and the XR sitting Synced=False forever.
+    - launchtemplates.ec2.aws.upbound.io
+    - fleets.ec2.aws.upbound.io
 
     # --- XFargateApp (xfargateapp-composition.yaml). These are INERT until the
     # ecs/iam/cloudwatchlogs providers are re-added: an MRAP entry with no
