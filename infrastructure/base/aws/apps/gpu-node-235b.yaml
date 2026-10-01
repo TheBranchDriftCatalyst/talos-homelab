@@ -46,13 +46,14 @@ spec:
   maxModelLen: "32768"
   gpuMemoryUtilization: "0.78"      # leaves VRAM for ComfyUI alongside
   enableImageGen: "true"            # needs the GHCR bundle image to exist — see header
-  cacheVolumeGb: 200                # 124.6GB model + headroom
+  # No cache volume: /cache is this shape's 3800GB local NVMe instance store — far
+  # more than the 124.6GB model needs, and not zone-scoped (TALOS-rkg0).
   servePort: "8000"
   region: us-east-2
-  availabilityZone: us-east-2c      # g6e.12xlarge offered in a/b/c; same AZ as the seeder
+  # No zone or subnet named: AWS places this wherever us-east-2 has 4x L40S capacity.
+  # Placement score was only 3/9, so unpinning matters here too.
   ami: ami-07173ded18b6f3a7b        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA), resolved 2026-09-27. Region-specific (upjet rejects resolve:ssm).
-  vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC
-  subnetId: subnet-030ae60367ab837fe  # default subnet for us-east-2c (public-IP-on-launch)
+  vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC (for the egress-only SG)
   # SSM + S3 read/write for the boot-time weights path. Switch to catalyst-ssm only
   # if the cache is pre-seeded via cacheSnapshotId and no S3 write is needed.
   instanceProfileName: catalyst-gpu-seeder

@@ -1,7 +1,18 @@
 ---
-# Composition for XGPUInstance (POC-DEMO, TALOS-455u / TALOS-iymy). Members: SG
-# (egress-only — the box TUNNELS OUT, no public inference port), spot GPU
-# Instance, gp3 cache Volume + Attachment. Cache mounts at /cache.
+# Composition for XGPUInstance (POC-DEMO, TALOS-455u / TALOS-iymy / TALOS-rkg0).
+# Members: SG (egress-only — the box TUNNELS OUT, no public inference port) and the
+# GPU Instance. That is all — there is deliberately NO EBS cache volume.
+#
+# TALOS-rkg0: /cache lives on the instance's LOCAL NVME INSTANCE STORE, not EBS.
+# EBS is an AZ-scoped resource, so an EBS cache forced the claim to name one AZ —
+# and that pin is what made the rig unlaunchable: g6e.2xlarge refused with
+# InsufficientInstanceCapacity across AZ after AZ (on spot AND on-demand), while
+# AWS's own remediation text said "you can get capacity by NOT SPECIFYING an
+# Availability Zone". Every GPU shape we use already ships local NVMe
+# (g6e.2xlarge 450GB, g6e.12xlarge 3800GB), which is free, direct-attached (faster
+# than gp3), and has no AZ dimension. S3 is already the durable layer via the
+# seed-on-miss path, so the only thing given up is a warm cache surviving instance
+# replacement — a re-sync from same-region S3 is fast and free.
 #
 # ONE composition for every machine shape. Everything that differs between a
 # 1x L40S box and a 4x L40S box is a spec field on the claim
@@ -55,35 +66,6 @@ spec:
                   securityGroupIdSelector: {matchControllerRef: true}
             patches:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
-          - name: cache-volume
-            base:
-              apiVersion: ec2.aws.upbound.io/v1beta1
-              kind: EBSVolume
-              spec:
-                forProvider:
-                  region: us-west-2
-                  type: gp3
-                  size: 200
-                  tags: {purpose: xgpu-model-cache}
-            patches:
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.availabilityZone, toFieldPath: spec.forProvider.availabilityZone}
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.cacheVolumeGb, toFieldPath: spec.forProvider.size}
-              # Pre-seeded warm cache (TALOS-iymy): restore /cache from a snapshot the small seeder built,
-              # so the GPU box skips even the S3 sync. Optional — unset => blank gp3 volume.
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.cacheSnapshotId, toFieldPath: spec.forProvider.snapshotId, policy: {fromFieldPath: Optional}}
-          - name: cache-attachment
-            base:
-              apiVersion: ec2.aws.upbound.io/v1beta1
-              kind: VolumeAttachment
-              spec:
-                forProvider:
-                  region: us-west-2
-                  deviceName: /dev/sdf
-                  instanceIdSelector: {matchControllerRef: true}
-                  volumeIdSelector: {matchControllerRef: true}
-            patches:
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
           - name: instance
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
@@ -106,12 +88,16 @@ spec:
                   rootBlockDevice:
                     # DL Base GPU AMI root snapshot is 75GB, so this must be >=75; 100
                     # leaves room for the OS/drivers + the ~10GB vllm-openai image.
-                    # (model weights live on the separate cacheVolumeGb gp3 at /cache.)
+                    # (model weights live on the local NVMe instance store at /cache.)
                     - volumeSize: 100
             patches:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceType, toFieldPath: spec.forProvider.instanceType}
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.subnetId, toFieldPath: spec.forProvider.subnetId}
+              # Optional: omit subnetId on the claim and AWS picks the AZ with capacity.
+              # That is the whole point of TALOS-rkg0 — nothing here is AZ-scoped any
+              # more, so there is no reason to pin placement. Set it only to force a
+              # specific subnet/VPC.
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.subnetId, toFieldPath: spec.forProvider.subnetId, policy: {fromFieldPath: Optional}}
               # Region-specific AMI (TALOS-iymy). Optional patch overrides the us-west-2 default above with a
               # concrete per-region DL GPU AMI (e.g. us-east-2). upjet rejects resolve:ssm: so it must be an id.
               - {type: FromCompositeFieldPath, fromFieldPath: spec.ami, toFieldPath: spec.forProvider.ami, policy: {fromFieldPath: Optional}}
@@ -155,10 +141,29 @@ spec:
                       exec > >(tee /var/log/gpu-init.log) 2>&1; set -x
                       HF_MODEL="%s"; BUCKET="%s"; PORT="%s"; SERVED="%s"; TP="%s"
                       QUANT="%s"; MAXLEN="%s"; UTIL="%s"; IMAGES="%s"; VLLM_IMAGE="%s"
-                      # --- mount the model cache (gp3; Nitro renames /dev/sdf -> /dev/nvmeXn1; wait for attach) ---
-                      for i in $(seq 1 40); do D=$(readlink -f /dev/sdf 2>/dev/null || true); [ -b "$D" ] && break; [ -b /dev/nvme1n1 ] && { D=/dev/nvme1n1; break; }; sleep 5; done
-                      blkid "$D" >/dev/null 2>&1 || mkfs.xfs "$D"
-                      mkdir -p /cache && mount "$D" /cache || true
+                      # --- mount /cache on LOCAL NVME INSTANCE STORE (TALOS-rkg0) ---
+                      # Identify it by the NVMe MODEL string, not device order: on Nitro the
+                      # root EBS volume is also an NVMe device and the numbering is not
+                      # guaranteed. Instance store reports "Amazon EC2 NVMe Instance Storage".
+                      # Always mkfs -f: instance store comes up raw on every boot and holds
+                      # nothing we need to preserve (S3 is the durable copy).
+                      CACHE_DEV=""
+                      for i in $(seq 1 30); do
+                        CACHE_DEV=$(lsblk -dno NAME,MODEL 2>/dev/null | awk '/Instance Storage/ {print "/dev/"$1; exit}')
+                        [ -n "$CACHE_DEV" ] && break
+                        sleep 2
+                      done
+                      mkdir -p /cache
+                      if [ -n "$CACHE_DEV" ]; then
+                        mkfs.xfs -f "$CACHE_DEV" && mount "$CACHE_DEV" /cache
+                        echo "cache: mounted instance store $CACHE_DEV at /cache"
+                      else
+                        # Shape without instance store, or it never appeared. Fall back to the
+                        # root volume so the box still serves — but the model must fit in
+                        # rootBlockDevice (100GB minus the ~75GB AMI and the vLLM image).
+                        echo "WARNING: no instance-store device found; /cache is on the root volume"
+                      fi
+                      df -h /cache
                       # --- s5cmd (PINNED: the /latest/download/s5cmd_Linux-64bit.tar.gz asset 404s -> silent no-binary) ---
                       curl -fsSL https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz | tar xz -C /usr/local/bin s5cmd
                       # --- weights: the S3 cache prefix IS the HF id, so one field drives both ---

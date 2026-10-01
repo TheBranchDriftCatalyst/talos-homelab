@@ -24,12 +24,12 @@
 # 8 vCPU there would leave 40 and lock big boi out of its own region. On-demand price
 # is per-region-identical across AZs, so there is no AZ premium to trade away.
 #
-# AZ: on-demand pricing does NOT vary by AZ, so this picks 2a (the largest/oldest)
-# purely for capacity odds. availabilityZone and subnetId MUST move together — the EBS
-# cache follows the former, the instance the latter, and a volume cannot change AZ
-# (upjet refuses the replacement; delete the EBSVolume MR to let it be recreated).
-# Default subnets: 2a subnet-36191741 | 2b subnet-6d58b209 | 2c subnet-2372567a
-#                  2d subnet-a6ed938e
+# PLACEMENT IS UNPINNED (TALOS-rkg0). No AZ and no subnet are named, so AWS picks
+# the zone that actually has capacity. This is not a convenience — g6e.2xlarge refused
+# with InsufficientInstanceCapacity in 2a, then 2d, then 2a again, on spot AND
+# on-demand, with the set of zones holding capacity rotating between attempts minutes
+# apart. AWS's own guidance is to stop naming a zone, which only became possible once
+# /cache moved off zone-scoped EBS onto the instance's local NVMe.
 #
 # THE FILE'S LINE IN kustomization.yaml IS THE ON-SWITCH.
 #
@@ -76,13 +76,12 @@ spec:
   maxModelLen: "32768"
   gpuMemoryUtilization: "0.90"      # 43.2GB of 48 − 30.9GB weights ≈ 12GB KV cache
   enableImageGen: "false"           # no spare VRAM here, and the GHCR bundle image does not exist yet
-  cacheVolumeGb: 100                # 30.9GB model + HF_HOME scratch + headroom
+  # No cache volume: /cache is this shape's 450GB local NVMe instance store.
   servePort: "8000"
   region: us-west-2
-  # See the AZ note in the header; moves together with subnetId.
-  availabilityZone: us-west-2a
-  vpcId: vpc-3536d651               # default VPC (verified by the retired gpu-test-rig)
-  subnetId: subnet-36191741         # default subnet for us-west-2a, public-IP-on-launch
+  # vpcId is only for the egress-only SG. No subnet is set, so AWS places this in
+  # whichever zone has capacity, choosing among this VPC's default subnets.
+  vpcId: vpc-3536d651               # us-west-2 default VPC
   # catalyst-gpu-seeder, NOT catalyst-ssm: the cold path WRITES the weights to S3,
   # which needs s3:PutObject. This profile carries that plus AmazonSSMManagedInstanceCore.
   instanceProfileName: catalyst-gpu-seeder

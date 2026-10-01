@@ -39,7 +39,7 @@ spec:
           properties:
             spec:
               type: object
-              required: [instanceName, hfModel, vpcId, subnetId, availabilityZone]
+              required: [instanceName, hfModel, vpcId]
               properties:
                 instanceName: {type: string}
                 instanceType: {type: string, default: g5.xlarge, description: "g5.xlarge=1xA10G 24GB, g6e.2xlarge=1xL40S 48GB, g6.12xlarge=4xL4 96GB, g6e.12xlarge=4xL40S 192GB. NOTE: G/VT spot quota is per-REGION vCPU (48 = exactly one 4-GPU box) — see aws/apps/gpu-profiles.yaml"}
@@ -90,19 +90,24 @@ spec:
                 capacityType: {type: string, enum: [spot], description: "Set to 'spot' for a spot instance. OMIT ENTIRELY for on-demand (there is no on-demand marketType; absence is the signal). Omitting costs MORE — see the comment above."}
 
                 # ── machine / placement ─────────────────────────────────────
-                cacheVolumeGb: {type: integer, default: 200, description: "gp3 hot-cache at /cache — size for THIS model plus headroom, not the whole library"}
-                # Pre-seeded cache (TALOS-iymy): create /cache FROM this EBS snapshot instead of a blank
-                # volume, so the (expensive) GPU box boots warm with the model already present and skips
-                # even the S3 sync. Optional: unset => blank volume (seed-on-miss path runs).
-                cacheSnapshotId: {type: string, description: "EBS snapshot id to restore /cache from (pre-seeded model). Omit for a blank cache."}
+                # NO cacheVolumeGb / cacheSnapshotId (TALOS-rkg0): /cache is the instance's
+                # LOCAL NVME INSTANCE STORE, which is free, faster than gp3, sized by the
+                # shape (g6e.2xlarge 450GB, g6e.12xlarge 3800GB), and — the reason for the
+                # change — NOT AZ-scoped. An EBS cache forced this XRD to pin one AZ, and
+                # that pin made the rig unlaunchable while AWS was telling us to stop
+                # specifying an AZ. S3 is the durable layer via seed-on-miss.
                 # AMI is region-specific and upjet does NOT accept resolve:ssm aliases, so it must be a
                 # concrete ami-... id per region. Optional: unset => composition default (us-west-2 DL GPU AMI).
                 ami: {type: string, description: "Concrete AMI id (region-specific DL Base GPU AMI). Omit to use the composition default."}
                 servePort: {type: string, default: "8000"}
                 region: {type: string, default: us-west-2}
-                availabilityZone: {type: string, description: "MUST match the subnet's AZ (e.g. us-west-2a). Also where the EBS cache lands. Retry across the region's other AZs on a spot capacity failure."}
-                vpcId: {type: string}
-                subnetId: {type: string}
+                # NO availabilityZone (TALOS-rkg0): nothing in this composition is
+                # AZ-scoped any more, so there is nothing to pin. OMIT subnetId and AWS
+                # places the instance in whichever AZ actually has capacity — which is
+                # exactly what its InsufficientInstanceCapacity guidance asks for. Set
+                # subnetId only to force a specific subnet (and thereby a specific AZ).
+                vpcId: {type: string, description: "VPC for the egress-only security group. Keep it the VPC whose default subnets AWS will choose from when subnetId is omitted."}
+                subnetId: {type: string, description: "OPTIONAL. Omit to let AWS pick the AZ with capacity (recommended). Set to pin a subnet/AZ."}
                 # Interactive mode (SSM). NO default: unset => the composition patch
                 # is skipped (Optional) and the box launches with no profile/SSM.
                 # The XGPUInstance SG is EGRESS-ONLY (no inbound), so without this

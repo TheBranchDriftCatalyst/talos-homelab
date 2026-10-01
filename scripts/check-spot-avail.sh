@@ -106,7 +106,7 @@ for T in $TYPES; do
       --query 'SpotPlacementScores[0].Score' --output text 2> /dev/null)
     printf '%-14s' "${S:--}"
   done
-  printf '%8s %7sG %6s\n' "$(shape_field "$T" vcpu)" "$(shape_field "$T" vramGb)" "$(shape_field "$T" gpus)"
+  printf '%8s %7sG %6s\n' "$(shape_field "$T" vcpu)" "$(shape_field "$T" vramGib)" "$(shape_field "$T" gpus)"
 done
 echo "  (score is capacity ONLY — a 9 in a zero-quota region still cannot launch)"
 
@@ -149,9 +149,9 @@ if [ "$HAVE_TABLE" -eq 1 ]; then
     shapes = d["shapes"] || []
     printf("  %-38s %8s %9s   %s\n", "MODEL", "SIZE", "MIN VRAM", "FITS")
     (d["models"] || []).each do |m|
-      ok = shapes.select { |s| s["vramGb"].to_f >= m["minVramGb"].to_f }.map { |s| s["instanceType"] }
+      ok = shapes.select { |s| s["vramGib"].to_f >= m["minVramGib"].to_f }.map { |s| s["instanceType"] }
       printf("  %-38s %7.1fG %8sG   %s\n", m["hfModel"], m["sizeGb"].to_f,
-             m["minVramGb"], ok.empty? ? "(nothing in the table)" : ok.join(", "))
+             m["minVramGib"], ok.empty? ? "(nothing in the table)" : ok.join(", "))
     end
     puts
     printf("  %-20s %-5s %-16s %-14s %-34s %s\n", "RIG", "STATE", "SHAPE", "REGION", "MODEL", "~$/hr")

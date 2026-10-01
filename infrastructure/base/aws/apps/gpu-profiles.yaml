@@ -9,6 +9,16 @@
 # Run `scripts/check-spot-avail.sh` BEFORE flipping a claim on — quota and spot
 # capacity both move, and quota != capacity.
 #
+# ── Placement is unpinned (TALOS-rkg0) ──────────────────────────────────────
+# Claims no longer name a zone or subnet: /cache sits on the instance's local NVMe
+# instead of zone-scoped EBS, so AWS places the box wherever capacity exists.
+#
+# ── Units, because they bite ────────────────────────────────────────────────
+# vramGib / instanceStoreGb come from describe-instance-types and are the REPORTED
+# figures, which run under the marketing number: an L40S reports 45776 MiB = 44.7
+# GiB, not "48 GB"; an A10G reports 22.4 GiB, not 24. Model sizes below are
+# decimal GB as HuggingFace reports them. Budget KV cache in GiB against vramGib.
+#
 # ── The quota trap ───────────────────────────────────────────────────────────
 # "All G and VT Spot Instance Requests" (L-3819A6DF) is a per-REGION vCPU ceiling,
 # NOT per-AZ and NOT per-instance-count. There is no per-AZ GPU quota. A 4-GPU
@@ -29,21 +39,21 @@ regions:
 
 # Candidate machine shapes. `gpus` MUST equal a claim's tensorParallelSize.
 shapes:
-  - {instanceType: g5.2xlarge, gpu: A10G, gpus: 1, vramGb: 24, vcpu: 8}
-  - {instanceType: g6e.2xlarge, gpu: L40S, gpus: 1, vramGb: 48, vcpu: 8}
-  - {instanceType: g6e.4xlarge, gpu: L40S, gpus: 1, vramGb: 48, vcpu: 16}
-  - {instanceType: g6.12xlarge, gpu: L4, gpus: 4, vramGb: 96, vcpu: 48}
-  - {instanceType: g5.12xlarge, gpu: A10G, gpus: 4, vramGb: 96, vcpu: 48}
-  - {instanceType: g6e.12xlarge, gpu: L40S, gpus: 4, vramGb: 192, vcpu: 48}
+  - {instanceType: g5.2xlarge, gpu: A10G, gpus: 1, vramGib: 22.4, instanceStoreGb: 450, vcpu: 8}
+  - {instanceType: g6e.2xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, instanceStoreGb: 450, vcpu: 8}
+  - {instanceType: g6e.4xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, instanceStoreGb: 600, vcpu: 16}
+  - {instanceType: g6.12xlarge, gpu: L4, gpus: 4, vramGib: 89.4, instanceStoreGb: 3760, vcpu: 48}
+  - {instanceType: g5.12xlarge, gpu: A10G, gpus: 4, vramGib: 89.4, instanceStoreGb: 3800, vcpu: 48}
+  - {instanceType: g6e.12xlarge, gpu: L40S, gpus: 4, vramGib: 178.8, instanceStoreGb: 3800, vcpu: 48}
 
 # Weight sizes measured from the HuggingFace file listings (2026-09-30).
 # `minVramGb` is weights + a usable KV cache, not weights alone.
 models:
-  - {hfModel: Qwen/Qwen3.8-27B-FP8, sizeGb: 30.9, minVramGb: 48, note: "latest flagship, FP8 native on Ada/L40S"}
-  - {hfModel: Qwen/Qwen3.8-27B, sizeGb: 55.6, minVramGb: 96, note: "same model in bf16 — needs 4x"}
-  - {hfModel: Qwen/Qwen3-32B-AWQ, sizeGb: 19.3, minVramGb: 48, note: "staged at the legacy flat key qwen3-32b-awq/. Technically loads on 24GB but leaves ~2.3GB KV (~8k ctx max) — 48GB for a usable context."}
-  - {hfModel: Qwen/Qwen3.5-122B-A10B-GPTQ-Int4, sizeGb: 78.9, minVramGb: 96, note: "MoE, 10B active"}
-  - {hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4, sizeGb: 124.6, minVramGb: 192, note: "staged in use2; original Qwen3 generation"}
+  - {hfModel: Qwen/Qwen3.8-27B-FP8, sizeGb: 30.9, minVramGib: 40, note: "latest flagship, FP8 native on Ada (L40S/L4). 28.8GiB weights"}
+  - {hfModel: Qwen/Qwen3.8-27B, sizeGb: 55.6, minVramGib: 60, note: "same model in bf16, 51.8GiB weights — needs a 4x shape"}
+  - {hfModel: Qwen/Qwen3-32B-AWQ, sizeGb: 19.3, minVramGib: 26, note: "18GiB weights. Loads on a 22.4GiB A10G but leaves ~2GiB KV (~8k ctx)"}
+  - {hfModel: Qwen/Qwen3.5-122B-A10B-GPTQ-Int4, sizeGb: 78.9, minVramGib: 85, note: "MoE, 10B active, 73.5GiB weights — tight on 89.4GiB"}
+  - {hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4, sizeGb: 124.6, minVramGib: 140, note: "116GiB weights; original Qwen3 generation"}
 
 # The rigs that exist as claims in this directory.
 rigs:
@@ -51,9 +61,8 @@ rigs:
     state: "on"
     instanceType: g6e.2xlarge
     region: us-west-2
-    availabilityZone: us-west-2a
-    availabilityZonesFallback: [us-west-2b, us-west-2c, us-west-2d]
-    capacityType: on-demand        # spot was at the on-demand price AND had no capacity
+    placement: unpinned           # TALOS-rkg0 — AWS picks the zone with capacity
+    capacityType: on-demand        # spot sat AT the on-demand price and had no capacity
     hfModel: Qwen/Qwen3.8-27B-FP8
     spotUsdPerHour: 2.24   # ON-DEMAND list. Spot was capped at this price anyway:
                            # L40S spot is scarce (score 1/9) so the discount off ~$2.24
@@ -62,7 +71,7 @@ rigs:
     state: "off"
     instanceType: g6e.12xlarge
     region: us-east-2
-    availabilityZones: [us-east-2a, us-east-2b, us-east-2c]
+    placement: unpinned           # TALOS-rkg0
     hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4
     spotUsdPerHour: 5.17   # us-east-2c, measured 2026-09-30 (range 5.17-5.24 across AZs).
                            # In us-west-2 the same shape is $6.11-9.90 — do not move it there.
