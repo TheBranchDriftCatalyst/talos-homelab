@@ -1,70 +1,123 @@
 ---
-# ██ LITTLE BOI / TALOS-iymy ██ The everyday rig: spot g6e.2xlarge (1× L40S = 48GB
-# VRAM) in us-west-2 serving Qwen3.8-27B-FP8 via vLLM. ~$1.42/hr spot (us-west-2a,
-# measured 2026-09-30) — about a quarter of the 4× box (gpu-node-235b.yaml), which is
-# why this one is the default ON.
+# ██ LITTLE BOI / TALOS-iymy ██ The everyday rig: ONE GPU box serving
+# Qwen3.8-27B-FP8 via vLLM, taken from whichever of three capacity pools AWS can
+# actually fill. ~$2.24/hr if it lands on the cheap shape, $4.60/hr worst case.
 #
-# COST: ~$2.24/hr ON-DEMAND (us-west-2 list, $2.24208) => ~$54/day if left up. This
-# is NOT a pocket-change box. `scripts/check-spot-avail.sh` before assuming anything.
+# ⚠️ PREFLIGHT BEFORE UNCOMMENTING THIS IN kustomization.yaml ⚠️
+#   1. fleets.ec2.aws.upbound.io and launchtemplates.ec2.aws.upbound.io must be
+#      ACTIVATED in infrastructure/base/aws-providers/activation-policy.yaml.
+#      Crossplane v2 ships managed resources inactive; both are Inactive today, and
+#      without them this claim renders nothing (see the composition's header box).
+#   2. scripts/check-spot-avail.sh — quota and capacity both move, and quota is not
+#      capacity.
 #
-# WHY ON-DEMAND AND NOT SPOT — spot was tried first and is the worse deal here:
+# COST: the pool spans $2.24 - $4.60/hr on-demand in us-east-2 (measured 2026-10-01
+# via the Pricing API: g6e.2xlarge $2.24208, g6e.4xlarge $3.00424, g6.12xlarge
+# $4.6016). That is ~$54-110/day if left up. This is NOT a pocket-change box.
+# onDemandOptions.allocationStrategy is lowestPrice, so the dearer shapes are reached
+# for ONLY when the cheap one has no capacity — i.e. when the alternative is the rig
+# not running at all. Budget against the ceiling anyway.
+#
+# ── WHY A POOL AND NOT A SHAPE (TALOS-i91u) ─────────────────────────────────────────
+# This used to say `instanceType: g6e.2xlarge`, and one instance type is one capacity
+# pool. Unpinning the AZ (TALOS-rkg0) was necessary but not sufficient: with placement
+# free, AWS still chose across every zone and still returned InsufficientInstanceCapacity
+# with NO zone named — first region-wide in us-west-2, then region-wide in us-east-2,
+# before us-east-2c eventually opened. L40S spot placement score was 1/9 in all four
+# regions. The fix is to stop naming the machine at all and name the requirement.
+#
+# ALL THREE SHAPES BELOW GENUINELY RUN THIS MODEL — checked, not assumed, because
+# lowestPrice means any of them can be the one you get:
+#   g6e.2xlarge   1x L40S  44.7GiB  8 vCPU   -> TP1   $2.242
+#   g6e.4xlarge   1x L40S  44.7GiB  16 vCPU  -> TP1   $3.004  (separate capacity pool
+#                                                              from 2xlarge)
+#   g6.12xlarge   4x L4    89.4GiB  48 vCPU  -> TP4   $4.602  (L4 is the VOLUME
+#                                                              inference card, so its
+#                                                              pool is much deeper)
+# FP8 e4m3 is native on Ada, which both L40S and L4 are. TP4 divides this checkpoint
+# cleanly — config.json reports num_attention_heads 24, num_key_value_heads 4,
+# linear_num_key_heads 16, linear_num_value_heads 48, hidden_size 5120,
+# intermediate_size 17408; every one is divisible by 4.
+#
+# DELIBERATELY EXCLUDED:
+#   g5.*          A10G is AMPERE — no native FP8, so it would fall back to a Marlin
+#                 emulation path; g5.2xlarge's 22.4GiB cannot even hold 28.8GiB of
+#                 weights at TP1.
+#   g6e.12xlarge  $10.49/hr on-demand. That is big boi's shape and big boi is a
+#                 deliberate decision to spend that much; it must not be something
+#                 little boi wanders into.
+#
+# ⚠️ QUOTA CONSEQUENCE: "All G and VT" quota is a per-REGION vCPU ceiling, and
+# us-east-2 is at 48. If this rig lands on g6.12xlarge it consumes the ENTIRE regional
+# on-demand allowance by itself. Big boi (48 vCPU) is git-off, so that is latent rather
+# than blocking — but a second rig will fail to launch, confusingly, while this one
+# happens to be on the big shape.
+#
+# ── NO tensorParallelSize (TALOS-5drv.2) ────────────────────────────────────────────
+# It used to say `tensorParallelSize: "1"  # ONE GPU on this shape`. With a pool
+# spanning 1-GPU and 4-GPU shapes there IS no single correct value, so the field is
+# gone and userData derives it from `nvidia-smi -L` at boot. TP is a property of the
+# machine, not of this file. 0 GPUs is a hard FATAL in the boot script rather than a
+# silent fallback to 1.
+#
+# ── WEIGHTS STREAM FROM S3 (TALOS-5drv.3) ───────────────────────────────────────────
+# `hfModel` still drives everything, but vLLM now reads
+# s3://catalyst-tbdc-models-use2/Qwen/Qwen3.8-27B-FP8/ DIRECTLY into VRAM with
+# --load-format runai_streamer. No ~31GB local write and re-read per boot. The repo is
+# native sharded safetensors (layers-0.safetensors ... plus mtp), which is exactly what
+# that loader wants. First boot still seeds from HuggingFace, then throws the staged
+# copy away.
+#
+# WHY ON-DEMAND AND NOT SPOT — spot was tried first and was the worse deal:
 #   * Spot price is CAPPED AT on-demand, and on 2026-09-30 g6e.2xlarge spot in
 #     us-west-2b/2c sat at $2.2421 vs $2.24208 on-demand: a 0.0% discount for full
 #     interruption risk.
 #   * The only AZs with a real discount (2a $1.42, 2d $1.94) both refused with
 #     InsufficientInstanceCapacity, and the set of "AZs that have capacity" rotated
-#     between attempts minutes apart (2b/2c/2d, then 2a/2b/2c). L40S spot placement
-#     score is 1/9 — chasing it is whack-a-mole.
+#     between attempts minutes apart. L40S spot placement score is 1/9.
 #   * On-demand also removes interruption risk, which matters for a box meant to
 #     stay up unattended.
-# If spot capacity recovers and shows a real discount, add `capacityType: spot`.
+# RE-MEASURE THAT: a three-pool fleet on price-capacity-optimized is a much better
+# spot bet than one pinned shape was, so `capacityType: spot` may now win. Run
+# check-spot-avail.sh across all three shapes before deciding.
 #
-# REGION — moved to us-east-2 on 2026-09-30. us-west-2 was preferred (it leaves
-# us-east-2's 48 vCPU free, which is EXACTLY what big boi's g6e.12xlarge needs), but
-# us-west-2 has no g6e.2xlarge capacity at all: after placement was unpinned, AWS
-# chose freely across every zone and still returned "Insufficient capacity" with no
-# zone named. us-east-2 is an independent capacity pool.
+# REGION — us-east-2 since 2026-09-30. us-west-2 was preferred (it leaves us-east-2's
+# 48 vCPU free for big boi) but had no g6e.2xlarge capacity at all. Now that the rig
+# can take g6e.4xlarge or g6.12xlarge too, us-west-2 is worth retesting — move back
+# (and back to the catalyst-tbdc-models bucket, and drop the ami override) if the
+# wider pool makes it viable there.
 #
-# The cost of being here: little boi's 8 vCPU leaves 40 of us-east-2's 48, so big boi
-# CANNOT launch concurrently until the pending quota bump to 64 clears. Big boi is
-# git-off, so that is latent, not blocking. Move back to us-west-2 (and back to the
-# catalyst-tbdc-models bucket + drop the ami override) when L40S capacity returns
-# there, or when the quota bump lands.
-#
-# PLACEMENT IS UNPINNED (TALOS-rkg0). No AZ and no subnet are named, so AWS picks
-# the zone that actually has capacity. This is not a convenience — g6e.2xlarge refused
-# with InsufficientInstanceCapacity in 2a, then 2d, then 2a again, on spot AND
-# on-demand, with the set of zones holding capacity rotating between attempts minutes
-# apart. AWS's own guidance is to stop naming a zone, which only became possible once
-# /cache moved off zone-scoped EBS onto the instance's local NVMe.
+# PLACEMENT IS UNPINNED (TALOS-rkg0). No AZ and no subnet are named anywhere — the
+# XRD no longer even has a subnetId field, because pinning one AZ is exactly the
+# anti-pattern the pool above exists to escape.
 #
 # THE FILE'S LINE IN kustomization.yaml IS THE ON-SWITCH.
 #
 # Why FP8 and not bf16: Qwen3.8-27B in bf16 is 55.6GB and does NOT fit 48GB. The
-# official FP8 checkpoint is 30.9GB, and L40S (Ada) does FP8 natively — so this is
-# the latest-generation flagship Qwen on ONE GPU, where bf16 needs four.
+# official FP8 checkpoint is 30.9GB and Ada does FP8 natively — so this is the
+# latest-generation flagship Qwen on ONE GPU, where bf16 needs four.
 #
-# Weights come from `hfModel` with no manual S3 seeding: the first boot pulls from
-# HuggingFace and writes s3://catalyst-tbdc-models/Qwen/Qwen3.8-27B-FP8/ plus a
-# _SEED_COMPLETE marker; every boot after syncs from S3 same-region instead.
-#
-# Reach it via SSM port-forward (`scripts/gpu-tunnel.sh`) — the SG is egress-only,
-# so that is the ONLY way in. Mesh-join is a Phase-3 follow-on.
+# Reach it via SSM port-forward (`scripts/gpu-tunnel.sh`) — the SG is egress-only, so
+# that is the ONLY way in. It resolves the box by `tag:Name`, which the launch
+# template's tagSpecifications keeps supplying. Mesh-join is a Phase-3 follow-on.
 apiVersion: aws.catalyst.io/v1alpha1
 kind: XGPUInstance
 metadata:
   name: gpu-node-27b-fp8
   # poc-demo opts into gpu-testrig-reaper (age > 6h). While this file is ON in git,
-  # the reaper deleting the XR just makes Flux recreate it — so 6h is a CHURN
-  # (new instance, re-sync from S3), not a teardown. Cheap here; git-off is the
-  # real teardown. scripts/gpu-tunnel.sh re-resolves the instance id so a churn
+  # the reaper deleting the XR just makes Flux recreate it — so 6h is a CHURN (new
+  # fleet, new instance, re-stream from S3), not a teardown. Cheap here, and cheaper
+  # than it was now that a churn no longer re-downloads 31GB to local disk. Git-off is
+  # the real teardown. scripts/gpu-tunnel.sh re-resolves the instance id, so a churn
   # does not strand the local tunnel.
   labels: {catalyst.io/stage: poc-demo}
 spec:
   instanceName: gpu-node-27b-fp8
-  instanceType: g6e.2xlarge         # 1× L40S 48GB, 8 vCPU — fits us-west-2's 32-vCPU G/VT spot quota
-  hfModel: Qwen/Qwen3.8-27B-FP8     # 30.9GB across 64 layer shards + mtp + outside
-  modelsBucket: catalyst-tbdc-models-use2  # us-east-2 bucket => same-region sync (free, fast)
+  # THE POOL, not a preference order — the fleet's allocationStrategy picks, not this
+  # ordering. See the header for why each one is in, and why g5.* / g6e.12xlarge are out.
+  instanceTypes: [g6e.2xlarge, g6e.4xlarge, g6.12xlarge]
+  hfModel: Qwen/Qwen3.8-27B-FP8     # 30.9GB of native safetensors, 64 layer shards + mtp
+  modelsBucket: catalyst-tbdc-models-use2  # us-east-2 bucket => same-region streaming (free, fast)
   # Two aliases, space-separated (vLLM serves both; reports the first).
   #   qwen3.8-27b      — the honest name for what this box runs
   #   qwen3.8:27b-mlx  — the tag the Mac's local Ollama uses for the SAME MODEL
@@ -75,23 +128,34 @@ spec:
   # very same string against this box over the tunnel. Without it, pointing :9092
   # here would break :9091's chat, because get_default_chat_model() reads that one
   # yaml for both processes.
+  # It is also no longer merely cosmetic: with an s3:// --model, vLLM would otherwise
+  # report the raw S3 URI as the model id.
   servedModelName: "qwen3.8-27b qwen3.8:27b-mlx"
   # capacityType is DELIBERATELY OMITTED => ON-DEMAND. See the header for why spot
-  # lost here. Absence is how on-demand is expressed (no on-demand marketType exists).
-  tensorParallelSize: "1"           # ONE GPU on this shape
-  quantization: "auto"              # FP8 checkpoint self-describes; omitting the flag is correct
+  # lost here, and why that is worth re-measuring now the pool is three deep.
+  # NO tensorParallelSize — derived at boot from nvidia-smi (TALOS-5drv.2).
+  quantization: "auto"              # FP8 checkpoint self-describes (quant_method fp8, e4m3); omitting the flag is correct
   maxModelLen: "32768"
-  gpuMemoryUtilization: "0.90"      # 43.2GB of 48 − 30.9GB weights ≈ 12GB KV cache
-  enableImageGen: "false"           # no spare VRAM here, and the GHCR bundle image does not exist yet
-  # No cache volume: /cache is this shape's 450GB local NVMe instance store.
+  gpuMemoryUtilization: "0.90"      # on the 1x L40S: 43.2GiB of 44.7 − 28.8GiB weights ≈ 12GiB KV cache
+  enableImageGen: "false"           # no spare VRAM on the 1x shapes, and the GHCR bundle image does not exist yet
+  # streamerConcurrency defaults to "16" (RUNAI_STREAMER_CONCURRENCY). Raise it if
+  # same-region S3 is not saturating the load.
+  # No cache volume: /cache is the shape's local NVMe, and since TALOS-5drv.3 it is
+  # scratch for the cold HF seed only — the serving path never reads it.
   servePort: "8000"
   region: us-east-2
-  # The composition's default AMI is us-west-2-specific and AMI ids are regional,
-  # so moving region REQUIRES setting this. Same id big boi uses.
+  # The composition's default AMI is us-west-2-specific and AMI ids are regional, so
+  # moving region REQUIRES setting this. Must be a concrete id: AWS forbids
+  # resolve:ssm: in a launch template used by a fleet of type maintain, and upjet
+  # rejects it independently. Same id big boi uses.
   ami: ami-07173ded18b6f3a7b        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA)
-  # vpcId is only for the egress-only SG. No subnet is set, so AWS places this in
-  # whichever zone has capacity, choosing among this VPC's default subnets.
+  # vpcId is for the egress-only SG, and it is also where the box lands: nothing names
+  # a subnet, so AWS chooses among this VPC's DEFAULT subnets in whichever AZ has
+  # capacity.
   vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC
-  # catalyst-gpu-seeder, NOT catalyst-ssm: the cold path WRITES the weights to S3,
-  # which needs s3:PutObject. This profile carries that plus AmazonSSMManagedInstanceCore.
+  # catalyst-gpu-seeder, NOT catalyst-ssm. This is now MANDATORY rather than a
+  # convenience: vLLM itself authenticates to S3 through this profile on every boot
+  # (the Run:ai streamer uses the AWS SDK default credential chain, i.e. IMDS), so
+  # s3:GetObject + s3:ListBucket are load-bearing, on top of the s3:PutObject the cold
+  # seed needs. catalyst-ssm has SSM only and could not load weights at all.
   instanceProfileName: catalyst-gpu-seeder

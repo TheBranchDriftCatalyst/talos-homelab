@@ -9,21 +9,46 @@
 # Run `scripts/check-spot-avail.sh` BEFORE flipping a claim on — quota and spot
 # capacity both move, and quota != capacity.
 #
+# ── Claims name a POOL now, not a shape (TALOS-i91u) ────────────────────────
+# An XGPUInstance takes `instanceTypes: [...]`, and an EC2 Fleet launches ONE box
+# from whichever pool actually has capacity. So each rig below carries BOTH:
+#   instanceType   the cheapest member — what lowestPrice lands on when capacity
+#                  exists, and the only key scripts/check-spot-avail.sh reads
+#   instanceTypes  the full pool the fleet may choose from
+# ⚠️ check-spot-avail.sh does not know about `instanceTypes` yet, so its RIG table
+# shows only the cheap member. Read `instanceTypes` here for the real exposure.
+#
+# ⚠️ EVERY MEMBER OF A POOL MUST FIT THE MODEL. The allocation strategy is
+# lowestPrice (on-demand) / price-capacity-optimized (spot) — NOT the list order —
+# so any member can be the one you get. Check each against the model's minVramGib
+# below before adding it, and remember the DEAREST member sets the worst-case bill.
+#
 # ── Placement is unpinned (TALOS-rkg0) ──────────────────────────────────────
-# Claims no longer name a zone or subnet: /cache sits on the instance's local NVMe
-# instead of zone-scoped EBS, so AWS places the box wherever capacity exists.
+# Claims name no zone and no subnet — the XRD does not even have a subnetId field
+# any more. /cache sits on the instance's local NVMe instead of zone-scoped EBS, so
+# AWS places the box wherever capacity exists.
+#
+# ── Tensor parallelism is derived, not tabulated (TALOS-5drv.2) ─────────────
+# `gpus` below used to have to equal a claim's tensorParallelSize. That field is
+# gone: userData derives TP from `nvidia-smi -L` at boot, which is what lets one
+# pool span 1-GPU and 4-GPU shapes. `gpus` is now just the TP you will GET on that
+# shape — useful for checking a checkpoint's head counts divide by it.
 #
 # ── Units, because they bite ────────────────────────────────────────────────
 # vramGib / instanceStoreGb come from describe-instance-types and are the REPORTED
 # figures, which run under the marketing number: an L40S reports 45776 MiB = 44.7
 # GiB, not "48 GB"; an A10G reports 22.4 GiB, not 24. Model sizes below are
 # decimal GB as HuggingFace reports them. Budget KV cache in GiB against vramGib.
+# onDemandUsd is the us-east-2 Linux/shared list price from the Pricing API,
+# measured 2026-10-01. Spot is CAPPED at it and is often barely under.
 #
 # ── The quota trap ───────────────────────────────────────────────────────────
 # "All G and VT Spot Instance Requests" (L-3819A6DF) is a per-REGION vCPU ceiling,
 # NOT per-AZ and NOT per-instance-count. There is no per-AZ GPU quota. A 4-GPU
 # .12xlarge is 48 vCPU, so a region at 48 can host exactly ONE of them and nothing
-# else; a region at 32 cannot host one at all, no matter the capacity.
+# else; a region at 32 cannot host one at all, no matter the capacity. A POOL makes
+# this subtler: a rig whose pool contains a .12xlarge may quietly consume the whole
+# regional allowance on the boot where it lands there.
 version: 1
 
 quotaCodes:
@@ -37,41 +62,55 @@ regions:
   us-east-1: {spotVcpu: 0, onDemandVcpu: 0, modelsBucket: null}      # quota 0 — unusable until raised
   eu-central-1: {spotVcpu: 0, onDemandVcpu: 0, modelsBucket: null}   # quota 0 — unusable until raised
 
-# Candidate machine shapes. `gpus` MUST equal a claim's tensorParallelSize.
+# Candidate machine shapes. `gpus` is the tensorParallelSize a claim will GET here.
+# Verified against describe-instance-types in us-east-2 on 2026-10-01.
 shapes:
-  - {instanceType: g5.2xlarge, gpu: A10G, gpus: 1, vramGib: 22.4, instanceStoreGb: 450, vcpu: 8}
-  - {instanceType: g6e.2xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, instanceStoreGb: 450, vcpu: 8}
-  - {instanceType: g6e.4xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, instanceStoreGb: 600, vcpu: 16}
-  - {instanceType: g6.12xlarge, gpu: L4, gpus: 4, vramGib: 89.4, instanceStoreGb: 3760, vcpu: 48}
-  - {instanceType: g5.12xlarge, gpu: A10G, gpus: 4, vramGib: 89.4, instanceStoreGb: 3800, vcpu: 48}
-  - {instanceType: g6e.12xlarge, gpu: L40S, gpus: 4, vramGib: 178.8, instanceStoreGb: 3800, vcpu: 48}
+  - {instanceType: g5.2xlarge, gpu: A10G, gpus: 1, vramGib: 22.4, instanceStoreGb: 450, vcpu: 8, onDemandUsd: 1.212, fp8: false}
+  - {instanceType: g6e.2xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, instanceStoreGb: 450, vcpu: 8, onDemandUsd: 2.242, fp8: true}
+  - {instanceType: g6e.4xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, instanceStoreGb: 600, vcpu: 16, onDemandUsd: 3.004, fp8: true}
+  - {instanceType: g6.12xlarge, gpu: L4, gpus: 4, vramGib: 89.4, instanceStoreGb: 3760, vcpu: 48, onDemandUsd: 4.602, fp8: true}
+  - {instanceType: g5.12xlarge, gpu: A10G, gpus: 4, vramGib: 89.4, instanceStoreGb: 3800, vcpu: 48, onDemandUsd: 5.672, fp8: false}
+  - {instanceType: g6e.12xlarge, gpu: L40S, gpus: 4, vramGib: 178.8, instanceStoreGb: 3800, vcpu: 48, onDemandUsd: 10.493, fp8: true}
+
+# `fp8: false` means AMPERE (A10G) — no native FP8 e4m3. An FP8 checkpoint will fall
+# back to a weight-only emulation path there, so keep g5.* out of an FP8 rig's pool
+# even when the VRAM arithmetic works. L40S and L4 are both Ada and do FP8 natively.
 
 # Weight sizes measured from the HuggingFace file listings (2026-09-30).
-# `minVramGb` is weights + a usable KV cache, not weights alone.
+# `minVramGib` is weights + a usable KV cache, not weights alone.
 models:
-  - {hfModel: Qwen/Qwen3.8-27B-FP8, sizeGb: 30.9, minVramGib: 40, note: "latest flagship, FP8 native on Ada (L40S/L4). 28.8GiB weights"}
+  - {hfModel: Qwen/Qwen3.8-27B-FP8, sizeGb: 30.9, minVramGib: 40, note: "latest flagship, FP8 native on Ada (L40S/L4). 28.8GiB weights. 24 attn / 4 kv heads, hidden 5120, inter 17408 -> divides by 1 and by 4"}
   - {hfModel: Qwen/Qwen3.8-27B, sizeGb: 55.6, minVramGib: 60, note: "same model in bf16, 51.8GiB weights — needs a 4x shape"}
   - {hfModel: Qwen/Qwen3-32B-AWQ, sizeGb: 19.3, minVramGib: 26, note: "18GiB weights. Loads on a 22.4GiB A10G but leaves ~2GiB KV (~8k ctx)"}
   - {hfModel: Qwen/Qwen3.5-122B-A10B-GPTQ-Int4, sizeGb: 78.9, minVramGib: 85, note: "MoE, 10B active, 73.5GiB weights — tight on 89.4GiB"}
-  - {hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4, sizeGb: 124.6, minVramGib: 140, note: "116GiB weights; original Qwen3 generation"}
+  - {hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4, sizeGb: 124.6, minVramGib: 140, note: "116GiB weights across 32 safetensors shards; original Qwen3 generation"}
 
 # The rigs that exist as claims in this directory.
+# ⚠️ Both are OFF in kustomization.yaml, and both additionally need
+# fleets.ec2.aws.upbound.io + launchtemplates.ec2.aws.upbound.io activated in
+# infrastructure/base/aws-providers/activation-policy.yaml before they can render.
 rigs:
   - name: gpu-node-27b-fp8
-    state: "on"
-    instanceType: g6e.2xlarge
-    region: us-east-2              # us-west-2 had NO g6e.2xlarge capacity at all
-    placement: unpinned           # TALOS-rkg0 — AWS picks the zone with capacity
-    capacityType: on-demand        # spot sat AT the on-demand price and had no capacity
+    state: "off"
+    instanceType: g6e.2xlarge      # cheapest pool member; the only key check-spot-avail.sh reads
+    instanceTypes: [g6e.2xlarge, g6e.4xlarge, g6.12xlarge]
+    region: us-east-2              # us-west-2 had NO g6e.2xlarge capacity at all — worth retesting now the pool is 3 deep
+    placement: unpinned            # TALOS-rkg0 — AWS picks the zone with capacity
+    capacityType: on-demand        # spot sat AT the on-demand price and had no capacity; re-measure across all 3 shapes
     hfModel: Qwen/Qwen3.8-27B-FP8
-    spotUsdPerHour: 2.24   # ON-DEMAND list. Spot was capped at this price anyway:
-                           # L40S spot is scarce (score 1/9) so the discount off ~$2.24
-                           # on-demand is thin. us-east-2a is cheaper ($1.29) but see note.
+    spotUsdPerHour: 2.24   # ON-DEMAND list for the CHEAP member. Spot was capped at this
+                           # price anyway: L40S spot is scarce (score 1/9) so the discount
+                           # off ~$2.24 on-demand is thin.
+    maxUsdPerHour: 4.60    # the pool's CEILING (g6.12xlarge). lowestPrice only reaches
+                           # for it when the cheaper pools are dry.
   - name: gpu-node-235b
     state: "off"
     instanceType: g6e.12xlarge
+    instanceTypes: [g6e.12xlarge]  # ONE-MEMBER POOL: nothing else clears 140GiB inside the vCPU quota
     region: us-east-2
-    placement: unpinned           # TALOS-rkg0
+    placement: unpinned            # TALOS-rkg0 — and the only capacity lever this rig has
+    capacityType: spot
     hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4
     spotUsdPerHour: 5.17   # us-east-2c, measured 2026-09-30 (range 5.17-5.24 across AZs).
                            # In us-west-2 the same shape is $6.11-9.90 — do not move it there.
+    maxUsdPerHour: 10.49   # on-demand list, i.e. the spot price ceiling for this shape

@@ -3,17 +3,50 @@
 # VRAM) in us-east-2 serving Qwen3-235B-A22B-GPTQ-Int4 via vLLM TP4 + ComfyUI
 # (comfyui-shim :8012) sharing VRAM. THE FILE'S LINE IN kustomization.yaml IS THE
 # ON-SWITCH — it is HELD OFF pending an explicit go (~$5.2/hr spot, verified live
-# 2026-09-30; on-demand ~$10).
+# 2026-09-30; on-demand ~$10.49).
 #
-# 48 vCPU is EXACTLY us-east-2's G/VT spot quota, so this box alone consumes the
-# whole regional allowance — little boi runs in us-west-2 for that reason. Raising
-# the quota to 64 (see the plan's Part 0) is what lets both run at once.
+# ⚠️ PREFLIGHT BEFORE UNCOMMENTING THIS IN kustomization.yaml ⚠️
+#   1. fleets.ec2.aws.upbound.io and launchtemplates.ec2.aws.upbound.io must be
+#      ACTIVATED in infrastructure/base/aws-providers/activation-policy.yaml — both
+#      are Inactive today, and without them this claim renders nothing.
+#   2. The one-time S3 key copy below, or the first boot re-downloads 124.6GB from
+#      HuggingFace.
+#   3. check-spot-avail.sh shows us-east-2 g6e.12xlarge still has capacity.
 #
-# The cache is seeded same-region from catalyst-tbdc-models-use2 (the pre-init
-# seeder staged the ~123GB there). NOTE: the seeded prefix is the LEGACY flat key
-# `qwen3-235b-gptq-int4/`, but `hfModel` now derives the prefix from the HF id, so
-# this expects `Qwen/Qwen3-235B-A22B-GPTQ-Int4/`. Run the one-time server-side copy
-# before flipping this on, or the first boot re-downloads 124.6GB from HuggingFace:
+# ── NO DIVERSIFICATION IS AVAILABLE HERE, AND THAT IS NOT AN OVERSIGHT ──────────────
+# TALOS-i91u turned instanceType into a POOL, and little boi gets three shapes out of
+# it. This rig gets ONE, honestly: the model needs ~140GiB of VRAM including a usable
+# KV cache, and g6e.12xlarge's 178.8GiB is the only shape in gpu-profiles.yaml that
+# clears it. The next shapes up (g6e.24xlarge 96 vCPU, g6e.48xlarge 192 vCPU) blow
+# straight through the 48-vCPU regional G/VT quota — and the 64 it is being raised
+# to — and the p-family is a different quota entirely, at far higher cost. So this
+# claim still has exactly one capacity pool and is still exposed to the
+# InsufficientInstanceCapacity whack-a-mole that TALOS-i91u fixed for little boi.
+# Widening it needs either a much larger quota or a smaller/sharper checkpoint.
+#
+# 48 vCPU is EXACTLY us-east-2's G/VT spot quota, so this box alone consumes the whole
+# regional allowance. Raising the quota to 64 is what would let both rigs run at once —
+# though note little boi's pool now includes a 48-vCPU shape of its own, so "both at
+# once" depends on which shape little boi actually landed on.
+#
+# ── NO tensorParallelSize (TALOS-5drv.2) ────────────────────────────────────────────
+# It used to say `tensorParallelSize: "4"  # all four L40S`. Derived at boot now from
+# `nvidia-smi -L`, like every other rig. On this shape that still resolves to 4 — the
+# value is identical, the ASSERTION is what is gone.
+#
+# ── WEIGHTS STREAM FROM S3 (TALOS-5drv.3) ───────────────────────────────────────────
+# vLLM reads the 32 native safetensors shards straight out of S3 into VRAM with
+# --load-format runai_streamer. That matters a lot more at 124.6GB than it does for
+# little boi: the old path wrote and re-read all 124.6GB on the local NVMe on every
+# single boot.
+#
+# The cache is seeded same-region from catalyst-tbdc-models-use2 (the pre-init seeder
+# staged the ~123GB there). NOTE: the seeded prefix is the LEGACY flat key
+# `qwen3-235b-gptq-int4/`, but `hfModel` derives the prefix from the HF id, so this
+# expects `Qwen/Qwen3-235B-A22B-GPTQ-Int4/`. Run the one-time server-side copy before
+# flipping this on, or the first boot re-downloads 124.6GB from HuggingFace. This is
+# MORE important than it was: there is no local-disk fallback path any more, so the
+# prefix either holds the safetensors or the boot script hard-fails on its preflight.
 #   aws s3 cp --recursive s3://catalyst-tbdc-models-use2/qwen3-235b-gptq-int4/ \
 #                         s3://catalyst-tbdc-models-use2/Qwen/Qwen3-235B-A22B-GPTQ-Int4/
 #   aws s3 cp /dev/null s3://catalyst-tbdc-models-use2/Qwen/Qwen3-235B-A22B-GPTQ-Int4/_SEED_COMPLETE
@@ -33,27 +66,33 @@ metadata:
   labels: {catalyst.io/stage: poc-demo}
 spec:
   instanceName: gpu-node-235b
-  instanceType: g6e.12xlarge        # 4× L40S = 192GB VRAM, 48 vCPU. Spot ~$5.2/hr, score 3/9 in us-east-2.
-  # EXPLICIT: on-demand for this shape is ~$10/hr, so spot's interruption risk is
-  # worth it here (unlike the 1x box, where spot was at the on-demand price anyway).
-  # Omitting this field would silently double the bill.
+  # ONE-MEMBER POOL, deliberately — see the header. 4× L40S = 178.8GiB reported,
+  # 48 vCPU. Spot ~$5.2/hr, placement score 3/9 in us-east-2.
+  instanceTypes: [g6e.12xlarge]
+  # EXPLICIT: on-demand for this shape is ~$10.49/hr, so spot's interruption risk is
+  # worth it here (unlike the 1x box, where spot sat at the on-demand price anyway).
+  # Omitting this field would silently double the bill. Under a fleet this renders as
+  # targetCapacitySpecification.defaultTargetCapacityType: spot with
+  # price-capacity-optimized allocation.
   capacityType: spot
-  hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4  # official Qwen GPTQ-Int4, 124.6GB / 32 shards
-  modelsBucket: catalyst-tbdc-models-use2  # us-east-2 replica -> same-region S3->/cache (fast, free egress)
+  hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4  # official Qwen GPTQ-Int4, 124.6GB across 32 safetensors shards
+  modelsBucket: catalyst-tbdc-models-use2  # us-east-2 replica -> same-region S3 streaming (fast, free egress)
   servedModelName: qwen3-235b       # unchanged — keeps the contract the 9/9 run verified
-  tensorParallelSize: "4"           # all four L40S
+  # NO tensorParallelSize — derived at boot from nvidia-smi, which on this shape is 4.
   quantization: gptq_marlin         # forced: the Marlin GPTQ kernel, not autodetect
   maxModelLen: "32768"
   gpuMemoryUtilization: "0.78"      # leaves VRAM for ComfyUI alongside
   enableImageGen: "true"            # needs the GHCR bundle image to exist — see header
-  # No cache volume: /cache is this shape's 3800GB local NVMe instance store — far
-  # more than the 124.6GB model needs, and not zone-scoped (TALOS-rkg0).
+  # No cache volume: /cache is this shape's 3800GB local NVMe, and since TALOS-5drv.3
+  # it is scratch for the cold HF seed only — not zone-scoped either (TALOS-rkg0).
   servePort: "8000"
   region: us-east-2
-  # No zone or subnet named: AWS places this wherever us-east-2 has 4x L40S capacity.
-  # Placement score was only 3/9, so unpinning matters here too.
-  ami: ami-07173ded18b6f3a7b        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA), resolved 2026-09-27. Region-specific (upjet rejects resolve:ssm).
-  vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC (for the egress-only SG)
-  # SSM + S3 read/write for the boot-time weights path. Switch to catalyst-ssm only
-  # if the cache is pre-seeded via cacheSnapshotId and no S3 write is needed.
+  # No zone or subnet named anywhere: AWS places this wherever us-east-2 has 4x L40S
+  # capacity. Placement score was only 3/9, so unpinning matters here too — and with
+  # a single-shape pool it is the ONLY lever this rig has.
+  ami: ami-07173ded18b6f3a7b        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA), resolved 2026-09-27. Regional, and must be a concrete id.
+  vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC (egress-only SG, and the source of the default subnets)
+  # MANDATORY, not a convenience: vLLM authenticates to S3 through this profile on
+  # every boot to stream its own weights, so s3:GetObject + s3:ListBucket are
+  # load-bearing on top of the cold seed's s3:PutObject.
   instanceProfileName: catalyst-gpu-seeder

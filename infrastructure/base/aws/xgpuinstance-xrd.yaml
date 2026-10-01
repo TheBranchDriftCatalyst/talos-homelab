@@ -1,25 +1,35 @@
 ---
-# XGPUInstance — POC-DEMO (TALOS-455u, TALOS-iymy). Spot GPU box whose model is
-# chosen by ONE field: `hfModel`, a HuggingFace repo id.
+# XGPUInstance — POC-DEMO (TALOS-455u, TALOS-iymy). GPU box whose model is chosen by
+# ONE field: `hfModel`, a HuggingFace repo id.
 #
-# Two-tier weights, with the S3 location DERIVED from that same id:
-#   HF  = the upstream source of truth (`hfModel`, e.g. Qwen/Qwen3.8-27B-FP8)
-#   S3  = the durable cache at s3://<modelsBucket>/<hfModel>/ — written by the
-#         first box that ever boots this model (seed-on-miss), read by every
-#         box after at same-region speed (free transfer, ~1-2GB/s)
-#   EBS = small EPHEMERAL hot-cache (gp3) at /cache; lives exactly as long as
-#         this CR (delete the file → GPU + cache + bill gone; S3 untouched)
+# Weights, after TALOS-5drv.3:
+#   HF  = the upstream source of truth (`hfModel`, e.g. Qwen/Qwen3.8-27B-FP8), read
+#         ONCE ever, by the first box that boots a model nobody has staged yet
+#   S3  = the durable cache at s3://<modelsBucket>/<hfModel>/, and now also the thing
+#         vLLM LOADS FROM: Run:ai Model Streamer reads native safetensors straight out
+#         of S3 into VRAM (`--load-format runai_streamer`), so the steady-state path is
+#         S3 -> VRAM with no local copy at all
+#   /cache = the instance's LOCAL NVMe, now only scratch for the cold HF seed
 #
-# One composition serves every machine shape: tensorParallelSize / quantization /
-# maxModelLen / gpuMemoryUtilization / enableImageGen are per-claim, so a 1x L40S
-# and a 4x L40S are the SAME pattern with different numbers. See aws/apps/ for the
-# concrete rigs and aws/apps/gpu-profiles.yaml for the sizing table.
+# One composition serves every machine shape. quantization / maxModelLen /
+# gpuMemoryUtilization / enableImageGen are per-claim; tensorParallelSize is NOT a
+# field any more — it is derived at boot (see below). See aws/apps/ for the concrete
+# rigs and aws/apps/gpu-profiles.yaml for the sizing table.
 #
-# v1alpha1 honesty: always-spot (market options hardcoded — on-demand is a
-# v1alpha2 param). The numeric knobs are `type: string` because the composition
-# builds userData with a patch-and-transform `CombineFromComposite` (strategy:
-# string), which formats every variable through %s — strings avoid coercion
-# surprises. Same reason servePort has always been a string here.
+# The numeric knobs are `type: string` because the composition builds userData with a
+# patch-and-transform `CombineFromComposite` (strategy: string), which formats every
+# variable through %s — strings avoid coercion surprises. Same reason servePort has
+# always been a string here.
+#
+# ── WHY THERE IS NO v1alpha2 YET ────────────────────────────────────────────────────
+# The epic (TALOS-5drv) is named "XGPUInstance v1alpha2" and this change does remove
+# two fields, so a version bump is tempting. Deliberately not done yet:
+#   * there are no live claims — both rigs are git-off — so in-place schema evolution
+#     costs nothing and a served second version would be dead weight
+#   * the one-rig admission guard (TALOS-5drv.4) matches `aws.catalyst.io/v1alpha1/
+#     XGPUInstance` by name; bumping here would silently stop it matching
+#   * v1alpha2 should land ONCE, when the epic's remaining pieces (scale-to-zero) are
+#     in — not twice, half-finished
 apiVersion: apiextensions.crossplane.io/v1
 kind: CompositeResourceDefinition
 metadata:
@@ -39,46 +49,166 @@ spec:
           properties:
             spec:
               type: object
-              required: [instanceName, hfModel, vpcId]
+              required: [instanceName, instanceTypes, hfModel, vpcId]
               properties:
                 instanceName: {type: string}
-                instanceType: {type: string, default: g5.xlarge, description: "g5.xlarge=1xA10G 24GB, g6e.2xlarge=1xL40S 48GB, g6.12xlarge=4xL4 96GB, g6e.12xlarge=4xL40S 192GB. NOTE: G/VT spot quota is per-REGION vCPU (48 = exactly one 4-GPU box) — see aws/apps/gpu-profiles.yaml"}
+
+                # ── the capacity POOL, not a machine (TALOS-i91u) ─────────────
+                # WAS a single `instanceType` with a g5.xlarge default. One instance
+                # type is ONE CAPACITY POOL, and that is why the 2026-09-30/10-01
+                # bring-up failed over and over: g6e.2xlarge refused on spot in
+                # us-west-2a and 2d, then on-demand region-wide in us-west-2, then
+                # region-wide in us-east-2, before us-east-2c finally opened. Spot
+                # placement score was 1/9 for every single-GPU g6e size in four
+                # regions. Unpinning the AZ (TALOS-rkg0) was necessary but not
+                # sufficient — with placement free, AWS still had only one shape to
+                # look for.
+                #
+                # Now the claim names SEVERAL acceptable shapes and the composition
+                # asks for ONE instance from whichever pool can actually serve it
+                # (EC2 Fleet launch-template overrides).
+                #
+                # ⚠️ TWO THINGS THE LIST ORDER DOES *NOT* MEAN:
+                #   1. It is NOT a preference order. The fleet's allocation strategy
+                #      chooses: lowestPrice for on-demand, price-capacity-optimized
+                #      for spot. Order in this list is ignored.
+                #   2. It is NOT a fallback chain where only the first has to fit.
+                #      EVERY shape listed must be able to RUN THE MODEL, because any
+                #      of them may be the one you get. Check each against the model's
+                #      minVramGib in aws/apps/gpu-profiles.yaml before adding it.
+                #
+                # ⚠️ AND THE BILL IS SET BY THE MOST EXPENSIVE MEMBER. lowestPrice
+                # reaches for a dearer shape only when the cheap ones have no
+                # capacity — which is the trade you want — but state the ceiling in
+                # the claim header so nobody is surprised. us-east-2 on-demand,
+                # measured 2026-10-01: g6e.2xlarge $2.242, g6e.4xlarge $3.004,
+                # g6.12xlarge $4.602, g6e.12xlarge $10.493.
+                #
+                # Max 6 entries: patch-and-transform cannot loop, so the composition
+                # carries six Optional patches, one per slot.
+                instanceTypes:
+                  type: array
+                  minItems: 1
+                  maxItems: 6
+                  items: {type: string}
+                  description: >-
+                    Acceptable machine shapes, e.g. [g6e.2xlarge, g6e.4xlarge, g6.12xlarge]. AWS picks whichever
+                    pool has capacity. EVERY entry must fit the model (see gpu-profiles.yaml minVramGib) and the
+                    most expensive entry sets the worst-case bill. NOTE: G/VT quota is per-REGION vCPU, so a
+                    48-vCPU .12xlarge in the pool can consume the whole regional allowance on its own.
 
                 # ── the model ────────────────────────────────────────────────
-                # THE single source of model truth. Drives both the vLLM --model
-                # path and the S3 cache prefix (s3://<modelsBucket>/<hfModel>/),
-                # so adding a model is one line and needs no manual S3 seeding:
-                # the first boot pulls from HF and writes S3 + a _SEED_COMPLETE
-                # marker; every later boot syncs from S3 instead.
-                hfModel: {type: string, description: "HuggingFace repo id, e.g. 'Qwen/Qwen3.8-27B-FP8'. Also the S3 cache prefix under modelsBucket."}
-                modelsBucket: {type: string, default: catalyst-tbdc-models, description: "S3 cache bucket. MUST be same-region as spec.region or the sync is slow and billed (us-east-2 => catalyst-tbdc-models-use2)."}
-                servedModelName: {type: string, default: catalyst-gpu, description: "SPACE-SEPARATED list of vLLM --served-model-name aliases; the endpoint answers to all of them and reports the first. Decoupled from hfModel so the operator config survives a model swap, and so a remote box can also answer to the local Ollama tag. Only alias names that are honestly the same model."}
+                # THE single source of model truth. Drives both the vLLM --model URI
+                # and the S3 cache prefix (s3://<modelsBucket>/<hfModel>/), so adding
+                # a model is one line and needs no manual S3 seeding: the first boot
+                # pulls from HF, writes S3 + a _SEED_COMPLETE marker, and every boot
+                # after — including that one — serves by STREAMING from S3.
+                hfModel:
+                  type: string
+                  description: >-
+                    HuggingFace repo id, e.g. 'Qwen/Qwen3.8-27B-FP8'. Also the S3 cache prefix under
+                    modelsBucket, and therefore the s3:// URI vLLM loads from.
+                modelsBucket:
+                  type: string
+                  default: catalyst-tbdc-models
+                  description: >-
+                    S3 cache bucket. MUST be same-region as spec.region — weights are STREAMED from here on
+                    every boot now, so cross-region would be slow and billed on every start
+                    (us-east-2 => catalyst-tbdc-models-use2).
+                servedModelName:
+                  type: string
+                  default: catalyst-gpu
+                  description: >-
+                    SPACE-SEPARATED list of vLLM --served-model-name aliases; the endpoint answers to all of
+                    them and reports the first. Decoupled from hfModel so the operator config survives a model
+                    swap, and so a remote box can also answer to the local Ollama tag. Only alias names that
+                    are honestly the same model. EFFECTIVELY REQUIRED now: vLLM resolves served_model_name
+                    BEFORE it rewrites an s3:// --model, so without this the reported model id is the raw S3 URI.
 
                 # ── vLLM serving knobs (per machine shape) ───────────────────
-                tensorParallelSize: {type: string, default: "1", description: "vLLM --tensor-parallel-size. MUST equal the instance's GPU count (1 for g5/g6e .xlarge-.8xlarge, 4 for .12xlarge)."}
-                quantization: {type: string, default: "auto", description: "vLLM --quantization. Sentinel 'auto' OMITS the flag so vLLM autodetects from the checkpoint's config.json (correct for FP8/AWQ/GPTQ repos that self-describe). Set explicitly only to force a kernel, e.g. gptq_marlin / awq_marlin."}
-                maxModelLen: {type: string, default: "32768", description: "vLLM --max-model-len. Budget against VRAM left after weights: KV cache per token scales with the model's GQA shape."}
-                gpuMemoryUtilization: {type: string, default: "0.90", description: "vLLM --gpu-memory-utilization. Drop to ~0.78 only when ComfyUI shares the same GPUs (enableImageGen)."}
+                # NO tensorParallelSize (TALOS-5drv.2). It is DERIVED at boot from
+                # `nvidia-smi -L`, because TP is a property of the machine, not of
+                # user intent — and a pool spanning 1-GPU and 4-GPU shapes has no
+                # single correct value, so asserting it per claim is what blocked
+                # instanceTypes above. Not kept as an optional override either:
+                # against a heterogeneous pool an override is wrong by construction
+                # (pin 1 on a 4-GPU box and you pay for three idle GPUs; pin 4 on a
+                # 1-GPU box and vLLM will not start), and the one honest use for it
+                # — leaving GPUs free for ComfyUI — is not how enableImageGen works
+                # (ComfyUI gets --gpus all and shares VRAM, not separate devices).
+                quantization:
+                  type: string
+                  default: "auto"
+                  description: >-
+                    vLLM --quantization. Sentinel 'auto' OMITS the flag so vLLM autodetects from the
+                    checkpoint's config.json (correct for FP8/AWQ/GPTQ repos that self-describe). Set
+                    explicitly only to force a kernel, e.g. gptq_marlin / awq_marlin.
+                maxModelLen:
+                  type: string
+                  default: "32768"
+                  description: >-
+                    vLLM --max-model-len. Budget against VRAM left after weights: KV cache per token scales
+                    with the model's GQA shape.
+                gpuMemoryUtilization:
+                  type: string
+                  default: "0.90"
+                  description: >-
+                    vLLM --gpu-memory-utilization. Drop to ~0.78 only when ComfyUI shares the same GPUs
+                    (enableImageGen).
+                # Run:ai Model Streamer read concurrency (TALOS-5drv.3). Sets
+                # RUNAI_STREAMER_CONCURRENCY, which is exactly what the documented
+                # `--model-loader-extra-config '{"concurrency":N}'` sets underneath
+                # (the loader validates the key and then does os.environ.update).
+                # 16 is the value vLLM's own doc uses as its example.
+                streamerConcurrency:
+                  type: string
+                  default: "16"
+                  description: >-
+                    Run:ai Model Streamer parallel S3 reads (RUNAI_STREAMER_CONCURRENCY). Raise to push more
+                    same-region S3 bandwidth into VRAM; lower if the box is host-memory-tight during load.
                 # Pinned, NOT :latest — on a multi-dollar-per-hour box a floating
                 # tag is a reproducibility hazard, and newer architectures (e.g.
                 # Qwen3.8's hybrid Gated-DeltaNet attention) need a known-good
-                # version. Bump deliberately, in a PR.
-                vllmImage: {type: string, default: "vllm/vllm-openai:v0.30.0", description: "Pinned vLLM server image. v0.30.0 (2026-09-22) postdates Qwen3.8."}
+                # version. Bump deliberately, in a PR. v0.30.0 also already ships
+                # runai-model-streamer[s3] in the image, so the streaming path needs
+                # no pip install at boot — do not pin BELOW it.
+                vllmImage:
+                  type: string
+                  default: "vllm/vllm-openai:v0.30.0"
+                  description: >-
+                    Pinned vLLM server image. v0.30.0 (2026-09-22) postdates Qwen3.8 and bundles
+                    runai-model-streamer[s3,gcs,azure] (installed in the Dockerfile's vllm-runtime-base
+                    stage), so --load-format runai_streamer works with no extra install.
 
                 # ── image generation ────────────────────────────────────────
                 # ComfyUI + comfyui-shim share the GPUs with vLLM. Default OFF:
                 # it only fits where there is spare VRAM after the LLM, and the
                 # bundle image must exist in GHCR first (see composition note).
-                enableImageGen: {type: string, default: "false", description: "'true' to also run ComfyUI + comfyui-shim (:8012). Needs spare VRAM AND the runpod-mac-bundle image pushed to GHCR."}
+                enableImageGen:
+                  type: string
+                  default: "false"
+                  description: >-
+                    'true' to also run ComfyUI + comfyui-shim (:8012). Needs spare VRAM AND the
+                    runpod-mac-bundle image pushed to GHCR.
 
                 # ── spot vs on-demand ───────────────────────────────────────
                 # ⚠️ OMITTING THIS MEANS ON-DEMAND, which can be 2-4x the spot price.
-                # It has no default BY NECESSITY: there is no "on-demand" marketType
-                # value in the EC2 API — on-demand is expressed by the ABSENCE of
-                # instanceMarketOptions. patch-and-transform can only skip a patch when
-                # its SOURCE field is absent (the Optional policy), so absence here is
-                # the only way to render absence there. STATE IT EXPLICITLY on every
-                # claim; both current claims do.
+                # STATE IT EXPLICITLY ON EVERY CLAIM; both current claims do.
+                #
+                # The CONTRACT is unchanged: absence means on-demand. The MECHANISM
+                # changed with TALOS-i91u, so the old reason no longer applies and is
+                # recorded here rather than deleted. It used to read: "it has no
+                # default BY NECESSITY — there is no 'on-demand' marketType value in
+                # the EC2 API, on-demand is expressed by the ABSENCE of
+                # instanceMarketOptions, and patch-and-transform can only skip a
+                # patch when its SOURCE field is absent, so absence here is the only
+                # way to render absence there." That is true of a bare Instance. An
+                # EC2 Fleet instead takes an explicit targetCapacitySpecification.
+                # defaultTargetCapacityType whose valid values ARE `on-demand` and
+                # `spot`, so the composition now defaults that to `on-demand` in the
+                # base and an Optional patch flips it to `spot`. Absence is still how
+                # you ask for on-demand, but it is no longer the ONLY way to say it —
+                # which makes the rendered intent explicit instead of implied.
                 #
                 # When to pick which: spot is only worth its interruption risk when it
                 # is actually cheaper, and spot price is CAPPED AT on-demand. Measured
@@ -86,8 +216,15 @@ spec:
                 # on-demand list of $2.24208 — a 0.0% discount for full interruption
                 # risk, while the AZs that did show a real discount (2a $1.42, 2d $1.94)
                 # both refused with InsufficientInstanceCapacity. Run
-                # scripts/check-spot-avail.sh and compare before choosing.
-                capacityType: {type: string, enum: [spot], description: "Set to 'spot' for a spot instance. OMIT ENTIRELY for on-demand (there is no on-demand marketType; absence is the signal). Omitting costs MORE — see the comment above."}
+                # scripts/check-spot-avail.sh and compare before choosing. A diversified
+                # pool improves spot's odds a lot, so re-measure before assuming the
+                # 2026-09-30 answer still holds.
+                capacityType:
+                  type: string
+                  enum: [spot]
+                  description: >-
+                    Set to 'spot' for a spot fleet. OMIT ENTIRELY for on-demand. Omitting costs MORE —
+                    see the comment above.
 
                 # ── machine / placement ─────────────────────────────────────
                 # NO cacheVolumeGb / cacheSnapshotId (TALOS-rkg0): /cache is the instance's
@@ -95,29 +232,89 @@ spec:
                 # shape (g6e.2xlarge 450GB, g6e.12xlarge 3800GB), and — the reason for the
                 # change — NOT AZ-scoped. An EBS cache forced this XRD to pin one AZ, and
                 # that pin made the rig unlaunchable while AWS was telling us to stop
-                # specifying an AZ. S3 is the durable layer via seed-on-miss.
-                # AMI is region-specific and upjet does NOT accept resolve:ssm aliases, so it must be a
-                # concrete ami-... id per region. Optional: unset => composition default (us-west-2 DL GPU AMI).
-                ami: {type: string, description: "Concrete AMI id (region-specific DL Base GPU AMI). Omit to use the composition default."}
+                # specifying an AZ. Since TALOS-5drv.3 it is not even on the serving path:
+                # vLLM streams from S3 and /cache is scratch for the cold HF seed only.
+                #
+                # AMI is region-specific and must be a CONCRETE ami-... id — two
+                # independent reasons now:
+                #   * upjet does not accept resolve:ssm: aliases (it passes the literal
+                #     to DescribeImages -> InvalidAMIID.Malformed)
+                #   * AWS itself forbids it here: "EC2 Fleets of type maintain and
+                #     request ... do not support using a launch template that has a
+                #     Systems Manager parameter specified in place of an AMI ID"
+                #     (AWSEC2/latest/UserGuide/create-launch-template.html, Limitations).
+                #     This fleet is type `maintain`.
+                # Optional: unset => composition default (us-west-2 DL GPU AMI).
+                ami:
+                  type: string
+                  description: >-
+                    Concrete AMI id (region-specific DL Base GPU AMI). Omit to use the composition default.
+                    Must be a real ami-... id, never a resolve:ssm: alias.
                 servePort: {type: string, default: "8000"}
-                region: {type: string, default: us-west-2}
-                # NO availabilityZone (TALOS-rkg0): nothing in this composition is
-                # AZ-scoped any more, so there is nothing to pin. OMIT subnetId and AWS
-                # places the instance in whichever AZ actually has capacity — which is
-                # exactly what its InsufficientInstanceCapacity guidance asks for. Set
-                # subnetId only to force a specific subnet (and thereby a specific AZ).
-                vpcId: {type: string, description: "VPC for the egress-only security group. Keep it the VPC whose default subnets AWS will choose from when subnetId is omitted."}
-                subnetId: {type: string, description: "OPTIONAL. Omit to let AWS pick the AZ with capacity (recommended). Set to pin a subnet/AZ."}
+                region:
+                  type: string
+                  default: us-west-2
+                  description: >-
+                    AWS region. Also exported to the vLLM container as AWS_REGION, because the Run:ai
+                    streamer infers NO region from the s3:// URI.
+                # NO availabilityZone and NO subnetId. There was an Optional subnetId
+                # "to force a specific subnet/AZ"; it is gone, because forcing one AZ
+                # is now precisely the anti-pattern this XRD exists to avoid — it
+                # would collapse a multi-pool fleet back to the single pool whose
+                # exhaustion caused TALOS-i91u. Nothing here is AZ-scoped, so AWS
+                # places the instance in whichever AZ of this VPC has capacity, which
+                # is exactly what its InsufficientInstanceCapacity guidance asks for.
+                # If a specific subnet ever genuinely becomes necessary it belongs on
+                # the fleet's per-override subnetId, not as a claim-level pin.
+                vpcId:
+                  type: string
+                  description: >-
+                    VPC for the egress-only security group. Keep it the VPC whose DEFAULT subnets AWS will
+                    choose from — no subnet is named anywhere, so the default subnets are where the box lands.
                 # Interactive mode (SSM). NO default: unset => the composition patch
                 # is skipped (Optional) and the box launches with no profile/SSM.
                 # The XGPUInstance SG is EGRESS-ONLY (no inbound), so without this
                 # the box is UNREACHABLE once booted — set it to get a shell and to
                 # port-forward vLLM :servePort via `aws ssm start-session`.
-                # NOTE: the seed-on-miss path WRITES to S3, so the profile needs
-                # s3:PutObject on modelsBucket — `catalyst-gpu-seeder` has it and
-                # SSM both; plain `catalyst-ssm` has SSM only (read-only models).
-                instanceProfileName: {type: string, description: "IAM instance profile NAME to attach (SSM shell + port-forward). Use catalyst-gpu-seeder so seed-on-miss can write S3. Omit for none."}
+                # NOTE: this profile now does MORE than SSM + the seed write. vLLM
+                # ITSELF authenticates to S3 through it on EVERY boot (the Run:ai
+                # streamer uses the AWS SDK default credential chain, i.e. IMDS), so
+                # it needs s3:GetObject + s3:ListBucket as well as the s3:PutObject
+                # the cold seed uses. `catalyst-gpu-seeder` has all of them; plain
+                # `catalyst-ssm` has SSM only, and a box using it CANNOT LOAD WEIGHTS
+                # AT ALL now — it is no longer merely "read-only models".
+                instanceProfileName:
+                  type: string
+                  description: >-
+                    IAM instance profile NAME to attach. Use catalyst-gpu-seeder: vLLM streams weights from S3
+                    via IMDS credentials, so S3 READ is now mandatory, not just the seed's write. Omit for
+                    none — and then nothing can load weights.
             status:
               type: object
               properties:
-                publicIp: {type: string}
+                # NO publicIp. A Fleet of type `maintain` does not report its
+                # instances (fleetInstanceSet is "available only when type is set to
+                # instant"), so the old ToCompositeFieldPath would have had nothing to
+                # read and the field would be a permanent lie. It was not
+                # load-bearing: the SG is egress-only so a public IP reaches nothing,
+                # scripts/gpu-tunnel.sh resolves the box by its Name tag over SSM, and
+                # the one consumer — the dormant gpu-broker's "status.publicIp ->
+                # rewrite the EndpointSlice" note — is a scaffold with no image, and
+                # already stale against this XRD (it also stamps an XGPUCache that no
+                # longer exists).
+                #
+                # What replaces it is better: these three answer "did AWS actually
+                # find me a machine?", which is the question that cost a day.
+                fleetId:
+                  type: string
+                  description: >-
+                    EC2 Fleet id (fleet-...). `aws ec2 describe-fleet-instances --fleet-id` lists what it
+                    launched, and `describe-fleet-history` says what it tried.
+                fleetState:
+                  type: string
+                  description: >-
+                    Fleet state, e.g. active / failed. `active` with fulfilledCapacity 0 means it is still
+                    hunting for capacity across the pool.
+                fulfilledCapacity:
+                  type: number
+                  description: "Instances actually running. 0 = no pool had capacity yet; 1 = the rig is up."

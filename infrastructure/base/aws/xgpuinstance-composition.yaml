@@ -1,29 +1,84 @@
 ---
-# Composition for XGPUInstance (POC-DEMO, TALOS-455u / TALOS-iymy / TALOS-rkg0).
-# Members: SG (egress-only — the box TUNNELS OUT, no public inference port) and the
-# GPU Instance. That is all — there is deliberately NO EBS cache volume.
+# Composition for XGPUInstance (POC-DEMO, TALOS-455u / TALOS-iymy / TALOS-rkg0 /
+# TALOS-i91u / TALOS-5drv.2 / TALOS-5drv.3).
 #
-# TALOS-rkg0: /cache lives on the instance's LOCAL NVME INSTANCE STORE, not EBS.
-# EBS is an AZ-scoped resource, so an EBS cache forced the claim to name one AZ —
-# and that pin is what made the rig unlaunchable: g6e.2xlarge refused with
-# InsufficientInstanceCapacity across AZ after AZ (on spot AND on-demand), while
-# AWS's own remediation text said "you can get capacity by NOT SPECIFYING an
-# Availability Zone". Every GPU shape we use already ships local NVMe
-# (g6e.2xlarge 450GB, g6e.12xlarge 3800GB), which is free, direct-attached (faster
-# than gp3), and has no AZ dimension. S3 is already the durable layer via the
-# seed-on-miss path, so the only thing given up is a warm cache surviving instance
-# replacement — a re-sync from same-region S3 is fast and free.
+# Members: SG (egress-only — the box TUNNELS OUT, no public inference port), a
+# LaunchTemplate (what the machine IS), and an EC2 Fleet (how MANY and from WHICH
+# capacity pools). There is deliberately NO EBS cache volume.
 #
-# ONE composition for every machine shape. Everything that differs between a
-# 1x L40S box and a 4x L40S box is a spec field on the claim
-# (tensorParallelSize / quantization / maxModelLen / gpuMemoryUtilization /
-# enableImageGen / vllmImage), so there is no second composition to keep in step.
+# ╔═══════════════════════════════════════════════════════════════════════════════╗
+# ║ PREFLIGHT — THIS COMPOSITION WILL NOT RENDER UNTIL TWO MRDs ARE ACTIVATED.    ║
+# ║                                                                               ║
+# ║ Crossplane v2 ships managed resources INACTIVE. provider-aws-ec2 v2.7.0 does  ║
+# ║ define fleets.ec2.aws.upbound.io and launchtemplates.ec2.aws.upbound.io, but   ║
+# ║ `kubectl get mrd` reports both Inactive, so their CRDs do not exist in the     ║
+# ║ cluster and an XR using this composition will fail with "no matches for kind". ║
+# ║                                                                               ║
+# ║ Add these two lines to infrastructure/base/aws-providers/activation-policy.yaml ║
+# ║ (spec.activate), next to instances.ec2.aws.upbound.io:                         ║
+# ║     - launchtemplates.ec2.aws.upbound.io                                       ║
+# ║     - fleets.ec2.aws.upbound.io                                                ║
+# ║                                                                               ║
+# ║ Harmless until then: BOTH rigs are git-off in aws/apps/kustomization.yaml, so  ║
+# ║ nothing renders and nothing bills. Do not uncomment a rig before activating.   ║
+# ║ instances.ec2.aws.upbound.io stays activated — aws-redteam's XInstance uses it.║
+# ╚═══════════════════════════════════════════════════════════════════════════════╝
 #
-# The model is `spec.hfModel`, a HuggingFace repo id, and the S3 cache prefix is
-# DERIVED from it — see the seed-on-miss block in userData below.
+# ── TALOS-i91u: a POOL, not a machine ──────────────────────────────────────────────
+# This used to compose ONE ec2 Instance with ONE instanceType. One instance type is
+# ONE CAPACITY POOL, and that is the whole reason the 2026-09-30/10-01 bring-up kept
+# failing: g6e.2xlarge refused on spot in us-west-2a and 2d, then on-demand
+# region-wide in us-west-2, then region-wide in us-east-2, before us-east-2c opened.
+# AWS's InsufficientInstanceCapacity guidance is to diversify instance types and let
+# EC2 choose, which a bare Instance cannot express at all.
 #
-# AMI: concrete per-region DL Base GPU AMI ids (NVIDIA drivers included) — the
-# most drift-prone lines here; re-resolve if a launch fails on a deregistered AMI.
+# WHY type: maintain, and not instant or request — from AWS's own request-type doc:
+#   request:  "the fleet places an asynchronous one-time request ... nor does it
+#              submit requests in alternative Spot capacity pools if capacity is
+#              unavailable"  <- defeats the entire point of this change
+#   instant:  "a synchronous one-time request ... returns the instances that launched
+#              and provides errors for those that could not be launched"  <- one shot;
+#              a momentary region-wide shortage leaves an empty fleet and no retry
+#   maintain: "places an asynchronous request for your desired capacity, and maintains
+#              it"  <- keeps working the pools until one opens, and replaces an
+#              interrupted spot instance
+# (docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-fleet-request-type.html)
+# `maintain` also matches the behaviour this repo already had: Crossplane recreated a
+# deleted Instance anyway (see scripts/gpu-tunnel.sh on why the instance id churns),
+# so manual termination was never a brake. GIT-OFF IS STILL THE ONLY TEARDOWN.
+#
+# ⚠️ terminateInstances: true IS LOAD-BEARING MONEY. It defaults to FALSE, and false
+# means deleting the fleet LEAVES THE GPU INSTANCE RUNNING AND BILLING. Deleting the
+# XR has to actually stop the spend.
+#
+# ⚠️ ONE REGRESSION, ACCEPTED KNOWINGLY: editing userData used to force a replacement
+# (aws_instance treats user_data as replace-on-change), so a GitOps edit rebuilt the
+# box. A LaunchTemplate edit only creates a NEW VERSION; a `maintain` fleet does not
+# roll running instances onto it, and EC2 Fleet has no instance-refresh (that is an
+# ASG feature, and provider-aws-autoscaling is not installed). New launches pick it
+# up, so the 6h gpu-testrig-reaper churn converges it in practice — but an urgent
+# userData fix needs a deliberate churn (git-off, commit, git-on).
+#
+# ── TALOS-rkg0: /cache is LOCAL NVMe, and placement is unpinned ────────────────────
+# EBS is AZ-scoped, so an EBS cache forced the claim to name one AZ — and that pin is
+# what made the rig unlaunchable while AWS's remediation text said "you can get
+# capacity by NOT SPECIFYING an Availability Zone". Every GPU shape we use ships local
+# NVMe (g6e.2xlarge 450GB, g6e.12xlarge 3800GB), free, direct-attached, no AZ
+# dimension. No subnet and no AZ are named ANYWHERE in this file, by design.
+#
+# ── TALOS-5drv.3: weights stream from S3 ───────────────────────────────────────────
+# The model is `spec.hfModel` and the S3 prefix is DERIVED from it. vLLM now loads
+# with --load-format runai_streamer directly off s3://, so /cache is scratch for the
+# cold HF seed only and the 30.9GB local write+read per boot is gone.
+#
+# ONE composition for every machine shape. Everything that differs between a 1x L40S
+# box and a 4x L40S box is either a spec field on the claim or — for tensor
+# parallelism — derived at boot, so there is no second composition to keep in step.
+#
+# AMI: concrete per-region DL Base GPU AMI ids (NVIDIA drivers included) — the most
+# drift-prone lines here; re-resolve if a launch fails on a deregistered AMI. They
+# MUST be concrete: AWS forbids resolve:ssm: aliases in a launch template used by a
+# fleet of type maintain, and upjet rejects them independently.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -66,51 +121,94 @@ spec:
                   securityGroupIdSelector: {matchControllerRef: true}
             patches:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
-          - name: instance
+
+          # ── WHAT THE MACHINE IS ───────────────────────────────────────────────
+          # Everything that is NOT "which shape" and NOT "how many" lives here. The
+          # fleet below references this template and supplies only the shape pool.
+          - name: launch-template
             base:
-              apiVersion: ec2.aws.upbound.io/v1beta1
-              kind: Instance
+              apiVersion: ec2.aws.upbound.io/v1beta2
+              kind: LaunchTemplate
               spec:
                 forProvider:
                   region: us-west-2
-                  # upjet provider-aws does NOT support the resolve:ssm: alias (it passes the
-                  # literal to DescribeImages -> InvalidAMIID.Malformed). Use the CONCRETE
-                  # DL Base GPU AMI id (AL2023, x86_64, NVIDIA drivers). us-west-2, resolved
-                  # 2026-09-26 from /aws/service/deeplearning/.../base-oss-nvidia-driver-gpu-amazon-linux-2023.
-                  # Re-resolve if a launch fails on a deregistered AMI (TALOS-3hjh: make this a spec field).
-                  ami: ami-0138b0ae7d33b5753
-                  instanceType: g5.xlarge
+                  # DL Base GPU AMI (AL2023, x86_64, NVIDIA drivers), us-west-2,
+                  # resolved 2026-09-26 from /aws/service/deeplearning/.../
+                  # base-oss-nvidia-driver-gpu-amazon-linux-2023. Per-region override
+                  # is spec.ami. CONCRETE ONLY — see the header.
+                  imageId: ami-0138b0ae7d33b5753
+                  # New userData => new template version. Without this the fleet would
+                  # keep launching version 1 forever.
+                  updateDefaultVersion: true
                   vpcSecurityGroupIdSelector: {matchControllerRef: true}
-                  # NO instanceMarketOptions here => ON-DEMAND. Spot is opted into by
-                  # spec.capacityType via the Optional patch below, because on-demand is
-                  # expressed by this block's ABSENCE (there is no on-demand marketType)
-                  # and a patch can only be skipped when its source field is absent.
-                  rootBlockDevice:
-                    # DL Base GPU AMI root snapshot is 75GB, so this must be >=75; 100
-                    # leaves room for the OS/drivers + the ~10GB vllm-openai image.
-                    # (model weights live on the local NVMe instance store at /cache.)
-                    - volumeSize: 100
+                  # NO instanceType: the fleet's launchTemplateConfig[].override[]
+                  # carries the pool. Setting it here would also forbid any future
+                  # move to attribute-based selection ("If present then
+                  # instance_requirements cannot be present").
+                  #
+                  # NO instanceMarketOptions: spot/on-demand is a FLEET decision
+                  # (targetCapacitySpecification.defaultTargetCapacityType). Market
+                  # options in a template consumed by a fleet are at best redundant
+                  # and at worst a conflict — the analogous Auto Scaling path rejects
+                  # them outright ("You cannot use a launch template that is set to
+                  # request Spot Instances (InstanceMarketOptions) when you configure
+                  # an Auto Scaling group with a mixed instances policy").
+                  #
+                  # ⚠️ httpPutResponseHopLimit: 2 IS REQUIRED, NOT HARDENING THEATRE.
+                  # The default is 1, which is one hop — enough for a process on the
+                  # host, NOT enough for a process inside a Docker container, whose
+                  # reply to the IMDSv2 token PUT is one hop further and gets dropped.
+                  # This never mattered before: s5cmd authenticated on the HOST. As of
+                  # TALOS-5drv.3 vLLM authenticates to S3 from INSIDE the container on
+                  # every boot, so at hop limit 1 the weights simply never load.
+                  # httpTokens: required keeps that IMDSv2-only rather than silently
+                  # leaning on IMDSv1 to paper over the hop limit.
+                  metadataOptions:
+                    httpEndpoint: enabled
+                    httpTokens: required
+                    httpPutResponseHopLimit: 2
+                  # Root volume. The AMI's root device is /dev/xvda (gp3, 75GB
+                  # snapshot — verified live against ami-07173ded18b6f3a7b), and a
+                  # launch template needs the device name spelled out; aws_instance's
+                  # rootBlockDevice inferred it. 100 leaves room for the OS/drivers and
+                  # the ~9GB vllm-openai image. Weights never land here.
+                  # deleteOnTermination is a STRING in aws_launch_template (not a
+                  # bool), and it is explicit because an orphaned 100GB gp3 volume
+                  # bills forever after the GPU is gone.
+                  blockDeviceMappings:
+                    - deviceName: /dev/xvda
+                      ebs:
+                        volumeSize: 100
+                        volumeType: gp3
+                        deleteOnTermination: "true"
+                  # The Name tag on the INSTANCE, not on the template. A fleet-launched
+                  # instance inherits tags only from the template's tagSpecifications,
+                  # and scripts/gpu-tunnel.sh + the inventory exporter find the box by
+                  # `tag:Name`, so this is how the tunnel keeps working.
+                  tagSpecifications:
+                    - resourceType: instance
+                      tags: {Name: xgpuinstance}
             patches:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceType, toFieldPath: spec.forProvider.instanceType}
-              # Optional: omit subnetId on the claim and AWS picks the AZ with capacity.
-              # That is the whole point of TALOS-rkg0 — nothing here is AZ-scoped any
-              # more, so there is no reason to pin placement. Set it only to force a
-              # specific subnet/VPC.
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.subnetId, toFieldPath: spec.forProvider.subnetId, policy: {fromFieldPath: Optional}}
-              # Region-specific AMI (TALOS-iymy). Optional patch overrides the us-west-2 default above with a
-              # concrete per-region DL GPU AMI (e.g. us-east-2). upjet rejects resolve:ssm: so it must be an id.
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.ami, toFieldPath: spec.forProvider.ami, policy: {fromFieldPath: Optional}}
+              # Region-specific AMI (TALOS-iymy). Optional patch overrides the
+              # us-west-2 default above with a concrete per-region DL GPU AMI.
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.ami
+                toFieldPath: spec.forProvider.imageId
+                policy: {fromFieldPath: Optional}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceName, toFieldPath: "spec.forProvider.tags[Name]"}
-              # SSM interactive mode. Optional patch — no-op when spec.instanceProfileName
-              # is unset. This SG is egress-only, so attaching the profile is the ONLY
-              # way to reach the box (shell + `aws ssm start-session ... AWS-StartPortForwardingSession` to vLLM).
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceProfileName, toFieldPath: spec.forProvider.iamInstanceProfile, policy: {fromFieldPath: Optional}}
-              # Spot opt-in. Unset spec.capacityType => this patch is skipped => no
-              # instanceMarketOptions => on-demand. See the XRD's capacityType comment
-              # for why absence (not a value) is how on-demand is expressed.
-              - {type: FromCompositeFieldPath, fromFieldPath: spec.capacityType, toFieldPath: "spec.forProvider.instanceMarketOptions[0].marketType", policy: {fromFieldPath: Optional}}
-              - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.publicIp, toFieldPath: status.publicIp}
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.instanceName
+                toFieldPath: "spec.forProvider.tagSpecifications[0].tags[Name]"
+              # SSM + S3. Optional patch — no-op when spec.instanceProfileName is
+              # unset. The SG is egress-only, so the profile is the ONLY way to reach
+              # the box (shell + `aws ssm start-session ...
+              # AWS-StartPortForwardingSession` to vLLM) AND, since TALOS-5drv.3, the
+              # only way vLLM can read its own weights.
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.instanceProfileName
+                toFieldPath: spec.forProvider.iamInstanceProfile.name
+                policy: {fromFieldPath: Optional}
               - type: CombineFromComposite
                 combine:
                   # Every variable is interpolated EXACTLY ONCE, straight into a shell
@@ -118,37 +216,74 @@ spec:
                   # layout inlined fields at their point of use, which forced
                   # spec.models and spec.servePort to be listed twice and made the
                   # "%s order MUST match this list" comment load-bearing. It isn't now —
-                  # but the order below still has to match the assignments.
+                  # but the order below still has to match the assignments, and the
+                  # COUNT of %s must equal the count of variables or the renderer
+                  # silently writes %!s(MISSING) into the boot script.
+                  #
+                  # fmt is a Go format string: a literal percent sign anywhere in the
+                  # script below would be read as a verb. There are none. Keep it that
+                  # way (no printf, no ${var%suffix}).
                   variables:
                     - {fromFieldPath: spec.hfModel}
                     - {fromFieldPath: spec.modelsBucket}
                     - {fromFieldPath: spec.servePort}
                     - {fromFieldPath: spec.servedModelName}
-                    - {fromFieldPath: spec.tensorParallelSize}
+                    - {fromFieldPath: spec.region}
                     - {fromFieldPath: spec.quantization}
                     - {fromFieldPath: spec.maxModelLen}
                     - {fromFieldPath: spec.gpuMemoryUtilization}
                     - {fromFieldPath: spec.enableImageGen}
                     - {fromFieldPath: spec.vllmImage}
+                    - {fromFieldPath: spec.streamerConcurrency}
                   strategy: string
                   string:
                     fmt: |
                       #!/bin/bash
-                      # XGPUInstance boot: mount /cache, get the weights, serve them.
+                      # XGPUInstance boot: count the GPUs, make sure S3 holds the weights, stream them in.
                       # NO `set -eu` (lesson: it aborted before vLLM ever started on any transient error).
-                      # Logs to /var/log/gpu-init.log; inspect via SSM. Mesh-join is a Phase-3 follow-on — a
-                      # first launch is reachable via `aws ssm start-session ... AWS-StartPortForwardingSession`.
+                      # Logs to /var/log/gpu-init.log; inspect via SSM. A hard stop also writes
+                      # /var/log/gpu-init.FAILED, so a dead box is one `cat` away from a diagnosis.
                       exec > >(tee /var/log/gpu-init.log) 2>&1; set -x
-                      HF_MODEL="%s"; BUCKET="%s"; PORT="%s"; SERVED="%s"; TP="%s"
+                      HF_MODEL="%s"; BUCKET="%s"; PORT="%s"; SERVED="%s"; REGION="%s"
                       QUANT="%s"; MAXLEN="%s"; UTIL="%s"; IMAGES="%s"; VLLM_IMAGE="%s"
+                      STREAM_CONCURRENCY="%s"
+                      S3="s3://$BUCKET/$HF_MODEL"
+                      S5=/usr/local/bin/s5cmd
+                      fatal() { echo "FATAL: $*"; echo "FATAL: $*" > /var/log/gpu-init.FAILED; exit 1; }
+                      # --- tensor parallelism is DERIVED, never asserted (TALOS-5drv.2) ---
+                      # TP must equal this machine's GPU count, and with a diversified fleet
+                      # (TALOS-i91u) the machine could be any shape in the pool - 1x L40S or 4x L4 -
+                      # so no claim can know it. TP is a property of the machine, not of intent.
+                      # `grep -c '^GPU '` and not `wc -l`: nvidia-smi prints diagnostics on failure
+                      # too, and wc would return a plausible-looking non-zero count for them.
+                      # The driver ships in the DL Base GPU AMI but is not always up at first boot,
+                      # hence the bounded wait. ZERO GPUs IS FATAL, not "fall back to 1": quietly
+                      # serving on one GPU of four while paying for four is the exact failure here.
+                      TP=0
+                      for _ in $(seq 1 30); do
+                        TP=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU ')
+                        [ "$TP" -gt 0 ] && break
+                        sleep 2
+                      done
+                      [ "$TP" -gt 0 ] || fatal "nvidia-smi reports 0 GPUs after 60s - refusing to serve. Is this a DL Base GPU AMI, and does this shape have NVIDIA devices?"
+                      nvidia-smi -L
+                      echo "gpus: $TP detected -> --tensor-parallel-size $TP"
                       # --- mount /cache on LOCAL NVME INSTANCE STORE (TALOS-rkg0) ---
                       # Identify it by the NVMe MODEL string, not device order: on Nitro the
                       # root EBS volume is also an NVMe device and the numbering is not
-                      # guaranteed. Instance store reports "Amazon EC2 NVMe Instance Storage".
+                      # guaranteed - verified live 2026-10-01, where the instance store came up
+                      # as nvme1n1 right next to the EBS root at nvme0n1. Instance store reports
+                      # "Amazon EC2 NVMe Instance Storage".
                       # Always mkfs -f: instance store comes up raw on every boot and holds
                       # nothing we need to preserve (S3 is the durable copy).
+                      # That rawness is also why "local NVMe is ~7GB/s vs ~1GB/s for network
+                      # storage" does NOT argue against streaming: an ALREADY-WARM local disk
+                      # would beat the network, but this disk is reformatted every single boot,
+                      # so it is never warm. The old path paid the same S3 read AND a ~31GB write
+                      # AND a ~31GB read on top of it.
+                      # /cache now exists for the COLD HF SEED ONLY. The serving path never reads it.
                       CACHE_DEV=""
-                      for i in $(seq 1 30); do
+                      for _ in $(seq 1 30); do
                         CACHE_DEV=$(lsblk -dno NAME,MODEL 2>/dev/null | awk '/Instance Storage/ {print "/dev/"$1; exit}')
                         [ -n "$CACHE_DEV" ] && break
                         sleep 2
@@ -158,60 +293,210 @@ spec:
                         mkfs.xfs -f "$CACHE_DEV" && mount "$CACHE_DEV" /cache
                         echo "cache: mounted instance store $CACHE_DEV at /cache"
                       else
-                        # Shape without instance store, or it never appeared. Fall back to the
-                        # root volume so the box still serves — but the model must fit in
-                        # rootBlockDevice (100GB minus the ~75GB AMI and the vLLM image).
+                        # Shape without instance store, or it never appeared. The WARM path does not
+                        # care - it streams from S3 - but a COLD seed stages the whole model here
+                        # first, and the root volume has only ~25GB free after the AMI and the vLLM
+                        # image. A cold seed of anything large will run out of space.
                         echo "WARNING: no instance-store device found; /cache is on the root volume"
                       fi
                       df -h /cache
                       # --- s5cmd (PINNED: the /latest/download/s5cmd_Linux-64bit.tar.gz asset 404s -> silent no-binary) ---
                       curl -fsSL https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz | tar xz -C /usr/local/bin s5cmd
-                      # --- weights: the S3 cache prefix IS the HF id, so one field drives both ---
-                      # WARM (normal): same-region S3 -> /cache. Free transfer, ~1-2GB/s.
-                      # COLD (first box ever to boot this model): pull from HF once, then
-                      # WRITE S3 so every later boot takes the warm path. The download runs
-                      # inside the pinned vLLM image — it already ships huggingface_hub, so
-                      # the host needs no pip and no PATH guessing. snapshot_download with
-                      # local_dir writes a plain file tree (no blob symlinks), which is what
-                      # makes the s5cmd round-trip safe.
-                      S3="s3://$BUCKET/$HF_MODEL"; DIR="/cache/$HF_MODEL"
-                      mkdir -p "$DIR"
-                      if /usr/local/bin/s5cmd ls "$S3/_SEED_COMPLETE" >/dev/null 2>&1; then
-                        /usr/local/bin/s5cmd sync "$S3/*" "$DIR/"
-                      else
+                      # --- weights: S3 is the cache AND the loader source (TALOS-5drv.3) ---
+                      # The S3 prefix IS the HF id, so one field drives both.
+                      # WARM (normal): nothing happens here at all. vLLM streams the shards from
+                      # $S3 straight into VRAM below.
+                      # COLD (first box ever to boot this model): pull from HF once, push to S3,
+                      # drop the marker, then DELETE the staged copy. There is exactly ONE serving
+                      # path and it reads S3, so a local copy would be ~31GB of dead weight.
+                      # The download runs inside the pinned vLLM image - it already ships
+                      # huggingface_hub, so the host needs no pip and no PATH guessing.
+                      # snapshot_download with local_dir writes a plain file tree (no blob
+                      # symlinks), which is what makes the s5cmd round-trip safe.
+                      if ! $S5 ls "$S3/_SEED_COMPLETE" > /dev/null 2>&1; then
+                        SEED="/cache/seed/$HF_MODEL"
+                        mkdir -p "$SEED"
                         docker run --rm -i --entrypoint python3 -v /cache:/cache -e HF_HOME=/cache/hf "$VLLM_IMAGE" - <<PY
                       from huggingface_hub import snapshot_download
-                      snapshot_download("$HF_MODEL", local_dir="$DIR", max_workers=16)
+                      snapshot_download("$HF_MODEL", local_dir="$SEED", max_workers=16)
                       PY
-                        /usr/local/bin/s5cmd sync "$DIR/" "$S3/" \
-                          && echo done | /usr/local/bin/s5cmd cp - "$S3/_SEED_COMPLETE"
+                        $S5 sync "$SEED/" "$S3/" \
+                          && echo seeded | $S5 cp - "$S3/_SEED_COMPLETE" \
+                          && rm -rf "$SEED"
                       fi
-                      # --- LLM: vLLM on :$PORT. 'auto' quantization means OMIT the flag and let
-                      #     vLLM autodetect from the checkpoint's config.json (right for FP8/AWQ/GPTQ
-                      #     repos that self-describe); set it explicitly only to force a kernel. ---
+                      # PREFLIGHT, because the box bills while you debug: runai_streamer globs
+                      # *.safetensors and loads nothing else. A checkpoint published only as
+                      # .bin/.pth would crash-loop vLLM with no obvious cause, so say so here.
+                      $S5 ls "$S3/*.safetensors" > /dev/null 2>&1 \
+                        || fatal "no *.safetensors under $S3 - runai_streamer loads native safetensors ONLY. Did the seed finish? Is this a safetensors checkpoint?"
+                      # --- LLM: vLLM on :$PORT, streaming its weights out of S3 (TALOS-5drv.3) ---
+                      # --load-format runai_streamer with an s3:// --model is the documented pair:
+                      # docs.vllm.ai/en/stable/models/extensions/runai_model_streamer. The pinned
+                      # v0.30.0 image already contains runai-model-streamer[s3], so nothing is
+                      # installed at boot. vLLM pulls the small non-weight files (config.json,
+                      # tokenizer*, *.index.json, *.py) to a container-local temp dir itself and
+                      # keeps streaming the shards from S3 - there is no local weight copy at all.
+                      # --tokenizer is DELIBERATELY NOT SET. Unset means tokenizer == model, which
+                      # makes vLLM run a SECOND pull of everything-except-weights; that second pass
+                      # is the only thing that fetches BPE files like merges.txt / vocab.txt, which
+                      # the first pull's *.model/*.py/*.json filter would miss. Qwen3-235B-GPTQ-Int4
+                      # ships a merges.txt, so pointing --tokenizer anywhere else would break it.
+                      #
+                      # AWS_REGION is MANDATORY: the streamer infers NO region from the s3:// URI.
+                      # AWS_EC2_METADATA_DISABLED IS DELIBERATELY NOT SET. vLLM's own doc sets it in
+                      # the S3-COMPATIBLE (MinIO/GCS) recipe, where it only skips a startup delay;
+                      # copying it here would switch IMDS off and kill instance-profile auth dead.
+                      # Credentials come from the AWS SDK default chain (env, profile, SSO, IMDS),
+                      # so the instance profile is sufficient and there are no static keys anywhere.
+                      # RUNAI_STREAMER_CONCURRENCY is exactly what the documented
+                      # --model-loader-extra-config '{"concurrency":N}' sets underneath, without
+                      # nesting JSON inside a Go format string inside YAML.
+                      #
+                      # 'auto' quantization means OMIT the flag and let vLLM autodetect from the
+                      # checkpoint's config.json (right for FP8/AWQ/GPTQ repos that self-describe);
+                      # set it explicitly only to force a kernel.
+                      # --ipc=host: the default 64MB /dev/shm is too small for tensor parallel, and
+                      # TP is now whatever the machine turned out to be, so this is never optional.
+                      # --trust-remote-code now also trusts the BUCKET: the streamer pulls *.py
+                      # from the S3 prefix and vLLM executes them. That prefix is written only by
+                      # our own cold seed straight from HuggingFace, so the practical trust
+                      # boundary is unchanged - but it is S3, not HF, that now has to be trusted.
                       QUANT_ARG=""; [ "$QUANT" != "auto" ] && QUANT_ARG="--quantization $QUANT"
-                      # $SERVED is INTENTIONALLY UNQUOTED: vLLM's --served-model-name takes
+                      # $QUANT_ARG and $SERVED are both INTENTIONALLY UNQUOTED - they must
+                      # word-split. $QUANT_ARG is either empty or the two words
+                      # "--quantization <kernel>"; quoting it would pass an empty string as
+                      # an argument when QUANT is auto. (shellcheck SC2086 flags this; it is
+                      # wrong here.)
+                      # $SERVED is unquoted because vLLM's --served-model-name takes
                       # nargs='+', so a space-separated servedModelName becomes several
                       # aliases and the endpoint answers to all of them. That is what lets
                       # one ~/.catalyst/llm-config.yaml model name resolve against BOTH the
-                      # Mac's local Ollama and this box. Same space-separated idiom the old
-                      # `models` field used.
+                      # Mac's local Ollama and this box. It is also no longer optional: vLLM
+                      # resolves served_model_name BEFORE it rewrites an s3:// --model, so
+                      # leaving it unset makes the reported model id the raw S3 URI.
                       docker run -d --restart=always --name vllm --gpus all --ipc=host -p "$PORT":8000 \
-                        -v /cache:/cache -e HF_HOME=/cache/hf "$VLLM_IMAGE" \
-                        --model "$DIR" --served-model-name $SERVED \
+                        -v /cache:/cache -e HF_HOME=/cache/hf \
+                        -e AWS_REGION="$REGION" -e AWS_DEFAULT_REGION="$REGION" \
+                        -e RUNAI_STREAMER_CONCURRENCY="$STREAM_CONCURRENCY" \
+                        "$VLLM_IMAGE" \
+                        --model "$S3" --load-format runai_streamer \
+                        --served-model-name $SERVED \
                         --tensor-parallel-size "$TP" $QUANT_ARG \
                         --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" --trust-remote-code
                       # --- Image gen: ComfyUI + comfyui-shim (OpenAI /v1/images on :8012), sharing VRAM.
                       #     Gated on enableImageGen because it only fits where the LLM leaves spare VRAM.
                       #     `|| true`: runpod-mac-bundle is built+pushed separately and DOES NOT EXIST in
-                      #     GHCR yet (404 as of 2026-09-30, see SESSION_STATUS.md) — a launch before it
+                      #     GHCR yet (404 as of 2026-09-30, see SESSION_STATUS.md) - a launch before it
                       #     exists still brings up vLLM. That `|| true` is also why the 2026-09-28 235B
                       #     launch reported success with no ComfyUI running at all.
-                      #     Ollama/Whisper disabled — vLLM owns the LLM path. ---
+                      #     Ollama/Whisper disabled - vLLM owns the LLM path. ---
                       if [ "$IMAGES" = "true" ]; then
                         docker run -d --restart=always --name comfy --gpus all -p 8012:8012 -p 8188:8188 \
                           -v /cache:/workspace -e ENABLE_OLLAMA=false -e ENABLE_WHISPER=false \
                           -e ENABLE_COMFYUI=true -e ENABLE_COMFYUI_SHIM=true \
                           ghcr.io/thebranchdriftcatalyst/runpod-mac-bundle:latest || true
                       fi
+                # A launch template's userData field is BASE64, unlike aws_instance's
+                # plain-text user_data ("The base64-encoded user data to provide when
+                # launching the instance"). Pass the rendered script through ToBase64
+                # here rather than hand-encoding it, so the script above stays readable
+                # and reviewable in git. Transforms run after the combine, on its
+                # result, so the %s accounting above is unaffected.
+                transforms:
+                  - type: string
+                    string: {type: Convert, convert: ToBase64}
                 toFieldPath: spec.forProvider.userData
+
+          # ── HOW MANY, AND FROM WHICH CAPACITY POOLS ───────────────────────────
+          # One instance, from whichever of spec.instanceTypes can actually be had.
+          - name: fleet
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Fleet
+              spec:
+                forProvider:
+                  region: us-west-2
+                  # See the header for why maintain and not instant/request.
+                  type: maintain
+                  # ⚠️ MONEY. Defaults to false, and false leaves the GPU instance
+                  # running after the fleet is deleted. Deleting the XR must stop
+                  # the spend.
+                  terminateInstances: true
+                  targetCapacitySpecification:
+                    # Exactly one box. Overrides carry no weightedCapacity, so the
+                    # default weight of 1 makes this "one instance", whichever shape
+                    # it lands on. This is also the one-rig invariant's arithmetic:
+                    # a fleet cannot quietly grow to two.
+                    totalTargetCapacity: 1
+                    # on-demand in the base; the Optional patch below flips it to
+                    # spot when the claim sets capacityType. Unlike a bare Instance,
+                    # a fleet CAN say "on-demand" out loud - see the XRD's
+                    # capacityType comment for the history.
+                    defaultTargetCapacityType: on-demand
+                  spotOptions:
+                    # AWS's current recommendation, and the right one for scarce L40S:
+                    # weighs pool capacity depth first and price second, instead of
+                    # charging at the cheapest pool and getting interrupted out of it.
+                    # Ignored when the fleet is on-demand.
+                    allocationStrategy: price-capacity-optimized
+                  onDemandOptions:
+                    # Cheapest shape that HAS capacity. This is what makes a pool
+                    # containing a dearer shape safe: the dear one is reached for only
+                    # when the cheap ones are dry, i.e. when the alternative is not
+                    # running at all. NOT the claim's list order - priority would need
+                    # `prioritized`, and we do not want "preferred but unavailable" to
+                    # beat "available".
+                    allocationStrategy: lowestPrice
+                  launchTemplateConfig:
+                    - launchTemplateSpecification:
+                        # Wired to THIS composite's template by owner reference, the
+                        # same way sg-egress finds its security group.
+                        launchTemplateIdSelector: {matchControllerRef: true}
+                        version: "$Latest"
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceName, toFieldPath: "spec.forProvider.tags[Name]"}
+              # THE POOL. patch-and-transform has no loop, so this is six Optional
+              # patches, one per slot, matching the XRD's maxItems: 6. A claim listing
+              # three shapes leaves slots 3-5 with no source field, so those patches
+              # are skipped and only three overrides are rendered.
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.instanceTypes[0]"
+                toFieldPath: "spec.forProvider.launchTemplateConfig[0].override[0].instanceType"
+                policy: {fromFieldPath: Optional}
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.instanceTypes[1]"
+                toFieldPath: "spec.forProvider.launchTemplateConfig[0].override[1].instanceType"
+                policy: {fromFieldPath: Optional}
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.instanceTypes[2]"
+                toFieldPath: "spec.forProvider.launchTemplateConfig[0].override[2].instanceType"
+                policy: {fromFieldPath: Optional}
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.instanceTypes[3]"
+                toFieldPath: "spec.forProvider.launchTemplateConfig[0].override[3].instanceType"
+                policy: {fromFieldPath: Optional}
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.instanceTypes[4]"
+                toFieldPath: "spec.forProvider.launchTemplateConfig[0].override[4].instanceType"
+                policy: {fromFieldPath: Optional}
+              - type: FromCompositeFieldPath
+                fromFieldPath: "spec.instanceTypes[5]"
+                toFieldPath: "spec.forProvider.launchTemplateConfig[0].override[5].instanceType"
+                policy: {fromFieldPath: Optional}
+              # Spot opt-in. Unset spec.capacityType => this patch is skipped => the
+              # base's `on-demand` stands. Setting it to `spot` is the only accepted
+              # value, and it maps 1:1 onto the fleet's own vocabulary.
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.capacityType
+                toFieldPath: spec.forProvider.targetCapacitySpecification.defaultTargetCapacityType
+                policy: {fromFieldPath: Optional}
+              # "Did AWS actually find me a machine?" - the question that cost a day.
+              # fleetState active with fulfilledCapacity 0 means still hunting.
+              - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.id, toFieldPath: status.fleetId}
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.fleetState
+                toFieldPath: status.fleetState
+              - type: ToCompositeFieldPath
+                fromFieldPath: status.atProvider.fulfilledCapacity
+                toFieldPath: status.fulfilledCapacity
