@@ -1,0 +1,185 @@
+---
+# One GPU rig at a time (TALOS-5drv.4, gap 4 of TALOS-5drv). DENIES the CREATE of
+# a second XGPUInstance.
+#
+# THE GAP: the one-rig invariant held only by CONVENTION. Exactly one claim is
+# left uncommented in infrastructure/base/aws/apps/kustomization.yaml and nothing
+# anywhere refused a second one. Both claims on at once is $7.41/hr — $5.17
+# g6e.12xlarge spot + $2.24 g6e.2xlarge on-demand, the two spotUsdPerHour figures
+# in gpu-profiles.yaml — or ~$178/day.
+#
+# The accidental backstop WAS the G/VT vCPU quota, and the epic is explicit that
+# this is the wrong mechanism: the pending increases take us-east-1, us-east-2 and
+# eu-central-1 to 64 vCPU specifically so a 4-GPU and a 1-GPU rig COULD coexist,
+# which is not wanted. 48 vCPU hosts exactly one .12xlarge and nothing else (see
+# gpu-profiles.yaml, "the quota trap"), so the ceiling was doing the deciding. A
+# ceiling is not a decision, and this repeats the lesson already written into
+# aws/apps/kustomization.yaml's own header: "the missing credential was acting as
+# an undeclared brake ... restoring it immediately began creating real AWS
+# resources that nobody had actually decided to run." State the invariant
+# explicitly so it depends on neither the quota nor a commented-out line.
+#
+# ── WHY KYVERNO AND NOT A ValidatingAdmissionPolicy ─────────────────────────
+# VAP was the preferred option and it IS available here (server v1.36.4,
+# admissionregistration.k8s.io/v1, GA since 1.30), but its CEL environment
+# CANNOT SEE OTHER OBJECTS. The exposed variables are object, oldObject, request,
+# params, namespaceObject, authorizer and variables. There is no lister, and
+# `authorizer` answers "may this user do X" — not "how many of these exist". So a
+# VAP cannot count siblings, which is the entire check.
+#
+# The only way to put the existing rigs in front of a VAP is to abuse paramKind:
+# aim it at XGPUInstance itself and give the binding a match-all paramRef
+# selector, so the policy is re-evaluated once per existing rig and each pass
+# asserts params.metadata.name == object.metadata.name. That turns an obscure
+# AND-over-params evaluation rule into a counting primitive, reads from the API
+# server's param informer cache rather than a live read, collapses the moment the
+# limit is anything other than 1, and leans on parameterNotFoundAction: Allow to
+# avoid denying the FIRST rig. Rejected as too clever to trust with $7.41/hr.
+#
+# Kyverno costs nothing to adopt here: it is already installed and healthy
+# (kyverno namespace, v1.18.2, two admission replicas, 37d) and this directory is
+# already the repo's home for admission policy — 13 ClusterPolicies and zero
+# VAPs. Its context.apiCall does a real list against the API server, so it counts
+# for real AND can name the rig that is in the way. No new controller either way.
+#
+# ── HOW IT READS ────────────────────────────────────────────────────────────
+# On CREATE, Kyverno lists xgpuinstances and denies when the list is non-empty.
+# XGPUInstance is CLUSTER-scoped, so the list path carries no namespace segment.
+# The incoming object is not yet persisted at admission time, so an empty list
+# means "no rig exists" and the first rig always passes.
+#
+# ── ESCAPE HATCH ────────────────────────────────────────────────────────────
+# Label the incoming claim catalyst.io/allow-concurrent: "true" and it is
+# excluded from the rule, so a deliberate two-rig test is one label away. The
+# label is read off the INCOMING claim, so exempting one rig does not disarm the
+# policy for anything else — and it is visible in git diff on the claim itself.
+#
+# FOR A TWO-RIG TEST, LABEL BOTH CLAIMS. Labelling only the new one is enough to
+# get it admitted, but the OTHER rig is then unlabelled and over the limit, so if
+# gpu-testrig-reaper churns it at 6h its Flux recreate is a CREATE and gets
+# denied — the box would not come back until the test ends. Label both and both
+# can be recreated; unlabel both when the test is over.
+#
+# ── TWO FAIL-CLOSED CHOICES, BOTH DELIBERATE ────────────────────────────────
+# failurePolicy: Fail, the OPPOSITE of this directory's other policies. They use
+# Ignore because they match Pods and IngressRoutes, where a Kyverno outage must
+# not wedge cluster-wide admission. This rule matches ONE rare cluster-scoped CRD
+# created by hand a few times a month, so failing closed costs a retry and
+# failing open costs $7.41/hr.
+#
+# apiCall carries NO `default:` ON PURPOSE. A default of `[]` would turn a
+# missing-RBAC or API error into a count of zero — a policy that silently stops
+# enforcing, which is worse than no policy at all. No default plus Fail means an
+# errored lookup DENIES.
+#
+# background: false — a background scan evaluates an ALREADY-PERSISTED object, so
+# the list would include the object itself and the single legitimate rig would be
+# reported as a violation forever. This rule is only meaningful at admission.
+#
+# ── KNOWN LIMIT ─────────────────────────────────────────────────────────────
+# Admission-time counting is TOCTOU-racy: two CREATEs arriving inside the same
+# instant can both read zero and both be admitted. There is no admission
+# mechanism that closes this (Kyverno or VAP alike) — it needs a controller
+# holding a lock. Not a concern for a resource flipped on by a human editing
+# kustomization.yaml, and the 6h gpu-testrig-reaper still backs it up.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:admission:gpu-rig-count
+  labels:
+    app.kubernetes.io/part-of: kyverno
+    rbac.kyverno.io/aggregate-to-admission-controller: "true"
+# Kyverno's admission controller gets NO access to custom resources by default —
+# verified: `kubectl auth can-i list xgpuinstances.aws.catalyst.io
+# --as=system:serviceaccount:kyverno:kyverno-admission-controller` answered "no".
+# Without this aggregation the context.apiCall below fails, and because the call
+# has no `default:` that failure denies rather than silently permitting. Read-only
+# and scoped to the one kind; the background/reports controllers are deliberately
+# NOT granted anything, since background: false means they never evaluate this.
+rules:
+  - apiGroups: [aws.catalyst.io]
+    resources: [xgpuinstances]
+    verbs: [get, list]
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: single-gpu-rig
+  labels:
+    app.kubernetes.io/part-of: kyverno
+  annotations:
+    policies.kyverno.io/title: One GPU rig at a time
+    policies.kyverno.io/category: Cost
+    policies.kyverno.io/severity: critical
+    policies.kyverno.io/subject: XGPUInstance
+    policies.kyverno.io/description: >-
+      Denies creating a second XGPUInstance while one already exists, naming the
+      rig that is in the way. Two concurrent rigs is $7.41/hr. Replaces the
+      convention of "exactly one claim is uncommented in aws/apps" and the G/VT
+      vCPU quota ceiling, neither of which actually decided anything
+      (TALOS-5drv.4). Label a claim catalyst.io/allow-concurrent: "true" to
+      exempt it for a deliberate two-rig test.
+spec:
+  # Fail, not Ignore — see the file header. One rare cluster-scoped CRD, so
+  # failing closed is cheap and failing open is $7.41/hr.
+  failurePolicy: Fail
+  # Admission only. A background scan would count the object against itself.
+  background: false
+  rules:
+    - name: deny-second-xgpuinstance
+      match:
+        any:
+          # Fully qualified, matching this directory's convention (see
+          # ingressroute-tls-default.yaml). CREATE only: a second rig cannot be
+          # conjured by an UPDATE, and restricting the operation keeps Flux's
+          # re-apply of the EXISTING rig from tripping the rule every reconcile.
+          - resources:
+              kinds:
+                - aws.catalyst.io/v1alpha1/XGPUInstance
+              operations:
+                - CREATE
+      exclude:
+        any:
+          # The escape hatch. Carried by the incoming claim, so it exempts that
+          # one rig rather than disabling the policy.
+          - resources:
+              selector:
+                matchLabels:
+                  catalyst.io/allow-concurrent: "true"
+      context:
+        # A live list through the API server, not an informer cache. Cluster-scoped
+        # kind, hence no /namespaces/<ns>/ segment.
+        #
+        # The filter drops the incoming claim by name. It is redundant at CREATE —
+        # the object is not persisted yet, so it cannot be in the list — but it
+        # makes the count mean "OTHER rigs" unconditionally, which keeps the rule
+        # correct if anyone later adds UPDATE to the operations above or flips
+        # background on. Verified with `kyverno jp query`: a list containing only
+        # the incoming object yields 0, not 1.
+        #
+        # `|| `[]`` keeps the projection total when there are no rigs (it projects
+        # to null otherwise) — the same guard restrict-public-hostname-claims.yaml
+        # uses. sort() makes the message deterministic. NO `default:` — an error
+        # here must DENY, not silently count zero.
+        - name: existingRigs
+          apiCall:
+            urlPath: /apis/aws.catalyst.io/v1alpha1/xgpuinstances
+            jmesPath: "items[?metadata.name != '{{ request.object.metadata.name }}'].metadata.name || `[]` | sort(@)"
+      validate:
+        failureAction: Enforce
+        # Names the rig to turn off, which is the whole point of preferring a real
+        # list over a bare count.
+        message: >-
+          Refusing to create XGPUInstance '{{ request.object.metadata.name }}':
+          one GPU rig at a time, and '{{ existingRigs | join(', ', @) }}' already
+          exists. Two concurrent rigs is $7.41/hr (~$178/day). Comment that rig's
+          line out of infrastructure/base/aws/apps/kustomization.yaml and let Flux
+          remove it first, or label this claim
+          'catalyst.io/allow-concurrent: "true"' if you genuinely mean to run two
+          (TALOS-5drv.4).
+        deny:
+          conditions:
+            all:
+              - key: "{{ existingRigs | length(@) }}"
+                operator: GreaterThanOrEquals
+                value: 1

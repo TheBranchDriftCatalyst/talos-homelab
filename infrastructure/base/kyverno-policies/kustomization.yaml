@@ -17,3 +17,17 @@ resources:
   - cnpg-velero-exclude.yaml # keep Velero off self-backing CNPG clusters (TALOS-a38d.4)
   - helmrelease-remediation-defaults.yaml # remediation.retries:3 on HelmReleases (TALOS-a38d.5)
   - restrict-public-hostname-claims.yaml # block cross-ns *.amberdark.net IngressRoute claims (TALOS-lxz5.4.3)
+  # ── OFF (2026-10-01) ── ONE GPU RIG AT A TIME (TALOS-5drv.4). Denies the CREATE of a
+  # second XGPUInstance, naming the rig already running. Two rigs is $7.41/hr.
+  #
+  # LEFT COMMENTED DELIBERATELY, borrowing aws/apps/kustomization.yaml's "the line is
+  # the on-switch" idiom: arming this changes what the cluster will ACCEPT, so it wants
+  # a human on the trigger. Uncommenting it applies two objects — an aggregated
+  # ClusterRole granting Kyverno's admission controller read on xgpuinstances (it has
+  # none today, verified with `kubectl auth can-i`), and the ClusterPolicy itself.
+  #
+  # ORDER MATTERS AND IT IS SAFE EITHER WAY: the policy fails CLOSED (failurePolicy:
+  # Fail, and the apiCall has no `default:`), so if the ClusterRole were somehow absent
+  # the lookup errors and XGPUInstance creation is DENIED rather than silently allowed.
+  # Both objects live in this one file, so Flux applies them together.
+  - single-gpu-rig.yaml
