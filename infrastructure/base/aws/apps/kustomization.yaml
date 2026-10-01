@@ -23,10 +23,22 @@ resources:
   # ON in git the reaper's delete is undone by Flux on the next reconcile, so it caps
   # a single box's AGE (churn) rather than tearing it down. See file header.
   - gpu-testrig-reaper.yaml
-  # ── ON (2026-09-30) ── LITTLE BOI (TALOS-iymy): spot g6e.2xlarge (1× L40S 48GB) in
-  # us-west-2 serving Qwen3.8-27B-FP8 via vLLM. ~$0.6/hr spot. This is the everyday
-  # rig and the default-on one; see gpu-node-27b-fp8.yaml header.
-  - gpu-node-27b-fp8.yaml
+  # ── OFF (2026-10-01) ── LITTLE BOI (TALOS-iymy): g6e.2xlarge (1× L40S 44.7GiB)
+  # on-demand in us-east-2 serving Qwen3.8-27B-FP8 via vLLM. ~$2.24/hr, ~$54/day.
+  #
+  # OFF IS THE DEFAULT AND THE DEFAULT IS DELIBERATE. Launch it for a test, then
+  # re-comment this line and commit. Do not leave it up: there is no scale-to-zero
+  # yet (TALOS-5drv.5 is deferred on purpose), so the only cost controls are this
+  # line and the 6h reaper — and the reaper CHURNS a running box rather than tearing
+  # it down, because Flux puts the XR straight back while this line is uncommented.
+  #
+  # ON→OFF (2026-10-01): launched i-07c9140f294b30ed9 in us-east-2c after spot and
+  # on-demand both refused across every us-west-2 zone. Verified the local-NVMe
+  # cache (TALOS-rkg0): instance store came up as nvme1n1 alongside the EBS root at
+  # nvme0n1 and mounted at /cache with 419G, which is exactly why the device is
+  # identified by its NVMe MODEL string and not by device order. vLLM v0.30.0 image
+  # pulled; torn down during the cold weight pull rather than paying to finish it.
+  # - gpu-node-27b-fp8.yaml
   # ── OFF / HELD (TALOS-iymy) ── BIG BOI: spot g6e.12xlarge (4× L40S) in us-east-2
   # serving Qwen3-235B-A22B-GPTQ-Int4 (vLLM TP4) + ComfyUI. ~$5.2/hr spot — do NOT
   # leave it running unattended ($124/day). Uncomment ONLY on an explicit go, AND
