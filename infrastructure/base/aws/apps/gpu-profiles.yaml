@@ -51,6 +51,27 @@
 # regional allowance on the boot where it lands there.
 version: 1
 
+# ── The local <-> rig endpoint contract ──────────────────────────────────────
+# ONE home for these, because the tunnel's local port was previously hardcoded in
+# FOUR separate code locations across two repos (scripts/gpu-tunnel.sh, and the
+# operator's Tiltfile twice plus its Taskfile), and the served model name is a
+# producer/consumer pair — the claim produces it, ~/.catalyst/llm-config.yaml
+# consumes it — with nothing checking they agree. Disagreement is a 404 at chat time.
+#
+# Consumers: scripts/gpu-tunnel.sh, and in the sibling catalyst-operator repo the
+# Tiltfile (LITELLM_BASE_URL, SWARM_AGENT_LLM_BASE_URL) and Taskfile (llm:*).
+endpoint:
+  # 18000/18012, NOT 8000/8012: on the Mac :8000 is fchat-bouncer's uvicorn and
+  # :8012 is mac-sdlc-node's comfyui-shim. Both 18xxx are free.
+  llmLocalPort: 18000
+  llmRemotePort: 8000
+  imageLocalPort: 18012
+  imageRemotePort: 8012
+  # Where the operator points when NO rig is on — which is the default state. This is
+  # what makes "down by default" fall out of this file instead of being a separate
+  # decision in the Tiltfile.
+  localFallbackUrl: "http://localhost:11434"
+
 quotaCodes:
   spot: L-3819A6DF        # All G and VT Spot Instance Requests (vCPU)
   onDemand: L-DB2E81BA    # Running On-Demand G and VT instances (vCPU)
@@ -98,6 +119,10 @@ rigs:
     placement: unpinned            # TALOS-rkg0 — AWS picks the zone with capacity
     capacityType: on-demand        # spot sat AT the on-demand price and had no capacity; re-measure across all 3 shapes
     hfModel: Qwen/Qwen3.8-27B-FP8
+    # MIRRORS spec.servedModelName on the claim — keep them identical. The second
+    # alias is the Mac's local Ollama tag for the same model generation, which is what
+    # lets one llm-config.yaml model name resolve against either backend.
+    servedModelName: "qwen3.8-27b qwen3.8:27b-mlx"
     spotUsdPerHour: 2.24   # ON-DEMAND list for the CHEAP member. Spot was capped at this
                            # price anyway: L40S spot is scarce (score 1/9) so the discount
                            # off ~$2.24 on-demand is thin.
@@ -111,6 +136,9 @@ rigs:
     placement: unpinned            # TALOS-rkg0 — and the only capacity lever this rig has
     capacityType: spot
     hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4
+    # MIRRORS spec.servedModelName. NOTE: no local-Ollama alias — this is a different
+    # model, so switching to this rig DOES require editing llm-config.yaml.
+    servedModelName: "qwen3-235b"
     spotUsdPerHour: 5.17   # us-east-2c, measured 2026-09-30 (range 5.17-5.24 across AZs).
                            # In us-west-2 the same shape is $6.11-9.90 — do not move it there.
     maxUsdPerHour: 10.49   # on-demand list, i.e. the spot price ceiling for this shape
