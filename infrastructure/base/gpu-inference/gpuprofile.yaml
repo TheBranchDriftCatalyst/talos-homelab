@@ -1,19 +1,33 @@
 ---
-# GPUProfile — the DECLARATIVE SPEC for the ephemeral GPU (TALOS-t3ic).
+# GPUProfile — LIFECYCLE POLICY ONLY for the (dormant) demand plane.
 #
-# This is the git-owned half of the split. Everything describing WHAT the machine and its
-# cache are lives here and is reviewed like any manifest; gpu-broker reads it and stamps
-# out the XGPUCache / XGPUInstance XRs when demand appears.
+# This used to also carry the machine and model spec that gpu-broker rendered into
+# XGPUInstance claims. Every one of those keys described an API that no longer exists:
 #
-# Why the XRs themselves are NOT in git: TALOS-455u documents three zombie modes —
-# instance self-terminates -> Crossplane resurrects it; XR deleted -> Flux reapplies it;
-# running:false patched -> Flux reverts it. Flux never asserting XR *existence* kills all
-# three. Same principle as keeping replicas out of git when an HPA owns them: the spec is
-# declarative, the count is not.
+#   models / modelsBucket   -> replaced by spec.hfModel, a HuggingFace repo id from
+#                              which the S3 prefix is DERIVED
+#   instanceType            -> replaced by spec.instanceTypes, a POOL of acceptable
+#                              shapes, because one instance type is one capacity pool
+#                              (TALOS-i91u)
+#   availabilityZone        -> removed; placement is deliberately unpinned so AWS can
+#   subnetId                   choose a zone with capacity (TALOS-rkg0)
+#   cacheVolumeGb           -> removed; /cache is the instance's local NVMe, and
+#                              XGPUCache no longer exists
 #
-# A ConfigMap rather than a CRD for v1 — no operator needs to validate it yet, and this
-# keeps the broker dependency-free. Promote to a real CRD if it grows fields that need
-# schema validation.
+# They are GONE rather than updated, because restating them here would recreate the
+# exact drift that made them wrong: two overlapping descriptions of one machine. The
+# authoritative sources are the claims in ../aws/apps/gpu-node-*.yaml and the sizing
+# and endpoint table in ../aws/apps/gpu-profiles.yaml. A broker that ever ships should
+# read the claim, not a second copy of it.
+#
+# What remains is genuine lifecycle policy with live consumers:
+#   reaper-cache-cronjob.yaml    reads cacheTtl
+#   reaper-instance-cronjob.yaml reads maxInstanceLifetime
+#   broker-deployment.yaml       takes --profile-configmap=gpu-profile (imageless, 0 replicas)
+#
+# A ConfigMap rather than a CRD because nothing needs to validate it yet. Tracked as
+# TALOS-tt48; the demand plane itself is TALOS-5drv.5 (deferred) and its reachability
+# design is known broken (TALOS-x1sb).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,33 +36,23 @@ metadata:
   labels:
     app.kubernetes.io/part-of: gpu-inference
 data:
-  # ---- machine (rendered into XGPUInstance) --------------------------------
-  instanceName: "ollama-gpu"
-  # g5.xlarge = A10G 24GB, fits 7-8B comfortably. g6e.xlarge = L40S 48GB for 32B quant.
-  instanceType: "g5.xlarge"
-  # SPACE-separated s3 prefixes under modelsBucket (the XRD takes a string, not a list —
-  # patch-and-transform cannot fmt-join arrays).
-  models: "llama-3.1-8b"
-  modelsBucket: "catalyst-tbdc-models"
-  servePort: "8000"
-  region: "us-west-2"
-  # MUST match the subnet's AZ, per the XRD.
-  availabilityZone: "us-west-2a"
-  vpcId: "vpc-REPLACE-ME"        # EPIC A5 — blocked on the creds gate (TALOS-3g8f)
-  subnetId: "subnet-REPLACE-ME"  # EPIC A5
-
-  # ---- cache (rendered into XGPUCache) -------------------------------------
-  # Sized for the models under test, NOT the whole library. The library lives in S3.
-  cacheVolumeGb: "200"
-
-  # ---- lifecycle -----------------------------------------------------------
-  # Tier 1: no traffic for this long -> delete the INSTANCE, keep the cache warm.
-  # Must exceed the cold start (2-5 min) by a wide margin or we thrash expensively.
-  # Mirrors HTTPScaledObject.scaledownPeriod — keep the two in step.
+  # ---- lifecycle (READ BY THE LIVE CRONJOBS IN THIS DIRECTORY) -------------
+  # These three are the only keys with real consumers, so they are the only keys left.
+  #
+  # Tier 1: no traffic for this long -> delete the INSTANCE.
+  # Must exceed the cold start by a wide margin or we thrash expensively. Cold start is
+  # now ONE streamed S3 read rather than a download-then-load, but a 4x box still takes
+  # minutes to pull ~116GiB into VRAM.
+  # Mirrors the interceptor's scaledownPeriod — keep the two in step.
   instanceIdleTimeout: "30m"
-  # Tier 2: no instance for this long -> delete the CACHE too (WARM -> COLD).
-  # Next wake then re-syncs weights from S3 (+10-40s).
+  # Tier 2 — VESTIGIAL. It describes deleting an XGPUCache, a kind that no longer
+  # exists: TALOS-rkg0 moved /cache onto the instance's local NVMe, which dies with the
+  # box and needs no reaping. reaper-cache-cronjob.yaml still reads this key and
+  # therefore still runs, finding nothing. Remove both together, not separately.
   cacheTtl: "72h"
   # Hard ceiling regardless of traffic — the backstop against a stuck broker billing
-  # forever. The reaper enforces this even if idle detection fails entirely.
+  # forever. reaper-instance-cronjob.yaml enforces this even if idle detection fails.
+  # NOTE: this is NOT the reaper guarding spend today — that is
+  # aws/apps/gpu-testrig-reaper.yaml, whose 6h window is hardcoded and which matches
+  # catalyst.io/stage=poc-demo.
   maxInstanceLifetime: "12h"
