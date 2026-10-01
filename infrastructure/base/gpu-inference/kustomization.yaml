@@ -16,6 +16,30 @@ resources:
   - namespace.yaml
   - gpuprofile.yaml            # lifecycle TTLs only (TALOS-tt48)
   - gpu-service.yaml           # gpu-backend, now SELECTS the gpu-relay Pod
+  # ── DELETED (2026-10-01) ── gateway-deployment.yaml, gateway-service.yaml,
+  # httpscaledobject.yaml.
+  #
+  # The nginx ollama-gateway existed only so KEDA had a Deployment to scale 0<->1 as
+  # the demand signal. It was never used, and having it in the path was actively worse
+  # than nothing: ollama.talos00 HUNG for ~8s and returned nothing, because the
+  # interceptor dutifully held each request waiting for a Deployment pinned at 0
+  # replicas that could never report Ready. Routing straight to gpu-backend 503s
+  # immediately instead, which is the honest answer.
+  #
+  # Its HTTPScaledObject also targeted http.keda.sh/v1alpha1, an API deleted upstream
+  # on 2026-09-30 (TALOS-rzjx), so it could not have survived the next add-on upgrade.
+  #
+  # KEDA ITSELF IS UNTOUCHED — both the core operator and the keda-add-ons-http
+  # controller stay installed (../operators/keda/). Only the proxy they were managing
+  # is gone. Three unrelated workloads depend on KEDA core
+  # (openscad/manyfold-performance-worker, boomtime/boomtime-jobs,
+  # crossplane-demo/demo-celery), and leaving the HTTP add-on in place means the
+  # scale-to-zero reimplementation needs no reinstall — just new objects.
+  #
+  # Scale-to-zero returns as a REIMPLEMENTATION, not a revival: TALOS-rzjx
+  # (http.keda.sh/v1beta1 InterceptorRoute, whose timeouts.readiness and
+  # coldStart.fallback actually fit a multi-minute boot) or TALOS-5mfc (/scale on the
+  # XR, which may remove the need for an interceptor entirely).
   # ── OFF ── LEVEL 2 reachability hop (TALOS-x1sb). THIS LINE IS THE ON-SWITCH.
   # The Pod holding the SSM tunnel, so the Mac stops being the transport. Arming it
   # needs gpu-inference/gpu-relay-creds to exist, which means first uncommenting
@@ -24,9 +48,6 @@ resources:
   # Harmless to arm with no rig running: the tunnel loop just reports no instance and
   # the Pod stays Running-but-NotReady.
   # - relay-deployment.yaml
-  - gateway-deployment.yaml    # readiness gated on the GPU backend
-  - gateway-service.yaml
-  - httpscaledobject.yaml      # KEDA buffer + scale-from-zero
   - ingressroute.yaml          # ollama.talos00 -> gpu-backend (interceptor deferred)
   - broker-rbac.yaml
   - broker-deployment.yaml

@@ -23,22 +23,33 @@ spec:
   groups:
     - name: gpu-inference.cost
       rules:
-        # The headline cost alarm. The gateway being up implies a GPU is (or should be)
-        # provisioned at ~$0.16/hr. Up for hours means either genuine sustained use or a
-        # stuck scale-down.
-        - alert: GPUGatewayUpTooLong
+        # The headline cost alarm, re-keyed off the relay (2026-10-01). It used to watch
+        # ollama-gateway's replica count, but that Deployment is deleted and the metric
+        # would simply never fire again -- a silently dead alert, which is worse than none.
+        #
+        # This is a BETTER signal than the one it replaces. gpu-relay only reports
+        # Available when its readiness probe GETs /health successfully THROUGH the tunnel,
+        # so "available" means vLLM is genuinely answering -- i.e. a GPU is up and
+        # billing. The old alert fired on what KEDA INTENDED, this one on what is true.
+        #
+        # Rates are per-rig and current as of 2026-10-01: ~$2.24/hr for the 1x L40S,
+        # ~$5.17/hr spot for the 4x. 4h is therefore ~$9-21, not the ~$0.64 the previous
+        # text claimed from a stale $0.16/hr figure.
+        - alert: GPUBoxServingTooLong
           expr: |
-            kube_deployment_spec_replicas{namespace="gpu-inference",deployment="ollama-gateway"} > 0
+            kube_deployment_status_replicas_available{namespace="gpu-inference",deployment="gpu-relay"} > 0
           for: 4h
           labels:
             severity: warning
           annotations:
-            summary: "GPU gateway has been scaled up for 4h (~$0.64+ of spot spend)"
+            summary: "A GPU rig has been serving for 4h (~$9-21 depending on shape)"
             description: >-
-              ollama-gateway has had replicas>0 for 4 hours, which means an AWS GPU box is
-              billing. Either traffic is genuinely sustained, or scale-down is stuck.
-              Check: kubectl get xgpuinstance; kubectl get httpscaledobject -n gpu-inference.
-              The tier-1 reaper should cap this at maxInstanceLifetime from the GPUProfile.
+              gpu-relay has been Available for 4 hours, and it is only Available when vLLM
+              answers /health through the tunnel -- so an AWS GPU box is up and billing.
+              Either use is genuinely sustained, or a teardown was forgotten.
+              Check: kubectl get xgpuinstance -o wide; and remember git-off is the real
+              teardown -- the 6h reaper CHURNS a box rather than removing it while the
+              claim is uncommented in aws/apps/kustomization.yaml.
 
         # If the reaper stops running, the cost backstop is gone and nobody would know.
         - alert: GPUReaperNotRunning
@@ -65,19 +76,19 @@ spec:
 
     - name: gpu-inference.availability
       rules:
-        # Cold start is 2-5 min. Stuck NotReady well past that means the box failed to
-        # provision or the tunnel is down -- and buffered requests are piling up against
-        # the interceptor's 600s ceiling.
-        - alert: GPUGatewayStuckNotReady
-          expr: |
-            kube_deployment_status_replicas_unavailable{namespace="gpu-inference",deployment="ollama-gateway"} > 0
-          for: 12m
-          labels:
-            severity: warning
-          annotations:
-            summary: "GPU gateway NotReady for 12m — cold start should take 2-5 min"
-            description: >-
-              The gateway readiness probe gates on the GPU backend answering /health, so
-              this means the EC2 box never came up or the tunnel/EndpointSlice is wrong.
-              Buffered requests will start timing out at the 600s interceptor ceiling.
-              Check: kubectl get xgpuinstance -o wide; kubectl get endpointslice -n gpu-inference.
+        # ── REMOVED (2026-10-01): GPUGatewayStuckNotReady ──────────────────────
+        # It watched kube_deployment_status_replicas_unavailable for ollama-gateway, a
+        # Deployment that no longer exists, so it was already a silently dead alert.
+        #
+        # It is NOT re-keyed onto gpu-relay, deliberately. gpu-relay is NotReady whenever
+        # no rig is running, which is the normal and intended resting state -- so the
+        # same expression against the relay would fire continuously and get muted, which
+        # is strictly worse than having no alert.
+        #
+        # Making it work needs a signal for "a rig is SUPPOSED to be up", which does not
+        # exist as a metric today: XGPUInstance is a custom resource and kube-state-metrics
+        # only exposes CRs when explicitly configured via its custom-resource-state config.
+        # Add that first, then the alert becomes expressible as
+        #   relay NotReady AND an XGPUInstance exists, for >12m
+        # which is the question actually worth alerting on. Tracked with the demand-plane
+        # work (TALOS-x1sb and onward).
