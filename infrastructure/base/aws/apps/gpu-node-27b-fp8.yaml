@@ -4,28 +4,32 @@
 # measured 2026-09-30) — about a quarter of the 4× box (gpu-node-235b.yaml), which is
 # why this one is the default ON.
 #
-# COST REALITY: L40S spot capacity is scarce (placement score 1/9), so the discount
-# off ~$2.24 on-demand is thin — this is NOT a pocket-change box. ~$47/day if left up.
-# Check `scripts/check-spot-avail.sh` before assuming a price.
+# COST: ~$2.24/hr ON-DEMAND (us-west-2 list, $2.24208) => ~$54/day if left up. This
+# is NOT a pocket-change box. `scripts/check-spot-avail.sh` before assuming anything.
 #
-# WHY us-west-2 AND NOT the cheaper us-east-2a ($1.29/hr): G/VT spot quota is a
-# per-REGION vCPU ceiling. us-east-2 has 48, which is EXACTLY what big boi's
-# g6e.12xlarge needs — parking little boi's 8 vCPU there would leave 40 and lock big
-# boi out entirely. Note the premium is now ~$0.65/hr, not the ~$0.14 the cheapest
-# us-west-2 AZ implied, because 2a had no capacity (see below). If that gap matters
-# more than keeping big boi launchable, move this rig to us-east-2a + the -use2
-# bucket. The pending quota bump to 64 makes the question moot.
+# WHY ON-DEMAND AND NOT SPOT — spot was tried first and is the worse deal here:
+#   * Spot price is CAPPED AT on-demand, and on 2026-09-30 g6e.2xlarge spot in
+#     us-west-2b/2c sat at $2.2421 vs $2.24208 on-demand: a 0.0% discount for full
+#     interruption risk.
+#   * The only AZs with a real discount (2a $1.42, 2d $1.94) both refused with
+#     InsufficientInstanceCapacity, and the set of "AZs that have capacity" rotated
+#     between attempts minutes apart (2b/2c/2d, then 2a/2b/2c). L40S spot placement
+#     score is 1/9 — chasing it is whack-a-mole.
+#   * On-demand also removes interruption risk, which matters for a box meant to
+#     stay up unattended.
+# If spot capacity recovers and shows a real discount, add `capacityType: spot`.
 #
-# AZ ROTATION — capacity, not quota, is what fails here. us-west-2a was refused with
-# InsufficientInstanceCapacity on 2026-09-30 ("you can currently get g6e.2xlarge
-# capacity by choosing us-west-2b, us-west-2c, us-west-2d"). availabilityZone and
-# subnetId MUST move together: the EBS cache follows the former, the instance the
-# latter, and an EBS volume cannot change AZ (expect the volume to be replaced).
-# Default subnets, with spot price as of 2026-09-30:
-#   us-west-2a  subnet-36191741  $1.42   <- cheapest, NO CAPACITY
-#   us-west-2d  subnet-a6ed938e  $1.94   <- in use
-#   us-west-2b  subnet-6d58b209  $2.24
-#   us-west-2c  subnet-2372567a  $2.24
+# WHY us-west-2 AND NOT us-east-2: G/VT quota is a per-REGION vCPU ceiling. us-east-2
+# has 48 on-demand, which is EXACTLY what big boi's g6e.12xlarge needs, so parking
+# 8 vCPU there would leave 40 and lock big boi out of its own region. On-demand price
+# is per-region-identical across AZs, so there is no AZ premium to trade away.
+#
+# AZ: on-demand pricing does NOT vary by AZ, so this picks 2a (the largest/oldest)
+# purely for capacity odds. availabilityZone and subnetId MUST move together — the EBS
+# cache follows the former, the instance the latter, and a volume cannot change AZ
+# (upjet refuses the replacement; delete the EBSVolume MR to let it be recreated).
+# Default subnets: 2a subnet-36191741 | 2b subnet-6d58b209 | 2c subnet-2372567a
+#                  2d subnet-a6ed938e
 #
 # THE FILE'S LINE IN kustomization.yaml IS THE ON-SWITCH.
 #
@@ -65,6 +69,8 @@ spec:
   # here would break :9091's chat, because get_default_chat_model() reads that one
   # yaml for both processes.
   servedModelName: "qwen3.8-27b qwen3.8:27b-mlx"
+  # capacityType is DELIBERATELY OMITTED => ON-DEMAND. See the header for why spot
+  # lost here. Absence is how on-demand is expressed (no on-demand marketType exists).
   tensorParallelSize: "1"           # ONE GPU on this shape
   quantization: "auto"              # FP8 checkpoint self-describes; omitting the flag is correct
   maxModelLen: "32768"
@@ -73,12 +79,10 @@ spec:
   cacheVolumeGb: 100                # 30.9GB model + HF_HOME scratch + headroom
   servePort: "8000"
   region: us-west-2
-  # Offered in all four us-west-2 AZs, but OFFERED != AVAILABLE: 2a refused with
-  # InsufficientInstanceCapacity. See the AZ rotation table in the header before
-  # changing this — availabilityZone and subnetId move together.
-  availabilityZone: us-west-2d
+  # See the AZ note in the header; moves together with subnetId.
+  availabilityZone: us-west-2a
   vpcId: vpc-3536d651               # default VPC (verified by the retired gpu-test-rig)
-  subnetId: subnet-a6ed938e         # default subnet for us-west-2d, public-IP-on-launch
+  subnetId: subnet-36191741         # default subnet for us-west-2a, public-IP-on-launch
   # catalyst-gpu-seeder, NOT catalyst-ssm: the cold path WRITES the weights to S3,
   # which needs s3:PutObject. This profile carries that plus AmazonSSMManagedInstanceCore.
   instanceProfileName: catalyst-gpu-seeder

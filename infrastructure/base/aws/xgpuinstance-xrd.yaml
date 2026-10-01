@@ -71,6 +71,24 @@ spec:
                 # bundle image must exist in GHCR first (see composition note).
                 enableImageGen: {type: string, default: "false", description: "'true' to also run ComfyUI + comfyui-shim (:8012). Needs spare VRAM AND the runpod-mac-bundle image pushed to GHCR."}
 
+                # ── spot vs on-demand ───────────────────────────────────────
+                # ⚠️ OMITTING THIS MEANS ON-DEMAND, which can be 2-4x the spot price.
+                # It has no default BY NECESSITY: there is no "on-demand" marketType
+                # value in the EC2 API — on-demand is expressed by the ABSENCE of
+                # instanceMarketOptions. patch-and-transform can only skip a patch when
+                # its SOURCE field is absent (the Optional policy), so absence here is
+                # the only way to render absence there. STATE IT EXPLICITLY on every
+                # claim; both current claims do.
+                #
+                # When to pick which: spot is only worth its interruption risk when it
+                # is actually cheaper, and spot price is CAPPED AT on-demand. Measured
+                # 2026-09-30, g6e.2xlarge spot in us-west-2b/2c was $2.2421 against an
+                # on-demand list of $2.24208 — a 0.0% discount for full interruption
+                # risk, while the AZs that did show a real discount (2a $1.42, 2d $1.94)
+                # both refused with InsufficientInstanceCapacity. Run
+                # scripts/check-spot-avail.sh and compare before choosing.
+                capacityType: {type: string, enum: [spot], description: "Set to 'spot' for a spot instance. OMIT ENTIRELY for on-demand (there is no on-demand marketType; absence is the signal). Omitting costs MORE — see the comment above."}
+
                 # ── machine / placement ─────────────────────────────────────
                 cacheVolumeGb: {type: integer, default: 200, description: "gp3 hot-cache at /cache — size for THIS model plus headroom, not the whole library"}
                 # Pre-seeded cache (TALOS-iymy): create /cache FROM this EBS snapshot instead of a blank

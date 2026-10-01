@@ -99,8 +99,10 @@ spec:
                   ami: ami-0138b0ae7d33b5753
                   instanceType: g5.xlarge
                   vpcSecurityGroupIdSelector: {matchControllerRef: true}
-                  instanceMarketOptions:
-                    - marketType: spot
+                  # NO instanceMarketOptions here => ON-DEMAND. Spot is opted into by
+                  # spec.capacityType via the Optional patch below, because on-demand is
+                  # expressed by this block's ABSENCE (there is no on-demand marketType)
+                  # and a patch can only be skipped when its source field is absent.
                   rootBlockDevice:
                     # DL Base GPU AMI root snapshot is 75GB, so this must be >=75; 100
                     # leaves room for the OS/drivers + the ~10GB vllm-openai image.
@@ -118,6 +120,10 @@ spec:
               # is unset. This SG is egress-only, so attaching the profile is the ONLY
               # way to reach the box (shell + `aws ssm start-session ... AWS-StartPortForwardingSession` to vLLM).
               - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceProfileName, toFieldPath: spec.forProvider.iamInstanceProfile, policy: {fromFieldPath: Optional}}
+              # Spot opt-in. Unset spec.capacityType => this patch is skipped => no
+              # instanceMarketOptions => on-demand. See the XRD's capacityType comment
+              # for why absence (not a value) is how on-demand is expressed.
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.capacityType, toFieldPath: "spec.forProvider.instanceMarketOptions[0].marketType", policy: {fromFieldPath: Optional}}
               - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.publicIp, toFieldPath: status.publicIp}
               - type: CombineFromComposite
                 combine:
