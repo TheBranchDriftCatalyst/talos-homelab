@@ -1,0 +1,217 @@
+---
+# AWS inventory drift + cost-leak alerts (TALOS-hnod).
+#
+# ⚠️ OFF BY DEFAULT — `- alerts.yaml` is commented out in ./kustomization.yaml, and it
+# must stay that way until `- rbac.yaml` is armed. Before the exporter can read the live
+# managed-resource set, `aws_inventory_mr_index_ok` is 0 and
+# AwsInventoryClassificationUntrustworthy below would fire forever.
+#
+# ── The design rule these encode ────────────────────────────────────────────────────
+# A partial scan reporting no orphans is worse than no scan. So the exporter OMITS the
+# aws_orphaned_resource_count family entirely when the join inputs are untrustworthy,
+# rather than publishing a 0 — and the rules below are written to match:
+#
+#   * AwsOrphanedResource reads a REAL count, because the series only exists when the
+#     count was earned.
+#   * AwsInventoryOrphanCountMissing uses absent() to catch the family disappearing,
+#     which is what a broken scan now looks like. Without this rule, a broken scan would
+#     simply make AwsOrphanedResource stop firing — the silent-pass failure mode.
+#
+# Never rewrite these with `or vector(0)`. That is the exact bug this replaced: the old
+# dashboard's orphan stat panel was `sum(aws_unmanaged_resource) or vector(0)`, which
+# rendered a confident green 0 whenever the exporter could not reach AWS at all.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: aws-inventory-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: aws-inventory-exporter
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    # ----------------------------------------------------------------
+    # 1. Orphans — Crossplane made it, Crossplane lost it, AWS still bills
+    # ----------------------------------------------------------------
+    - name: aws-inventory.orphans
+      rules:
+        - alert: AwsOrphanedResource
+          # freshness="fresh" only: Resource Explorer re-confirmed the resource within
+          # ORPHAN_FRESH_MAX_AGE. stale/unverified rows are index lag until proven
+          # otherwise — us-east-2's tagging API still returns a crossplane-tagged EC2
+          # instance that describe-instances says does not exist.
+          expr: sum(aws_orphaned_resource_count{freshness="fresh"}) > 0
+          for: 20m
+          labels:
+            severity: critical
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "{{ $value }} AWS resource(s) have Crossplane tags but no managed resource"
+            description: >-
+              A resource carries crossplane-kind/crossplane-name tags, but no managed
+              resource of that kind and name exists in the cluster. Crossplane created it
+              and lost track of it, so nothing will ever delete it and it bills until
+              someone does it by hand. Expected value is 0 — anything else is a leak.
+              Find them on the AWS Inventory dashboard's "Orphaned" table, or:
+              `aws_orphaned_resource{freshness="fresh"}` for the ARNs.
+
+        - alert: AwsOrphanSuspectUnverified
+          # Not critical: these are mostly index lag. But they must not be invisible,
+          # because a genuinely leaked resource in a region Resource Explorer does not
+          # index can only ever appear here.
+          expr: sum(aws_orphaned_resource_count{freshness=~"stale|unverified"}) > 0
+          for: 6h
+          labels:
+            severity: info
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "{{ $value }} unconfirmed AWS orphan suspect(s) — index lag or a real leak"
+            description: >-
+              Crossplane-tagged resources with no managed resource, seen only through a
+              source that cannot confirm they still exist: either the tagging API (which
+              publishes no timestamp) or a Resource Explorer entry older than
+              ORPHAN_FRESH_MAX_AGE. Confirm each ARN with the owning service's describe
+              call before deleting anything. If a region here shows up in
+              `aws_inventory_region_unindexed`, give it a Resource Explorer index.
+
+        - alert: AwsInventoryOrphanCountMissing
+          # The anti-silent-zero rule. The family is absent exactly when the exporter
+          # refused to guess, so absence is the signal.
+          expr: absent(aws_orphaned_resource_count)
+          for: 30m
+          labels:
+            severity: warning
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "AWS orphan detection is not running — not '0 orphans'"
+            description: >-
+              aws_orphaned_resource_count does not exist. The exporter emits it only when
+              a zero would be meaningful: the live managed-resource set read in full AND
+              every enabled region swept cleanly with no truncation. So this means either
+              the Kubernetes half of the join failed (aws_inventory_mr_index_ok,
+              aws_inventory_scrape_error_info{source="kubernetes"}) or the AWS half did
+              (aws_inventory_resources_total, same metric with source=resource-explorer or
+              tagging-api), or the exporter is down. The one-stat version is
+              aws_inventory_orphan_detection_authoritative. Orphan coverage is currently
+              ZERO; do not read the dashboard's orphan panel as reassurance.
+
+    # ----------------------------------------------------------------
+    # 2. Scan integrity — a permissions failure must never look like "nothing found"
+    # ----------------------------------------------------------------
+    - name: aws-inventory.integrity
+      rules:
+        - alert: AwsInventoryClassificationUntrustworthy
+          expr: aws_inventory_classification_trustworthy == 0
+          for: 30m
+          labels:
+            severity: warning
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "AWS inventory classification cannot be believed right now"
+            description: >-
+              Either the managed-resource index was incomplete, a region's scan failed, or
+              Resource Explorer truncated a result set (Count.Complete=false). Every count
+              on the AWS Inventory dashboard is a lower bound until this clears. The cause
+              is in aws_inventory_scrape_error_info — its `code` label carries the AWS or
+              HTTP error code, so AccessDenied is distinguishable from an empty account.
+
+        - alert: AwsInventoryScrapeErrors
+          expr: sum by (source, code) (aws_inventory_scrape_error_info) > 0
+          for: 30m
+          labels:
+            severity: warning
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "AWS inventory scan failing: source={{ $labels.source }} code={{ $labels.code }}"
+            description: >-
+              {{ $value }} failure(s) from {{ $labels.source }} with code
+              {{ $labels.code }}. An AccessDenied / UnauthorizedException here means the
+              IAM policy in infrastructure/base/aws/inventory-ro-user.yaml is missing an
+              action; HTTP403 from source="kubernetes" means rbac.yaml is not armed.
+
+        - alert: AwsInventoryMrKindCoverageGap
+          # discovered != listed means the exporter found a managed-resource kind it is
+          # not allowed to read. New provider families should be picked up automatically
+          # by the aggregated ClusterRole, so a gap here means that broke.
+          expr: >-
+            (aws_inventory_mr_kinds{state="discovered"}
+             - on(instance) aws_inventory_mr_kinds{state="listed"}) > 0
+          for: 1h
+          labels:
+            severity: warning
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "{{ $value }} managed-resource kind(s) discovered but not listable"
+            description: >-
+              The exporter discovered managed-resource kinds it cannot list, so the live
+              MR set is incomplete and every live managed resource of those kinds would
+              read as an orphan. The aggregated ClusterRole
+              aws-inventory-exporter-managed-read should cover new provider families
+              automatically — check that its aggregationRule still matches
+              rbac.crossplane.io/aggregate-to-view and that kube-controller-manager's
+              ClusterRole aggregation is populating its rules.
+
+        - alert: AwsInventoryStale
+          expr: time() - aws_inventory_last_scrape_timestamp_seconds > 3600
+          for: 15m
+          labels:
+            severity: warning
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "AWS inventory snapshot is {{ $value | humanizeDuration }} old"
+            description: >-
+              The exporter is serving a cached snapshot older than an hour against a 600s
+              refresh interval, so its refresh thread is wedged or AWS calls are hanging.
+              Everything on the dashboard describes the past.
+
+    # ----------------------------------------------------------------
+    # 3. EC2 Fleet — the failure modes that cost money while looking idle
+    # ----------------------------------------------------------------
+    - name: aws-inventory.fleets
+      rules:
+        - alert: AwsEc2FleetNotPlacing
+          # A `maintain` fleet can sit `active` with FulfilledCapacity 0 forever: burning
+          # nothing, but also silently never placing the instance someone asked for.
+          expr: >-
+            (aws_ec2_fleet_capacity{kind="target"} > 0)
+            and on(id, region) (aws_ec2_fleet_capacity{kind="fulfilled"} == 0)
+          for: 30m
+          labels:
+            severity: warning
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "EC2 Fleet {{ $labels.id }} in {{ $labels.region }} is placing nothing"
+            description: >-
+              Target capacity is above 0 but fulfilled capacity is 0, so the fleet is not
+              getting instances — usually no spot capacity in the pool, or a regional
+              vCPU quota (L-3819A6DF for G/VT spot) that the shape cannot fit under. The
+              XR will look provisioned and the rig will never come up. Run
+              scripts/check-spot-avail.sh and check aws_ec2_fleet_info's activity_status.
+
+        - alert: AwsEc2FleetOrphaned
+          # terminateInstances=true makes a stranded fleet the difference between
+          # "deleting the XR stopped the bill" and "it did not": the fleet keeps
+          # REPLACING instances that disappear.
+          expr: >-
+            sum(aws_ec2_fleet_info{management="orphaned"}) > 0
+          for: 20m
+          labels:
+            severity: critical
+            category: aws-cost
+            ticket: TALOS-hnod
+          annotations:
+            summary: "{{ $value }} EC2 Fleet(s) have Crossplane tags but no managed resource"
+            description: >-
+              A Fleet with crossplane tags and no live Fleet managed resource. A
+              `maintain` fleet replaces any instance that vanishes, so this does not just
+              leak one box — it re-launches GPU capacity indefinitely and no reaper will
+              stop it. Delete the fleet by hand (`aws ec2 delete-fleets --fleet-ids ...
+              --terminate-instances`) after confirming the ARN.

@@ -1,9 +1,39 @@
 ---
-# Read-only IAM user for the aws-inventory-exporter (TALOS-iymy hardening).
+# Read-only IAM user for the aws-inventory-exporter (TALOS-iymy hardening, widened by
+# TALOS-hnod).
 # Replaces the exporter's use of the over-privileged root aws-credentials with a scoped
-# READ-ONLY identity: describe/list only, no writes, no s3:GetObject, no secrets. The AccessKey
-# writes its creds straight into the monitoring namespace where the exporter consumes them.
-# Root creates this (MRs default to providerConfigRef `default` = root).
+# READ-ONLY identity: describe/list/Search only, no writes, no s3:GetObject, no secrets. The
+# AccessKey writes its creds straight into the monitoring namespace where the exporter
+# consumes them. Root creates this (MRs default to providerConfigRef `default` = root).
+#
+# ── TALOS-hnod widened this, and it is still read-only ──────────────────────────────────
+# Added: `tag:GetResources` and six `resource-explorer-2:*` READ actions. Nothing else
+# changed. Every added action is a read: Search/List/Get. The writes-denied guarantee is
+# unchanged because this is an Allow-only policy with no write action in it and nothing else
+# attached to the user — in particular CreateIndex, UpdateIndexType, CreateView, DeleteView,
+# AssociateDefaultView, tag:TagResources and tag:UntagResources are all still absent.
+# Verified before the change with `aws iam simulate-principal-policy`: the seven new actions
+# were implicitDeny, which is the gap; ec2:RunInstances / s3:PutObject / tag:TagResources /
+# resource-explorer-2:CreateIndex / resource-explorer-2:UpdateIndexType / iam:CreateUser are
+# implicitDeny and MUST stay that way.
+#
+# ⚠️ Two Resource Explorer gaps need an AWS WRITE and are deliberately NOT grantable here —
+# a human runs them with their own credentials, once:
+#
+#   # 1. index a region Resource Explorer cannot see. us-east-2 (where the GPU rigs run) was
+#   #    indexed on 2026-10-01; any other region in `aws_inventory_region_unindexed` needs:
+#   aws resource-explorer-2 create-index --region <region>
+#
+#   # 2. promote ONE region to AGGREGATOR so a single Search covers the whole account.
+#   #    All three indexes are LOCAL today, so there is still no cross-region query and
+#   #    `aws_inventory_coverage_complete` stays 0.
+#   aws resource-explorer-2 update-index-type \
+#       --arn arn:aws:resource-explorer-2:us-east-1:744062333585:index/<id> \
+#       --type AGGREGATOR --region us-east-1
+#
+# Resource Explorer itself is free. Granting the exporter CreateIndex would let a monitoring
+# component change account-wide configuration, which is exactly the blast radius this scoped
+# user exists to avoid — so it stays a human action.
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: User
 metadata:
@@ -36,7 +66,14 @@ spec:
            "Action": ["cloudwatch:GetMetricStatistics"], "Resource": "*"},
           {"Sid": "IamReadOnly", "Effect": "Allow",
            "Action": ["iam:ListUsers", "iam:ListRoles", "iam:ListPolicies", "iam:ListInstanceProfiles"],
-           "Resource": "*"}
+           "Resource": "*"},
+          {"Sid": "ResourceExplorerReadOnly", "Effect": "Allow",
+           "Action": ["resource-explorer-2:Search", "resource-explorer-2:ListIndexes",
+                      "resource-explorer-2:GetIndex", "resource-explorer-2:GetDefaultView",
+                      "resource-explorer-2:GetView", "resource-explorer-2:ListViews"],
+           "Resource": "*"},
+          {"Sid": "ResourceGroupsTaggingReadOnly", "Effect": "Allow",
+           "Action": ["tag:GetResources"], "Resource": "*"}
         ]
       }
 ---

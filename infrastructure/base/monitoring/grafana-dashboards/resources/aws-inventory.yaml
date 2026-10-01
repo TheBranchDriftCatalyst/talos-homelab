@@ -1,15 +1,37 @@
 ---
-# GrafanaDashboard CR: "AWS Inventory & Status" (TALOS-iymy).
+# GrafanaDashboard CR: "AWS Inventory & Status" (TALOS-iymy, reworked by TALOS-hnod).
 #
-# Cost + orphan visibility for the AWS footprint that nothing else in Grafana sees:
-# EC2/EBS/S3/IAM across ALL regions, estimated $/hr of running instances, an
-# "unmanaged/orphan" panel (live resources with no crossplane tag — the transient
-# seeders/builders/red-team boxes launched outside GitOps), plus a reaper-activity row
-# (when each cost-backstop reaper last fired + how many it reaped).
+# Cost + drift visibility for the AWS footprint that nothing else in Grafana sees.
+# Seven rows: cost & status, compute (now including EC2 Fleets), storage, network &
+# identity, "Drift — what AWS has that git does not", "Scan integrity & coverage", and a
+# reaper-activity row (when each cost-backstop reaper last fired + how many it reaped).
+#
+# ── The drift row is the point ──────────────────────────────────────────────────────
+# Three buckets, computed from an EXACT join rather than guessed: upjet's crossplane-name
+# tag IS the managed resource's metadata.name, so every AWS resource is either managed
+# (tags + a live MR), orphaned (tags, no MR — Crossplane made it and lost it, and it
+# bills forever), or unmanaged (no crossplane tags at all — console/CLI/packer/legacy).
+# A fourth value, crossplane-tagged, means the live MR set could not be read, so the
+# answer is UNDECIDABLE — it is never silently rendered as "managed".
+#
+# ── Why there is a whole row about whether to trust the numbers ─────────────────────
+# A partial scan reporting no orphans is worse than no scan, and this dashboard shipped
+# with exactly that bug: the orphan stat was `sum(aws_unmanaged_resource) or vector(0)`,
+# which rendered a confident green 0 whenever the exporter could not reach AWS at all.
+# It now reads a real count and shows "NO DATA" when the exporter refuses to guess,
+# because aws_orphaned_resource_count is OMITTED rather than defaulted when its inputs
+# are untrustworthy. Every other count-style panel uses an earned-zero guard
+# (`or sum(aws_inventory_scrape_success == 1) * 0`) which yields 0 only when the sweep
+# completed cleanly and genuinely found nothing. ⚠️ Do not reintroduce `or vector(0)`.
 #
 # Data: the aws-inventory-exporter (../../aws-inventory-exporter, PodMonitor -> Mimir) +
 # kube-state-metrics (reaper CronJob schedule/fire) + pushgateway (reaper_last_* from the
 # instrumented reapers). All targets use the Mimir datasource (uid "mimir").
+#
+# ⚠️ The drift and integrity rows read metrics only the TALOS-hnod exporter emits, and
+# four storage/network stats moved from aws_resource_count{kind=...} to
+# aws_detail_resource_count{kind=...}. Those panels read "No data" until the exporter
+# Deployment rolls to the new exporter.py. Ship the two together.
 #
 # JSON at ../json/aws-inventory.json -> ConfigMap dashboard-aws-inventory
 # (configMapGenerator, disableNameSuffixHash). uid "aws-inventory" is stable.

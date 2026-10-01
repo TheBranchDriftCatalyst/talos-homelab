@@ -1,0 +1,82 @@
+---
+# Kubernetes read access for the aws-inventory-exporter (TALOS-hnod).
+#
+# The exporter's whole premise is a join between what AWS says exists and what
+# Crossplane says it manages. Before this file it had NO Kubernetes access at all —
+# no serviceAccountName on the Deployment, so it ran as `monitoring:default`, and:
+#
+#   kubectl auth can-i list buckets.s3.aws.upbound.io \
+#     --as=system:serviceaccount:monitoring:default   ->  no
+#
+# so the managed/orphaned half of the classification was simply impossible.
+#
+# ── Why an AGGREGATED ClusterRole and not a list of groups ──────────────────────────
+# The exporter DISCOVERS managed-resource kinds from the API server rather than
+# hardcoding them, because a hardcoded list silently stops covering kinds added by a
+# provider upgrade — which is the exact drift this exporter exists to catch. RBAC has to
+# be just as open-ended, and RBAC does NOT support wildcard apiGroups like
+# "*.aws.upbound.io" (only a bare "*", which would also hand over Secrets).
+#
+# Crossplane's rbac-manager already solves this: for every installed provider it
+# maintains a ClusterRole `crossplane:provider:<provider>:aggregate-to-view` labelled
+# `rbac.crossplane.io/aggregate-to-view: "true"`, listing that provider family's entire
+# CRD set with get/list/watch — both the cluster-scoped `*.aws.upbound.io` groups and the
+# namespaced `*.aws.m.upbound.io` ones. Selecting that label means installing a new
+# provider family extends this role with no edit here.
+#
+# Verified 2026-10-01: all 56 managed kinds the exporter discovers, across 8 API groups
+# (cloudwatchlogs/ec2/ecs/iam/s3 .aws.upbound.io, s3.aws.m.upbound.io, and
+# kubernetes{,.m}.crossplane.io), are covered by this aggregation — zero gaps.
+#
+# What the aggregation does NOT include, checked deliberately: core Secrets. The base
+# `crossplane:aggregate-to-view` role touches only `events` and `namespaces` in the core
+# group; `secrets.crossplane.io` is the StoreConfig CRD group, not core Secrets. So this
+# role cannot read connection secrets.
+#
+# ⚠️ There is intentionally NO `rules:` key below. The kube-controller-manager's
+# ClusterRole aggregation controller owns that field and fills it in — the same way the
+# built-in `view`/`edit`/`admin` roles work. Because git never declares `rules`, Flux's
+# server-side apply never claims the field and the two do not fight over it. Do NOT add
+# a `rules:` block "for safety": it would be overwritten every few seconds, and if
+# aggregation ever stopped working the exporter reports
+# `aws_inventory_mr_index_ok 0` plus HTTP403 error codes rather than a silent 0 orphans.
+#
+# Discovery itself (/apis and /apis/<group>/<version>) needs no grant here: the built-in
+# `system:discovery` ClusterRoleBinding already covers system:authenticated. Verified:
+#   kubectl auth can-i get /apis --as=system:serviceaccount:monitoring:default  ->  yes
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aws-inventory-exporter
+  namespace: monitoring
+  labels:
+    app: aws-inventory-exporter
+    app.kubernetes.io/component: exporter
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aws-inventory-exporter-managed-read
+  labels:
+    app: aws-inventory-exporter
+    app.kubernetes.io/component: exporter
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.crossplane.io/aggregate-to-view: 'true'
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aws-inventory-exporter-managed-read
+  labels:
+    app: aws-inventory-exporter
+    app.kubernetes.io/component: exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: aws-inventory-exporter-managed-read
+subjects:
+  - kind: ServiceAccount
+    name: aws-inventory-exporter
+    namespace: monitoring

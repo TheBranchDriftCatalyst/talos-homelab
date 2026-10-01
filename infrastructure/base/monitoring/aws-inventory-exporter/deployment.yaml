@@ -1,10 +1,28 @@
 ---
-# AWS inventory + status exporter (TALOS-iymy follow-on). Sweeps EVERY enabled region
-# for EC2/EBS/S3/IAM + estimated $/hr + an unmanaged/orphan flag, served at /metrics for
-# Alloy to scrape. boto3 is pip-installed into a writable /tmp emptyDir at start (keeps the
-# root FS read-only). Creds come from a dedicated scoped READ-ONLY IAM user
-# (catalyst-aws-inventory-ro; describe/list only, writes denied) via the AccessKey connection
-# secret aws-inventory-ro-creds — NOT root. See infrastructure/base/aws/inventory-ro-user.yaml.
+# AWS account-wide inventory exporter (TALOS-iymy -> TALOS-hnod). Enumerates the whole
+# account through AWS Resource Explorer (primary) with the Resource Groups Tagging API as
+# the coverage floor, joins every crossplane-tagged resource against the LIVE managed-
+# resource set read from the Kubernetes API, and classifies each one managed / orphaned /
+# unmanaged. A narrower describe_* sweep stays for the things tag APIs cannot report:
+# instance state, $/hr, EBS sizes and EC2 Fleet fulfilment. Served at /metrics for Alloy.
+#
+# boto3 is pip-installed into a writable /tmp emptyDir at start (keeps the root FS
+# read-only). AWS creds come from a dedicated scoped READ-ONLY IAM user
+# (catalyst-aws-inventory-ro; describe/list/Search only, writes denied) via the AccessKey
+# connection secret aws-inventory-ro-creds — NOT root. See
+# infrastructure/base/aws/inventory-ro-user.yaml.
+#
+# ⚠️ TWO-LINE ON-SWITCH for the Kubernetes half of the join. The exporter needs its own
+# ServiceAccount to read managed resources, and that is OFF until BOTH of these are
+# uncommented together, in the same commit:
+#     1. `- rbac.yaml` in ./kustomization.yaml
+#     2. `serviceAccountName:` below
+# Uncommenting (2) alone pins the pod to a ServiceAccount that does not exist and the
+# ReplicaSet cannot create pods — it would take the running exporter down. Until both are
+# on, the exporter runs as `monitoring:default`, gets HTTP403 listing managed resources,
+# and reports `aws_inventory_mr_index_ok 0` with every crossplane-tagged resource in the
+# `crossplane-tagged` (undecidable) bucket. It does NOT report 0 orphans — the
+# aws_orphaned_resource_count family is omitted entirely in that state.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -23,6 +41,8 @@ spec:
       labels:
         app: aws-inventory-exporter
     spec:
+      # ⚠️ Uncomment WITH `- rbac.yaml` in kustomization.yaml, never on its own.
+      # serviceAccountName: aws-inventory-exporter
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532
@@ -44,10 +64,26 @@ spec:
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom: {secretKeyRef: {name: aws-inventory-ro-creds, key: password}}
             - {name: AWS_DEFAULT_REGION, value: us-east-1}   # base client / global S3+IAM
+            - {name: AWS_HOME_REGION, value: us-east-1}      # list_indexes + global clients
             - {name: SCRAPE_INTERVAL, value: "600"}          # AWS state is slow-moving
             - {name: HOME, value: /tmp}                       # pip + boto config land in /tmp
             - {name: PYTHONDONTWRITEBYTECODE, value: "1"}
             # AWS_REGIONS unset => sweep ALL enabled regions (orphan-catcher)
+            # Resource Explorer is the PRIMARY enumeration source: one Search per region
+            # covers every service, tagged or not, and its default view already returns tags.
+            - {name: RESOURCE_EXPLORER_ENABLED, value: "1"}
+            # The tagging API is the SECONDARY source and, today, the coverage FLOOR:
+            # Resource Explorer has LOCAL indexes in only 3 of 17 enabled regions and no
+            # AGGREGATOR, so 14 regions would otherwise be invisible. Set this to "0" ONLY
+            # after an AGGREGATOR index exists — see the header of exporter.py.
+            - {name: TAGGING_API_ENABLED, value: "1"}
+            # describe_* layer: instance state, $/hr, EBS sizes, EC2 Fleet fulfilment.
+            # None of that is available from any tag-based API.
+            - {name: DETAIL_SWEEP, value: "1"}
+            # An orphan is only ALERTABLE if Resource Explorer re-confirmed it this
+            # recently. Both AWS indexes lag: us-east-2's tagging API still returns a
+            # crossplane-tagged instance that describe-instances says does not exist.
+            - {name: ORPHAN_FRESH_MAX_AGE_SECONDS, value: "86400"}
           ports:
             - {name: metrics, containerPort: 9100}
           readinessProbe:

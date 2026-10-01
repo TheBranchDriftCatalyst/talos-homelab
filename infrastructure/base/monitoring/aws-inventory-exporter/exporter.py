@@ -1,34 +1,181 @@
 #!/usr/bin/env python3
-"""AWS inventory + status exporter (TALOS-iymy follow-on).
+"""AWS account-wide inventory exporter — three buckets, exactly (TALOS-hnod).
 
-Sweeps EVERY enabled AWS region and exposes a Prometheus /metrics snapshot of the FULL
-account footprint — not just what's "on". If we provision it (via Crossplane or raw), it
-shows here:
-  compute: EC2 instances (any non-terminated state — running AND stopped)
-  storage: EBS volumes (+ size), EBS snapshots (+ size), S3 buckets (+ size via CloudWatch)
-  network: security groups, Elastic IPs (associated or not)
-  identity: IAM users, roles, customer-managed policies, instance profiles
-Plus an estimated RUNNING $/hr and an estimated IDLE storage $/mo (volumes/snapshots/S3/
-unassociated EIPs — the "not on but still billing" spend), and an "unmanaged" flag for
-resources with no crossplane tag (orphans / raw run-instances that live outside GitOps).
+This answers ONE question for the whole account: what exists in AWS that git does not
+know about, and what did Crossplane create and then lose track of.
 
-Read-only: only describe_*/list_*/get_* calls. Creds from the scoped read-only IAM user
-(catalyst-aws-inventory-ro) via env AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
-Mirrors the cf-records-exporter shape: a background refresh thread + a stdlib HTTP server
-serving the last snapshot, scraped by a PodMonitor. boto3 only (no prometheus_client).
+── The classification is EXACT, not a heuristic ─────────────────────────────────────
+upjet tags every resource it creates, and `crossplane-name` IS the managed resource's
+`metadata.name`. Verified 2026-10-01 on a real XBucket-created bucket:
+
+    crossplane-providerconfig: default
+    crossplane-kind:           bucket.s3.aws.upbound.io   <- lower(Kind) + "." + apiGroup
+    crossplane-name:           models-library-fb95ee084cd7
+
+So (crossplane-kind, crossplane-name) is a primary key into the live managed-resource
+set read from the Kubernetes API. No fuzzy matching, no name conventions:
+
+    managed            crossplane tags present AND a live MR of that kind/name exists
+    orphaned           crossplane tags present, MR index trustworthy, NO matching MR
+                       -> Crossplane made it and lost it. Bills forever. Should be 0.
+    unmanaged          no crossplane-* tags -> console/CLI/legacy/packer. Exact without
+                       the MR index, because it depends only on the resource's own tags.
+    crossplane-tagged  crossplane tags present but the MR index is UNAVAILABLE, so
+                       managed-vs-orphaned is UNDECIDABLE. This bucket exists so that a
+                       Kubernetes RBAC failure can never be mistaken for "0 orphans".
+
+── Enumeration: Resource Explorer is PRIMARY, the tagging API is the coverage floor ──
+AWS Resource Explorer (`resource-explorer-2:Search`) is the primary source because it
+is strictly more expansive than `tag:GetResources`: it indexes resources that do not
+support tagging at all. On this account a wildcard search in us-west-2 returns 77
+resources including `ec2:vpc` and 29 x `ec2:security-group-rule`, which the tagging API
+never returns. Its default view already includes tags (IncludedProperties: [{tags}]),
+so the exact classification above works straight off Search output — no second call.
+
+But Resource Explorer's coverage here is INCOMPLETE, and this matters more than it
+sounds. Verified 2026-10-01 via `list-indexes`:
+
+    us-east-1  LOCAL      us-west-2  LOCAL      (everything else: NO INDEX)
+
+A LOCAL index answers only for its own region, and there is no AGGREGATOR, so there is
+no cross-region query. us-east-2 — where the GPU rigs actually run — has no index at
+all. Closing that needs two AWS WRITES that are deliberately NOT in this exporter's
+IAM policy and must be run by a human (see the IAM note in inventory-ro-user.yaml):
+
+    aws resource-explorer-2 create-index --region us-east-2
+    # wait for the index to reach ACTIVE (minutes), then promote ONE region:
+    aws resource-explorer-2 update-index-type \
+        --arn <us-east-1-index-arn> --type AGGREGATOR --region us-east-1
+
+Until then the Resource Groups Tagging API runs as the SECONDARY source over EVERY
+enabled region. It is the only thing that sees us-east-2 today. Every resource carries
+a `source` label (resource-explorer / tagging-api / both) so the divergence is visible
+rather than assumed, and `aws_inventory_region_unindexed` names each region that
+Resource Explorer cannot see.
+
+── Index lag is real and it manufactures false orphans ──────────────────────────────
+Both APIs are eventually consistent. Verified 2026-10-01: the us-east-2 tagging API
+still returns
+
+    arn:aws:ec2:us-east-2:...:instance/i-07c9140f294b30ed9
+      crossplane-kind: instance.ec2.aws.upbound.io
+      crossplane-name: gpu-node-27b-fp8-a17c761ce312
+
+while `describe-instances --instance-ids i-07c9140f294b30ed9` returns ZERO reservations
+and the region holds no instances at all. There is no live MR of that name either, so a
+naive classifier calls that an ORPHAN and the alert stays red forever over a resource
+that does not exist and bills nothing.
+
+So every orphan carries a `freshness` label derived from Resource Explorer's
+`LastReportedAt`, and the alertable rollup is split by it:
+
+    fresh       Resource Explorer re-confirmed it within ORPHAN_FRESH_MAX_AGE  -> ALERT
+    stale       Resource Explorer has not re-confirmed it recently             -> review
+    unverified  tagging-API-only row; that API reports no timestamp at all     -> review
+
+── NEVER default a failed scan to zero ──────────────────────────────────────────────
+A partial scan reporting no orphans is worse than no scan. Three mechanisms:
+  1. The orphan rollups are OMITTED ENTIRELY when the MR index is untrustworthy. The
+     series goes absent, so `absent()` fires and a panel reads "No data" — it does not
+     read 0. (The old dashboard's `sum(aws_unmanaged_resource) or vector(0)` is exactly
+     the bug this guards against.)
+  2. Every failure is published with its AWS error code as a LABEL, so AccessDenied is
+     visibly different from "nothing found": aws_inventory_scrape_error_info{code=...}.
+  3. Nothing is inferred from a region that failed. aws_inventory_region_scanned goes
+     to 0 for it and its resources simply are not in the rollups.
+
+── What is NOT available from Resource Explorer ─────────────────────────────────────
+Search returns identity (ARN, type, region, tags) but no state, no instance type and no
+capacity numbers. Running $/hr, stopped-vs-running, EBS sizes and — importantly — EC2
+Fleet fulfilment still require `describe_*`, so a narrower detail sweep stays. A
+`maintain` fleet can sit `active` with FulfilledCapacity 0, silently failing to place
+while also replacing any instance that vanishes; `terminateInstances: true` makes a
+stranded fleet the difference between "deleting the XR stopped the bill" and "it did
+not". Fleets and launch templates are therefore described explicitly.
+
+Read-only everywhere: only describe_*/list_*/get_*/Search calls to AWS, only get/list to
+Kubernetes. AWS creds come from the scoped read-only IAM user (catalyst-aws-inventory-ro)
+via env; Kubernetes creds come from the exporter's ServiceAccount token. Mirrors the
+cf-records-exporter shape: a background refresh thread + a stdlib HTTP server serving the
+last snapshot, scraped by a PodMonitor. boto3 only (no prometheus_client, no kubernetes).
+
+Local debug: `kubectl proxy --port=18001` then
+    K8S_API=http://127.0.0.1:18001 SCRAPE_INTERVAL=99999 python3 exporter.py
 """
+import json
 import os
+import re
+import ssl
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
-SCRAPE_INTERVAL = int(os.environ.get("SCRAPE_INTERVAL", "600"))  # 10 min; AWS state is slow-moving
+# ── config ───────────────────────────────────────────────────────────────────────────
+SCRAPE_INTERVAL = int(os.environ.get("SCRAPE_INTERVAL", "600"))  # AWS state is slow-moving
 PORT = int(os.environ.get("METRICS_PORT", "9100"))
 REGIONS_ENV = os.environ.get("AWS_REGIONS", "").strip()  # restrict via comma-list, else ALL enabled
+HOME_REGION = os.environ.get("AWS_HOME_REGION", "us-east-1")  # global clients + list_indexes
+
+RE_ENABLED = os.environ.get("RESOURCE_EXPLORER_ENABLED", "1") == "1"
+TAGGING_ENABLED = os.environ.get("TAGGING_API_ENABLED", "1") == "1"
+DETAIL_SWEEP = os.environ.get("DETAIL_SWEEP", "1") == "1"
+
+# How recently Resource Explorer must have re-confirmed a resource for an orphan to be
+# treated as actionable. At or below this it is `fresh` and alertable; above, `stale`.
+ORPHAN_FRESH_MAX_AGE = int(os.environ.get("ORPHAN_FRESH_MAX_AGE_SECONDS", "86400"))
+
+# Per-ARN series are capped so sudden account-wide growth cannot blow up Mimir's
+# cardinality. Orphans, undecidables and non-allowlisted unmanaged resources are ALWAYS
+# emitted per-ARN regardless of the cap — they are the few that matter — and exceeding
+# the cap raises aws_inventory_series_truncated rather than quietly dropping rows.
+MAX_RESOURCE_SERIES = int(os.environ.get("MAX_RESOURCE_SERIES", "2000"))
+
+# Kubernetes: in-cluster defaults, overridable for local debugging via `kubectl proxy`.
+K8S_API = os.environ.get("K8S_API", "https://kubernetes.default.svc").rstrip("/")
+K8S_TOKEN_FILE = os.environ.get("K8S_TOKEN_FILE",
+                                "/var/run/secrets/kubernetes.io/serviceaccount/token")
+K8S_CA_FILE = os.environ.get("K8S_CA_FILE",
+                             "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+K8S_TIMEOUT = int(os.environ.get("K8S_TIMEOUT", "20"))
+
+# Unmanaged resources that are NOT drift. Every account has these, most cannot be
+# deleted, and none of them bill — so they need an allowlist, not an alarm. They are
+# still exported (allowlisted="1" on aws_resource_info); the allowlist only keeps them
+# out of aws_unmanaged_resource_count{allowlisted="0"}, which is the reviewable number.
+# Grounded in an actual us-west-2 sweep (2026-10-01), not guessed.
+# The env override is NEWLINE-separated, never "|"-separated: these patterns contain
+# "|" inside their own alternations, so a "|" split shreds them (caught locally
+# before this ever ran in-cluster).
+DEFAULT_ALLOWLIST = [
+    # Default-VPC furniture: VPC, its subnets, route table, NACL, IGW, DHCP option set.
+    r"^arn:aws:ec2:[^:]*:\d*:(vpc|subnet|route-table|network-acl|internet-gateway|dhcp-options)/",
+    # SG RULES only — the parent security group is still reported, so nothing hides. A
+    # leaked SG shows up; its 29 child rules do not drown the table.
+    r"^arn:aws:ec2:[^:]*:\d*:security-group-rule/",
+    # AWS service-linked roles and AWS-managed policies: created by services, not by us.
+    r"^arn:aws:iam::\d*:role/aws-service-role/",
+    r"^arn:aws:iam::aws:policy/",
+    # Per-service singletons AWS creates on first use and that cannot be removed.
+    r"^arn:aws:athena:[^:]*:\d*:(datacatalog/AwsDataCatalog|workgroup/primary)$",
+    r"^arn:aws:events:[^:]*:\d*:event-bus/default$",
+    r"^arn:aws:xray:[^:]*:\d*:sampling-rule/Default$",
+    r"^arn:aws:apprunner:[^:]*:\d*:autoscalingconfiguration/DefaultConfiguration/",
+    r"^arn:aws:memorydb:[^:]*:\d*:(parametergroup/default\.|user/default$|acl/open-access$)",
+    r"^arn:aws:elasticache:[^:]*:\d*:user:default$",
+    # Resource Explorer's own index and view: the observer observing itself.
+    r"^arn:aws:resource-explorer-2:",
+]
+_ALLOW_ENV = os.environ.get("UNMANAGED_ALLOWLIST", "").strip()
+ALLOWLIST_RE = [re.compile(p.strip()) for p in
+                (_ALLOW_ENV.splitlines() if _ALLOW_ENV else DEFAULT_ALLOWLIST) if p.strip()]
 
 # Rough ON-DEMAND $/hr for the running-cost estimate (spot is less => conservative ceiling).
 PRICE = {
@@ -42,10 +189,14 @@ PRICE = {
 # Rough $/GB-month for the idle-storage estimate, + $/month for an unassociated EIP.
 EBS_GB_MO, SNAP_GB_MO, S3_GB_MO, EIP_UNASSOC_MO = 0.08, 0.05, 0.023, 3.60
 
-_boto = Config(retries={"max_attempts": 3, "mode": "standard"}, connect_timeout=10, read_timeout=40)
+_boto = Config(retries={"max_attempts": 3, "mode": "standard"},
+               connect_timeout=10, read_timeout=40)
 _snapshot = ("# HELP aws_inventory_scrape_success 1 if the last sweep succeeded.\n"
              "# TYPE aws_inventory_scrape_success gauge\naws_inventory_scrape_success 0\n")
 _lock = threading.Lock()
+
+MANAGED, ORPHANED = "managed", "orphaned"
+UNMANAGED, UNDECIDABLE = "unmanaged", "crossplane-tagged"
 
 
 def _log(m):
@@ -56,221 +207,834 @@ def _esc(v):
     return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
 
 
-def _managed(tags):
-    # upjet/Crossplane tag managed resources with crossplane-kind/-name/-providerconfig
-    # (NOT crossplane.io/ — that was the bug that flagged every managed resource as an orphan).
-    return "1" if any(k in ("crossplane-kind", "crossplane-name", "crossplane-providerconfig")
-                      or k.startswith("crossplane.io/") for k in tags) else "0"
+# ── metric assembly ──────────────────────────────────────────────────────────────────
+class Metrics:
+    """Collects samples per family so HELP/TYPE is emitted exactly once.
+
+    The previous version wrote HELP/TYPE inline at each call site, which meant adding a
+    second emission point for an existing family silently produced a duplicate HELP and
+    a text-format parse error. Declaring up front makes that impossible.
+    """
+
+    def __init__(self):
+        self._fam = {}
+        self._order = []
+
+    def declare(self, name, help_, type_="gauge"):
+        if name not in self._fam:
+            self._fam[name] = {"help": help_, "type": type_, "lines": []}
+            self._order.append(name)
+
+    def has(self, name):
+        return name in self._fam
+
+    def total(self, name):
+        """Sum of the values emitted for a family — used for derived trust gauges."""
+        if name not in self._fam:
+            return 0.0
+        return sum(float(line.rsplit(" ", 1)[1]) for line in self._fam[name]["lines"])
+
+    def add(self, name, labels=None, value=1):
+        fam = self._fam[name]  # KeyError here is a bug: declare() first.
+        if labels:
+            rendered = ",".join(f'{k}="{_esc(v)}"' for k, v in labels.items())
+            fam["lines"].append(f"{name}{{{rendered}}} {value}")
+        else:
+            fam["lines"].append(f"{name} {value}")
+
+    def render(self):
+        out = []
+        for name in self._order:
+            fam = self._fam[name]
+            out.append(f"# HELP {name} {fam['help']}")
+            out.append(f"# TYPE {name} {fam['type']}")
+            out.extend(fam["lines"])
+        return "\n".join(out) + "\n"
 
 
-def _tagmap(taglist):
-    return {t["Key"]: t["Value"] for t in (taglist or [])}
+class Errors:
+    """Every failure, keyed by (source, region, op), carrying the AWS/HTTP error CODE.
+
+    The code lands in a metric label specifically so that a permissions failure is
+    distinguishable from an empty result at query time, without reading pod logs.
+    """
+
+    def __init__(self):
+        self.items = {}
+
+    def record(self, source, region, op, exc):
+        code = _error_code(exc)
+        key = (source, region, op, code)
+        self.items[key] = self.items.get(key, 0) + 1
+        _log(f"ERROR source={source} region={region} op={op} code={code}: {exc}")
+
+    def __len__(self):
+        return sum(self.items.values())
 
 
-def _regions(ec2):
+def _error_code(exc):
+    if isinstance(exc, ClientError):
+        return exc.response.get("Error", {}).get("Code") or "ClientError"
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP{exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        return "URLError"
+    if isinstance(exc, BotoCoreError):
+        return type(exc).__name__
+    return type(exc).__name__
+
+
+# ── layer 1: the live managed-resource index, read from the Kubernetes API ───────────
+# Kinds are DISCOVERED, never hardcoded. A hardcoded list silently stops covering kinds
+# added by a provider upgrade or a newly installed provider family — which is the exact
+# drift mechanism this exporter exists to catch, so hardcoding would make the tool lie
+# about the one thing it was built to find.
+#
+# Discovery walks /apis -> each group's preferred version -> the resources carrying
+# Crossplane's `managed` category. That category is what `kubectl get managed` uses, and
+# every upjet MR CRD advertises it (verified: s3.aws.upbound.io buckets report
+# categories ["crossplane","managed","aws"]). Filtering on the CATEGORY rather than on a
+# group-name pattern means non-AWS providers are covered for free.
+#
+# Objects are fetched as PartialObjectMetadataList, so only metadata crosses the wire —
+# MR specs are large and nothing here reads them.
+#
+# ⚠️ The index is keyed on metadata.name ALONE, with no namespace, because that is what
+# upjet puts in the crossplane-name tag — adding a namespace to the key would break the
+# join outright. The namespaced "m" provider families (s3.aws.m.upbound.io and friends)
+# therefore collide if two MRs in different namespaces share a name. That direction of
+# error is the safe one: a collision can only make an orphan look MANAGED, never make a
+# live managed resource look orphaned, so it cannot manufacture a false alert. It can
+# mask a real orphan, so revisit this if namespaced MRs ever come into real use here
+# (today the only namespaced managed kind in use is kubernetes.m.crossplane.io Objects,
+# which carry no AWS tags at all).
+_K8S_META_ACCEPT = "application/json;as=PartialObjectMetadataList;v=v1;g=meta.k8s.io"
+
+
+def _k8s_ctx():
+    token, ctx = None, None
+    if os.path.exists(K8S_TOKEN_FILE):
+        with open(K8S_TOKEN_FILE, encoding="utf-8") as fh:
+            token = fh.read().strip()
+    if K8S_API.startswith("https"):
+        ctx = ssl.create_default_context(
+            cafile=K8S_CA_FILE if os.path.exists(K8S_CA_FILE) else None)
+    return token, ctx
+
+
+def _k8s_get(path, token, ctx, accept="application/json"):
+    req = urllib.request.Request(f"{K8S_API}{path}", headers={"Accept": accept})
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(req, timeout=K8S_TIMEOUT, context=ctx) as resp:
+        return json.loads(resp.read().decode())
+
+
+def managed_resource_index(errors):
+    """-> (index, ok, kinds_discovered, kinds_listed).
+
+    index maps the upjet `crossplane-kind` tag value -> set of metadata.name.
+    ok is False if discovery failed outright or ANY discovered kind could not be listed.
+    A single 403 flips ok to False: a partial MR set turns live managed resources into
+    phantom orphans, which is worse than reporting nothing.
+    """
+    index, kinds_discovered, kinds_listed = {}, 0, 0
+    token, ctx = _k8s_ctx()
+    try:
+        groups = _k8s_get("/apis", token, ctx)
+    except Exception as exc:  # noqa: BLE001 — recorded, never swallowed
+        errors.record("kubernetes", "-", "discover-groups", exc)
+        return index, False, 0, 0
+
+    ok = True
+    for group in (groups.get("groups") or []):
+        gname = group.get("name", "")
+        version = (group.get("preferredVersion") or {}).get("version")
+        if not gname or not version:
+            continue
+        try:
+            listing = _k8s_get(f"/apis/{gname}/{version}", token, ctx)
+        except Exception as exc:  # noqa: BLE001
+            errors.record("kubernetes", "-", f"discover-{gname}", exc)
+            ok = False
+            continue
+        for res in (listing.get("resources") or []):
+            if "/" in res.get("name", ""):
+                continue  # subresource
+            if "managed" not in (res.get("categories") or []):
+                continue
+            if "list" not in (res.get("verbs") or []):
+                continue
+            kinds_discovered += 1
+            # upjet's tag value is lower(Kind) + "." + apiGroup, e.g.
+            # bucket.s3.aws.upbound.io. Build the same key so the join is exact.
+            kind_tag = f"{res['kind'].lower()}.{gname}"
+            names, listed_ok = _k8s_list_names(gname, version, res["name"], token, ctx, errors)
+            if listed_ok:
+                kinds_listed += 1
+                index.setdefault(kind_tag, set()).update(names)
+            else:
+                ok = False
+    if kinds_discovered == 0:
+        ok = False  # discovery "succeeded" but found nothing -> broken, not empty
+    return index, ok, kinds_discovered, kinds_listed
+
+
+def _k8s_list_names(group, version, plural, token, ctx, errors):
+    names, cont = [], None
+    while True:
+        query = {"limit": "500"}
+        if cont:
+            query["continue"] = cont
+        path = f"/apis/{group}/{version}/{plural}?{urllib.parse.urlencode(query)}"
+        try:
+            page = _k8s_get(path, token, ctx, accept=_K8S_META_ACCEPT)
+        except Exception as exc:  # noqa: BLE001
+            errors.record("kubernetes", "-", f"list-{plural}.{group}", exc)
+            return names, False
+        names.extend(item["metadata"]["name"] for item in (page.get("items") or []))
+        cont = (page.get("metadata") or {}).get("continue")
+        if not cont:
+            return names, True
+
+
+# ── ARN helpers ──────────────────────────────────────────────────────────────────────
+# Resource Explorer hands back Service and ResourceType directly. The tagging API hands
+# back only an ARN, so these derive the same two fields from it. Deliberately small and
+# honest: Resource Explorer's values win whenever both sources saw a resource.
+_S3_LIKE = {"s3": "bucket"}
+
+
+def _arn_parts(arn):
+    bits = arn.split(":", 5)
+    if len(bits) < 6:
+        return "", "", ""
+    _, _, service, region, _, resource = bits
+    if "/" in resource:
+        rtype = resource.split("/", 1)[0]
+    elif ":" in resource:
+        rtype = resource.split(":", 1)[0]
+    else:
+        rtype = _S3_LIKE.get(service, service)
+    return service, region, rtype
+
+
+# ── layer 2: AWS Resource Explorer (PRIMARY) ────────────────────────────────────────
+def resource_explorer_indexes(errors):
+    """-> (region -> index type, ok). ONE account-level call; any region's endpoint answers.
+
+    `ok` matters: if this call fails we do not know which regions are indexed, and
+    publishing "every region is unindexed" would invent a blind spot that may not exist.
+    """
+    try:
+        client = boto3.client("resource-explorer-2", region_name=HOME_REGION, config=_boto)
+        found = {}
+        for page in client.get_paginator("list_indexes").paginate():
+            for idx in (page.get("Indexes") or []):
+                found[idx["Region"]] = idx.get("Type", "UNKNOWN")
+        return found, True
+    except Exception as exc:  # noqa: BLE001
+        errors.record("resource-explorer", HOME_REGION, "list-indexes", exc)
+        return {}, False
+
+
+def resource_explorer_search(region, errors):
+    """-> (rows, complete, ok). Wildcard search against the region's DEFAULT view.
+
+    The default view already carries IncludedProperties [{tags}], so one call returns
+    identity AND tags — no per-resource tag lookup. `complete` is AWS's own
+    Count.Complete: when it is False the result set is truncated and must not be treated
+    as authoritative, so it is exported rather than discarded.
+    """
+    rows, complete = [], True
+    try:
+        client = boto3.client("resource-explorer-2", region_name=region, config=_boto)
+        for page in client.get_paginator("search").paginate(QueryString="*"):
+            complete = complete and bool((page.get("Count") or {}).get("Complete", True))
+            for res in (page.get("Resources") or []):
+                tags, reported = {}, None
+                for prop in res.get("Properties") or []:
+                    if prop.get("Name") == "tags":
+                        tags = {t["Key"]: t["Value"] for t in prop.get("Data") or []}
+                last = res.get("LastReportedAt")
+                if last is not None:
+                    reported = last.timestamp()
+                rows.append({
+                    "arn": res["Arn"],
+                    "service": res.get("Service") or _arn_parts(res["Arn"])[0],
+                    "type": res.get("ResourceType") or "",
+                    "region": res.get("Region") or region,
+                    "tags": tags,
+                    "last_reported": reported,
+                    "source": "resource-explorer",
+                })
+        return rows, complete, True
+    except Exception as exc:  # noqa: BLE001
+        errors.record("resource-explorer", region, "search", exc)
+        return [], False, False
+
+
+# ── layer 3: Resource Groups Tagging API (SECONDARY / coverage floor) ───────────────
+def tagging_api_scan(region, errors):
+    """-> (rows, ok). One paginated call per region, every taggable service, no
+    per-service code. Only sees TAGGED resources, and reports no freshness timestamp —
+    hence `unverified` rather than `fresh`. Today it is the ONLY source covering any
+    region without a Resource Explorer index, us-east-2 included.
+    """
+    rows = []
+    try:
+        client = boto3.client("resourcegroupstaggingapi", region_name=region, config=_boto)
+        for page in client.get_paginator("get_resources").paginate():
+            for res in (page.get("ResourceTagMappingList") or []):
+                arn = res["ResourceARN"]
+                service, arn_region, rtype = _arn_parts(arn)
+                rows.append({
+                    "arn": arn,
+                    "service": service,
+                    "type": f"{service}:{rtype}" if service else rtype,
+                    "region": arn_region or region,
+                    "tags": {t["Key"]: t["Value"] for t in res.get("Tags") or []},
+                    "last_reported": None,
+                    "source": "tagging-api",
+                })
+        return rows, True
+    except Exception as exc:  # noqa: BLE001
+        errors.record("tagging-api", region, "get-resources", exc)
+        return [], False
+
+
+# ── classification ───────────────────────────────────────────────────────────────────
+def classify(tags, mr_index, mr_ok):
+    """-> (management, crossplane_kind, crossplane_name)."""
+    kind = tags.get("crossplane-kind", "")
+    name = tags.get("crossplane-name", "")
+    if not kind and not name:
+        # Exact without Kubernetes: depends only on the resource's own tags.
+        return UNMANAGED, "", ""
+    if not mr_ok:
+        # Tagged by Crossplane, but we cannot see the live MR set. Saying "managed"
+        # would hide orphans; saying "orphaned" would cry wolf. Say neither.
+        return UNDECIDABLE, kind, name
+    return (MANAGED if name in mr_index.get(kind, ()) else ORPHANED), kind, name
+
+
+def allowlisted(arn):
+    return any(pattern.search(arn) for pattern in ALLOWLIST_RE)
+
+
+def freshness(row):
+    if row["last_reported"] is None:
+        return "unverified"  # tagging-API-only: that API publishes no timestamp
+    return "fresh" if (time.time() - row["last_reported"]) <= ORPHAN_FRESH_MAX_AGE else "stale"
+
+
+def _regions(errors):
     if REGIONS_ENV:
-        return [r.strip() for r in REGIONS_ENV.split(",") if r.strip()]
-    resp = ec2.describe_regions(Filters=[{"Name": "opt-in-status",
-                                          "Values": ["opt-in-not-required", "opted-in"]}])
-    return sorted(r["RegionName"] for r in resp["Regions"])
-
-
-def _s3_size(bucket, region):
-    """(bytes, objects) from CloudWatch S3 daily metrics — cheap vs list-objects on a big bucket."""
+        return [r.strip() for r in REGIONS_ENV.split(",") if r.strip()], True
     try:
-        cw = boto3.client("cloudwatch", region_name=region or "us-east-1", config=_boto)
-
-        def stat(metric, storage):
-            r = cw.get_metric_statistics(
-                Namespace="AWS/S3", MetricName=metric,
-                Dimensions=[{"Name": "BucketName", "Value": bucket},
-                            {"Name": "StorageType", "Value": storage}],
-                StartTime=time.time() - 3 * 86400, EndTime=time.time(),
-                Period=86400, Statistics=["Average"])
-            pts = sorted(r.get("Datapoints", []), key=lambda p: p["Timestamp"])
-            return pts[-1]["Average"] if pts else 0.0
-        return stat("BucketSizeBytes", "StandardStorage"), stat("NumberOfObjects", "AllStorageTypes")
-    except Exception:  # noqa: BLE001 — size is best-effort
-        return 0.0, 0.0
+        ec2 = boto3.client("ec2", region_name=HOME_REGION, config=_boto)
+        resp = ec2.describe_regions(Filters=[{"Name": "opt-in-status",
+                                              "Values": ["opt-in-not-required", "opted-in"]}])
+        return sorted(r["RegionName"] for r in resp["Regions"]), True
+    except Exception as exc:  # noqa: BLE001
+        errors.record("ec2", HOME_REGION, "describe-regions", exc)
+        return [], False
 
 
-def build_metrics():
-    out = []
+# ── the inventory sweep ──────────────────────────────────────────────────────────────
+def inventory(m, errors, mr_index, mr_ok, regions):
+    """Merge Resource Explorer + tagging API by ARN, classify, emit.
 
-    def add(line):
-        out.append(line)
+    -> (merged, complete_all, scanned_regions, aggregator_present)
+    """
+    m.declare("aws_inventory_resource_explorer_index",
+              "A Resource Explorer index (value=1); type label is LOCAL or AGGREGATOR.")
+    m.declare("aws_inventory_resource_explorer_aggregator",
+              "1 if an AGGREGATOR index exists (cross-region query possible), else 0.")
+    m.declare("aws_inventory_region_unindexed",
+              "1 for an enabled region with NO Resource Explorer index — a blind spot "
+              "the tagging API only partly covers (tagged resources only).")
+    m.declare("aws_inventory_region_scanned",
+              "1 if this region was scanned successfully by this source, 0 if it failed.")
+    m.declare("aws_inventory_region_search_complete",
+              "Resource Explorer Count.Complete for this region; 0 = truncated result set.")
+    m.declare("aws_inventory_source_resources",
+              "Resources returned by one source in one region (RE vs tagging divergence).")
 
-    ok, regions_swept = 1, 0
-    ec2_count, ebs_count = {}, {}
-    cost_hr = {}                 # region -> running on-demand $/hr
-    storage_gb = {"ebs": 0.0, "snapshot": 0.0, "s3": 0.0}
-    eip_unassoc = 0
-    counts = {"sg": 0, "snapshot": 0, "eip": 0}
-    try:
-        base = boto3.client("ec2", region_name="us-east-1", config=_boto)
-        regions = _regions(base)
-        for h in ("# HELP aws_ec2_instance_info An EC2 instance (value=1); state label incl. stopped.",
-                  "# TYPE aws_ec2_instance_info gauge",
-                  "# HELP aws_ebs_volume_size_gb An EBS volume; value = size GiB.",
-                  "# TYPE aws_ebs_volume_size_gb gauge",
-                  "# HELP aws_ebs_snapshot_size_gb A self-owned EBS snapshot; value = size GiB.",
-                  "# TYPE aws_ebs_snapshot_size_gb gauge",
-                  "# HELP aws_security_group_info A security group (value=1).",
-                  "# TYPE aws_security_group_info gauge",
-                  "# HELP aws_eip_info An Elastic IP (value=1); associated label.",
-                  "# TYPE aws_eip_info gauge",
-                  "# HELP aws_unmanaged_resource A live resource with no crossplane tag (orphan candidate).",
-                  "# TYPE aws_unmanaged_resource gauge"):
-            add(h)
+    err_before = len(errors)
+    re_indexes, re_list_ok = resource_explorer_indexes(errors) if RE_ENABLED else ({}, True)
+    aggregator = any(t == "AGGREGATOR" for t in re_indexes.values())
+    for region, itype in sorted(re_indexes.items()):
+        m.add("aws_inventory_resource_explorer_index", {"region": region, "type": itype})
+    m.add("aws_inventory_resource_explorer_aggregator", None, 1 if aggregator else 0)
+    if re_list_ok:
         for region in regions:
-            regions_swept += 1
-            ec2 = boto3.client("ec2", region_name=region, config=_boto)
-            # --- EC2 instances (running AND stopped) ---
+            if region not in re_indexes:
+                m.add("aws_inventory_region_unindexed", {"region": region})
+
+    merged, complete_all, scanned = {}, True, set()
+
+    def absorb(rows, source, region):
+        m.add("aws_inventory_source_resources", {"source": source, "region": region}, len(rows))
+        for row in rows:
+            existing = merged.get(row["arn"])
+            if existing is None:
+                merged[row["arn"]] = row
+                continue
+            # Resource Explorer wins on identity (authoritative Service/ResourceType and
+            # the only source with a timestamp); tags are unioned so a tag visible to
+            # only one source still classifies.
+            if existing["source"] != row["source"]:
+                existing["source"] = "both"
+            if row["last_reported"] is not None and existing["last_reported"] is None:
+                existing["last_reported"] = row["last_reported"]
+            for key, value in row["tags"].items():
+                existing["tags"].setdefault(key, value)
+
+    # PRIMARY: Resource Explorer, per region, against that region's own LOCAL index.
+    # Once an AGGREGATOR exists this collapses to a single search from its region.
+    if RE_ENABLED:
+        for region in sorted(re_indexes):
+            if regions and region not in regions:
+                continue
+            rows, complete, ok = resource_explorer_search(region, errors)
+            m.add("aws_inventory_region_scanned",
+                  {"region": region, "source": "resource-explorer"}, 1 if ok else 0)
+            m.add("aws_inventory_region_search_complete", {"region": region},
+                  1 if complete else 0)
+            complete_all = complete_all and complete
+            if ok:
+                scanned.add(region)
+                absorb(rows, "resource-explorer", region)
+
+    # SECONDARY: the tagging API everywhere, because Resource Explorer sees 2 of 17
+    # regions today. Drop to Resource-Explorer-only by setting TAGGING_API_ENABLED=0
+    # AFTER an AGGREGATOR index exists — not before.
+    if TAGGING_ENABLED:
+        for region in regions:
+            rows, ok = tagging_api_scan(region, errors)
+            m.add("aws_inventory_region_scanned",
+                  {"region": region, "source": "tagging-api"}, 1 if ok else 0)
+            if ok:
+                scanned.add(region)
+                absorb(rows, "tagging-api", region)
+
+    # ── classify + emit ─────────────────────────────────────────────────────────────
+    m.declare("aws_resource_info",
+              "One AWS resource (value=1). management is managed/orphaned/unmanaged, or "
+              "crossplane-tagged when the live MR set could not be read.")
+    m.declare("aws_resource_last_reported_timestamp_seconds",
+              "Unix time Resource Explorer last re-confirmed this resource. Absent for "
+              "tagging-API-only rows, which carry no timestamp.")
+    m.declare("aws_resource_count", "Resource count by service/type/region/management.")
+    m.declare("aws_orphaned_resource",
+              "Crossplane created it and lost it: crossplane tags present, NO live "
+              "managed resource. Bills forever. OMITTED when the MR index is unreadable.")
+    m.declare("aws_unmanaged_resource",
+              "A live resource with NO crossplane tag (console/CLI/legacy). "
+              "allowlisted=1 marks the AWS defaults that are expected to be unmanaged.")
+    m.declare("aws_inventory_resources_total", "Distinct ARNs in the merged inventory.")
+    m.declare("aws_inventory_series_truncated",
+              "1 if MAX_RESOURCE_SERIES capped the per-ARN aws_resource_info series. "
+              "Rollups, orphans and non-allowlisted unmanaged rows are never capped.")
+
+    rollup, orphan_rollup, unmanaged_rollup = {}, {}, {}
+    emitted, truncated = 0, False
+    for arn in sorted(merged):
+        row = merged[arn]
+        management, kind, name = classify(row["tags"], mr_index, mr_ok)
+        allow = allowlisted(arn)
+        always = (management in (ORPHANED, UNDECIDABLE)
+                  or (management == UNMANAGED and not allow))
+        if emitted < MAX_RESOURCE_SERIES or always:
+            m.add("aws_resource_info", {
+                "arn": arn, "service": row["service"], "type": row["type"],
+                "region": row["region"], "management": management,
+                "crossplane_kind": kind, "crossplane_name": name,
+                "source": row["source"], "allowlisted": "1" if allow else "0"})
+            if row["last_reported"] is not None:
+                m.add("aws_resource_last_reported_timestamp_seconds", {"arn": arn},
+                      int(row["last_reported"]))
+            emitted += 1
+        else:
+            truncated = True
+
+        key = (row["service"], row["type"], row["region"], management)
+        rollup[key] = rollup.get(key, 0) + 1
+        if management == ORPHANED:
+            fresh = freshness(row)
+            m.add("aws_orphaned_resource", {
+                "arn": arn, "service": row["service"], "type": row["type"],
+                "region": row["region"], "crossplane_kind": kind,
+                "crossplane_name": name, "source": row["source"], "freshness": fresh})
+            okey = (row["service"], fresh)
+            orphan_rollup[okey] = orphan_rollup.get(okey, 0) + 1
+        elif management == UNMANAGED:
+            m.add("aws_unmanaged_resource", {
+                "arn": arn, "service": row["service"], "type": row["type"],
+                "region": row["region"], "name": row["tags"].get("Name", ""),
+                "allowlisted": "1" if allow else "0"})
+            akey = (row["service"], "1" if allow else "0")
+            unmanaged_rollup[akey] = unmanaged_rollup.get(akey, 0) + 1
+
+    for (service, rtype, region, management), count in sorted(rollup.items()):
+        m.add("aws_resource_count", {"service": service, "type": rtype,
+                                     "region": region, "management": management}, count)
+    m.add("aws_inventory_resources_total", None, len(merged))
+    m.add("aws_inventory_series_truncated", None, 1 if truncated else 0)
+
+    m.declare("aws_unmanaged_resource_count",
+              "Unmanaged resource count by service; allowlisted=0 is the reviewable number.")
+    for (service, allow), count in sorted(unmanaged_rollup.items()):
+        m.add("aws_unmanaged_resource_count", {"service": service, "allowlisted": allow}, count)
+
+    # THE number this whole exporter exists for — and the one that must never be a
+    # defaulted zero. Two different conditions, deliberately not conflated:
+    #
+    #   mr_ok          enough to BELIEVE an orphan we found. A crossplane-tagged resource
+    #                  with no live MR is a real orphan no matter how patchy the sweep was.
+    #   authoritative  enough to BELIEVE A ZERO. Requires the MR index AND a clean sweep
+    #                  of every enabled region with no truncation — otherwise the orphan
+    #                  could be sitting in whatever we failed to look at.
+    #
+    # Publishing a 0 off a failed AWS scan was a real bug here, caught by running the
+    # exporter with rejected credentials: Kubernetes answered, AWS returned nothing, and
+    # "0 orphans" went out over an inventory of zero resources. Absence is the only
+    # honest answer in that state, so the whole family is withheld.
+    inventory_clean = (len(errors) == err_before and bool(scanned) and complete_all
+                       and all(r in scanned for r in regions))
+    authoritative = mr_ok and inventory_clean
+    m.declare("aws_inventory_orphan_detection_authoritative",
+              "1 if a ZERO orphan count can be believed: MR index read in full AND every "
+              "enabled region swept cleanly with no truncation. 0 means the orphan count "
+              "is a lower bound at best, and the count family is withheld entirely.")
+    m.add("aws_inventory_orphan_detection_authoritative", None, 1 if authoritative else 0)
+    if mr_ok and (orphan_rollup or authoritative):
+        m.declare("aws_orphaned_resource_count",
+                  "Orphaned resources by service. freshness=fresh is the alertable one; "
+                  "stale/unverified are index-lag suspects needing confirmation.")
+        for (service, fresh), count in sorted(orphan_rollup.items()):
+            m.add("aws_orphaned_resource_count", {"service": service, "freshness": fresh}, count)
+        if not orphan_rollup:
+            # An explicit, EARNED zero: the MR index was readable, every region was swept
+            # cleanly, and nothing came back orphaned.
+            m.add("aws_orphaned_resource_count", {"service": "none", "freshness": "fresh"}, 0)
+
+    return merged, complete_all, scanned, aggregator
+
+
+# ── layer 4: shape / state / capacity detail (describe_*) ───────────────────────────
+# Resource Explorer gives identity, not state. $/hr needs the instance type AND whether
+# it is running; fleet health needs TargetCapacity vs FulfilledCapacity. Neither is in
+# any tag-based API, so this narrower sweep stays.
+def detail_sweep(m, errors, mr_index, mr_ok, regions):
+    m.declare("aws_ec2_instance_info",
+              "An EC2 instance (value=1); state label includes stopped.")
+    m.declare("aws_ebs_volume_size_gb", "An EBS volume; value = size GiB.")
+    m.declare("aws_ebs_snapshot_size_gb", "A self-owned EBS snapshot; value = size GiB.")
+    m.declare("aws_security_group_info", "A security group (value=1).")
+    m.declare("aws_eip_info", "An Elastic IP (value=1); associated label.")
+    m.declare("aws_ec2_fleet_info",
+              "An EC2 Fleet (value=1). activity_status=error or pending_fulfillment on an "
+              "active maintain fleet means it is failing to place instances.")
+    m.declare("aws_ec2_fleet_capacity",
+              "EC2 Fleet capacity units. kind=target vs kind=fulfilled: target>0 with "
+              "fulfilled=0 is a fleet burning nothing and silently placing nothing.")
+    m.declare("aws_ec2_launch_template_info",
+              "An EC2 LaunchTemplate (value=1); default/latest version numbers in labels.")
+    m.declare("aws_ec2_instances", "Instance count by region/type/state.")
+    m.declare("aws_ebs_volumes", "EBS volume count by region/state.")
+    m.declare("aws_detail_resource_count",
+              "Describe-sourced count by kind (incl. things that are off but present).")
+    m.declare("aws_estimated_cost_usd_per_hour",
+              "Estimated ON-DEMAND $/hr of RUNNING instances.")
+    m.declare("aws_estimated_storage_cost_usd_per_month",
+              "Idle/standing spend: EBS + snapshots + S3 + unassociated EIPs.")
+    m.declare("aws_s3_bucket_info", "An S3 bucket (value=1).")
+    m.declare("aws_s3_bucket_bytes", "S3 bucket size in bytes (CloudWatch daily).")
+    m.declare("aws_s3_bucket_objects", "S3 bucket object count (CloudWatch daily).")
+    m.declare("aws_iam_user_info", "An IAM user (value=1).")
+    m.declare("aws_iam_role_info", "A customer IAM role (service-linked excluded) (value=1).")
+    m.declare("aws_iam_policy_info", "A customer-managed IAM policy (value=1).")
+    m.declare("aws_iam_instance_profile_info", "An IAM instance profile (value=1).")
+
+    ec2_count, ebs_count, cost_hr = {}, {}, {}
+    storage_gb = {"ebs": 0.0, "snapshot": 0.0, "s3": 0.0}
+    counts = {"sg": 0, "snapshot": 0, "eip": 0, "fleet": 0, "launch_template": 0}
+    eip_unassoc = 0
+
+    def mgmt(tags):
+        return classify(tags, mr_index, mr_ok)[0]
+
+    def tagmap(taglist):
+        return {t["Key"]: t["Value"] for t in (taglist or [])}
+
+    for region in regions:
+        ec2 = boto3.client("ec2", region_name=region, config=_boto)
+        try:
             for page in ec2.get_paginator("describe_instances").paginate():
                 for res in page["Reservations"]:
                     for inst in res["Instances"]:
                         state = inst["State"]["Name"]
                         if state in ("terminated", "shutting-down"):
                             continue
-                        iid, itype = inst["InstanceId"], inst["InstanceType"]
-                        tags = _tagmap(inst.get("Tags"))
-                        name, managed = tags.get("Name", ""), _managed(tags)
+                        tags = tagmap(inst.get("Tags"))
+                        itype = inst["InstanceType"]
                         life = "spot" if inst.get("InstanceLifecycle") == "spot" else "on-demand"
-                        add(f'aws_ec2_instance_info{{id="{iid}",region="{region}",type="{itype}",'
-                            f'state="{state}",name="{_esc(name)}",lifecycle="{life}",managed="{managed}"}} 1')
-                        ec2_count[(region, itype, state)] = ec2_count.get((region, itype, state), 0) + 1
+                        m.add("aws_ec2_instance_info", {
+                            "id": inst["InstanceId"], "region": region, "type": itype,
+                            "state": state, "name": tags.get("Name", ""),
+                            "lifecycle": life, "management": mgmt(tags)})
+                        ckey = (region, itype, state)
+                        ec2_count[ckey] = ec2_count.get(ckey, 0) + 1
                         if state == "running":
                             cost_hr[region] = cost_hr.get(region, 0.0) + PRICE.get(itype, 0.0)
-                        if managed == "0" and state != "terminated":
-                            add(f'aws_unmanaged_resource{{type="ec2",id="{iid}",'
-                                f'region="{region}",name="{_esc(name)}"}} 1')
-            # --- EBS volumes ---
+        except Exception as exc:  # noqa: BLE001
+            errors.record("ec2", region, "describe-instances", exc)
+
+        try:
             for page in ec2.get_paginator("describe_volumes").paginate():
                 for vol in page["Volumes"]:
-                    vid, vstate, sz = vol["VolumeId"], vol["State"], vol["Size"]
-                    managed = _managed(_tagmap(vol.get("Tags")))
-                    add(f'aws_ebs_volume_size_gb{{id="{vid}",region="{region}",'
-                        f'state="{vstate}",managed="{managed}"}} {sz}')
-                    ebs_count[(region, vstate)] = ebs_count.get((region, vstate), 0) + 1
-                    storage_gb["ebs"] += sz
-                    if vstate == "available" and managed == "0":  # unattached + unmanaged = wasted spend
-                        add(f'aws_unmanaged_resource{{type="ebs",id="{vid}",region="{region}",name=""}} 1')
-            # --- EBS snapshots (self-owned only) ---
+                    m.add("aws_ebs_volume_size_gb", {
+                        "id": vol["VolumeId"], "region": region, "state": vol["State"],
+                        "management": mgmt(tagmap(vol.get("Tags")))}, vol["Size"])
+                    vkey = (region, vol["State"])
+                    ebs_count[vkey] = ebs_count.get(vkey, 0) + 1
+                    storage_gb["ebs"] += vol["Size"]
+        except Exception as exc:  # noqa: BLE001
+            errors.record("ec2", region, "describe-volumes", exc)
+
+        try:
             for page in ec2.get_paginator("describe_snapshots").paginate(OwnerIds=["self"]):
                 for snap in page["Snapshots"]:
-                    sid, sz = snap["SnapshotId"], snap.get("VolumeSize", 0)
-                    managed = _managed(_tagmap(snap.get("Tags")))
-                    add(f'aws_ebs_snapshot_size_gb{{id="{sid}",region="{region}",managed="{managed}"}} {sz}')
+                    size = snap.get("VolumeSize", 0)
+                    m.add("aws_ebs_snapshot_size_gb", {
+                        "id": snap["SnapshotId"], "region": region,
+                        "management": mgmt(tagmap(snap.get("Tags")))}, size)
                     counts["snapshot"] += 1
-                    storage_gb["snapshot"] += sz
-            # --- security groups ---
+                    storage_gb["snapshot"] += size
+        except Exception as exc:  # noqa: BLE001
+            errors.record("ec2", region, "describe-snapshots", exc)
+
+        try:
             for page in ec2.get_paginator("describe_security_groups").paginate():
                 for sg in page["SecurityGroups"]:
-                    managed = _managed(_tagmap(sg.get("Tags")))
-                    add(f'aws_security_group_info{{id="{sg["GroupId"]}",region="{region}",'
-                        f'name="{_esc(sg["GroupName"])}",vpc="{sg.get("VpcId","")}",managed="{managed}"}} 1')
+                    m.add("aws_security_group_info", {
+                        "id": sg["GroupId"], "region": region, "name": sg["GroupName"],
+                        "vpc": sg.get("VpcId", ""),
+                        "management": mgmt(tagmap(sg.get("Tags")))})
                     counts["sg"] += 1
-            # --- Elastic IPs ---
-            for eip in ec2.describe_addresses().get("Addresses", []):
-                assoc = "1" if eip.get("AssociationId") else "0"
-                managed = _managed(_tagmap(eip.get("Tags")))
-                add(f'aws_eip_info{{region="{region}",public_ip="{eip.get("PublicIp","")}",'
-                    f'associated="{assoc}",managed="{managed}"}} 1')
-                counts["eip"] += 1
-                if assoc == "0":
-                    eip_unassoc += 1
-                    add(f'aws_unmanaged_resource{{type="eip-unassociated",'
-                        f'id="{eip.get("AllocationId","")}",region="{region}",name=""}} 1')
+        except Exception as exc:  # noqa: BLE001
+            errors.record("ec2", region, "describe-security-groups", exc)
 
-        # --- global: S3 (+ size) + IAM (users/roles/policies/instance-profiles) ---
-        add("# HELP aws_s3_bucket_info An S3 bucket (value=1).")
-        add("# TYPE aws_s3_bucket_info gauge")
-        add("# HELP aws_s3_bucket_bytes S3 bucket size in bytes (CloudWatch daily).")
-        add("# TYPE aws_s3_bucket_bytes gauge")
-        add("# HELP aws_s3_bucket_objects S3 bucket object count (CloudWatch daily).")
-        add("# TYPE aws_s3_bucket_objects gauge")
+        try:
+            for eip in (ec2.describe_addresses().get("Addresses") or []):
+                assoc = "1" if eip.get("AssociationId") else "0"
+                m.add("aws_eip_info", {
+                    "region": region, "public_ip": eip.get("PublicIp", ""),
+                    "associated": assoc,
+                    "management": mgmt(tagmap(eip.get("Tags")))})
+                counts["eip"] += 1
+                eip_unassoc += assoc == "0"
+        except Exception as exc:  # noqa: BLE001
+            errors.record("ec2", region, "describe-addresses", exc)
+
+        # EC2 Fleets (TALOS-i91u replaced the bare Instance with LaunchTemplate + Fleet).
+        # `deleted` fleets are dropped, but deleted_running / deleted_terminating are KEPT:
+        # those still own instances, so they are still billing.
+        try:
+            for page in ec2.get_paginator("describe_fleets").paginate():
+                for fleet in (page.get("Fleets") or []):
+                    state = fleet.get("FleetState", "")
+                    if state == "deleted":
+                        continue
+                    spec = fleet.get("TargetCapacitySpecification") or {}
+                    base = {"id": fleet.get("FleetId", ""), "region": region}
+                    m.add("aws_ec2_fleet_info", dict(base, **{
+                        "state": state,
+                        "activity_status": fleet.get("ActivityStatus", ""),
+                        "fleet_type": fleet.get("Type", ""),
+                        "default_capacity_type": spec.get("DefaultTargetCapacityType", ""),
+                        "terminate_instances": str(
+                            fleet.get("TerminateInstancesWithExpiration", "")).lower(),
+                        "management": mgmt(tagmap(fleet.get("Tags")))}))
+                    for kind, value in (
+                            ("target", spec.get("TotalTargetCapacity", 0)),
+                            ("target_on_demand", spec.get("OnDemandTargetCapacity", 0)),
+                            ("target_spot", spec.get("SpotTargetCapacity", 0)),
+                            ("fulfilled", fleet.get("FulfilledCapacity", 0)),
+                            ("fulfilled_on_demand", fleet.get("FulfilledOnDemandCapacity", 0))):
+                        m.add("aws_ec2_fleet_capacity", dict(base, kind=kind), value or 0)
+                    counts["fleet"] += 1
+        except Exception as exc:  # noqa: BLE001
+            errors.record("ec2", region, "describe-fleets", exc)
+
+        try:
+            for page in ec2.get_paginator("describe_launch_templates").paginate():
+                for tpl in (page.get("LaunchTemplates") or []):
+                    m.add("aws_ec2_launch_template_info", {
+                        "id": tpl.get("LaunchTemplateId", ""),
+                        "name": tpl.get("LaunchTemplateName", ""), "region": region,
+                        "default_version": str(tpl.get("DefaultVersionNumber", "")),
+                        "latest_version": str(tpl.get("LatestVersionNumber", "")),
+                        "management": mgmt(tagmap(tpl.get("Tags")))})
+                    counts["launch_template"] += 1
+        except Exception as exc:  # noqa: BLE001
+            errors.record("ec2", region, "describe-launch-templates", exc)
+
+    # ── global: S3 sizes + IAM ──────────────────────────────────────────────────────
+    try:
         s3 = boto3.client("s3", config=_boto)
-        for b in s3.list_buckets().get("Buckets", []):
-            name = b["Name"]
+        for bucket in (s3.list_buckets().get("Buckets") or []):
+            name = bucket["Name"]
             try:
                 loc = s3.get_bucket_location(Bucket=name).get("LocationConstraint") or "us-east-1"
-            except Exception:  # noqa: BLE001
-                loc = "us-east-1"
-            add(f'aws_s3_bucket_info{{name="{_esc(name)}",region="{loc}"}} 1')
-            by, objs = _s3_size(name, loc)
-            add(f'aws_s3_bucket_bytes{{name="{_esc(name)}"}} {int(by)}')
-            add(f'aws_s3_bucket_objects{{name="{_esc(name)}"}} {int(objs)}')
-            storage_gb["s3"] += by / (1024 ** 3)
+            except Exception as exc:  # noqa: BLE001 — a denied bucket is still a bucket
+                errors.record("s3", "-", "get-bucket-location", exc)
+                loc = "unknown"
+            m.add("aws_s3_bucket_info", {"name": name, "region": loc})
+            size, objects = _s3_size(name, loc, errors)
+            m.add("aws_s3_bucket_bytes", {"name": name}, int(size))
+            m.add("aws_s3_bucket_objects", {"name": name}, int(objects))
+            storage_gb["s3"] += size / (1024 ** 3)
+    except Exception as exc:  # noqa: BLE001
+        errors.record("s3", "-", "list-buckets", exc)
 
+    try:
         iam = boto3.client("iam", config=_boto)
-        add("# HELP aws_iam_user_info An IAM user (value=1).")
-        add("# TYPE aws_iam_user_info gauge")
         for page in iam.get_paginator("list_users").paginate():
-            for u in page["Users"]:
-                add(f'aws_iam_user_info{{name="{_esc(u["UserName"])}",path="{_esc(u.get("Path","/"))}"}} 1')
-        add("# HELP aws_iam_role_info A customer IAM role (service-linked excluded) (value=1).")
-        add("# TYPE aws_iam_role_info gauge")
+            for user in page["Users"]:
+                m.add("aws_iam_user_info", {"name": user["UserName"],
+                                            "path": user.get("Path", "/")})
         for page in iam.get_paginator("list_roles").paginate():
-            for r in page["Roles"]:
-                if r.get("Path", "/").startswith("/aws-service-role/"):
+            for role in page["Roles"]:
+                if role.get("Path", "/").startswith("/aws-service-role/"):
                     continue  # AWS service-linked roles are noise
-                add(f'aws_iam_role_info{{name="{_esc(r["RoleName"])}",path="{_esc(r.get("Path","/"))}"}} 1')
-        add("# HELP aws_iam_policy_info A customer-managed IAM policy (value=1).")
-        add("# TYPE aws_iam_policy_info gauge")
-        for page in iam.get_paginator("list_policies").paginate(Scope="Local"):  # customer-managed only
-            for p in page["Policies"]:
-                add(f'aws_iam_policy_info{{name="{_esc(p["PolicyName"])}",'
-                    f'attached="{p.get("AttachmentCount",0)}"}} 1')
-        add("# HELP aws_iam_instance_profile_info An IAM instance profile (value=1).")
-        add("# TYPE aws_iam_instance_profile_info gauge")
+                m.add("aws_iam_role_info", {"name": role["RoleName"],
+                                            "path": role.get("Path", "/")})
+        for page in iam.get_paginator("list_policies").paginate(Scope="Local"):
+            for policy in page["Policies"]:
+                m.add("aws_iam_policy_info", {"name": policy["PolicyName"],
+                                              "attached": policy.get("AttachmentCount", 0)})
         for page in iam.get_paginator("list_instance_profiles").paginate():
-            for ip in page["InstanceProfiles"]:
-                add(f'aws_iam_instance_profile_info{{name="{_esc(ip["InstanceProfileName"])}"}} 1')
-    except Exception as e:  # noqa: BLE001 — surface as scrape_success=0, keep serving last good
-        ok = 0
-        _log(f"sweep failed: {e}\n{traceback.format_exc()}")
+            for profile in page["InstanceProfiles"]:
+                m.add("aws_iam_instance_profile_info",
+                      {"name": profile["InstanceProfileName"]})
+    except Exception as exc:  # noqa: BLE001
+        errors.record("iam", "-", "list", exc)
 
-    # --- rollups ---
-    add("# HELP aws_ec2_instances Instance count by region/type/state.")
-    add("# TYPE aws_ec2_instances gauge")
-    for (region, itype, state), n in sorted(ec2_count.items()):
-        add(f'aws_ec2_instances{{region="{region}",type="{itype}",state="{state}"}} {n}')
-    add("# HELP aws_ebs_volumes EBS volume count by region/state.")
-    add("# TYPE aws_ebs_volumes gauge")
-    for (region, state), n in sorted(ebs_count.items()):
-        add(f'aws_ebs_volumes{{region="{region}",state="{state}"}} {n}')
-    add("# HELP aws_resource_count Provisioned resource count by kind (incl. things that are off but present).")
-    add("# TYPE aws_resource_count gauge")
-    add(f'aws_resource_count{{kind="security_group"}} {counts["sg"]}')
-    add(f'aws_resource_count{{kind="ebs_snapshot"}} {counts["snapshot"]}')
-    add(f'aws_resource_count{{kind="elastic_ip"}} {counts["eip"]}')
-    add(f'aws_resource_count{{kind="elastic_ip_unassociated"}} {eip_unassoc}')
-    add("# HELP aws_estimated_cost_usd_per_hour Estimated ON-DEMAND $/hr of RUNNING instances.")
-    add("# TYPE aws_estimated_cost_usd_per_hour gauge")
+    # ── rollups ─────────────────────────────────────────────────────────────────────
+    for (region, itype, state), count in sorted(ec2_count.items()):
+        m.add("aws_ec2_instances", {"region": region, "type": itype, "state": state}, count)
+    for (region, state), count in sorted(ebs_count.items()):
+        m.add("aws_ebs_volumes", {"region": region, "state": state}, count)
+    for kind, value in (("security_group", counts["sg"]),
+                        ("ebs_snapshot", counts["snapshot"]),
+                        ("elastic_ip", counts["eip"]),
+                        ("elastic_ip_unassociated", eip_unassoc),
+                        ("ec2_fleet", counts["fleet"]),
+                        ("ec2_launch_template", counts["launch_template"])):
+        m.add("aws_detail_resource_count", {"kind": kind}, value)
+
     total = 0.0
-    for region, c in sorted(cost_hr.items()):
-        add(f'aws_estimated_cost_usd_per_hour{{region="{region}"}} {c:.4f}')
-        total += c
-    add(f'aws_estimated_cost_usd_per_hour{{region="all"}} {total:.4f}')
-    add("# HELP aws_estimated_storage_cost_usd_per_month Idle/standing spend: EBS+snapshots+S3+unassoc EIPs.")
-    add("# TYPE aws_estimated_storage_cost_usd_per_month gauge")
-    add(f'aws_estimated_storage_cost_usd_per_month{{kind="ebs"}} {storage_gb["ebs"] * EBS_GB_MO:.2f}')
-    add(f'aws_estimated_storage_cost_usd_per_month{{kind="ebs_snapshot"}} {storage_gb["snapshot"] * SNAP_GB_MO:.2f}')
-    add(f'aws_estimated_storage_cost_usd_per_month{{kind="s3"}} {storage_gb["s3"] * S3_GB_MO:.2f}')
-    add(f'aws_estimated_storage_cost_usd_per_month{{kind="elastic_ip"}} {eip_unassoc * EIP_UNASSOC_MO:.2f}')
-    stor_total = (storage_gb["ebs"] * EBS_GB_MO + storage_gb["snapshot"] * SNAP_GB_MO
-                  + storage_gb["s3"] * S3_GB_MO + eip_unassoc * EIP_UNASSOC_MO)
-    add(f'aws_estimated_storage_cost_usd_per_month{{kind="all"}} {stor_total:.2f}')
-    add("# HELP aws_inventory_regions_swept Number of regions swept this scrape.")
-    add("# TYPE aws_inventory_regions_swept gauge")
-    add(f"aws_inventory_regions_swept {regions_swept}")
-    add("# HELP aws_inventory_scrape_success 1 if the last sweep succeeded.")
-    add("# TYPE aws_inventory_scrape_success gauge")
-    add(f"aws_inventory_scrape_success {ok}")
-    add("# HELP aws_inventory_last_scrape_timestamp_seconds Unix time of the last sweep.")
-    add("# TYPE aws_inventory_last_scrape_timestamp_seconds gauge")
-    add(f"aws_inventory_last_scrape_timestamp_seconds {int(time.time())}")
-    return "\n".join(out) + "\n"
+    for region, value in sorted(cost_hr.items()):
+        m.add("aws_estimated_cost_usd_per_hour", {"region": region}, f"{value:.4f}")
+        total += value
+    m.add("aws_estimated_cost_usd_per_hour", {"region": "all"}, f"{total:.4f}")
+    ebs_mo = storage_gb["ebs"] * EBS_GB_MO
+    snap_mo = storage_gb["snapshot"] * SNAP_GB_MO
+    s3_mo = storage_gb["s3"] * S3_GB_MO
+    eip_mo = eip_unassoc * EIP_UNASSOC_MO
+    for kind, value in (("ebs", ebs_mo), ("ebs_snapshot", snap_mo), ("s3", s3_mo),
+                        ("elastic_ip", eip_mo),
+                        ("all", ebs_mo + snap_mo + s3_mo + eip_mo)):
+        m.add("aws_estimated_storage_cost_usd_per_month", {"kind": kind}, f"{value:.2f}")
+
+
+def _s3_size(bucket, region, errors):
+    """(bytes, objects) from CloudWatch S3 daily metrics — cheap vs listing a big bucket."""
+    try:
+        cw = boto3.client("cloudwatch",
+                          region_name=region if region != "unknown" else HOME_REGION,
+                          config=_boto)
+
+        def stat(metric, storage):
+            resp = cw.get_metric_statistics(
+                Namespace="AWS/S3", MetricName=metric,
+                Dimensions=[{"Name": "BucketName", "Value": bucket},
+                            {"Name": "StorageType", "Value": storage}],
+                StartTime=time.time() - 3 * 86400, EndTime=time.time(),
+                Period=86400, Statistics=["Average"])
+            points = sorted((resp.get("Datapoints") or []), key=lambda p: p["Timestamp"])
+            return points[-1]["Average"] if points else 0.0
+        return stat("BucketSizeBytes", "StandardStorage"), stat("NumberOfObjects", "AllStorageTypes")
+    except Exception as exc:  # noqa: BLE001 — size is best-effort, but still reported
+        errors.record("cloudwatch", region, "get-metric-statistics", exc)
+        return 0.0, 0.0
+
+
+# ── top level ────────────────────────────────────────────────────────────────────────
+def build_metrics():
+    m, errors = Metrics(), Errors()
+    m.declare("aws_inventory_mr_index_ok",
+              "1 if the live Crossplane managed-resource set was read in full from the "
+              "Kubernetes API. 0 means managed-vs-orphaned is UNDECIDABLE this scrape.")
+    m.declare("aws_inventory_mr_kinds",
+              "Managed-resource kinds discovered from the API server and how many were "
+              "listable. discovered != listed means RBAC is missing an API group.")
+    m.declare("aws_inventory_mr_resources", "Live Crossplane managed resources seen.")
+    m.declare("aws_inventory_classification_trustworthy",
+              "1 only if the MR index was read in full, every scanned region succeeded "
+              "and no Resource Explorer result set was truncated.")
+    m.declare("aws_inventory_coverage_complete",
+              "1 only if, in addition, every enabled region was scanned by some source "
+              "and an AGGREGATOR index exists. 0 = known blind spots; see "
+              "aws_inventory_region_unindexed.")
+
+    mr_index, mr_ok, kinds_found, kinds_listed = managed_resource_index(errors)
+    m.add("aws_inventory_mr_index_ok", None, 1 if mr_ok else 0)
+    m.add("aws_inventory_mr_kinds", {"state": "discovered"}, kinds_found)
+    m.add("aws_inventory_mr_kinds", {"state": "listed"}, kinds_listed)
+    m.add("aws_inventory_mr_resources", None, sum(len(v) for v in mr_index.values()))
+
+    regions, regions_ok = _regions(errors)
+    merged, complete_all, scanned, aggregator = inventory(m, errors, mr_index, mr_ok, regions)
+
+    if DETAIL_SWEEP and regions:
+        detail_sweep(m, errors, mr_index, mr_ok, regions)
+
+    m.declare("aws_inventory_scrape_errors",
+              "Failures in the last sweep by source/region/op. Non-zero means the "
+              "inventory is incomplete — read it before believing any count.")
+    m.declare("aws_inventory_scrape_error_info",
+              "One failure with its AWS/HTTP error code as a label, so a permissions "
+              "failure is distinguishable from an empty result without reading logs.")
+    for (source, region, op, code), count in sorted(errors.items.items()):
+        m.add("aws_inventory_scrape_errors",
+              {"source": source, "region": region, "op": op}, count)
+        m.add("aws_inventory_scrape_error_info",
+              {"source": source, "region": region, "op": op, "code": code}, count)
+
+    trustworthy = mr_ok and not len(errors) and complete_all
+    coverage = (trustworthy and regions_ok and bool(regions)
+                and all(r in scanned for r in regions) and aggregator)
+    m.add("aws_inventory_classification_trustworthy", None, 1 if trustworthy else 0)
+    m.add("aws_inventory_coverage_complete", None, 1 if coverage else 0)
+
+    m.declare("aws_inventory_regions_swept", "Enabled regions this sweep covered.")
+    m.add("aws_inventory_regions_swept", None, len(scanned))
+    m.declare("aws_inventory_regions_enabled", "Enabled regions in the account.")
+    m.add("aws_inventory_regions_enabled", None, len(regions))
+    m.declare("aws_inventory_scrape_success",
+              "1 if the sweep completed without errors. Deliberately NOT the trust "
+              "signal: see aws_inventory_classification_trustworthy for whether the "
+              "three-bucket classification can be believed.")
+    m.add("aws_inventory_scrape_success", None, 1 if not len(errors) else 0)
+    m.declare("aws_inventory_last_scrape_timestamp_seconds", "Unix time of the last sweep.")
+    m.add("aws_inventory_last_scrape_timestamp_seconds", None, int(time.time()))
+    _log(f"swept regions={len(scanned)}/{len(regions)} resources={len(merged)} "
+         f"mr_kinds={kinds_listed}/{kinds_found} mr_ok={mr_ok} errors={len(errors)}")
+    return m.render()
 
 
 def _refresh_loop():
@@ -281,8 +1045,8 @@ def _refresh_loop():
             with _lock:
                 _snapshot = snap
             _log(f"snapshot refreshed ({snap.count(chr(10))} lines)")
-        except Exception as e:  # noqa: BLE001
-            _log(f"refresh loop error: {e}")
+        except Exception as exc:  # noqa: BLE001 — keep serving the last good snapshot
+            _log(f"refresh loop error: {exc}\n{traceback.format_exc()}")
         time.sleep(SCRAPE_INTERVAL)
 
 
@@ -305,5 +1069,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     threading.Thread(target=_refresh_loop, daemon=True).start()
-    _log(f"serving /metrics on :{PORT} (interval {SCRAPE_INTERVAL}s, regions={REGIONS_ENV or 'ALL'})")
+    _log(f"serving /metrics on :{PORT} (interval {SCRAPE_INTERVAL}s, "
+         f"regions={REGIONS_ENV or 'ALL'}, resource-explorer={RE_ENABLED}, "
+         f"tagging-api={TAGGING_ENABLED}, detail-sweep={DETAIL_SWEEP})")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

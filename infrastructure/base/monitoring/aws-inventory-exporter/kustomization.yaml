@@ -1,5 +1,7 @@
 ---
-# AWS inventory + status exporter (TALOS-iymy). Sweeps all regions; feeds dashboard-aws-inventory.
+# AWS account-wide inventory exporter (TALOS-iymy -> TALOS-hnod). Resource Explorer
+# first, tagging API as the coverage floor, joined against the live Crossplane managed-
+# resource set; feeds dashboard-aws-inventory.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: monitoring
@@ -9,6 +11,18 @@ resources:
   # infrastructure/base/aws/inventory-ro-user.yaml). TALOS-iymy hardening.
   - deployment.yaml
   - podmonitor.yaml
+  # ── OFF BY DEFAULT: uncomment to arm ────────────────────────────────────────────────
+  # rbac.yaml gives the exporter its own ServiceAccount + an aggregated ClusterRole so it
+  # can read managed resources and actually compute managed-vs-orphaned. ⚠️ Uncomment it
+  # TOGETHER WITH `serviceAccountName:` in deployment.yaml, in the same commit —
+  # uncommenting either alone is wrong (see the deployment.yaml header).
+  # - rbac.yaml
+  #
+  # alerts.yaml fires on a confirmed orphan, on a fleet that is active but placing
+  # nothing, and on the classification going untrustworthy. Arm it after rbac.yaml,
+  # because until the MR index is readable the orphan series does not exist and the
+  # untrustworthy alert would be permanently firing.
+  # - alerts.yaml
 configMapGenerator:
   - name: aws-inventory-exporter-script
     files:

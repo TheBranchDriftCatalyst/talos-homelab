@@ -17,7 +17,7 @@
   "editable": true,
   "graphTooltip": 1,
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "1m",
   "timezone": "",
   "time": {
@@ -232,11 +232,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum(aws_ec2_instances{state=\"running\"}) or vector(0)",
+          "expr": "sum(aws_ec2_instances{state=\"running\"}) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -293,15 +294,16 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum(aws_ec2_instances{state=\"stopped\"}) or vector(0)",
+          "expr": "sum(aws_ec2_instances{state=\"stopped\"}) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
-      "title": "Orphans",
+      "title": "Orphaned",
       "id": 6,
       "datasource": {
         "type": "prometheus",
@@ -331,7 +333,8 @@
           },
           "color": {
             "mode": "thresholds"
-          }
+          },
+          "noValue": "NO DATA"
         },
         "overrides": []
       },
@@ -354,11 +357,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum(aws_unmanaged_resource) or vector(0)",
+          "expr": "sum(aws_orphaned_resource_count{freshness=\"fresh\"})",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Crossplane-tagged AWS resources with NO live managed resource, confirmed fresh by Resource Explorer. Expected 0. Reads 'NO DATA' \u2014 never 0 \u2014 when the exporter could not read the live managed-resource set, because aws_orphaned_resource_count is omitted entirely in that state rather than defaulted to zero."
     },
     {
       "type": "stat",
@@ -612,6 +616,248 @@
       ]
     },
     {
+      "type": "stat",
+      "title": "Fleets",
+      "id": 100,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_detail_resource_count{kind=\"ec2_fleet\"}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "EC2 Fleets in any non-`deleted` state. deleted_running and deleted_terminating are counted: they still own instances, so they still bill."
+    },
+    {
+      "type": "stat",
+      "title": "Fleets not placing",
+      "id": 101,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "\u2014"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "count((aws_ec2_fleet_capacity{kind=\"target\"} > 0) and on(id, region) (aws_ec2_fleet_capacity{kind=\"fulfilled\"} == 0))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Fleets whose target capacity is above 0 while fulfilled capacity is 0: burning nothing but silently failing to place. Usually no spot capacity in the pool or a regional vCPU quota the shape cannot fit under. '\u2014' means no fleet is in that state; read it next to the Fleets count."
+    },
+    {
+      "type": "table",
+      "title": "EC2 Fleets \u2014 state, activity, management",
+      "id": 102,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 9,
+        "x": 6,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_ec2_fleet_info",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "Value": true,
+              "instance": true,
+              "job": true,
+              "pod": true,
+              "container": true,
+              "namespace": true,
+              "endpoint": true,
+              "prometheus": true,
+              "prometheus_replica": true,
+              "cluster": true,
+              "service": true
+            }
+          }
+        }
+      ],
+      "description": "activity_status `error` or `pending_fulfillment` on an active maintain fleet is the silent-failure signature. management=orphaned here is the worst case: a maintain fleet with no managed resource re-launches GPU capacity indefinitely and no reaper stops it."
+    },
+    {
+      "type": "table",
+      "title": "Launch templates",
+      "id": 103,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 9,
+        "x": 15,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_ec2_launch_template_info",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "Value": true,
+              "instance": true,
+              "job": true,
+              "pod": true,
+              "container": true,
+              "namespace": true,
+              "endpoint": true,
+              "prometheus": true,
+              "prometheus_replica": true,
+              "cluster": true,
+              "service": true
+            }
+          }
+        }
+      ]
+    },
+    {
       "type": "row",
       "collapsed": false,
       "title": "Storage (EBS / snapshots / S3)",
@@ -620,7 +866,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 18
       },
       "panels": []
     },
@@ -636,7 +882,7 @@
         "h": 4,
         "w": 3,
         "x": 0,
-        "y": 15
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -675,11 +921,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum(aws_ebs_volume_size_gb) or vector(0)",
+          "expr": "sum(aws_ebs_volume_size_gb) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -693,7 +940,7 @@
         "h": 4,
         "w": 3,
         "x": 3,
-        "y": 15
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -736,11 +983,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum(aws_ebs_volumes{state=\"available\"}) or vector(0)",
+          "expr": "sum(aws_ebs_volumes{state=\"available\"}) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -754,7 +1002,7 @@
         "h": 4,
         "w": 3,
         "x": 6,
-        "y": 15
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -793,7 +1041,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "aws_resource_count{kind=\"ebs_snapshot\"}",
+          "expr": "aws_detail_resource_count{kind=\"ebs_snapshot\"}",
           "refId": "A",
           "instant": true
         }
@@ -811,7 +1059,7 @@
         "h": 4,
         "w": 3,
         "x": 9,
-        "y": 15
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -850,11 +1098,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum(aws_ebs_snapshot_size_gb) or vector(0)",
+          "expr": "sum(aws_ebs_snapshot_size_gb) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -868,7 +1117,7 @@
         "h": 4,
         "w": 3,
         "x": 12,
-        "y": 15
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -907,11 +1156,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "count(aws_s3_bucket_info) or vector(0)",
+          "expr": "count(aws_s3_bucket_info) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -925,7 +1175,7 @@
         "h": 4,
         "w": 3,
         "x": 15,
-        "y": 15
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -964,11 +1214,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum(aws_s3_bucket_bytes) or vector(0)",
+          "expr": "sum(aws_s3_bucket_bytes) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -982,7 +1233,7 @@
         "h": 4,
         "w": 3,
         "x": 18,
-        "y": 15
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -1040,7 +1291,7 @@
         "h": 4,
         "w": 3,
         "x": 21,
-        "y": 15
+        "y": 19
       },
       "fieldConfig": {
         "defaults": {
@@ -1098,7 +1349,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 19
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -1158,7 +1409,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 19
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -1218,7 +1469,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 19
+        "y": 23
       },
       "fieldConfig": {
         "defaults": {
@@ -1275,7 +1526,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 27
+        "y": 31
       },
       "panels": []
     },
@@ -1291,7 +1542,7 @@
         "h": 4,
         "w": 3,
         "x": 0,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1330,7 +1581,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "aws_resource_count{kind=\"security_group\"}",
+          "expr": "aws_detail_resource_count{kind=\"security_group\"}",
           "refId": "A",
           "instant": true
         }
@@ -1348,7 +1599,7 @@
         "h": 4,
         "w": 3,
         "x": 3,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1387,7 +1638,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "aws_resource_count{kind=\"elastic_ip\"}",
+          "expr": "aws_detail_resource_count{kind=\"elastic_ip\"}",
           "refId": "A",
           "instant": true
         }
@@ -1405,7 +1656,7 @@
         "h": 4,
         "w": 3,
         "x": 6,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1448,7 +1699,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "aws_resource_count{kind=\"elastic_ip_unassociated\"}",
+          "expr": "aws_detail_resource_count{kind=\"elastic_ip_unassociated\"}",
           "refId": "A",
           "instant": true
         }
@@ -1466,7 +1717,7 @@
         "h": 4,
         "w": 3,
         "x": 9,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1505,11 +1756,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "count(aws_iam_user_info) or vector(0)",
+          "expr": "count(aws_iam_user_info) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -1523,7 +1775,7 @@
         "h": 4,
         "w": 3,
         "x": 12,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1562,11 +1814,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "count(aws_iam_role_info) or vector(0)",
+          "expr": "count(aws_iam_role_info) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -1580,7 +1833,7 @@
         "h": 4,
         "w": 3,
         "x": 15,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1619,11 +1872,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "count(aws_iam_policy_info) or vector(0)",
+          "expr": "count(aws_iam_policy_info) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -1637,7 +1891,7 @@
         "h": 4,
         "w": 3,
         "x": 18,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1676,11 +1930,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "count(aws_iam_instance_profile_info) or vector(0)",
+          "expr": "count(aws_iam_instance_profile_info) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "stat",
@@ -1694,7 +1949,7 @@
         "h": 4,
         "w": 3,
         "x": 21,
-        "y": 28
+        "y": 32
       },
       "fieldConfig": {
         "defaults": {
@@ -1733,11 +1988,12 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "sum(aws_eip_info) or vector(0)",
+          "expr": "sum(aws_eip_info) or sum(aws_inventory_scrape_success == 1) * 0",
           "refId": "A",
           "instant": true
         }
-      ]
+      ],
+      "description": "Zero here is EARNED, not defaulted: the `or sum(aws_inventory_scrape_success == 1) * 0` tail yields 0 only when the sweep completed cleanly and found nothing, and leaves the panel empty when the sweep failed."
     },
     {
       "type": "table",
@@ -1751,7 +2007,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 32
+        "y": 36
       },
       "fieldConfig": {
         "defaults": {
@@ -1811,7 +2067,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 32
+        "y": 36
       },
       "fieldConfig": {
         "defaults": {
@@ -1871,7 +2127,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 32
+        "y": 36
       },
       "fieldConfig": {
         "defaults": {
@@ -1922,20 +2178,534 @@
     {
       "type": "row",
       "collapsed": false,
-      "title": "Orphans \u2014 live & NOT Crossplane-managed",
+      "title": "Drift \u2014 what AWS has that git does not",
       "id": 36,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 40
+        "y": 44
       },
       "panels": []
     },
     {
+      "type": "stat",
+      "title": "Managed",
+      "id": 110,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(aws_resource_count{management=\"managed\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Crossplane tags present AND a live managed resource of that kind/name exists. The join key is exact: crossplane-name IS the MR's metadata.name."
+    },
+    {
+      "type": "stat",
+      "title": "Orphaned (fresh)",
+      "id": 111,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "NO DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(aws_orphaned_resource_count{freshness=\"fresh\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Crossplane created it and lost it, and Resource Explorer re-confirmed it exists within the last ORPHAN_FRESH_MAX_AGE. Bills forever; nothing tracks it. Should always be 0."
+    },
+    {
+      "type": "stat",
+      "title": "Orphan suspects",
+      "id": 112,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "NO DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(aws_orphaned_resource_count{freshness=~\"stale|unverified\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Orphan-shaped, but seen only through a source that cannot confirm the resource still exists: the tagging API (no timestamp at all) or a stale Resource Explorer entry. Mostly index lag \u2014 us-east-2's tagging API still returns a crossplane-tagged instance that describe-instances says is gone. Confirm with the owning service before deleting anything."
+    },
+    {
+      "type": "stat",
+      "title": "Unmanaged (review)",
+      "id": 113,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(aws_unmanaged_resource_count{allowlisted=\"0\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "No crossplane-* tags at all: console, CLI, packer or legacy. Exact without Kubernetes, because it depends only on the resource's own tags."
+    },
+    {
+      "type": "stat",
+      "title": "Allowlisted",
+      "id": 114,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(aws_unmanaged_resource_count{allowlisted=\"1\"})",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Unmanaged and expected to be: default-VPC furniture, service-linked roles, per-service singletons AWS creates on first use. Counted, not alarmed."
+    },
+    {
+      "type": "stat",
+      "title": "Inventory total",
+      "id": 115,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_resources_total",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Distinct ARNs in the merged Resource Explorer + tagging API inventory."
+    },
+    {
+      "type": "stat",
+      "title": "MR index readable",
+      "id": 116,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NO",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "YES",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "NO DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_mr_index_ok",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "NO means the Kubernetes half of the join failed, so managed-vs-orphaned is undecidable and every crossplane-tagged resource sits in the `crossplane-tagged` bucket. Check rbac.yaml is armed."
+    },
+    {
+      "type": "stat",
+      "title": "Classification trusted",
+      "id": 117,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 45
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NO",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "YES",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "NO DATA"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_classification_trustworthy",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "NO means every count on this dashboard is a lower bound: the MR index was incomplete, a region's scan failed, or Resource Explorer truncated a result set."
+    },
+    {
       "type": "table",
-      "title": "Unmanaged resources (no crossplane tag)",
-      "id": 37,
+      "title": "ORPHANED \u2014 Crossplane made it, Crossplane lost it, AWS still bills",
+      "id": 118,
       "datasource": {
         "type": "prometheus",
         "uid": "mimir"
@@ -1944,13 +2714,14 @@
         "h": 6,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 49
       },
       "fieldConfig": {
         "defaults": {
           "custom": {
             "filterable": true
-          }
+          },
+          "noValue": "No orphans, or no scan \u2014 check 'MR index readable' before reading this as clean."
         },
         "overrides": []
       },
@@ -1963,7 +2734,7 @@
             "type": "prometheus",
             "uid": "mimir"
           },
-          "expr": "aws_unmanaged_resource",
+          "expr": "aws_orphaned_resource",
           "refId": "A",
           "instant": true,
           "format": "table"
@@ -1990,7 +2761,901 @@
             }
           }
         }
+      ],
+      "description": "freshness=fresh is actionable. stale/unverified need confirmation with the owning service's describe call first."
+    },
+    {
+      "type": "table",
+      "title": "Unmanaged & NOT allowlisted \u2014 console / CLI / packer / legacy",
+      "id": 119,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_unmanaged_resource{allowlisted=\"0\"}",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "Value": true,
+              "instance": true,
+              "job": true,
+              "pod": true,
+              "container": true,
+              "namespace": true,
+              "endpoint": true,
+              "prometheus": true,
+              "prometheus_replica": true,
+              "cluster": true,
+              "service": true,
+              "allowlisted": true
+            }
+          }
+        }
       ]
+    },
+    {
+      "type": "table",
+      "title": "Inventory by service / type / region / bucket",
+      "id": 120,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_resource_count",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "pod": true,
+              "container": true,
+              "namespace": true,
+              "endpoint": true,
+              "prometheus": true,
+              "prometheus_replica": true,
+              "cluster": true,
+              "service": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "collapsed": false,
+      "title": "Scan integrity & coverage \u2014 read this before believing any count",
+      "id": 130,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Regions scanned",
+      "id": 131,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_regions_swept",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Regions enabled",
+      "id": 132,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 3,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_regions_enabled",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "RE indexes",
+      "id": 133,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 6,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "count(aws_inventory_resource_explorer_index)",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Resource Explorer LOCAL/AGGREGATOR indexes that exist."
+    },
+    {
+      "type": "stat",
+      "title": "Aggregator index",
+      "id": 134,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 9,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NO",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "YES",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_resource_explorer_aggregator",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "NO means no single Search can cover the account: every index is LOCAL and answers only for its own region. Promoting one region to AGGREGATOR is an AWS write a human must run \u2014 see infrastructure/base/aws/inventory-ro-user.yaml."
+    },
+    {
+      "type": "stat",
+      "title": "MR kinds discovered",
+      "id": 135,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 12,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_mr_kinds{state=\"discovered\"}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Managed-resource kinds found by walking the API server's discovery doc for Crossplane's `managed` category. Never a hardcoded list \u2014 a hardcoded list silently stops covering new kinds, which is the drift this exporter exists to catch."
+    },
+    {
+      "type": "stat",
+      "title": "MR kinds listable",
+      "id": 136,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 15,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_mr_kinds{state=\"listed\"}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Fewer than discovered means RBAC is missing an API group and the live MR set is incomplete \u2014 every managed resource of those kinds would read as an orphan."
+    },
+    {
+      "type": "stat",
+      "title": "Scan failures",
+      "id": 137,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "sum(aws_inventory_scrape_errors)",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Coverage complete",
+      "id": 138,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 64
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NO",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "YES",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_coverage_complete",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "description": "Trustworthy AND every enabled region scanned by some source AND an AGGREGATOR index exists. 0 = known blind spots, listed to the right."
+    },
+    {
+      "type": "stat",
+      "title": "Zero is believable",
+      "id": 142,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 0,
+        "y": 68
+      },
+      "description": "The single stat that says whether a 0 on the Orphaned panel means anything. YES requires the live managed-resource set read in full AND every enabled region swept cleanly with no truncation. NO means the orphan count is withheld entirely rather than defaulted \u2014 an orphan could be sitting in whatever failed.",
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "NO",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "YES",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "noValue": "NO DATA",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_orphan_detection_authoritative",
+          "refId": "A",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Scan failures \u2014 the `code` label separates AccessDenied from an empty account",
+      "id": 139,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 3,
+        "y": 68
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          },
+          "noValue": "No failures this sweep."
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_scrape_error_info",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "pod": true,
+              "container": true,
+              "namespace": true,
+              "endpoint": true,
+              "prometheus": true,
+              "prometheus_replica": true,
+              "cluster": true,
+              "service": true
+            }
+          }
+        }
+      ],
+      "description": "code=AccessDeniedException / UnauthorizedException means the IAM policy in infrastructure/base/aws/inventory-ro-user.yaml is missing an action. code=HTTP403 with source=kubernetes means rbac.yaml is not armed."
+    },
+    {
+      "type": "table",
+      "title": "Regions with NO Resource Explorer index",
+      "id": 140,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 15,
+        "y": 68
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          },
+          "noValue": "Every enabled region is indexed."
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_region_unindexed",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "Value": true,
+              "instance": true,
+              "job": true,
+              "pod": true,
+              "container": true,
+              "namespace": true,
+              "endpoint": true,
+              "prometheus": true,
+              "prometheus_replica": true,
+              "cluster": true,
+              "service": true
+            }
+          }
+        }
+      ],
+      "description": "Blind spots for the primary source. The tagging API covers them, but only for resources that are tagged \u2014 an untagged leak in these regions is invisible. Fix with `aws resource-explorer-2 create-index --region <r>`."
+    },
+    {
+      "type": "table",
+      "title": "Source divergence \u2014 Resource Explorer vs tagging API",
+      "id": 141,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "mimir"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 0,
+        "y": 75
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "mimir"
+          },
+          "expr": "aws_inventory_source_resources",
+          "refId": "A",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "pod": true,
+              "container": true,
+              "namespace": true,
+              "endpoint": true,
+              "prometheus": true,
+              "prometheus_replica": true,
+              "cluster": true,
+              "service": true
+            }
+          }
+        }
+      ],
+      "description": "Per-region counts from each source. Resource Explorer should return MORE than the tagging API, because it also indexes untaggable resources."
     },
     {
       "type": "row",
@@ -2001,7 +3666,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 82
       },
       "panels": []
     },
@@ -2017,7 +3682,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 48
+        "y": 83
       },
       "fieldConfig": {
         "defaults": {
@@ -2078,7 +3743,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 48
+        "y": 83
       },
       "fieldConfig": {
         "defaults": {
@@ -2124,7 +3789,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 56
+        "y": 91
       },
       "fieldConfig": {
         "defaults": {
@@ -2185,7 +3850,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 56
+        "y": 91
       },
       "fieldConfig": {
         "defaults": {
@@ -2242,7 +3907,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 91
       },
       "fieldConfig": {
         "defaults": {
