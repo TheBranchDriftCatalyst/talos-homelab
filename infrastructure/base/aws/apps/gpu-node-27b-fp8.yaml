@@ -1,0 +1,71 @@
+---
+# ██ LITTLE BOI / TALOS-iymy ██ The everyday rig: spot g6e.2xlarge (1× L40S = 48GB
+# VRAM) in us-west-2 serving Qwen3.8-27B-FP8 via vLLM. ~$1.42/hr spot (us-west-2a,
+# measured 2026-09-30) — about a quarter of the 4× box (gpu-node-235b.yaml), which is
+# why this one is the default ON.
+#
+# COST REALITY: L40S spot capacity is scarce (placement score 1/9), so the discount
+# off ~$2.24 on-demand is thin — this is NOT a pocket-change box. ~$34/day if left up.
+# Check `scripts/check-spot-avail.sh` before assuming a price.
+#
+# WHY us-west-2 AND NOT the cheaper us-east-2a ($1.29/hr): G/VT spot quota is a
+# per-REGION vCPU ceiling. us-east-2 has 48, which is EXACTLY what big boi's
+# g6e.12xlarge needs — parking little boi's 8 vCPU there would leave 40 and lock big
+# boi out entirely. The ~$0.14/hr premium buys non-conflicting quota. Revisit once the
+# quota bump to 64 lands.
+#
+# THE FILE'S LINE IN kustomization.yaml IS THE ON-SWITCH.
+#
+# Why FP8 and not bf16: Qwen3.8-27B in bf16 is 55.6GB and does NOT fit 48GB. The
+# official FP8 checkpoint is 30.9GB, and L40S (Ada) does FP8 natively — so this is
+# the latest-generation flagship Qwen on ONE GPU, where bf16 needs four.
+#
+# Weights come from `hfModel` with no manual S3 seeding: the first boot pulls from
+# HuggingFace and writes s3://catalyst-tbdc-models/Qwen/Qwen3.8-27B-FP8/ plus a
+# _SEED_COMPLETE marker; every boot after syncs from S3 same-region instead.
+#
+# Reach it via SSM port-forward (`scripts/gpu-tunnel.sh`) — the SG is egress-only,
+# so that is the ONLY way in. Mesh-join is a Phase-3 follow-on.
+apiVersion: aws.catalyst.io/v1alpha1
+kind: XGPUInstance
+metadata:
+  name: gpu-node-27b-fp8
+  # poc-demo opts into gpu-testrig-reaper (age > 6h). While this file is ON in git,
+  # the reaper deleting the XR just makes Flux recreate it — so 6h is a CHURN
+  # (new instance, re-sync from S3), not a teardown. Cheap here; git-off is the
+  # real teardown. scripts/gpu-tunnel.sh re-resolves the instance id so a churn
+  # does not strand the local tunnel.
+  labels: {catalyst.io/stage: poc-demo}
+spec:
+  instanceName: gpu-node-27b-fp8
+  instanceType: g6e.2xlarge         # 1× L40S 48GB, 8 vCPU — fits us-west-2's 32-vCPU G/VT spot quota
+  hfModel: Qwen/Qwen3.8-27B-FP8     # 30.9GB across 64 layer shards + mtp + outside
+  modelsBucket: catalyst-tbdc-models  # us-west-2 bucket => same-region sync (free, fast)
+  # Two aliases, space-separated (vLLM serves both; reports the first).
+  #   qwen3.8-27b      — the honest name for what this box runs
+  #   qwen3.8:27b-mlx  — the tag the Mac's local Ollama uses for the SAME MODEL
+  #                      GENERATION (Qwen3.8-27B; MLX on the Mac, FP8 here).
+  # The alias is what keeps ~/.catalyst/llm-config.yaml a single shared file:
+  # models.default_chat stays qwen3.8:27b-mlx, so the launchd :9091 service keeps
+  # resolving it against local Ollama while the Tilt :9092 service resolves the
+  # very same string against this box over the tunnel. Without it, pointing :9092
+  # here would break :9091's chat, because get_default_chat_model() reads that one
+  # yaml for both processes.
+  servedModelName: "qwen3.8-27b qwen3.8:27b-mlx"
+  tensorParallelSize: "1"           # ONE GPU on this shape
+  quantization: "auto"              # FP8 checkpoint self-describes; omitting the flag is correct
+  maxModelLen: "32768"
+  gpuMemoryUtilization: "0.90"      # 43.2GB of 48 − 30.9GB weights ≈ 12GB KV cache
+  enableImageGen: "false"           # no spare VRAM here, and the GHCR bundle image does not exist yet
+  cacheVolumeGb: 100                # 30.9GB model + HF_HOME scratch + headroom
+  servePort: "8000"
+  region: us-west-2
+  # g6e.2xlarge is offered in us-west-2 a/b/c/d. Spot placement score was 1/9 on
+  # 2026-09-30, so expect capacity failures — rotate this field across the other
+  # AZs and re-reconcile. The EBS cache follows this AZ, so it must match subnetId's.
+  availabilityZone: us-west-2a
+  vpcId: vpc-3536d651               # default VPC (verified by the retired gpu-test-rig)
+  subnetId: subnet-36191741         # default subnet for us-west-2a, public-IP-on-launch
+  # catalyst-gpu-seeder, NOT catalyst-ssm: the cold path WRITES the weights to S3,
+  # which needs s3:PutObject. This profile carries that plus AmazonSSMManagedInstanceCore.
+  instanceProfileName: catalyst-gpu-seeder

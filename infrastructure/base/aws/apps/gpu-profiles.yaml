@@ -1,0 +1,66 @@
+---
+# GPU sizing + placement table — NOT a Kubernetes resource.
+#
+# Deliberately excluded from kustomization.yaml's `resources`, so Flux never
+# applies it. It lives next to the claims so the table and the manifests cannot
+# drift: scripts/check-spot-avail.sh reads this file to decide what to query, and
+# every XGPUInstance claim in this directory should correspond to a `rigs` entry.
+#
+# Run `scripts/check-spot-avail.sh` BEFORE flipping a claim on — quota and spot
+# capacity both move, and quota != capacity.
+#
+# ── The quota trap ───────────────────────────────────────────────────────────
+# "All G and VT Spot Instance Requests" (L-3819A6DF) is a per-REGION vCPU ceiling,
+# NOT per-AZ and NOT per-instance-count. There is no per-AZ GPU quota. A 4-GPU
+# .12xlarge is 48 vCPU, so a region at 48 can host exactly ONE of them and nothing
+# else; a region at 32 cannot host one at all, no matter the capacity.
+version: 1
+
+quotaCodes:
+  spot: L-3819A6DF        # All G and VT Spot Instance Requests (vCPU)
+  onDemand: L-DB2E81BA    # Running On-Demand G and VT instances (vCPU)
+
+# Snapshot taken 2026-09-30 — re-read with check-spot-avail.sh, do not trust these.
+regions:
+  us-west-2: {spotVcpu: 32, onDemandVcpu: 48, modelsBucket: catalyst-tbdc-models}
+  us-east-2: {spotVcpu: 48, onDemandVcpu: 48, modelsBucket: catalyst-tbdc-models-use2}
+  us-east-1: {spotVcpu: 0, onDemandVcpu: 0, modelsBucket: null}      # quota 0 — unusable until raised
+  eu-central-1: {spotVcpu: 0, onDemandVcpu: 0, modelsBucket: null}   # quota 0 — unusable until raised
+
+# Candidate machine shapes. `gpus` MUST equal a claim's tensorParallelSize.
+shapes:
+  - {instanceType: g5.2xlarge, gpu: A10G, gpus: 1, vramGb: 24, vcpu: 8}
+  - {instanceType: g6e.2xlarge, gpu: L40S, gpus: 1, vramGb: 48, vcpu: 8}
+  - {instanceType: g6e.4xlarge, gpu: L40S, gpus: 1, vramGb: 48, vcpu: 16}
+  - {instanceType: g6.12xlarge, gpu: L4, gpus: 4, vramGb: 96, vcpu: 48}
+  - {instanceType: g5.12xlarge, gpu: A10G, gpus: 4, vramGb: 96, vcpu: 48}
+  - {instanceType: g6e.12xlarge, gpu: L40S, gpus: 4, vramGb: 192, vcpu: 48}
+
+# Weight sizes measured from the HuggingFace file listings (2026-09-30).
+# `minVramGb` is weights + a usable KV cache, not weights alone.
+models:
+  - {hfModel: Qwen/Qwen3.8-27B-FP8, sizeGb: 30.9, minVramGb: 48, note: "latest flagship, FP8 native on Ada/L40S"}
+  - {hfModel: Qwen/Qwen3.8-27B, sizeGb: 55.6, minVramGb: 96, note: "same model in bf16 — needs 4x"}
+  - {hfModel: Qwen/Qwen3-32B-AWQ, sizeGb: 19.3, minVramGb: 48, note: "staged at the legacy flat key qwen3-32b-awq/. Technically loads on 24GB but leaves ~2.3GB KV (~8k ctx max) — 48GB for a usable context."}
+  - {hfModel: Qwen/Qwen3.5-122B-A10B-GPTQ-Int4, sizeGb: 78.9, minVramGb: 96, note: "MoE, 10B active"}
+  - {hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4, sizeGb: 124.6, minVramGb: 192, note: "staged in use2; original Qwen3 generation"}
+
+# The rigs that exist as claims in this directory.
+rigs:
+  - name: gpu-node-27b-fp8
+    state: "on"
+    instanceType: g6e.2xlarge
+    region: us-west-2
+    availabilityZones: [us-west-2a, us-west-2b, us-west-2c, us-west-2d]
+    hfModel: Qwen/Qwen3.8-27B-FP8
+    spotUsdPerHour: 1.42   # us-west-2a, measured 2026-09-30. NOT the ~0.6 first assumed:
+                           # L40S spot is scarce (score 1/9) so the discount off ~$2.24
+                           # on-demand is thin. us-east-2a is cheaper ($1.29) but see note.
+  - name: gpu-node-235b
+    state: "off"
+    instanceType: g6e.12xlarge
+    region: us-east-2
+    availabilityZones: [us-east-2a, us-east-2b, us-east-2c]
+    hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4
+    spotUsdPerHour: 5.17   # us-east-2c, measured 2026-09-30 (range 5.17-5.24 across AZs).
+                           # In us-west-2 the same shape is $6.11-9.90 — do not move it there.

@@ -1,11 +1,31 @@
 ---
-# ██ MVP / TALOS-iymy ██ The SOTA GPU node: spot g6e.12xlarge (4× L40S = 192GB VRAM) in
-# us-east-2 serving Qwen3-235B-A22B-GPTQ-Int4 via vLLM TP4 + ComfyUI (comfyui-shim :8012)
-# sharing VRAM. THE FILE'S LINE IN kustomization.yaml IS THE ON-SWITCH — it is HELD OFF
-# pending an explicit go (~$5.1/hr spot; on-demand ~$10). The cache is seeded same-region
-# from catalyst-tbdc-models-use2 (the pre-init seeder staged the ~123GB there), so the box
-# does a fast S3->/cache at boot and never touches HuggingFace. Reach it via SSM
-# port-forward for the first bring-up (mesh-join is a Phase-3 follow-on).
+# ██ BIG BOI / TALOS-iymy ██ The SOTA GPU node: spot g6e.12xlarge (4× L40S = 192GB
+# VRAM) in us-east-2 serving Qwen3-235B-A22B-GPTQ-Int4 via vLLM TP4 + ComfyUI
+# (comfyui-shim :8012) sharing VRAM. THE FILE'S LINE IN kustomization.yaml IS THE
+# ON-SWITCH — it is HELD OFF pending an explicit go (~$5.2/hr spot, verified live
+# 2026-09-30; on-demand ~$10).
+#
+# 48 vCPU is EXACTLY us-east-2's G/VT spot quota, so this box alone consumes the
+# whole regional allowance — little boi runs in us-west-2 for that reason. Raising
+# the quota to 64 (see the plan's Part 0) is what lets both run at once.
+#
+# The cache is seeded same-region from catalyst-tbdc-models-use2 (the pre-init
+# seeder staged the ~123GB there). NOTE: the seeded prefix is the LEGACY flat key
+# `qwen3-235b-gptq-int4/`, but `hfModel` now derives the prefix from the HF id, so
+# this expects `Qwen/Qwen3-235B-A22B-GPTQ-Int4/`. Run the one-time server-side copy
+# before flipping this on, or the first boot re-downloads 124.6GB from HuggingFace:
+#   aws s3 cp --recursive s3://catalyst-tbdc-models-use2/qwen3-235b-gptq-int4/ \
+#                         s3://catalyst-tbdc-models-use2/Qwen/Qwen3-235B-A22B-GPTQ-Int4/
+#   aws s3 cp /dev/null s3://catalyst-tbdc-models-use2/Qwen/Qwen3-235B-A22B-GPTQ-Int4/_SEED_COMPLETE
+#
+# Reach it via SSM port-forward (`scripts/gpu-tunnel.sh NAME=gpu-node-235b
+# REGION=us-east-2`) — mesh-join is a Phase-3 follow-on.
+#
+# ON→OFF (2026-09-28): launched i-03e0480dd97da94b1, verified 9/9 LLM acceptance
+# tests (Qwen3-235B via vLLM TP4), then torn down to stop the ~$5.11/hr. Model stays
+# in S3. Caveat on that run: ComfyUI never actually started — the bundle image is a
+# 404 in GHCR and its `docker run` is wrapped in `|| true`, so enableImageGen below
+# is aspirational until `task runpod:build` ships the image.
 apiVersion: aws.catalyst.io/v1alpha1
 kind: XGPUInstance
 metadata:
@@ -13,14 +33,22 @@ metadata:
   labels: {catalyst.io/stage: poc-demo}
 spec:
   instanceName: gpu-node-235b
-  instanceType: g6e.12xlarge          # 4× L40S = 192GB VRAM. Spot ~$5.1/hr (us-east-2c cheapest), score 9/10.
-  ami: ami-07173ded18b6f3a7b          # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA), resolved 2026-09-27. Region-specific (upjet rejects resolve:ssm).
-  models: "qwen3-235b-gptq-int4"      # official Qwen GPTQ-Int4, ~123GB/32 shards; seeded to S3 by the pre-init seeder.
-  modelsBucket: catalyst-tbdc-models-use2  # us-east-2 replica -> same-region S3->/cache (fast, free egress).
-  cacheVolumeGb: 200                  # 123GB model + headroom.
+  instanceType: g6e.12xlarge        # 4× L40S = 192GB VRAM, 48 vCPU. Spot ~$5.2/hr, score 3/9 in us-east-2.
+  hfModel: Qwen/Qwen3-235B-A22B-GPTQ-Int4  # official Qwen GPTQ-Int4, 124.6GB / 32 shards
+  modelsBucket: catalyst-tbdc-models-use2  # us-east-2 replica -> same-region S3->/cache (fast, free egress)
+  servedModelName: qwen3-235b       # unchanged — keeps the contract the 9/9 run verified
+  tensorParallelSize: "4"           # all four L40S
+  quantization: gptq_marlin         # forced: the Marlin GPTQ kernel, not autodetect
+  maxModelLen: "32768"
+  gpuMemoryUtilization: "0.78"      # leaves VRAM for ComfyUI alongside
+  enableImageGen: "true"            # needs the GHCR bundle image to exist — see header
+  cacheVolumeGb: 200                # 124.6GB model + headroom
   servePort: "8000"
   region: us-east-2
-  availabilityZone: us-east-2c        # g6e.12xlarge offered here + spot cheapest; same AZ as the seeder.
-  vpcId: vpc-0fa8197c81c9c151f        # us-east-2 default VPC
+  availabilityZone: us-east-2c      # g6e.12xlarge offered in a/b/c; same AZ as the seeder
+  ami: ami-07173ded18b6f3a7b        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA), resolved 2026-09-27. Region-specific (upjet rejects resolve:ssm).
+  vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC
   subnetId: subnet-030ae60367ab837fe  # default subnet for us-east-2c (public-IP-on-launch)
-  instanceProfileName: catalyst-gpu-seeder  # SSM + S3 read for the boot-time s5cmd S3->/cache. Switch to catalyst-ssm when the Phase-4 snapshot pre-seed lands.
+  # SSM + S3 read/write for the boot-time weights path. Switch to catalyst-ssm only
+  # if the cache is pre-seeded via cacheSnapshotId and no S3 write is needed.
+  instanceProfileName: catalyst-gpu-seeder

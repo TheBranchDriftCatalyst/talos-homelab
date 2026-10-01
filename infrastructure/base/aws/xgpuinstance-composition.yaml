@@ -1,10 +1,18 @@
 ---
-# Composition for XGPUInstance (POC-DEMO, TALOS-455u). Members: SG (egress-only
-# — the box TUNNELS OUT, no public inference port), spot GPU Instance, gp3
-# cache Volume + Attachment. Cache mounts at /cache, seeded via s5cmd
-# (same-region S3→EC2 = free transfer, ~1-2GB/s: 8B warm in ~10s).
-# AMI: AWS Deep Learning Base GPU AMI via SSM alias (NVIDIA drivers included) —
-# VERIFY the alias on unblock day, it's the most drift-prone line here.
+# Composition for XGPUInstance (POC-DEMO, TALOS-455u / TALOS-iymy). Members: SG
+# (egress-only — the box TUNNELS OUT, no public inference port), spot GPU
+# Instance, gp3 cache Volume + Attachment. Cache mounts at /cache.
+#
+# ONE composition for every machine shape. Everything that differs between a
+# 1x L40S box and a 4x L40S box is a spec field on the claim
+# (tensorParallelSize / quantization / maxModelLen / gpuMemoryUtilization /
+# enableImageGen / vllmImage), so there is no second composition to keep in step.
+#
+# The model is `spec.hfModel`, a HuggingFace repo id, and the S3 cache prefix is
+# DERIVED from it — see the seed-on-miss block in userData below.
+#
+# AMI: concrete per-region DL Base GPU AMI ids (NVIDIA drivers included) — the
+# most drift-prone lines here; re-resolve if a launch fails on a deregistered AMI.
 apiVersion: apiextensions.crossplane.io/v1
 kind: Composition
 metadata:
@@ -62,7 +70,7 @@ spec:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.availabilityZone, toFieldPath: spec.forProvider.availabilityZone}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.cacheVolumeGb, toFieldPath: spec.forProvider.size}
               # Pre-seeded warm cache (TALOS-iymy): restore /cache from a snapshot the small seeder built,
-              # so the GPU box never downloads models. Optional — unset => blank gp3 volume.
+              # so the GPU box skips even the S3 sync. Optional — unset => blank gp3 volume.
               - {type: FromCompositeFieldPath, fromFieldPath: spec.cacheSnapshotId, toFieldPath: spec.forProvider.snapshotId, policy: {fromFieldPath: Optional}}
           - name: cache-attachment
             base:
@@ -113,41 +121,86 @@ spec:
               - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.publicIp, toFieldPath: status.publicIp}
               - type: CombineFromComposite
                 combine:
-                  # %s order MUST match this list: models, modelsBucket, servePort, servePort, models
+                  # Every variable is interpolated EXACTLY ONCE, straight into a shell
+                  # variable at the top of the script; bash composes the rest. The old
+                  # layout inlined fields at their point of use, which forced
+                  # spec.models and spec.servePort to be listed twice and made the
+                  # "%s order MUST match this list" comment load-bearing. It isn't now —
+                  # but the order below still has to match the assignments.
                   variables:
-                    - {fromFieldPath: spec.models}
+                    - {fromFieldPath: spec.hfModel}
                     - {fromFieldPath: spec.modelsBucket}
                     - {fromFieldPath: spec.servePort}
-                    - {fromFieldPath: spec.servePort}
-                    - {fromFieldPath: spec.models}
+                    - {fromFieldPath: spec.servedModelName}
+                    - {fromFieldPath: spec.tensorParallelSize}
+                    - {fromFieldPath: spec.quantization}
+                    - {fromFieldPath: spec.maxModelLen}
+                    - {fromFieldPath: spec.gpuMemoryUtilization}
+                    - {fromFieldPath: spec.enableImageGen}
+                    - {fromFieldPath: spec.vllmImage}
                   strategy: string
                   string:
                     fmt: |
                       #!/bin/bash
-                      # TALOS-iymy MVP serving (vllm-single): the big model on vLLM TP4 + ComfyUI sharing VRAM.
+                      # XGPUInstance boot: mount /cache, get the weights, serve them.
                       # NO `set -eu` (lesson: it aborted before vLLM ever started on any transient error).
                       # Logs to /var/log/gpu-init.log; inspect via SSM. Mesh-join is a Phase-3 follow-on — a
                       # first launch is reachable via `aws ssm start-session ... AWS-StartPortForwardingSession`.
                       exec > >(tee /var/log/gpu-init.log) 2>&1; set -x
+                      HF_MODEL="%s"; BUCKET="%s"; PORT="%s"; SERVED="%s"; TP="%s"
+                      QUANT="%s"; MAXLEN="%s"; UTIL="%s"; IMAGES="%s"; VLLM_IMAGE="%s"
                       # --- mount the model cache (gp3; Nitro renames /dev/sdf -> /dev/nvmeXn1; wait for attach) ---
                       for i in $(seq 1 40); do D=$(readlink -f /dev/sdf 2>/dev/null || true); [ -b "$D" ] && break; [ -b /dev/nvme1n1 ] && { D=/dev/nvme1n1; break; }; sleep 5; done
                       blkid "$D" >/dev/null 2>&1 || mkfs.xfs "$D"
                       mkdir -p /cache && mount "$D" /cache || true
                       # --- s5cmd (PINNED: the /latest/download/s5cmd_Linux-64bit.tar.gz asset 404s -> silent no-binary) ---
                       curl -fsSL https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz | tar xz -C /usr/local/bin s5cmd
-                      # --- same-region S3 -> /cache (fast; the big GPU never touches HuggingFace) ---
-                      for m in %s; do /usr/local/bin/s5cmd sync "s3://%s/$m/*" "/cache/$m/"; done
-                      # --- LLM: vLLM GPTQ-Int4, TP4 across all 4 L40S, util 0.78 (leaves VRAM for ComfyUI), on :%s ---
-                      docker run -d --restart=always --name vllm --gpus all --ipc=host -p %s:8000 \
-                        -v /cache:/cache -e HF_HOME=/cache/hf vllm/vllm-openai:latest \
-                        --model "/cache/%s" --served-model-name qwen3-235b \
-                        --tensor-parallel-size 4 --quantization gptq_marlin \
-                        --gpu-memory-utilization 0.78 --max-model-len 32768 --trust-remote-code
+                      # --- weights: the S3 cache prefix IS the HF id, so one field drives both ---
+                      # WARM (normal): same-region S3 -> /cache. Free transfer, ~1-2GB/s.
+                      # COLD (first box ever to boot this model): pull from HF once, then
+                      # WRITE S3 so every later boot takes the warm path. The download runs
+                      # inside the pinned vLLM image — it already ships huggingface_hub, so
+                      # the host needs no pip and no PATH guessing. snapshot_download with
+                      # local_dir writes a plain file tree (no blob symlinks), which is what
+                      # makes the s5cmd round-trip safe.
+                      S3="s3://$BUCKET/$HF_MODEL"; DIR="/cache/$HF_MODEL"
+                      mkdir -p "$DIR"
+                      if /usr/local/bin/s5cmd ls "$S3/_SEED_COMPLETE" >/dev/null 2>&1; then
+                        /usr/local/bin/s5cmd sync "$S3/*" "$DIR/"
+                      else
+                        docker run --rm -i --entrypoint python3 -v /cache:/cache -e HF_HOME=/cache/hf "$VLLM_IMAGE" - <<PY
+                      from huggingface_hub import snapshot_download
+                      snapshot_download("$HF_MODEL", local_dir="$DIR", max_workers=16)
+                      PY
+                        /usr/local/bin/s5cmd sync "$DIR/" "$S3/" \
+                          && echo done | /usr/local/bin/s5cmd cp - "$S3/_SEED_COMPLETE"
+                      fi
+                      # --- LLM: vLLM on :$PORT. 'auto' quantization means OMIT the flag and let
+                      #     vLLM autodetect from the checkpoint's config.json (right for FP8/AWQ/GPTQ
+                      #     repos that self-describe); set it explicitly only to force a kernel. ---
+                      QUANT_ARG=""; [ "$QUANT" != "auto" ] && QUANT_ARG="--quantization $QUANT"
+                      # $SERVED is INTENTIONALLY UNQUOTED: vLLM's --served-model-name takes
+                      # nargs='+', so a space-separated servedModelName becomes several
+                      # aliases and the endpoint answers to all of them. That is what lets
+                      # one ~/.catalyst/llm-config.yaml model name resolve against BOTH the
+                      # Mac's local Ollama and this box. Same space-separated idiom the old
+                      # `models` field used.
+                      docker run -d --restart=always --name vllm --gpus all --ipc=host -p "$PORT":8000 \
+                        -v /cache:/cache -e HF_HOME=/cache/hf "$VLLM_IMAGE" \
+                        --model "$DIR" --served-model-name $SERVED \
+                        --tensor-parallel-size "$TP" $QUANT_ARG \
+                        --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" --trust-remote-code
                       # --- Image gen: ComfyUI + comfyui-shim (OpenAI /v1/images on :8012), sharing VRAM.
-                      #     `|| true`: runpod-mac-bundle is built+pushed separately; a launch before it exists
-                      #     still brings up vLLM. Ollama/Whisper disabled — vLLM owns the LLM path. ---
-                      docker run -d --restart=always --name comfy --gpus all -p 8012:8012 -p 8188:8188 \
-                        -v /cache:/workspace -e ENABLE_OLLAMA=false -e ENABLE_WHISPER=false \
-                        -e ENABLE_COMFYUI=true -e ENABLE_COMFYUI_SHIM=true \
-                        ghcr.io/thebranchdriftcatalyst/runpod-mac-bundle:latest || true
+                      #     Gated on enableImageGen because it only fits where the LLM leaves spare VRAM.
+                      #     `|| true`: runpod-mac-bundle is built+pushed separately and DOES NOT EXIST in
+                      #     GHCR yet (404 as of 2026-09-30, see SESSION_STATUS.md) — a launch before it
+                      #     exists still brings up vLLM. That `|| true` is also why the 2026-09-28 235B
+                      #     launch reported success with no ComfyUI running at all.
+                      #     Ollama/Whisper disabled — vLLM owns the LLM path. ---
+                      if [ "$IMAGES" = "true" ]; then
+                        docker run -d --restart=always --name comfy --gpus all -p 8012:8012 -p 8188:8188 \
+                          -v /cache:/workspace -e ENABLE_OLLAMA=false -e ENABLE_WHISPER=false \
+                          -e ENABLE_COMFYUI=true -e ENABLE_COMFYUI_SHIM=true \
+                          ghcr.io/thebranchdriftcatalyst/runpod-mac-bundle:latest || true
+                      fi
                 toFieldPath: spec.forProvider.userData

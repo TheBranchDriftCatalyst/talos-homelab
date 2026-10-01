@@ -1,7 +1,11 @@
 ---
-# XFargateApp instances (layer 3, sibling of buckets/) — kind exists only
-# after layer 2's XRD. Instances carry REPLACE-ME placeholders until the
-# human console-walk in each file's header is done.
+# AWS XR instances (layer 3, sibling of buckets/) — these kinds exist only
+# after layer 2's XRDs. Each FILE'S LINE HERE IS ITS ON-SWITCH: uncommented =
+# provisioning real AWS resources, commented = the off position.
+#
+# NOT a resource: gpu-profiles.yaml is a plain sizing/placement table read by
+# scripts/check-spot-avail.sh, deliberately left out of the list below so Flux
+# ignores it. It lives here so the table and the claims cannot drift apart.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -10,24 +14,33 @@ resources:
   # it is a free IAM primitive any box references via spec.instanceProfileName to
   # get Session Manager interactive access. See ssm-instance-profile.yaml header.
   - ssm-instance-profile.yaml
-  # ALWAYS-ON: the cheap seeder's IAM identity (SSM + scoped S3 + EBS snapshot) so the big GPU box
-  # never needs S3 / never downloads models. See gpu-seeder-profile.yaml header (TALOS-iymy).
+  # ALWAYS-ON: the cheap seeder's IAM identity (SSM + scoped S3 + EBS snapshot). Every
+  # XGPUInstance uses this now, because the seed-on-miss weights path WRITES to the
+  # model bucket. See gpu-seeder-profile.yaml header (TALOS-iymy).
   - gpu-seeder-profile.yaml
-  # ALWAYS-ON: cost backstop for the poc-demo GPU test rig (age>2h). See file header.
+  # ALWAYS-ON: cost backstop for poc-demo GPU boxes (age > 6h — the window is
+  # MAX=21600 in the file, not the 2h this comment used to claim). While a claim is
+  # ON in git the reaper's delete is undone by Flux on the next reconcile, so it caps
+  # a single box's AGE (churn) rather than tearing it down. See file header.
   - gpu-testrig-reaper.yaml
-  # ── OFF (2026-09-27) ── gpu-test-rig tested OK (g5.xlarge A10G serving
-  # qwen3-14b-awq via vLLM, verified answering over SSM) then torn down. The file
-  # carries a working spec (g5.xlarge/us-west-2a/14B); flip on to re-launch, or
-  # swap to g6e.xlarge + qwen3-32b-awq when L40S capacity/quota (TALOS-nxt4) lands.
-  # - gpu-test-rig.yaml
-  # ── OFF / HELD (TALOS-iymy) ── the SOTA GPU node: spot g6e.12xlarge (4× L40S) in us-east-2
-  # serving Qwen3-235B-A22B-GPTQ-Int4 (vLLM TP4) + ComfyUI. ~$5.1/hr spot. Uncomment ONLY on an
-  # explicit go AND after the seed's _SEED_COMPLETE marker exists + aws-gpu-report.sh shows
-  # us-east-2 g6e.12xlarge still has capacity. See gpu-node-235b.yaml header.
-  # ON→OFF (2026-09-28): launched i-03e0480dd97da94b1, verified 9/9 LLM acceptance tests
-  # (Qwen3-235B via vLLM TP4), then torn down (git-off) to stop the ~$5.11/hr. Model stays in
-  # S3 (catalyst-tbdc-models-use2); relaunch = uncomment (userData is fixed with --ipc=host).
+  # ── ON (2026-09-30) ── LITTLE BOI (TALOS-iymy): spot g6e.2xlarge (1× L40S 48GB) in
+  # us-west-2 serving Qwen3.8-27B-FP8 via vLLM. ~$0.6/hr spot. This is the everyday
+  # rig and the default-on one; see gpu-node-27b-fp8.yaml header.
+  - gpu-node-27b-fp8.yaml
+  # ── OFF / HELD (TALOS-iymy) ── BIG BOI: spot g6e.12xlarge (4× L40S) in us-east-2
+  # serving Qwen3-235B-A22B-GPTQ-Int4 (vLLM TP4) + ComfyUI. ~$5.2/hr spot — do NOT
+  # leave it running unattended ($124/day). Uncomment ONLY on an explicit go, AND
+  # after (a) the one-time S3 key copy in its header, and (b) check-spot-avail.sh
+  # shows us-east-2 g6e.12xlarge still has capacity.
+  # ON→OFF (2026-09-28): launched i-03e0480dd97da94b1, verified 9/9 LLM acceptance
+  # tests (Qwen3-235B via vLLM TP4), then torn down (git-off) to stop the ~$5.11/hr.
   # - gpu-node-235b.yaml
+  #
+  # ── RETIRED (2026-09-30) ── gpu-test-rig.yaml (TALOS-455u, the 2026-09-26 g5.xlarge
+  # + Qwen3-14B-AWQ POC) is DELETED. It was superseded by gpu-node-235b the next day,
+  # and the shared composition was then rewritten for the 4-GPU shape, leaving the
+  # rig's spec unlaunchable (TP4 on one GPU). gpu-node-27b-fp8 above is its successor.
+  #
   # OFF (2026-09-25). The rest are commented out deliberately -- per this file's own
   # "file = on-switch" idiom, that is the off position. Uncomment to spin up.
   #
@@ -42,6 +55,7 @@ resources:
   #
   # NOT READY TO ENABLE AS-IS: both claims still carry vpcId: vpc-REPLACE-ME and
   # subnetId: subnet-REPLACE-ME, so they could not have come up correctly anyway.
-  # Fill those in before flipping the switch.
-  # - vllm-8b.yaml # POC-DEMO: on-demand GPU box — BLOCKED: on-demand G/VT quota is 0 (spot-only); would be rejected
+  # Fill those in before flipping the switch. They also predate the `models` ->
+  # `hfModel` change, so their specs need updating to the current XRD.
+  # - vllm-8b.yaml # POC-DEMO: on-demand GPU box — on-demand G/VT quota is now 48 (was 0)
   # - talos-worker-poc.yaml # POC-DEMO: KubeSpan hybrid worker — needs machineconfig secret plumbing first (see file header)
