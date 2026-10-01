@@ -19,10 +19,17 @@
 #     stay up unattended.
 # If spot capacity recovers and shows a real discount, add `capacityType: spot`.
 #
-# WHY us-west-2 AND NOT us-east-2: G/VT quota is a per-REGION vCPU ceiling. us-east-2
-# has 48 on-demand, which is EXACTLY what big boi's g6e.12xlarge needs, so parking
-# 8 vCPU there would leave 40 and lock big boi out of its own region. On-demand price
-# is per-region-identical across AZs, so there is no AZ premium to trade away.
+# REGION — moved to us-east-2 on 2026-09-30. us-west-2 was preferred (it leaves
+# us-east-2's 48 vCPU free, which is EXACTLY what big boi's g6e.12xlarge needs), but
+# us-west-2 has no g6e.2xlarge capacity at all: after placement was unpinned, AWS
+# chose freely across every zone and still returned "Insufficient capacity" with no
+# zone named. us-east-2 is an independent capacity pool.
+#
+# The cost of being here: little boi's 8 vCPU leaves 40 of us-east-2's 48, so big boi
+# CANNOT launch concurrently until the pending quota bump to 64 clears. Big boi is
+# git-off, so that is latent, not blocking. Move back to us-west-2 (and back to the
+# catalyst-tbdc-models bucket + drop the ami override) when L40S capacity returns
+# there, or when the quota bump lands.
 #
 # PLACEMENT IS UNPINNED (TALOS-rkg0). No AZ and no subnet are named, so AWS picks
 # the zone that actually has capacity. This is not a convenience — g6e.2xlarge refused
@@ -57,7 +64,7 @@ spec:
   instanceName: gpu-node-27b-fp8
   instanceType: g6e.2xlarge         # 1× L40S 48GB, 8 vCPU — fits us-west-2's 32-vCPU G/VT spot quota
   hfModel: Qwen/Qwen3.8-27B-FP8     # 30.9GB across 64 layer shards + mtp + outside
-  modelsBucket: catalyst-tbdc-models  # us-west-2 bucket => same-region sync (free, fast)
+  modelsBucket: catalyst-tbdc-models-use2  # us-east-2 bucket => same-region sync (free, fast)
   # Two aliases, space-separated (vLLM serves both; reports the first).
   #   qwen3.8-27b      — the honest name for what this box runs
   #   qwen3.8:27b-mlx  — the tag the Mac's local Ollama uses for the SAME MODEL
@@ -78,10 +85,13 @@ spec:
   enableImageGen: "false"           # no spare VRAM here, and the GHCR bundle image does not exist yet
   # No cache volume: /cache is this shape's 450GB local NVMe instance store.
   servePort: "8000"
-  region: us-west-2
+  region: us-east-2
+  # The composition's default AMI is us-west-2-specific and AMI ids are regional,
+  # so moving region REQUIRES setting this. Same id big boi uses.
+  ami: ami-07173ded18b6f3a7b        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA)
   # vpcId is only for the egress-only SG. No subnet is set, so AWS places this in
   # whichever zone has capacity, choosing among this VPC's default subnets.
-  vpcId: vpc-3536d651               # us-west-2 default VPC
+  vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC
   # catalyst-gpu-seeder, NOT catalyst-ssm: the cold path WRITES the weights to S3,
   # which needs s3:PutObject. This profile carries that plus AmazonSSMManagedInstanceCore.
   instanceProfileName: catalyst-gpu-seeder
