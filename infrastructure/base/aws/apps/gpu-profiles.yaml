@@ -67,9 +67,16 @@ endpoint:
   llmRemotePort: 8000
   imageLocalPort: 18012
   imageRemotePort: 8012
-  # Where the operator points when NO rig is on — which is the default state. This is
-  # what makes "down by default" fall out of this file instead of being a separate
-  # decision in the Tiltfile.
+  # THE URL CONSUMERS SHOULD USE (TALOS-x1sb / LEVEL 2). Served by Traefik on the LAN,
+  # routed to the gpu-backend Service, which selects the in-cluster gpu-relay Pod holding
+  # the SSM tunnel. Consumers need no port, no tunnel and no laptop — this is what takes
+  # the Mac out of the loop and makes catalyst-operator a CONSUMER rather than the
+  # transport. Guarded by the lan-only middleware (TALOS-a8vo.4).
+  clusterUrl: "http://ollama.talos00"
+  # Where consumers point when NO rig is on — the default state. Still needed at Level 2
+  # because nothing yet fails over automatically: with no rig, clusterUrl returns 503.
+  # TALOS-rzjx's InterceptorRoute has coldStart.fallback, which would make clusterUrl
+  # correct unconditionally and retire this field.
   localFallbackUrl: "http://localhost:11434"
 
 quotaCodes:

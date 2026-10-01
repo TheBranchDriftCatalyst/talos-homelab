@@ -1,0 +1,135 @@
+---
+# gpu-relay — the reachability hop (TALOS-x1sb / LEVEL 2).
+#
+# THE POINT: take the Mac out of the loop. Before this, the SSM tunnel terminated on a
+# laptop, so catalyst-operator was not a CONSUMER of the inference endpoint — it WAS the
+# transport. Close the lid and inference died, and nothing else on the network could
+# reach the box at all. This Pod holds the tunnel instead, so the box is reachable from
+# anything in the cluster and the Mac becomes just another client.
+#
+# WHY A POD AND NOT AN ENDPOINTSLICE. The original design had gpu-broker write the
+# tunnel's address into a selectorless Service's EndpointSlice. That can never work:
+# EndpointSlice validation REJECTS loopback addresses ("may not be in the loopback range
+# 127.0.0.0/8"), and an SSM port-forward terminates on 127.0.0.1. addressType: FQDN is
+# not an escape hatch either — no core component implements it and kube-proxy programs
+# no rules. And the instance's own IP is unreachable because the SG is egress-only by
+# design. A Pod sidesteps all three: it has a routable Pod IP, so a normal label
+# selector works, and it becomes probe-able and HPA-observable for free.
+# Upstream calls this shape "dual pods" (llm-d): a requesting Pod that describes a
+# desired inference server without running it, and the providing box that does.
+#
+# TWO CONTAINERS, ON PURPOSE. The session-manager-plugin binds its forwarded port on
+# LOCALHOST only, which kubectl port-forward can reach but a Service cannot. Containers
+# in a Pod share a network namespace, so `proxy` binds 0.0.0.0 and bridges to the
+# tunnel's localhost listener. That is the whole reason for the second container.
+#
+# NO CUSTOM IMAGE. Both are stock. The plugin is installed at start with the same
+# one-liner aws-redteam/ssm-jump.yaml already uses — the amazon/aws-cli image is
+# AL-based, so dnf is available and the RPM is a plain install.
+#
+# READINESS IS THE INTERESTING PART. The probe does an HTTP GET of /health THROUGH the
+# tunnel, so Ready means "vLLM is actually serving", not "the relay process started".
+# That is what makes this Pod a truthful backend for gpu-backend, and later what lets a
+# request interceptor release held requests at the right moment rather than into a void.
+#
+# EXPECTED RESTING STATE IS NOT-READY. With no rig running the tunnel has nothing to
+# connect to, the probe fails, the Pod stays Running-but-NotReady, and gpu-backend has no
+# endpoints — so ollama.talos00 returns 503. That is correct, not broken.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-relay
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-relay
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gpu-relay
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gpu-relay
+        app.kubernetes.io/part-of: gpu-inference
+    spec:
+      securityContext:
+        runAsNonRoot: false # dnf needs root to install the plugin
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        # ── the tunnel ────────────────────────────────────────────────────────
+        - name: tunnel
+          image: amazon/aws-cli:2.31.24
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -uo pipefail
+              # Same install line as aws-redteam/ssm-jump.yaml. Pinned to :latest by AWS;
+              # there is no versioned URL for the plugin RPM.
+              command -v session-manager-plugin > /dev/null 2>&1 \
+                || dnf install -y https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm > /dev/null
+              echo "relay: targeting tag:Name=${RIG_NAME} in ${AWS_REGION}"
+              while true; do
+                # RE-RESOLVE EVERY ATTEMPT. The instance id is not stable: a spot
+                # interruption or a reaper churn replaces the box, and an EC2 Fleet of
+                # type maintain replaces it again. A tunnel pinned to one id dies at the
+                # first churn and takes inference with it.
+                ID=$(aws ec2 describe-instances --region "$AWS_REGION" \
+                      --filters "Name=tag:Name,Values=${RIG_NAME}" \
+                                "Name=instance-state-name,Values=running" \
+                      --query 'Reservations[].Instances[0].InstanceId' \
+                      --output text 2> /dev/null)
+                if [ -z "$ID" ] || [ "$ID" = "None" ]; then
+                  echo "relay: no running instance tagged ${RIG_NAME}; retrying in ${RETRY_SECS}s"
+                  sleep "$RETRY_SECS"
+                  continue
+                fi
+                echo "relay: connecting to ${ID}"
+                aws ssm start-session --region "$AWS_REGION" --target "$ID" \
+                  --document-name AWS-StartPortForwardingSession \
+                  --parameters "portNumber=${REMOTE_PORT},localPortNumber=${LOCAL_PORT}"
+                echo "relay: session to ${ID} ended; re-resolving in ${RETRY_SECS}s"
+                sleep "$RETRY_SECS"
+              done
+          env:
+            # NOTE: these duplicate aws/apps/gpu-profiles.yaml, which is the source of
+            # truth for which rig is on and in which region. They are env vars because
+            # this Pod lives in a different Flux kustomization than that table. Keep
+            # them in step by hand until something generates one from the other.
+            - {name: RIG_NAME, value: gpu-node-27b-fp8}
+            - {name: AWS_REGION, value: us-east-2}
+            - {name: REMOTE_PORT, value: "8000"}
+            - {name: LOCAL_PORT, value: "18000"}
+            - {name: RETRY_SECS, value: "15"}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: gpu-relay-creds, key: username}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: gpu-relay-creds, key: password}}
+          resources:
+            requests: {cpu: 25m, memory: 128Mi}
+            limits: {memory: 512Mi}
+        # ── localhost -> pod IP ───────────────────────────────────────────────
+        - name: proxy
+          image: alpine/socat:1.8.1.3
+          args:
+            - TCP-LISTEN:8000,fork,reuseaddr
+            - TCP:127.0.0.1:18000
+          ports:
+            - {name: http, containerPort: 8000}
+          # Ready only when vLLM answers THROUGH the tunnel. periodSeconds x
+          # failureThreshold is generous because a cold rig streams tens of GB into VRAM
+          # before /health returns 200.
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 60
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}

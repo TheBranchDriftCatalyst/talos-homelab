@@ -1,0 +1,80 @@
+---
+# catalyst-gpu-relay — the IAM identity the in-cluster SSM relay Pod uses (TALOS-x1sb).
+#
+# WHY A SEPARATE USER rather than reusing catalyst-aws-inventory-ro: that one is
+# deliberately read-only, and ssm:StartSession is NOT a read. It opens a session and
+# forwards traffic. Mixing the two would quietly turn the inventory exporter's
+# credentials into something that can tunnel into any SSM-managed box.
+#
+# Scope is deliberately narrow: start/resume/terminate a session, and the two describe
+# calls needed to FIND the box by tag. No ssm:SendCommand (that executes arbitrary
+# commands as root), no ec2 mutations, no S3.
+#
+# The relay runs in-cluster, so it needs a static access key — this is a bare-metal
+# Talos cluster with no IRSA. Rotate by deleting the AccessKey MR; Crossplane mints a
+# new one and rewrites the secret.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: User
+metadata:
+  name: catalyst-gpu-relay
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-relay}
+  annotations:
+    crossplane.io/external-name: catalyst-gpu-relay
+spec:
+  forProvider:
+    path: /catalyst/
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: catalyst-gpu-relay
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-relay}
+  annotations:
+    crossplane.io/external-name: catalyst-gpu-relay
+spec:
+  forProvider:
+    path: /catalyst/
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {"Sid": "FindTheBox", "Effect": "Allow",
+           "Action": ["ec2:DescribeInstances", "ssm:DescribeInstanceInformation"],
+           "Resource": "*"},
+          {"Sid": "PortForwardOnly", "Effect": "Allow",
+           "Action": ["ssm:StartSession"],
+           "Resource": "arn:aws:ec2:*:744062333585:instance/*",
+           "Condition": {"StringEquals": {
+             "ssm:SessionDocumentAccessCheck": "true"}}},
+          {"Sid": "PortForwardDocumentOnly", "Effect": "Allow",
+           "Action": ["ssm:StartSession"],
+           "Resource": "arn:aws:ssm:*::document/AWS-StartPortForwardingSession"},
+          {"Sid": "OwnSessionLifecycle", "Effect": "Allow",
+           "Action": ["ssm:TerminateSession", "ssm:ResumeSession"],
+           "Resource": "arn:aws:ssm:*:*:session/${aws:username}-*"}
+        ]
+      }
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: UserPolicyAttachment
+metadata:
+  name: catalyst-gpu-relay
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-relay}
+spec:
+  forProvider:
+    userRef: {name: catalyst-gpu-relay}
+    policyArnRef: {name: catalyst-gpu-relay}
+---
+# Crossplane writes the key pair into gpu-inference/gpu-relay-creds as username/password
+# (access key id / secret), the same shape the inventory exporter consumes.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: AccessKey
+metadata:
+  name: catalyst-gpu-relay
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-relay}
+spec:
+  forProvider:
+    userRef: {name: catalyst-gpu-relay}
+  writeConnectionSecretToRef:
+    namespace: gpu-inference
+    name: gpu-relay-creds

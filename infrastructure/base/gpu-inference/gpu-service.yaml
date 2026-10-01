@@ -1,14 +1,23 @@
 ---
-# SELECTORLESS Service for the ephemeral AWS GPU box.
+# gpu-backend — the in-cluster handle on the AWS GPU box (TALOS-x1sb / LEVEL 2).
 #
-# There is no pod behind this — the backend is a vLLM process on an EC2 instance reached
-# over a tunnel. gpu-broker writes the EndpointSlice from the XGPUInstance's status once
-# the box is up, and empties it when the box is reaped. Same shape as the working
-# mac-sdlc-node/ollama-mac Service, which fronts the Mac at 192.168.1.33 the same way.
+# WAS SELECTORLESS, with gpu-broker writing the tunnel's address into a hand-authored
+# EndpointSlice. That could never have worked, for three independent reasons:
+#   * EndpointSlice validation REJECTS loopback ("may not be in the loopback range
+#     127.0.0.0/8, ::1/128"), and an SSM port-forward terminates on 127.0.0.1
+#   * addressType: FQDN is not an escape hatch — no core component implements it and
+#     kube-proxy programs no rules for it
+#   * the instance's own IP is unreachable anyway: the XGPUInstance SG is egress-only
+# ...and there was never a Pod or process anywhere in the cluster holding that tunnel.
 #
-# Empty endpoints is the NORMAL resting state (GPU scaled to zero). The gateway's
-# readiness probe fails while it is empty, which is exactly what keeps the KEDA
-# interceptor holding requests instead of releasing them into the void.
+# So it now selects the gpu-relay Pod by label, like any ordinary Service, and the
+# EndpointSlice is DELETED rather than left as an empty stub — a stub invites the next
+# person to try writing an address into it again.
+#
+# Empty endpoints is still the NORMAL resting state. With no rig running, gpu-relay's
+# readiness probe fails (it GETs /health THROUGH the tunnel, so Ready genuinely means
+# "vLLM is serving"), this Service has no endpoints, and ollama.talos00 returns 503.
+# That is correct behaviour, not a fault.
 apiVersion: v1
 kind: Service
 metadata:
@@ -19,30 +28,10 @@ metadata:
     app.kubernetes.io/part-of: gpu-inference
 spec:
   type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gpu-relay
   ports:
     - name: http
       port: 8000
-      targetPort: 8000
+      targetPort: http
       protocol: TCP
----
-# Seed an EMPTY EndpointSlice so the Service exists in a well-defined "no backend" state
-# rather than a missing-object state. gpu-broker owns the contents from here on; Flux
-# owns only this empty shell.
-#
-# NOTE: the broker is the single writer of .endpoints. Do not add addresses here — a
-# committed address would be reasserted by Flux every reconcile and fight the broker
-# (the same class of conflict that keeps the XRs themselves out of git).
-apiVersion: discovery.k8s.io/v1
-kind: EndpointSlice
-metadata:
-  name: gpu-backend-static
-  namespace: gpu-inference
-  labels:
-    kubernetes.io/service-name: gpu-backend
-    app.kubernetes.io/part-of: gpu-inference
-addressType: IPv4
-ports:
-  - name: http
-    port: 8000
-    protocol: TCP
-endpoints: []

@@ -31,6 +31,15 @@ spec:
         - name: lan-only
           namespace: traefik
       services:
-        - name: keda-add-ons-http-interceptor-proxy
-          namespace: keda
-          port: 8080
+        # LEVEL 2 (TALOS-x1sb): straight to gpu-backend, which selects the gpu-relay
+        # Pod holding the SSM tunnel. KEDA is deliberately NOT in this path yet —
+        # Level 2's win (the Mac is no longer the transport) does not depend on
+        # scale-to-zero, and routing through an interceptor before there is anything
+        # to intercept only adds a hop that can fail. Restore the interceptor when
+        # TALOS-rzjx (InterceptorRoute) and TALOS-5drv.5 land.
+        - name: gpu-backend
+          namespace: gpu-inference
+          port: 8000
+        # - name: keda-add-ons-http-interceptor-proxy
+        #   namespace: keda
+        #   port: 8080

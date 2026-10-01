@@ -14,12 +14,20 @@ namespace: gpu-inference
 
 resources:
   - namespace.yaml
-  - gpuprofile.yaml            # the git-owned machine + cache SPEC
-  - gpu-service.yaml           # selectorless backend + empty EndpointSlice
+  - gpuprofile.yaml            # lifecycle TTLs only (TALOS-tt48)
+  - gpu-service.yaml           # gpu-backend, now SELECTS the gpu-relay Pod
+  # ── OFF ── LEVEL 2 reachability hop (TALOS-x1sb). THIS LINE IS THE ON-SWITCH.
+  # The Pod holding the SSM tunnel, so the Mac stops being the transport. Arming it
+  # needs gpu-inference/gpu-relay-creds to exist, which means first uncommenting
+  # gpu-relay-user.yaml in ../aws/apps/kustomization.yaml and letting Crossplane mint
+  # the key. Without that secret the Pod sits in CreateContainerConfigError.
+  # Harmless to arm with no rig running: the tunnel loop just reports no instance and
+  # the Pod stays Running-but-NotReady.
+  # - relay-deployment.yaml
   - gateway-deployment.yaml    # readiness gated on the GPU backend
   - gateway-service.yaml
   - httpscaledobject.yaml      # KEDA buffer + scale-from-zero
-  - ingressroute.yaml          # ollama.talos00 -> interceptor
+  - ingressroute.yaml          # ollama.talos00 -> gpu-backend (interceptor deferred)
   - broker-rbac.yaml
   - broker-deployment.yaml
   - reaper-instance-cronjob.yaml  # tier 1: HOT -> WARM (cost backstop)
