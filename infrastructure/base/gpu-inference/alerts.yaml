@@ -74,21 +74,24 @@ spec:
             summary: "A gpu-inference reaper Job is failing"
             description: "kubectl logs -n gpu-inference job/{{ $labels.job_name }}"
 
-    - name: gpu-inference.availability
-      rules:
-        # ── REMOVED (2026-10-01): GPUGatewayStuckNotReady ──────────────────────
-        # It watched kube_deployment_status_replicas_unavailable for ollama-gateway, a
-        # Deployment that no longer exists, so it was already a silently dead alert.
-        #
-        # It is NOT re-keyed onto gpu-relay, deliberately. gpu-relay is NotReady whenever
-        # no rig is running, which is the normal and intended resting state -- so the
-        # same expression against the relay would fire continuously and get muted, which
-        # is strictly worse than having no alert.
-        #
-        # Making it work needs a signal for "a rig is SUPPOSED to be up", which does not
-        # exist as a metric today: XGPUInstance is a custom resource and kube-state-metrics
-        # only exposes CRs when explicitly configured via its custom-resource-state config.
-        # Add that first, then the alert becomes expressible as
-        #   relay NotReady AND an XGPUInstance exists, for >12m
-        # which is the question actually worth alerting on. Tracked with the demand-plane
-        # work (TALOS-x1sb and onward).
+    # ── GROUP REMOVED (2026-10-01): gpu-inference.availability ──────────────
+    # Its only rule was GPUGatewayStuckNotReady, watching
+    # kube_deployment_status_replicas_unavailable for ollama-gateway — a Deployment that
+    # no longer exists, so the alert was already silently dead and would never have
+    # fired again.
+    #
+    # It is NOT re-keyed onto gpu-relay, deliberately. The relay is NotReady whenever no
+    # rig is running, which is the intended resting state, so the same expression would
+    # fire continuously and get muted — strictly worse than having no alert.
+    #
+    # Making it real needs a signal for "a rig is SUPPOSED to be up", which is not a
+    # metric today: XGPUInstance is a custom resource, and kube-state-metrics only
+    # exposes CRs when its custom-resource-state config is set up. Add that, then the
+    # alert becomes expressible as
+    #     gpu-relay NotReady AND an XGPUInstance exists, for > 12m
+    # which is the question actually worth paging on. Tracked with the demand-plane work
+    # (TALOS-x1sb and onward).
+    #
+    # The GROUP is dropped rather than left with an empty rules: list — a group with
+    # rules: null fails the PrometheusRule schema ("must be of type array"), which Flux
+    # catches only on SERVER-side dry-run, not by client-side validation.
