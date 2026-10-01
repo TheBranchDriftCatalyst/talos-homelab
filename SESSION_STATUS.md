@@ -2,8 +2,8 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-09-27
-**Pick up here:** `TALOS-iymy` (SOTA GPU node — resume from the `_SEED_COMPLETE` marker; the g6e.12xlarge launch is held for an explicit go) · **Deadline item:** none outstanding
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-01
+**Pick up here:** `TALOS-x1sb` (Level 2 relay Pod — built and committed but DISARMED; arming it plus one rig is the first end-to-end test this plane has ever had) · **Deadline item:** none outstanding
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -19,9 +19,13 @@ Multi-node Talos cluster, dual GitOps (Flux for infra, ArgoCD for apps). Everyth
 
 **The live effort is the SOTA GPU node; two older efforts remain open.**
 
-1. **SOTA GPU inference node** (`TALOS-iymy`) — _the live one_. A us-east-2 `g6e.12xlarge` (4× L40S)
-   serving Qwen3-235B + ComfyUI on a self-hosted Headscale mesh, model cached from S3. Phases 0–1
-   (mesh + AWS prereqs) and the pytest acceptance suite are in; the model is seeding to S3. See Now/next.
+1. **Ephemeral GPU inference plane** (`TALOS-5drv`, formerly `TALOS-iymy`) — _the live one_. An
+   `XGPUInstance` Crossplane claim provisions a bare AWS GPU box on demand; weights stream from S3
+   into vLLM; a relay Pod in-cluster holds the SSM tunnel so nothing on a laptop is in the path.
+   Design and reasoning live in [`infrastructure/base/aws/architecture.md`](infrastructure/base/aws/architecture.md)
+   and [`ROADMAP.md`](infrastructure/base/aws/ROADMAP.md) — **read those, not this paragraph**. Note the
+   earlier Headscale-mesh plan was dropped: the box joins nothing. Nothing is running; off is the
+   deliberate default. See Now/next.
 2. **Docs as projection** (`TALOS-f0sd`) — open; was the live effort on 2026-09-19. The tree is pruned
    from 105 to 37 files and `docsgen` (a portable Go linter at `dev/docs-generator/`) reports drift; the
    generator half remains.
@@ -35,29 +39,38 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-### Active — `TALOS-iymy`, SOTA GPU inference node (mesh + 235B + ComfyUI)
+### Active — `TALOS-x1sb`, Level 2: arm the relay Pod and run the first real end-to-end test
 
-|                       |                                                                                                                                                                                                       |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Resume here**       | A seeder EC2 is streaming Qwen3-235B-A22B-GPTQ-Int4 (~123GB) into `s3://catalyst-tbdc-models-use2/`. Check the `_SEED_COMPLETE` marker (an aws Job in `crossplane-system`, region `us-east-2`), then continue. |
-| Next, in order        | Build `runpod-ollama`+`runpod-mac-bundle` → GHCR; rewrite the XGPUInstance userData (mesh-join from secret `mesh/headscale-join-key` + `s5cmd` S3→`/cache` + `docker run` **upstream** `vllm/vllm-openai` 235B TP4 `gptq_marlin` + ComfyUI); add the `us-east-2` `g6e.12xlarge` claim. |
-| Held for explicit go  | The `g6e.12xlarge` **launch** (~$5–10/hr) — the only real spend. Confirm quota+capacity with `scripts/aws-gpu-report.sh` first. Full plan: `~/.claude/plans/…-snazzy-starlight.md`; state in `bd remember sota-gpu-node-state` + `qwen-seeder-inflight`. |
+|                      |                                                                                                                                                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Resume here**      | Everything for Level 2 is committed and **disarmed**. Arm `gpu-relay-user.yaml` in `aws/apps/kustomization.yaml` **first** and wait for the secret `gpu-inference/gpu-relay-creds`, then `relay-deployment.yaml` in `gpu-inference/`. Out of order the Pod sits in `CreateContainerConfigError`. |
+| Then, in order       | `scripts/check-spot-avail.sh` → arm `gpu-node-27b-fp8.yaml` → watch `/var/log/gpu-init.log` (and `gpu-init.FAILED`) over SSM → **`curl http://ollama.talos00/v1/models` from the Mac with no tunnel running** → re-comment the claim and sweep both regions for orphans. |
+| What this finally proves | Nothing has served a token yet. Unexercised: whether `CreateFleet` accepts a launch template with no subnet and no AZ; the `nvidia-smi` TP derivation; the Run:ai streamer reading `s3://`; and `terminateInstances: true` actually stopping the bill. |
+| Cost                 | ~$2.24/hr for the 1× L40S. Expect capacity failures — L40S spot placement scores 1/9 and on-demand refused region-wide in us-west-2.                                                                                                  |
+
+### Also open — `TALOS-hnod`, account-wide AWS inventory with orphan detection
+
+|            |                                                                                                                                                                                                      |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| State      | **Uncommitted, unreviewed agent work in the tree** — `exporter.py`, `deployment.yaml`, `kustomization.yaml`, `aws/inventory-ro-user.yaml`, plus new `alerts.yaml` and `rbac.yaml`. All parse; none reviewed. |
+| Why it matters | It is the thing that would _tell you_ something is quietly billing. Classification is exact, not heuristic: upjet tags everything with `crossplane-kind`/`crossplane-name`, and `crossplane-name` **is** the MR name — so tagged-with-no-MR means orphaned. |
+| Note       | Resource Explorer is the primary API (verified: default views already include tags, and it sees untaggable resources the tagging API misses). Two gaps need an AWS **write**: us-east-2 has no index, and nothing is an AGGREGATOR. |
 
 ### Still P0 — `TALOS-a8vo.4`, host-spoof reaches everything (partly remediated)
 
-|             |                                                                                                                                                                                                       |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| What moved  | The deferred **off-net cold pass** ran from a real AWS vantage and confirmed the live exposures; the concurrent session landed `lan-only` on the worst surfaces (`a8vo.7` **closed**; 6 admin/AI surfaces in `9e464b32`). |
-| Still to do | The full **exemption inventory** + the Traefik entrypoint-default inversion are the careful finish. `a8vo.4` is still open (P0).                                                                       |
+|             |                                                                                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unchanged   | The **exemption inventory** + the Traefik entrypoint-default inversion are still the careful finish. `a8vo.4` remains open and still outranks most things. |
 
 ### Explicitly not next
 
-|                                       |                                                                                                                                                                      |
-| ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Launching the `g6e.12xlarge` unprompted | It's the only real spend in the GPU effort. Confirm `_SEED_COMPLETE` + capacity + an explicit go first.                                                            |
-| Flipping the Traefik entrypoint default | Not before the exemption inventory exists — a wrong list locks out your own SSO.                                                                                   |
-| `TALOS-lq5y` provider-cred cutover      | The scoped IAM user is created (phase 1), but repointing the live ProviderConfig off the root keys can break the whole AWS stack — do it tested + deliberately, not casually. |
-| `TALOS-f0sd` (docs) · `TALOS-a13n` (security campaign) | Both still open + worthwhile, but the GPU effort and the a8vo.4 P0 outrank them right now.                                                          |
+|                                                        |                                                                                                                                                                                 |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scale-to-zero / `TALOS-5drv.5`                         | Deferred **on purpose** until a cold boot is boring, and its old design is known broken (`TALOS-x1sb`). It is also blocked behind the relay Pod — there is nothing for a scaler to target until a Pod exists. |
+| Level 3 / KubeSpan (`TALOS-5drv.6`)                    | Discovery only. It needs neither Nebula nor a lighthouse, but KubeSpan is not enabled on any of the 5 nodes and NVIDIA-on-Talos is **not** solved — `talos02-gpu` is an Intel node. De-risk with one cheap non-GPU Talos worker first. |
+| Launching `gpu-node-235b` (4× L40S)                    | ~$5.17/hr, and 48 vCPU is the entire us-east-2 G/VT quota. Needs the one-time S3 key copy in its header first, or the first boot re-pulls 124.6 GB from HuggingFace. |
+| Removing KEDA                                          | Core is load-bearing for `openscad/manyfold-performance-worker`, `boomtime/boomtime-jobs` and `crossplane-demo/demo-celery`. Only the nginx proxy was deleted; leave both HelmReleases alone. |
+| Raising G/VT quota past 48                             | One rig at a time is the invariant. Quota should be headroom, never a brake — that mistake is already recorded in `aws/apps/kustomization.yaml`. |
 
 <!-- /closeout:next -->
 
@@ -66,6 +79,59 @@ If you are here to do something else entirely, that is fine and probably correct
 <!-- closeout:sessions -->
 
 ## Sessions
+
+### 2026-09-30/10-01 — GPU plane rebuilt: fleet placement, streamed weights, and the Mac out of the loop
+
+**Commits:** 16 here + 2 in `catalyst-operator` · **Scope:** `infrastructure/base/aws/`, `infrastructure/base/gpu-inference/`, `infrastructure/base/kyverno-policies/`, `infrastructure/base/aws-providers/`, `scripts/`
+
+**Filed:** `TALOS-5drv` (epic) + `.1`/`.5`/`.6`/`.7`, `TALOS-x1sb`, `TALOS-5mfc`, `TALOS-rzjx`, `TALOS-hnod`, `TALOS-msb0`, `TALOS-tt0c`, `TALOS-46y0`, `TALOS-vuf5`, `TALOS-fwl9`
+**Closed:** `TALOS-rkg0`, `TALOS-i91u`, `TALOS-5drv.2`, `TALOS-5drv.3`, `TALOS-5drv.4`, `TALOS-tt48`, `TALOS-osxr` (duplicate)
+**Carried:** `TALOS-x1sb` — Level 2 is committed but disarmed, and arming it is the gate on `5mfc`/`rzjx`/`5drv.5`. `TALOS-hnod` has uncommitted, unreviewed agent work in the tree.
+
+The XGPUInstance API now takes a HuggingFace repo id and derives everything from it: the
+S3 cache prefix, and on a cold boot a seed-on-miss that pulls from HF once and writes S3
+for every box after. `tensorParallelSize` is derived at boot from `nvidia-smi` rather than
+asserted (a pool spanning 1-GPU and 4-GPU shapes has no single correct value), weights now
+stream from S3 straight into VRAM via vLLM's bundled Run:ai Model Streamer, and the bare
+`Instance` became `LaunchTemplate` + **EC2 Fleet** so AWS can pick whichever instance-type
+pool has capacity. `/cache` moved to the instance's local NVMe, which deleted the EBS
+volume, both placement fields and a monthly charge.
+
+That last one was forced, not chosen. The rig would not launch: spot refused in
+us-west-2a, then 2d, then on-demand refused **region-wide** in us-west-2 and again in
+us-east-2, before us-east-2c opened on its own. The zone pin existed only because an EBS
+cache is zone-scoped — and AWS's own remediation text is to stop naming a zone. One rig
+did finally run (`i-07c9140f294b30ed9`) and proved the NVMe path before being torn down
+during the cold weight pull. **Nothing has yet served a token end to end**; the Fleet path,
+the TP derivation and the streamer are all committed but unexercised. Cost for the whole
+session was about **$0.75**.
+
+Found rather than built, in rough order of nastiness. `terminateInstances` on an EC2 Fleet
+**defaults to false**, so at the default, deleting the XR would have left a GPU box billing
+with nothing tracking it. The demand plane's central mechanism **cannot work**: EndpointSlice
+validation rejects loopback, so `gpu-broker` could never have written an SSM tunnel's
+`127.0.0.1`, `addressType: FQDN` is unimplemented by any core component, and there was no
+tunnel Pod anywhere — which retroactively justified deferring scale-to-zero. `ollama.talos00`
+**hung for 8s and returned nothing**, because the interceptor dutifully held every request
+for a gateway pinned at 0 replicas that could never report Ready; it now 503s in 23ms.
+`httpscaledobject.yaml` targeted an API deleted upstream on 2026-09-30. ComfyUI **never ran**
+on the 2026-09-28 235B POC — its image is a 404 in GHCR and the `docker run` is wrapped in
+`|| true`, so a success was reported for something that never started. And spot turned out
+not to be cheaper: its price is capped at on-demand, and in the only AZs with capacity the
+discount was **0.0%**.
+
+Two mistakes of mine worth recording. I removed the KEDA HTTP add-on HelmRelease when only
+the nginx proxy it was scaling was meant to go — reverted; KEDA core is load-bearing for
+three unrelated workloads (`openscad`, `boomtime`, `crossplane-demo`). And deleting an alert
+left a PrometheusRule group with `rules: null`, which passed yamllint **and** the
+`kube-validate` hook and then stalled the entire kustomization on Flux, silently taking an
+unrelated prune with it. That gap is now `TALOS-msb0`.
+
+Also landed: a one-rig-at-a-time Kyverno guard (armed and verified live — a
+`ValidatingAdmissionPolicy` provably cannot count sibling CRs), one home for the endpoint
+contract that had been copy-pasted into four code locations across two repos, and colocated
+[`architecture.md`](infrastructure/base/aws/architecture.md) +
+[`ROADMAP.md`](infrastructure/base/aws/ROADMAP.md) carrying the three-level design.
 
 ### 2026-09-26/27 — SOTA GPU inference node: mesh, the quota fight, interactive SSM
 
@@ -311,6 +377,34 @@ worth keeping is distilled up into this list first. Fuller detail lives in
 23. **Bulk model staging (HF→S3) must run on an in-AWS EC2, never the on-prem cluster.** The
     download is fast anywhere, but uploading ~123GB to S3 over the home uplink takes hours. An
     EC2 in the target region does HF→S3 (and S3→EBS) on the AWS backbone in minutes.
+24. **`kubectl apply --dry-run=client` does not validate CRD schemas.** The `kube-validate`
+    hook uses it, so a PrometheusRule with `rules: null` passed both it and yamllint (null is
+    valid YAML), then failed Flux's server-side apply. Use `--dry-run=server`. Same family as
+    gotcha 2.
+25. **A Kustomization that fails on one object stops applying everything else in it.** The bad
+    alert above silently took an unrelated prune with it. One malformed field blocks the whole
+    directory, so a failing reconcile is never "just that one resource".
+26. **Crossplane v2 ships provider managed resources INACTIVE.** 339 MRDs exist here and the
+    activation policy enables ~21, so `kubectl api-resources` showing five ec2 kinds does **not**
+    mean the provider lacks the rest — check `kubectl get mrd`. Without activating a kind, a
+    composition referencing it renders something the API server will not serve and every claim
+    sits `Synced=False` forever.
+27. **upjet refuses immutable-field replacement.** Changing `region`, `vpcId` or an EBS volume's
+    AZ leaves the MR stuck at `Synced=False` with "requires replacing it", not self-healing.
+    Delete the dependent MR first, then the parent. Runbook: `TALOS-vuf5`.
+28. **Spot is not automatically cheaper, and quota is not capacity.** Spot price is capped at
+    on-demand: measured 2026-10-01, `g6e.2xlarge` spot in us-west-2b/2c was $2.2421 against a
+    $2.24208 on-demand list — a 0.0% discount for full interruption risk — and the only AZs
+    showing a real discount were the ones that refused capacity. G/VT quota is also a per-REGION
+    vCPU ceiling, never per-AZ.
+29. **EndpointSlice validation rejects loopback addresses**, and `addressType: FQDN` is
+    implemented by nothing. So a tunnel terminating on `127.0.0.1` can never be a Service
+    backend — it needs a Pod in the path. This invalidated the whole `gpu-backend` design.
+30. **Reported GPU memory is below the marketing number.** An L40S reports 45776 MiB = 44.7 GiB,
+    not "48 GB"; an A10G 22.4 GiB, not 24. Budget KV cache against `describe-instance-types`,
+    not a datasheet.
+31. **`terminateInstances` on an EC2 Fleet defaults to `false`.** Left at the default, deleting
+    the XR leaves the instances running and billing with nothing tracking them.
 
 <!-- /closeout:gotchas -->
 
