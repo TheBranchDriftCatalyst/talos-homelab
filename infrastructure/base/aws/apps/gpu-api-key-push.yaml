@@ -19,8 +19,11 @@
 # workload. The only new thing needed is this identity, and Crossplane manages it the same
 # way it manages catalyst-gpu-relay and catalyst-aws-inventory-ro.
 #
-# Scope is one parameter path. PutParameter is a write, deliberately the ONLY write, and it
-# cannot reach any other prefix.
+# Scope is one parameter path. PutParameter and AddTagsToResource are the only writes,
+# and neither can reach another prefix.
+# ListTagsForResource looks redundant next to AddTagsToResource but is NOT: ESO reads
+# the parameter's existing tags before writing, so without it the push fails with
+# AccessDenied on a LIST it never occurred to me it would need.
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: User
 metadata:
@@ -47,7 +50,8 @@ spec:
         "Statement": [
           {"Sid": "PushTheGpuApiKeyOnly", "Effect": "Allow",
            "Action": ["ssm:PutParameter", "ssm:AddTagsToResource", "ssm:GetParameter",
-                      "ssm:DescribeParameters"],
+                      "ssm:DescribeParameters",
+                      "ssm:ListTagsForResource"],
            "Resource": "arn:aws:ssm:*:744062333585:parameter/catalyst/gpu/*"},
           {"Sid": "EncryptWithTheAccountDefaultKey", "Effect": "Allow",
            "Action": ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey"],
