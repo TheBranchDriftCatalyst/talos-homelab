@@ -227,6 +227,7 @@ _snapshot = ("# HELP aws_inventory_scrape_success 1 if the last sweep succeeded.
 _lock = threading.Lock()
 
 MANAGED, ORPHANED = "managed", "orphaned"
+STALE_INDEX = "stale-index"   # tagged, no MR, and CONFIRMED ABSENT in AWS (TALOS-04s3)
 UNMANAGED, UNDECIDABLE = "unmanaged", "crossplane-tagged"
 
 
@@ -593,6 +594,91 @@ def enrich_tags(merged, errors):
     return enriched, all_ok
 
 
+# ── existence verification (TALOS-04s3) ──────────────────────────────────────────────
+# BOTH inventory APIs keep returning resources after deletion. A deleted resource looks
+# EXACTLY like an orphan - crossplane tags present, no live MR - so without this check
+# every teardown manufactures phantom orphans. Measured 2026-10-02: four fleets reported
+# orphaned, three of which did not exist at all and one of which was state=deleted.
+#
+# freshness does NOT substitute for this. It comes from LastReportedAt, which says the
+# INDEX touched the row recently, not that the resource exists; three of those four
+# phantoms were in the `fresh` tier.
+#
+# Cost is bounded by the ORPHAN CANDIDATE count - normally zero - not by inventory size,
+# which is why a per-resource API call is affordable here and nowhere else in this file.
+#
+# (service, method, id-kwarg, absent-marker-substrings). The markers are matched against
+# the botocore error code, so a permissions failure is NOT mistaken for absence.
+EXISTENCE_CHECKS = {
+    "ec2:fleet":           ("ec2", "describe_fleets", "FleetIds", ("InvalidFleetId.NotFound",)),
+    "ec2:instance":        ("ec2", "describe_instances", "InstanceIds", ("InvalidInstanceID.NotFound",)),
+    "ec2:security-group":  ("ec2", "describe_security_groups", "GroupIds", ("InvalidGroup.NotFound",)),
+    "ec2:launch-template": ("ec2", "describe_launch_templates", "LaunchTemplateIds", ("InvalidLaunchTemplateId.NotFound",)),
+    "ec2:volume":          ("ec2", "describe_volumes", "VolumeIds", ("InvalidVolume.NotFound",)),
+    "iam:role":            ("iam", "get_role", "RoleName", ("NoSuchEntity",)),
+    "iam:user":            ("iam", "get_user", "UserName", ("NoSuchEntity",)),
+    "iam:policy":          ("iam", "get_policy", "PolicyArn", ("NoSuchEntity",)),
+    "s3:bucket":           ("s3", "head_bucket", "Bucket", ("404", "NoSuchBucket")),
+}
+# An EC2 instance can exist and still be gone. terminated/shutting-down instances keep
+# answering describe for ~an hour, so the API returning one is not evidence of existence.
+_DEAD_INSTANCE_STATES = ("terminated", "shutting-down")
+
+
+def verify_existence(candidates, errors):
+    """Which orphan candidates are confirmed GONE? -> (absent_arns, all_ok).
+
+    all_ok=False whenever a candidate's existence could not be established - either no
+    check is mapped for its type, or the call failed. That feeds the authoritative gate
+    for the same reason a failed tag read does: an orphan count we cannot substantiate is
+    not a number to publish as fact.
+    """
+    if not candidates:
+        return set(), True
+    clients, absent, all_ok = {}, set(), True
+    for arn, row in candidates:
+        check = EXISTENCE_CHECKS.get(row["type"])
+        if check is None:
+            errors.record("existence", row["region"], f"unmapped:{row['type']}",
+                          Exception("no existence check for this type"))
+            all_ok = False
+            continue
+        service, op, kwarg, markers = check
+        ident = arn.split("/")[-1] if "/" in arn else arn.split(":")[-1]
+        key = (service, row["region"])
+        try:
+            if key not in clients:
+                clients[key] = boto3.client(
+                    service, config=_boto,
+                    **({} if service == "iam" else {"region_name": row["region"]}))
+            cli = clients[key]
+            arg = arn if row["type"] == "iam:policy" else ident
+            resp = getattr(cli, op)(**{kwarg: ([arg] if kwarg.endswith("Ids") else arg)})
+            if row["type"] == "ec2:instance":
+                states = [i.get("State", {}).get("Name")
+                          for r in resp.get("Reservations", []) for i in r.get("Instances", [])]
+                # NO states means AWS has aged the record out entirely - that is absent,
+                # not "exists". Measured: a long-terminated instance returns an empty
+                # Reservations list rather than raising InvalidInstanceID.NotFound, so
+                # requiring a non-empty list here reported a dead box as still present.
+                if not states or all(st in _DEAD_INSTANCE_STATES for st in states):
+                    absent.add(arn)
+            elif row["type"] == "ec2:fleet":
+                # describe_fleets does NOT 404 a deleted fleet; it returns it as deleted.
+                states = [f.get("FleetState") for f in resp.get("Fleets", [])]
+                if not states or all(st and st.startswith("deleted") for st in states):
+                    absent.add(arn)
+        except Exception as exc:  # noqa: BLE001
+            resp = getattr(exc, "response", None) or {}
+            code = (resp.get("Error") or {}).get("Code") or type(exc).__name__
+            if any(mark in code for mark in markers):
+                absent.add(arn)          # confirmed gone: a stale index row, not an orphan
+            else:
+                errors.record(service, row["region"], f"{op}:{row['type']}", exc)
+                all_ok = False
+    return absent, all_ok
+
+
 # ── classification ───────────────────────────────────────────────────────────────────
 def classify(tags, mr_index, mr_ok):
     """-> (management, crossplane_kind, crossplane_name)."""
@@ -741,9 +827,32 @@ def inventory(m, errors, mr_index, mr_ok, regions):
     m.add("aws_inventory_tag_enrichment", {"result": "enriched"}, enriched)
     m.add("aws_inventory_tag_enrichment", {"result": "complete"}, 1 if tags_ok else 0)
 
+    # Then ask AWS whether each orphan candidate still EXISTS (TALOS-04s3). Both inventory
+    # APIs keep returning deleted resources, and a deleted resource is indistinguishable
+    # from an orphan by tags alone, so without this every teardown invents orphans.
+    # Classification is cheap and pure, so running it twice to find the candidates costs
+    # nothing and keeps the expensive call off every other row.
+    candidates = [(a, r) for a, r in merged.items()
+                  if classify(r["tags"], mr_index, mr_ok)[0] == ORPHANED]
+    absent, exists_ok = verify_existence(candidates, errors)
+    m.declare("aws_inventory_stale_index_rows",
+              "Orphan candidates that AWS confirms are GONE: the inventory API is serving "
+              "a deleted resource. Informational, never alertable — but worth seeing, "
+              "because it explains away a number someone would otherwise chase.")
+    m.add("aws_inventory_stale_index_rows", None, len(absent))
+    m.declare("aws_inventory_existence_checks",
+              "Orphan candidates whose existence was checked, and whether every check "
+              "succeeded. complete=0 means an orphan count cannot be substantiated.")
+    m.add("aws_inventory_existence_checks", {"result": "checked"}, len(candidates))
+    m.add("aws_inventory_existence_checks", {"result": "complete"}, 1 if exists_ok else 0)
+
     for arn in sorted(merged):
         row = merged[arn]
         management, kind, name = classify(row["tags"], mr_index, mr_ok)
+        if management == ORPHANED and arn in absent:
+            # Tagged, no MR — but AWS says it is gone. That is a stale index row, not an
+            # orphan, and calling it an orphan is how the alert gets muted.
+            management = STALE_INDEX
         allow = allowlisted(arn)
         always = (management in (ORPHANED, UNDECIDABLE)
                   or (management == UNMANAGED and not allow))
@@ -834,7 +943,10 @@ def inventory(m, errors, mr_index, mr_ok, regions):
                        and all(r in scanned for r in regions))
     # tags_ok matters as much as mr_ok: a type whose tags we could not read can never
     # reach the orphan branch, so a zero would be a lower bound presented as a fact.
-    authoritative = mr_ok and inventory_clean and tags_ok
+    # exists_ok belongs here for the same reason tags_ok does: if a candidate's existence
+    # could not be established — no check mapped for its type, or the call failed — then a
+    # zero orphan count is a lower bound being presented as a fact.
+    authoritative = mr_ok and inventory_clean and tags_ok and exists_ok
     m.declare("aws_inventory_orphan_detection_authoritative",
               "1 if a ZERO orphan count can be believed: MR index read in full AND every "
               "enabled region swept cleanly with no truncation. 0 means the orphan count "
