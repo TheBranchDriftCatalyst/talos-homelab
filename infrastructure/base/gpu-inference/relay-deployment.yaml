@@ -117,15 +117,34 @@ spec:
             - TCP:127.0.0.1:18000
           ports:
             - {name: http, containerPort: 8000}
-          # Ready only when vLLM answers THROUGH the tunnel. periodSeconds x
-          # failureThreshold is generous because a cold rig streams tens of GB into VRAM
-          # before /health returns 200.
-          readinessProbe:
+          # Ready only when vLLM answers THROUGH the tunnel, so Ready means the far end
+          # is really serving - not merely that socat bound a port.
+          #
+          # The long tolerance for a cold rig belongs in a startupProbe, NOT in the
+          # readiness failureThreshold. failureThreshold applies in BOTH directions: a
+          # readiness probe with failureThreshold 60 x periodSeconds 10 also takes 600s to
+          # mark the Pod NotReady AFTER a rig goes away, and for those ten minutes the
+          # Service keeps advertising a relay with no backend. Measured on the 2026-10-02
+          # teardown: the rig was gone and the Pod still read Ready.
+          # A startupProbe suspends readiness until the first success, so the cold-boot
+          # budget and the de-advertise latency can be set independently.
+          #
+          # 90 x 10s = 15min of cold-boot budget. The 2026-10-02 run needed ~7min on a
+          # warm S3 prefix (30.9GB streamed, then CUDA graph capture); a cold HuggingFace
+          # seed of a larger model is the case this has to cover, so the budget is
+          # deliberately well above anything measured.
+          startupProbe:
             httpGet: {path: /health, port: 8000}
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 60
+            failureThreshold: 90
+          # Once serving, 3 x 10s means a dead rig de-advertises in ~30s.
+          readinessProbe:
+            httpGet: {path: /health, port: 8000}
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests: {cpu: 25m, memory: 32Mi}
             limits: {memory: 128Mi}

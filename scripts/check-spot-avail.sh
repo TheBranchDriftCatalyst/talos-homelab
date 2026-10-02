@@ -154,10 +154,22 @@ if [ "$HAVE_TABLE" -eq 1 ]; then
              m["minVramGib"], ok.empty? ? "(nothing in the table)" : ok.join(", "))
     end
     puts
+    # STATE is DERIVED from the kustomization, never stored here (TALOS-cmni): an
+    # uncommented `- gpu-node-<name>.yaml` line is the switch Flux acts on, so it cannot
+    # disagree with reality. A stored copy did, on 2026-10-02, printing "off" for a rig
+    # that was armed and billing on AWS.
+    kust = File.join(File.dirname(ARGV[0]), "kustomization.yaml")
+    armed = File.exist?(kust) ? File.readlines(kust).map(&:strip).
+      select { |l| l.start_with?("- gpu-node-") && l.end_with?(".yaml") }.
+      map { |l| l.delete_prefix("- ").delete_suffix(".yaml") } : []
     printf("  %-20s %-5s %-16s %-14s %-34s %s\n", "RIG", "STATE", "SHAPE", "REGION", "MODEL", "~$/hr")
     (d["rigs"] || []).each do |r|
-      printf("  %-20s %-5s %-16s %-14s %-34s %s\n", r["name"], r["state"].to_s,
+      printf("  %-20s %-5s %-16s %-14s %-34s %s\n", r["name"],
+             armed.include?(r["name"]) ? "ON" : "off",
              r["instanceType"], r["region"], r["hfModel"], r["spotUsdPerHour"])
+    end
+    (armed - (d["rigs"] || []).map { |r| r["name"] }).each do |n|
+      printf("  %-20s %-5s %s\n", n, "ON", "(armed but NOT in this table)")
     end
   ' "$PROFILES"
 else

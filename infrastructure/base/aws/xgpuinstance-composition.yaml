@@ -433,12 +433,6 @@ spec:
                     # a fleet CAN say "on-demand" out loud - see the XRD's
                     # capacityType comment for the history.
                     defaultTargetCapacityType: on-demand
-                  spotOptions:
-                    # AWS's current recommendation, and the right one for scarce L40S:
-                    # weighs pool capacity depth first and price second, instead of
-                    # charging at the cheapest pool and getting interrupted out of it.
-                    # Ignored when the fleet is on-demand.
-                    allocationStrategy: price-capacity-optimized
                   onDemandOptions:
                     # Cheapest shape that HAS capacity. This is what makes a pool
                     # containing a dearer shape safe: the dear one is reached for only
@@ -453,6 +447,25 @@ spec:
                         # same way sg-egress finds its security group.
                         launchTemplateIdSelector: {matchControllerRef: true}
                         version: "$Latest"
+                # initProvider, NOT forProvider (TALOS-8cjb). upjet applies these at
+                # CREATE and then stops reconciling them, which is exactly the semantics
+                # wanted: the allocation strategy decides how the fleet is first placed and
+                # is meaningless to re-assert afterwards.
+                #
+                # In forProvider this made the Fleet permanently Synced=False. The
+                # Terraform aws_ec2_fleet schema DEFAULTS spot_options.
+                # instance_pools_to_use_count to 1, while AWS reports 0 because that field
+                # only applies to the lowest-price allocation strategy - and
+                # price-capacity-optimized is deliberate here. upjet saw 0 vs its own
+                # default of 1, found the field immutable, and refused to update, every
+                # reconcile, forever. Nothing in this file ever set it.
+                initProvider:
+                  spotOptions:
+                    # AWS's current recommendation, and the right one for scarce L40S:
+                    # weighs pool capacity depth first and price second, instead of
+                    # charging at the cheapest pool and getting interrupted out of it.
+                    # Ignored when the fleet is on-demand.
+                    allocationStrategy: price-capacity-optimized
             patches:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceName, toFieldPath: "spec.forProvider.tags[Name]"}

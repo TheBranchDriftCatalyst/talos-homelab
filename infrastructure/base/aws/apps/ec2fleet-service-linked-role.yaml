@@ -1,0 +1,40 @@
+---
+# AWSServiceRoleForEC2Fleet — declared so a fresh account never hits the first-CreateFleet
+# race (TALOS-grb7).
+#
+# Without this, the FIRST CreateFleet call ever made in an AWS account fails: AWS begins
+# auto-creating this role on that call, and the call loses the race against it —
+#
+#   api error ServiceLinkedRoleCreationInProgress: The Service-Linked Role for this EC2
+#   Fleet is not yet ready for use.
+#
+# upjet retries 3 times inside one reconcile, exhausts them, and surfaces a hard
+# ReconcileError on the Fleet. It self-heals on the next reconcile, so the practical cost
+# is one wasted debugging session per account — and the error names the fleet, which sends
+# you looking at the composition rather than at IAM. Observed live 2026-10-02.
+#
+# This is a one-time, account-scoped, FREE IAM resource, not per-rig, which is why it
+# lives here rather than in the XGPUInstance composition: composing it per rig would make
+# every rig's teardown try to delete a role the next rig needs.
+#
+# Already exists on account 744062333585 (AWS created it at 2026-10-02T14:55:47 during that
+# first failed call), so Crossplane ADOPTS it rather than creating it. The external-name
+# annotation is what makes adoption work instead of a name collision.
+#
+# deletionPolicy: Orphan is deliberate. Service-linked roles are account infrastructure
+# shared by anything using EC2 Fleet; removing this manifest must not delete the role out
+# from under a fleet that is still running. It also keeps the inventory exporter quiet:
+# role/aws-service-role/ is already in DEFAULT_ALLOWLIST, so an orphaned SLR is not
+# reported as un-git-managed drift.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: ServiceLinkedRole
+metadata:
+  name: ec2fleet
+  annotations:
+    crossplane.io/external-name: arn:aws:iam::744062333585:role/aws-service-role/ec2fleet.amazonaws.com/AWSServiceRoleForEC2Fleet
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-fleet}
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    awsServiceName: ec2fleet.amazonaws.com
+  providerConfigRef: {name: default}
