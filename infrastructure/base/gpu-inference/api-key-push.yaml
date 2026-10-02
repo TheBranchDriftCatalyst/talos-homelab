@@ -13,6 +13,22 @@
 # Rotation is therefore: change the field in 1Password. ESO refreshes the Secret, PushSecret
 # updates the parameter, and the next rig boot picks it up. Nothing here holds a copy.
 #
+# BUT ROTATION IS NOT IMMEDIATE, and for a COMPROMISED key that matters. Both hops run on
+# refreshInterval (1h), so a rotated value can sit unpropagated for up to an hour while the
+# old one is still live in SSM and still accepted by a running rig. Measured exactly that
+# on 2026-10-02: the field was rotated, yet the Secret and the parameter both still held the
+# previous value. To force it:
+#   kubectl annotate externalsecret -n gpu-inference gpu-api-key force-sync=$(date +%s) --overwrite
+#   kubectl annotate pushsecret    -n gpu-inference gpu-api-key-to-ssm force-sync=$(date +%s) --overwrite
+# in that order - the push can only carry what the ExternalSecret has already fetched.
+# A rig that is already running keeps the OLD key until it is relaunched, because vLLM
+# takes --api-key once at start. Rotating under compromise therefore means: rotate, force
+# both syncs, THEN tear the rig down and relaunch it.
+#
+# Verify by hash, never by printing the value. sha256 of the empty string begins
+# e3b0c44298fc - if a comparison shows that, the read failed and returned nothing rather
+# than the secret disagreeing, which is a different problem entirely.
+#
 # The same Secret is what any IN-CLUSTER consumer would mount, so the k8s hop is not purely
 # a staging area for the push.
 apiVersion: external-secrets.io/v1
