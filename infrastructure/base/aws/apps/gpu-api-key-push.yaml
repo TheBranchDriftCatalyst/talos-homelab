@@ -21,9 +21,19 @@
 #
 # Scope is one parameter path. PutParameter and AddTagsToResource are the only writes,
 # and neither can reach another prefix.
-# ListTagsForResource looks redundant next to AddTagsToResource but is NOT: ESO reads
-# the parameter's existing tags before writing, so without it the push fails with
-# AccessDenied on a LIST it never occurred to me it would need.
+# ListTagsForResource looks redundant next to AddTagsToResource but is NOT: ESO reads the
+# parameter's existing tags before writing, to decide whether it owns it.
+# It also has to be granted on "*" rather than on the parameter, which is why it sits in
+# its own statement. Measured, because the two disagree:
+#   simulate-principal-policy, exact parameter ARN -> allowed
+#   simulate-principal-policy, "*"                 -> implicitDeny
+#   the actual ListTagsForResource call            -> AccessDenied
+# The real call behaves like the "*" evaluation, so authorization for this action is not
+# resource-scoped despite the IAM reference listing `parameter` as a supported resource
+# type. simulate evaluates whatever ARN you hand it, which is exactly why it said allowed
+# and reality said no - worth knowing before trusting a simulate result over an error.
+# The widened action is a READ of tag keys/values. Both writes stay scoped to
+# parameter/catalyst/gpu/*.
 apiVersion: iam.aws.upbound.io/v1beta1
 kind: User
 metadata:
@@ -50,9 +60,11 @@ spec:
         "Statement": [
           {"Sid": "PushTheGpuApiKeyOnly", "Effect": "Allow",
            "Action": ["ssm:PutParameter", "ssm:AddTagsToResource", "ssm:GetParameter",
-                      "ssm:DescribeParameters",
-                      "ssm:ListTagsForResource"],
+                      "ssm:DescribeParameters"],
            "Resource": "arn:aws:ssm:*:744062333585:parameter/catalyst/gpu/*"},
+          {"Sid": "ListTagsIsEvaluatedAgainstStarNotTheParameter", "Effect": "Allow",
+           "Action": ["ssm:ListTagsForResource"],
+           "Resource": "*"},
           {"Sid": "EncryptWithTheAccountDefaultKey", "Effect": "Allow",
            "Action": ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey"],
            "Resource": "*",
