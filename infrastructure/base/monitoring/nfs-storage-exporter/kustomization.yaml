@@ -21,5 +21,8 @@ configMapGenerator:
       annotations:
         kustomize.toolkit.fluxcd.io/substitute: disabled
 
-generatorOptions:
-  disableNameSuffixHash: true
+# NO disableNameSuffixHash — same trap as aws-inventory-exporter (TALOS-h1ng). probe.sh is
+# read by a long-running Deployment, so without the content hash the ConfigMap updates in
+# place, the pod template stays byte-identical, nothing restarts, and the old script keeps
+# running while Flux reports Ready. The hash makes the generated name change with content,
+# kustomize rewrites deployment.yaml's volume reference, and the Deployment rolls.

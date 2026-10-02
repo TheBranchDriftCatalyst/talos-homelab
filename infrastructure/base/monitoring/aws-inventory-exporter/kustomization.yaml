@@ -27,5 +27,15 @@ configMapGenerator:
   - name: aws-inventory-exporter-script
     files:
       - exporter.py
-generatorOptions:
-  disableNameSuffixHash: true
+# NO disableNameSuffixHash. The hash is what makes an exporter.py edit actually take
+# effect: the generated ConfigMap name changes with its content, kustomize rewrites the
+# Deployment's volume reference to match, and the pod template therefore changes, so the
+# Deployment rolls. With the hash disabled the ConfigMap was updated in place, the pod
+# template stayed byte-identical, NOTHING restarted, and the running process kept serving
+# from the copy it read at startup - while Flux reported Ready and the commit looked
+# applied. That silently ran stale code five separate times on 2026-10-02 (TALOS-h1ng),
+# including once where the fix being verified was for a false "unmanaged" classification.
+# The asymmetry is what makes it so easy to miss: an ENV VAR change does roll the pod,
+# because env lives in the pod template. Only file content was affected.
+# Nothing references this ConfigMap by a fixed name except deployment.yaml's volume, and
+# kustomize rewrites that reference itself - which is why the hash was never needed.
