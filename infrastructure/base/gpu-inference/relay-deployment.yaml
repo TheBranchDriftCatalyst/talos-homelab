@@ -45,6 +45,15 @@ metadata:
     app.kubernetes.io/part-of: gpu-inference
 spec:
   replicas: 1
+  # Recreate, NOT the default RollingUpdate. A rolling update waits for the new Pod to go
+  # Ready before retiring the old one — and with no rig armed NO Pod can ever be Ready,
+  # which is this relay's correct resting state. So every revision stacked another Pod
+  # that would never be collected: three were live at once on 2026-10-02, each polling
+  # ec2:DescribeInstances every 15s and each racing to open its own SSM session.
+  # Recreate is right on the merits too, not just as a workaround: there is exactly one
+  # relay holding exactly one port-forward session, it cannot be load-balanced, and two
+  # relays contending for the same tunnel is not a state worth passing through.
+  strategy: {type: Recreate}
   selector:
     matchLabels:
       app.kubernetes.io/name: gpu-relay
