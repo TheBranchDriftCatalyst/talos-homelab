@@ -129,19 +129,23 @@ spec:
           # A startupProbe suspends readiness until the first success, so the cold-boot
           # budget and the de-advertise latency can be set independently.
           #
-          # 90 x 10s = 15min of cold-boot budget. The 2026-10-02 run needed ~7min on a
-          # warm S3 prefix (30.9GB streamed, then CUDA graph capture); a cold HuggingFace
-          # seed of a larger model is the case this has to cover, so the budget is
-          # deliberately well above anything measured.
-          startupProbe:
-            httpGet: {path: /health, port: 8000}
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            timeoutSeconds: 5
-            failureThreshold: 90
-          # Once serving, 3 x 10s means a dead rig de-advertises in ~30s.
+          # A startupProbe is WRONG here and was briefly tried: a failing startupProbe makes
+          # the kubelet KILL the container. This relay's correct resting state is "running,
+          # not ready, no backend yet" — with no rig the probe can never succeed, so a
+          # startupProbe turns the normal idle state into a crash loop.
+          #
+          # Readiness alone covers every case, because the Pod genuinely is NOT ready while
+          # a rig boots — there is no need to paper over that window:
+          #   cold rig booting  -> NotReady, which is true, and nothing restarts
+          #   rig serving       -> Ready within one period
+          #   rig torn down     -> NotReady in ~30s, so the Service stops offering it
+          #   no rig at all     -> NotReady forever, no restarts, no churn
+          # The old failureThreshold of 60 was sized as a cold-boot allowance, but it was
+          # never needed for that and acted as a 600s DE-ADVERTISE delay instead: measured
+          # on the 2026-10-02 teardown, the rig was gone and the Pod still read Ready.
           readinessProbe:
             httpGet: {path: /health, port: 8000}
+            initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
