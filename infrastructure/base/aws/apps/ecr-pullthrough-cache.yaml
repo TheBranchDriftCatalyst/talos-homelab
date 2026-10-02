@@ -1,0 +1,116 @@
+---
+# ECR pull-through cache rules, asserted declaratively (TALOS-2rhw).
+#
+# WHY THIS EXISTS. Measured on a GPU rig 2026-10-02: 30.9GB of model weights stream from
+# same-region S3 into VRAM in 24 SECONDS (1.29 GB/s via runai_streamer), while the 21.6GB
+# vllm/vllm-openai container image takes roughly 5 MINUTES from Docker Hub (>=72 MB/s).
+# The tensor streaming is ~18x faster than the container pull that feeds it. Same-region is
+# doing all the work, and the image is the one big download that is not same-region.
+#
+# WHY A CRONJOB AND NOT CROSSPLANE. provider-aws-ecr is not installed, and every provider
+# pod in this cluster is resident at 470-500Mi - half a gigabyte standing for a couple of
+# account-level rules that essentially never change. This repo already has the pattern for
+# one-off AWS calls (aws-redteam/retrieve-console.yaml) and for scheduled enforcement
+# (gpu-testrig-reaper). A CronJob is both: idempotent assertion on a schedule, which is
+# reconciliation without a controller.
+#
+# WHY NOT A PLAIN JOB. A completed Job is never re-run, so a rule deleted out of band would
+# stay deleted. The schedule is the only thing that makes this self-healing, and the whole
+# point of putting it in git is that the cluster disagreeing with git gets corrected.
+#
+# WHAT IS AND IS NOT HERE. Only public.ecr.aws. Measured, not assumed:
+#   public.ecr.aws   -> rule created, NO credential needed
+#   registry-1.docker.io -> UnsupportedUpstreamRegistryException: requires a credential
+#   ghcr.io              -> same
+# and vLLM publishes to Docker Hub only. So the image that motivated this work is NOT yet
+# cached - that needs a Docker Hub read-only token, and the credential secret must be named
+# ecr-pullthroughcache/<name> because AWS enforces that by regex on credentialArn. Once a
+# token exists it can ride the same 1Password -> ESO -> AWS path as the vLLM api key; add a
+# second rule here with --credential-arn.
+#
+# public.ecr.aws is still worth caching on its own: a great deal of AWS-published and
+# community tooling lives there, and it costs nothing to have the rule in place.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ecr-pullthrough-assert
+  namespace: crossplane-system
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ecr-pullthrough-assert
+  namespace: crossplane-system
+  labels:
+    app.kubernetes.io/name: ecr-pullthrough-assert
+    catalyst.io/cloud: aws
+spec:
+  # Daily is ample: these rules are account-level and change about never. The schedule is
+  # for drift correction, not for provisioning speed.
+  schedule: "17 4 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      backoffLimit: 2
+      template:
+        spec:
+          serviceAccountName: ecr-pullthrough-assert
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: assert
+              image: amazon/aws-cli:2.31.24
+              env:
+                - {name: AWS_SHARED_CREDENTIALS_FILE, value: /creds/creds}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -u
+                  # Rigs place in either region, so the rule has to exist in both.
+                  for R in us-east-2 us-west-2; do
+                    for SPEC in "ecr-public public.ecr.aws"; do
+                      PREFIX=$(echo "$SPEC" | cut -d' ' -f1)
+                      UP=$(echo "$SPEC" | cut -d' ' -f2)
+                      # Idempotent by construction: an existing rule returns
+                      # PullThroughCacheRuleAlreadyExistsException, which is success here,
+                      # not failure. Anything else is a real error and must surface.
+                      OUT=$(aws ecr create-pull-through-cache-rule --region "$R" \
+                              --ecr-repository-prefix "$PREFIX" \
+                              --upstream-registry-url "$UP" 2>&1) && \
+                        echo "created  $R $PREFIX -> $UP" && continue
+                      case "$OUT" in
+                        *PullThroughCacheRuleAlreadyExists*)
+                          echo "present  $R $PREFIX -> $UP" ;;
+                        *)
+                          echo "FAILED   $R $PREFIX -> $UP: $OUT" >&2; exit 1 ;;
+                      esac
+                    done
+                  done
+                  echo "--- rules now in place ---"
+                  for R in us-east-2 us-west-2; do
+                    aws ecr describe-pull-through-cache-rules --region "$R" \
+                      --query 'pullThroughCacheRules[].[ecrRepositoryPrefix,upstreamRegistryUrl]' \
+                      --output text | sed "s/^/$R /"
+                  done
+              resources:
+                requests: {cpu: 10m, memory: 64Mi}
+                limits: {memory: 192Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              volumeMounts:
+                - {name: creds, mountPath: /creds, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            # Same credential the retrieve-console Job already uses. Deliberately NOT a
+            # fourth scoped identity: this is two account-level calls on a daily schedule,
+            # and the command is visible in git.
+            - {name: creds, secret: {secretName: aws-credentials}}
+            - {name: tmp, emptyDir: {}}
