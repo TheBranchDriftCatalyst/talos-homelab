@@ -381,32 +381,56 @@ def managed_resource_index(errors):
     ok = True
     for group in (groups.get("groups") or []):
         gname = group.get("name", "")
-        version = (group.get("preferredVersion") or {}).get("version")
-        if not gname or not version:
+        if not gname:
             continue
-        try:
-            listing = _k8s_get(f"/apis/{gname}/{version}", token, ctx)
-        except Exception as exc:  # noqa: BLE001
-            errors.record("kubernetes", "-", f"discover-{gname}", exc)
-            ok = False
-            continue
-        for res in (listing.get("resources") or []):
-            if "/" in res.get("name", ""):
-                continue  # subresource
-            if "managed" not in (res.get("categories") or []):
-                continue
-            if "list" not in (res.get("verbs") or []):
-                continue
-            kinds_discovered += 1
-            # upjet's tag value is lower(Kind) + "." + apiGroup, e.g.
-            # bucket.s3.aws.upbound.io. Build the same key so the join is exact.
-            kind_tag = f"{res['kind'].lower()}.{gname}"
-            names, listed_ok = _k8s_list_names(gname, version, res["name"], token, ctx, errors)
-            if listed_ok:
-                kinds_listed += 1
-                index.setdefault(kind_tag, set()).update(names)
-            else:
+        # EVERY served version, not just preferredVersion. A CRD that serves only an older
+        # version does NOT appear under the group's preferred one, so iterating the
+        # preferred version alone made whole MR kinds INVISIBLE - and an invisible kind
+        # does not look like an error, it looks like every one of its resources being an
+        # orphan. Measured 2026-10-02 on ec2.aws.upbound.io, preferred v1beta2:
+        #   launchtemplates  serves v1beta1 + v1beta2 -> found     -> classified managed
+        #   fleets           serves v1beta1 only      -> NOT found -> phantom orphan
+        #   securitygroups   serves v1beta1 only      -> NOT found -> phantom orphan
+        #   volumes          serves v1beta1 only      -> NOT found -> phantom orphan
+        # Worse, it was silent: kinds_discovered == kinds_listed, so mr_ok stayed True and
+        # the whole orphan rollup was published as authoritative. The
+        # MrKindCoverageGap alert compares discovered against listed and so cannot see a
+        # kind that was never discovered at all.
+        versions = [v.get("version") for v in (group.get("versions") or []) if v.get("version")]
+        if not versions:
+            pref = (group.get("preferredVersion") or {}).get("version")
+            versions = [pref] if pref else []
+        seen_kinds = set()
+        for version in versions:
+            try:
+                listing = _k8s_get(f"/apis/{gname}/{version}", token, ctx)
+            except Exception as exc:  # noqa: BLE001
+                errors.record("kubernetes", "-", f"discover-{gname}/{version}", exc)
                 ok = False
+                continue
+            for res in (listing.get("resources") or []):
+                if "/" in res.get("name", ""):
+                    continue  # subresource
+                if "managed" not in (res.get("categories") or []):
+                    continue
+                if "list" not in (res.get("verbs") or []):
+                    continue
+                # upjet's tag value is lower(Kind) + "." + apiGroup, e.g.
+                # bucket.s3.aws.upbound.io. Build the same key so the join is exact.
+                kind_tag = f"{res['kind'].lower()}.{gname}"
+                # The same kind is served by several versions and returns the SAME objects
+                # from each, so list it once - via the first (preferred) version that
+                # exposes it - and skip the duplicates.
+                if kind_tag in seen_kinds:
+                    continue
+                seen_kinds.add(kind_tag)
+                kinds_discovered += 1
+                names, listed_ok = _k8s_list_names(gname, version, res["name"], token, ctx, errors)
+                if listed_ok:
+                    kinds_listed += 1
+                    index.setdefault(kind_tag, set()).update(names)
+                else:
+                    ok = False
     if kinds_discovered == 0:
         ok = False  # discovery "succeeded" but found nothing -> broken, not empty
     return index, ok, kinds_discovered, kinds_listed
