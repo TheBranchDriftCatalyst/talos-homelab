@@ -28,8 +28,13 @@ spec:
       # lan-only added 2026-09-26 (TALOS-a8vo.4). WAN-reachable admin/AI surface on the
       # web entrypoint with no auth; host-spoof from off-net reached it. Blocks off-LAN.
       middlewares:
-        - name: lan-only
-          namespace: traefik
+        # inference-lan-only, NOT traefik/lan-only. The shared one allows
+        # 10.0.0.0/8, which on this cluster CONTAINS the pod CIDR (10.244/16)
+        # and the service CIDR (10.96/12) - so it admitted every Pod in the
+        # cluster to a GPU that bills by the hour. See inference-allowlist.yaml
+        # for why an IP allowlist and not authentik. (TALOS-a8vo.9)
+        - name: inference-lan-only
+          namespace: gpu-inference
       services:
         # LEVEL 2 (TALOS-x1sb): straight to gpu-backend, which selects the gpu-relay
         # Pod holding the SSM tunnel. KEDA is deliberately NOT in this path yet —

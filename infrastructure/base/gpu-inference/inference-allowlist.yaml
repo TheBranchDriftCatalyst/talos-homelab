@@ -1,0 +1,44 @@
+---
+# TALOS-a8vo.9 — gate the inference plane at L7.
+#
+# WHY NOT just reuse traefik/lan-only: it allows 10.0.0.0/8, 172.16.0.0/12 and
+# 192.168.0.0/16. On this cluster 10.0.0.0/8 CONTAINS BOTH the pod CIDR (10.244.0.0/16 —
+# nodes carry /24 slices of it) and the service CIDR (10.96.0.0/12). So "lan-only" also
+# admits every Pod and every Service IP in the cluster: it is a perimeter control that
+# silently opens the entire east-west surface. That is TALOS-a8vo.5, and it is NOT fixed
+# here — lan-only is shared by 49 routes and narrowing it is its own change with its own
+# blast radius. This middleware is scoped to the inference plane only.
+#
+# WHY THIS MATTERS MORE HERE THAN ELSEWHERE: behind this route is a GPU that costs
+# $2–10/hr while it runs, plus open prompt submission and arbitrary generation. Every
+# other lan-only route leaks data; this one also spends money.
+#
+# WHY AN IP ALLOWLIST AND NOT AUTHENTIK: the consumer is catalyst-operator's HTTP client,
+# not a browser. A forward-auth redirect to an OIDC login cannot be followed by an
+# OpenAI-compatible SDK, so gating this with authentik would break the Level 2 chain
+# (TALOS-x1sb) rather than secure it. The right second factor for a machine endpoint is a
+# bearer token — vLLM takes `--api-key` and the operator already sends LITELLM_API_KEY —
+# and that is deliberately a SEPARATE step, because it can only be tested with a rig
+# running and this cannot.
+#
+# VERIFIED SAFE BEFORE NARROWING: Traefik sees the real client IP, not a SNAT'd node IP,
+# despite externalTrafficPolicy: Cluster — confirmed from its own access log, which
+# recorded ClientHost 192.168.1.33 (the Mac) for a live request. Had the source been
+# rewritten to a node IP, dropping 10.0.0.0/8 would have blocked every legitimate client.
+#
+# 192.168.0.0/16 rather than 192.168.1.0/24: the nodes and the Mac all sit in
+# 192.168.1.0/24 today, but a /16 keeps any other home subnet working while still
+# excluding the pod, service and Docker-default ranges — which is the whole point.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: inference-lan-only
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: inference-lan-only
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  ipAllowList:
+    sourceRange:
+      - 192.168.0.0/16   # the real LAN. NOT 10.0.0.0/8 — that is pods + services.
+      - 127.0.0.1/32     # Traefik itself
