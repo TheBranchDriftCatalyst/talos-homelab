@@ -80,3 +80,14 @@ spec:
         secretKey: api-key
         remoteRef:
           remoteKey: /catalyst/gpu/api-key
+      # WITHOUT THIS ESO CREATES A PLAIN `String` PARAMETER - verified: the first
+      # successful push produced Type=String, leaving a bearer token unencrypted at rest
+      # and readable by anything with ssm:GetParameter and no kms:Decrypt at all.
+      # SecureString with the account default key is what makes the box's kms:Decrypt
+      # grant meaningful; without it that grant is decoration.
+      metadata:
+        apiVersion: kubernetes.external-secrets.io/v1alpha1
+        kind: PushSecretMetadata
+        spec:
+          secretType: SecureString
+          keyID: alias/aws/ssm
