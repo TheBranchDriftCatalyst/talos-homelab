@@ -1,0 +1,82 @@
+---
+# 1Password -> Kubernetes -> SSM Parameter Store, declaratively (TALOS-a8vo.9).
+#
+#   1Password vault catalyst-eso, item "catalyst-operator", field "gpu-api-key"
+#                                                   source of truth (ADR-0015).
+#   The URI spelling of that reference is deliberately not written in this file:
+#   .gitleaks.toml permits it only in .env.tpl and .envrc, and the ExternalSecret
+#   below already names the item and property, so the rule costs nothing here.
+#     -> ExternalSecret  ->  Secret gpu-inference/gpu-api-key
+#       -> PushSecret    ->  SSM SecureString /catalyst/gpu/api-key  (us-east-2)
+#         -> the EC2 instance profile reads it at boot and passes vLLM --api-key
+#
+# Rotation is therefore: change the field in 1Password. ESO refreshes the Secret, PushSecret
+# updates the parameter, and the next rig boot picks it up. Nothing here holds a copy.
+#
+# The same Secret is what any IN-CLUSTER consumer would mount, so the k8s hop is not purely
+# a staging area for the push.
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: aws-parameterstore
+spec:
+  provider:
+    aws:
+      service: ParameterStore
+      region: us-east-2
+      auth:
+        secretRef:
+          # Minted by Crossplane — see aws/apps/gpu-api-key-push.yaml. upjet writes the
+          # pair as username/password, not as AWS's own key names.
+          accessKeyIDSecretRef:
+            name: eso-ssm-push-creds
+            namespace: external-secrets
+            key: username
+          secretAccessKeySecretRef:
+            name: eso-ssm-push-creds
+            namespace: external-secrets
+            key: password
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: gpu-api-key
+  namespace: gpu-inference
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: onepassword
+    kind: ClusterSecretStore
+  target:
+    name: gpu-api-key
+    creationPolicy: Owner
+  data:
+    - secretKey: api-key
+      remoteRef:
+        key: catalyst-operator
+        property: gpu-api-key
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: gpu-api-key-to-ssm
+  namespace: gpu-inference
+spec:
+  refreshInterval: 1h
+  # IfNotExists would leave a rotated key stale in AWS while 1Password moved on, so the
+  # push must be allowed to overwrite.
+  updatePolicy: Replace
+  # The parameter outlives any single rig and is read at boot by boxes this controller
+  # knows nothing about. Deleting it when this manifest goes away would strand them.
+  deletionPolicy: None
+  secretStoreRefs:
+    - name: aws-parameterstore
+      kind: ClusterSecretStore
+  selector:
+    secret:
+      name: gpu-api-key
+  data:
+    - match:
+        secretKey: api-key
+        remoteRef:
+          remoteKey: /catalyst/gpu/api-key

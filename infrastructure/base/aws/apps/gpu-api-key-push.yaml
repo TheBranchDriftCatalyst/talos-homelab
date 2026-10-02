@@ -1,0 +1,81 @@
+---
+# The IAM identity external-secrets uses to PUSH the vLLM api key into SSM Parameter
+# Store (TALOS-a8vo.9).
+#
+# WHY A PUSH AT ALL. The key has to exist in two trust domains: the operator on the Mac
+# sends it as a bearer token, and the GPU box needs it for vLLM's --api-key. 1Password is
+# the source of truth for both (ADR-0015 house pattern), but an EC2 instance cannot read
+# 1Password — it authenticates with an instance profile. SSM Parameter Store is the one
+# channel the box can reach with the identity it already has.
+#
+# WHY NOT userData: userData is readable by anyone with ec2:DescribeInstanceAttribute AND
+# from IMDS on the box itself, so the secret would be plainly visible to anything that can
+# describe the instance. A SecureString parameter read at boot is not.
+#
+# WHY ESO PushSecret AND NOT A CROSSPLANE ssm.Parameter: provider-aws-ssm is not installed,
+# and each provider pod in this cluster costs 470-500Mi resident — half a gigabyte standing
+# for one parameter. external-secrets is already running and is already the 1Password
+# bridge, so ExternalSecret + PushSecret keeps the whole path in one system and adds no
+# workload. The only new thing needed is this identity, and Crossplane manages it the same
+# way it manages catalyst-gpu-relay and catalyst-aws-inventory-ro.
+#
+# Scope is one parameter path. PutParameter is a write, deliberately the ONLY write, and it
+# cannot reach any other prefix.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: User
+metadata:
+  name: catalyst-eso-ssm-push
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-api-key}
+spec:
+  forProvider:
+    path: /catalyst/
+    tags:
+      component: gpu-api-key
+      purpose: eso-push-to-parameter-store
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: catalyst-eso-ssm-push
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-api-key}
+spec:
+  forProvider:
+    path: /catalyst/
+    policy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {"Sid": "PushTheGpuApiKeyOnly", "Effect": "Allow",
+           "Action": ["ssm:PutParameter", "ssm:AddTagsToResource", "ssm:GetParameter",
+                      "ssm:DescribeParameters"],
+           "Resource": "arn:aws:ssm:*:744062333585:parameter/catalyst/gpu/*"},
+          {"Sid": "EncryptWithTheAccountDefaultKey", "Effect": "Allow",
+           "Action": ["kms:Encrypt", "kms:Decrypt", "kms:DescribeKey"],
+           "Resource": "*",
+           "Condition": {"StringEquals": {"kms:ViaService": "ssm.us-east-2.amazonaws.com"}}}
+        ]
+      }
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: UserPolicyAttachment
+metadata:
+  name: catalyst-eso-ssm-push
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-api-key}
+spec:
+  forProvider:
+    userRef: {name: catalyst-eso-ssm-push}
+    policyArnRef: {name: catalyst-eso-ssm-push}
+---
+# Crossplane writes the key pair as username/password, the same shape the inventory
+# exporter and the gpu relay consume.
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: AccessKey
+metadata:
+  name: catalyst-eso-ssm-push
+  labels: {catalyst.io/cloud: aws, catalyst.io/component: gpu-api-key}
+spec:
+  forProvider:
+    userRef: {name: catalyst-eso-ssm-push}
+  writeConnectionSecretToRef:
+    name: eso-ssm-push-creds
+    namespace: external-secrets

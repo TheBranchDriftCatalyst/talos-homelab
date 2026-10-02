@@ -160,6 +160,20 @@ spec:
                 # `--model-loader-extra-config '{"concurrency":N}'` sets underneath
                 # (the loader validates the key and then does os.environ.update).
                 # 16 is the value vLLM's own doc uses as its example.
+                apiKeyParameter:
+                  type: string
+                  default: "/catalyst/gpu/api-key"
+                  description: >-
+                    SSM Parameter Store path holding the bearer token vLLM enforces via
+                    --api-key. Read at boot with the instance profile; the box cannot reach
+                    1Password, which is the source of truth, so ESO pushes it here
+                    (gpu-inference/api-key-push.yaml). Set to the empty string to serve with
+                    NO authentication - only sane if nothing but the relay can reach the box,
+                    and the relay is reachable from any Pod via the gpu-backend ClusterIP, so
+                    in practice do not.
+                    NEVER pass the key itself through a claim: it would land in git, and in
+                    userData, which is readable by anything holding
+                    ec2:DescribeInstanceAttribute and from IMDS on the box.
                 streamerConcurrency:
                   type: string
                   default: "16"

@@ -266,6 +266,7 @@ spec:
                     - {fromFieldPath: spec.enableImageGen}
                     - {fromFieldPath: spec.vllmImage}
                     - {fromFieldPath: spec.streamerConcurrency}
+                    - {fromFieldPath: spec.apiKeyParameter}
                   strategy: string
                   string:
                     fmt: |
@@ -277,7 +278,7 @@ spec:
                       exec > >(tee /var/log/gpu-init.log) 2>&1; set -x
                       HF_MODEL="%s"; BUCKET="%s"; PORT="%s"; SERVED="%s"; REGION="%s"
                       QUANT="%s"; MAXLEN="%s"; UTIL="%s"; IMAGES="%s"; VLLM_IMAGE="%s"
-                      STREAM_CONCURRENCY="%s"
+                      STREAM_CONCURRENCY="%s"; API_KEY_PARAM="%s"
                       S3="s3://$BUCKET/$HF_MODEL"
                       S5=/usr/local/bin/s5cmd
                       fatal() { echo "FATAL: $*"; echo "FATAL: $*" > /var/log/gpu-init.FAILED; exit 1; }
@@ -392,6 +393,37 @@ spec:
                       # from the S3 prefix and vLLM executes them. That prefix is written only by
                       # our own cold seed straight from HuggingFace, so the practical trust
                       # boundary is unchanged - but it is S3, not HF, that now has to be trusted.
+                      # --- vLLM bearer token, fetched from SSM at boot (TALOS-a8vo.9) ---
+                      # The key is NEVER in a claim, in git, or in userData - only this PATH is. userData
+                      # is readable by anything holding ec2:DescribeInstanceAttribute and from IMDS on the
+                      # box, so a literal key here would be plainly visible.
+                      # 1Password is the source of truth; ESO pushes it to SSM because an EC2 instance
+                      # cannot read 1Password - it authenticates with its instance profile.
+                      # Why this is enforced ON THE BOX and not only at the ingress: the relay Pod is
+                      # reachable from ANY Pod through the gpu-backend ClusterIP, which bypasses Traefik
+                      # and therefore bypasses lan-only-strict entirely. --api-key is what closes that.
+                      # A FETCH FAILURE IS FATAL. Falling through to an unauthenticated endpoint on a box
+                      # that bills by the hour is the one outcome worse than not booting.
+                      API_KEY_ARG=""
+                      if [ -n "$API_KEY_PARAM" ]; then
+                        # The aws CLI is a NEW dependency here - every other remote read in this script
+                        # uses s5cmd, which is fetched by curl. AL2023 is expected to ship awscli v2,
+                        # but check explicitly: without this the get-parameter below just returns empty
+                        # and the failure below would blame IAM, sending you to debug permissions on a
+                        # box that bills by the hour.
+                        command -v aws >/dev/null 2>&1 || dnf install -y -q awscli 2>/dev/null || true
+                        command -v aws >/dev/null 2>&1 || fatal "no aws CLI on this AMI and dnf could not install awscli; cannot read the vLLM api key from SSM"
+                        VLLM_API_KEY=$(aws ssm get-parameter --region "$REGION" --name "$API_KEY_PARAM" \
+                          --with-decryption --query Parameter.Value --output text 2>/dev/null)
+                        [ -n "$VLLM_API_KEY" ] || fatal "could not read $API_KEY_PARAM from SSM in $REGION. Does the instance profile grant ssm:GetParameter on it, and has the ESO PushSecret run?"
+                        API_KEY_ARG="--api-key $VLLM_API_KEY"
+                        # Length via the shell parameter expansion, never printf: any percent-s in
+                        # this script is a Go format placeholder and would shift every later
+                        # substitution by one.
+                        echo "api key: loaded from $API_KEY_PARAM (${#VLLM_API_KEY} chars)"
+                      else
+                        echo "api key: NONE - serving unauthenticated (apiKeyParameter is empty)"
+                      fi
                       QUANT_ARG=""; [ "$QUANT" != "auto" ] && QUANT_ARG="--quantization $QUANT"
                       # $QUANT_ARG and $SERVED are both INTENTIONALLY UNQUOTED - they must
                       # word-split. $QUANT_ARG is either empty or the two words
@@ -412,7 +444,7 @@ spec:
                         "$VLLM_IMAGE" \
                         --model "$S3" --load-format runai_streamer \
                         --served-model-name $SERVED \
-                        --tensor-parallel-size "$TP" $QUANT_ARG \
+                        --tensor-parallel-size "$TP" $QUANT_ARG $API_KEY_ARG \
                         --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" --trust-remote-code
                       # --- Image gen: ComfyUI + comfyui-shim (OpenAI /v1/images on :8012), sharing VRAM.
                       #     Gated on enableImageGen because it only fits where the LLM leaves spare VRAM.
