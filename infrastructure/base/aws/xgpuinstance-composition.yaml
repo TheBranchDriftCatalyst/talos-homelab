@@ -267,6 +267,7 @@ spec:
                     - {fromFieldPath: spec.vllmImage}
                     - {fromFieldPath: spec.streamerConcurrency}
                     - {fromFieldPath: spec.apiKeyParameter}
+                    - {fromFieldPath: spec.maxNumSeqs}
                   strategy: string
                   string:
                     fmt: |
@@ -278,7 +279,7 @@ spec:
                       exec > >(tee /var/log/gpu-init.log) 2>&1; set -x
                       HF_MODEL="%s"; BUCKET="%s"; PORT="%s"; SERVED="%s"; REGION="%s"
                       QUANT="%s"; MAXLEN="%s"; UTIL="%s"; IMAGES="%s"; VLLM_IMAGE="%s"
-                      STREAM_CONCURRENCY="%s"; API_KEY_PARAM="%s"
+                      STREAM_CONCURRENCY="%s"; API_KEY_PARAM="%s"; MAX_NUM_SEQS="%s"
                       S3="s3://$BUCKET/$HF_MODEL"
                       S5=/usr/local/bin/s5cmd
                       fatal() { echo "FATAL: $*"; echo "FATAL: $*" > /var/log/gpu-init.FAILED; exit 1; }
@@ -445,7 +446,8 @@ spec:
                         --model "$S3" --load-format runai_streamer \
                         --served-model-name $SERVED \
                         --tensor-parallel-size "$TP" $QUANT_ARG $API_KEY_ARG \
-                        --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" --trust-remote-code
+                        --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" \
+                        --max-num-seqs "$MAX_NUM_SEQS" --trust-remote-code
                       # --- Image gen: ComfyUI + comfyui-shim (OpenAI /v1/images on :8012), sharing VRAM.
                       #     Gated on enableImageGen because it only fits where the LLM leaves spare VRAM.
                       #     `|| true`: runpod-mac-bundle is built+pushed separately and DOES NOT EXIST in

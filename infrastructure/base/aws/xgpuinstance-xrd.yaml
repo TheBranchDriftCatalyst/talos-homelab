@@ -160,6 +160,20 @@ spec:
                 # `--model-loader-extra-config '{"concurrency":N}'` sets underneath
                 # (the loader validates the key and then does os.environ.update).
                 # 16 is the value vLLM's own doc uses as its example.
+                maxNumSeqs:
+                  type: string
+                  default: "128"
+                  description: >-
+                    vLLM --max-num-seqs. MUST be set, and 256 (vLLM default) is wrong on a
+                    1-GPU shape: Qwen3.8-27B is a HYBRID architecture whose Gated DeltaNet
+                    layers need one Mamba cache block per decode sequence, and a 44.7GiB L40S
+                    holding 30.9GB of weights has room for only 165. vLLM then refuses to
+                    start at all - "max_num_seqs (256) exceeds available Mamba cache blocks
+                    (165)" - and with --restart=always it CRASH-LOOPS silently, which looks
+                    exactly like a slow boot. Cost 17 minutes of a billing GPU to diagnose.
+                    Shape-dependent: it does NOT appear on the 4x shapes, which have the VRAM
+                    for more blocks, so it only bites the cheapest rig - the one most used.
+                    Raise it only alongside more VRAM or a lower gpuMemoryUtilization.
                 apiKeyParameter:
                   type: string
                   default: "/catalyst/gpu/api-key"
