@@ -42,7 +42,16 @@ resources:
   # cache (TALOS-rkg0): instance store came up as nvme1n1 alongside the EBS root at
   # nvme0n1 and mounted at /cache with 419G, which is exactly why the device is
   # identified by its NVMe MODEL string and not by device order. vLLM v0.30.0 image
-  # pulled; torn down during the cold weight pull rather than paying to finish it.
+  # pulled. Torn down before serving - but the 2026-10-02 audit showed its HF download
+  # AND its S3 sync had both FINISHED; only the _SEED_COMPLETE marker was missing, so
+  # nothing was lost and the next boot took the warm path.
+  # ON→OFF (2026-10-02): FIRST SUCCESSFUL END-TO-END RUN (TALOS-x1sb). The fleet walked
+  # the whole pool - g6e.2xlarge and g6e.4xlarge both returned Insufficient capacity for
+  # ON-DEMAND and were blacklisted 15min - and placed i-009d3f4bb019620e2, a g6.12xlarge
+  # (4x L4) in us-east-2b. A bare Instance would have hard-failed on the first shape.
+  # The box derived --tensor-parallel-size 4 from nvidia-smi on its own, streamed 30.9GB
+  # out of same-region S3 in ~30s via runai_streamer, autodetected quantization=fp8, and
+  # answered a completion through the in-cluster relay from the Mac in 1.2s. ~$1.50.
   # - gpu-node-27b-fp8.yaml
   # ── OFF / HELD (TALOS-iymy) ── BIG BOI: spot g6e.12xlarge (4× L40S) in us-east-2
   # serving Qwen3-235B-A22B-GPTQ-Int4 (vLLM TP4) + ComfyUI. ~$5.2/hr spot — do NOT
