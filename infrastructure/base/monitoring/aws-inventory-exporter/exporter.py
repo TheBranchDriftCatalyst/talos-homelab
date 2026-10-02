@@ -172,6 +172,37 @@ DEFAULT_ALLOWLIST = [
     r"^arn:aws:elasticache:[^:]*:\d*:user:default$",
     # Resource Explorer's own index and view: the observer observing itself.
     r"^arn:aws:resource-explorer-2:",
+
+    # ── AWS-OWNED, CANNOT BE ANYTHING ELSE (audited 2026-10-02) ──
+    # The default security group AWS creates with every VPC and refuses to delete. Listed
+    # by ARN because the allowlist matches ARNs and an SG's ARN does not carry its name -
+    # and a name-blind `security-group/` pattern would hide every leaked SG, which is the
+    # one thing this table exists to show. These three are stable for the account's life.
+    r"^arn:aws:ec2:us-east-1:\d*:security-group/sg-084608c8aaa410fea$",
+    r"^arn:aws:ec2:us-east-2:\d*:security-group/sg-0bfe49a97e54e33ab$",
+    r"^arn:aws:ec2:us-west-2:\d*:security-group/sg-a72e8dc0$",
+    # AWS-MANAGED KMS keys (KeyManager=AWS), e.g. the default that protects Secrets
+    # Manager when no CMK is given. Not creatable or deletable by us.
+    r"^arn:aws:kms:[^:]*:\d*:key/eb236f9e-de53-4030-b63d-1926d2775079$",
+    # ElastiCache's IAM-auth defaults, alongside the plain `default` user already above.
+    r"^arn:aws:elasticache:[^:]*:\d*:user:default\.",
+    r"^arn:aws:elasticache:[^:]*:\d*:usergroup:default\.",
+    # The free account-level S3 Storage Lens dashboard AWS enables for everyone.
+    r"^arn:aws:s3:[^:]*:\d*:storage-lens/default-account-dashboard$",
+
+    # ── ACCOUNT-LEVEL FACTS THAT CANNOT LIVE IN GIT (audited 2026-10-02) ──
+    # These are not infrastructure and Crossplane has no business owning them. Leaving
+    # them reviewable would mean the review list can never reach zero, which trains
+    # everyone to ignore it.
+    # How the account pays its bill.
+    r"^arn:aws:payments::\d*:payment-instrument:",
+    # The human operator's own login and MFA device. A Crossplane-managed IAM user is a
+    # service identity; this one is a person, and tagging it would be a lie.
+    r"^arn:aws:iam::\d*:mfa/",
+    r"^arn:aws:iam::\d*:user/panda$",
+    # Cost Explorer anomaly detection: console-created, account-scoped, and WANTED - it is
+    # part of how overspend gets noticed. No Crossplane kind exists for it.
+    r"^arn:aws:ce::\d*:anomaly(monitor|subscription)/",
 ]
 _ALLOW_ENV = os.environ.get("UNMANAGED_ALLOWLIST", "").strip()
 ALLOWLIST_RE = [re.compile(p.strip()) for p in
