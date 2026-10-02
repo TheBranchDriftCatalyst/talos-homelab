@@ -185,9 +185,29 @@ spec:
                   # instance inherits tags only from the template's tagSpecifications,
                   # and scripts/gpu-tunnel.sh + the inventory exporter find the box by
                   # `tag:Name`, so this is how the tunnel keeps working.
+                  # crossplane-kind/-name make the INSTANCE attributable (TALOS-fpsx).
+                  # A fleet-launched instance is NOT a Crossplane resource - the template
+                  # creates it - so it arrived carrying no crossplane tag at all, and an
+                  # untagged row classifies `unmanaged`, which can never reach the orphan
+                  # branch. The most expensive resource in the account was therefore the one
+                  # whose orphans were undetectable: delete the Fleet while the box lives (or
+                  # get terminateInstances wrong - it DEFAULTS to false) and it keeps billing,
+                  # indistinguishable from a console-created instance.
+                  # These name the FLEET, because the fleet owns the instance lifecycle. That
+                  # is also why the fleet MR name is pinned rather than Crossplane-generated:
+                  # the join key has to be knowable from here.
                   tagSpecifications:
                     - resourceType: instance
-                      tags: {Name: xgpuinstance}
+                      tags:
+                        Name: xgpuinstance
+                        crossplane-kind: fleet.ec2.aws.upbound.io
+                        crossplane-name: xgpuinstance-fleet
+                    # The root volume too, so idle-storage findings are attributable.
+                    - resourceType: volume
+                      tags:
+                        Name: xgpuinstance
+                        crossplane-kind: fleet.ec2.aws.upbound.io
+                        crossplane-name: xgpuinstance-fleet
             patches:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
               # Region-specific AMI (TALOS-iymy). Optional patch overrides the
@@ -200,6 +220,17 @@ spec:
               - type: FromCompositeFieldPath
                 fromFieldPath: spec.instanceName
                 toFieldPath: "spec.forProvider.tagSpecifications[0].tags[Name]"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.instanceName
+                toFieldPath: "spec.forProvider.tagSpecifications[0].tags[crossplane-name]"
+                transforms: [{type: string, string: {type: Format, fmt: "%s-fleet"}}]
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.instanceName
+                toFieldPath: "spec.forProvider.tagSpecifications[1].tags[Name]"
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.instanceName
+                toFieldPath: "spec.forProvider.tagSpecifications[1].tags[crossplane-name]"
+                transforms: [{type: string, string: {type: Format, fmt: "%s-fleet"}}]
               # SSM + S3. Optional patch — no-op when spec.instanceProfileName is
               # unset. The SG is egress-only, so the profile is the ONLY way to reach
               # the box (shell + `aws ssm start-session ...
@@ -469,6 +500,17 @@ spec:
             patches:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceName, toFieldPath: "spec.forProvider.tags[Name]"}
+              # PIN the MR name (TALOS-fpsx). Crossplane would otherwise generate
+              # <xr>-<hash>, which the launch template cannot know - and the template has to
+              # stamp this exact string onto every instance it launches as crossplane-name,
+              # because that tag is what the inventory exporter joins against the live MR set.
+              # Generated names made the join impossible, so instances were unattributable.
+              # Safe to pin: the one-rig Kyverno guard plus a unique instanceName per claim
+              # means two fleets can never contend for the name.
+              - type: FromCompositeFieldPath
+                fromFieldPath: spec.instanceName
+                toFieldPath: metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-fleet"}}]
               # THE POOL. patch-and-transform has no loop, so this is six Optional
               # patches, one per slot, matching the XRD's maxItems: 6. A claim listing
               # three shapes leaves slots 3-5 with no source field, so those patches
