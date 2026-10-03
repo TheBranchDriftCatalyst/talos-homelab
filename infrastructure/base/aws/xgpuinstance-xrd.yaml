@@ -253,17 +253,27 @@ spec:
                 # while /v1/models and plain completions work fine. So the rig looks
                 # healthy and the agent is simply broken.
                 #
-                # Per-model because the parser is model-specific: Qwen3 ships a
-                # Hermes-style tool template in its tokenizer_config, so `hermes` is right
-                # for the models this rig serves. Set to "" to serve a model whose
-                # template has no tool support, rather than passing a parser that cannot
-                # match and silently returning raw text instead of tool_calls.
+                # Per-model, because the parser must match the model's ACTUAL emission
+                # format — and getting that wrong fails SILENTLY. `hermes` was tried first
+                # (Qwen docs recommend it for Qwen3) and the 400 went away, but tool_calls
+                # came back EMPTY while the content field carried:
+                #   <tool_call><function=get_weather><parameter=city>Paris</parameter>
+                # i.e. Qwen3.8 emits the XML format, not Hermes JSON
+                # ({"name":..,"arguments":..}), so the parser matched nothing and handed
+                # the markup back as prose. No error anywhere — the model "answered", the
+                # agent just never saw a tool call. `qwen3_xml` is the matching parser,
+                # confirmed present in this vLLM's own --help.
+                #
+                # Set to "" to serve a model whose template has no tool support. That is
+                # better than a mismatched parser, which produces exactly the silent
+                # failure above.
                 toolCallParser:
                   type: string
-                  default: "hermes"
+                  default: "qwen3_xml"
                   description: >-
-                    vLLM --tool-call-parser (hermes | llama3_json | mistral | ...).
-                    Empty disables tool calling. Qwen3 wants hermes.
+                    vLLM --tool-call-parser. Must match the model's emission format:
+                    qwen3_xml for Qwen3.x, hermes for Hermes-JSON models, llama3_json,
+                    mistral, etc. Empty disables tool calling.
 
                 # ── IMAGE RIG ONLY (enableLlm: "false") ─────────────────────────
                 # Pinned, not :latest, for the same reason as vllmImage: a boot that
