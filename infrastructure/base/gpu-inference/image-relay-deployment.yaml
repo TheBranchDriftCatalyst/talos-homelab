@@ -1,0 +1,229 @@
+---
+# IMAGE RELAY — the in-cluster SSM tunnel to the image-gen rig (TALOS-p412).
+#
+# Sibling of relay-deployment.yaml, which does the same job for the LLM rig. Same
+# reasoning: every XGPUInstance security group is EGRESS-ONLY with no inbound rules at
+# all, so Session Manager is the only way in and there is no public inference port. The
+# tunnel lives in a Pod here rather than on the Mac, which makes the Mac a plain consumer
+# and lets image generation survive the laptop sleeping.
+#
+# ── WHY FOUR CONTAINERS ──────────────────────────────────────────────────────────────
+# AWS-StartPortForwardingSession forwards exactly ONE port per session, and this rig
+# serves two different things on two ports: the comfyui-shim's OpenAI-compatible
+# /v1/images API on 8012, and ComfyUI's OWN web UI on 8188. The UI is part of the
+# deliverable, not a debug affordance, so both get a session and a socat bridge.
+#
+# ── THE LABEL IS LOAD-BEARING ────────────────────────────────────────────────────────
+# app.kubernetes.io/name MUST be gpu-image-relay, NOT gpu-relay. gpu-service.yaml's
+# Service/gpu-backend selects app.kubernetes.io/name: gpu-relay, so a Pod carrying that
+# label would make gpu-backend round-robin LLM CHAT TRAFFIC INTO THE IMAGE RIG — showing
+# up as an intermittent 404 on /v1/chat/completions on roughly half of requests. The
+# shared label is part-of; the name is deliberately distinct.
+#
+# ── THE socat TRAP ───────────────────────────────────────────────────────────────────
+# socat's port numbers below are LITERAL args, because socat is PID 1 with no shell and
+# would not interpolate $REMOTE_PORT. Changing only the env vars yields tunnels on the
+# new ports and socat bridges pointing at the old ones, connecting to nothing, with NO
+# ERROR ANYWHERE. All four numbers are hand-written and must agree with the env above
+# them. The two LOCAL_PORTs must also differ from each other and from the LLM relay's
+# 18000 — containers in a Pod share a network namespace, so a duplicate makes the second
+# start-session fail to bind.
+#
+# ── WHY READINESS IS TWO PROBES AND WHY ONE OF THEM CANNOT BE FAKED ─────────────────
+# The shim's /healthz returns HTTP 200 with {"ok": true, "comfyui_reachable": <bool>}
+# REGARDLESS of whether ComfyUI is up, and an HTTP probe cannot inspect a body. So a
+# readiness probe on /healthz alone would report Ready with no ComfyUI at all — exactly
+# the 2026-09-28 failure, reproduced in the cluster's own view.
+#
+# So proxy-ui probes /system_stats, which is ComfyUI's OWN endpoint and cannot answer
+# unless ComfyUI is genuinely listening. Pod Ready requires ALL containers ready, so
+# "1/1" here means: SSM resolved the box by tag, two independent tunnels are up, ComfyUI
+# answered 200 through its tunnel, and the shim answered 200 through its. ComfyUI cannot
+# be absent and leave that green — and it is checked continuously, not once at boot.
+#
+# Do NOT use / for the UI probe: ComfyUI serves the SPA shell there, which can 200 from
+# cache while the backend is dead. Do NOT use /healthz on 8188: ComfyUI does not serve it.
+#
+# ── TIMINGS, AND WHY NOT A startupProbe ─────────────────────────────────────────────
+# failureThreshold: 3 doubles as the DE-ADVERTISE delay: it is how long a Ready Pod keeps
+# receiving traffic after the rig vanishes. A high value was measured at 600s of a Ready
+# Pod with no rig behind it on 2026-10-02. And a startupProbe is actively wrong here: a
+# failing one makes the kubelet KILL the container, which would turn the normal idle state
+# (no rig armed) into a crash loop. Running-but-NotReady is the CORRECT resting state.
+#
+# strategy: Recreate for the same reason as the LLM relay — because NotReady is the
+# correct resting state, a RollingUpdate never retires the old Pod and they stack (three
+# were live at once on 2026-10-02).
+#
+# ── ARMING ───────────────────────────────────────────────────────────────────────────
+# Needs gpu-inference/gpu-relay-creds, which means gpu-relay-user.yaml must be armed in
+# ../aws/apps/kustomization.yaml FIRST so Crossplane mints the key. Without it this Pod
+# sits in CreateContainerConfigError. The credentials are reused VERBATIM and need no IAM
+# change: gpu-relay-user.yaml grants ec2:DescribeInstances and
+# ssm:DescribeInstanceInformation on "*" and ssm:StartSession on instance/*, none of which
+# names a rig.
+#
+# Harmless to arm with no rig running: both tunnel loops just report no instance and the
+# Pod stays Running-but-NotReady.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-image-relay
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-image-relay
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gpu-image-relay
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gpu-image-relay
+        app.kubernetes.io/part-of: gpu-inference
+    spec:
+      securityContext:
+        runAsNonRoot: false # dnf needs root to install the session-manager plugin
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        # ── session 1: the shim API, 8012 on the box -> 18012 in this Pod ──────────
+        - name: tunnel-api
+          image: amazon/aws-cli:2.31.24
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -uo pipefail
+              command -v session-manager-plugin > /dev/null 2>&1 \
+                || dnf install -y https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm > /dev/null
+              echo "relay(api): targeting tag:Name=${RIG_NAME} in ${AWS_REGION}"
+              while true; do
+                # Re-resolve EVERY attempt: the instance id is not stable. A spot
+                # interruption or the 6h reaper's churn makes Crossplane recreate the
+                # box with a new id, and a tunnel pinned to one id dies at the first
+                # churn. Resolving by the Name tag survives both.
+                ID=$(aws ec2 describe-instances --region "$AWS_REGION" \
+                      --filters "Name=tag:Name,Values=${RIG_NAME}" \
+                                "Name=instance-state-name,Values=running" \
+                      --query 'Reservations[].Instances[0].InstanceId' \
+                      --output text 2> /dev/null)
+                if [ -z "$ID" ] || [ "$ID" = "None" ]; then
+                  echo "relay(api): no running instance tagged ${RIG_NAME}; retrying in ${RETRY_SECS}s"
+                  sleep "$RETRY_SECS"
+                  continue
+                fi
+                echo "relay(api): connecting to ${ID}"
+                aws ssm start-session --region "$AWS_REGION" --target "$ID" \
+                  --document-name AWS-StartPortForwardingSession \
+                  --parameters "portNumber=${REMOTE_PORT},localPortNumber=${LOCAL_PORT}"
+                echo "relay(api): session to ${ID} ended; re-resolving in ${RETRY_SECS}s"
+                sleep "$RETRY_SECS"
+              done
+          env:
+            - {name: RIG_NAME, value: gpu-image-node}
+            - {name: AWS_REGION, value: us-east-2}
+            - {name: REMOTE_PORT, value: "8012"}
+            - {name: LOCAL_PORT, value: "18012"}
+            - {name: RETRY_SECS, value: "15"}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: gpu-relay-creds, key: username}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: gpu-relay-creds, key: password}}
+          resources:
+            requests: {cpu: 25m, memory: 128Mi}
+            limits: {memory: 512Mi}
+
+        # ── session 2: ComfyUI's UI, 8188 on the box -> 18188 in this Pod ──────────
+        - name: tunnel-ui
+          image: amazon/aws-cli:2.31.24
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -uo pipefail
+              command -v session-manager-plugin > /dev/null 2>&1 \
+                || dnf install -y https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm > /dev/null
+              echo "relay(ui): targeting tag:Name=${RIG_NAME} in ${AWS_REGION}"
+              while true; do
+                ID=$(aws ec2 describe-instances --region "$AWS_REGION" \
+                      --filters "Name=tag:Name,Values=${RIG_NAME}" \
+                                "Name=instance-state-name,Values=running" \
+                      --query 'Reservations[].Instances[0].InstanceId' \
+                      --output text 2> /dev/null)
+                if [ -z "$ID" ] || [ "$ID" = "None" ]; then
+                  echo "relay(ui): no running instance tagged ${RIG_NAME}; retrying in ${RETRY_SECS}s"
+                  sleep "$RETRY_SECS"
+                  continue
+                fi
+                echo "relay(ui): connecting to ${ID}"
+                aws ssm start-session --region "$AWS_REGION" --target "$ID" \
+                  --document-name AWS-StartPortForwardingSession \
+                  --parameters "portNumber=${REMOTE_PORT},localPortNumber=${LOCAL_PORT}"
+                echo "relay(ui): session to ${ID} ended; re-resolving in ${RETRY_SECS}s"
+                sleep "$RETRY_SECS"
+              done
+          env:
+            - {name: RIG_NAME, value: gpu-image-node}
+            - {name: AWS_REGION, value: us-east-2}
+            - {name: REMOTE_PORT, value: "8188"}
+            - {name: LOCAL_PORT, value: "18188"}
+            - {name: RETRY_SECS, value: "15"}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: {secretKeyRef: {name: gpu-relay-creds, key: username}}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: {secretKeyRef: {name: gpu-relay-creds, key: password}}
+          resources:
+            requests: {cpu: 25m, memory: 128Mi}
+            limits: {memory: 512Mi}
+
+        # ── bridge 1: the shim API. LITERAL ports — see the socat trap above. ──────
+        - name: proxy-api
+          image: alpine/socat:1.8.1.3
+          args:
+            - TCP-LISTEN:8012,fork,reuseaddr
+            - TCP:127.0.0.1:18012
+          ports:
+            - {name: shim, containerPort: 8012}
+          readinessProbe:
+            # The shim's own health endpoint. Truthful for "the shim process answers
+            # through its tunnel", and nothing more — see the header for why the UI probe
+            # is the one that proves ComfyUI exists. Unauthenticated by design: /healthz
+            # has no api-key dependency, so this keeps working if the shim's key is set.
+            httpGet: {path: /healthz, port: 8012}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+
+        # ── bridge 2: ComfyUI's UI. LITERAL ports. ────────────────────────────────
+        - name: proxy-ui
+          image: alpine/socat:1.8.1.3
+          args:
+            - TCP-LISTEN:8188,fork,reuseaddr
+            - TCP:127.0.0.1:18188
+          ports:
+            - {name: comfy, containerPort: 8188}
+          readinessProbe:
+            # THE PROBE THAT CANNOT BE FAKED. /system_stats is ComfyUI's own endpoint;
+            # it cannot answer unless ComfyUI is genuinely serving. This is what makes
+            # "gpu-image-relay 1/1" mean ComfyUI is really there.
+            httpGet: {path: /system_stats, port: 8188}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 25m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}

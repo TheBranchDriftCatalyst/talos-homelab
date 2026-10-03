@@ -136,7 +136,7 @@ spec:
                   # resolved 2026-09-26 from /aws/service/deeplearning/.../
                   # base-oss-nvidia-driver-gpu-amazon-linux-2023. Per-region override
                   # is spec.ami. CONCRETE ONLY — see the header.
-                  imageId: ami-0138b0ae7d33b5753
+                  imageId: ami-087772adfc6271ec9
                   # New userData => new template version. Without this the fleet would
                   # keep launching version 1 forever.
                   updateDefaultVersion: true
@@ -168,7 +168,7 @@ spec:
                     httpTokens: required
                     httpPutResponseHopLimit: 2
                   # Root volume. The AMI's root device is /dev/xvda (gp3, 75GB
-                  # snapshot — verified live against ami-07173ded18b6f3a7b), and a
+                  # snapshot — verified live against ami-059ac32deae89a373), and a
                   # launch template needs the device name spelled out; aws_instance's
                   # rootBlockDevice inferred it. 100 leaves room for the OS/drivers and
                   # the ~9GB vllm-openai image. Weights never land here.
@@ -263,11 +263,16 @@ spec:
                     - {fromFieldPath: spec.quantization}
                     - {fromFieldPath: spec.maxModelLen}
                     - {fromFieldPath: spec.gpuMemoryUtilization}
-                    - {fromFieldPath: spec.enableImageGen}
+                    - {fromFieldPath: spec.enableLlm}
                     - {fromFieldPath: spec.vllmImage}
                     - {fromFieldPath: spec.streamerConcurrency}
                     - {fromFieldPath: spec.apiKeyParameter}
                     - {fromFieldPath: spec.maxNumSeqs}
+                    - {fromFieldPath: spec.comfyImage}
+                    - {fromFieldPath: spec.imageModelsPrefix}
+                    - {fromFieldPath: spec.shimPort}
+                    - {fromFieldPath: spec.comfyPort}
+                    - {fromFieldPath: spec.comfyArgs}
                   strategy: string
                   string:
                     fmt: |
@@ -278,9 +283,12 @@ spec:
                       # /var/log/gpu-init.FAILED, so a dead box is one `cat` away from a diagnosis.
                       exec > >(tee /var/log/gpu-init.log) 2>&1; set -x
                       HF_MODEL="%s"; BUCKET="%s"; PORT="%s"; SERVED="%s"; REGION="%s"
-                      QUANT="%s"; MAXLEN="%s"; UTIL="%s"; IMAGES="%s"; VLLM_IMAGE="%s"
+                      QUANT="%s"; MAXLEN="%s"; UTIL="%s"; ENABLE_LLM="%s"; VLLM_IMAGE="%s"
                       STREAM_CONCURRENCY="%s"; API_KEY_PARAM="%s"; MAX_NUM_SEQS="%s"
+                      COMFY_IMAGE="%s"; IMAGE_PREFIX="%s"; SHIM_PORT="%s"; COMFY_PORT="%s"
+                      COMFY_ARGS="%s"
                       S3="s3://$BUCKET/$HF_MODEL"
+                      IMAGE_S3="s3://$BUCKET/$IMAGE_PREFIX"
                       S5=/usr/local/bin/s5cmd
                       fatal() { echo "FATAL: $*"; echo "FATAL: $*" > /var/log/gpu-init.FAILED; exit 1; }
                       # --- tensor parallelism is DERIVED, never asserted (TALOS-5drv.2) ---
@@ -346,6 +354,43 @@ spec:
                       # huggingface_hub, so the host needs no pip and no PATH guessing.
                       # snapshot_download with local_dir writes a plain file tree (no blob
                       # symlinks), which is what makes the s5cmd round-trip safe.
+                      # ── SHARED: the bearer token ────────────────────────────────────
+                      # Fetched for BOTH roles, before the gate, because both serve an
+                      # authenticated endpoint from the same SSM parameter. It sat inside the
+                      # LLM branch for one revision, which left an image rig with an empty
+                      # SHIM_API_KEY serving UNAUTHENTICATED - and nothing would have reported
+                      # that, because the shim reads an empty key as "no auth required".
+                      API_KEY_ARG=""
+                      if [ -n "$API_KEY_PARAM" ]; then
+                        # The aws CLI is a NEW dependency here - every other remote read in this script
+                        # uses s5cmd, which is fetched by curl. AL2023 is expected to ship awscli v2,
+                        # but check explicitly: without this the get-parameter below just returns empty
+                        # and the failure below would blame IAM, sending you to debug permissions on a
+                        # box that bills by the hour.
+                        command -v aws >/dev/null 2>&1 || dnf install -y -q awscli 2>/dev/null || true
+                        command -v aws >/dev/null 2>&1 || fatal "no aws CLI on this AMI and dnf could not install awscli; cannot read the vLLM api key from SSM"
+                        VLLM_API_KEY=$(aws ssm get-parameter --region "$REGION" --name "$API_KEY_PARAM" \
+                          --with-decryption --query Parameter.Value --output text 2>/dev/null)
+                        [ -n "$VLLM_API_KEY" ] || fatal "could not read $API_KEY_PARAM from SSM in $REGION. Does the instance profile grant ssm:GetParameter on it, and has the ESO PushSecret run?"
+                        API_KEY_ARG="--api-key $VLLM_API_KEY"
+                        # Length via the shell parameter expansion, never printf: any percent-s in
+                        # this script is a Go format placeholder and would shift every later
+                        # substitution by one.
+                        echo "api key: loaded from $API_KEY_PARAM (${#VLLM_API_KEY} chars)"
+                      else
+                        echo "api key: NONE - serving unauthenticated (apiKeyParameter is empty)"
+                      fi
+                      # ══ EVERYTHING ABOVE IS SHARED. EVERYTHING BELOW IS PER-ROLE. ══
+                      # The split is deliberate: most of this script is rig-agnostic and
+                      # carries the fixes that took a real box to find — the instance store
+                      # identified by its NVMe MODEL string rather than device order, the
+                      # `grep -c` over `wc -l`, the 30x2s waits, and the fatal() that leaves
+                      # /var/log/gpu-init.FAILED behind. Two compositions would duplicate
+                      # all of it and then drift, and nothing runs both boot scripts, so
+                      # nothing would catch the drift. A format-slot/variable miscount, by contrast,
+                      # IS mechanically checkable - and is checked.
+                      if [ "$ENABLE_LLM" = "true" ]; then
+                      [ -n "$HF_MODEL" ] || fatal "enableLlm is true but hfModel is empty. Set spec.hfModel, or enableLlm false for an image rig."
                       if ! $S5 ls "$S3/_SEED_COMPLETE" > /dev/null 2>&1; then
                         SEED="/cache/seed/$HF_MODEL"
                         mkdir -p "$SEED"
@@ -405,26 +450,6 @@ spec:
                       # and therefore bypasses lan-only-strict entirely. --api-key is what closes that.
                       # A FETCH FAILURE IS FATAL. Falling through to an unauthenticated endpoint on a box
                       # that bills by the hour is the one outcome worse than not booting.
-                      API_KEY_ARG=""
-                      if [ -n "$API_KEY_PARAM" ]; then
-                        # The aws CLI is a NEW dependency here - every other remote read in this script
-                        # uses s5cmd, which is fetched by curl. AL2023 is expected to ship awscli v2,
-                        # but check explicitly: without this the get-parameter below just returns empty
-                        # and the failure below would blame IAM, sending you to debug permissions on a
-                        # box that bills by the hour.
-                        command -v aws >/dev/null 2>&1 || dnf install -y -q awscli 2>/dev/null || true
-                        command -v aws >/dev/null 2>&1 || fatal "no aws CLI on this AMI and dnf could not install awscli; cannot read the vLLM api key from SSM"
-                        VLLM_API_KEY=$(aws ssm get-parameter --region "$REGION" --name "$API_KEY_PARAM" \
-                          --with-decryption --query Parameter.Value --output text 2>/dev/null)
-                        [ -n "$VLLM_API_KEY" ] || fatal "could not read $API_KEY_PARAM from SSM in $REGION. Does the instance profile grant ssm:GetParameter on it, and has the ESO PushSecret run?"
-                        API_KEY_ARG="--api-key $VLLM_API_KEY"
-                        # Length via the shell parameter expansion, never printf: any percent-s in
-                        # this script is a Go format placeholder and would shift every later
-                        # substitution by one.
-                        echo "api key: loaded from $API_KEY_PARAM (${#VLLM_API_KEY} chars)"
-                      else
-                        echo "api key: NONE - serving unauthenticated (apiKeyParameter is empty)"
-                      fi
                       QUANT_ARG=""; [ "$QUANT" != "auto" ] && QUANT_ARG="--quantization $QUANT"
                       # $QUANT_ARG and $SERVED are both INTENTIONALLY UNQUOTED - they must
                       # word-split. $QUANT_ARG is either empty or the two words
@@ -448,18 +473,75 @@ spec:
                         --tensor-parallel-size "$TP" $QUANT_ARG $API_KEY_ARG \
                         --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" \
                         --max-num-seqs "$MAX_NUM_SEQS" --trust-remote-code
-                      # --- Image gen: ComfyUI + comfyui-shim (OpenAI /v1/images on :8012), sharing VRAM.
-                      #     Gated on enableImageGen because it only fits where the LLM leaves spare VRAM.
-                      #     `|| true`: runpod-mac-bundle is built+pushed separately and DOES NOT EXIST in
-                      #     GHCR yet (404 as of 2026-09-30, see SESSION_STATUS.md) - a launch before it
-                      #     exists still brings up vLLM. That `|| true` is also why the 2026-09-28 235B
-                      #     launch reported success with no ComfyUI running at all.
-                      #     Ollama/Whisper disabled - vLLM owns the LLM path. ---
-                      if [ "$IMAGES" = "true" ]; then
-                        docker run -d --restart=always --name comfy --gpus all -p 8012:8012 -p 8188:8188 \
-                          -v /cache:/workspace -e ENABLE_OLLAMA=false -e ENABLE_WHISPER=false \
-                          -e ENABLE_COMFYUI=true -e ENABLE_COMFYUI_SHIM=true \
-                          ghcr.io/thebranchdriftcatalyst/runpod-mac-bundle:latest || true
+                      # --- No image generation on this branch. It used to live here, sharing VRAM
+                      #     with vLLM behind enableImageGen, with its `docker run` wrapped in
+                      #     `|| true` - which hid that the image it pulled had NEVER EXISTED in GHCR,
+                      #     and is why the 2026-09-28 run reported success with no ComfyUI running at
+                      #     all. Images are their own rig now: see the else branch below, and
+                      #     aws/apps/gpu-image-l40s.yaml. ---
+                      else
+                      # ── IMAGE RIG ────────────────────────────────────────────────────
+                      # NO `|| true` anywhere here. The previous version wrapped its docker
+                      # run in one, which hid that the image it pulled did not exist in GHCR
+                      # at all - so the box booted "successfully" with no ComfyUI for a
+                      # month. ComfyUI is this box's ONLY job; if it cannot start, the boot
+                      # has failed and fatal() should say so.
+                      MODELS_DIR=/cache/models
+                      mkdir -p "$MODELS_DIR/unet" "$MODELS_DIR/vae" "$MODELS_DIR/clip" "$MODELS_DIR/loras"
+                      # THE SAME SEED-THEN-STREAM CACHE THE vLLM PATH USES, for the same
+                      # reasons: ~103 GB across 14 files, and pulling that from HuggingFace
+                      # on every boot means 13 LFS objects over an external CDN with normal
+                      # 429s and multi-minute variance. Same-region S3 was measured at
+                      # 1.29 GB/s, so a warm boot stages in ~90-150s instead of 4-9 minutes,
+                      # and nothing outside AWS is in the boot path.
+                      #
+                      # ONE DELIBERATE DIFFERENCE from the vLLM branch: it does NOT delete
+                      # the local copy afterwards. vLLM streams weights straight out of S3
+                      # via runai_streamer and never needs them on disk; ComfyUI mmaps from
+                      # the filesystem and cannot read s3://, so here the local copy IS the
+                      # serving path.
+                      if $S5 ls "$IMAGE_S3/_SEED_COMPLETE" > /dev/null 2>&1; then
+                        echo "image models: WARM - streaming from $IMAGE_S3"
+                        $S5 sync --concurrency 32 "$IMAGE_S3/*" "$MODELS_DIR/" \
+                          || fatal "S3 sync from $IMAGE_S3 failed. Prefix is marked seeded: credentials or network, not a cold cache."
+                      else
+                        echo "image models: COLD prefix - the container will pull ~103 GB from HuggingFace."
+                        echo "image models: minutes of GPU time. S3 is seeded after, so it happens once."
+                      fi
+                      # The shim's own key. Fetched above unconditionally because both roles
+                      # use the same token, but only PASSED to the container when a client
+                      # exists that sends it: /healthz has no auth dependency, so enabling
+                      # the key with an unauthenticated caller yields a Ready relay and a
+                      # 401 on every render - green dashboard, zero function.
+                      docker run -d --restart=always --name comfy --gpus all \
+                        -p "$SHIM_PORT":8012 -p "$COMFY_PORT":8188 \
+                        -v /cache:/workspace \
+                        -e MODEL_ROOT=/workspace/models \
+                        -e SHIM_OWNED_BY=aws-l40s-comfyui \
+                        -e SHIM_API_KEY="$VLLM_API_KEY" \
+                        -e COMFY_EXTRA_ARGS="$COMFY_ARGS" \
+                        "$COMFY_IMAGE" \
+                        || fatal "docker run of $COMFY_IMAGE failed. Is the GHCR package PUBLIC? A private one 401s here."
+                      # Prove ComfyUI is actually serving before declaring the boot good.
+                      # /system_stats is ComfyUI's OWN endpoint - the shim's /healthz returns
+                      # 200 with comfyui_reachable:false, so it cannot answer this question.
+                      for _ in $(seq 1 120); do
+                        curl -fsS --max-time 3 "http://127.0.0.1:$COMFY_PORT/system_stats" > /dev/null 2>&1 && break
+                        sleep 5
+                      done
+                      curl -fsS --max-time 5 "http://127.0.0.1:$COMFY_PORT/system_stats" > /dev/null 2>&1 \
+                        || fatal "ComfyUI never answered /system_stats on $COMFY_PORT within 10min. docker logs comfy."
+                      curl -fsS --max-time 5 "http://127.0.0.1:$SHIM_PORT/healthz" > /dev/null 2>&1 \
+                        || fatal "comfyui-shim never answered /healthz on $SHIM_PORT. docker logs comfy."
+                      echo "image rig: ComfyUI and the shim are both answering"
+                      # Seed S3 now that the weights are on local disk, so the next boot is
+                      # warm. Backgrounded: the box is already serving and this is 103 GB.
+                      if ! $S5 ls "$IMAGE_S3/_SEED_COMPLETE" > /dev/null 2>&1; then
+                        ( $S5 sync "$MODELS_DIR/" "$IMAGE_S3/" \
+                            && echo seeded | $S5 cp - "$IMAGE_S3/_SEED_COMPLETE" \
+                            && echo "image models: S3 prefix seeded - later boots take the warm path" \
+                            || echo "WARNING: S3 seed failed; the next boot will pull from HuggingFace again" ) &
+                      fi
                       fi
                 # A launch template's userData field is BASE64, unlike aws_instance's
                 # plain-text user_data ("The base64-encoded user data to provide when

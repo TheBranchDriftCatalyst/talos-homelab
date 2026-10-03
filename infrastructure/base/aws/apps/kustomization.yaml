@@ -6,6 +6,26 @@
 # NOT a resource: gpu-profiles.yaml is a plain sizing/placement table read by
 # scripts/check-spot-avail.sh, deliberately left out of the list below so Flux
 # ignores it. It lives here so the table and the claims cannot drift apart.
+#
+# ── RENAMED 2026-10-02 ───────────────────────────────────────────────────────────────
+#   gpu-node-27b-fp8  ->  inference-node
+#   gpu-node-235b     ->  inference-node-235b
+# The old names described the MODEL that happened to be loaded; the new ones describe
+# the JOB the box does, which is what survives a model swap. Anything dated before
+# 2026-10-02 — the ON->OFF launch logs below, instance tags in AWS, git history,
+# aws-inventory-exporter's index-lag docstring — refers to these boxes by their old
+# names. Same rigs.
+#
+# Renaming was safe only because nothing was running: spec.instanceName pins the
+# derived `<name>-fleet` managed resource, so a rename under a live box would try to
+# create inference-node-fleet while gpu-node-27b-fp8-fleet still owned the instance,
+# and `terminateInstances` defaults to FALSE. Both regions were swept clean first.
+#
+# INVARIANT, newly load-bearing: `inference-node` is a strict PREFIX of
+# `inference-node-235b`. Every consumer today matches EXACTLY (EC2 tag:Name filters,
+# the crossplane-name tag join, launch-template names) and must stay that way — a
+# `Values=inference-node*` filter would silently match BOTH rigs and conflate a
+# $2.24/hr box with a $5.17/hr one.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -55,7 +75,7 @@ resources:
   # The box derived --tensor-parallel-size 4 from nvidia-smi on its own, streamed 30.9GB
   # out of same-region S3 in ~30s via runai_streamer, autodetected quantization=fp8, and
   # answered a completion through the in-cluster relay from the Mac in 1.2s. ~$1.50.
-  # - gpu-node-27b-fp8.yaml
+  # - inference-node.yaml
   # ── OFF / HELD (TALOS-iymy) ── BIG BOI: spot g6e.12xlarge (4× L40S) in us-east-2
   # serving Qwen3-235B-A22B-GPTQ-Int4 (vLLM TP4) + ComfyUI. ~$5.2/hr spot — do NOT
   # leave it running unattended ($124/day). Uncomment ONLY on an explicit go, AND
@@ -63,12 +83,25 @@ resources:
   # shows us-east-2 g6e.12xlarge still has capacity.
   # ON→OFF (2026-09-28): launched i-03e0480dd97da94b1, verified 9/9 LLM acceptance
   # tests (Qwen3-235B via vLLM TP4), then torn down (git-off) to stop the ~$5.11/hr.
-  # - gpu-node-235b.yaml
+  # - inference-node-235b.yaml
+  # ── OFF ── IMAGE-GEN RIG (TALOS-p412): 1x L40S on-demand in us-east-2 running ComfyUI
+  # + comfyui-shim with four selectable SOTA pipelines. ~$2.24/hr on the 2xlarge.
+  #
+  # APPENDED BELOW THE LLM CLAIMS ON PURPOSE. The operator's Tiltfile takes armed[0] in
+  # THIS FILE'S ORDER for its LLM endpoint, so inserting an image rig above them would
+  # change which rig chat resolves to. Role filtering makes that safe today, but the
+  # ordering is load-bearing enough to write down.
+  #
+  # Arming it needs, in order: (a) the GHCR package catalyst-comfyui-aws PUBLIC, (b)
+  # gpu-inference/image-relay-deployment.yaml armed so an endpoint exists. First boot
+  # pays a ~103 GB HuggingFace pull, then seeds S3 so later boots stream in ~90-150s.
+  # - gpu-image-l40s.yaml
   #
   # ── RETIRED (2026-09-30) ── gpu-test-rig.yaml (TALOS-455u, the 2026-09-26 g5.xlarge
-  # + Qwen3-14B-AWQ POC) is DELETED. It was superseded by gpu-node-235b the next day,
+  # + Qwen3-14B-AWQ POC) is DELETED. It was superseded by inference-node-235b (then
+  # named gpu-node-235b) the next day,
   # and the shared composition was then rewritten for the 4-GPU shape, leaving the
-  # rig's spec unlaunchable (TP4 on one GPU). gpu-node-27b-fp8 above is its successor.
+  # rig's spec unlaunchable (TP4 on one GPU). inference-node above is its successor.
   #
   # OFF (2026-09-25). The rest are commented out deliberately -- per this file's own
   # "file = on-switch" idiom, that is the off position. Uncomment to spin up.

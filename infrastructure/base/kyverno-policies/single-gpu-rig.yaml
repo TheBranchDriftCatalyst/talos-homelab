@@ -108,24 +108,70 @@ metadata:
   labels:
     app.kubernetes.io/part-of: kyverno
   annotations:
-    policies.kyverno.io/title: One GPU rig at a time
+    policies.kyverno.io/title: One GPU rig per role
     policies.kyverno.io/category: Cost
     policies.kyverno.io/severity: critical
     policies.kyverno.io/subject: XGPUInstance
     policies.kyverno.io/description: >-
-      Denies creating a second XGPUInstance while one already exists, naming the
-      rig that is in the way. Two concurrent rigs is $7.41/hr. Replaces the
-      convention of "exactly one claim is uncommented in aws/apps" and the G/VT
-      vCPU quota ceiling, neither of which actually decided anything
-      (TALOS-5drv.4). Label a claim catalyst.io/allow-concurrent: "true" to
-      exempt it for a deliberate two-rig test.
+      Denies creating a second XGPUInstance OF THE SAME ROLE while one already
+      exists, naming the rig that is in the way. The GPU plane is deliberately
+      two rigs — one serving tokens (role llm) and one serving pixels (role
+      image) — so a flat one-at-a-time rule would deny the intended design.
+      Scoping the count by catalyst.io/gpu-role admits that pair and still
+      refuses a duplicate of either. Replaces the convention of "exactly one
+      claim is uncommented in aws/apps" and the G/VT vCPU quota ceiling, neither
+      of which actually decided anything (TALOS-5drv.4). Label a claim
+      catalyst.io/allow-concurrent: "true" to exempt it for a deliberate
+      three-rig test.
 spec:
   # Fail, not Ignore — see the file header. One rare cluster-scoped CRD, so
-  # failing closed is cheap and failing open is $7.41/hr.
+  # failing closed is cheap and failing open is a GPU nobody decided to run.
+  # Costs are per-shape and live in aws/apps/gpu-profiles.yaml; as of 2026-10-02
+  # two rigs is ~$4.48/hr at the cheap members of both pools and ~$7.61/hr at
+  # both ceilings. No figure is restated in the rules below, because the ones
+  # that were there went stale the moment the shapes changed.
   failurePolicy: Fail
   # Admission only. A background scan would count the object against itself.
   background: false
   rules:
+    # ── RULE 1 ── the label must exist and be one of the two known roles.
+    #
+    # This is NOT belt-and-braces; without it the rule below has a silent hole.
+    # An ABSENT label compares as null in JMESPath, so an unlabelled claim finds
+    # ZERO same-role siblings and is admitted unconditionally. Verified with
+    # `kyverno jp query`: the same-role filter against a claim with no role
+    # label returns `[]` even with two rigs already running. A $4.48/hr guard
+    # that any claim can walk past by omitting a label is not a guard.
+    #
+    # Deliberately NOT excluded by allow-concurrent: that hatch is for running
+    # more rigs on purpose, not for running one whose role is unknown. Nothing
+    # downstream can route an unlabelled rig anyway — the operator's Tiltfile
+    # and scripts/lib/armed-rigs.rb both abort on it, because an LLM box and an
+    # image box are both `kind: XGPUInstance` and the kind cannot tell them apart.
+    - name: require-gpu-role-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - aws.catalyst.io/v1alpha1/XGPUInstance
+              operations:
+                - CREATE
+                - UPDATE
+      validate:
+        failureAction: Enforce
+        message: >-
+          XGPUInstance '{{ request.object.metadata.name }}' must carry
+          catalyst.io/gpu-role with the value "llm" or "image". The role is what
+          separates a token box from a pixel box — they share one kind — and
+          without it the one-rig-per-role guard counts no siblings and admits
+          this claim unconditionally, the relay cannot know which ports to
+          forward, and the operator aborts rather than guess.
+        pattern:
+          metadata:
+            labels:
+              catalyst.io/gpu-role: "llm | image"
+
+    # ── RULE 2 ── at most one rig per role.
     - name: deny-second-xgpuinstance
       match:
         any:
@@ -164,19 +210,29 @@ spec:
         - name: existingRigs
           apiCall:
             urlPath: /apis/aws.catalyst.io/v1alpha1/xgpuinstances
-            jmesPath: "items[?metadata.name != '{{ request.object.metadata.name }}'].metadata.name || `[]` | sort(@)"
+            # Scoped to the SAME ROLE as the incoming claim, so one llm rig plus one
+            # image rig is admitted while a duplicate of either is refused naming the
+            # one in the way. The label key needs the quotes — it contains a dot and a
+            # slash, so bare `metadata.labels.catalyst.io/gpu-role` is not a valid
+            # JMESPath identifier. Verified with `kyverno jp query` against a list of
+            # three rigs: an incoming image claim sees only the image sibling, an
+            # incoming llm claim only the llm sibling, and a list containing just the
+            # incoming object still yields 0 rather than 1.
+            jmesPath: "items[?metadata.name != '{{ request.object.metadata.name }}' && metadata.labels.\"catalyst.io/gpu-role\" == '{{ request.object.metadata.labels.\"catalyst.io/gpu-role\" }}'].metadata.name || `[]` | sort(@)"
       validate:
         failureAction: Enforce
         # Names the rig to turn off, which is the whole point of preferring a real
         # list over a bare count.
         message: >-
           Refusing to create XGPUInstance '{{ request.object.metadata.name }}':
-          one GPU rig at a time, and '{{ existingRigs | join(', ', @) }}' already
-          exists. Two concurrent rigs is $7.41/hr (~$178/day). Comment that rig's
-          line out of infrastructure/base/aws/apps/kustomization.yaml and let Flux
-          remove it first, or label this claim
+          one GPU rig per role, and '{{ existingRigs | join(', ', @) }}' already
+          holds role
+          '{{ request.object.metadata.labels."catalyst.io/gpu-role" }}'. Comment
+          that rig's line out of infrastructure/base/aws/apps/kustomization.yaml
+          and let Flux remove it first, or label this claim
           'catalyst.io/allow-concurrent: "true"' if you genuinely mean to run two
-          (TALOS-5drv.4).
+          of the same role (TALOS-5drv.4). Rate depends on the shape the fleet
+          places; see aws/apps/gpu-profiles.yaml.
         deny:
           conditions:
             all:

@@ -58,8 +58,9 @@ version: 1
 # producer/consumer pair — the claim produces it, ~/.catalyst/llm-config.yaml
 # consumes it — with nothing checking they agree. Disagreement is a 404 at chat time.
 #
-# Consumers: scripts/gpu-tunnel.sh, and in the sibling catalyst-operator repo the
-# Tiltfile (LITELLM_BASE_URL, SWARM_AGENT_LLM_BASE_URL) and Taskfile (llm:*).
+# Consumers: scripts/gpu-tunnel.sh (ROLE=llm|image), scripts/lib/armed-rigs.rb, and in
+# the sibling catalyst-operator repo the Tiltfile (LITELLM_BASE_URL,
+# SWARM_AGENT_LLM_BASE_URL, IMAGE_SHIM_BASE_URL, COMFYUI_UI_URL) and Taskfile (llm:*).
 endpoint:
   # 18000/18012, NOT 8000/8012: on the Mac :8000 is fchat-bouncer's uvicorn and
   # :8012 is mac-sdlc-node's comfyui-shim. Both 18xxx are free.
@@ -73,6 +74,32 @@ endpoint:
   # the Mac out of the loop and makes catalyst-operator a CONSUMER rather than the
   # transport. Guarded by the lan-only middleware (TALOS-a8vo.4).
   clusterUrl: "http://ollama.talos00"
+  # ── IMAGE RIG ENDPOINTS ──────────────────────────────────────────────────────────
+  # Two hostnames because they are two different servers on the box: the shim's
+  # OpenAI-compatible /v1/images API, and ComfyUI's own web UI. The UI is part of the
+  # deliverable, not a debug affordance, so it gets a real route.
+  #
+  # HOST-based, not path-based, and that is not a style choice: ComfyUI's SPA loads
+  # /assets/*, calls /api/*, /object_info, /queue, /history and opens a websocket at /ws,
+  # all from ABSOLUTE ROOT paths. A PathPrefix + StripPrefix route would serve the HTML
+  # and then 404 every asset and the websocket. Giving ComfyUI the root of its own
+  # hostname is the only form that works without patching ComfyUI.
+  #
+  # No DNS change is needed: *.talos00 is a Pi-hole wildcard to 192.168.1.54. Hosts that
+  # resolve via /etc/hosts instead need both names added there.
+  imageClusterUrl: "http://imagegen.talos00"
+  comfyUiClusterUrl: "http://comfy.talos00"
+  # Where image consumers point when NO image rig is armed — the default state. This is
+  # the Mac's own comfyui-shim, which serves the SAME four pipeline ids from the SAME
+  # pipelines/ directory. That is why the rig sets SHIM_OWNED_BY=aws-l40s-comfyui: it is
+  # the only thing in the response that says which host actually rendered.
+  imageLocalFallbackUrl: "http://localhost:8012"
+  comfyUiLocalFallbackUrl: "http://localhost:8188"
+  # ComfyUI's UI port, tunnelled alongside the shim. AWS-StartPortForwardingSession
+  # forwards ONE port per session, so the image relay runs two sessions and two socat
+  # bridges, and these two local ports must differ from each other and from 18000.
+  comfyLocalPort: 18188
+  comfyRemotePort: 8188
   # Where consumers point when NO rig is on — the default state. Still needed at Level 2
   # because nothing yet fails over automatically: with no rig, clusterUrl returns 503.
   # TALOS-rzjx's InterceptorRoute has coldStart.fallback, which would make clusterUrl
@@ -83,22 +110,50 @@ quotaCodes:
   spot: L-3819A6DF        # All G and VT Spot Instance Requests (vCPU)
   onDemand: L-DB2E81BA    # Running On-Demand G and VT instances (vCPU)
 
-# Snapshot taken 2026-09-30 — re-read with check-spot-avail.sh, do not trust these.
+# Snapshot RE-READ 2026-10-02 against service-quotas — re-read with check-spot-avail.sh,
+# do not trust these. The 2026-09-30 snapshot said us-east-2 was 48/48; it is 64/64, raised
+# by a case that closed on 2026-09-30. That staleness is not harmless: it made the two-rig
+# split look like it needed a quota increase before it could run at all.
+#
+# ── TWO RIGS AT ONCE: 64 IS ENOUGH, WITH ZERO HEADROOM ──────────────────────────────
+# The ceiling is per-REGION vCPU, not per-AZ and not per-GPU. Worst concurrent case is the
+# LLM rig landing on g6.12xlarge (48 vCPU — and that IS the shape the only successful run
+# got) plus the image rig on g6e.4xlarge (16) = exactly 64. It fits and nothing is spare.
+# A third rig, or widening either pool upward, needs L-DB2E81BA raised first.
+#
+# The failure mode if it does NOT fit is the trap worth knowing: the fleet reports
+# fleetState: active with fulfilledCapacity: 0, which reads like an insufficient-capacity
+# problem rather than a quota one.
 regions:
   us-west-2: {spotVcpu: 32, onDemandVcpu: 48, modelsBucket: catalyst-tbdc-models}
-  us-east-2: {spotVcpu: 48, onDemandVcpu: 48, modelsBucket: catalyst-tbdc-models-use2}
+  us-east-2: {spotVcpu: 64, onDemandVcpu: 64, modelsBucket: catalyst-tbdc-models-use2}
   us-east-1: {spotVcpu: 0, onDemandVcpu: 0, modelsBucket: null}      # quota 0 — unusable until raised
   eu-central-1: {spotVcpu: 0, onDemandVcpu: 0, modelsBucket: null}   # quota 0 — unusable until raised
 
 # Candidate machine shapes. `gpus` is the tensorParallelSize a claim will GET here.
-# Verified against describe-instance-types in us-east-2 on 2026-10-01.
+# Verified against describe-instance-types in us-east-2 on 2026-10-02.
+#
+# ── vramGib IS AN AGGREGATE ACROSS ALL GPUs, AND THAT MISLEADS ON THE 4x SHAPES ──────
+# `vramPerGpuGib` is the number that decides whether a model LOADS. vLLM shards a model
+# across GPUs with tensor parallelism, so for an LLM the aggregate is the useful figure.
+# ComfyUI has NO tensor parallelism: a diffusion UNET plus its text encoders must fit ONE
+# device or it CPU-offloads and crawls. So g6.12xlarge reads as 89.4 GiB — MORE than an
+# L40S — while offering only 22.4 GiB per device, which cannot hold qwen-image-2.1's
+# 32.4 GB. A shape with more total VRAM than the L40S is disqualified for images.
+#
+# ── ramGib IS BINDING FOR IMAGE RIGS AND WAS INVISIBLE HERE ──────────────────────────
+# It never mattered for vLLM, which streams S3 -> VRAM and never stages through host RAM.
+# ComfyUI stages each model through RAM and its smart-memory then CACHES the previous model
+# there, so swapping across four pipelines accumulates. qwen-image-2.1 alone stages
+# 14.2 GB UNET + 17.5 GB encoder = 31.7 GB transiently. 64 GiB works; --disable-smart-memory
+# via the claim's comfyArgs is the mitigation if a 2xlarge OOMs.
 shapes:
-  - {instanceType: g5.2xlarge, gpu: A10G, gpus: 1, vramGib: 22.4, instanceStoreGb: 450, vcpu: 8, onDemandUsd: 1.212, fp8: false}
-  - {instanceType: g6e.2xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, instanceStoreGb: 450, vcpu: 8, onDemandUsd: 2.242, fp8: true}
-  - {instanceType: g6e.4xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, instanceStoreGb: 600, vcpu: 16, onDemandUsd: 3.004, fp8: true}
-  - {instanceType: g6.12xlarge, gpu: L4, gpus: 4, vramGib: 89.4, instanceStoreGb: 3760, vcpu: 48, onDemandUsd: 4.602, fp8: true}
-  - {instanceType: g5.12xlarge, gpu: A10G, gpus: 4, vramGib: 89.4, instanceStoreGb: 3800, vcpu: 48, onDemandUsd: 5.672, fp8: false}
-  - {instanceType: g6e.12xlarge, gpu: L40S, gpus: 4, vramGib: 178.8, instanceStoreGb: 3800, vcpu: 48, onDemandUsd: 10.493, fp8: true}
+  - {instanceType: g5.2xlarge, gpu: A10G, gpus: 1, vramGib: 22.4, vramPerGpuGib: 22.4, ramGib: 32, instanceStoreGb: 450, vcpu: 8, onDemandUsd: 1.212, fp8: false}
+  - {instanceType: g6e.2xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, vramPerGpuGib: 44.7, ramGib: 64, instanceStoreGb: 450, vcpu: 8, onDemandUsd: 2.242, fp8: true}
+  - {instanceType: g6e.4xlarge, gpu: L40S, gpus: 1, vramGib: 44.7, vramPerGpuGib: 44.7, ramGib: 128, instanceStoreGb: 600, vcpu: 16, onDemandUsd: 3.004, fp8: true}
+  - {instanceType: g6.12xlarge, gpu: L4, gpus: 4, vramGib: 89.4, vramPerGpuGib: 22.4, ramGib: 192, instanceStoreGb: 3760, vcpu: 48, onDemandUsd: 4.602, fp8: true}
+  - {instanceType: g5.12xlarge, gpu: A10G, gpus: 4, vramGib: 89.4, vramPerGpuGib: 22.4, ramGib: 192, instanceStoreGb: 3800, vcpu: 48, onDemandUsd: 5.672, fp8: false}
+  - {instanceType: g6e.12xlarge, gpu: L40S, gpus: 4, vramGib: 178.8, vramPerGpuGib: 44.7, ramGib: 384, instanceStoreGb: 3800, vcpu: 48, onDemandUsd: 10.493, fp8: true}
 
 # `fp8: false` means AMPERE (A10G) — no native FP8 e4m3. An FP8 checkpoint will fall
 # back to a weight-only emulation path there, so keep g5.* out of an FP8 rig's pool
@@ -118,7 +173,8 @@ models:
 # fleets.ec2.aws.upbound.io + launchtemplates.ec2.aws.upbound.io activated in
 # infrastructure/base/aws-providers/activation-policy.yaml before they can render.
 rigs:
-  - name: gpu-node-27b-fp8
+  - name: inference-node
+    role: llm
     instanceType: g6e.2xlarge      # cheapest pool member; the only key check-spot-avail.sh reads
     instanceTypes: [g6e.2xlarge, g6e.4xlarge, g6.12xlarge]
     region: us-east-2              # us-west-2 had NO g6e.2xlarge capacity at all — worth retesting now the pool is 3 deep
@@ -134,7 +190,8 @@ rigs:
                            # off ~$2.24 on-demand is thin.
     maxUsdPerHour: 4.60    # the pool's CEILING (g6.12xlarge). lowestPrice only reaches
                            # for it when the cheaper pools are dry.
-  - name: gpu-node-235b
+  - name: inference-node-235b
+    role: llm
     instanceType: g6e.12xlarge
     instanceTypes: [g6e.12xlarge]  # ONE-MEMBER POOL: nothing else clears 140GiB inside the vCPU quota
     region: us-east-2
@@ -147,3 +204,16 @@ rigs:
     spotUsdPerHour: 5.17   # us-east-2c, measured 2026-09-30 (range 5.17-5.24 across AZs).
                            # In us-west-2 the same shape is $6.11-9.90 — do not move it there.
     maxUsdPerHour: 10.49   # on-demand list, i.e. the spot price ceiling for this shape
+  # THE PIXEL BOX. role: image is what lets it coexist with a token rig — admission
+  # counts same-role siblings only, and both the operator and the scripts pick their
+  # endpoint by this field rather than by guessing from the name.
+  - name: gpu-image-node
+    role: image
+    instanceType: g6e.2xlarge
+    region: us-east-2
+    # Not an hfModel: ComfyUI serves four pipelines from one box and the caller picks per
+    # request. These are the ids /v1/models reports (they are _meta.name values, NOT
+    # filename stems, which is what a test asserting on filenames would get wrong).
+    pipelines: [z-image-turbo, hidream-i1-fast, qwen-image-2.1, chroma-radiance]
+    spotUsdPerHour: 2.24
+    maxUsdPerHour: 3.00

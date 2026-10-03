@@ -20,6 +20,9 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILES="${PROFILES:-$REPO_ROOT/infrastructure/base/aws/apps/gpu-profiles.yaml}"
+# NOT dirname($PROFILES) — see the STATE column comment below. PROFILES is overridable
+# for ad-hoc sizing runs; "which rig is armed" is a fact about this checkout.
+APPS_DIR="$REPO_ROOT/infrastructure/base/aws/apps"
 
 SPOT_Q=L-3819A6DF # All G and VT Spot Instance Requests (vCPU)
 OD_Q=L-DB2E81BA   # Running On-Demand G and VT instances (vCPU)
@@ -144,7 +147,7 @@ done
 echo
 echo "═══ 5. MODEL → SHAPE FIT  (from the profiles table) ═══"
 if [ "$HAVE_TABLE" -eq 1 ]; then
-  ruby -ryaml -e '
+  ruby -ryaml -r"$REPO_ROOT/scripts/lib/armed-rigs" -e '
     d = YAML.load_file(ARGV[0])
     shapes = d["shapes"] || []
     printf("  %-38s %8s %9s   %s\n", "MODEL", "SIZE", "MIN VRAM", "FITS")
@@ -155,13 +158,18 @@ if [ "$HAVE_TABLE" -eq 1 ]; then
     end
     puts
     # STATE is DERIVED from the kustomization, never stored here (TALOS-cmni): an
-    # uncommented `- gpu-node-<name>.yaml` line is the switch Flux acts on, so it cannot
-    # disagree with reality. A stored copy did, on 2026-10-02, printing "off" for a rig
-    # that was armed and billing on AWS.
-    kust = File.join(File.dirname(ARGV[0]), "kustomization.yaml")
-    armed = File.exist?(kust) ? File.readlines(kust).map(&:strip).
-      select { |l| l.start_with?("- gpu-node-") && l.end_with?(".yaml") }.
-      map { |l| l.delete_prefix("- ").delete_suffix(".yaml") } : []
+    # uncommented claim line is the switch Flux acts on, so it cannot disagree with
+    # reality. A stored copy did, on 2026-10-02, printing "off" for a rig that was armed
+    # and billing on AWS. The rule lives in scripts/lib/armed-rigs.rb and identifies a
+    # rig by its kind+role, NOT by a filename prefix, so renaming one cannot silently
+    # empty this column.
+    #
+    # The apps dir is ARGV[1] (REPO_ROOT-derived), NOT File.dirname(PROFILES): "which
+    # rig is armed" is a fact about THIS checkout, while PROFILES is overridable for
+    # ad-hoc sizing runs. Deriving both from the override meant PROFILES=/tmp/copy.yaml
+    # found no kustomization and printed EVERY rig "off" — and a rename is exactly when
+    # someone reaches for a scratch copy.
+    armed = ArmedRigs.names(ARGV[1])
     printf("  %-20s %-5s %-16s %-14s %-34s %s\n", "RIG", "STATE", "SHAPE", "REGION", "MODEL", "~$/hr")
     (d["rigs"] || []).each do |r|
       printf("  %-20s %-5s %-16s %-14s %-34s %s\n", r["name"],
@@ -171,7 +179,7 @@ if [ "$HAVE_TABLE" -eq 1 ]; then
     (armed - (d["rigs"] || []).map { |r| r["name"] }).each do |n|
       printf("  %-20s %-5s %s\n", n, "ON", "(armed but NOT in this table)")
     end
-  ' "$PROFILES"
+  ' "$PROFILES" "$APPS_DIR"
 else
   echo "  (needs ruby + $PROFILES)"
 fi

@@ -11,8 +11,9 @@
 #         S3 -> VRAM with no local copy at all
 #   /cache = the instance's LOCAL NVMe, now only scratch for the cold HF seed
 #
-# One composition serves every machine shape. quantization / maxModelLen /
-# gpuMemoryUtilization / enableImageGen are per-claim; tensorParallelSize is NOT a
+# One composition serves every machine shape AND both roles: enableLlm picks between
+# the vLLM payload and the ComfyUI payload over a shared prologue. quantization /
+# maxModelLen / gpuMemoryUtilization are per-claim; tensorParallelSize is NOT a
 # field any more — it is derived at boot (see below). See aws/apps/ for the concrete
 # rigs and aws/apps/gpu-profiles.yaml for the sizing table.
 #
@@ -49,7 +50,11 @@ spec:
           properties:
             spec:
               type: object
-              required: [instanceName, instanceTypes, hfModel, vpcId]
+              # hfModel is NOT required schema-wide: it names the vLLM checkpoint, which is
+              # meaningless on an image rig. The LLM branch of the boot script fatals with
+              # a precise message when enableLlm is true and it is empty, which is a better
+              # place for that check than a schema that cannot see enableLlm.
+              required: [instanceName, instanceTypes, vpcId]
               properties:
                 instanceName: {type: string}
 
@@ -105,6 +110,7 @@ spec:
                 # after — including that one — serves by STREAMING from S3.
                 hfModel:
                   type: string
+                  default: ""
                   description: >-
                     HuggingFace repo id, e.g. 'Qwen/Qwen3.8-27B-FP8'. Also the S3 cache prefix under
                     modelsBucket, and therefore the s3:// URI vLLM loads from.
@@ -134,8 +140,9 @@ spec:
                 # against a heterogeneous pool an override is wrong by construction
                 # (pin 1 on a 4-GPU box and you pay for three idle GPUs; pin 4 on a
                 # 1-GPU box and vLLM will not start), and the one honest use for it
-                # — leaving GPUs free for ComfyUI — is not how enableImageGen works
-                # (ComfyUI gets --gpus all and shares VRAM, not separate devices).
+                # - leaving GPUs free for ComfyUI - is not a case at all any more,
+                # because ComfyUI runs on its OWN rig and shares none of this box's
+                # devices.
                 quantization:
                   type: string
                   default: "auto"
@@ -153,8 +160,9 @@ spec:
                   type: string
                   default: "0.90"
                   description: >-
-                    vLLM --gpu-memory-utilization. Drop to ~0.78 only when ComfyUI shares the same GPUs
-                    (enableImageGen).
+                    vLLM --gpu-memory-utilization. 0.90 suits a dedicated token box, which is the only
+                    kind there is now: ComfyUI has its own rig and shares no VRAM here, so nothing
+                    needs holding back.
                 # Run:ai Model Streamer read concurrency (TALOS-5drv.3). Sets
                 # RUNAI_STREAMER_CONCURRENCY, which is exactly what the documented
                 # `--model-loader-extra-config '{"concurrency":N}'` sets underneath
@@ -212,12 +220,63 @@ spec:
                 # ComfyUI + comfyui-shim share the GPUs with vLLM. Default OFF:
                 # it only fits where there is spare VRAM after the LLM, and the
                 # bundle image must exist in GHCR first (see composition note).
-                enableImageGen:
+                # ── WHAT THIS BOX IS FOR ────────────────────────────────────
+                # enableImageGen is GONE (2026-10-02). It tried to make one box serve
+                # tokens and pixels at once, and its `docker run` was wrapped in
+                # `|| true` — which hid that the image it pulled, runpod-mac-bundle,
+                # NEVER EXISTED IN GHCR. That is why the 2026-09-28 run is recorded as
+                # "verified 9/9 tests + ComfyUI" with no ComfyUI process ever started.
+                # Deleting the flag removes that failure mode by construction.
+                #
+                # It could not have worked anyway: 30.9 GB of LLM weights plus an
+                # 18.3-32.4 GB image working set does not fit a 44.7 GiB L40S, and AWS
+                # sells no 2x GPU shape (the G family is 1x, 4x or 8x), so "one GPU
+                # each" would mean paying for four and idling two.
+                #
+                # So a rig is one thing or the other, and this is the switch. The claim
+                # must ALSO carry the matching catalyst.io/gpu-role label: admission
+                # counts siblings by role, and the operator and scripts pick their
+                # endpoint by it. This field and that label must agree.
+                enableLlm:
                   type: string
-                  default: "false"
+                  default: "true"
                   description: >-
-                    'true' to also run ComfyUI + comfyui-shim (:8012). Needs spare VRAM AND the
-                    runpod-mac-bundle image pushed to GHCR.
+                    'true' serves text with vLLM (and then hfModel is required).
+                    'false' serves images with ComfyUI + comfyui-shim. Must agree with
+                    the claim's catalyst.io/gpu-role label (llm | image).
+
+                # ── IMAGE RIG ONLY (enableLlm: "false") ─────────────────────────
+                # Pinned, not :latest, for the same reason as vllmImage: a boot that
+                # silently changes what it runs is unattributable.
+                comfyImage:
+                  type: string
+                  default: "ghcr.io/thebranchdriftcatalyst/catalyst-comfyui-aws:v1"
+                  description: ComfyUI + comfyui-shim image. Pin it.
+                imageModelsPrefix:
+                  type: string
+                  default: "comfyui-models"
+                  description: >-
+                    Prefix under modelsBucket holding the staged image weights (~103 GB
+                    across 14 files). Seeded from HuggingFace on a cold prefix and
+                    streamed from S3 on every later boot - the SAME seed-then-stream
+                    cache the vLLM path uses, measured at 1.29 GB/s same-region.
+                shimPort:
+                  type: string
+                  default: "8012"
+                  description: comfyui-shim's OpenAI-compatible /v1/images port.
+                comfyPort:
+                  type: string
+                  default: "8188"
+                  description: >-
+                    ComfyUI's own web UI and API port. Exposed so the UI is reachable
+                    through the relay alongside the shim, which needs its own SSM
+                    port-forward session - one session forwards one port.
+                comfyArgs:
+                  type: string
+                  default: ""
+                  description: >-
+                    Extra ComfyUI flags, e.g. --disable-smart-memory if swapping across
+                    pipelines exhausts host RAM on a 64 GiB shape.
 
                 # ── spot vs on-demand ───────────────────────────────────────
                 # ⚠️ OMITTING THIS MEANS ON-DEMAND, which can be 2-4x the spot price.

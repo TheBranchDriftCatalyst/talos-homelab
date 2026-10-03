@@ -1,0 +1,112 @@
+---
+# LAN routes for the image rig (TALOS-p412).
+#
+# TWO HOSTNAMES, not two paths, and that is a functional requirement rather than a style
+# preference: ComfyUI's SPA loads /assets/*, calls /api/*, /object_info, /queue and
+# /history, and opens a websocket at /ws — all from ABSOLUTE ROOT paths. A
+# PathPrefix(`/comfy`) + StripPrefix route would serve the HTML and then 404 every asset
+# and the websocket. Giving ComfyUI the root of its own hostname is the only form that
+# works without patching ComfyUI.
+#
+# No DNS change needed: *.talos00 is a Pi-hole wildcard to 192.168.1.54, so a new
+# hostname resolves the day it is routed. Hosts using /etc/hosts instead need both names
+# added there.
+#
+# ── THE MIDDLEWARE IS REPEATED ON PURPOSE ────────────────────────────────────────────
+# Traefik middlewares are PER ROUTE, not per object, so lan-only-strict has to appear on
+# each one. It is the strict variant (192.168.0.0/16 + 127.0.0.1/32) rather than
+# lan-only, which admits 10.0.0.0/8 — and that range CONTAINS the pod and service CIDRs,
+# so lan-only let an unprivileged Pod reach grafana.talos00 (traefik/middlewares.yaml
+# :222-226). Same reasoning applies with more force here, because a render costs GPU time.
+#
+# ── THE HOLE THIS DOES NOT CLOSE ─────────────────────────────────────────────────────
+# gpu-image-backend's ClusterIP is reachable from ANY Pod in the cluster, bypassing
+# Traefik and therefore this allowlist entirely. The shim's own bearer token is the
+# east-west control, which is why the composition passes SHIM_API_KEY from the shared SSM
+# parameter. Until a client sends that header the endpoint is open inside the cluster.
+#
+# ── TIMEOUTS: EXPLICIT, 600s ─────────────────────────────────────────────────────────
+# Renders are long. chroma-radiance is ~274s on the M5 Max reference and the four
+# pipelines span 18-274s, so any default measured in tens of seconds is a hazard. Rather
+# than inherit whatever the entrypoint happens to default to, the budget is declared here
+# and in the ServersTransport below.
+#
+# 600s, not the 300s that "5 minutes" suggests: 300 leaves only ~26s of headroom over the
+# slowest reference render, and that reference is a laptop — a cold model swap on the rig
+# can be slower. 600s also sits just under the operator's own client budget
+# (_GENERATE_TIMEOUT = 660s in catalyst-images/shim.py), so the proxy is never the first
+# thing to give up, and a timeout you do see is the backend's rather than the proxy's.
+#
+# WHY A PER-SERVICE ServersTransport AND NOT AN ENTRYPOINT CHANGE. The timeout that
+# actually governs "the backend is still thinking" is responseHeaderTimeout, which lives
+# on the transport Traefik uses to talk to the service — so it is settable per service,
+# with zero blast radius. respondingTimeouts live on the ENTRYPOINT, which `web` shares
+# with 49+ other routes, and readTimeout there governs reading the REQUEST (a few hundred
+# bytes here), not waiting for the response.
+#
+# IF A RENDER STILL DIES AT ~60s, the entrypoint is the next suspect and the recipe is:
+# add a dedicated `aiweb` port to traefik/helmrelease.yaml next to `web` with its own
+# `transport.respondingTimeouts` (readTimeout/idleTimeout 600s) and point these routes at
+# it — a contained second entrypoint rather than loosening the shared one. Distinguish the
+# two by running the same render against
+# gpu-image-backend.gpu-inference.svc.cluster.local:8012 from a throwaway in-cluster Pod:
+# if the ClusterIP succeeds and Traefik fails, it is ingress, not the rig.
+---
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: gpu-image-long-render
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-image-backend
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  forwardingTimeouts:
+    # How long Traefik waits for the backend's response HEADERS. This is the one that
+    # matters: the shim does not respond until ComfyUI has finished rendering, so this is
+    # effectively the render budget. Traefik's default is 0 (unlimited), but relying on a
+    # permissive default is how you discover it changed during a 274s render.
+    responseHeaderTimeout: 600s
+    # Keep-alive reuse. Shorter than responseHeaderTimeout would churn connections
+    # between the two long-poll requests the UI makes.
+    idleConnTimeout: 600s
+    # Connecting to the socat bridge in the relay Pod is local and instant; a long dial
+    # timeout would only delay discovering that the relay is down.
+    dialTimeout: 10s
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: imagegen
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-image-backend
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  entryPoints:
+    - web
+  routes:
+    # The API the operator calls.
+    - kind: Rule
+      match: Host(`imagegen.talos00`)
+      middlewares:
+        - name: lan-only-strict
+          namespace: traefik
+      services:
+        - name: gpu-image-backend
+          namespace: gpu-inference
+          port: 8012
+          serversTransport: gpu-image-long-render
+    # ComfyUI's own UI, for humans. Same Service, different port.
+    - kind: Rule
+      match: Host(`comfy.talos00`)
+      middlewares:
+        - name: lan-only-strict
+          namespace: traefik
+      services:
+        - name: gpu-image-backend
+          namespace: gpu-inference
+          port: 8188
+          # The UI needs it as much as the API: ComfyUI's /ws progress stream and its
+          # queue/history polls stay open across a whole render.
+          serversTransport: gpu-image-long-render

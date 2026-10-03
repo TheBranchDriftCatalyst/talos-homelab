@@ -51,21 +51,29 @@
 #                         s3://catalyst-tbdc-models-use2/Qwen/Qwen3-235B-A22B-GPTQ-Int4/
 #   aws s3 cp /dev/null s3://catalyst-tbdc-models-use2/Qwen/Qwen3-235B-A22B-GPTQ-Int4/_SEED_COMPLETE
 #
-# Reach it via SSM port-forward (`scripts/gpu-tunnel.sh NAME=gpu-node-235b
+# Reach it via SSM port-forward (`scripts/gpu-tunnel.sh NAME=inference-node-235b
 # REGION=us-east-2`) — mesh-join is a Phase-3 follow-on.
 #
 # ON→OFF (2026-09-28): launched i-03e0480dd97da94b1, verified 9/9 LLM acceptance
 # tests (Qwen3-235B via vLLM TP4), then torn down to stop the ~$5.11/hr. Model stays
 # in S3. Caveat on that run: ComfyUI never actually started — the bundle image is a
-# 404 in GHCR and its `docker run` is wrapped in `|| true`, so enableImageGen below
+# 404 in GHCR and its `docker run` was wrapped in `|| true`, so image generation here
 # is aspirational until `task runpod:build` ships the image.
 apiVersion: aws.catalyst.io/v1alpha1
 kind: XGPUInstance
 metadata:
-  name: gpu-node-235b
-  labels: {catalyst.io/stage: poc-demo}
+  name: inference-node-235b
+  labels:
+    catalyst.io/stage: poc-demo
+    # THE ROLE, not a description. Three things read it, and all three break quietly
+    # without it: the one-rig admission guard counts siblings of the SAME role (so an
+    # unlabelled claim would count zero and always be admitted), and the Tiltfile and
+    # check-spot-avail.sh pick the LLM endpoint from the llm-role rigs only. Every
+    # XGPUInstance is `kind: XGPUInstance` whether it serves tokens or pixels, so the
+    # kind cannot tell them apart and this label is the only discriminator.
+    catalyst.io/gpu-role: llm
 spec:
-  instanceName: gpu-node-235b
+  instanceName: inference-node-235b
   # ONE-MEMBER POOL, deliberately — see the header. 4× L40S = 178.8GiB reported,
   # 48 vCPU. Spot ~$5.2/hr, placement score 3/9 in us-east-2.
   instanceTypes: [g6e.12xlarge]
@@ -82,7 +90,7 @@ spec:
   quantization: gptq_marlin         # forced: the Marlin GPTQ kernel, not autodetect
   maxModelLen: "32768"
   gpuMemoryUtilization: "0.78"      # leaves VRAM for ComfyUI alongside
-  enableImageGen: "true"            # needs the GHCR bundle image to exist — see header
+  enableLlm: "true"                 # a TOKEN box. Images live on their own rig now (gpu-image-l40s.yaml).
   # No cache volume: /cache is this shape's 3800GB local NVMe, and since TALOS-5drv.3
   # it is scratch for the cold HF seed only — not zone-scoped either (TALOS-rkg0).
   servePort: "8000"
@@ -90,7 +98,7 @@ spec:
   # No zone or subnet named anywhere: AWS places this wherever us-east-2 has 4x L40S
   # capacity. Placement score was only 3/9, so unpinning matters here too — and with
   # a single-shape pool it is the ONLY lever this rig has.
-  ami: ami-07173ded18b6f3a7b        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA), resolved 2026-09-27. Regional, and must be a concrete id.
+  ami: ami-059ac32deae89a373        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA), resolved 2026-09-27. Regional, and must be a concrete id.
   vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC (egress-only SG, and the source of the default subnets)
   # MANDATORY, not a convenience: vLLM authenticates to S3 through this profile on
   # every boot to stream its own weights, so s3:GetObject + s3:ListBucket are

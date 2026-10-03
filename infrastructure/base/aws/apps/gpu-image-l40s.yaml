@@ -1,0 +1,141 @@
+---
+# IMAGE-GEN RIG — ComfyUI + comfyui-shim on 1× L40S in us-east-2 (TALOS-p412).
+#
+# THE PIXEL BOX. Its sibling inference-node.yaml is the token box. They are separate
+# because one box could not be both:
+#   * 30.9 GB of LLM weights plus an 18.3-32.4 GB image working set is more than a
+#     44.7 GiB L40S holds, and AWS sells NO 2× GPU shape — the G family is 1×, 4× or 8× —
+#     so "one GPU each" would mean paying for four and idling two.
+#   * text is wanted most of the time and images are bursty, so one box means paying for
+#     both to get either.
+# The previous attempt was `enableImageGen: "true"` on the LLM rig, whose `docker run`
+# was wrapped in `|| true`. That wrapper hid the fact that the image it pulled,
+# runpod-mac-bundle, DID NOT EXIST IN GHCR — which is why the 2026-09-28 run is recorded
+# as "verified 9/9 tests + ComfyUI" with no ComfyUI process ever started. The flag is
+# deleted; there is no `|| true` anywhere in this path.
+#
+# ── FOUR MODELS, SELECTABLE PER REQUEST ──────────────────────────────────────────────
+#   z-image-turbo     8 steps,  ~37s   18.3 GB resident   the fast default
+#   hidream-i1-fast  16 steps,  ~18s   33.3 GB
+#   qwen-image-2.1   25 steps, ~112s   32.4 GB            largest resident set
+#   chroma-radiance  30 steps, ~274s   19.0 GB            slowest; see the timeout note
+# (seconds are the M5 Max reference, not this box.) ComfyUI swaps models per workflow, so
+# only ONE resident set is in VRAM at a time and every one of them fits a single L40S.
+# All four use CORE ComfyUI nodes only, so no custom-node install can break the boot.
+#
+# ── WHY NOT A 4× SHAPE, EVEN THOUGH IT HAS MORE VRAM ─────────────────────────────────
+# gpu-profiles.yaml reports g6.12xlarge at vramGib 89.4 — double an L40S — but that is
+# the AGGREGATE across 4 GPUs, i.e. 22.4 GiB per device. ComfyUI has no tensor
+# parallelism: a diffusion UNET plus its text encoders must fit ONE device or ComfyUI
+# CPU-offloads and crawls. qwen-image-2.1's 32.4 GB does not fit 22.4 GiB. So the 4×
+# shapes are excluded despite looking bigger, and the A10G ones additionally lack native
+# FP8 for hidream_i1_fast_fp8. g6e.12xlarge (4× L40S) would work and costs $10.49/hr for
+# one usable GPU, which is why it is out too.
+#
+# ── ON-DEMAND, NOT SPOT ──────────────────────────────────────────────────────────────
+# capacityType is omitted deliberately. A spot interruption mid-render kills a job that
+# may be 4+ minutes in AND costs a full 103 GB re-stage plus fleet re-placement. The L40S
+# spot discount was measured at 0.0% with a 1/9 placement score (see inference-node.yaml),
+# so there is nothing to buy with that risk.
+#
+# ── COST AND THE QUOTA CEILING ───────────────────────────────────────────────────────
+# $2.242/hr on g6e.2xlarge, $3.004/hr on g6e.4xlarge. us-east-2 allows 64 on-demand G/VT
+# vCPU (re-read 2026-10-02; the table's old 48 was stale). Worst concurrent case is the
+# LLM rig on g6.12xlarge (48) plus this one on g6e.4xlarge (16) = exactly 64 — it fits,
+# with nothing spare. If it does NOT fit, the fleet reports fleetState: active with
+# fulfilledCapacity: 0, which reads like a capacity problem rather than a quota one.
+#
+# ── ARMING IT ────────────────────────────────────────────────────────────────────────
+# OFF IS THE DEFAULT AND THE DEFAULT IS DELIBERATE. Its line in kustomization.yaml is the
+# on-switch; git-off is the real teardown. Before arming:
+#   1. the GHCR package ghcr.io/thebranchdriftcatalyst/catalyst-comfyui-aws MUST BE
+#      PUBLIC. A private package 401s on the box, and there is no `|| true` to hide it
+#      any more — the boot will fatal and say so, but that still costs you a launch.
+#   2. gpu-inference/image-relay-deployment.yaml needs arming for the endpoint to exist.
+#   3. the first boot pays a ~103 GB HuggingFace pull before anything serves. Budget for
+#      it; do not diagnose it as a hang. Every later boot streams from S3 in ~90-150s.
+apiVersion: aws.catalyst.io/v1alpha1
+kind: XGPUInstance
+metadata:
+  name: gpu-image-node
+  labels:
+    # poc-demo opts into gpu-testrig-reaper (age > 6h). While this file is ON in git the
+    # reaper deleting the XR just makes Flux recreate it, so 6h is a CHURN, not a
+    # teardown. A churn CAN interrupt a render — accepted, because the alternative is
+    # removing this rig from the cost backstop entirely.
+    catalyst.io/stage: poc-demo
+    # THE ROLE. Admission counts same-role siblings, so this is what lets one token box
+    # and one pixel box coexist while still refusing a second of either. It must agree
+    # with spec.enableLlm below. Without it the claim is DENIED, deliberately: an absent
+    # label compares as null in JMESPath and would otherwise find zero siblings and be
+    # admitted unconditionally.
+    catalyst.io/gpu-role: image
+spec:
+  instanceName: gpu-image-node
+  # A POOL, not a preference order — the fleet's allocationStrategy picks. Both members
+  # are 1× L40S 44.7 GiB; the 4xlarge is here for capacity, not performance, and brings
+  # 128 GiB host RAM instead of 64.
+  instanceTypes: [g6e.2xlarge, g6e.4xlarge]
+
+  # THE SWITCH. "false" => ComfyUI instead of vLLM. hfModel is deliberately unset: it
+  # names a vLLM checkpoint and means nothing here, which is why it is no longer a
+  # required field. The boot script fatals if enableLlm is true and hfModel is empty.
+  enableLlm: "false"
+
+  # Same bucket as the LLM rig => same-region S3, so staging is free and fast. The image
+  # weights live under their own prefix and are seeded once, then streamed on every later
+  # boot — the SAME cache mechanism vLLM uses, measured at 1.29 GB/s in-region.
+  modelsBucket: catalyst-tbdc-models-use2
+  imageModelsPrefix: comfyui-models
+
+  # Pinned. :v1 is the first build that can actually serve, and :v0 failed in two ways
+  # that both looked like success:
+  #   * it resolved PIPELINES_DIR to a path that does not exist inside an installed wheel,
+  #     and Path.glob on a missing directory returns empty WITHOUT raising — so it answered
+  #     /v1/models with {"data":[]} and HTTP 200. A container that boots, serves and reads
+  #     healthy while offering nothing.
+  #   * it could not start ComfyUI AT ALL: pinned to torch 2.6.0+cu124, where
+  #     torch.library.infer_schema rejects the PEP-585 `list[int]` annotation that
+  #     comfy-kitchen 0.2.35 (which ComfyUI v0.37.4 pins) uses to register a custom op.
+  #     Builtin generics were only accepted from torch 2.7.0. Known open upstream issue
+  #     Comfy-Org/comfy-kitchen#114.
+  # :v1 runs torch 2.14.1 / torchvision 0.29.1 / torchaudio 2.11.0 on cu130 — hence the
+  # driver floor noted on the ami below — sets the three path env vars, carries
+  # models.yaml, reports owned_by: aws-l40s-comfyui so a caller can tell this rig from the
+  # Mac's identical shim, asserts `import comfy.utils` at BUILD time, and asserts
+  # torch.cuda.is_available() at startup rather than rendering on CPU on a billing box.
+  comfyImage: ghcr.io/thebranchdriftcatalyst/catalyst-comfyui-aws:v1
+
+  # 8012 is the shim's OpenAI-compatible /v1/images surface; 8188 is ComfyUI's own web UI
+  # and API. Both are exposed because the UI is part of the deliverable, not a debug
+  # affordance — and each needs its OWN SSM port-forward session, since one session
+  # forwards one port.
+  shimPort: "8012"
+  comfyPort: "8188"
+
+  # Empty by default. If swapping across all four pipelines exhausts host RAM on the
+  # 64 GiB 2xlarge, --disable-smart-memory stops ComfyUI caching the previous model in
+  # RAM. Host RAM is a binding constraint here in a way it never was for vLLM, which
+  # streams S3 -> VRAM and never stages through RAM.
+  comfyArgs: ""
+
+  # capacityType DELIBERATELY OMITTED => ON-DEMAND. See the header.
+
+  region: us-east-2
+  # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA) 20260929. Regional, and must be a
+  # concrete id. Resolved 2026-10-02 from the AWS public SSM parameter
+  #   /aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-amazon-linux-2023/latest/ami-id
+  # which is the supported way to find the newest one; us-west-2's equivalent is
+  # ami-087772adfc6271ec9.
+  #
+  # ITS DRIVER VERSION IS LOAD-BEARING, not incidental: this release ships nvidia_driver
+  # 595.91.07 with CUDA 12.8/12.9/13.0/13.2 present and cuda-13.2 as the default. The
+  # comfyImage above is built against cu130 wheels, which need a driver >= 580.65.06, so
+  # DO NOT pin this back to an older AMI without checking that floor. The container
+  # asserts torch.cuda.is_available() at startup and fatals rather than rendering on CPU,
+  # so a mismatch fails loudly — but it still costs you a launch.
+  ami: ami-059ac32deae89a373
+  vpcId: vpc-0fa8197c81c9c151f      # us-east-2 default VPC (egress-only SG, and the source of the default subnets)
+  # SSM + scoped S3 + EBS snapshot. The S3 write permission is load-bearing: this rig
+  # SEEDS the image-model prefix on a cold cache, it does not only read it.
+  instanceProfileName: catalyst-gpu-seeder

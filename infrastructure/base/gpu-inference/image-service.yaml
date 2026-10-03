@@ -1,0 +1,38 @@
+---
+# The image rig's in-cluster endpoint (TALOS-p412).
+#
+# ONE Service, TWO ports, mirroring gpu-service.yaml's shape. The shim API and ComfyUI's
+# UI are different servers on the box but the same Pod here, so one Service with named
+# ports is the honest model; the two IngressRoutes target different ports on it.
+#
+# THE SELECTOR IS THE POINT. gpu-backend selects app.kubernetes.io/name: gpu-relay; this
+# selects gpu-image-relay. Had the image relay reused the gpu-relay name, gpu-backend
+# would have round-robined LLM chat traffic into the image rig. Verify after any label
+# edit with:
+#   kubectl get endpointslices -n gpu-inference \
+#     -l kubernetes.io/service-name=gpu-backend \
+#     -o jsonpath='{.items[*].endpoints[*].targetRef.name}'
+# It must name NO gpu-image-relay Pod.
+apiVersion: v1
+kind: Service
+metadata:
+  name: gpu-image-backend
+  namespace: gpu-inference
+  labels:
+    app.kubernetes.io/name: gpu-image-backend
+    app.kubernetes.io/part-of: gpu-inference
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gpu-image-relay
+  ports:
+    # comfyui-shim: the OpenAI-compatible /v1/images surface the operator talks to.
+    - name: shim
+      port: 8012
+      targetPort: shim
+      protocol: TCP
+    # ComfyUI's own web UI and API, including the /ws websocket its progress stream uses.
+    - name: comfy
+      port: 8188
+      targetPort: comfy
+      protocol: TCP

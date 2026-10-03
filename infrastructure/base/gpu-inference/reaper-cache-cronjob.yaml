@@ -62,18 +62,28 @@ spec:
                 - |
                   set -eu
 
-                  if ! kubectl get crd xgpucaches.aws.catalyst.io >/dev/null 2>&1; then
-                    echo "XGPUCache CRD absent (AWS chain not yet enabled) - nothing to reap"
-                    exit 0
-                  fi
+                  # Guard on the RESOURCE, not the CRD object: broker-rbac.yaml grants no
+                  # apiextensions.k8s.io rule, so `kubectl get crd` is FORBIDDEN and every
+                  # such test here silently answers "absent". XGPUCache is itself a deleted
+                  # kind (see gpuprofile.yaml), so this still exits 0 — but now because the
+                  # resource really is gone, not because an RBAC denial was misread.
+                  kubectl get xgpucache >/dev/null 2>&1 \
+                    || { echo "no XGPUCache CRD / no access - nothing to reap"; exit 0; }
 
                   TTL=$(kubectl get cm gpu-profile -n gpu-inference \
                         -o jsonpath='{.data.cacheTtl}')
                   TTL_S=$(echo "${TTL}" | sed 's/h/*3600/;s/m/*60/;s/s//' | bc)
                   echo "cacheTtl=${TTL} (${TTL_S}s)"
 
-                  # Guard: never reap while a GPU instance is live.
-                  if kubectl get crd xgpuinstances.aws.catalyst.io >/dev/null 2>&1; then
+                  # Guard: never reap while a GPU instance is live. This one was the
+                  # dangerous half of the same RBAC bug — a FORBIDDEN `kubectl get crd` made
+                  # the condition FALSE, so the whole safety check was skipped rather than
+                  # enforced. It was unreachable only because the guard above exited first,
+                  # which made "fix the first guard" (the obvious change) enough on its own
+                  # to turn a harmless no-op into a reaper that deletes caches out from
+                  # under a running GPU. Both are on the resource now, so neither depends
+                  # on the other being broken.
+                  if kubectl get xgpuinstance >/dev/null 2>&1; then
                     LIVE=$(kubectl get xgpuinstances \
                            -l app.kubernetes.io/part-of=gpu-inference \
                            -o jsonpath='{.items[*].metadata.name}')

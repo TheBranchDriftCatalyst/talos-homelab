@@ -5,12 +5,18 @@
 # git diff that tells you a GPU is running. `kubectl get xgpuinstance` and these alerts
 # are the only signal that money is being spent.
 #
-# GROUNDING NOTE: alerts here are built on metrics that EXIST TODAY (kube-state-metrics +
-# KEDA operator metrics, both confirmed scraped). Alerting directly on XGPUInstance
-# existence would need either kube-state-metrics CustomResourceStateMetrics config or the
-# broker exporting its own metric -- neither exists yet, so gateway replicas is used as
-# the proxy for "a GPU should be running". Tighten this once the broker exports
-# gpu_broker_instance_exists.
+# GROUNDING NOTE: these are built on metrics that EXIST TODAY (kube-state-metrics,
+# confirmed scraped). Alerting directly on XGPUInstance existence would need
+# kube-state-metrics CustomResourceStateMetrics config, which is not set up — so relay
+# AVAILABILITY is the proxy for "a GPU is up". That is a strong proxy: a relay reports
+# Available only when its readiness probe succeeds THROUGH the SSM tunnel, so it cannot
+# be Available without a box answering on the other end.
+#
+# RIGS ARE PLURAL NOW. There is an LLM relay and an image relay, each tunnelling to its
+# own box, so every cost rule here matches deployment=~"gpu-relay|gpu-image-relay" rather
+# than naming one. An exact match on "gpu-relay" would have left a second rig billing
+# $2.24-3.00/hr completely invisible to the headline alarm — which contradicts this
+# file's whole premise above.
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -32,24 +38,58 @@ spec:
         # so "available" means vLLM is genuinely answering -- i.e. a GPU is up and
         # billing. The old alert fired on what KEDA INTENDED, this one on what is true.
         #
-        # Rates are per-rig and current as of 2026-10-01: ~$2.24/hr for the 1x L40S,
-        # ~$5.17/hr spot for the 4x. 4h is therefore ~$9-21, not the ~$0.64 the previous
-        # text claimed from a stale $0.16/hr figure.
+        # NO $/hr FIGURE IS BAKED IN HERE. Rates are per-shape, the fleet chooses the
+        # shape at placement time, and a hardcoded number goes stale silently — the text
+        # this replaced still carried a ~$0.16/hr figure from a retired g5 rig. The live
+        # price table is ../aws/apps/gpu-profiles.yaml; as of 2026-10-02 one rig is
+        # $2.24-10.49/hr depending on where the fleet lands.
+        #
+        # `for: 4h` is evaluated PER SERIES, so each relay gets its own independent 4h
+        # clock from one rule — two near-duplicate rules would be strictly worse.
         - alert: GPUBoxServingTooLong
           expr: |
-            kube_deployment_status_replicas_available{namespace="gpu-inference",deployment="gpu-relay"} > 0
+            kube_deployment_status_replicas_available{
+              namespace="gpu-inference",
+              deployment=~"gpu-relay|gpu-image-relay"
+            } > 0
           for: 4h
           labels:
             severity: warning
           annotations:
-            summary: "A GPU rig has been serving for 4h (~$9-21 depending on shape)"
+            summary: "{{ $labels.deployment }} has been serving a GPU rig for 4h"
             description: >-
-              gpu-relay has been Available for 4 hours, and it is only Available when vLLM
-              answers /health through the tunnel -- so an AWS GPU box is up and billing.
-              Either use is genuinely sustained, or a teardown was forgotten.
+              {{ $labels.deployment }} has been Available for 4 hours, and it is only
+              Available when its readiness probe succeeds THROUGH the SSM tunnel -- so an
+              AWS GPU box is up and billing. Either use is genuinely sustained, or a
+              teardown was forgotten. Rate depends on the shape the fleet placed; see
+              aws/apps/gpu-profiles.yaml.
               Check: kubectl get xgpuinstance -o wide; and remember git-off is the real
               teardown -- the 6h reaper CHURNS a box rather than removing it while the
               claim is uncommented in aws/apps/kustomization.yaml.
+
+        # NEW (2026-10-02), because the two-rig split made this state reachable for the
+        # first time. Either rig alone is a deliberate act; both at once is usually "I
+        # forgot the other one", and the burn is additive -- roughly $4.48/hr at the cheap
+        # members of both pools and $7.61/hr at both ceilings. 30m rather than 4h because
+        # the cost of being wrong is doubled and the legitimate overlap window is short.
+        - alert: BothGPURigsServing
+          expr: |
+            count(
+              kube_deployment_status_replicas_available{
+                namespace="gpu-inference",
+                deployment=~"gpu-relay|gpu-image-relay"
+              } > 0
+            ) > 1
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "BOTH GPU rigs have been serving for 30m (additive burn)"
+            description: >-
+              The inference rig and the image rig are both Available, so two AWS GPU boxes
+              are billing at once. Intentional for a combined test; otherwise re-comment
+              whichever claim you are done with in aws/apps/kustomization.yaml.
+              Note the two also compete for the same regional on-demand G/VT vCPU quota.
 
         # If the reaper stops running, the cost backstop is gone and nobody would know.
         - alert: GPUReaperNotRunning
@@ -61,9 +101,12 @@ spec:
           annotations:
             summary: "GPU instance reaper has not succeeded in over an hour"
             description: >-
-              The tier-1 reaper is the only thing standing between a wedged gpu-broker and
-              an unbounded AWS bill. If it is not running, treat a live GPU as unattended:
+              The tier-1 reaper is the only thing standing between a forgotten rig and an
+              unbounded AWS bill. If it is not running, treat a live GPU as unattended:
               verify with kubectl get xgpuinstance and delete manually if present.
+              NOTE this alert cannot catch a reaper that exits 0 while doing nothing --
+              which is exactly what the RBAC-misread CRD guard caused until 2026-10-02.
+              A reaper log that says "nothing to reap" while a rig exists is the tell.
 
         - alert: GPUReaperFailing
           expr: kube_job_failed{namespace="gpu-inference"} > 0

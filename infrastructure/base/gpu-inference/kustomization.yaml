@@ -1,12 +1,17 @@
 ---
 # Ephemeral GPU inference — the demand plane (TALOS-t3ic / EPIC C + D).
 #
-# INERT BY DESIGN until the AWS chain opens (EPIC A, blocked on TALOS-3g8f):
-#   * ollama-gateway   replicas 0
-#   * gpu-broker       replicas 0 and image not yet built
-#   * both reapers     exit 0 cleanly while the XR CRDs are absent
-# So applying this creates NO AWS spend. Scaling gpu-broker to 1 is the single switch
-# that arms real billing -- do not flip it before the reapers are verified.
+# NO AWS SPEND FROM APPLYING THIS. The on-switch for a GPU is an uncommented claim line
+# in ../aws/apps/kustomization.yaml, and nothing here can turn one on.
+#
+# The old inertness guarantees named ollama-gateway and gpu-broker; both are now DELETED
+# (see below), so neither is load-bearing. What remains inert is relay-deployment.yaml,
+# which with no rig running just reports "no instance" and sits Running-but-NotReady.
+#
+# The reapers DO act the moment a rig exists — that is their job. Until 2026-10-02 they
+# did not: both guarded on `kubectl get crd`, which the gpu-broker ServiceAccount has no
+# RBAC for, so the denial was misread as "the CRD is absent" and they exited 0 claiming
+# "nothing to reap" while a GPU billed. They guard on the RESOURCE now.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -49,18 +54,32 @@ resources:
   # Harmless to arm with no rig running: the tunnel loop just reports no instance and
   # the Pod stays Running-but-NotReady.
   - relay-deployment.yaml
+  # ── OFF ── THE IMAGE RIG'S DEMAND PLANE (TALOS-p412). These three lines are its
+  # on-switch, same idiom as relay-deployment.yaml above. Arming them with no image rig
+  # running is harmless: both tunnel loops report no instance and the Pod stays
+  # Running-but-NotReady, so gpu-image-backend has no endpoints and the routes 503.
+  # Needs gpu-relay-creds, i.e. gpu-relay-user.yaml armed in ../aws/apps first.
+  # - image-relay-deployment.yaml
+  # - image-service.yaml
+  # - image-ingressroute.yaml
   - ingressroute.yaml          # ollama.talos00 -> gpu-backend (interceptor deferred)
+  # KEEP: both reapers run as serviceAccountName gpu-broker, so this is the cost
+  # backstop's identity, not leftover scaffolding. The name is historical.
   - broker-rbac.yaml
-  - broker-deployment.yaml
+  # ── DELETED (2026-10-02) ── broker-deployment.yaml. It sat at replicas 0 with the image
+  # ghcr.io/thebranchdriftcatalyst/gpu-broker:PLACEHOLDER-NOT-BUILT-YET, and BOTH halves of
+  # its documented contract referenced removed APIs: XGPUCache (kind deleted, see
+  # gpuprofile.yaml) and status.publicIp (field removed, xgpuinstance-xrd.yaml). Its own
+  # header and this file both advertised "scaling this to 1 arms real billing" — a footgun
+  # pointing at an image that does not exist. At 0 replicas, deleting it changed nothing at
+  # runtime. Scale-to-zero returns as a reimplementation (TALOS-rzjx / TALOS-5mfc), not as
+  # this object.
   - reaper-instance-cronjob.yaml  # tier 1: HOT -> WARM (cost backstop)
   - reaper-cache-cronjob.yaml     # tier 2: WARM -> COLD
   - alerts.yaml
 
-# Generated, NOT a static ConfigMap: this is mounted with subPath, and a subPath mount is
-# FROZEN at pod start -- kubelet never propagates ConfigMap updates into one. With a stable
-# name the pod would run stale config forever, silently (proven on honeypot-lb, e0b9a475).
-# The hash suffix makes an edit change the CM name -> the podTemplate -> rolls the pod.
-configMapGenerator:
-  - name: ollama-gateway-nginx
-    files:
-      - cfg/nginx.conf
+# ── DELETED (2026-10-02) ── the ollama-gateway-nginx configMapGenerator and cfg/nginx.conf.
+# The gateway it configured was deleted on 2026-10-01; the generator outlived it and kept
+# rendering ConfigMap/ollama-gateway-nginx-<hash> that nothing mounted. Verified before
+# removing: the generator declaration was the ONLY reference to that name anywhere in the
+# repo, and no volume referenced it.

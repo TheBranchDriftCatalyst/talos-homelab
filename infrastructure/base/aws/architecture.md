@@ -30,7 +30,7 @@ flowchart LR
   subgraph GIT["GIT — the on-switch"]
     direction TB
     K["kustomization.yaml<br/><i>uncommented = exists</i>"]
-    C["gpu-node-27b-fp8.yaml<br/>hfModel + instanceTypes[]"]
+    C["inference-node.yaml<br/>hfModel + instanceTypes[]"]
     K --- C
   end
 
@@ -153,8 +153,9 @@ Manager is the only way in; there is no public inference port.
 
 ```mermaid
 flowchart LR
-  subgraph TBL["apps/gpu-profiles.yaml — the contract"]
-    E["endpoint.llmLocalPort<br/>endpoint.localFallbackUrl<br/>rigs[].state"]
+  subgraph TBL["the contract — two files, two jobs"]
+    E["apps/gpu-profiles.yaml<br/><i>WHERE: ports + urls</i>"]
+    K["apps/kustomization.yaml<br/><i>WHETHER: the on-switch</i>"]
   end
 
   subgraph MAC["MAC"]
@@ -165,19 +166,25 @@ flowchart LR
     T["gpu-tunnel.sh"]
   end
 
+  subgraph CL["HOMELAB CLUSTER"]
+    R["gpu-relay Pod<br/><i>holds the SSM tunnel</i>"]
+  end
+
   subgraph BOX["AWS GPU BOX"]
     VL["vLLM :8000<br/>served as BOTH<br/>qwen3.8-27b<br/>qwen3.8:27b-mlx"]
   end
 
-  E -.->|"derives port + which rig"| T
+  K -.->|"WHICH rig is armed<br/>(kind + gpu-role label)"| E
+  E -.->|"derives ports"| T
   E -.->|"derives LITELLM_BASE_URL"| O2
   O1 ==>|"plist → :11434"| OL
-  O2 ==>|"no rig on → :11434"| OL
-  O2 -->|"rig on → :18000"| T
-  T -->|"SSM port-forward<br/>re-resolves instance id"| VL
+  O2 ==>|"nothing armed → :11434"| OL
+  O2 -->|"armed → clusterUrl<br/>ollama.talos00"| R
+  T -.->|"direct debugging only"| VL
+  R -->|"SSM port-forward<br/>re-resolves instance id"| VL
 
   classDef good fill:#d9eceb,stroke:#0f6f6c,color:#10151c
-  class E,OL good
+  class E,K,OL good
 ```
 
 **One home for the endpoint contract.** The tunnel's local port was previously hardcoded
@@ -189,9 +196,24 @@ disagreement is a 404 at chat time. Both now live in
 `scripts/gpu-tunnel.sh` and by the operator's Tiltfile and Taskfile.
 
 That also makes **down-by-default fall out** rather than being a second decision: with no
-rig marked `state: "on"`, the operator resolves to `endpoint.localFallbackUrl` — the Mac's
-Ollama — so Tilt-side chat works with nothing provisioned and no tunnel running. Flip a
-rig on and the same code picks up the tunnel. Tilt prints which endpoint it chose and why.
+rig armed, the operator resolves to `endpoint.localFallbackUrl` — the Mac's Ollama — so
+Tilt-side chat works with nothing provisioned and no tunnel running. Flip a rig on and the
+same code picks up the endpoint. Tilt prints which one it chose and why.
+
+**"Armed" means an uncommented claim line in
+[`apps/kustomization.yaml`](apps/kustomization.yaml), and nothing else.** The table used to
+carry a `rigs[].state` field saying the same thing, and on 2026-10-02 the two drifted: a rig
+was armed and billing while the table read `off`, which would have pointed the operator at
+local Ollama while paying for a GPU (TALOS-cmni). The kustomization is what Flux acts on, so
+it cannot disagree with reality; a second copy of the fact can.
+
+The rule is implemented once, in
+[`scripts/lib/armed-rigs.rb`](../../../scripts/lib/armed-rigs.rb), and a rig is identified
+there by its claim's **kind and `catalyst.io/gpu-role` label — never by its filename**. A
+`gpu-node-` filename prefix used to do that job, and nothing errors when a prefix stops
+matching: every consumer just reports "off" while a GPU bills, which made renaming a rig
+unsafe. The role label is needed because an LLM box and an image box are both
+`kind: XGPUInstance`.
 
 The remaining asymmetry worth knowing: the **endpoint** comes from `LITELLM_BASE_URL`
 (read only by `catalyst_langgraph/config.py`, whose `BASE_URL_ENV_ORDER` is exactly that
@@ -464,7 +486,7 @@ aws ssm send-command --region <r> --instance-ids <id> --document-name AWS-RunShe
   --parameters 'commands=["tail -40 /var/log/gpu-init.log","cat /var/log/gpu-init.FAILED 2>/dev/null"]'
 
 # From the catalyst-operator repo — all three derive the endpoint from gpu-profiles.yaml
-task llm:tunnel     # targets whichever rig is state: "on"
+task llm:tunnel     # targets whichever LLM rig is armed (ROLE=image for the other)
 task llm:check      # probes the endpoint the operator is ACTUALLY using
 task llm:spot       # the report above
 

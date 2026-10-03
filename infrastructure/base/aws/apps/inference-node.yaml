@@ -103,16 +103,24 @@
 apiVersion: aws.catalyst.io/v1alpha1
 kind: XGPUInstance
 metadata:
-  name: gpu-node-27b-fp8
+  name: inference-node
   # poc-demo opts into gpu-testrig-reaper (age > 6h). While this file is ON in git,
   # the reaper deleting the XR just makes Flux recreate it — so 6h is a CHURN (new
   # fleet, new instance, re-stream from S3), not a teardown. Cheap here, and cheaper
   # than it was now that a churn no longer re-downloads 31GB to local disk. Git-off is
   # the real teardown. scripts/gpu-tunnel.sh re-resolves the instance id, so a churn
   # does not strand the local tunnel.
-  labels: {catalyst.io/stage: poc-demo}
+  labels:
+    catalyst.io/stage: poc-demo
+    # THE ROLE, not a description. Three things read it, and all three break quietly
+    # without it: the one-rig admission guard counts siblings of the SAME role (so an
+    # unlabelled claim would count zero and always be admitted), and the Tiltfile and
+    # check-spot-avail.sh pick the LLM endpoint from the llm-role rigs only. Every
+    # XGPUInstance is `kind: XGPUInstance` whether it serves tokens or pixels, so the
+    # kind cannot tell them apart and this label is the only discriminator.
+    catalyst.io/gpu-role: llm
 spec:
-  instanceName: gpu-node-27b-fp8
+  instanceName: inference-node
   # THE POOL, not a preference order — the fleet's allocationStrategy picks, not this
   # ordering. See the header for why each one is in, and why g5.* / g6e.12xlarge are out.
   instanceTypes: [g6e.2xlarge, g6e.4xlarge, g6.12xlarge]
@@ -137,7 +145,7 @@ spec:
   quantization: "auto"              # FP8 checkpoint self-describes (quant_method fp8, e4m3); omitting the flag is correct
   maxModelLen: "32768"
   gpuMemoryUtilization: "0.90"      # on the 1x L40S: 43.2GiB of 44.7 − 28.8GiB weights ≈ 12GiB KV cache
-  enableImageGen: "false"           # no spare VRAM on the 1x shapes, and the GHCR bundle image does not exist yet
+  enableLlm: "true"                 # a TOKEN box. Must agree with the catalyst.io/gpu-role label above.
   # streamerConcurrency defaults to "16" (RUNAI_STREAMER_CONCURRENCY). Raise it if
   # same-region S3 is not saturating the load.
   # No cache volume: /cache is the shape's local NVMe, and since TALOS-5drv.3 it is
@@ -148,7 +156,7 @@ spec:
   # moving region REQUIRES setting this. Must be a concrete id: AWS forbids
   # resolve:ssm: in a launch template used by a fleet of type maintain, and upjet
   # rejects it independently. Same id big boi uses.
-  ami: ami-07173ded18b6f3a7b        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA)
+  ami: ami-059ac32deae89a373        # us-east-2 DL Base GPU AMI (AL2023 x86_64 NVIDIA)
   # vpcId is for the egress-only SG, and it is also where the box lands: nothing names
   # a subnet, so AWS chooses among this VPC's DEFAULT subnets in whichever AZ has
   # capacity.
