@@ -275,6 +275,188 @@ spec:
                     - {fromFieldPath: spec.comfyArgs}
                   strategy: string
                   string:
+                    # ── BOOT SCRIPT RATIONALE ────────────────────────────────────────────
+                    # Moved OUT of the script below on 2026-10-03: EC2 caps user data at 16384
+                    # bytes RAW (pre-base64) and the script hit 16497, of which 11005 were
+                    # comments. CreateLaunchTemplate failed with InvalidUserData.Malformed and the
+                    # rig could not place at all. These notes belong where they are maintained,
+                    # not shipped to the box; the script keeps one-line section banners so it
+                    # still reads in /var/lib/cloud/instance/user-data.txt.
+                    #
+                    # --- tensor parallelism is DERIVED, never asserted (TALOS-5drv.2) ---
+                    #   TP must equal this machine's GPU count, and with a diversified fleet
+                    #   (TALOS-i91u) the machine could be any shape in the pool - 1x L40S or 4x L4 -
+                    #   so no claim can know it. TP is a property of the machine, not of intent.
+                    #   `grep -c '^GPU '` and not `wc -l`: nvidia-smi prints diagnostics on failure
+                    #   too, and wc would return a plausible-looking non-zero count for them.
+                    #   The driver ships in the DL Base GPU AMI but is not always up at first boot,
+                    #   hence the bounded wait. ZERO GPUs IS FATAL, not "fall back to 1": quietly
+                    #   serving on one GPU of four while paying for four is the exact failure here.
+                    #
+                    # --- mount /cache on LOCAL NVME INSTANCE STORE (TALOS-rkg0) ---
+                    #   Identify it by the NVMe MODEL string, not device order: on Nitro the
+                    #   root EBS volume is also an NVMe device and the numbering is not
+                    #   guaranteed - verified live 2026-10-01, where the instance store came up
+                    #   as nvme1n1 right next to the EBS root at nvme0n1. Instance store reports
+                    #   "Amazon EC2 NVMe Instance Storage".
+                    #   Always mkfs -f: instance store comes up raw on every boot and holds
+                    #   nothing we need to preserve (S3 is the durable copy).
+                    #   That rawness is also why "local NVMe is ~7GB/s vs ~1GB/s for network
+                    #   storage" does NOT argue against streaming: an ALREADY-WARM local disk
+                    #   would beat the network, but this disk is reformatted every single boot,
+                    #   so it is never warm. The old path paid the same S3 read AND a ~31GB write
+                    #   AND a ~31GB read on top of it.
+                    #   /cache now exists for the COLD HF SEED ONLY. The serving path never reads it.
+                    #
+                    # Shape without instance store, or it never appeared. The WARM path does not
+                    #   Shape without instance store, or it never appeared. The WARM path does not
+                    #   care - it streams from S3 - but a COLD seed stages the whole model here
+                    #   first, and the root volume has only ~25GB free after the AMI and the vLLM
+                    #   image. A cold seed of anything large will run out of space.
+                    #
+                    # --- weights: S3 is the cache AND the loader source (TALOS-5drv.3) ---
+                    #   The S3 prefix IS the HF id, so one field drives both.
+                    #   WARM (normal): nothing happens here at all. vLLM streams the shards from
+                    #   $S3 straight into VRAM below.
+                    #   COLD (first box ever to boot this model): pull from HF once, push to S3,
+                    #   drop the marker, then DELETE the staged copy. There is exactly ONE serving
+                    #   path and it reads S3, so a local copy would be ~31GB of dead weight.
+                    #   The download runs inside the pinned vLLM image - it already ships
+                    #   huggingface_hub, so the host needs no pip and no PATH guessing.
+                    #   snapshot_download with local_dir writes a plain file tree (no blob
+                    #   symlinks), which is what makes the s5cmd round-trip safe.
+                    #   ── SHARED: the bearer token ────────────────────────────────────
+                    #   Fetched for BOTH roles, before the gate, because both serve an
+                    #   authenticated endpoint from the same SSM parameter. It sat inside the
+                    #   LLM branch for one revision, which left an image rig with an empty
+                    #   SHIM_API_KEY serving UNAUTHENTICATED - and nothing would have reported
+                    #   that, because the shim reads an empty key as "no auth required".
+                    #
+                    # The aws CLI is a NEW dependency here - every other remote read in this script
+                    #   The aws CLI is a NEW dependency here - every other remote read in this script
+                    #   uses s5cmd, which is fetched by curl. AL2023 is expected to ship awscli v2,
+                    #   but check explicitly: without this the get-parameter below just returns empty
+                    #   and the failure below would blame IAM, sending you to debug permissions on a
+                    #   box that bills by the hour.
+                    #
+                    # Length via the shell parameter expansion, never printf: any percent-s in
+                    #   Length via the shell parameter expansion, never printf: any percent-s in
+                    #   this script is a Go format placeholder and would shift every later
+                    #   substitution by one.
+                    #
+                    # ══ EVERYTHING ABOVE IS SHARED. EVERYTHING BELOW IS PER-ROLE. ══
+                    #   The split is deliberate: most of this script is rig-agnostic and
+                    #   carries the fixes that took a real box to find — the instance store
+                    #   identified by its NVMe MODEL string rather than device order, the
+                    #   `grep -c` over `wc -l`, the 30x2s waits, and the fatal() that leaves
+                    #   /var/log/gpu-init.FAILED behind. Two compositions would duplicate
+                    #   all of it and then drift, and nothing runs both boot scripts, so
+                    #   nothing would catch the drift. A format-slot/variable miscount, by contrast,
+                    #   IS mechanically checkable - and is checked.
+                    #
+                    # PREFLIGHT, because the box bills while you debug: runai_streamer globs
+                    #   PREFLIGHT, because the box bills while you debug: runai_streamer globs
+                    #   *.safetensors and loads nothing else. A checkpoint published only as
+                    #   .bin/.pth would crash-loop vLLM with no obvious cause, so say so here.
+                    #
+                    # --- LLM: vLLM on :$PORT, streaming its weights out of S3 (TALOS-5drv.3) ---
+                    #   --load-format runai_streamer with an s3:// --model is the documented pair:
+                    #   docs.vllm.ai/en/stable/models/extensions/runai_model_streamer. The pinned
+                    #   v0.30.0 image already contains runai-model-streamer[s3], so nothing is
+                    #   installed at boot. vLLM pulls the small non-weight files (config.json,
+                    #   tokenizer*, *.index.json, *.py) to a container-local temp dir itself and
+                    #   keeps streaming the shards from S3 - there is no local weight copy at all.
+                    #   --tokenizer is DELIBERATELY NOT SET. Unset means tokenizer == model, which
+                    #   makes vLLM run a SECOND pull of everything-except-weights; that second pass
+                    #   is the only thing that fetches BPE files like merges.txt / vocab.txt, which
+                    #   the first pull's *.model/*.py/*.json filter would miss. Qwen3-235B-GPTQ-Int4
+                    #   ships a merges.txt, so pointing --tokenizer anywhere else would break it.
+                    #
+                    #   AWS_REGION is MANDATORY: the streamer infers NO region from the s3:// URI.
+                    #   AWS_EC2_METADATA_DISABLED IS DELIBERATELY NOT SET. vLLM's own doc sets it in
+                    #   the S3-COMPATIBLE (MinIO/GCS) recipe, where it only skips a startup delay;
+                    #   copying it here would switch IMDS off and kill instance-profile auth dead.
+                    #   Credentials come from the AWS SDK default chain (env, profile, SSO, IMDS),
+                    #   so the instance profile is sufficient and there are no static keys anywhere.
+                    #   RUNAI_STREAMER_CONCURRENCY is exactly what the documented
+                    #   --model-loader-extra-config '{"concurrency":N}' sets underneath, without
+                    #   nesting JSON inside a Go format string inside YAML.
+                    #
+                    #   'auto' quantization means OMIT the flag and let vLLM autodetect from the
+                    #   checkpoint's config.json (right for FP8/AWQ/GPTQ repos that self-describe);
+                    #   set it explicitly only to force a kernel.
+                    #   --ipc=host: the default 64MB /dev/shm is too small for tensor parallel, and
+                    #   TP is now whatever the machine turned out to be, so this is never optional.
+                    #   --trust-remote-code now also trusts the BUCKET: the streamer pulls *.py
+                    #   from the S3 prefix and vLLM executes them. That prefix is written only by
+                    #   our own cold seed straight from HuggingFace, so the practical trust
+                    #   boundary is unchanged - but it is S3, not HF, that now has to be trusted.
+                    #   --- vLLM bearer token, fetched from SSM at boot (TALOS-a8vo.9) ---
+                    #   The key is NEVER in a claim, in git, or in userData - only this PATH is. userData
+                    #   is readable by anything holding ec2:DescribeInstanceAttribute and from IMDS on the
+                    #   box, so a literal key here would be plainly visible.
+                    #   1Password is the source of truth; ESO pushes it to SSM because an EC2 instance
+                    #   cannot read 1Password - it authenticates with its instance profile.
+                    #   Why this is enforced ON THE BOX and not only at the ingress: the relay Pod is
+                    #   reachable from ANY Pod through the gpu-backend ClusterIP, which bypasses Traefik
+                    #   and therefore bypasses lan-only-strict entirely. --api-key is what closes that.
+                    #   A FETCH FAILURE IS FATAL. Falling through to an unauthenticated endpoint on a box
+                    #   that bills by the hour is the one outcome worse than not booting.
+                    #
+                    # $QUANT_ARG and $SERVED are both INTENTIONALLY UNQUOTED - they must
+                    #   $QUANT_ARG and $SERVED are both INTENTIONALLY UNQUOTED - they must
+                    #   word-split. $QUANT_ARG is either empty or the two words
+                    #   "--quantization <kernel>"; quoting it would pass an empty string as
+                    #   an argument when QUANT is auto. (shellcheck SC2086 flags this; it is
+                    #   wrong here.)
+                    #   $SERVED is unquoted because vLLM's --served-model-name takes
+                    #   nargs='+', so a space-separated servedModelName becomes several
+                    #   aliases and the endpoint answers to all of them. That is what lets
+                    #   one ~/.catalyst/llm-config.yaml model name resolve against BOTH the
+                    #   Mac's local Ollama and this box. It is also no longer optional: vLLM
+                    #   resolves served_model_name BEFORE it rewrites an s3:// --model, so
+                    #   leaving it unset makes the reported model id the raw S3 URI.
+                    #
+                    # --- No image generation on this branch. It used to live here, sharing VRAM
+                    #   with vLLM behind enableImageGen, with its `docker run` wrapped in
+                    #   `|| true` - which hid that the image it pulled had NEVER EXISTED in GHCR,
+                    #   and is why the 2026-09-28 run reported success with no ComfyUI running at
+                    #   all. Images are their own rig now: see the else branch below, and
+                    #   aws/apps/gpu-image-l40s.yaml. ---
+                    #
+                    # ── IMAGE RIG ────────────────────────────────────────────────────
+                    #   NO `|| true` anywhere here. The previous version wrapped its docker
+                    #   run in one, which hid that the image it pulled did not exist in GHCR
+                    #   at all - so the box booted "successfully" with no ComfyUI for a
+                    #   month. ComfyUI is this box's ONLY job; if it cannot start, the boot
+                    #   has failed and fatal() should say so.
+                    #
+                    # THE SAME SEED-THEN-STREAM CACHE THE vLLM PATH USES, for the same
+                    #   THE SAME SEED-THEN-STREAM CACHE THE vLLM PATH USES, for the same
+                    #   reasons: ~103 GB across 14 files, and pulling that from HuggingFace
+                    #   on every boot means 13 LFS objects over an external CDN with normal
+                    #   429s and multi-minute variance. Same-region S3 was measured at
+                    #   1.29 GB/s, so a warm boot stages in ~90-150s instead of 4-9 minutes,
+                    #   and nothing outside AWS is in the boot path.
+                    #
+                    #   ONE DELIBERATE DIFFERENCE from the vLLM branch: it does NOT delete
+                    #   the local copy afterwards. vLLM streams weights straight out of S3
+                    #   via runai_streamer and never needs them on disk; ComfyUI mmaps from
+                    #   the filesystem and cannot read s3://, so here the local copy IS the
+                    #   serving path.
+                    #
+                    # The shim's own key. Fetched above unconditionally because both roles
+                    #   The shim's own key. Fetched above unconditionally because both roles
+                    #   use the same token, but only PASSED to the container when a client
+                    #   exists that sends it: /healthz has no auth dependency, so enabling
+                    #   the key with an unauthenticated caller yields a Ready relay and a
+                    #   401 on every render - green dashboard, zero function.
+                    #
+                    # Prove ComfyUI is actually serving before declaring the boot good.
+                    #   Prove ComfyUI is actually serving before declaring the boot good.
+                    #   /system_stats is ComfyUI's OWN endpoint - the shim's /healthz returns
+                    #   200 with comfyui_reachable:false, so it cannot answer this question.
+                    #
                     fmt: |
                       #!/bin/bash
                       # XGPUInstance boot: count the GPUs, make sure S3 holds the weights, stream them in.
@@ -292,14 +474,6 @@ spec:
                       S5=/usr/local/bin/s5cmd
                       fatal() { echo "FATAL: $*"; echo "FATAL: $*" > /var/log/gpu-init.FAILED; exit 1; }
                       # --- tensor parallelism is DERIVED, never asserted (TALOS-5drv.2) ---
-                      # TP must equal this machine's GPU count, and with a diversified fleet
-                      # (TALOS-i91u) the machine could be any shape in the pool - 1x L40S or 4x L4 -
-                      # so no claim can know it. TP is a property of the machine, not of intent.
-                      # `grep -c '^GPU '` and not `wc -l`: nvidia-smi prints diagnostics on failure
-                      # too, and wc would return a plausible-looking non-zero count for them.
-                      # The driver ships in the DL Base GPU AMI but is not always up at first boot,
-                      # hence the bounded wait. ZERO GPUs IS FATAL, not "fall back to 1": quietly
-                      # serving on one GPU of four while paying for four is the exact failure here.
                       TP=0
                       for _ in $(seq 1 30); do
                         TP=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU ')
@@ -310,19 +484,6 @@ spec:
                       nvidia-smi -L
                       echo "gpus: $TP detected -> --tensor-parallel-size $TP"
                       # --- mount /cache on LOCAL NVME INSTANCE STORE (TALOS-rkg0) ---
-                      # Identify it by the NVMe MODEL string, not device order: on Nitro the
-                      # root EBS volume is also an NVMe device and the numbering is not
-                      # guaranteed - verified live 2026-10-01, where the instance store came up
-                      # as nvme1n1 right next to the EBS root at nvme0n1. Instance store reports
-                      # "Amazon EC2 NVMe Instance Storage".
-                      # Always mkfs -f: instance store comes up raw on every boot and holds
-                      # nothing we need to preserve (S3 is the durable copy).
-                      # That rawness is also why "local NVMe is ~7GB/s vs ~1GB/s for network
-                      # storage" does NOT argue against streaming: an ALREADY-WARM local disk
-                      # would beat the network, but this disk is reformatted every single boot,
-                      # so it is never warm. The old path paid the same S3 read AND a ~31GB write
-                      # AND a ~31GB read on top of it.
-                      # /cache now exists for the COLD HF SEED ONLY. The serving path never reads it.
                       CACHE_DEV=""
                       for _ in $(seq 1 30); do
                         CACHE_DEV=$(lsblk -dno NAME,MODEL 2>/dev/null | awk '/Instance Storage/ {print "/dev/"$1; exit}')
@@ -334,61 +495,25 @@ spec:
                         mkfs.xfs -f "$CACHE_DEV" && mount "$CACHE_DEV" /cache
                         echo "cache: mounted instance store $CACHE_DEV at /cache"
                       else
-                        # Shape without instance store, or it never appeared. The WARM path does not
-                        # care - it streams from S3 - but a COLD seed stages the whole model here
-                        # first, and the root volume has only ~25GB free after the AMI and the vLLM
-                        # image. A cold seed of anything large will run out of space.
                         echo "WARNING: no instance-store device found; /cache is on the root volume"
                       fi
                       df -h /cache
                       # --- s5cmd (PINNED: the /latest/download/s5cmd_Linux-64bit.tar.gz asset 404s -> silent no-binary) ---
                       curl -fsSL https://github.com/peak/s5cmd/releases/download/v2.3.0/s5cmd_2.3.0_Linux-64bit.tar.gz | tar xz -C /usr/local/bin s5cmd
                       # --- weights: S3 is the cache AND the loader source (TALOS-5drv.3) ---
-                      # The S3 prefix IS the HF id, so one field drives both.
-                      # WARM (normal): nothing happens here at all. vLLM streams the shards from
-                      # $S3 straight into VRAM below.
-                      # COLD (first box ever to boot this model): pull from HF once, push to S3,
-                      # drop the marker, then DELETE the staged copy. There is exactly ONE serving
-                      # path and it reads S3, so a local copy would be ~31GB of dead weight.
-                      # The download runs inside the pinned vLLM image - it already ships
-                      # huggingface_hub, so the host needs no pip and no PATH guessing.
-                      # snapshot_download with local_dir writes a plain file tree (no blob
-                      # symlinks), which is what makes the s5cmd round-trip safe.
-                      # ── SHARED: the bearer token ────────────────────────────────────
-                      # Fetched for BOTH roles, before the gate, because both serve an
-                      # authenticated endpoint from the same SSM parameter. It sat inside the
-                      # LLM branch for one revision, which left an image rig with an empty
-                      # SHIM_API_KEY serving UNAUTHENTICATED - and nothing would have reported
-                      # that, because the shim reads an empty key as "no auth required".
                       API_KEY_ARG=""
                       if [ -n "$API_KEY_PARAM" ]; then
-                        # The aws CLI is a NEW dependency here - every other remote read in this script
-                        # uses s5cmd, which is fetched by curl. AL2023 is expected to ship awscli v2,
-                        # but check explicitly: without this the get-parameter below just returns empty
-                        # and the failure below would blame IAM, sending you to debug permissions on a
-                        # box that bills by the hour.
                         command -v aws >/dev/null 2>&1 || dnf install -y -q awscli 2>/dev/null || true
                         command -v aws >/dev/null 2>&1 || fatal "no aws CLI on this AMI and dnf could not install awscli; cannot read the vLLM api key from SSM"
                         VLLM_API_KEY=$(aws ssm get-parameter --region "$REGION" --name "$API_KEY_PARAM" \
                           --with-decryption --query Parameter.Value --output text 2>/dev/null)
                         [ -n "$VLLM_API_KEY" ] || fatal "could not read $API_KEY_PARAM from SSM in $REGION. Does the instance profile grant ssm:GetParameter on it, and has the ESO PushSecret run?"
                         API_KEY_ARG="--api-key $VLLM_API_KEY"
-                        # Length via the shell parameter expansion, never printf: any percent-s in
-                        # this script is a Go format placeholder and would shift every later
-                        # substitution by one.
                         echo "api key: loaded from $API_KEY_PARAM (${#VLLM_API_KEY} chars)"
                       else
                         echo "api key: NONE - serving unauthenticated (apiKeyParameter is empty)"
                       fi
                       # ══ EVERYTHING ABOVE IS SHARED. EVERYTHING BELOW IS PER-ROLE. ══
-                      # The split is deliberate: most of this script is rig-agnostic and
-                      # carries the fixes that took a real box to find — the instance store
-                      # identified by its NVMe MODEL string rather than device order, the
-                      # `grep -c` over `wc -l`, the 30x2s waits, and the fatal() that leaves
-                      # /var/log/gpu-init.FAILED behind. Two compositions would duplicate
-                      # all of it and then drift, and nothing runs both boot scripts, so
-                      # nothing would catch the drift. A format-slot/variable miscount, by contrast,
-                      # IS mechanically checkable - and is checked.
                       if [ "$ENABLE_LLM" = "true" ]; then
                       [ -n "$HF_MODEL" ] || fatal "enableLlm is true but hfModel is empty. Set spec.hfModel, or enableLlm false for an image rig."
                       if ! $S5 ls "$S3/_SEED_COMPLETE" > /dev/null 2>&1; then
@@ -402,67 +527,10 @@ spec:
                           && echo seeded | $S5 cp - "$S3/_SEED_COMPLETE" \
                           && rm -rf "$SEED"
                       fi
-                      # PREFLIGHT, because the box bills while you debug: runai_streamer globs
-                      # *.safetensors and loads nothing else. A checkpoint published only as
-                      # .bin/.pth would crash-loop vLLM with no obvious cause, so say so here.
                       $S5 ls "$S3/*.safetensors" > /dev/null 2>&1 \
                         || fatal "no *.safetensors under $S3 - runai_streamer loads native safetensors ONLY. Did the seed finish? Is this a safetensors checkpoint?"
                       # --- LLM: vLLM on :$PORT, streaming its weights out of S3 (TALOS-5drv.3) ---
-                      # --load-format runai_streamer with an s3:// --model is the documented pair:
-                      # docs.vllm.ai/en/stable/models/extensions/runai_model_streamer. The pinned
-                      # v0.30.0 image already contains runai-model-streamer[s3], so nothing is
-                      # installed at boot. vLLM pulls the small non-weight files (config.json,
-                      # tokenizer*, *.index.json, *.py) to a container-local temp dir itself and
-                      # keeps streaming the shards from S3 - there is no local weight copy at all.
-                      # --tokenizer is DELIBERATELY NOT SET. Unset means tokenizer == model, which
-                      # makes vLLM run a SECOND pull of everything-except-weights; that second pass
-                      # is the only thing that fetches BPE files like merges.txt / vocab.txt, which
-                      # the first pull's *.model/*.py/*.json filter would miss. Qwen3-235B-GPTQ-Int4
-                      # ships a merges.txt, so pointing --tokenizer anywhere else would break it.
-                      #
-                      # AWS_REGION is MANDATORY: the streamer infers NO region from the s3:// URI.
-                      # AWS_EC2_METADATA_DISABLED IS DELIBERATELY NOT SET. vLLM's own doc sets it in
-                      # the S3-COMPATIBLE (MinIO/GCS) recipe, where it only skips a startup delay;
-                      # copying it here would switch IMDS off and kill instance-profile auth dead.
-                      # Credentials come from the AWS SDK default chain (env, profile, SSO, IMDS),
-                      # so the instance profile is sufficient and there are no static keys anywhere.
-                      # RUNAI_STREAMER_CONCURRENCY is exactly what the documented
-                      # --model-loader-extra-config '{"concurrency":N}' sets underneath, without
-                      # nesting JSON inside a Go format string inside YAML.
-                      #
-                      # 'auto' quantization means OMIT the flag and let vLLM autodetect from the
-                      # checkpoint's config.json (right for FP8/AWQ/GPTQ repos that self-describe);
-                      # set it explicitly only to force a kernel.
-                      # --ipc=host: the default 64MB /dev/shm is too small for tensor parallel, and
-                      # TP is now whatever the machine turned out to be, so this is never optional.
-                      # --trust-remote-code now also trusts the BUCKET: the streamer pulls *.py
-                      # from the S3 prefix and vLLM executes them. That prefix is written only by
-                      # our own cold seed straight from HuggingFace, so the practical trust
-                      # boundary is unchanged - but it is S3, not HF, that now has to be trusted.
-                      # --- vLLM bearer token, fetched from SSM at boot (TALOS-a8vo.9) ---
-                      # The key is NEVER in a claim, in git, or in userData - only this PATH is. userData
-                      # is readable by anything holding ec2:DescribeInstanceAttribute and from IMDS on the
-                      # box, so a literal key here would be plainly visible.
-                      # 1Password is the source of truth; ESO pushes it to SSM because an EC2 instance
-                      # cannot read 1Password - it authenticates with its instance profile.
-                      # Why this is enforced ON THE BOX and not only at the ingress: the relay Pod is
-                      # reachable from ANY Pod through the gpu-backend ClusterIP, which bypasses Traefik
-                      # and therefore bypasses lan-only-strict entirely. --api-key is what closes that.
-                      # A FETCH FAILURE IS FATAL. Falling through to an unauthenticated endpoint on a box
-                      # that bills by the hour is the one outcome worse than not booting.
                       QUANT_ARG=""; [ "$QUANT" != "auto" ] && QUANT_ARG="--quantization $QUANT"
-                      # $QUANT_ARG and $SERVED are both INTENTIONALLY UNQUOTED - they must
-                      # word-split. $QUANT_ARG is either empty or the two words
-                      # "--quantization <kernel>"; quoting it would pass an empty string as
-                      # an argument when QUANT is auto. (shellcheck SC2086 flags this; it is
-                      # wrong here.)
-                      # $SERVED is unquoted because vLLM's --served-model-name takes
-                      # nargs='+', so a space-separated servedModelName becomes several
-                      # aliases and the endpoint answers to all of them. That is what lets
-                      # one ~/.catalyst/llm-config.yaml model name resolve against BOTH the
-                      # Mac's local Ollama and this box. It is also no longer optional: vLLM
-                      # resolves served_model_name BEFORE it rewrites an s3:// --model, so
-                      # leaving it unset makes the reported model id the raw S3 URI.
                       docker run -d --restart=always --name vllm --gpus all --ipc=host -p "$PORT":8000 \
                         -v /cache:/cache -e HF_HOME=/cache/hf \
                         -e AWS_REGION="$REGION" -e AWS_DEFAULT_REGION="$REGION" \
@@ -474,32 +542,10 @@ spec:
                         --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" \
                         --max-num-seqs "$MAX_NUM_SEQS" --trust-remote-code
                       # --- No image generation on this branch. It used to live here, sharing VRAM
-                      #     with vLLM behind enableImageGen, with its `docker run` wrapped in
-                      #     `|| true` - which hid that the image it pulled had NEVER EXISTED in GHCR,
-                      #     and is why the 2026-09-28 run reported success with no ComfyUI running at
-                      #     all. Images are their own rig now: see the else branch below, and
-                      #     aws/apps/gpu-image-l40s.yaml. ---
                       else
                       # ── IMAGE RIG ────────────────────────────────────────────────────
-                      # NO `|| true` anywhere here. The previous version wrapped its docker
-                      # run in one, which hid that the image it pulled did not exist in GHCR
-                      # at all - so the box booted "successfully" with no ComfyUI for a
-                      # month. ComfyUI is this box's ONLY job; if it cannot start, the boot
-                      # has failed and fatal() should say so.
                       MODELS_DIR=/cache/models
                       mkdir -p "$MODELS_DIR/unet" "$MODELS_DIR/vae" "$MODELS_DIR/clip" "$MODELS_DIR/loras"
-                      # THE SAME SEED-THEN-STREAM CACHE THE vLLM PATH USES, for the same
-                      # reasons: ~103 GB across 14 files, and pulling that from HuggingFace
-                      # on every boot means 13 LFS objects over an external CDN with normal
-                      # 429s and multi-minute variance. Same-region S3 was measured at
-                      # 1.29 GB/s, so a warm boot stages in ~90-150s instead of 4-9 minutes,
-                      # and nothing outside AWS is in the boot path.
-                      #
-                      # ONE DELIBERATE DIFFERENCE from the vLLM branch: it does NOT delete
-                      # the local copy afterwards. vLLM streams weights straight out of S3
-                      # via runai_streamer and never needs them on disk; ComfyUI mmaps from
-                      # the filesystem and cannot read s3://, so here the local copy IS the
-                      # serving path.
                       if $S5 ls "$IMAGE_S3/_SEED_COMPLETE" > /dev/null 2>&1; then
                         echo "image models: WARM - streaming from $IMAGE_S3"
                         $S5 sync --concurrency 32 "$IMAGE_S3/*" "$MODELS_DIR/" \
@@ -508,11 +554,6 @@ spec:
                         echo "image models: COLD prefix - the container will pull ~103 GB from HuggingFace."
                         echo "image models: minutes of GPU time. S3 is seeded after, so it happens once."
                       fi
-                      # The shim's own key. Fetched above unconditionally because both roles
-                      # use the same token, but only PASSED to the container when a client
-                      # exists that sends it: /healthz has no auth dependency, so enabling
-                      # the key with an unauthenticated caller yields a Ready relay and a
-                      # 401 on every render - green dashboard, zero function.
                       docker run -d --restart=always --name comfy --gpus all \
                         -p "$SHIM_PORT":8012 -p "$COMFY_PORT":8188 \
                         -v /cache:/workspace \
@@ -522,9 +563,6 @@ spec:
                         -e COMFY_EXTRA_ARGS="$COMFY_ARGS" \
                         "$COMFY_IMAGE" \
                         || fatal "docker run of $COMFY_IMAGE failed. Is the GHCR package PUBLIC? A private one 401s here."
-                      # Prove ComfyUI is actually serving before declaring the boot good.
-                      # /system_stats is ComfyUI's OWN endpoint - the shim's /healthz returns
-                      # 200 with comfyui_reachable:false, so it cannot answer this question.
                       for _ in $(seq 1 120); do
                         curl -fsS --max-time 3 "http://127.0.0.1:$COMFY_PORT/system_stats" > /dev/null 2>&1 && break
                         sleep 5
