@@ -275,7 +275,22 @@ spec:
                     - {fromFieldPath: spec.comfyArgs}
                   strategy: string
                   string:
-                    # ── BOOT SCRIPT RATIONALE ────────────────────────────────────────────
+                    # ── THE COMFYUI WAIT BUDGET IS PER-PATH, AND THAT IS NOT COSMETIC ──────────
+              # A flat 120 tries (600s) was WRONG and cost a real boot. On a cold S3 prefix
+              # the container pulls ~103 GB from HuggingFace BEFORE ComfyUI starts, so the
+              # host wait spans the whole download. Measured on 2026-10-03: 4.0 GB in ~27s
+              # (~148 MB/s), i.e. ~11.6 min for the full set — over the 600s budget.
+              #
+              # Blowing that budget is worse than it looks. fatal() EXITS the script, so the
+              # S3 seed that runs after this wait never happens: the box would pull 103 GB
+              # from HuggingFace, serve fine, and leave the cache cold so EVERY later boot
+              # repeats it. The expensive thing was silently not being saved.
+              #
+              # So COLD gets 600 tries (50 min) and WARM keeps 120 (10 min) — warm staging
+              # is an in-region S3 sync measured at 1.29 GB/s, so if that has not answered
+              # in 10 minutes something is actually wrong.
+              #
+              # ── BOOT SCRIPT RATIONALE ────────────────────────────────────────────
                     # Moved OUT of the script below on 2026-10-03: EC2 caps user data at 16384
                     # bytes RAW (pre-base64) and the script hit 16497, of which 11005 were
                     # comments. CreateLaunchTemplate failed with InvalidUserData.Malformed and the
@@ -547,10 +562,12 @@ spec:
                       MODELS_DIR=/cache/models
                       mkdir -p "$MODELS_DIR/unet" "$MODELS_DIR/vae" "$MODELS_DIR/clip" "$MODELS_DIR/loras"
                       if $S5 ls "$IMAGE_S3/_SEED_COMPLETE" > /dev/null 2>&1; then
+                        COMFY_WAIT_TRIES=120
                         echo "image models: WARM - streaming from $IMAGE_S3"
                         $S5 sync --concurrency 32 "$IMAGE_S3/*" "$MODELS_DIR/" \
                           || fatal "S3 sync from $IMAGE_S3 failed. Prefix is marked seeded: credentials or network, not a cold cache."
                       else
+                        COMFY_WAIT_TRIES=600
                         echo "image models: COLD prefix - the container will pull ~103 GB from HuggingFace."
                         echo "image models: minutes of GPU time. S3 is seeded after, so it happens once."
                       fi
@@ -563,12 +580,12 @@ spec:
                         -e COMFY_EXTRA_ARGS="$COMFY_ARGS" \
                         "$COMFY_IMAGE" \
                         || fatal "docker run of $COMFY_IMAGE failed. Is the GHCR package PUBLIC? A private one 401s here."
-                      for _ in $(seq 1 120); do
+                      for _ in $(seq 1 "$COMFY_WAIT_TRIES"); do
                         curl -fsS --max-time 3 "http://127.0.0.1:$COMFY_PORT/system_stats" > /dev/null 2>&1 && break
                         sleep 5
                       done
                       curl -fsS --max-time 5 "http://127.0.0.1:$COMFY_PORT/system_stats" > /dev/null 2>&1 \
-                        || fatal "ComfyUI never answered /system_stats on $COMFY_PORT within 10min. docker logs comfy."
+                        || fatal "ComfyUI never answered /system_stats on $COMFY_PORT within $((COMFY_WAIT_TRIES * 5))s. docker logs comfy."
                       curl -fsS --max-time 5 "http://127.0.0.1:$SHIM_PORT/healthz" > /dev/null 2>&1 \
                         || fatal "comfyui-shim never answered /healthz on $SHIM_PORT. docker logs comfy."
                       echo "image rig: ComfyUI and the shim are both answering"
