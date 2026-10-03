@@ -82,9 +82,20 @@ spec:
   # required field. The boot script fatals if enableLlm is true and hfModel is empty.
   enableLlm: "false"
 
-  # Same bucket as the LLM rig => same-region S3, so staging is free and fast. The image
-  # weights live under their own prefix and are seeded once, then streamed on every later
-  # boot — the SAME cache mechanism vLLM uses, measured at 1.29 GB/s in-region.
+  # Same bucket as the LLM rig => same-region S3, so staging is free. The image weights
+  # live under their own prefix, seeded once and then synced on every later boot.
+  #
+  # WARM BOOT IS ~8-9 MIN, NOT ~90s. Measured 2026-10-03: 86.4 GB of 103.2 GB in 437s =
+  # ~198 MB/s, with iostat showing nvme1n1 at 100% util and ~196 MB/s of writes. The
+  # bottleneck is the instance store's WRITE throughput, not S3 and not the network.
+  #
+  # Do not reuse the vLLM path's 1.29 GB/s figure here — I did, and it was wrong by ~6x.
+  # That number is runai_streamer reading S3 straight into VRAM, never touching disk.
+  # ComfyUI mmaps weights from the filesystem and cannot read s3://, so this path has to
+  # WRITE all 103 GB down first. Same cache, fundamentally different cost.
+  #
+  # Cold boot (HuggingFace, unseeded prefix) was ~13 min at ~100 MB/s, so seeding still
+  # buys roughly a third off — just not the 10x the original estimate implied.
   modelsBucket: catalyst-tbdc-models-use2
   imageModelsPrefix: comfyui-models
 
