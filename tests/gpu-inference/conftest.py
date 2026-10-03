@@ -80,6 +80,27 @@ def strip_think(text: str) -> str:
     return t.strip()
 
 
+class _Redacting(dict):
+    """A dict whose repr masks secret-looking values.
+
+    Exists because pytest renders fixture values into the failure header, so any secret
+    returned from a fixture leaks into logs on the FIRST failing test — exactly when you
+    are least likely to be watching for it.
+    """
+
+    _SECRET_KEYS = ("key", "token", "secret", "password")
+
+    def __repr__(self) -> str:
+        shown = {
+            k: ("<redacted:%d chars>" % len(str(v)) if v else "<empty>")
+            if any(s in k.lower() for s in self._SECRET_KEYS) else v
+            for k, v in self.items()
+        }
+        return repr(shown)
+
+    __str__ = __repr__
+
+
 def _bail(request, env_flag: str, msg: str):
     """Skip, or FAIL when the matching REQUIRE flag is set.
 
@@ -188,11 +209,16 @@ def image(request):
     if IMAGE_MODEL and IMAGE_MODEL not in pipelines:
         _bail(request, "GPU_IMAGE_REQUIRE",
               f"GPU_IMAGE_MODEL={IMAGE_MODEL!r} not available (have: {pipelines})")
-    return {
+    # NOT a plain dict any more. pytest prints a failing test's fixture values in the
+    # traceback header, so returning the bearer token as a dict entry put it in PLAINTEXT
+    # into every CI log and terminal scrollback the moment any render failed. That
+    # happened on 2026-10-03 and forced a key rotation. _Redacting masks it in repr while
+    # the real value stays usable by the tests.
+    return _Redacting({
         "base": IMAGE_BASE,
         "key": IMAGE_KEY,
         "model": IMAGE_MODEL or pipelines[0],
         "pipelines": pipelines,
         # owned_by per model — the only field that says which HOST rendered.
         "owned_by": sorted({m.get("owned_by", "") for m in payload}),
-    }
+    })
