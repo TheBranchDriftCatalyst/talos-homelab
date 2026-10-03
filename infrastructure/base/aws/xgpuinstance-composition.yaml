@@ -275,7 +275,22 @@ spec:
                     - {fromFieldPath: spec.comfyArgs}
                   strategy: string
                   string:
-                    # ── THE COMFYUI WAIT BUDGET IS PER-PATH, AND THAT IS NOT COSMETIC ──────────
+                    # ── HF_HOME MUST BE ON THE NVMe, NOT THE ROOT VOLUME ──────────────────────
+              # Omitting it cost a real boot on 2026-10-03. hf_hub_download stages every
+              # file into HF_HOME's blob cache and THEN copies it to the destination, so
+              # without this the cache lands in the container's writable layer on the 100G
+              # root EBS volume while the 419G instance store sits at 8 percent:
+              #   UserWarning: Not enough free disk space... expected 17534.33 MB,
+              #   /root/.cache/huggingface/hub/... only has 10457.19 MB free
+              # The root volume hit 95 percent and the container restarted 3 times, each
+              # time resuming and refilling it. The vLLM branch already passed
+              # -e HF_HOME=/cache/hf; the image branch simply did not, which is exactly
+              # the kind of divergence a shared prologue is supposed to prevent.
+              #
+              # Note the stage-then-copy means the pull needs roughly 2x the final size
+              # transiently. On 419G that is fine; on the root volume it never was.
+              #
+              # ── THE COMFYUI WAIT BUDGET IS PER-PATH, AND THAT IS NOT COSMETIC ──────────
               # A flat 120 tries (600s) was WRONG and cost a real boot. On a cold S3 prefix
               # the container pulls ~103 GB from HuggingFace BEFORE ComfyUI starts, so the
               # host wait spans the whole download. Measured on 2026-10-03: 4.0 GB in ~27s
@@ -575,6 +590,7 @@ spec:
                         -p "$SHIM_PORT":8012 -p "$COMFY_PORT":8188 \
                         -v /cache:/workspace \
                         -e MODEL_ROOT=/workspace/models \
+                        -e HF_HOME=/workspace/hf \
                         -e SHIM_OWNED_BY=aws-l40s-comfyui \
                         -e SHIM_API_KEY="$VLLM_API_KEY" \
                         -e COMFY_EXTRA_ARGS="$COMFY_ARGS" \
