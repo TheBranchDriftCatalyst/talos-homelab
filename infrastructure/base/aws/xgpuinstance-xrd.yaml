@@ -245,6 +245,26 @@ spec:
                     'false' serves images with ComfyUI + comfyui-shim. Must agree with
                     the claim's catalyst.io/gpu-role label (llm | image).
 
+                # Tool calling is OFF in vLLM unless both flags are passed, and the
+                # failure is a 400 at CHAT time, not at boot: any client sending
+                # tool_choice "auto" — which the operator's agent does — gets
+                #   "auto" tool choice requires --enable-auto-tool-choice and
+                #   --tool-call-parser to be set
+                # while /v1/models and plain completions work fine. So the rig looks
+                # healthy and the agent is simply broken.
+                #
+                # Per-model because the parser is model-specific: Qwen3 ships a
+                # Hermes-style tool template in its tokenizer_config, so `hermes` is right
+                # for the models this rig serves. Set to "" to serve a model whose
+                # template has no tool support, rather than passing a parser that cannot
+                # match and silently returning raw text instead of tool_calls.
+                toolCallParser:
+                  type: string
+                  default: "hermes"
+                  description: >-
+                    vLLM --tool-call-parser (hermes | llama3_json | mistral | ...).
+                    Empty disables tool calling. Qwen3 wants hermes.
+
                 # ── IMAGE RIG ONLY (enableLlm: "false") ─────────────────────────
                 # Pinned, not :latest, for the same reason as vllmImage: a boot that
                 # silently changes what it runs is unattributable.

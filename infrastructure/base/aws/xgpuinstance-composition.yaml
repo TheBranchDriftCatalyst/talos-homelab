@@ -273,6 +273,7 @@ spec:
                     - {fromFieldPath: spec.shimPort}
                     - {fromFieldPath: spec.comfyPort}
                     - {fromFieldPath: spec.comfyArgs}
+                    - {fromFieldPath: spec.toolCallParser}
                   strategy: string
                   string:
                     # ── HF_HOME MUST BE ON THE NVMe, NOT THE ROOT VOLUME ──────────────────────
@@ -498,7 +499,7 @@ spec:
                       QUANT="%s"; MAXLEN="%s"; UTIL="%s"; ENABLE_LLM="%s"; VLLM_IMAGE="%s"
                       STREAM_CONCURRENCY="%s"; API_KEY_PARAM="%s"; MAX_NUM_SEQS="%s"
                       COMFY_IMAGE="%s"; IMAGE_PREFIX="%s"; SHIM_PORT="%s"; COMFY_PORT="%s"
-                      COMFY_ARGS="%s"
+                      COMFY_ARGS="%s"; TOOL_PARSER="%s"
                       S3="s3://$BUCKET/$HF_MODEL"
                       IMAGE_S3="s3://$BUCKET/$IMAGE_PREFIX"
                       S5=/usr/local/bin/s5cmd
@@ -561,6 +562,12 @@ spec:
                         || fatal "no *.safetensors under $S3 - runai_streamer loads native safetensors ONLY. Did the seed finish? Is this a safetensors checkpoint?"
                       # --- LLM: vLLM on :$PORT, streaming its weights out of S3 (TALOS-5drv.3) ---
                       QUANT_ARG=""; [ "$QUANT" != "auto" ] && QUANT_ARG="--quantization $QUANT"
+                      # Without BOTH flags vLLM 400s any request carrying tool_choice
+                      # "auto" — which the operator's agent always sends — while
+                      # /v1/models and plain chat keep working. Healthy-looking rig,
+                      # broken agent.
+                      TOOL_ARGS=""
+                      [ -n "$TOOL_PARSER" ] && TOOL_ARGS="--enable-auto-tool-choice --tool-call-parser $TOOL_PARSER"
                       docker run -d --restart=always --name vllm --gpus all --ipc=host -p "$PORT":8000 \
                         -v /cache:/cache -e HF_HOME=/cache/hf \
                         -e AWS_REGION="$REGION" -e AWS_DEFAULT_REGION="$REGION" \
@@ -570,7 +577,7 @@ spec:
                         --served-model-name $SERVED \
                         --tensor-parallel-size "$TP" $QUANT_ARG $API_KEY_ARG \
                         --gpu-memory-utilization "$UTIL" --max-model-len "$MAXLEN" \
-                        --max-num-seqs "$MAX_NUM_SEQS" --trust-remote-code
+                        --max-num-seqs "$MAX_NUM_SEQS" $TOOL_ARGS --trust-remote-code
                       # --- No image generation on this branch. It used to live here, sharing VRAM
                       else
                       # ── IMAGE RIG ────────────────────────────────────────────────────
