@@ -2,8 +2,8 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-01
-**Pick up here:** `TALOS-x1sb` (Level 2 relay Pod — built and committed but DISARMED; arming it plus one rig is the first end-to-end test this plane has ever had) · **Deadline item:** none outstanding
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-13
+**Pick up here:** `TALOS-xr14` (hot-ones cutover — mid-flight; **if it is open, `prune` may still be DISABLED on `arr-stack-private`**, so close it or revert the guard before anything else) · **Deadline item:** none outstanding
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -39,7 +39,17 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-### Active — `TALOS-x1sb`, Level 2: arm the relay Pod and run the first real end-to-end test
+### Active — `TALOS-xr14`, hot-ones cutover (mid-flight, and it holds a safety guard open)
+
+|                  |                                                                                                                                                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Check first**  | **Is `prune` still `false` on `arr-stack-private`?** `kubectl -n argocd get application arr-stack-private -o jsonpath='{.spec.syncPolicy.automated}'`. The cutover disables it deliberately; an interrupted migration leaves it off, which means that app silently stops pruning anything. |
+| Why the guard    | `arr-stack-private` is `prune: true` + `selfHeal: true` with foreground propagation, and every hot-ones resource is tracked `arr-stack-private:...`. Removing `- hot-ones/` from its kustomization unguarded deletes `hot-ones-content` (**50Gi**), `hot-ones-state` (5Gi) and the CNPG cluster. |
+| Resume here      | Gates before the parent edit: zero-diff render (filter both builds to `app.kubernetes.io/name=hot-ones`, diff must be empty) → `tracking-id` reads `hot-ones:` on all 8 resources → `argocd app diff arr-stack-private` shows nothing queued for prune → app still answers and `STASH_URL`/`STASH_API_KEY` resolve. |
+| Rollback         | Re-add `- hot-ones/` to the parent and delete the new Application. Nothing is destroyed while prune is off.                                                                                                                                                            |
+| Then             | `TALOS-fzt7` aligns `k8s/` into `base` + `overlays/{local,cluster}` — **after** the cutover is green, never during.                                                                                                                                                    |
+
+### Also open — `TALOS-x1sb`, Level 2: arm the relay Pod and run the first real end-to-end test
 
 |                      |                                                                                                                                                                                                                                      |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -71,6 +81,8 @@ If you are here to do something else entirely, that is fine and probably correct
 | Launching `inference-node-235b` (4× L40S)                    | ~$5.17/hr, and 48 vCPU is the entire us-east-2 G/VT quota. Needs the one-time S3 key copy in its header first, or the first boot re-pulls 124.6 GB from HuggingFace. |
 | Removing KEDA                                          | Core is load-bearing for `openscad/manyfold-performance-worker`, `boomtime/boomtime-jobs` and `crossplane-demo/demo-celery`. Only the nginx proxy was deleted; leave both HelmReleases alone. |
 | Raising G/VT quota past 48                             | One rig at a time is the invariant. Quota should be headroom, never a brake — that mistake is already recorded in `aws/apps/kustomization.yaml`. |
+| Pointing the hot-ones ArgoCD app at `workspace/hot-ones/k8s/base` | That is the **Tilt/local-dev** set, not a second copy of production: own `hot-ones` namespace, plain `postgres:18` StatefulSet instead of CNPG, a dev-registry image, and no ingressroute/ExternalSecrets/chat/cam/Stash wiring. It would deploy a different app with the wrong database into the wrong namespace. Production manifests are the talos-private ones. |
+| Moving hot-ones out of `media-private` (`TALOS-17hl`) | Costed, not forgotten. It needs the `scene-engine-metadata` Secret reflected (Secrets do not cross namespaces) **and** `STASH_URL` changed off the bare `http://stash:9999`. That turns a zero-diff ownership move into a live reconfiguration of the app's content source. |
 
 <!-- /closeout:next -->
 
@@ -79,6 +91,50 @@ If you are here to do something else entirely, that is fine and probably correct
 <!-- closeout:sessions -->
 
 ## Sessions
+
+### 2026-10-13 — Haven + openGym shipped; ArgoCD got SSO, and its RBAC turned out to be dead
+
+**Commits:** 4 · **Scope:** `applications/haven/`, `applications/opengym/`, `clusters/catalyst-cluster/`, `infrastructure/base/argocd/`, `infrastructure/base/authentik/`
+
+**Filed:** `TALOS-yxtx` (epic) + `.2z1r`/`uzss`/`2wgp`/`ymrl`, `TALOS-87bw`, `TALOS-pa0z`, `TALOS-o1sb`, `TALOS-6j4p` (epic) + `TALOS-xr14`/`fzt7`/`340i`/`17hl`
+**Closed:** `TALOS-2z1r`, `TALOS-pa0z`
+**Carried:** `TALOS-xr14` — hot-ones cutover, **leaves `prune` disabled on `arr-stack-private` while in flight**. `TALOS-o1sb` (dead Helm value paths — 3rd instance, wants a CI check). `TALOS-87bw` (outpost race hits every future forward-auth app).
+
+Two self-hosted apps landed: **Haven** (Discord replacement) at `haven.talos00` and **openGym**
+(gym tracker) at `opengym.talos00`, both digest-pinned, neither needing Postgres — Haven is SQLite,
+openGym is JSON files, so each is one local-path PVC and one Deployment. **ArgoCD got SSO** via
+native OIDC against Authentik, which it had never had: it was absent from the Authentik app list
+because no provider had ever existed for it, not because anything regressed.
+
+The valuable half is what was **found, not built**. `clusters/catalyst-cluster/` is **not
+auto-discovered** — `flux-system` points at `./clusters/catalyst-cluster/flux-system`, whose
+kustomization enumerates every `../<app>.yaml` explicitly, so the first commit's two Kustomizations
+were inert. That surfaced only by reconciling and then asking for the objects; `flux-system` applied
+the new revision perfectly while `get kustomization haven opengym` returned NotFound. Worse,
+`spec.values.rbac` on the argocd HelmRelease is a **dead value path** — the chart reads
+`configs.rbac` and has no top-level `rbac` key at all, so `policy.csv` and `policy.default` have
+rendered **empty** for as long as that block existed: the six `role:org-admin` rules and
+`g, admin, role:admin` were never in effect. It stayed invisible because ArgoCD special-cases the
+local `admin` account and bypasses RBAC, and admin was the only account in use. SSO is what would
+have made it bite — an OIDC user matches no rule and, with `policy.default` empty, authenticates
+successfully into a permissionless UI.
+
+Both new hosts also **404'd behind forward-auth** on first deploy: the outpost union's `!Find`
+entries were silently dropped because the union blueprint applied ~100ms after the provider
+blueprints and the applies are async, so the providers had not committed. Providers existed; the
+union held `irc: True, haven: False, opengym: False`. Two upstream traps were avoided only by
+reading the images rather than the READMEs — Haven self-signs TLS and serves HTTPS itself unless
+`FORCE_HTTP=true`, and openGym's nginx defaults `RESOLVER` to Docker's `127.0.0.11`, which in
+Kubernetes does not fail fast but **hangs every `/api` call until it times out**. openGym therefore
+runs api+web in one pod with `BACKEND=127.0.0.1`, bypassing resolution entirely rather than
+hardcoding a CoreDNS IP that can rot.
+
+One deliberate design split worth keeping: forward-auth gates **browser UIs only**. `/api`,
+`/socket.io` and `/uploads` are excluded at priority 100 with no middleware, because Haven ships
+desktop and Android clients and openGym has a paired mobile app using Bearer tokens — none of which
+can follow a login 302. Separately, planning the hot-ones extraction turned up that **Tilt local dev
+in that repo is already broken** (`Tiltfile` points at a `deploy/` directory that does not exist,
+and at `k8s/base/immich` which does not exist at all despite the commit that wired it up).
 
 ### 2026-09-30/10-01 — GPU plane rebuilt: fleet placement, streamed weights, and the Mac out of the loop
 
@@ -405,6 +461,24 @@ worth keeping is distilled up into this list first. Fuller detail lives in
     not a datasheet.
 31. **`terminateInstances` on an EC2 Fleet defaults to `false`.** Left at the default, deleting
     the XR leaves the instances running and billing with nothing tracking them.
+32. **`clusters/catalyst-cluster/*.yaml` is not auto-discovered.** The `flux-system` Kustomization
+    points at `./clusters/catalyst-cluster/flux-system`, whose kustomization enumerates every
+    `../<app>.yaml` **explicitly**. A file dropped in the parent directory is a silent no-op — no
+    error, no drift, `flux-system` reports the new revision applied, and the app simply never
+    deploys. Verify a new Kustomization by asking for the object, not by a green reconcile.
+33. **A Helm value at a path the chart does not define is silently ignored.** Third occurrence
+    (tempo ran unrequested, mimir's nginx block never applied, and argocd's `rbac` sat at
+    `spec.values.rbac` when the chart only reads `configs.rbac` — so its RBAC policy was empty for
+    as long as the block existed). The tell: sibling keys in the **same live ConfigMap** hold chart
+    _defaults_ while the keys you declared are empty. Diff `spec.values` top-level keys against
+    `helm show values <chart> --version <v>`. `[unenforced — TALOS-o1sb filed]`
+34. **Authentik's outpost-union `!Find` resolves at apply time and silently drops a provider that
+    has not committed yet.** The blueprint reports success and the app answers **404** behind
+    forward-auth. Separate an outpost fault from a routing fault with a no-middleware route: if
+    `/api` returns the app's own 200 while `/` returns 404, routing/TLS/Service are fine and the
+    fault is entirely the union. Fix by re-applying the union blueprint via the Importer
+    (`BlueprintInstance.apply()` does not exist; `tasks.apply_blueprint()` raises
+    `CurrentTaskNotFound` outside a worker). `[TALOS-87bw]`
 
 <!-- /closeout:gotchas -->
 
