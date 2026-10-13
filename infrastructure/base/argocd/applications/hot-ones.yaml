@@ -91,19 +91,28 @@ spec:
       kind: Deployment
       jsonPointers:
         - /spec/replicas
-    # Carried over from arr-stack-private, and REQUIRED: the ESO webhook
-    # defaults these six fields server-side, so without the exemption the three
-    # ExternalSecrets here (amber-cam, amber-guest-access, nexus-pull-dockercfg)
-    # sit permanently OutOfSync. Observed immediately after adoption — 3 of 24
-    # resources, and the only ones that would not settle. Omitting it does not
-    # break anything, it just leaves the app never reporting Synced, which
-    # destroys the signal you would want during the next incident.
+    # REQUIRED: the ESO webhook defaults these fields server-side, so without
+    # the exemption the three ExternalSecrets here (amber-cam,
+    # amber-guest-access, nexus-pull-dockercfg) sit permanently OutOfSync —
+    # observed right after adoption as the only 3 of 24 that would not settle.
+    # Harmless to the workload, but it costs the Synced signal exactly when you
+    # would want to trust it.
+    #
+    # The first six are copied from arr-stack-private. The last TWO are not in
+    # that list and were found by diffing live against the render: ESO also
+    # defaults `nullBytePolicy: Ignore` on every remoteRef and
+    # `deletionPolicy: Retain` on target. Those are newer ESO fields than the
+    # original exemption list, so arr-stack-private carries the same latent gap
+    # — its own ExternalSecrets only read Synced because their field ownership
+    # is long-established, not because the list is complete.
     - group: external-secrets.io
       kind: ExternalSecret
       jqPathExpressions:
         - .spec.data[].remoteRef.conversionStrategy
         - .spec.data[].remoteRef.decodingStrategy
         - .spec.data[].remoteRef.metadataPolicy
+        - .spec.data[].remoteRef.nullBytePolicy
         - .spec.dataFrom[].extract.conversionStrategy
         - .spec.dataFrom[].extract.decodingStrategy
         - .spec.dataFrom[].extract.metadataPolicy
+        - .spec.target.deletionPolicy
