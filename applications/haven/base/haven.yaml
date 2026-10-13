@@ -1,0 +1,163 @@
+---
+# Haven — self-hosted Discord replacement (chat, channels, voice, screen share).
+# https://github.com/ancsemi/Haven
+#
+# Single container, no external dependencies: Haven stores everything in SQLite
+# plus an uploads tree under /data. There is no Postgres, no Redis and no object
+# store to wire, so this whole app is one PVC and one Deployment.
+#
+# WHAT RUNS WHERE: the web UI, the REST API and the socket.io signalling all
+# share port 3000. Voice and screen share are WebRTC and go PEER-TO-PEER between
+# browsers — the server only brokers the handshake. On a LAN that works off STUN
+# alone, so no TURN/coturn is deployed here. Remote users behind symmetric NAT
+# would need TURN_URL/TURN_SECRET set; see the follow-up ticket.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: haven-data
+  namespace: haven
+spec:
+  accessModes: [ReadWriteOnce]
+  # local-path, NOT NFS: /data/haven.db is SQLite. Its locking is unreliable
+  # over NFS and the failure mode is a corrupted database, not a slow one — the
+  # same reason thelounge is on local-path in applications/irc.
+  #
+  # 20Gi because uploads live on this volume too (/data/uploads), not just the
+  # database. Attachments are the part that grows.
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: haven
+  namespace: haven
+  labels:
+    app.kubernetes.io/name: haven
+spec:
+  replicas: 1
+  strategy:
+    # Recreate: one RWO volume and one SQLite writer. Two instances would both
+    # open haven.db, and socket.io sessions are held in-process, so a second
+    # replica would also split voice signalling across pods.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: haven
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: haven
+        app: haven
+      annotations:
+        # Velero's daily-all schedule is OPT-IN (defaultVolumesToFsBackup:
+        # false). Without this annotation only the PVC OBJECT is backed up and a
+        # restore hands back an empty volume.
+        #
+        # What this protects: haven.db (users, channels, messages, DMs), the
+        # uploads tree, and /data/.env — which holds the AUTO-GENERATED
+        # JWT_SECRET. Losing that file invalidates every session token and every
+        # client has to log in again, so it is the file that matters most and
+        # the reason no JWT_SECRET is pinned in this manifest.
+        backup.velero.io/backup-volumes: "data"
+    spec:
+      securityContext:
+        # Deliberately NOT runAsNonRoot. Haven's /entrypoint.sh must start as
+        # root: it chowns /data to uid 1000 for bind-mounted volumes and then
+        # ends with `exec su-exec node "$@"`. su-exec calls setgroups/setgid/
+        # setuid, which need CAP_SETGID/CAP_SETUID — unavailable to a non-root
+        # process — so forcing runAsUser: 1000 here makes the container exit
+        # before node ever starts. The app process still ends up as uid 1000;
+        # the image drops privileges itself.
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: haven
+          image: ghcr.io/ancsemi/haven:3.14.1@sha256:918d69a272f5d92b0ac5362251a9132980e5425256897a71d7c4e11251624fdc
+          # Digest-pinned, not :latest. A floating tag on an app that
+          # self-migrates a SQLite schema turns any pod reschedule into an
+          # unplanned upgrade across however many releases have shipped since.
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              # Exactly what the entrypoint needs and nothing else: CHOWN+FOWNER
+              # for the /data fixup, SETUID+SETGID for the su-exec drop to node.
+              drop: ['ALL']
+              add: ['CHOWN', 'FOWNER', 'SETUID', 'SETGID']
+          env:
+            # FORCE_HTTP is the important one. Left unset, the entrypoint
+            # generates a self-signed cert into /data/certs and serves HTTPS
+            # itself — so Traefik would be speaking plaintext to a TLS port and
+            # every request would fail. Traefik terminates TLS here.
+            - name: FORCE_HTTP
+              value: "true"
+            - name: PORT
+              value: "3000"
+            - name: HAVEN_DATA_DIR
+              value: /data
+            # PUBLIC_URL must be the browser-facing https:// origin, not the
+            # Service name: Haven hands it to clients for invite links and as
+            # the WebRTC signalling origin. Auto-detection behind a reverse
+            # proxy resolves to the pod, which no client can reach.
+            - name: PUBLIC_URL
+              value: https://haven.${CLUSTER_DOMAIN}
+            - name: SERVER_NAME
+              value: Catalyst Haven
+            # The FIRST account registered with this username becomes admin.
+            - name: ADMIN_USERNAME
+              value: admin
+            # Bot callbacks to RFC1918 addresses stay blocked (the default).
+            # Everything in this cluster is private, so flipping it on would let
+            # any bot webhook reach every internal service — SSRF by config.
+            - name: HAVEN_ALLOW_PRIVATE_CALLBACKS
+              value: "false"
+          ports:
+            - name: http
+              containerPort: 3000
+            # NOTE: the image also EXPOSEs 3001. Nothing in the documented
+            # configuration serves on it once FORCE_HTTP=true, so it is not
+            # published here. If voice ever needs it, it gets added to the
+            # Service as well, not just here.
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              # No CPU limit: WebRTC signalling and media handshakes are bursty,
+              # and throttling them shows up as calls that fail to connect.
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          # No livenessProbe by design: a restart drops every active voice call
+          # and every open websocket. Matches the reasoning on thelounge.
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: haven-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: haven
+  namespace: haven
+spec:
+  selector:
+    app.kubernetes.io/name: haven
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

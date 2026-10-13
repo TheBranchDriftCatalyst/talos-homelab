@@ -1,0 +1,235 @@
+---
+# openGym — self-hosted gym / body-weight tracker (Hevy / Strong / JEFIT
+# replacement). https://github.com/DuarteSantos8/openGym
+#
+# TWO CONTAINERS, ONE POD, and that is a deliberate decision rather than
+# convenience. openGym ships `web` (nginx: serves the static PWA and proxies
+# /api) and `api` (node). Upstream's compose runs them as separate services and
+# nginx finds the backend through DNS — with `resolver ${RESOLVER}` defaulting to
+# 127.0.0.11, Docker's embedded DNS. Nothing answers on that address in
+# Kubernetes, and the upstream template documents the consequence: an
+# unreachable resolver does NOT fail fast, so every /api request hangs until it
+# times out. The app would load and then appear to freeze on login.
+#
+# Co-locating them lets BACKEND be 127.0.0.1 — a literal address nginx never
+# resolves — so the resolver is bypassed entirely instead of being pointed at a
+# hardcoded CoreDNS IP that can rot. RESOLVER is still set to the cluster's real
+# kube-dns address as a backstop, not as the primary mechanism.
+#
+# It costs nothing in scalability: storage is plain JSON files on one RWO volume
+# with the api as sole writer, so replicas is 1 either way.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opengym-data
+  namespace: opengym
+spec:
+  accessModes: [ReadWriteOnce]
+  # local-path: small, latency-sensitive JSON files rewritten on every sync
+  # (db.json, state-<user>.json). Also the session-signing `secret` and
+  # `vapid.json` — see the backup annotation below for why those matter.
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opengym
+  namespace: opengym
+  labels:
+    app.kubernetes.io/name: opengym
+spec:
+  replicas: 1
+  strategy:
+    # Recreate: single RWO volume, and the api is the only writer of the JSON
+    # state files. Two writers would interleave whole-file rewrites and lose
+    # workouts.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opengym
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opengym
+        app: opengym
+      annotations:
+        # Velero daily-all is OPT-IN; without this only the PVC object is saved
+        # and a restore returns an empty volume.
+        #
+        # What this protects: db.json (profiles and PUBLIC PASSKEY data) plus
+        # state-<user>.json (plans, workouts, body weight). Note the passkey
+        # consequence — passkeys are the primary login here, and the private
+        # half lives on the user's device while db.json holds the public half.
+        # Lose db.json and every enrolled device becomes unrecognised; there is
+        # no password to fall back on unless PASSWORD_LOGIN was enabled. `secret`
+        # (session cookie signing key) is here too — losing it logs everyone out.
+        backup.velero.io/backup-volumes: "data"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        # ---------- api: node backend, sole owner of /data ----------
+        - name: api
+          image: ghcr.io/duartesantos8/opengym-api:1.4.1@sha256:4bc07fe7d1f05a57c0fa25da3563d54dfe27223506637d67fc64088a2a2f140b
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ['ALL']
+          env:
+            - name: PORT
+              value: "3000"
+            # RP_ID and ORIGIN are the WebAuthn relying-party binding and they
+            # must match the browser's address EXACTLY. A mismatch does not warn
+            # — passkey registration and login just fail. RP_ID is the bare
+            # hostname (no scheme, no port); ORIGIN is the full https:// origin.
+            #
+            # These resolve to opengym.talos00, which the hourly SAN discovery
+            # CronJob (infrastructure/base/talos00-san-discovery) picks up from
+            # the IngressRoute automatically and adds to the talos00 cert. That
+            # matters here more than for most apps: a `*.talos00` wildcard is
+            # REJECTED by macOS/iOS, and WebAuthn requires a trusted origin — so
+            # on an iPhone, passkeys only work once the explicit SAN exists.
+            - name: RP_ID
+              value: opengym.${CLUSTER_DOMAIN}
+            - name: ORIGIN
+              value: https://opengym.${CLUSTER_DOMAIN}
+            - name: RP_NAME
+              value: Catalyst openGym
+            # Behind Traefik, so trust the forwarded headers. nginx overwrites
+            # X-Forwarded-For with the real peer rather than appending, so the
+            # value the api reads cannot be spoofed by the client.
+            - name: TRUST_PROXY
+              value: "1"
+            - name: SESSION_DAYS
+              value: "90"
+            # Closed by default: ALLOW_GUEST off and INVITE_ONLY on. The app is
+            # reachable by anyone who can resolve the hostname, and guest access
+            # would let them write into the same data directory.
+            - name: ALLOW_GUEST
+              value: "0"
+            - name: INVITE_ONLY
+              value: "1"
+            # First profile created becomes admin — pair this with INVITE_ONLY
+            # so the first profile is actually you and not a passer-by.
+            - name: FIRST_USER_ADMIN
+              value: "1"
+            - name: AUDIT_LOG
+              value: "1"
+            # Audit IPs stay off: behind forward-auth the identity is already in
+            # the Authentik log, and storing LAN addresses adds nothing.
+            - name: AUDIT_IP
+              value: "off"
+          ports:
+            - name: api
+              containerPort: 3000
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+        # ---------- web: nginx, serves the PWA + proxies /api ----------
+        - name: web
+          image: ghcr.io/duartesantos8/opengym-web:1.4.1@sha256:e32cae9d2f4aad0c5e1b7888c9bfc712b2306ddfe3c65bc4cfefd4b0002e86d3
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            # 101 = nginx in the unprivileged variant this image is built on
+            # (pid and all temp paths already point at /tmp).
+            runAsUser: 101
+            runAsGroup: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ['ALL']
+          env:
+            # 8080, NOT the image's NGINX_PORT=80 default: nginx runs as uid 101
+            # here and cannot bind a privileged port. The image already EXPOSEs
+            # 8080, so this aligns the rendered `listen` with it.
+            - name: NGINX_PORT
+              value: "8080"
+            # The whole point of the single pod — a literal address, so the
+            # `resolver` directive is never exercised.
+            - name: BACKEND
+              value: "127.0.0.1"
+            - name: PORT
+              value: "3000"
+            # Backstop only (see the header note): correct kube-dns address so
+            # that IF anything ever does resolve a name, it resolves against
+            # CoreDNS instead of hanging on Docker's 127.0.0.11.
+            - name: RESOLVER
+              value: "10.96.0.10"
+            # Served at the site root, so BASE_PATH stays empty. The image
+            # refuses to start on a malformed value (its 05-check-base-path.sh).
+            - name: BASE_PATH
+              value: ""
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            # readOnlyRootFilesystem needs both of these writable, and they are
+            # genuinely required rather than defensive:
+            #   /etc/nginx/conf.d — the entrypoint renders default.conf.template
+            #                       into it with envsubst at start-up
+            #   /tmp              — nginx.conf puts the pid and every temp path
+            #                       (proxy/client/fastcgi/uwsgi/scgi) under /tmp
+            - name: nginx-conf
+              mountPath: /etc/nginx/conf.d
+            - name: nginx-tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: opengym-data
+        - name: nginx-conf
+          emptyDir: {}
+        - name: nginx-tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opengym
+  namespace: opengym
+spec:
+  selector:
+    app.kubernetes.io/name: opengym
+  ports:
+    # Only nginx is published. The api is reached through it on 127.0.0.1 inside
+    # the pod, so exposing 3000 would be a second, unauthenticated front door.
+    - name: http
+      port: 80
+      targetPort: http

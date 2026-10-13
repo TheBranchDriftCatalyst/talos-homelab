@@ -1,0 +1,32 @@
+---
+# Haven — self-hosted Discord replacement (chat/voice/screen share).
+#
+# dependsOn traefik only: for the IngressRoute CRD plus the redirect-https and
+# catalyst-nav middlewares. There is NO `databases` dependency — Haven keeps
+# everything in SQLite on its own PVC, so no CNPG cluster is involved.
+#
+# wait:false — nothing downstream depends on chat being up, and holding a
+# reconciliation open on a 2Gi-limit Node app that has to initialise a database
+# on first boot would block unrelated work.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: haven
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/haven/base
+  prune: true
+  wait: false
+  dependsOn:
+    - name: traefik
+    - name: themepark
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

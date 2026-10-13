@@ -1,0 +1,89 @@
+---
+# Haven ingress. THREE routes on one hostname, and the split matters.
+#
+# Haven is not a "simple web UI" — it ships a desktop client and an Android app,
+# both of which talk to the same origin over REST + socket.io with Haven's own
+# JWT. Authentik forward-auth answers an unauthenticated request with a 302 to a
+# login page; a native client (and a websocket upgrade) cannot follow that, so
+# putting the middleware on the whole host would silently brick every client
+# that is not a logged-in browser.
+#
+# So: the browser UI is gated by Authentik, and the protocol endpoints are
+# excluded and authenticated by Haven itself. This is the documented /api
+# exclusion pattern already used by arr-stack — a higher-priority Rule with no
+# middleware, so the catch-all cannot swallow it.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: haven-api
+  namespace: haven
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    # priority 100 so this beats the default-priority UI route below. Traefik
+    # ranks by rule length when priority is unset, which is not something to
+    # leave to chance when the failure mode is "mobile app stops working".
+    - match: Host(`haven.${CLUSTER_DOMAIN}`) && (PathPrefix(`/api`) || PathPrefix(`/socket.io`) || PathPrefix(`/uploads`))
+      kind: Rule
+      priority: 100
+      # NO middlewares, deliberately:
+      #   /api       — desktop + Android clients, bearer JWT from Haven itself
+      #   /socket.io — the websocket upgrade; forward-auth cannot 302 an upgrade
+      #   /uploads   — attachments fetched by native clients with the same JWT
+      services:
+        - name: haven
+          port: 3000
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: haven
+  namespace: haven
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Haven"
+    gethomepage.dev/description: "Self-hosted Discord replacement"
+    gethomepage.dev/group: "Apps"
+    gethomepage.dev/icon: "discord.png"
+    gethomepage.dev/siteMonitor: "http://haven.haven.svc.cluster.local:3000"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`haven.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        # authentik FIRST, catalyst-nav SECOND: Traefik runs middlewares forward
+        # on the request and reverse on the response, so auth happens inbound
+        # and nav injection outbound.
+        - name: authentik
+          namespace: authentik
+        - name: catalyst-nav
+          namespace: traefik
+      services:
+        - name: haven
+          port: 3000
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: haven-http
+  namespace: haven
+spec:
+  # Separate object from the websecure routes above, NOT a second entryPoint on
+  # them: Kyverno injects `tls: {}` into any IngressRoute it manages, which
+  # makes the router TLS-only and silently 404s the plaintext route.
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`haven.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: haven
+          port: 3000

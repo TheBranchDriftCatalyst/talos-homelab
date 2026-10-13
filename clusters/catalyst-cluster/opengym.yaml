@@ -1,0 +1,32 @@
+---
+# openGym — self-hosted gym / body-weight tracker.
+#
+# dependsOn traefik for the IngressRoute CRD and the redirect-https middleware.
+# No themepark dependency: catalyst-nav is intentionally not applied to this app
+# (body injection would be baked into the PWA's service-worker cache — see
+# applications/opengym/base/ingressroute.yaml).
+#
+# No database dependency: storage is JSON files on a PVC, not Postgres.
+#
+# wait:false — a workout tracker must never gate a cluster reconciliation.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: opengym
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 2m
+  timeout: 10m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./applications/opengym/base
+  prune: true
+  wait: false
+  dependsOn:
+    - name: traefik
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings

@@ -1,0 +1,88 @@
+---
+# openGym ingress. Same two-tier split as haven, for a different reason.
+#
+# openGym is an installed PWA with a service worker, and its login is WebAuthn
+# passkeys. Two things break under blanket forward-auth:
+#   - the installed app on a phone is not a browser tab following 302s; its
+#     background sync and push calls hit /api directly
+#   - a passkey ceremony is an /api round trip bound to ORIGIN, and a login
+#     redirect injected into it fails rather than re-authenticating
+#
+# So /api is excluded and openGym's own passkey auth guards it (with
+# INVITE_ONLY + ALLOW_GUEST=0 set in opengym.yaml, which is what makes that
+# exclusion safe). The static PWA shell is gated by Authentik.
+#
+# CONSEQUENCE, stated plainly: this is a double login — Authentik first, then
+# the passkey. That is inherent to an app that owns its own accounts, the same
+# as overseerr/tautulli in arr-stack. See the follow-up ticket if that is not
+# wanted; the alternative is dropping the Authentik layer entirely and leaning
+# on passkeys + invite-only, which openGym is designed for.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: opengym-api
+  namespace: opengym
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`opengym.${CLUSTER_DOMAIN}`) && PathPrefix(`/api`)
+      kind: Rule
+      priority: 100
+      # No middlewares: passkey ceremonies, PWA sync and web-push all land here.
+      # catalyst-nav is left off too — it rewrites response bodies, and these
+      # responses are JSON.
+      services:
+        - name: opengym
+          port: 80
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: opengym
+  namespace: opengym
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "openGym"
+    gethomepage.dev/description: "Gym & body-weight tracker"
+    gethomepage.dev/group: "Apps"
+    gethomepage.dev/icon: "mdi-weight-lifter"
+    gethomepage.dev/siteMonitor: "http://opengym.opengym.svc.cluster.local"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`opengym.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: authentik
+          namespace: authentik
+      # catalyst-nav is deliberately NOT applied to this route. It injects into
+      # the response body, and the injected markup would be captured by the
+      # PWA's service-worker cache and then served offline — a stale nav frozen
+      # into the installed app, which no redeploy of the middleware can clear.
+      services:
+        - name: opengym
+          port: 80
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: opengym-http
+  namespace: opengym
+spec:
+  # Separate object, not a second entryPoint: Kyverno injects `tls: {}` and
+  # would make a combined router TLS-only, silently 404ing plaintext.
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`opengym.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: opengym
+          port: 80

@@ -1,0 +1,59 @@
+---
+# Authentik Blueprint: Haven (self-hosted Discord replacement).
+#
+# WHY THIS EXISTS: Traefik's `authentik` forward-auth middleware hands the
+# request to the embedded outpost, and the outpost answers 404 — not a login
+# redirect — for any external_host it does not recognise. Attaching the
+# middleware to a route with no provider behind it makes the app return 404 with
+# a perfectly valid IngressRoute and nothing in the Traefik logs.
+#
+# Access = `talos-apps` OR `cluster-admin` (two PolicyBindings,
+# policy_engine_mode: any). Both groups are owned by other blueprints and
+# referenced here with !Find.
+#
+# SCOPE NOTE: this gates the BROWSER UI only. /api, /socket.io and /uploads are
+# excluded at the IngressRoute (applications/haven/base/ingressroute.yaml)
+# because Haven's desktop and Android clients authenticate with Haven's own JWT
+# and cannot follow a forward-auth 302. Haven does have an OIDC_CLIENT_SECRET
+# env var, so a native OIDC integration would fold both logins into one — but
+# the issuer/client-id half is configured in Haven's admin UI rather than by
+# environment, so it cannot be declared here. Tracked as a follow-up.
+#
+# The provider must ALSO be unioned into the embedded outpost, whose list is
+# authoritative in talos-private-blueprint.yaml and is REPLACE-not-merge.
+# Adding it here alone is not enough.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-haven-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  haven.yaml: |
+    version: 1
+    metadata:
+      name: Haven forward_single application
+      labels:
+        blueprints.goauthentik.io/description: "forward_single application for the Haven chat web UI (talos-apps group)"
+    entries:
+      # ========== Haven ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-haven
+        identifiers: {name: haven}
+        attrs:
+          name: haven
+          mode: forward_single
+          external_host: https://haven.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-haven, identifiers: {slug: haven}, attrs: {name: Haven, slug: haven, group: talos-apps, provider: !KeyOf p-haven, meta_launch_url: https://haven.talos00, meta_description: "Self-hosted Discord replacement — chat, voice, screen share", meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/discord.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-haven-own, identifiers: {target: !KeyOf a-haven, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-haven-ca, identifiers: {target: !KeyOf a-haven, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
