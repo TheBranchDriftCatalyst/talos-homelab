@@ -271,7 +271,47 @@ spec:
     configs:
       cm:
         # Enable apiKey capability for admin account (for Homepage widget)
+        #
+        # KEPT as `apiKey, login` deliberately. apiKey is load-bearing: the
+        # Homepage widget authenticates with an admin API token, so dropping it
+        # breaks the dashboard. `login` is the break-glass path — ArgoCD is how
+        # you would fix a broken Authentik, so locking the local account out
+        # behind the very SSO it would be needed to repair is a trap.
         accounts.admin: apiKey, login
+        # REQUIRED for OIDC: ArgoCD builds the redirect_uri from this, and with
+        # it unset the authorization request carries a redirect ArgoCD cannot
+        # later match, so login fails after a seemingly successful Authentik
+        # consent. Must equal the external origin exactly, no trailing slash.
+        url: https://argocd.talos00
+        # Native OIDC against Authentik (TALOS-yxtx follow-up). Dex stays
+        # disabled below — this talks to Authentik directly, no Dex hop.
+        #
+        # `$argocd-oidc:client-secret` resolves against the Secret of that name
+        # in this namespace, which MUST carry label
+        # app.kubernetes.io/part-of: argocd (set in oidc-client-secret.yaml) or
+        # the reference is silently left unresolved.
+        #
+        # requestedScopes: groups arrive inside `profile` — authentik's default
+        # profile mapping emits them and there is no separate `groups` scope, so
+        # asking for one would error. No requestedIDTokenClaims either:
+        # include_claims_in_id_token on the provider already puts groups in the
+        # ID token, which is where the RBAC below reads them.
+        oidc.config: |
+          name: Authentik
+          issuer: https://auth.knowledgedump.space/application/o/argocd/
+          clientID: argocd
+          clientSecret: $argocd-oidc:client-secret
+          # NOTE: the leading `$` survives only because the argocd Flux
+          # Kustomization (clusters/catalyst-cluster/argocd.yaml) has NO
+          # postBuild.substituteFrom. If envsubst is ever enabled there it will
+          # consume `$argocd` as a variable and leave `-oidc:client-secret`,
+          # breaking login with no obvious cause — escape it as `$$argocd-oidc`
+          # at that point. (Same reason ingressroute.yaml hardcodes the host
+          # instead of using ${CLUSTER_DOMAIN}.)
+          requestedScopes:
+            - openid
+            - profile
+            - email
       secret:
         # Don't create default password - managed by ExternalSecret
         createSecret: false
@@ -295,3 +335,14 @@ spec:
         p, role:org-admin, repositories, update, *, allow
         p, role:org-admin, repositories, delete, *, allow
         g, admin, role:admin
+        # Authentik SSO group -> role. The subject here is the GROUP NAME as it
+        # appears in the ID token's `groups` claim (authentik's profile mapping
+        # emits group.name), NOT a slug or UUID — so these must stay spelled
+        # exactly as the groups are named in Authentik.
+        #
+        # Both infra groups get full admin. Anyone else who authenticates
+        # successfully falls through to policy.default: role:readonly above,
+        # which is why that default matters: without it a new SSO user would
+        # have no permissions at all and see an empty, broken UI.
+        g, cluster-admin, role:admin
+        g, talos-admin, role:admin

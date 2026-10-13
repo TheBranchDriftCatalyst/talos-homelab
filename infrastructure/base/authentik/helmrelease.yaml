@@ -85,6 +85,7 @@ spec:
         - authentik-fchat-bouncer-blueprint
         - authentik-haven-blueprint
         - authentik-opengym-blueprint
+        - authentik-argocd-blueprint
         - authentik-sister-apps-blueprint
         - authentik-media-oidc-blueprint
         - authentik-flow-branding-blueprint
@@ -236,6 +237,17 @@ spec:
           valueFrom:
             secretKeyRef:
               name: authentik-zot-oidc
+              key: client-secret
+              optional: true
+        # !Env source for argocd-blueprint.yaml. The secret is REFLECTED here
+        # from ns argocd, where the ESO Password generator lives (the label
+        # ArgoCD needs can only be set on the ESO target). optional:true so the
+        # worker can never CrashLoop before reflector has copied it; restart
+        # authentik-worker if the value ever rotates.
+        - name: ARGOCD_OIDC_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: argocd-oidc
               key: client-secret
               optional: true
         # !Env source for forgejo-blueprint.yaml (TALOS-6nf). optional:true.

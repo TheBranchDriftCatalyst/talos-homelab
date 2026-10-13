@@ -1,0 +1,92 @@
+---
+# Authentik Blueprint: ArgoCD — NATIVE OIDC (Method 2), not forward-auth.
+#
+# WHY NOT FORWARD-AUTH: infrastructure/base/argocd/ingressroute.yaml records the
+# decision — ArgoCD authenticates its own UI, API and CLI, so a proxy provider
+# in front would double-auth every human and break `argocd` CLI / API-token
+# clients outright (they cannot follow a login 302). ArgoCD speaks OIDC
+# natively, so it gets an OAuth2Provider instead.
+#
+# An OAuth2Provider does NOT join the embedded outpost, so there is deliberately
+# no entry added to the union in talos-private-blueprint.yaml. That also means
+# this blueprint is immune to the !Find ordering race that made haven/opengym
+# 404 on first deploy.
+#
+# ACCESS: gated on `talos-admin` OR `cluster-admin` (2 PolicyBindings +
+# policy_engine_mode: any), matching the consolidated group model. Note this
+# gate only controls who may obtain a token; what they can DO inside ArgoCD is
+# decided by rbac.policy.csv in the argocd helmrelease, which maps both of those
+# groups to role:admin and defaults everyone else to role:readonly.
+#
+# ISSUER: issuer_mode per_provider yields
+#   https://auth.knowledgedump.space/application/o/argocd/
+# A PUBLIC-cert host on purpose. argocd-server must validate the issuer's JWKS
+# itself, and `argocd login --sso` runs on a laptop — homelab-ca is trusted by
+# neither without extra work, so an internal auth.talos00 issuer would mean
+# injecting the CA into the server pod and every client. See
+# [[authentik-sso-patterns]] Method 2.
+#
+# GROUPS CLAIM: no custom ScopeMapping needed. authentik's default `profile`
+# mapping already emits `"groups": [group.name ...]`, and
+# include_claims_in_id_token puts it in the ID token where ArgoCD reads it.
+#
+# SECRET: client_secret comes from !Env ARGOCD_OIDC_CLIENT_SECRET, injected into
+# the worker from secret `argocd-oidc` — which is REFLECTED from ns argocd,
+# where the ESO Password generator that mints it lives (see
+# infrastructure/base/argocd/oidc-client-secret.yaml for why that direction).
+# The worker env is optional:true, so a missing secret can never CrashLoop the
+# worker; the provider is just created with an empty secret until it syncs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-argocd-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  argocd.yaml: |
+    version: 1
+    metadata:
+      name: ArgoCD OIDC SSO
+      labels:
+        blueprints.goauthentik.io/description: "Native OIDC for ArgoCD UI/API/CLI (talos-admin + cluster-admin -> role:admin)"
+    entries:
+      # ========== ArgoCD OAuth2 provider ==========
+      - model: authentik_providers_oauth2.oauth2provider
+        id: argocd-oauth2-provider
+        identifiers:
+          name: argocd
+        attrs:
+          name: argocd
+          client_type: confidential
+          client_id: argocd
+          client_secret: !Env ARGOCD_OIDC_CLIENT_SECRET
+          # implicit-consent: ArgoCD is a first-party admin tool and an interactive
+          # consent screen would also appear in the CLI's browser handoff.
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+          # Puts the groups claim in the ID token, which is where ArgoCD's RBAC
+          # reads it. Without this ArgoCD falls back to a userinfo call.
+          include_claims_in_id_token: true
+          sub_mode: hashed_user_id
+          issuer_mode: per_provider
+          redirect_uris:
+            # The browser flow.
+            - matching_mode: strict
+              url: https://argocd.talos00/auth/callback
+            # `argocd login argocd.talos00 --sso` spins up a throwaway local
+            # listener and completes the code exchange against it. Without this
+            # URI registered the CLI's SSO login fails with redirect_uri_mismatch
+            # while the web UI works fine — a confusing split.
+            - matching_mode: strict
+              url: http://localhost:8085/auth/callback
+          property_mappings:
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+
+      - {model: authentik_core.application, id: a-argocd, identifiers: {slug: argocd}, attrs: {name: ArgoCD, slug: argocd, group: talos-admin, provider: !KeyOf argocd-oauth2-provider, meta_launch_url: https://argocd.talos00, meta_description: "GitOps Continuous Delivery", meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/argocd.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-argocd-own, identifiers: {target: !KeyOf a-argocd, group: !Find [authentik_core.group, [name, talos-admin]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-argocd-ca, identifiers: {target: !KeyOf a-argocd, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
