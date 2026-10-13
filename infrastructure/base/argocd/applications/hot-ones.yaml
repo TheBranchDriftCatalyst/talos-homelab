@@ -1,0 +1,92 @@
+---
+# hot-ones — extracted from the arr-stack-private app into its own Application
+# (TALOS-6j4p). Manifests moved to the hot-ones repo at k8s/cluster/.
+#
+# STILL DEPLOYS INTO media-private, on purpose. This is an ownership change, not
+# a namespace move, because hot-ones has hard same-namespace dependencies:
+#   - STASH_URL is the bare service name http://stash:9999 — resolves only
+#     inside media-private
+#   - STASH_API_KEY comes from secretKeyRef scene-engine-metadata, a Secret
+#     owned by scene-engine; Secrets do not cross namespaces
+#   - ingressroute.yaml pins hot-ones.media-private.svc.cluster.local for its
+#     own internal edge-auth call
+# Moving it out is costed in TALOS-17hl (reflect the Secret, switch STASH_URL to
+# an FQDN) and deliberately not attempted here.
+#
+# ADOPTION: every hot-ones resource is currently tracked
+# `arr-stack-private:...`. With resourceTrackingMethod=annotation (set in the
+# argocd HelmRelease), whichever Application syncs last owns the tracking-id, so
+# this app adopts them on first sync rather than duplicating anything. The
+# render was verified byte-identical to the live objects first — 24 objects, zero
+# differences — which is what makes adoption a no-op instead of a rewrite.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: hot-ones
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: hot-ones
+    app.kubernetes.io/part-of: catalyst
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  info:
+    - name: GitHub Repository
+      value: https://github.com/TheBranchDriftCatalyst/hot-ones
+    - name: Application (internal)
+      value: https://hot-ones.priv.talos00
+    - name: Application (external)
+      value: https://amberdark.net
+
+  source:
+    # No repo credential needed: ArgoCD's is the ORG-level template
+    # `git@github.com:TheBranchDriftCatalyst`, which already covers this repo.
+    repoURL: git@github.com:TheBranchDriftCatalyst/hot-ones.git
+    targetRevision: main
+    # k8s/cluster, NOT k8s/base. base + k8s/local are the Tilt/k3d dev stack —
+    # own `hot-ones` namespace, Postgres as a plain StatefulSet on postgres:18,
+    # a dev-registry image, no ingressroute/ExternalSecrets/chat/cam/Stash.
+    # Pointing this at base would deploy the wrong database into the wrong
+    # namespace. Sharing a real base is TALOS-fzt7.
+    path: k8s/cluster
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: media-private
+
+  syncPolicy:
+    automated:
+      # prune:false until the cutover completes (TALOS-xr14). The resources are
+      # adopted off arr-stack-private, whose own prune is likewise disabled
+      # during the migration; arming either side early is what could delete
+      # hot-ones-content (50Gi), hot-ones-state (5Gi) and the CNPG cluster.
+      # Flip BOTH back to true when TALOS-xr14 closes.
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      # false, unlike most apps here: media-private already exists and is owned
+      # by talos-private's own kustomization. Creating it from this app would
+      # fight over ownership of a namespace shared with ~10 other services.
+      - CreateNamespace=false
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      # Matches arr-stack-private so both apps use the same field-manager
+      # semantics; a mismatch during adoption shows up as spurious conflicts.
+      - ServerSideApply=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
