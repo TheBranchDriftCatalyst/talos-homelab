@@ -58,12 +58,13 @@ spec:
 
   syncPolicy:
     automated:
-      # prune:false until the cutover completes (TALOS-xr14). The resources are
-      # adopted off arr-stack-private, whose own prune is likewise disabled
-      # during the migration; arming either side early is what could delete
-      # hot-ones-content (50Gi), hot-ones-state (5Gi) and the CNPG cluster.
-      # Flip BOTH back to true when TALOS-xr14 closes.
-      prune: false
+      # Re-armed 2026-10-13 after the cutover verified clean (TALOS-xr14):
+      # all 24 objects adopted (tracking-id reads `hot-ones:`), the render was
+      # byte-identical to live so nothing was rewritten, the pod never
+      # restarted (0 restarts, 33d uptime through the migration), both NFS PVCs
+      # kept their original volumes, CNPG stayed 3/3, and arr-stack-private
+      # resynced to Synced/Healthy with 0 resources flagged requiresPruning.
+      prune: true
       selfHeal: true
       allowEmpty: false
 
@@ -90,3 +91,19 @@ spec:
       kind: Deployment
       jsonPointers:
         - /spec/replicas
+    # Carried over from arr-stack-private, and REQUIRED: the ESO webhook
+    # defaults these six fields server-side, so without the exemption the three
+    # ExternalSecrets here (amber-cam, amber-guest-access, nexus-pull-dockercfg)
+    # sit permanently OutOfSync. Observed immediately after adoption — 3 of 24
+    # resources, and the only ones that would not settle. Omitting it does not
+    # break anything, it just leaves the app never reporting Synced, which
+    # destroys the signal you would want during the next incident.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+        - .spec.dataFrom[].extract.conversionStrategy
+        - .spec.dataFrom[].extract.decodingStrategy
+        - .spec.dataFrom[].extract.metadataPolicy
