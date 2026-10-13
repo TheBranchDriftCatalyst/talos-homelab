@@ -3,7 +3,7 @@
 <!-- closeout:header -->
 
 **Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-13
-**Pick up here:** `TALOS-xr14` (hot-ones cutover — mid-flight; **if it is open, `prune` may still be DISABLED on `arr-stack-private`**, so close it or revert the guard before anything else) · **Deadline item:** none outstanding
+**Pick up here:** `TALOS-fzt7` (align the hot-ones overlays into base + overlays/{local,cluster} — the extraction is done and prune is restored on both apps, this is the tidy-up) · **Deadline item:** none outstanding
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -39,15 +39,14 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-### Active — `TALOS-xr14`, hot-ones cutover (mid-flight, and it holds a safety guard open)
+### Active — `TALOS-fzt7`, align the hot-ones overlays
 
-|                  |                                                                                                                                                                                                                                                                      |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Check first**  | **Is `prune` still `false` on `arr-stack-private`?** `kubectl -n argocd get application arr-stack-private -o jsonpath='{.spec.syncPolicy.automated}'`. The cutover disables it deliberately; an interrupted migration leaves it off, which means that app silently stops pruning anything. |
-| Why the guard    | `arr-stack-private` is `prune: true` + `selfHeal: true` with foreground propagation, and every hot-ones resource is tracked `arr-stack-private:...`. Removing `- hot-ones/` from its kustomization unguarded deletes `hot-ones-content` (**50Gi**), `hot-ones-state` (5Gi) and the CNPG cluster. |
-| Resume here      | Gates before the parent edit: zero-diff render (filter both builds to `app.kubernetes.io/name=hot-ones`, diff must be empty) → `tracking-id` reads `hot-ones:` on all 8 resources → `argocd app diff arr-stack-private` shows nothing queued for prune → app still answers and `STASH_URL`/`STASH_API_KEY` resolve. |
-| Rollback         | Re-add `- hot-ones/` to the parent and delete the new Application. Nothing is destroyed while prune is off.                                                                                                                                                            |
-| Then             | `TALOS-fzt7` aligns `k8s/` into `base` + `overlays/{local,cluster}` — **after** the cutover is green, never during.                                                                                                                                                    |
+|                  |                                                                                                                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| State            | The extraction itself is **done and verified** (`TALOS-xr14`/`TALOS-6j4p` closed): hot-ones runs from its own ArgoCD Application, source `hot-ones` repo `k8s/cluster`, still in `media-private`. **`prune: true` is restored on both apps** — nothing is left disarmed. |
+| What is left     | `k8s/` now holds `base` + `local` (Tilt) and `cluster` (ArgoCD) side by side. Fold them into `base` + `overlays/{local,cluster}`.                                                                                     |
+| The rule         | A resource moves into `base` **only if the cluster overlay still renders byte-identical to live**. Postgres can never be shared — plain `StatefulSet` vs CNPG `Cluster` are different kinds. The Deployment is the risk: strategic merge reorders env/volume lists, which is a silent prod change. If it will not share cleanly, the cluster overlay keeps a full copy and `base` holds less. |
+| Guard            | Set `prune: false` on the `hot-ones` app before changing its `path:` — a path that renders empty or partial under `prune: true` deletes live resources.                                                                |
 
 ### Also open — `TALOS-x1sb`, Level 2: arm the relay Pod and run the first real end-to-end test
 
@@ -81,7 +80,7 @@ If you are here to do something else entirely, that is fine and probably correct
 | Launching `inference-node-235b` (4× L40S)                    | ~$5.17/hr, and 48 vCPU is the entire us-east-2 G/VT quota. Needs the one-time S3 key copy in its header first, or the first boot re-pulls 124.6 GB from HuggingFace. |
 | Removing KEDA                                          | Core is load-bearing for `openscad/manyfold-performance-worker`, `boomtime/boomtime-jobs` and `crossplane-demo/demo-celery`. Only the nginx proxy was deleted; leave both HelmReleases alone. |
 | Raising G/VT quota past 48                             | One rig at a time is the invariant. Quota should be headroom, never a brake — that mistake is already recorded in `aws/apps/kustomization.yaml`. |
-| Pointing the hot-ones ArgoCD app at `workspace/hot-ones/k8s/base` | That is the **Tilt/local-dev** set, not a second copy of production: own `hot-ones` namespace, plain `postgres:18` StatefulSet instead of CNPG, a dev-registry image, and no ingressroute/ExternalSecrets/chat/cam/Stash wiring. It would deploy a different app with the wrong database into the wrong namespace. Production manifests are the talos-private ones. |
+| Pointing the hot-ones ArgoCD app at `k8s/base` or `k8s/overlays/local` | That is the **Tilt/local-dev** set, not a second copy of production: own `hot-ones` namespace, plain `postgres:18` StatefulSet instead of CNPG, a dev-registry image, and no ingressroute/ExternalSecrets/chat/cam/Stash wiring. It would deploy a different app with the wrong database into the wrong namespace. Production manifests are the talos-private ones. |
 | Moving hot-ones out of `media-private` (`TALOS-17hl`) | Costed, not forgotten. It needs the `scene-engine-metadata` Secret reflected (Secrets do not cross namespaces) **and** `STASH_URL` changed off the bare `http://stash:9999`. That turns a zero-diff ownership move into a live reconfiguration of the app's content source. |
 
 <!-- /closeout:next -->
@@ -132,9 +131,26 @@ hardcoding a CoreDNS IP that can rot.
 One deliberate design split worth keeping: forward-auth gates **browser UIs only**. `/api`,
 `/socket.io` and `/uploads` are excluded at priority 100 with no middleware, because Haven ships
 desktop and Android clients and openGym has a paired mobile app using Bearer tokens — none of which
-can follow a login 302. Separately, planning the hot-ones extraction turned up that **Tilt local dev
-in that repo is already broken** (`Tiltfile` points at a `deploy/` directory that does not exist,
-and at `k8s/base/immich` which does not exist at all despite the commit that wired it up).
+can follow a login 302.
+
+**hot-ones was then extracted** out of the `arr-stack-private` app into its own ArgoCD Application
+(`TALOS-6j4p`), still deploying into `media-private` — an ownership change, not a namespace move,
+because `STASH_URL` is the bare service name `http://stash:9999` and `STASH_API_KEY` comes from a
+Secret owned by `scene-engine`, neither of which crosses a namespace. The hazard: `arr-stack-private`
+runs `prune: true` with foreground propagation, so removing the directory unguarded would have
+deleted a 50Gi NFS PVC, a 5Gi one and the CNPG cluster. Guarded by disabling prune **in git** — the
+first attempt was a `kubectl patch`, which would have been reverted within ten minutes because that
+Application is itself Flux-managed. Adoption was verified byte-identical first and the pod came
+through with **0 restarts and 33d uptime**.
+
+Two things there were misdiagnosed before being checked properly. The `Tiltfile` was **not** broken:
+`deploy/k8s/local` and `deploy/k8s/base/immich` both existed in `HEAD` the whole time. What existed
+was a half-finished, uncommitted `deploy/k8s` → `k8s` move — 25 worktree deletions plus an untracked
+copy with `immich/` dropped — which made the working tree lie about git. Finished properly (rename
+detection gives `R100` on all 9 carried manifests), with immich removed deliberately rather than by
+accident. And the ESO `ignoreDifferences` list copied from `arr-stack-private` is **incomplete**:
+ESO also defaults `remoteRef.nullBytePolicy` and `target.deletionPolicy`, so three ExternalSecrets
+sat OutOfSync until both were exempted (`TALOS-go7p` for the same latent gap upstream).
 
 ### 2026-09-30/10-01 — GPU plane rebuilt: fleet placement, streamed weights, and the Mac out of the loop
 
