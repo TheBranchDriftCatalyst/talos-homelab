@@ -51,7 +51,20 @@ spec:
 
   syncPolicy:
     automated:
-      prune: true
+      # TEMPORARY GUARD — TALOS-xr14, hot-ones cutover. RESTORE TO true when it closes.
+      #
+      # hot-ones is being extracted into its own ArgoCD Application while still
+      # deploying into media-private. Every hot-ones resource is currently tracked
+      # `arr-stack-private:...`, so removing `- hot-ones/` from the talos-private
+      # base/kustomization.yaml while prune is on deletes, with foreground
+      # propagation: hot-ones-content (50Gi, fatboy-nfs-appdata), hot-ones-state
+      # (5Gi) and the CNPG cluster hot-ones-postgres plus its 3 PVCs.
+      #
+      # The guard lives HERE rather than as a `kubectl patch` because this
+      # Application is itself Flux-managed (applications/kustomization.yaml:10,
+      # argocd Kustomization interval 10m) — a live patch is reverted within ten
+      # minutes, which would re-arm prune mid-migration without anyone noticing.
+      prune: false
       selfHeal: true
       allowEmpty: false
 
