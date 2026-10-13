@@ -315,6 +315,42 @@ spec:
       secret:
         # Don't create default password - managed by ExternalSecret
         createSecret: false
+      # RBAC — MUST live under `configs`, NOT at the top level of spec.values.
+      # This block previously sat at spec.values.rbac, which the argo-cd chart
+      # does not read: there is no top-level `rbac` key in its values, only
+      # `configs.rbac`. Helm silently ignores unknown paths, so policy.csv and
+      # policy.default rendered EMPTY in argocd-rbac-cm for as long as that
+      # block existed — `g, admin, role:admin` and every role:org-admin rule
+      # above were dead the whole time.
+      #
+      # It went unnoticed because the local `admin` account is special-cased in
+      # ArgoCD and bypasses RBAC entirely, so the only user anyone logged in as
+      # was unaffected. SSO is what makes it load-bearing: an OIDC user matches
+      # no rule, and with policy.default empty they would authenticate
+      # successfully and then have no permissions at all.
+      # Verified against `helm show values argo-cd 10.10.3` (configs.rbac keys:
+      # annotations, create, policy.csv, policy.default, policy.matchMode, scopes).
+      rbac:
+        policy.default: role:readonly
+        policy.csv: |
+          p, role:org-admin, applications, *, */*, allow
+          p, role:org-admin, clusters, get, *, allow
+          p, role:org-admin, repositories, get, *, allow
+          p, role:org-admin, repositories, create, *, allow
+          p, role:org-admin, repositories, update, *, allow
+          p, role:org-admin, repositories, delete, *, allow
+          g, admin, role:admin
+          # Authentik SSO group -> role. The subject here is the GROUP NAME as it
+          # appears in the ID token's `groups` claim (authentik's profile mapping
+          # emits group.name), NOT a slug or UUID — so these must stay spelled
+          # exactly as the groups are named in Authentik.
+          #
+          # Both infra groups get full admin. Anyone else who authenticates
+          # successfully falls through to policy.default: role:readonly above,
+          # which is why that default matters: without it a new SSO user would
+          # have no permissions at all and see an empty, broken UI.
+          g, cluster-admin, role:admin
+          g, talos-admin, role:admin
       # Repository credentials (will be added via kubectl later)
       repositories: {}
       # Default project settings
@@ -324,25 +360,3 @@ spec:
         # Argo CD 3.0: annotation-based resource tracking (v3 default; explicit migration from
         # label — one-time re-sync of all apps on upgrade, then stable). (TALOS-zadf.2)
         application.resourceTrackingMethod: annotation
-    # RBAC Configuration
-    rbac:
-      policy.default: role:readonly
-      policy.csv: |
-        p, role:org-admin, applications, *, */*, allow
-        p, role:org-admin, clusters, get, *, allow
-        p, role:org-admin, repositories, get, *, allow
-        p, role:org-admin, repositories, create, *, allow
-        p, role:org-admin, repositories, update, *, allow
-        p, role:org-admin, repositories, delete, *, allow
-        g, admin, role:admin
-        # Authentik SSO group -> role. The subject here is the GROUP NAME as it
-        # appears in the ID token's `groups` claim (authentik's profile mapping
-        # emits group.name), NOT a slug or UUID — so these must stay spelled
-        # exactly as the groups are named in Authentik.
-        #
-        # Both infra groups get full admin. Anyone else who authenticates
-        # successfully falls through to policy.default: role:readonly above,
-        # which is why that default matters: without it a new SSO user would
-        # have no permissions at all and see an empty, broken UI.
-        g, cluster-admin, role:admin
-        g, talos-admin, role:admin
