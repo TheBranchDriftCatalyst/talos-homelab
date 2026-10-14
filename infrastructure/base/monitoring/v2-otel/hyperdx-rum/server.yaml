@@ -43,6 +43,14 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
+        # fsGroup is REQUIRED, not hygiene. An emptyDir is created root:root, so
+        # a container running as uid 101 cannot write into one -- and this image
+        # MUST write, because its entrypoint renders the nginx config at startup
+        # into /etc/nginx/conf.d. Without this the render silently fails, conf.d
+        # stays EMPTY, and nginx comes up with no server block at all: the
+        # container reports Running and healthy-looking while every request is
+        # refused. fsGroup makes kubelet chown the volumes to this gid.
+        fsGroup: 101
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -89,14 +97,28 @@ spec:
             capabilities:
               drop: ["ALL"]
           volumeMounts:
-            # nginx writes both even when nothing is cached, so a read-only
-            # root filesystem needs these two. Same shape as
-            # infrastructure/base/authentik/login-background.
+            # nginx writes all three even when nothing is cached, so a
+            # read-only root filesystem needs them.
+            #
+            # conf.d is NOT optional here and is the one login-background does
+            # not need: that pod mounts a finished default.conf from a
+            # ConfigMap, whereas this image RENDERS its config at startup
+            # (/docker-entrypoint.d/20-envsubst-on-templates.sh writes
+            # /etc/nginx/conf.d/default.conf), which a read-only root rejects:
+            #   "can't create /etc/nginx/conf.d/default.conf: Read-only file system"
+            # The pod CrashLoopBackOffs. This is the cost of baking the config
+            # in rather than ConfigMap-mounting it, and it is invisible when
+            # testing the image by hand -- `docker run` applies no
+            # securityContext, so the same image passed every local check.
+            - name: conf
+              mountPath: /etc/nginx/conf.d
             - name: cache
               mountPath: /var/cache/nginx
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: conf
+          emptyDir: {}
         - name: cache
           emptyDir: {}
         - name: tmp
