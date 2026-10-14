@@ -1,0 +1,31 @@
+---
+# Shared HelmRepository for every Grafana Labs chart in this Kustomization:
+# grafana-operator, mimir, alloy, alloy-node — and, until they are removed,
+# loki and tempo.
+#
+# WHY IT LIVES HERE and not inside a component directory: it used to be
+# declared at the top of tempo/helmrelease.yaml, which made five unrelated
+# HelmReleases depend on a file belonging to the one component scheduled for
+# deletion. Removing tempo/ would have taken the source out from under
+# grafana-operator, mimir, alloy and alloy-node with it, and the failure mode
+# is not a missing-file error — the HelmReleases simply go Ready=False with
+# "no object found" against a source nothing declares any more.
+#
+# The repo's usual convention is a per-component helmrepository.yaml (see
+# clickstack/, falco/, kyverno/). A shared chart source does not fit that
+# shape: whichever component held it would own a dependency for all the
+# others. Hoisting it to the Kustomization root makes the sharing explicit
+# and leaves every component directory independently deletable.
+#
+# All six consumers are applied by the SAME Flux Kustomization (monitoring,
+# path ./infrastructure/base/monitoring/v2-otel), so there is no cross-
+# Kustomization ordering to arrange — grafana-operator is pulled in from here
+# via ../grafana-operator.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  interval: 1h
+  url: https://grafana.github.io/helm-charts
