@@ -1,6 +1,8 @@
-# Reports Cowrie honeypot attackers to AbuseIPDB, once daily. Sources the last 24h from Loki so each
-# report is policy-compliant (detailed: ports/creds/commands/timestamps; handshake-completers only).
-# Lives in crowdsec ns (no NetworkPolicy) so it can reach BOTH Loki (in-cluster) and AbuseIPDB (public).
+# Reports Cowrie honeypot attackers to AbuseIPDB, once daily. Sources the last 24h from ClickHouse
+# (ClickStack) so each report is policy-compliant (detailed: ports/creds/commands/timestamps;
+# handshake-completers only).
+# Lives in crowdsec ns (no NetworkPolicy) so it can reach BOTH ClickHouse (in-cluster, :8123) and
+# AbuseIPDB (public).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -33,8 +35,10 @@ spec:
               env:
                 - name: DRY_RUN
                   value: "0"                      # LIVE — reports real attackers to AbuseIPDB daily
-                - name: LOKI_URL
-                  value: "http://loki.monitoring.svc:3100"
+                # Was LOKI_URL (TALOS-suxd.3). ClickHouse's HTTP interface, `default` user and
+                # no password -- it is cluster-internal only, same posture the HyperDX app uses.
+                - name: CLICKHOUSE_URL
+                  value: "http://clickhouse-hyperdx-logs.monitoring.svc:8123"
                 - name: WINDOW_HOURS
                   value: "24"
                 - name: ABUSEIPDB_API_KEY
