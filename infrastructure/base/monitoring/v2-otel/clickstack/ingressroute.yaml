@@ -1,7 +1,27 @@
 ---
-# HyperDX UI at http://hyperdx.talos00 (TALOS-cjny). LAN-only via the `web`
-# entrypoint, HyperDX's own auth for now — Authentik forward-auth is the
-# follow-up (house SSO pattern, see authentik-sso-patterns).
+# HyperDX UI at https://hyperdx.talos00 (TALOS-cjny).
+#
+# WAS: the `web` entrypoint only — plain HTTP, no TLS — with `lan-only` as the
+# SOLE control. A log UI with unauthenticated read access to everything the
+# cluster emits, served in cleartext. Now TLS + Authentik forward-auth, with
+# lan-only retained underneath rather than replaced.
+#
+# FORWARD-AUTH, not native OIDC, because HyperDX's open-source build cannot do
+# OIDC — SSO is a commercial feature upstream and the OSS image ships
+# email/password only. Blueprint:
+# infrastructure/base/authentik/hyperdx-blueprint.yaml, gated talos-admin OR
+# cluster-admin. The provider must ALSO be in the embedded outpost union
+# (talos-private-blueprint.yaml), or this route returns 404 instead of
+# redirecting to a login page.
+#
+# SAFE TO GATE because this hostname is a UI only: telemetry ingests to
+# clickstack-otel-collector:4318 in-cluster and never passes through here. The
+# only cluster references to hyperdx.talos00 are the talos00 cert SAN list and
+# HyperDX's own FRONTEND_URL self-reference, so nothing machine-driven breaks.
+#
+# Expect a DOUBLE LOGIN: Authentik, then HyperDX's own account. It has no way to
+# trust the proxy's identity headers, so that is inherent — as with
+# overseerr/tautulli.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -16,14 +36,40 @@ metadata:
     gethomepage.dev/weight: "15"
 spec:
   entryPoints:
+    - websecure
+  routes:
+    - match: Host(`hyperdx.talos00`)
+      kind: Rule
+      middlewares:
+        # lan-only FIRST, kept from 2026-09-26 (TALOS-a8vo.4): a WAN-reachable
+        # admin surface was reached by host-spoof from off-net. Authentik is an
+        # additional layer, not a replacement — reject off-LAN before spending
+        # an auth round trip on it.
+        - name: lan-only
+          namespace: traefik
+        - name: authentik
+          namespace: authentik
+      services:
+        - name: clickstack-app
+          port: 3000
+
+---
+# Separate object, NOT a second entryPoint on the route above: Kyverno injects
+# `tls: {}` into managed IngressRoutes, which makes a combined router TLS-only
+# and silently 404s the plaintext route — and it never shows up as drift.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hyperdx-http
+  namespace: monitoring
+spec:
+  entryPoints:
     - web
   routes:
     - match: Host(`hyperdx.talos00`)
       kind: Rule
-      # lan-only added 2026-09-26 (TALOS-a8vo.4). WAN-reachable admin/AI surface on the
-      # web entrypoint with no auth; host-spoof from off-net reached it. Blocks off-LAN.
       middlewares:
-        - name: lan-only
+        - name: redirect-https
           namespace: traefik
       services:
         - name: clickstack-app

@@ -1,0 +1,69 @@
+---
+# Authentik Blueprint: HyperDX (ClickStack log analytics UI).
+#
+# WHY FORWARD-AUTH AND NOT NATIVE OIDC: HyperDX's open-source build does not
+# support OIDC at all — SSO is a commercial feature upstream, and the OSS image
+# ships email/password only. (Community forks exist that add OIDC and list
+# Authentik explicitly, but adopting one means swapping a first-party image for
+# a community fork on the observability stack — a supply-chain decision, not one
+# to make silently.) So this is Method 1 from [[authentik-sso-patterns]], the
+# same pattern as the other ~20 apps here.
+#
+# WHY IT IS SAFE HERE, where forward-auth is usually wrong for an app with its
+# own accounts: hyperdx.talos00 is a UI ONLY. Telemetry ingestion goes to
+# clickstack-otel-collector:4318 in-cluster and never touches this hostname —
+# verified by grepping every ConfigMap in the cluster: the only references to
+# hyperdx.talos00 are the talos00 cert SAN list and HyperDX's own FRONTEND_URL
+# self-reference. So gating this host cannot break the log pipeline.
+#
+# CONSEQUENCE, stated plainly: this is a double login. Authentik first, then
+# HyperDX's own account. HyperDX has no way to trust the proxy's identity
+# headers, so that is inherent — same as overseerr/tautulli in arr-stack.
+#
+# ACCESS: `talos-admin` OR `cluster-admin` (2 PolicyBindings,
+# policy_engine_mode: any), matching the other monitoring/infra tools, all eight
+# of which use talos-admin.
+#
+# WHAT THIS FIXES: before this, hyperdx.talos00 was served on the `web`
+# entrypoint — plain HTTP, no TLS — with `lan-only` as the SOLE control. A log
+# UI with unauthenticated read access to everything the cluster emits.
+#
+# The provider must ALSO be unioned into the embedded outpost, whose list is
+# authoritative in talos-private-blueprint.yaml and is REPLACE-not-merge.
+# Adding it here alone is not enough — the outpost answers 404, not a login
+# redirect, for any external_host it does not recognise.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-hyperdx-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  hyperdx.yaml: |
+    version: 1
+    metadata:
+      name: HyperDX forward_single application
+      labels:
+        blueprints.goauthentik.io/description: "forward_single application for the HyperDX log UI (talos-admin group)"
+    entries:
+      # ========== HyperDX ==========
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-hyperdx
+        identifiers: {name: hyperdx}
+        attrs:
+          name: hyperdx
+          mode: forward_single
+          external_host: https://hyperdx.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-hyperdx, identifiers: {slug: hyperdx}, attrs: {name: HyperDX, slug: hyperdx, group: talos-admin, provider: !KeyOf p-hyperdx, meta_launch_url: https://hyperdx.talos00, meta_description: "ClickStack log analytics — SQL over logs, traces and metrics", meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/grafana.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-hyperdx-own, identifiers: {target: !KeyOf a-hyperdx, group: !Find [authentik_core.group, [name, talos-admin]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-hyperdx-ca, identifiers: {target: !KeyOf a-hyperdx, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
