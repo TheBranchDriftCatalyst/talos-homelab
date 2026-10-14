@@ -81,6 +81,15 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+        # HyperDX/ClickStack ingestion key, read below via sys.env(). Same
+        # ESO-managed secret the alloy Deployment uses; never inlined in git.
+        # New here, not copied: this DaemonSet had no ClickStack path at all
+        # until TALOS-suxd.1.
+        - name: HYPERDX_INGESTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: hyperdx-ingestion
+              key: ingestion_api_key
       # Mount host /var/log so we can read kernel-capture + netconsole files.
       # `mounts.varlog: false` disables the chart's default /var/log → /var/log
       # mount; we use a CUSTOM mount path /host-var-log so paths in the alloy
@@ -173,7 +182,57 @@ spec:
                 }
               }
             }
-            forward_to = [loki.write.default.receiver]
+            // DUAL-WRITE (TALOS-suxd.1). Kernel-panic and netconsole capture were
+            // LOKI-ONLY -- this DaemonSet had no otelcol pipeline whatsoever, so when
+            // Loki is deleted these logs would simply stop, with no error anywhere.
+            //
+            // They are the one stream that CANNOT be re-collected after the fact: a node
+            // that panicked has already lost the evidence. So ClickStack is added first
+            // and verified, and the Loki leg comes out only once data is confirmed in
+            // ClickHouse (TALOS-suxd.7).
+            forward_to = [
+              loki.write.default.receiver,
+              otelcol.receiver.loki.clickstack.receiver,
+            ]
+          }
+
+          // Bridge: Loki-format logs -> OTLP -> ClickStack. Same shape as the three
+          // components in the alloy Deployment, kept byte-similar on purpose so the two
+          // configs can be diffed by eye.
+          //
+          // The name says "loki" and this has NOTHING to do with the Loki server --
+          // otelcol.receiver.loki CONVERTS Loki-format logs into OTLP. It must SURVIVE
+          // Loki's deletion.
+          otelcol.receiver.loki "clickstack" {
+            output {
+              logs = [otelcol.processor.batch.clickstack.input]
+            }
+          }
+
+          otelcol.processor.batch "clickstack" {
+            timeout = "10s"
+            // send_batch_max_size MUST be >= send_batch_size. Alloy rejects the ENTIRE
+            // config otherwise and refuses to start -- that crashlooped the Deployment's
+            // collector on 2026-08-15 when only send_batch_size was set.
+            send_batch_size     = 4096
+            send_batch_max_size = 8192
+
+            output {
+              logs = [otelcol.exporter.otlphttp.clickstack.input]
+            }
+          }
+
+          otelcol.exporter.otlphttp "clickstack" {
+            client {
+              endpoint = "http://clickstack-otel-collector.monitoring.svc:4318"
+              tls {
+                insecure = true
+              }
+              // ClickStack secures OTLP ingest with the team's ingestion key.
+              headers = {
+                "authorization" = sys.env("HYPERDX_INGESTION_KEY"),
+              }
+            }
           }
 
           // ----------------------------------------
