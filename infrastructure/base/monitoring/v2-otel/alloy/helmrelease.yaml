@@ -1,7 +1,7 @@
 ---
 # Grafana Alloy - Unified telemetry collector
 # Replaces: OTEL Collector, Fluent Bit, Grafana Agent
-# Native support for Loki, Tempo, Mimir, Prometheus
+# Native support for Loki, Mimir, Prometheus, OTLP
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -98,8 +98,8 @@ spec:
           // dual-write this cluster does for every other log source (TALOS-cjny) -
           // that component is itself a loki.LogsReceiver, so it is type-compatible.
           //
-          // Traces DO go through the batch processor, so browser spans reach Tempo
-          // and ClickStack like every other trace and can be correlated with the
+          // Traces DO go through the batch processor, so browser spans reach
+          // ClickStack like every other trace and can be correlated with the
           // Traefik spans from TALOS-xfjl.9.
           faro.receiver "browser" {
             server {
@@ -188,15 +188,22 @@ spec:
 
             output {
               metrics = [otelcol.exporter.otlphttp.mimir.input]
-              // DUAL-WRITE (TALOS-cjny/xam9): Loki+Tempo keep their pipelines
-              // unchanged; ClickStack gets a copy for SQL analytics and
-              // log<->trace correlation (otel_logs carries TraceId/SpanId).
+              // Logs are still DUAL-WRITTEN (TALOS-cjny/xam9): Loki keeps its
+              // pipeline unchanged while ClickStack gets a copy for SQL
+              // analytics and log<->trace correlation (otel_logs carries
+              // TraceId/SpanId). Loki goes in TALOS-suxd.7.
+              //
+              // TRACES ARE NO LONGER DUAL-WRITTEN: Tempo was deleted in
+              // TALOS-suxd.5, so ClickStack is the only trace sink. Removed
+              // together with the otelcol.exporter.otlp "tempo" component, because a
+              // reference to a component that no longer exists is a whole-config
+              // rejection, not a warning -- and Alloy then refuses to start,
+              // taking metrics and logs down with it.
               logs    = [
                 otelcol.exporter.loki.default.input,
                 otelcol.exporter.otlphttp.clickstack.input,
               ]
               traces  = [
-                otelcol.exporter.otlp.tempo.input,
                 otelcol.exporter.otlphttp.clickstack.input,
               ]
             }
@@ -252,16 +259,6 @@ spec:
               // (minted by our own HyperDX, stored in our own MongoDB).
               headers = {
                 "authorization" = sys.env("HYPERDX_INGESTION_KEY"),
-              }
-            }
-          }
-
-          // Traces -> Tempo
-          otelcol.exporter.otlp "tempo" {
-            client {
-              endpoint = "tempo.monitoring.svc:4317"
-              tls {
-                insecure = true
               }
             }
           }
@@ -899,7 +896,6 @@ spec:
               // /ready). Probing /ready read DOWN (http 404). Use "/". TALOS-5356.
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://mimir-gateway.monitoring:80/", "instance" = "mimir" },
               { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://loki.monitoring:3100/ready", "instance" = "loki" },
-              { "__address__" = "prometheus-blackbox-exporter.monitoring:9115", "__param_target" = "http://tempo.monitoring:3200/ready", "instance" = "tempo" },
               // Traefik dashboard/api/ping are on the `traefik-internal` service
               // (port 9000). The `traefik` service does not expose 9000, so the
               // probe hung to the 5s timeout and read DOWN. TALOS-5356.
