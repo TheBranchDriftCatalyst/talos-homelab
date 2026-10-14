@@ -1,0 +1,67 @@
+[
+  {
+    "name": "Logs",
+    "kind": "log",
+    "from": { "databaseName": "default", "tableName": "otel_logs" },
+    "timestampValueExpression": "TimestampTime",
+    "displayedTimestampValueExpression": "Timestamp",
+    "implicitColumnExpression": "Body",
+    "serviceNameExpression": "coalesce(nullIf(ServiceName, ''), nullIf(LogAttributes['app'], ''), nullIf(LogAttributes['app_kubernetes_io_name'], ''), nullIf(LogAttributes['container'], ''), 'unknown')",
+    "bodyExpression": "Body",
+    "eventAttributesExpression": "LogAttributes",
+    "resourceAttributesExpression": "ResourceAttributes",
+    "defaultTableSelectExpression": "Timestamp,ServiceName,SeverityText,Body",
+    "severityTextExpression": "SeverityText",
+    "traceIdExpression": "LogAttributes['trace_id']",
+    "spanIdExpression": "LogAttributes['span_id']",
+    "_links": { "traceSourceId": "Traces", "metricSourceId": "Metrics" }
+  },
+  {
+    "name": "Traces",
+    "kind": "trace",
+    "from": { "databaseName": "default", "tableName": "otel_traces" },
+    "timestampValueExpression": "Timestamp",
+    "implicitColumnExpression": "SpanName",
+    "serviceNameExpression": "ServiceName",
+    "eventAttributesExpression": "SpanAttributes",
+    "resourceAttributesExpression": "ResourceAttributes",
+    "defaultTableSelectExpression": "Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName",
+    "traceIdExpression": "TraceId",
+    "spanIdExpression": "SpanId",
+    "durationExpression": "Duration",
+    "durationPrecision": 9,
+    "parentSpanIdExpression": "ParentSpanId",
+    "spanNameExpression": "SpanName",
+    "spanKindExpression": "SpanKind",
+    "statusCodeExpression": "StatusCode",
+    "statusMessageExpression": "StatusMessage",
+    "_links": {
+      "logSourceId": "Logs",
+      "sessionSourceId": "Sessions",
+      "metricSourceId": "Metrics"
+    }
+  },
+  {
+    "name": "Metrics",
+    "kind": "metric",
+    "from": { "databaseName": "default", "tableName": "" },
+    "timestampValueExpression": "TimeUnix",
+    "resourceAttributesExpression": "ResourceAttributes",
+    "metricTables": {
+      "gauge": "otel_metrics_gauge",
+      "sum": "otel_metrics_sum",
+      "histogram": "otel_metrics_histogram",
+      "summary": "otel_metrics_summary",
+      "exponential histogram": "otel_metrics_exponential_histogram"
+    },
+    "_links": { "logSourceId": "Logs" }
+  },
+  {
+    "name": "Sessions",
+    "kind": "session",
+    "from": { "databaseName": "default", "tableName": "hyperdx_sessions" },
+    "timestampValueExpression": "TimestampTime",
+    "resourceAttributesExpression": "ResourceAttributes",
+    "_links": { "traceSourceId": "Traces" }
+  }
+]

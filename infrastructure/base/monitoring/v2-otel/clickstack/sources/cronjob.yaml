@@ -1,0 +1,101 @@
+---
+# Reconcile HyperDX's source definitions from git into MongoDB.
+#
+# Git is the source of truth for what HyperDX queries: no datasources defined in
+# the UI, no schemas typed into a web form. Running on a schedule rather than
+# once also means a hand-edit in the UI is reverted on the next pass.
+#
+# WHY THIS EXISTS AT ALL -- hyperdx.defaultSources cannot do it. That value is
+# FIRST-BOOT-ONLY: setupTeamDefaults runs from POST /register/password (which
+# refuses if a team already exists) or at boot under IS_LOCAL_APP_MODE, which is
+# false here. Editing the HelmRelease therefore has no effect on a live install,
+# forever. See the long comment at the top of reconcile.js.
+#
+# Same shape as ../../alertmanager-config/cronjob.yaml, which pushes
+# Alertmanager config into Mimir for the same reason: the component owns its own
+# state and only accepts it at runtime.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: hyperdx-source-reconciler
+  labels:
+    app.kubernetes.io/name: clickstack
+    app.kubernetes.io/component: source-reconciler
+spec:
+  # Hourly. The reconciler is a no-op when nothing drifted, so this is cheap;
+  # the point is bounding how long a UI edit can masquerade as configuration.
+  schedule: "41 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # It exits non-zero and waits when the team or connection is missing (a
+      # cold cluster before first registration), so retries are for real
+      # failures, not for the expected not-ready-yet case.
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: clickstack
+            app.kubernetes.io/component: source-reconciler
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reconcile
+              # Same image family as the MongoDB StatefulSet, so mongosh matches
+              # the server it talks to.
+              image: quay.io/mongodb/mongodb-community-server:8.0.4-ubi8
+              imagePullPolicy: IfNotPresent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: {cpu: 10m, memory: 96Mi}
+                limits: {memory: 256Mi}
+              env:
+                # In-cluster form (the _LOCAL variant is localhost-only, for
+                # exec'ing inside the mongod pod). The URI contains the
+                # password, so it is referenced, never echoed -- the script
+                # prints only ids and names.
+                - name: MONGO_URI
+                  valueFrom:
+                    secretKeyRef:
+                      name: clickstack-mongodb-password
+                      key: CLICKSTACK_MONGO_URI
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  # --file, not --eval: keeps the script out of the process
+                  # args, and lets mongosh read sources.json itself via
+                  # require('fs') -- note cat() is legacy-shell only and fails
+                  # with a bare "cat is not defined".
+                  exec mongosh "$MONGO_URI" --quiet --file /config/reconcile.js
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+                # mongosh writes a little state even with --quiet; a read-only
+                # root filesystem needs somewhere for it.
+                - name: home
+                  mountPath: /home/mongodb
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: config
+              configMap:
+                name: hyperdx-sources
+            - name: home
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}

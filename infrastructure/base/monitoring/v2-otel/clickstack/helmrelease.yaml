@@ -192,82 +192,26 @@ spec:
       # this on :80, so the browser-facing URL carries no port.
       frontendUrl: "http://hyperdx.talos00"
       usageStatsEnabled: false
-      # PRE-PROVISIONED SOURCES (TALOS-cjny) — so the UI needs no click-ops.
-      # HyperDX auto-provisions these when a team has NO sources yet, which
-      # means changes here only apply to a FRESH team: to re-apply, drop the
-      # sources from Mongo and restart the app (documented on the ticket).
+      # SOURCES ARE NOT DEFINED HERE. They live in sources/sources.json and are
+      # applied by the hyperdx-source-reconciler CronJob (sources/cronjob.yaml).
       #
-      # Derived from the chart defaults with two deliberate changes:
-      #  1. trace/span ids and service name are read from LogAttributes, not
-      #     the native OTLP columns. Pod logs are stdout-scraped via
-      #     loki.source.kubernetes, which leaves ServiceName/TraceId EMPTY —
-      #     but Alloy parses the JSON body into LogAttributes, so the fields
-      #     are there as indexed map keys (cheaper than JSONExtract on Body).
-      #     serviceNameExpression falls back app -> app.kubernetes.io/name ->
-      #     container so EVERY pod gets a usable service, not just ones that
-      #     emit OTLP natively (verified: kometa/traefik/mimir/alloy/... all
-      #     resolve). trace_id/span_id come from boomtime's slog (TALOS-kvg1).
-      #  2. the metric + session sources are dropped: Mimir owns metrics and
-      #     nothing writes hyperdx_sessions, so they'd be dead entries.
-      # Log<->trace correlation (traceSourceId/logSourceId) is already wired.
-      defaultSources: |
-        [
-          {
-            "from": {
-              "databaseName": "default",
-              "tableName": "otel_logs"
-            },
-            "kind": "log",
-            "timestampValueExpression": "TimestampTime",
-            "name": "Logs",
-            "displayedTimestampValueExpression": "Timestamp",
-            "implicitColumnExpression": "Body",
-            "serviceNameExpression": "coalesce(nullIf(ServiceName, ''), nullIf(LogAttributes['app'], ''), nullIf(LogAttributes['app_kubernetes_io_name'], ''), nullIf(LogAttributes['container'], ''), 'unknown')",
-            "bodyExpression": "Body",
-            "eventAttributesExpression": "LogAttributes",
-            "resourceAttributesExpression": "ResourceAttributes",
-            "defaultTableSelectExpression": "Timestamp,ServiceName,SeverityText,Body",
-            "severityTextExpression": "SeverityText",
-            "traceIdExpression": "LogAttributes['trace_id']",
-            "spanIdExpression": "LogAttributes['span_id']",
-            "connection": "Local ClickHouse",
-            "traceSourceId": "Traces",
-            "sessionSourceId": "Sessions",
-            "metricSourceId": "Metrics"
-          },
-          {
-            "from": {
-              "databaseName": "default",
-              "tableName": "otel_traces"
-            },
-            "kind": "trace",
-            "timestampValueExpression": "Timestamp",
-            "name": "Traces",
-            "displayedTimestampValueExpression": "Timestamp",
-            "implicitColumnExpression": "SpanName",
-            "serviceNameExpression": "ServiceName",
-            "bodyExpression": "SpanName",
-            "eventAttributesExpression": "SpanAttributes",
-            "resourceAttributesExpression": "ResourceAttributes",
-            "defaultTableSelectExpression": "Timestamp,ServiceName,StatusCode,round(Duration/1e6),SpanName",
-            "traceIdExpression": "TraceId",
-            "spanIdExpression": "SpanId",
-            "durationExpression": "Duration",
-            "durationPrecision": 9,
-            "parentSpanIdExpression": "ParentSpanId",
-            "spanNameExpression": "SpanName",
-            "spanKindExpression": "SpanKind",
-            "statusCodeExpression": "StatusCode",
-            "statusMessageExpression": "StatusMessage",
-            "connection": "Local ClickHouse",
-            "logSourceId": "Logs",
-            "sessionSourceId": "Sessions",
-            "metricSourceId": "Metrics"
-          }
-        ]
-
-      # Point the UI at the operator-managed CHI (default user, no password —
-      # ClusterIP-only, same posture as the plausible CHI).
+      # `defaultSources` used to sit here and it NEVER RAN. It is first-boot-only:
+      # setupTeamDefaults is called from POST /register/password, which refuses
+      # outright once a team exists, and from a boot path guarded by
+      # IS_LOCAL_APP_MODE -- verified FALSE in this deployment. So edits here
+      # cannot reach a live install, ever.
+      #
+      # It also failed silently for a second reason worth recording, because the
+      # same trap is one rename away: setupDefaults resolves a source's
+      # `connection` BY NAME and `continue`s on a miss. The old block said
+      # "Local ClickHouse" while defaultConnections below creates
+      # "ClickHouse (hyperdx-logs)", so every source was dropped with one log
+      # line and the cluster sat with ZERO sources until someone built one by
+      # hand in the UI. If you rename the connection, rename it in
+      # sources/reconcile.js (CONNECTION_NAME) too.
+      #
+      # Removed rather than left as a stale second copy: two definitions that
+      # cannot both apply is how the first one got out of sync in the first place.
       defaultConnections: |
         [
           {

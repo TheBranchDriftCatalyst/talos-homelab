@@ -1,6 +1,8 @@
 ---
 # ClickStack/HyperDX dedicated log-analytics stack (TALOS-cjny).
-# Loki is NOT replaced — Alloy dual-writes; Loki remains the ops tail.
+#
+# Alloy dual-writes logs and traces here today. Loki and Tempo are being
+# retired (TALOS-suxd), after which this is the only store for both.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -10,3 +12,20 @@ resources:
   - mongodb.yaml # operator-managed MongoDB (replaces the chart's pinned Deployment)
   - helmrelease.yaml
   - ingressroute.yaml
+  - sources/cronjob.yaml
+
+# The four HyperDX sources, as DATA rather than UI state. The reconciler
+# CronJob applies them; hyperdx.defaultSources cannot, because it is
+# first-boot-only (see the note in helmrelease.yaml and reconcile.js).
+#
+# disableNameSuffixHash because the CronJob references the ConfigMap by a fixed
+# name. The hash is not needed to force a roll here -- unlike a Deployment,
+# each Job run mounts the ConfigMap fresh, so the next scheduled run picks up an
+# edit on its own.
+configMapGenerator:
+  - name: hyperdx-sources
+    options:
+      disableNameSuffixHash: true
+    files:
+      - sources/reconcile.js
+      - sources/sources.json
