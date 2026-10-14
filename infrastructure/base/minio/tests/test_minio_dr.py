@@ -1,7 +1,7 @@
 """MinIO tenant — disaster-recovery / chaos test  (TALOS-23l.2)
 
 Validates the operator-managed MinIO Tenant that is the cluster's S3 backend (Loki / Mimir /
-Tempo + Velero). A SINGLE server on an RWO PVC backed by Synology NFS: killing the one MinIO pod
+Velero). A SINGLE server on an RWO PVC backed by Synology NFS: killing the one MinIO pod
 must lose NO objects — it reschedules, re-mounts the same PVC, and every object is byte-identical.
 
 READ-ONLY (always) asserts the machinery EXISTS + is healthy and a canary object round-trips
@@ -35,7 +35,7 @@ ENDPOINT = os.environ.get("MINIO_ENDPOINT", f"http://{S3_SVC}.{NS}.svc.cluster.l
 ROOT_SECRET = os.environ.get("MINIO_ROOT_SECRET", "minio-root-credentials")
 TENANT_SELECTOR = os.environ.get("MINIO_TENANT_LABEL", "v1.min.io/tenant=minio")
 CORE_BUCKETS = [b.strip() for b in os.environ.get(
-    "MINIO_CORE_BUCKETS", "mimir,loki,tempo,velero,cnpg-backups").split(",") if b.strip()]
+    "MINIO_CORE_BUCKETS", "mimir,loki,velero,cnpg-backups").split(",") if b.strip()]
 CANARY_BUCKET = os.environ.get("MINIO_CANARY_BUCKET", "minio-dr-canary")
 MC_IMAGE = os.environ.get("MINIO_MC_IMAGE", "quay.io/minio/mc:RELEASE.2024-11-21T17-21-54Z")
 MAX_RECOVERY_S = float(os.environ.get("MINIO_MAX_RECOVERY_S", "180"))

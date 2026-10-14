@@ -1,7 +1,7 @@
 ---
 # MinIO Tenant - Operator-managed S3 storage
 # Replaces standalone HelmRelease with operator-managed tenant
-# Provides S3 backend for: Mimir, Tempo, Loki
+# Provides S3 backend for: Mimir, Loki
 #
 # config.env is the ONE channel this operator honors: the server pod
 # (minio-pool-0-0) gets only MINIO_CONFIG_ENV_FILE=/tmp/minio/config.env,
@@ -19,7 +19,7 @@
 # MINIO_ROOT_PASSWORD are now templated from the 1Password `minio` item
 # (root-user=pandamin, root-password=new strong pw). The old public
 # old public root literals (minio/****) are GONE from git. Every S3 consumer (Mimir, Loki,
-# Tempo, Velero, etcd-backup, authentik-pg-backup, flex) sources these SAME two
+# Velero, etcd-backup, authentik-pg-backup, flex) sources these SAME two
 # 1Password properties via a per-namespace ExternalSecret, so a single rotation
 # in 1Password cascades to the whole fleet on the next ESO refresh.
 #
@@ -164,14 +164,14 @@ spec:
               storage: 100Gi
       # Measured 7d to 2026-08-24: p50 3131Mi, peak 4656Mi against a 512Mi
       # request — 2.6 GiB of steady-state memory the scheduler could not see,
-      # under the object store that Loki, Mimir, Tempo and Velero all write to.
+      # under the object store that Loki, Mimir and Velero all write to.
       #
       # NOTE this is higher than TALOS-eda0 proposed. That ticket quoted p50
       # 1210Mi and sized the request at 2560Mi; the measured p50 is 3131Mi, so
       # 2560Mi would still have been BELOW steady state. Sized at p50 + ~6%.
       #
       # NO LIMIT, deliberately. MinIO sizes internal buffers to available
-      # memory and spikes on large multipart PUTs — Loki/Mimir/Tempo block
+      # memory and spikes on large multipart PUTs — Loki/Mimir block
       # uploads and Velero backups all land here concurrently. A limit turns a
       # large concurrent upload into an OOMKill of the object store everything
       # else depends on.
@@ -193,7 +193,7 @@ spec:
   # LB services never match a pool and sit unsatisfied forever
   # (cilium_operator_lbipam_services_unsatisfied_total=2, TALOS-6jco).
   # MinIO is reached via Traefik IngressRoutes (s3.talos00 / minio.talos00) and
-  # internally by Mimir/Loki/Tempo over the ClusterIP service — no LB IP needed.
+  # internally by Mimir/Loki over the ClusterIP service — no LB IP needed.
   # false => operator reconciles both services back to ClusterIP (they still
   # exist, just not LoadBalancer), which clears the unsatisfied metric.
   exposeServices:
@@ -206,7 +206,7 @@ spec:
   # — it does NOT manage the anonymous/public-download POLICY nor the image
   # OBJECTS themselves (both are data; the MinIO operator has no policy CRD). A
   # from-scratch rebuild must re-run `mc anonymous set download local/catalyst-bgs`
-  # and re-upload the 6 images. The other buckets (mimir/tempo/loki/dagster/
+  # and re-upload the 6 images. The other buckets (mimir/loki/dagster/
   # cnpg-backups) are still created imperatively by the minio-create-buckets Job
   # above; catalyst-bgs is declared here as the go-forward pattern.
   buckets:
@@ -270,7 +270,6 @@ spec:
 
               # Create buckets for OTEL stack
               mc mb local/mimir --ignore-existing
-              mc mb local/tempo --ignore-existing
               mc mb local/loki --ignore-existing
 
               # Create bucket for Dagster IO manager

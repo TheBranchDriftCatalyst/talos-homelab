@@ -1,6 +1,6 @@
 ---
 # Idempotent provisioner for the scoped object-store users (TALOS-xgrl.12):
-# mimir, tempo, loki, velero — each a MinIO user with a policy limited to its own
+# mimir, loki, velero — each a MinIO user with a policy limited to its own
 # bucket. Reads the ESO-generated secrets (mounted via env from the minio namespace),
 # talks only to MinIO (no kube RBAC needed). Re-runs are no-ops.
 apiVersion: batch/v1
@@ -45,8 +45,6 @@ spec:
                 - {name: ROOT_PASS, valueFrom: {secretKeyRef: {name: minio-root-credentials, key: AWS_SECRET_ACCESS_KEY}}}
                 - {name: MIMIR_KEY, valueFrom: {secretKeyRef: {name: mimir-s3-scoped, key: AWS_ACCESS_KEY_ID}}}
                 - {name: MIMIR_SEC, valueFrom: {secretKeyRef: {name: mimir-s3-scoped, key: AWS_SECRET_ACCESS_KEY}}}
-                - {name: TEMPO_KEY, valueFrom: {secretKeyRef: {name: tempo-s3-scoped, key: AWS_ACCESS_KEY_ID}}}
-                - {name: TEMPO_SEC, valueFrom: {secretKeyRef: {name: tempo-s3-scoped, key: AWS_SECRET_ACCESS_KEY}}}
                 - {name: LOKI_KEY, valueFrom: {secretKeyRef: {name: loki-s3-scoped, key: AWS_ACCESS_KEY_ID}}}
                 - {name: LOKI_SEC, valueFrom: {secretKeyRef: {name: loki-s3-scoped, key: AWS_SECRET_ACCESS_KEY}}}
                 - {name: VELERO_KEY, valueFrom: {secretKeyRef: {name: velero-s3-scoped, key: AWS_ACCESS_KEY_ID}}}
@@ -70,7 +68,6 @@ spec:
                     echo "OK: user=$1 bucket=$3 policy=$4"
                   }
                   provision "$MIMIR_KEY"  "$MIMIR_SEC"  mimir  mimir-rw
-                  provision "$TEMPO_KEY"  "$TEMPO_SEC"  tempo  tempo-rw
                   provision "$LOKI_KEY"   "$LOKI_SEC"   loki   loki-rw
                   provision "$VELERO_KEY" "$VELERO_SEC" velero velero-rw
                   provision "$BOOMCARDS_KEY" "$BOOMCARDS_SEC" boomtime-cards boomtime-cards-rw
