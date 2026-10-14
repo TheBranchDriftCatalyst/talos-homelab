@@ -101,7 +101,18 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: (Host(`boomtime.knowledgedump.space`) || Host(`amberdark.net`)) && PathPrefix(`/hyperdx-rum/`)
+    # boomtime ONLY. amberdark.net is deliberately absent: the Kyverno policy
+    # restrict-public-hostname-claims (Enforce) allows only media-private and
+    # authentik to claim an *.amberdark.net host, because amberdark.net is a
+    # pre-trusted public domain and a cross-namespace claim of one is a
+    # hostname-hijack vector (TALOS-lxz5.4.3 / pentest finding 012). Listing it
+    # here is REJECTED at admission -- which is the policy working, not a
+    # problem to route around. amberdark's public ingest route therefore lives
+    # in media-private, in the hot-ones repo, pointing back at this Service via
+    # Traefik's allowCrossNamespace. See TALOS-5kgj.
+    #
+    # knowledgedump.space is NOT guarded by that policy, so boomtime is fine.
+    - match: Host(`boomtime.knowledgedump.space`) && PathPrefix(`/hyperdx-rum/`)
       kind: Rule
       priority: 10100
       middlewares:
