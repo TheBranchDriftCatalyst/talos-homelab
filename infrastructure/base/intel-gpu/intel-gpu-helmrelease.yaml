@@ -30,16 +30,18 @@ spec:
   upgrade:
     crds: CreateReplace
   values:
-    # Operator manages GPU, QAT, SGX plugins via CRDs
-    operator:
-      resources:
-        requests:
-          cpu: 10m
-          memory: 64Mi
-    # Override default kube-rbac-proxy image — gcr.io/kubebuilder/kube-rbac-proxy
-    # was deprecated and removed. Use the actively-maintained quay.io/brancz fork.
-    kubeRbacProxy:
-      image:
-        hub: quay.io
-        hubRepo: brancz
-        tag: v0.22.1
+    # Operator manages GPU, QAT, SGX plugins via CRDs.
+    #
+    # resources is TOP-LEVEL. It was nested under `operator:`, which is not a chart
+    # key, so it was silently ignored and the controller ran chart defaults
+    # (100m/100Mi) rather than the 10m/64Mi below.
+    #
+    # The `kubeRbacProxy` image override that used to sit here is REMOVED, not
+    # relocated: chart 0.36.0 has no kube-rbac-proxy anywhere -- no values key, no
+    # template reference -- and the live Deployment has exactly one container
+    # (`manager`). The deprecated-gcr.io problem it described is genuinely gone
+    # upstream, so there is nothing left to point at quay.io/brancz. TALOS-1zwj.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi

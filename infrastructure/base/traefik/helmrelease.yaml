@@ -88,7 +88,19 @@ spec:
     # Service configuration
     service:
       enabled: true
-      type: ClusterIP
+      # spec.type, NOT type -- the chart reads service.spec.type, so the bare key was
+      # silently ignored and this Service has always been the chart default.
+      #
+      # LoadBalancer is the DELIBERATE state, not fallout from the dead key, and this
+      # is the trap: "fixing" the key to ClusterIP to match what the manifest used to
+      # say would tear down a documented VIP. cilium/lb-ipam.yaml reserves a dedicated
+      # lan-traefik-pool (.251-.252) selecting app.kubernetes.io/name=traefik with a
+      # matching CiliumL2AnnouncementPolicy, and README.md documents .251 as the
+      # Ingress VIP. Ingress itself does not depend on it -- traefik is a DaemonSet
+      # with hostPort 80/443, which is how *.talos00 reaches .54 -- but the VIP is
+      # referenced by docs and was provisioned on purpose. TALOS-1zwj.
+      spec:
+        type: LoadBalancer
 
     # Ports configuration
     ports:
@@ -331,7 +343,12 @@ spec:
     # Enable Prometheus metrics
     metrics:
       prometheus:
-        enabled: true
+        # No `enabled` key here -- the chart renders this block with `with
+        # .Values.metrics.prometheus`, so the PRESENCE of this map is what turns
+        # Prometheus metrics on. The `enabled: true` that used to sit here was never
+        # read; metrics work because of the keys below. Do not re-add it, and do not
+        # expect `enabled: false` to switch metrics off -- deleting the map does that.
+        # TALOS-1zwj.
         entryPoint: metrics
         # Enable detailed metrics labels for dashboards
         addEntryPointsLabels: true

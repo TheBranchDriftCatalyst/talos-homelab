@@ -114,4 +114,21 @@ opaque:
 
 # ── Per-release, per-path ────────────────────────────────────────────────────
 # (empty: every current finding is either a real defect or covered above)
-releases: {}
+releases:
+  # mimir's top-level `nginx:` block is dead and KNOWN to be dead -- the manifest
+  # carries a dated comment saying so, with the live-ConfigMap evidence. It is
+  # retained ON PURPOSE: the resolver and the /prometheus/-/healthy serverSnippet
+  # inside it would have to move to gateway.nginx.config, and that changes live
+  # gateway behaviour for the entire metrics write path -- a separate decision from
+  # fixing a key name. Suppressed so a reviewed retention stops presenting as an
+  # unreviewed finding.
+  #
+  # Justifying grep:
+  #   grep -n 'DEAD BLOCK' infrastructure/base/monitoring/v2-otel/mimir/helmrelease.yaml
+  #
+  # REMOVE THIS ENTRY if that block is ever migrated or deleted. TALOS-1zwj.
+  mimir:
+    - path: nginx
+      reason: >-
+        Deliberately retained dead block; migrating the resolver + healthz snippet
+        to gateway.nginx.config changes the live metrics write path (TALOS-1zwj).

@@ -44,14 +44,19 @@ spec:
         min: 1        # never scale the interceptor itself to zero — it IS the front door
         max: 3
       # Long timeouts: a buffered request may legitimately wait minutes for a cold GPU.
-      # keda-add-ons-http exposes these as env on the interceptor.
-      additionalEnvVars:
-        - name: KEDA_HTTP_CONNECT_TIMEOUT
-          value: "10s"
-        - name: KEDA_RESPONSE_HEADER_TIMEOUT
-          value: "600s"     # matches Traefik + nginx proxy_read_timeout
-        - name: KEDA_CONDITION_WAIT_TIMEOUT
-          value: "600s"     # how long to wait for the target to report Ready
+      #
+      # These were `additionalEnvVars` -- not a chart key, so all three were silently
+      # dropped and the live interceptor carried only its six chart defaults. TWO
+      # defects were stacked here: the key did not exist, AND two of the three env
+      # names were wrong for the binary anyway (it reads KEDA_HTTP_RESPONSE_HEADER_-
+      # TIMEOUT and KEDA_HTTP_READINESS_TIMEOUT). So even a corrected `extraEnvs` map
+      # would have set two no-op variables.
+      #
+      # Using the chart's first-class values instead of extraEnvs, so the env names
+      # are the chart's problem and not ours. TALOS-1zwj.
+      tcpConnectTimeout: "10s"
+      responseHeaderTimeout: "600s"   # matches Traefik + nginx proxy_read_timeout
+      readinessTimeout: "600s"        # how long to wait for the target to report Ready
       resources:
         requests: {cpu: 25m, memory: 64Mi}
         limits: {memory: 256Mi}

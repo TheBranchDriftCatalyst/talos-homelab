@@ -194,10 +194,27 @@ spec:
           memory: 2560Mi
         limits:
           memory: 5120Mi
-      persistence:
+      # persistentVolume, NOT persistence -- the chart defines no `persistence` key
+      # for these components, so this whole block was silently ignored and every
+      # Mimir volume has always run on chart defaults. Three consequences, each of
+      # which looks like a bug later if it is not written down:
+      #
+      # 1. `storageClass` is GONE, not renamed. The chart has no storageClass
+      #    option for these components at all; the PVCs get `local-path` purely
+      #    because it is the cluster default.
+      # 2. The SIZES MATCH LIVE DELIBERATELY. A StatefulSet volumeClaimTemplate is
+      #    immutable -- the API rejects the update outright -- so declaring the
+      #    sizes this block used to ask for (20/10/20/5Gi) would make every apply
+      #    of this HelmRelease fail from here on.
+      # 3. That costs nothing today: local-path is a hostPath provisioner and
+      #    enforces no quota. ingester-0 was measured holding 2.6G inside its 2Gi
+      #    claim, on a node with 1.7T free. The number is bookkeeping.
+      #
+      # To really change a size: recreate the PVC (local-path has no volume
+      # expansion), one replica at a time. TALOS-1zwj.
+      persistentVolume:
         enabled: true
-        storageClass: local-path
-        size: 20Gi
+        size: 2Gi
       zoneAwareReplication:
         enabled: false
     distributor:
@@ -251,10 +268,10 @@ spec:
         requests:
           cpu: 50m
           memory: 384Mi
-      persistence:
+      # persistentVolume, not persistence; size matches live. See ingester above.
+      persistentVolume:
         enabled: true
-        storageClass: local-path
-        size: 10Gi
+        size: 2Gi
       zoneAwareReplication:
         enabled: false
     compactor:
@@ -266,10 +283,10 @@ spec:
         requests:
           cpu: 50m
           memory: 320Mi
-      persistence:
+      # persistentVolume, not persistence; size matches live. See ingester above.
+      persistentVolume:
         enabled: true
-        storageClass: local-path
-        size: 20Gi
+        size: 2Gi
     # Disable components not needed for homelab
     ruler:
       enabled: true
@@ -292,10 +309,10 @@ spec:
           memory: 96Mi
         limits:
           memory: 192Mi
-      persistence:
+      # persistentVolume, not persistence; size matches live. See ingester above.
+      persistentVolume:
         enabled: true
-        storageClass: local-path
-        size: 5Gi
+        size: 1Gi
     # Disable built-in minio - using external MinIO instance
     minio:
       enabled: false
@@ -336,7 +353,10 @@ spec:
           release: kube-prometheus-stack
     # Gateway for external access
     gateway:
-      enabledNonEnterprise: true
+      # `enabled`, not `enabledNonEnterprise` -- the latter is not a chart key in
+      # 6.1.0 and was never read. No behaviour change: the chart defaults the gateway
+      # on, which is why mimir-gateway has been running regardless. TALOS-1zwj.
+      enabled: true
       # Had no request and no limit. The 64Mi under the `nginx:` block above
       # never applied — mimir-distributed 6.1.0 has no top-level `nginx` key,
       # the gateway is configured entirely under `gateway:`.

@@ -46,9 +46,17 @@ spec:
         enabled: true
         minAvailable: 1
       # 7d to 2026-08-24: p50 102Mi, peak 197Mi. (TALOS-gj3n)
-      resources:
-        requests: {cpu: 100m, memory: 192Mi}
-        limits: {memory: 448Mi}
+      #
+      # .container.resources, NOT .resources. This component is the odd one out: the
+      # chart reads admissionController.container.resources, while its three sibling
+      # controllers below read .resources directly. The bare key here was therefore
+      # silently ignored and the measurement above never applied -- the live pod ran
+      # chart defaults (128Mi/384Mi). Do not "make it consistent" with the siblings.
+      # TALOS-1zwj.
+      container:
+        resources:
+          requests: {cpu: 100m, memory: 192Mi}
+          limits: {memory: 448Mi}
     backgroundController:
       replicas: 1
       # 7d: p50 67Mi, peak 160Mi (2.4x on mutation sweeps). (TALOS-gj3n)
