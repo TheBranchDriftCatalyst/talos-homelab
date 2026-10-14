@@ -1,0 +1,249 @@
+---
+# scene-engine — extracted out of the arr-stack-private app into its own
+# Application (TALOS-cmer). Manifests move to the new Forgejo repo
+# panda/scene-engine at k8s/cluster/.
+#
+# WHY THE EXTRACTION EXISTS AT ALL: scene-engine does not ship its program in
+# its image. base/scene-engine/Dockerfile builds a dependency-only runtime
+# shell and the Python is injected at runtime from a configMapGenerator over
+# app/*.py. scene-engine-app-gkd6g8d6bg is 551,610 bytes, which blows past the
+# 262,144-byte kubectl.kubernetes.io/last-applied-configuration cap on any
+# client-side apply, and sits uncomfortably close to the ~1MB etcd object
+# ceiling. Giving the app its own repo gives it its own Forgejo Actions build,
+# so the source can be COPYed into the image and both source ConfigMaps
+# (scene-engine-app, scene-engine-parser) disappear entirely. See TALOS-nkbd
+# for the interim workaround this replaces.
+#
+# STILL DEPLOYS INTO media-private, on purpose — same as hot-ones. This is an
+# ownership change, not a namespace move, because scene-engine reaches its
+# siblings by BARE service name, which only resolves in-namespace:
+#   - http://stash:9999
+#   - http://stash-box:9998/graphql
+#   - http://whisparr-eros:6969
+# and because it OWNS the `scene-engine-metadata` Secret that hot-ones consumes
+# with a non-optional secretKeyRef (STASH_API_KEY). Secrets do not cross
+# namespaces; moving scene-engine out would hard-fail hot-ones with
+# CreateContainerConfigError.
+#
+# WHAT DELIBERATELY DOES *NOT* MOVE — do not let these follow the app:
+#   - private-content-pvc (5Ti, synology-nfs, statically bound to PV
+#     synology-private-content-pvc). scene-engine only MOUNTS it; it is
+#     DECLARED in talos-private base/storage/synology-private-storage.yaml and
+#     shared by eight consumers (stash, stash-ai, stash-tagger, immich,
+#     whisparr, whisparr-eros, scene-engine, scene-engine-face-worker). It must
+#     stay tracked `arr-stack-private:`. Declaring it here would make two
+#     Applications fight over 5Ti of content.
+#   - The Authentik proxy provider / application / policy bindings for
+#     scene-engine. Those are configuration of a platform service, not objects
+#     this app owns, and they live in one shared blueprint with stash, stash-box
+#     and whoami plus the amber outpost (talos-private
+#     authentik-media-blueprint/media-blueprint.yaml). Same split as
+#     fchat-bouncer, whose blueprint stays in infrastructure/base/authentik/.
+#   - base/auth/legacy-domains.yaml (the amber-legacy-private entry route that
+#     carries scene-engine.priv.knowledgedump.space) and the peer
+#     NetworkPolicies in base/stash/, base/stash-box/ and base/whisparr-eros/
+#     that name scene-engine as an allowed client. scene-engine's OWN three
+#     NetworkPolicies and its CiliumNetworkPolicy do move; its peers' do not.
+#
+# ADOPTION: all 26 scene-engine resources are currently tracked
+# `arr-stack-private:...`. ArgoCD v3.5.5 uses annotation resource tracking (the
+# v3 default — note that the repo's explicit `application.resourceTrackingMethod:
+# annotation` is set under the chart's `configs.params`, so it lands in
+# argocd-cmd-params-cm where ArgoCD never reads it; the default is what is
+# actually in force, and the live tracking-id annotations confirm it). Whichever
+# Application syncs last owns the tracking-id, so this app ADOPTS those objects
+# on first sync rather than duplicating them — provided the render is verified
+# byte-identical to live FIRST. That verification is gate (a) of TALOS-cmer's
+# cutover; it is what makes adoption a no-op instead of a rewrite.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: scene-engine
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: scene-engine
+    app.kubernetes.io/part-of: catalyst
+  annotations:
+    # REQUIRED HERE, unlike hot-ones. scene-engine owns a RAW
+    # postgresql.cnpg.io/v1 Cluster (scene-engine-postgres, instances: 2 on the
+    # Retain StorageClass), and the CNPG operator server-defaults a large part
+    # of that spec at runtime. Without ServerSideDiff ArgoCD falls back to a
+    # legacy client-side diff that ignores managed-field ownership, and every
+    # operator-defaulted field reads as drift. hot-ones got away without this
+    # because its database is a CatalystCNPGAppDB composite, not a raw Cluster.
+    # arr-stack-private carries the same annotation and its three raw CNPG
+    # Clusters (scene-engine-postgres, stash-box-postgres, whisparr-postgres)
+    # are Synced under it today — replicating the comparison mode is what keeps
+    # that true after adoption.
+    #
+    # If the Cluster still shows drift after adoption, the next escalation is
+    # fchat-bouncer's `managedFieldsManagers: [manager]` ignoreDifferences on
+    # postgresql.cnpg.io/Cluster. It is deliberately NOT pre-added: arr-stack-
+    # private does not need it, so adding it blind would mask real drift.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  # Human-facing links: the PUBLIC hostnames, unlike spec.source.repoURL.
+  # The two application hosts are read off the live IngressRoutes in
+  # media-private, not guessed: scene-engine-local serves Host(`scene-engine
+  # .talos00`) on entryPoint `web` (plain HTTP, no TLS block), and
+  # scene-engine-priv serves Host(`scene-engine.amberdark.net`) on `websecure`.
+  info:
+    - name: Source (Forgejo)
+      value: https://forge.knowledgedump.space/panda/scene-engine
+    - name: Container Registry (Zot)
+      value: https://registry.knowledgedump.space/talos00-registry/scene-engine
+    - name: Application (LAN)
+      value: http://scene-engine.talos00
+    - name: Application (external)
+      value: https://scene-engine.amberdark.net
+
+  source:
+    # The IN-CLUSTER Forgejo service, NOT forge.knowledgedump.space. Two
+    # reasons, both load-bearing:
+    #   1. CREDENTIALS. ArgoCD's `forgejo-repo-creds` Secret in ns argocd is a
+    #      repo-creds (prefix) credential whose url is exactly
+    #      `http://forgejo.forgejo.svc.cluster.local:3000/panda` — verified
+    #      live. Any repo under that prefix reuses it, so this app needs NO new
+    #      credential. The public URL would not match the prefix and would need
+    #      a second Secret. Source:
+    #      infrastructure/base/argocd/externalsecret-forgejo-repo.yaml.
+    #   2. BLAST RADIUS. ArgoCD runs in the same cluster as Forgejo; routing
+    #      its polling out through Traefik, external-dns, public DNS and back in
+    #      would make application sync depend on the whole ingress path and on
+    #      the homelab's WAN.
+    # Forgejo has no working SSH route (port 3000 HTTP only), so this is HTTPS-
+    # style token auth over plain HTTP in-cluster — see that ExternalSecret.
+    repoURL: http://forgejo.forgejo.svc.cluster.local:3000/panda/scene-engine.git
+    targetRevision: main
+    # k8s/cluster, matching hot-ones' layout: the cluster overlay, not a dev
+    # overlay. base/scene-engine/dev/ and mac-node/ in talos-private are the
+    # local/Tilt stack and must not be what this syncs.
+    path: k8s/cluster
+
+  destination:
+    server: https://kubernetes.default.svc
+    # NOT a namespace move. See the header: bare-service-name dependencies on
+    # stash / stash-box / whisparr-eros, plus hot-ones' non-optional
+    # secretKeyRef on the scene-engine-metadata Secret.
+    namespace: media-private
+
+  syncPolicy:
+    automated:
+      # ============================================================
+      # prune: false — INTENTIONAL, AND THE WHOLE SAFETY STORY.
+      # ============================================================
+      # FLIP THIS TO true ONLY AFTER ADOPTION IS VERIFIED (TALOS-cmer cutover
+      # gates). Until then it stays false, and arr-stack-private's prune must
+      # also be disabled IN GIT (not by kubectl patch — this Application
+      # directory is Flux-managed from
+      # infrastructure/base/argocd/kustomization.yaml with a 10m interval, so a
+      # live patch is reverted and prune re-arms itself mid-migration; that is
+      # exactly the trap hit during the hot-ones cutover, TALOS-xr14).
+      #
+      # WHAT IS AT RISK IF PRUNE IS ARMED EARLY. arr-stack-private runs
+      # prune: true + selfHeal: true with PrunePropagationPolicy=foreground and
+      # currently tracks every scene-engine object. The irreplaceable ones:
+      #   - CNPG Cluster scene-engine-postgres, instances: 2, the `sceneengine`
+      #     database with pgvector — PVCs scene-engine-postgres-{1,2}, 10Gi each
+      #   - ObjectStore + ScheduledBackup that are the only route back to that
+      #     database
+      #   - the 5Ti synology-nfs private-content-pvc mount (the PVC object
+      #     itself stays with arr-stack-private, but a foreground prune of the
+      #     Deployments that hold it is still an outage of the content path)
+      # This is strictly higher-stakes than hot-ones, which risked two NFS PVCs
+      # and a composite-managed Postgres. Here the database is a raw CNPG
+      # Cluster this app will own outright.
+      #
+      # Two independent backstops already exist and must not be removed:
+      # every database resource in talos-private base/scene-engine/database/
+      # carries `argocd.argoproj.io/sync-options: Prune=false,Delete=false`,
+      # and StorageClass scene-engine-postgres-retain is reclaimPolicy: Retain,
+      # so even a deleted PVC leaves its PV and data behind. Treat both as
+      # defence in depth, not as permission to skip the prune guard.
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      # false, unlike most apps here: media-private already exists and is owned
+      # by talos-private's own kustomization, shared with ~10 other services.
+      # Creating it from this app would start a fight over its ownership.
+      - CreateNamespace=false
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      # MUST match arr-stack-private. Two reasons:
+      #   - during adoption a field-manager mismatch between the two apps shows
+      #     up as spurious conflicts on every object;
+      #   - scene-engine owns a CLUSTER-SCOPED StorageClass
+      #     (scene-engine-postgres-retain), which is the same reason
+      #     arr-stack-private turned SSA on in the first place.
+      # Note this app-level option only reaches the sync when it is triggered by
+      # autoSync or the API Sync endpoint; a sync forced by writing .operation
+      # onto the CR leaves it empty. That is why the two big source ConfigMaps
+      # also pin ServerSideApply per-resource (TALOS-nkbd).
+      - ServerSideApply=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    # Precautionary, no HPA exists in media-private and both Deployments are
+    # replicas: 1 in git and 1 live. Kept so a manual `kubectl scale` while
+    # debugging is not instantly reverted by selfHeal.
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas
+
+    # THREE ExternalSecrets land in this app's scope, confirmed from the live
+    # tracking-ids on arr-stack-private:
+    #   scene-engine-metadata                      (spec.data[], 2 entries)
+    #   scene-engine-postgres-backup-credentials   (spec.data[], 2 entries)
+    #   scene-engine-face-worker                   (spec.dataFrom[] via a
+    #                                               Password generatorRef)
+    #
+    # WHICH EXEMPTIONS ARE ACTUALLY LOAD-BEARING — determined by diffing the
+    # live objects against the manifests, not copied on faith:
+    #
+    #   .spec.data[].remoteRef.{conversionStrategy,decodingStrategy,
+    #   metadataPolicy,nullBytePolicy}  — REQUIRED. ESO stamps all four onto
+    #     every remoteRef of the two data[]-style ExternalSecrets
+    #     (Default / None / None / Ignore). None are in git.
+    #
+    #   .spec.target.deletionPolicy — REQUIRED. ESO defaults it to `Retain`.
+    #     scene-engine-metadata happens to declare `Retain` explicitly, but
+    #     scene-engine-postgres-backup-credentials and scene-engine-face-worker
+    #     do NOT, and both read `Retain` live.
+    #
+    # `nullBytePolicy` and `target.deletionPolicy` are the two that bit the
+    # hot-ones cutover: they are newer ESO fields than arr-stack-private's
+    # six-entry list, so copying that list verbatim leaves ExternalSecrets
+    # permanently OutOfSync (harmless to the workload, but it costs the Synced
+    # signal exactly when you want to trust it). arr-stack-private carries the
+    # same latent gap and only reads Synced because its field ownership is
+    # long-established.
+    #
+    # The three .spec.dataFrom[].extract.* paths are NOT exercised today —
+    # scene-engine-face-worker uses dataFrom[].sourceRef.generatorRef, not
+    # .extract. They are kept because a jqPathExpression over a missing path is
+    # a no-op, and because the next ExternalSecret added to this repo should not
+    # have to rediscover the gap. All eight together are the complete list.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+        - .spec.data[].remoteRef.nullBytePolicy
+        - .spec.dataFrom[].extract.conversionStrategy
+        - .spec.dataFrom[].extract.decodingStrategy
+        - .spec.dataFrom[].extract.metadataPolicy
+        - .spec.target.deletionPolicy
