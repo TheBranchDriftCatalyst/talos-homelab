@@ -32,12 +32,28 @@ spec:
     server: https://kubernetes.default.svc
     namespace: media
 
-  # The ESO controller populates three default subkeys on every
-  # ExternalSecret (conversionStrategy, decodingStrategy, metadataPolicy)
-  # that aren't in git, which ArgoCD flags as drift even though the ESes
-  # are SecretSynced=True. Match BOTH `data[]` and `dataFrom[]` patterns —
-  # ESes can use either; protonvpn-credentials uses dataFrom[].extract.
+  # The ESO controller populates default subkeys on every ExternalSecret that
+  # aren't in git, which ArgoCD flags as drift even though the ESes are
+  # SecretSynced=True. Match BOTH `data[]` and `dataFrom[]` patterns — ESes can
+  # use either; protonvpn-credentials uses dataFrom[].extract.
   # Added dataFrom path 2026-05-30 after dashboard showed it OutOfSync.
+  #
+  # Completed to eight entries 2026-10-14 (TALOS-go7p). The list was six, and
+  # the two additions — .spec.data[].remoteRef.nullBytePolicy and
+  # .spec.target.deletionPolicy — are newer ESO fields than the original. Both
+  # ARE defaulted server-side here: all three ExternalSecrets in this app's
+  # scope read `nullBytePolicy: Ignore` on every remoteRef and
+  # `deletionPolicy: Retain` on target live, none of it declared in git.
+  # The omission was latent, not active — these three only read Synced because
+  # their field ownership is long-established under ServerSideApply. The same
+  # gap bit immediately on the freshly-adopted hot-ones ExternalSecrets, which
+  # sat OutOfSync until both fields were exempted. Keep in step with the
+  # identical lists in hot-ones.yaml and scene-engine.yaml.
+  #
+  # The three .spec.dataFrom[].extract.* paths are NOT exercised today — none
+  # of the three ESes uses dataFrom[]. They are kept because a jqPathExpression
+  # over a missing path is a no-op, and so the next ES added here does not have
+  # to rediscover the gap.
   ignoreDifferences:
     - group: external-secrets.io
       kind: ExternalSecret
@@ -45,9 +61,11 @@ spec:
         - .spec.data[].remoteRef.conversionStrategy
         - .spec.data[].remoteRef.decodingStrategy
         - .spec.data[].remoteRef.metadataPolicy
+        - .spec.data[].remoteRef.nullBytePolicy
         - .spec.dataFrom[].extract.conversionStrategy
         - .spec.dataFrom[].extract.decodingStrategy
         - .spec.dataFrom[].extract.metadataPolicy
+        - .spec.target.deletionPolicy
 
   syncPolicy:
     automated:

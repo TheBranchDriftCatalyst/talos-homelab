@@ -1,0 +1,117 @@
+# helm-values-lint suppressions.
+#
+# Every entry here is a DELIBERATE blind spot. The rule for adding one is the
+# same rule the repo applies to .gitleaksignore: a written reason that says why
+# the key is legitimate, with the evidence that makes it so. "The check was
+# noisy" is not a reason.
+#
+# Three mechanisms, in increasing bluntness:
+#   opaque_leaf_names  -- a key name that is free-form WHEREVER it appears
+#   opaque             -- a chart-scoped subtree that is free-form
+#   releases           -- one specific release/path pair
+#
+# `check` reports stale entries (nothing matched them), and --strict fails on
+# them, so this file cannot quietly rot into a list of keys that no longer exist.
+
+# ── Free-form by key name, at any depth ──────────────────────────────────────
+# These are Kubernetes API structures or established chart conventions that a
+# chart renders with `toYaml` after a `with`/`range` on `.` -- the toYaml-dump
+# detector cannot see those because the dump is of `.`, not of `.Values.<path>`.
+# A chart's values.yaml listing `resources.requests` does NOT mean `limits` is
+# invalid, so descending into them produces nothing but noise.
+#
+# The cost: a typo INSIDE one of these (`resources.limit`, `nodeSelecter` one
+# level down) is not caught. Accepted. Note these only ever stop the walk from
+# DESCENDING -- a misspelling of the key itself (`podLabels` on a chart that has
+# no `podLabels`) is still a finding, because the key is then simply unknown.
+opaque_leaf_names:
+  # pod/container spec fragments
+  - resources
+  - securityContext
+  - podSecurityContext
+  - containerSecurityContext
+  - nodeSelector
+  - tolerations
+  - affinity
+  - topologySpreadConstraints
+  - strategy
+  - updateStrategy
+  - lifecycle
+  - livenessProbe
+  - readinessProbe
+  - startupProbe
+  - dnsConfig
+  - hostAliases
+  - imagePullSecrets
+  # metadata maps
+  - annotations
+  - labels
+  - podAnnotations
+  - commonLabels
+  - deploymentAnnotations
+  - serviceAnnotations
+  # env / arg / volume passthroughs
+  - env
+  - envVars
+  - extraEnv
+  - extraEnvs
+  - extraEnvVars
+  - extraEnvFrom
+  - extraArgs
+  - extraVolumes
+  - extraVolumeMounts
+  - extraContainers
+  - initContainers
+  - volumes
+  - volumeMounts
+
+# ── Chart-scoped free-form subtrees ──────────────────────────────────────────
+opaque:
+  - chart: authentik
+    path: authentik
+    reason: >-
+      The whole subtree is handed to the recursive `authentik.env` helper
+      (templates/secret.yaml: include "authentik.env" (dict ... .Values.authentik)),
+      which flattens arbitrary nesting into AUTHENTIK_<K>__<SK> env vars. Any
+      authentik setting is therefore a legal key here, not just the handful the
+      chart's values.yaml happens to list.
+
+  - chart: mongodb-kubernetes
+    path: operator.telemetry
+    reason: >-
+      templates/operator.yaml aliases the subtree
+      (`$telemetry := default dict .Values.operator.telemetry`) and then reads
+      `$telemetry.send.enabled` and `$telemetry.enabled`, neither of which the
+      chart declares in values.yaml. The keys are real; only the declaration is
+      missing, and the alias is not something a values-diff can follow.
+
+  - chart: argo-cd
+    path: configs.cm
+    reason: >-
+      _helpers.tpl does `$config := omit .Values.configs.cm "create" "annotations"
+      "resourceExclusionsAdditional"` and then dumps $config into argocd-cm, so
+      every argocd-cm setting (url, oidc.config, accounts.admin, ...) is a legal
+      key here regardless of what values.yaml enumerates.
+      CAVEAT, and it is the whole of incident #4 in TALOS-o1sb: "the chart
+      renders it" is NOT "the consumer reads it". A key can land in argocd-cm or
+      argocd-cmd-params-cm and still be inert because ArgoCD reads that
+      particular setting from the OTHER ConfigMap. This checker does not and
+      cannot answer that; see README "What this does NOT check".
+
+  - chart: argo-cd
+    path: configs.params
+    reason: >-
+      Same shape as configs.cm: omit-then-dump into argocd-cmd-params-cm, so any
+      `server.*`/`controller.*`/`application.*` param is a legal key. Same
+      caveat about which ConfigMap the consumer actually reads.
+
+  - chart: traefik
+    path: ports
+    reason: >-
+      `ports` is a map of arbitrary named entrypoints (the chart ranges over it
+      and this repo adds weblan/websecurelan/bolt). Per-entrypoint keys are
+      likewise only partly enumerated by the `web`/`websecure` examples.
+
+# ── Per-release, per-path ────────────────────────────────────────────────────
+# (empty: every current finding is either a real defect or covered above)
+releases: {}

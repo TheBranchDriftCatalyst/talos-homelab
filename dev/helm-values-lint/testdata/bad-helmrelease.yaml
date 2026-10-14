@@ -1,0 +1,53 @@
+---
+# FIXTURE -- not deployed, not referenced by any kustomization.
+#
+# Gotcha #11: a check that reports success is not a check that ran. This file
+# exists so `helm-values-lint selftest` can prove the checker FIRES, and prove
+# it stays quiet on the shapes it must not flag. It is pinned to the same
+# argo-cd chart version the real release uses, so it is checked against a real
+# fingerprint from cache/, not a mock.
+#
+# Expectations live in helm_values_lint.py :: cmd_selftest. Keep them in sync.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: helm-values-lint-fixture
+  namespace: argocd
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: argo-cd
+      version: '>=10.0.0 <11.0.0'
+      sourceRef:
+        kind: HelmRepository
+        name: argocd
+        namespace: argocd
+  values:
+    # ── MUST BE FLAGGED ──────────────────────────────────────────────────────
+    # 1. The real TALOS-o1sb defect, reproduced exactly: argo-cd reads RBAC from
+    #    configs.rbac, so a top-level `rbac` is silently discarded.
+    rbac:
+      policy.default: role:readonly
+      policy.csv: |
+        g, admin, role:admin
+    # 2. A top-level key that is simply not a thing.
+    notAKey: true
+    # 3. A dead key nested under a REAL parent -- the kyverno/mimir shape, where
+    #    the parent resolves and only the leaf is wrong.
+    controller:
+      replicaCountTypo: 2
+      # ── MUST NOT BE FLAGGED (negative controls) ────────────────────────────
+      replicas: 1 # real chart key
+      resources: # free-form k8s structure
+        limits:
+          memory: 1Gi
+      podAnnotations: # free-form metadata map
+        prometheus.io/scrape: 'true'
+    configs:
+      rbac:
+        policy.default: role:readonly # real chart key, dotted literal name
+      cm:
+        url: https://argocd.example # allowlisted: omit-then-dump into argocd-cm
+    global:
+      domain: argocd.example # `global` is a Helm built-in

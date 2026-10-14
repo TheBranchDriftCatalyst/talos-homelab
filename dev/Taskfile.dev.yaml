@@ -94,6 +94,43 @@ tasks:
         cd "$tp"
         HOMELAB_DIR="$homelab" bash build.sh --check
 
+  # ============================================
+  # Helm value-path linting (TALOS-o1sb)
+  # ============================================
+  # NOT in `lint` and NOT in `ci`, on purpose. `task lint` is already red
+  # repo-wide (gotcha #8), so anything added to it is born ignored. This is its
+  # own task with its own exit code, so it is enforceable the moment someone
+  # wants it enforced -- see dev/helm-values-lint/README.md "Making this a gate"
+  # for the sequence (fix or allowlist the 26 current findings, then add
+  # `task dev:helm-values:check` to lefthook pre-push or CI).
+
+  helm-values:
+    desc: "Flag HelmRelease spec.values keys the chart does not define (offline)"
+    cmds:
+      - task: helm-values:check
+
+  helm-values:check:
+    desc: "Offline: lint every HelmRelease's spec.values against the cached chart schemas"
+    cmds:
+      - python3 dev/helm-values-lint/helm_values_lint.py check {{.CLI_ARGS}}
+
+  helm-values:refresh:
+    # The ONLY networked task here. It `helm pull`s every chart a HelmRelease
+    # references and writes a small schema fingerprint per chart+version into
+    # dev/helm-values-lint/cache/, which is committed. Run it after any chart
+    # version bump; `check` then stays offline and CI-safe.
+    desc: "NETWORK: re-pull every referenced chart and rebuild the schema cache"
+    cmds:
+      - python3 dev/helm-values-lint/helm_values_lint.py refresh {{.CLI_ARGS}}
+
+  helm-values:selftest:
+    # Gotcha #11: a check that reports success is not a check that ran. This
+    # proves the checker fires -- against a synthetic fixture AND against the
+    # real argocd rbac defect read out of git history at d26be8a4^.
+    desc: "Prove the checker fires (fixture + the historical argocd rbac defect)"
+    cmds:
+      - python3 dev/helm-values-lint/helm_values_lint.py selftest
+
   lint:yaml:
     desc: Lint YAML files with yamllint
     cmds:
