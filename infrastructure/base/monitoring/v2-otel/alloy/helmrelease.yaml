@@ -1157,50 +1157,7 @@ spec:
               replacement  = "talos-homelab"
               action       = "replace"
             }
-            // DUAL-WRITE, matching what logs and traces already do. Mimir stays the
-            // PRIMARY metrics store and nothing about it changes: 33 of 36 Grafana
-            // dashboards query it, and the ruler plus Alertmanager run on it. ClickStack
-            // gets a copy so HyperDX can correlate a metric with the trace, log and
-            // session beside it -- its "OTEL Metrics" source type is empty without this.
-            //
-            // Before this, ClickStack held 35 metric names and every one was the
-            // collector's OWN self-metrics (otelcol_*, scrape_*, up, promhttp_*). Not a
-            // single real cluster metric had ever reached it. That is easy to miss
-            // because the tables were far from empty -- 1.9M gauge rows of a collector
-            // measuring itself looks exactly like a working pipeline.
-            //
-            // This is the ONE choke point worth attaching to: every scrape in this file
-            // forwards to add_cluster, so one edit here covers all of them and a future
-            // scrape job is included by default rather than by remembering.
-            forward_to = [
-              prometheus.remote_write.mimir.receiver,
-              otelcol.receiver.prometheus.clickstack.receiver,
-            ]
-          }
-
-          // Bridge: Prometheus-format metrics -> OTLP -> ClickStack. Deliberately the
-          // same shape as otelcol.receiver.loki "clickstack", which does exactly this
-          // job for logs.
-          otelcol.receiver.prometheus "clickstack" {
-            output {
-              metrics = [otelcol.processor.batch.clickstack_metrics.input]
-            }
-          }
-
-          // Its OWN batch processor rather than reusing batch.clickstack: that one is
-          // wired for logs, and sharing it would couple this pipeline's backpressure to
-          // the log pipeline's -- a metrics burst would stall log delivery.
-          otelcol.processor.batch "clickstack_metrics" {
-            timeout = "10s"
-            // send_batch_max_size MUST be >= send_batch_size, same trap as the sibling
-            // processor: Alloy rejects the ENTIRE config otherwise and refuses to start,
-            // which takes out metrics, logs AND traces at once.
-            send_batch_size     = 4096
-            send_batch_max_size = 8192
-
-            output {
-              metrics = [otelcol.exporter.otlphttp.clickstack.input]
-            }
+            forward_to = [prometheus.remote_write.mimir.receiver]
           }
 
           // ============================================
