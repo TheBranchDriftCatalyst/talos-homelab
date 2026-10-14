@@ -1,0 +1,114 @@
+---
+# catalyst-rum: serves the HyperDX browser SDK and authenticates its telemetry.
+#
+# Source repo: workspace/catalyst-rum -> panda/catalyst-rum on Forgejo, built to
+# Zot by .forgejo/workflows/docker-publish.yml.
+#
+# TWO JOBS, ONE POD, deliberately:
+#   /rum.js, /sdk.js  static, same-origin with the page that loads them
+#   /v1/logs,/v1/traces  proxied to the ClickStack collector with the ingestion
+#                        key attached HERE, server-side
+#
+# The key is the reason this pod exists at all. Upstream's documented browser
+# setup passes the ingestion key to HyperDX.init() in client-side JS, which on
+# any public host publishes a write credential for the whole observability
+# stack in page source. A Traefik Middleware cannot read a Secret, and routing
+# the key in via Flux postBuild/envsubst would mean enabling substitution on
+# the monitoring Kustomization -- which also carries the Alloy river config,
+# full of $-expressions envsubst would mangle. One nginx template reading one
+# env var keeps it contained.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalyst-rum
+  labels:
+    app.kubernetes.io/name: catalyst-rum
+    app.kubernetes.io/component: rum
+spec:
+  # Two replicas because this sits on the page-load path of every opted-in app.
+  # It is stateless, so this is purely about not serving a 502 during a roll.
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalyst-rum
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalyst-rum
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          # TODO on first build: re-pin to the sha-<7c> tag AND its digest.
+          # `latest` on a stale tag is an upgrade trigger -- it fast-forwards
+          # across every release at once the first time a node re-pulls. The
+          # digest is strictly stronger; scene-engine ended up pinned the same
+          # way for the same reason.
+          image: registry.talos00/talos00-registry/catalyst-rum:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            # Minted by our own HyperDX and stored in our own MongoDB; the same
+            # single 1Password field Alloy reads (item `hyperdx`, property
+            # ingestion_api_key). Both ends of the handshake resolve here, which
+            # is what TALOS-cjny established after the placeholder-key 401.
+            - name: HYPERDX_INGESTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: hyperdx-ingestion
+                  key: ingestion_api_key
+            - name: OTEL_COLLECTOR
+              value: clickstack-otel-collector.monitoring.svc:4318
+          # Liveness checks THIS pod, not the collector -- see the template
+          # comment. Coupling them would turn a ClickHouse problem into an
+          # SDK-delivery outage and roll these pods for nothing.
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # nginx writes both even when nothing is cached, so a read-only
+            # root filesystem needs these two. Same shape as
+            # infrastructure/base/authentik/login-background.
+            - name: cache
+              mountPath: /var/cache/nginx
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: cache
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalyst-rum
+  labels:
+    app.kubernetes.io/name: catalyst-rum
+spec:
+  selector:
+    app.kubernetes.io/name: catalyst-rum
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

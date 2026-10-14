@@ -1,0 +1,99 @@
+---
+# ONE route publishes /hyperdx-rum/ on EVERY host, so both the SDK and the
+# beacon are always SAME-ORIGIN with the page that uses them.
+#
+# This is the same shape, and the same reasoning, as the Faro route next door
+# (../alloy/faro-route.yaml) and themepark's asset route: a hostless PathPrefix
+# rule applies to any hostname Traefik serves, so opting an app in is one
+# middleware reference and nothing else.
+#
+# Same-origin is not a convenience, it removes four separate problems:
+#   - No CORS. The browser never preflights a same-origin POST.
+#   - No CSP edit per app. connect-src falls back to default-src and
+#     same-origin counts as 'self', so even qBittorrent's bare
+#     `default-src 'self'` permits the beacon with no per-app middleware.
+#   - No mixed content. Plex and Jellyfin are served over plain HTTP as well as
+#     HTTPS; the beacon follows whichever scheme the page used, which is why the
+#     `web` route below is NOT a redirect-https.
+#   - No new DNS name or certificate SAN. `*.talos00` is a single-label parent
+#     that Apple clients reject outright, so a dedicated rum.talos00 would be
+#     its own project.
+#
+# ACCESS CONTROL is lan-only plus the shared rate-limit (100/s, burst 200 --
+# the same ceiling the Faro receiver enforces in-process). This endpoint is
+# write-only and unauthenticated FROM THE BROWSER by design: the pod behind it
+# attaches the real credential, so there is nothing for a page to hold. If an
+# app on a public host is ever opted in, lan-only has to come off this route
+# and the rate limit becomes the only control -- make that a deliberate change,
+# not a side effect.
+#
+# priority must beat the apps' own catch-all Host() rules, which would
+# otherwise swallow /hyperdx-rum/ and hand it to the application. Traefik
+# derives priority from rule length when unset, and Host(...) is longer.
+#
+# Two objects because Kyverno's ingressroute-no-combined-entrypoints (Enforce)
+# denies a single route listing both entrypoints.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: hyperdx-rum-strip
+  labels:
+    app.kubernetes.io/name: catalyst-rum
+spec:
+  stripPrefix:
+    prefixes:
+      - /hyperdx-rum
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hyperdx-rum
+  labels:
+    app.kubernetes.io/name: catalyst-rum
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: PathPrefix(`/hyperdx-rum/`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: hyperdx-rum-strip
+          namespace: monitoring
+      services:
+        - name: catalyst-rum
+          port: 80
+  tls: {}
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hyperdx-rum-http
+  labels:
+    app.kubernetes.io/name: catalyst-rum
+spec:
+  entryPoints:
+    - web
+  routes:
+    # Deliberately NOT redirect-https, matching the Faro and asset routes: Plex
+    # and Jellyfin are served over plain HTTP, and an HTTPS-only ingest origin
+    # would make their beacons mixed-content and silently dropped.
+    - match: PathPrefix(`/hyperdx-rum/`)
+      kind: Rule
+      priority: 10000
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: rate-limit
+          namespace: traefik
+        - name: hyperdx-rum-strip
+          namespace: monitoring
+      services:
+        - name: catalyst-rum
+          port: 80

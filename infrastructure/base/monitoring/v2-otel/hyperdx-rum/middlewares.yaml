@@ -1,0 +1,68 @@
+---
+# PER-APP opt-in handles. Reference one of these from an app's IngressRoute to
+# instrument it; nothing here touches an app until it opts in.
+#
+# One middleware per app rather than one shared middleware, because the
+# injected tag carries that app's identity in data-service -- it becomes
+# ServiceName in ClickHouse, and a shared tag would file every app's sessions
+# under one name. Same structure as the analytics sites-middlewares.
+#
+# TWO RULES BEFORE ADDING AN APP HERE:
+#
+# 1. NEVER put an app behind BOTH this and an analytics/themepark inject. Those
+#    are also rewriteBody middlewares, and chaining body rewriters is a
+#    documented SILENT failure mode in this cluster -- the second one's regex
+#    may never match and nothing reports it. Check the target route for any
+#    `*-inject-*` or `catalyst-inject-*` middleware first. (grafana, the first
+#    app here, carries only lan-only -- verified before choosing it.)
+#
+# 2. Session replay RECORDS WHAT THE USER SEES. The loader masks all inputs and
+#    all text by default and that default should stay; data-unmask="true" is a
+#    per-app decision about a specific screen, not a way to "see more". Private
+#    media UIs and anything under media-private are the wrong place for this.
+#
+# Accept-Encoding is stripped by reusing traefik/strip-accept-encoding from the
+# analytics chain -- the rewriteBody plugin cannot match </head> in a gzip or
+# brotli body, it would see compressed bytes and never fire.
+
+# ---------------------------------------------------------------------------
+# grafana -- the first and currently only opted-in app.
+#
+# Chosen as the canary deliberately: it is LAN-only and SSO-gated so the
+# audience is just the operator, it is a heavy SPA so the RUM data is actually
+# interesting, its IngressRoute is Flux-owned IN THIS REPO (no sister-repo
+# change), it carries no other body rewriter, and -- the point -- if RUM breaks
+# Grafana, HyperDX itself still works to show why. Instrumenting HyperDX first
+# would have removed the tool needed to debug it.
+# ---------------------------------------------------------------------------
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: hyperdx-rum-inject-grafana
+  labels:
+    app.kubernetes.io/name: catalyst-rum
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        # ONE tag, NO inline JS. An onload= handler would need CSP
+        # 'unsafe-inline'; the loader reads its config from data-* instead and
+        # appends the SDK itself. See rum.js in the catalyst-rum repo.
+        - regex: "</head>"
+          replacement: '<script src="/hyperdx-rum/rum.js" data-service="grafana" defer></script></head>'
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: hyperdx-rum-grafana
+  labels:
+    app.kubernetes.io/name: catalyst-rum
+spec:
+  chain:
+    middlewares:
+      - name: strip-accept-encoding
+        namespace: traefik
+      - name: hyperdx-rum-inject-grafana
+        namespace: monitoring
