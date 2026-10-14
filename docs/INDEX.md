@@ -18,7 +18,7 @@ summarizes its children — drill down from here.
 | [CLAUDE.md](../CLAUDE.md)                                 | Agent guidance: beads workflow, GitOps rules, session protocol                  |
 | [AGENTS.md](../AGENTS.md)                                 | Agent-facing repo conventions                                                   |
 | [TRAEFIK.md](02-architecture/traefik.md)                               | Ingress: Traefik DaemonSet, entrypoints, TLS, IngressRoutes, LB VIP             |
-| [OBSERVABILITY.md](08-monitoring/observability.md)                   | **Authoritative** monitoring stack — Alloy / Mimir / Loki / Tempo / ClickStack  |
+| [OBSERVABILITY.md](08-monitoring/observability.md)                   | **Authoritative** monitoring stack — Alloy / Mimir / Loki / ClickStack    |
 | [SECURITY_ops.md](../infrastructure/base/security/README.md)                     | CrowdSec + bouncer, honeypot, iocaine, allowlists, ban escalation               |
 
 ---

@@ -62,7 +62,7 @@ Manage the foundational platform infrastructure that the cluster depends on.
   - ArgoCD (GitOps controller for applications)
   - Cilium (CNI), Traefik (ingress)
   - Zot container registry (`registry.talos00`)
-  - Monitoring/observability: Mimir (metrics), Loki (logs), Tempo (traces), Grafana, Alloy, ClickStack/HyperDX
+  - Monitoring/observability: Mimir (metrics), Loki (logs), Grafana, Alloy, ClickStack/HyperDX (logs + traces)
   - Authentik (SSO), CrowdSec (IPS/AppSec), cert-manager, External Secrets Operator, Kyverno, reflector, CNPG
 - In-repo application workloads under `applications/` (arr stack, homepage, tdarr, metube, …) — also Flux-managed
 - Network policies and storage classes

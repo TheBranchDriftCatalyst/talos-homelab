@@ -28,7 +28,7 @@ Snapshot taken **2026-08-09** against the live cluster (`kubectl get crd`).
 - **Messaging** — RabbitMQ cluster operator + messaging-topology operator.
 - **NoSQL / object / search** — MongoDB, MinIO, ClickHouse (Altinity), OpenSearch operators.
 - **Virtualization** — KubeVirt + CDI (VMs, DataVolumes, instancetypes).
-- **Observability** — OTel-first v2 stack: Prometheus-operator CRDs (ServiceMonitors) scraped by Alloy → Mimir; Grafana operator, OpenTelemetry operator, Tempo operator.
+- **Observability** — OTel-first v2 stack: Prometheus-operator CRDs (ServiceMonitors) scraped by Alloy → Mimir; Grafana operator, OpenTelemetry operator. (Tempo operator removed — TALOS-suxd.5.)
 - **Autoscaling** — KEDA (event-driven) + VPA via Goldilocks (right-sizing).
 - **Policy** — Kyverno (+ PolicyReports / wgpolicyk8s).
 - **Backup** — Velero (very active — 1200+ pod-volume backups).
@@ -65,9 +65,8 @@ custom resources exist yet.
 | **NoSQL / object / search** | OpenSearch operator                  | OpenSearchCluster, OpensearchUser, OpensearchRole (10 kinds × 2 API groups)                                                      | `infrastructure/base/operators/opensearch-operator/`                           | Yes — OpenSearchCluster 1 (`opensearch.org`); `opensearch.opster.io` 0                            |
 | **Virtualization**          | KubeVirt + CDI                       | KubeVirt, VirtualMachine, VirtualMachineInstance, DataVolume, VM(Cluster)Instancetype/Preference                                 | `infrastructure/base/kubevirt/`                                                | Yes — ClusterInstancetype 48, ClusterPreference 42, VM 1, KubeVirt 1, CDI 1, StorageProfile 3     |
 | **Observability**           | Prometheus operator (CRDs)           | ServiceMonitor, PodMonitor, PrometheusRule, Prometheus, Alertmanager, ScrapeConfig, Probe                                        | CRDs `bootstrap-crds/`; consumed by `monitoring/v2-otel/alloy`                 | Partial — ServiceMonitor 36, PrometheusRule 15, PodMonitor 9; **no Prometheus/Alertmanager CR**   |
-| **Observability**           | Grafana operator                     | Grafana, GrafanaDashboard, GrafanaFolder, GrafanaDatasource (+ alerting kinds)                                                   | `infrastructure/base/monitoring/grafana-operator/`                             | Yes — Dashboard 44, Folder 12, Datasource 3, Grafana 1                                            |
+| **Observability**           | Grafana operator                     | Grafana, GrafanaDashboard, GrafanaFolder, GrafanaDatasource (+ alerting kinds)                                                   | `infrastructure/base/monitoring/grafana-operator/`                             | Yes — Datasource 2 (Mimir, Loki) after TALOS-suxd.5                                               |
 | **Observability**           | OpenTelemetry operator               | OpenTelemetryCollector, Instrumentation, TargetAllocator, OpAMPBridge                                                            | `infrastructure/base/monitoring/v2-otel/operators/otel-operator/`              | Installed — 0 CRs                                                                                 |
-| **Observability**           | Tempo operator                       | TempoStack, TempoMonolithic                                                                                                      | `infrastructure/base/monitoring/v2-otel/operators/tempo-operator/`             | Installed — 0 CRs                                                                                 |
 | **Observability**           | Mimir rollout-operator               | ReplicaTemplate, ZoneAwarePodDisruptionBudget                                                                                    | bundled w/ `monitoring/v2-otel/mimir` (mimir-distributed chart)                | Installed — 0 CRs                                                                                 |
 | **Autoscaling**             | KEDA                                 | ScaledObject, ScaledJob, TriggerAuthentication, CloudEventSource                                                                 | `infrastructure/base/operators/keda/`                                          | Yes — ScaledObject 1                                                                              |
 | **Autoscaling**             | VPA (via Goldilocks)                 | VerticalPodAutoscaler, VerticalPodAutoscalerCheckpoint                                                                           | `infrastructure/base/infra-control/goldilocks/`                                | Yes — VPA 70, Checkpoint 78                                                                       |
@@ -179,10 +178,13 @@ The metrics pipeline is **Alloy → Mimir**, _not_ a Prometheus server. Key nuan
   `Alertmanager`, or `ThanosRuler` CR**. Alloy discovers ServiceMonitors/PodMonitors and remote-writes
   to Mimir. (See memory: Alloy WAL bounds + Mimir Alertmanager tenant-config CronJob.)
 - **Grafana operator** (`infrastructure/base/monitoring/grafana-operator/`, v5.20.0) manages Grafana
-  declaratively: GrafanaDashboard (44), GrafanaFolder (12), GrafanaDatasource (3), Grafana (1).
-- **OpenTelemetry operator** (`monitoring/v2-otel/operators/otel-operator/`) and **Tempo operator**
-  (`.../tempo-operator/`) are installed but have no CRs yet (collectors/traces run via direct Helm
-  installs under `v2-otel/`).
+  declaratively: GrafanaDashboard, GrafanaFolder, Grafana, and GrafanaDatasource — 2 of the last
+  since Tempo's was removed in TALOS-suxd.5 (`kubectl get grafanadatasource -A` is the live answer;
+  counts in prose drift).
+- **OpenTelemetry operator** (`monitoring/v2-otel/operators/otel-operator/`) is installed but has
+  no CRs yet (collectors run via direct Helm installs under `v2-otel/`). The **Tempo operator** that
+  used to sit beside it is gone: it was removed from the cluster earlier, and its directory and
+  TempoStack/TempoMonolithic CRDs went with Tempo itself in TALOS-suxd.5.
 - **Mimir rollout-operator** CRDs (`rollout-operator.grafana.com`) come bundled with the
   mimir-distributed chart; 0 CRs.
 
@@ -232,7 +234,7 @@ Crossplane v2 variant). Usage is demo-level: ManagedResourceDefinition (4), Depl
 - **Installed-but-unused CRD surface** is significant and mostly comes from upstream chart bundles:
   - Traefik Hub (15 CRDs, `hub.traefik.io`) — API-management CRDs shipped with Traefik, unused.
   - Gateway API (6 CRDs) — bundled with Cilium; ingress goes through Traefik instead.
-  - OpenTelemetry operator, Tempo operator, Mimir rollout-operator — installed, 0 CRs.
+  - OpenTelemetry operator, Mimir rollout-operator — installed, 0 CRs.
   - Most KubeVirt sub-groups (snapshot/clone/export/pool/migrations/forklift) — idle with 1 VM.
   - 6 of 7 Intel device plugins — only GPU is deployed.
 - **Prometheus operator without a Prometheus** — the biggest architectural "gotcha": ServiceMonitors

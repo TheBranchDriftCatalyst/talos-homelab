@@ -160,7 +160,6 @@ Everything below lives in the `monitoring` namespace, under `infrastructure/base
 
 - **Mimir**: metrics TSDB and long-term store (1-year retention, MinIO S3 backend)
 - **Loki**: log storage (30-day retention, MinIO S3 backend)
-- **Tempo**: distributed tracing backend
 - **Grafana**: visualization, deployed by grafana-operator; dashboards are JSON files plus
   `GrafanaDashboard` CRs
 - **Grafana Alloy**: metrics/logs/OTLP collection (`alloy` deployment + `alloy-node` DaemonSet) —
@@ -210,7 +209,6 @@ flux reconcile kustomization <name> --with-source
 - Grafana: http://grafana.talos00 (admin / see `kubectl get secret -n monitoring grafana-admin-credentials -o jsonpath='{.data.GF_SECURITY_ADMIN_PASSWORD}' | base64 -d`)
 - Mimir (metrics): http://mimir.talos00
 - Loki (logs): http://loki.talos00
-- Tempo (traces): http://tempo.talos00
 - HyperDX / ClickStack: http://hyperdx.talos00
 - OTLP ingest (Alloy): http://otel.talos00
 
@@ -421,7 +419,7 @@ task talos:upgrade-k8s -- 1.34.10
 │   ├── authentik/                  # SSO / forward-auth
 │   ├── security/                   # crowdsec (IPS + AppSec), honeypots, falco, iocaine
 │   ├── kyverno/, kyverno-policies/ # Policy engine + derived-config ClusterPolicies
-│   ├── monitoring/                 # Mimir, Loki, Tempo, Grafana, Alloy, ClickStack
+│   ├── monitoring/                 # Mimir, Loki, Grafana, Alloy, ClickStack
 │   ├── registry/                   # Zot container registry
 │   ├── storage/                    # StorageClasses: local-path (default, node NVMe),
 │   │                               #   fatboy-nfs-appdata (192.168.1.36:/volume1/appdata),

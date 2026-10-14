@@ -439,7 +439,7 @@ Verified against the repo and the live cluster on 2026-08-22.
 - [ ] **ArgoCD (`argocd.talos00`)** — still local admin only; `dex.enabled: false` in
       `infrastructure/base/argocd/helmrelease.yaml` and no auth middleware on its IngressRoute.
       Tracked by **TALOS-xgrl.18.1**
-- [ ] **Mimir (`mimir.talos00`), Loki (`loki.talos00`), Tempo, HyperDX, Traefik dashboard** —
+- [ ] **Mimir (`mimir.talos00`), Loki (`loki.talos00`), HyperDX, Traefik dashboard** —
       no auth middleware on their IngressRoutes. HyperDX tracked by **TALOS-eao7**
 
 > **Removed since this list was first written (2024-11):** Prometheus and Alertmanager no longer

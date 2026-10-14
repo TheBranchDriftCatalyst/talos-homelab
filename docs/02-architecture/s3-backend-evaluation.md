@@ -60,7 +60,7 @@ bluf: MinIO CE is archived upstream with unpatchable CVEs, so the object store h
 ## What our consumers actually need
 
 Our S3 is used by **CNPG barman-cloud** (Postgres WAL + base backups), **Velero** (cluster
-backup/restore), the **Loki / Mimir / Tempo** stores, and **etcd snapshots** — all against a
+backup/restore), the **Loki / Mimir** stores, and **etcd snapshots** — all against a
 MinIO tenant configured `servers: 1, volumesPerServer: 1`, i.e. a deliberately simple target.
 (External Secrets _creates_ the credential Secrets these consumers use, out of 1Password; it is
 not itself an S3 client, so it constrains nothing here.) None of them use the console. Requirements: multipart upload
@@ -178,7 +178,7 @@ Live audit of the running MinIO tenant, 2026-09-11:
 | backups                                       | ❌             | ❌          | (general)         |
 | cnpg-backups                                  | ❌             | ❌          | CNPG barman-cloud |
 | velero                                        | ❌             | ❌          | Velero            |
-| loki / mimir / tempo                          | ❌             | ❌          | observability     |
+| loki / mimir                                  | ❌             | ❌          | observability     |
 | catalyst-data / catalyst-bgs / boomtime-cards | ❌             | ❌          | apps              |
 | lobechat                                      | ❌             | ❌          | LobeChat          |
 

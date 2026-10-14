@@ -302,7 +302,7 @@ talos-homelab/
 │   ├── authentik/           # SSO / forward-auth
 │   ├── security/            # crowdsec, honeypots, falco, iocaine
 │   ├── registry/            # Zot container registry
-│   ├── monitoring/          # v2-otel stack: Mimir, Loki, Tempo, Grafana, Alloy, ClickStack
+│   ├── monitoring/          # v2-otel stack: Mimir, Loki, Grafana, Alloy, ClickStack
 │   └── storage/             # StorageClasses: local-path (default), fatboy-nfs-appdata,
 │                            #   synology-nfs
 ├── applications/            # App deployments (arr-stack, etc.)

@@ -11,7 +11,7 @@ pinned: covers resolves to infrastructure/base/monitoring, but this is the secti
 # Monitoring Reference
 
 Dashboard-level reference for the observability stack. The stack itself — Alloy / Mimir / Loki /
-Tempo / ClickStack, all in the `monitoring` namespace — is documented in
+ClickStack, all in the `monitoring` namespace — is documented in
 [observability.md](observability.md) alongside this file.
 
 ## Quick Navigation
@@ -20,7 +20,7 @@ Tempo / ClickStack, all in the `monitoring` namespace — is documented in
 
 | Doc                                  | What it covers                                                                                                                                                                           |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [observability.md](observability.md) | An OTEL-native LGTM stack in one namespace — Alloy collects everything and fans out to Mimir, Loki, Tempo and ClickStack — and this explains why each backend is deployed the way it is. |
+| [observability.md](observability.md) | An OTEL-native stack in one namespace — Alloy collects everything and fans out to Mimir, Loki and ClickStack — and this explains why each backend is deployed the way it is. |
 
 <!-- /docs:gen:nav -->
 

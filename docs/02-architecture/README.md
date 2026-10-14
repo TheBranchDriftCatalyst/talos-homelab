@@ -39,7 +39,7 @@ changing how a thing is built.
 | [../../infrastructure/base/security/README.md](../../infrastructure/base/security/README.md) | Security architecture as deployed — CrowdSec LAPI/bouncer, honeypot, iocaine, ban escalation     |
 | [security/README.md](../../infrastructure/base/security/README.md)                           | **Start here for security**: how detection, decision and the two enforcement planes fit together |
 | [traefik.md](traefik.md)                                                                     | Ingress implementation detail: entrypoints, TLS, IngressRoutes, the LB VIP                       |
-| [observability.md](../08-monitoring/observability.md)                                        | The live monitoring stack — Alloy / Mimir / Loki / Tempo / ClickStack                            |
+| [observability.md](../08-monitoring/observability.md)                                        | The live monitoring stack — Alloy / Mimir / Loki / ClickStack                            |
 | [patterns/](../patterns/README.md)                                                           | Reusable cluster patterns extracted from these architecture docs                                 |
 | [07-reference/cluster-crds.md](../07-reference/cluster-crds.md)                              | Catalog of every operator/CRD referenced by these designs                                        |
 

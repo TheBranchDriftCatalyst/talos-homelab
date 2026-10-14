@@ -11,7 +11,7 @@ tickets:
   - TALOS-cjny
   - TALOS-vbr
   - TALOS-xgrl.12
-bluf: An OTEL-native LGTM stack in one namespace — Alloy collects everything and fans out to Mimir, Loki, Tempo and ClickStack — and this explains why each backend is deployed the way it is.
+bluf: An OTEL-native stack in one namespace — Alloy collects everything and fans out to Mimir, Loki and ClickStack — and this explains why each backend is deployed the way it is. Tempo was removed in TALOS-suxd.5; ClickStack is the only trace store.
 pinned: covers resolves to infrastructure/base/monitoring, but this is the section-level stack document for docs/08-monitoring and moving it would empty the section.
 ---
 
@@ -25,7 +25,6 @@ an OTEL-native LGTM stack living entirely in the **`monitoring`** namespace:
 - **Grafana Alloy** - Unified collector (scrapes metrics, tails pod logs, receives OTLP)
 - **Mimir** - Long-term metrics storage + Prometheus-compatible query API + Alertmanager + Ruler
 - **Loki** - Log storage and query (the ops tail)
-- **Tempo** - Distributed tracing backend
 - **ClickStack / HyperDX** - ClickHouse-backed log analytics (SQL over logs)
 - **Grafana** - Visualization, deployed and configured by grafana-operator
 
@@ -35,7 +34,6 @@ an OTEL-native LGTM stack living entirely in the **`monitoring`** namespace:
 - HyperDX: http://hyperdx.talos00
 - Mimir (Prometheus API): http://mimir.talos00
 - Loki (query API): http://loki.talos00
-- Tempo (query API): http://tempo.talos00
 - Alloy OTLP ingest: http://otel.talos00 (HTTP/4318)
 
 > **Migrated stack.** Prometheus (kube-prometheus-stack) and the Graylog / OpenSearch /
@@ -57,7 +55,7 @@ Everything now lives in a single namespace.
 
 - **Alloy** (Deployment, 1 replica): cluster-wide Prometheus scraping, pod log tailing,
   and the OTLP receiver (gRPC 4317 / HTTP 4318). Fans out: metrics → Mimir (OTLP),
-  logs → Loki **and** ClickStack (dual-write), traces → Tempo **and** ClickStack.
+  logs → Loki **and** ClickStack (dual-write), traces → ClickStack only.
 - **Alloy-node** (DaemonSet, one pod per node): per-node file tailing —
   kernel-capture logs (`/var/log/kernel-capture/<node>.log`) and netconsole-receiver
   logs → Loki. Deliberately _not_ a cluster-wide scraper (that would duplicate metrics).
@@ -68,9 +66,6 @@ Everything now lives in a single namespace.
   query-scheduler / store-gateway / compactor / ruler / alertmanager / nginx gateway.
   Blocks live in MinIO (`minio-hl.minio.svc:9000`, bucket `mimir`).
 - **Loki**: logs, single-binary mode, chunks in MinIO (bucket `loki`).
-- **Tempo**: traces, the monolithic `grafana/tempo` Helm chart — deliberately _not_
-  tempo-operator, which would drag in a cert-manager dependency. Blocks in MinIO
-  (bucket `tempo`).
 - **ClickStack**: HyperDX app + its own OTel collector + an Altinity-operator ClickHouse
   (`chi-hyperdx-logs`) + MongoDB (HyperDX app state only, no log data).
 
@@ -109,7 +104,7 @@ the `infrastructure/base/observability/` directory no longer exists in the repo.
   Loki (`http://loki.monitoring.svc:3100/loki/api/v1/push`) and to the ClickStack
   collector (`http://clickstack-otel-collector.monitoring.svc:4318`)
 - Metrics exported to Mimir via OTLP: `http://mimir-gateway.monitoring.svc:80/otlp`
-- Traces exported to Tempo: `tempo.monitoring.svc:4317`
+- Traces exported to ClickStack's OTel collector (no Tempo since TALOS-suxd.5)
 - `mimir.rules.kubernetes` watches **all** PrometheusRule CRDs cluster-wide and syncs
   them into the Mimir ruler every 30s (tenant `anonymous`)
 - Adds cluster label: `talos-homelab`; pod-log job label: `kubernetes-pods`
@@ -163,27 +158,25 @@ Alloy pushes via the native Loki push API. Loki PVCs/pods are labelled
 
 **Access**: http://loki.talos00
 
-### Tempo
+### Tempo — REMOVED
 
-**Deployment Method**: the monolithic `grafana/tempo` Helm chart via Flux HelmRelease, used
-**instead of** tempo-operator, which requires cert-manager. A `tempo-operator` install is still
-declared under `v2-otel/operators/`, so expect to find the operator without any Tempo CRs for it
-to reconcile.
+Deleted in TALOS-suxd.5 (2026-10-14), along with the orphaned `tempo-operator`
+directory and the MinIO `tempo` bucket's declarations. **Traces now live only in
+ClickStack and are read in HyperDX.** There is no Tempo HelmRelease, StatefulSet,
+IngressRoute (`tempo.talos00`) or GrafanaDatasource any more, and Alloy no longer
+has an `otelcol.exporter.otlp "tempo"`.
 
-**Configuration**: `infrastructure/base/monitoring/v2-otel/tempo/helmrelease.yaml`
+Why it went rather than being kept alongside: traces had been dual-written to
+ClickStack for weeks at full parity, so Tempo was a second copy of data nobody
+queried — it had one Grafana datasource and no dashboard panel beyond a
+build_info up-count. One consequence worth stating plainly: Tempo's blocks lived
+in MinIO, while ClickHouse is single-replica plain MergeTree on local disk with no
+S3 tier, so trace durability is lower than it was. That was accepted as part of
+the hard cutover.
 
-**Resources**: StatefulSet `tempo` (1 replica), no PVC — blocks go straight to MinIO bucket
-`tempo` (scoped `tempo-s3-scoped` user). OTLP receivers on 4317 (gRPC) and 4318 (HTTP).
-
-**Retention**: `block_retention: 168h` (7 days)
-
-**Note**: a postRenderer rewrites the chart's `tempo.yaml` ConfigMap wholesale — the chart
-emits an unsupported `defaults: {}` under `overrides`. Edit the postRenderer patch, not a
-`values:` block, when changing Tempo config. The monolithic chart caps at app 2.9.0;
-2.10+/3.0 is a re-platform.
-
-**Access**: http://tempo.talos00 — but traces are normally viewed through the Grafana
-Tempo datasource, not a standalone UI.
+The 99M of old trace blocks in the MinIO `tempo` bucket, and the `tempo` MinIO
+user, were deliberately NOT deleted — removing a declaration does not remove
+data. See TALOS-suxd.9.
 
 ### ClickStack / HyperDX
 
@@ -232,7 +225,6 @@ Loki stays the ops tail.
 | ----- | ---------- | ------------------------------------------------- |
 | Mimir | prometheus | http://mimir-gateway.monitoring.svc:80/prometheus |
 | Loki  | loki       | http://loki.monitoring.svc:3100                   |
-| Tempo | tempo      | http://tempo.monitoring.svc:3200                  |
 
 **Persistence**: **none by design.** `/var/lib/grafana` is an emptyDir. All state is code —
 dashboards are `GrafanaDashboard` CRs, datasources are `GrafanaDatasource` CRs, re-pushed by
@@ -409,9 +401,6 @@ kubectl logs -n monitoring -l app.kubernetes.io/component=distributor
 # Loki
 kubectl logs -n monitoring -l app.kubernetes.io/name=loki
 
-# Tempo
-kubectl logs -n monitoring tempo-0
-
 # Grafana
 kubectl logs -n monitoring -l app=grafana
 
@@ -455,7 +444,10 @@ kubectl logs -n monitoring -l app=otel-collector --tail=50
 ### Verify Trace Collection
 
 ```bash
-# Grafana Explore -> Tempo datasource -> Search
+# HyperDX -> Traces. Or straight from ClickHouse:
+kubectl -n monitoring exec chi-hyperdx-logs-logs-0-0-0 -- clickhouse-client -q \
+  "SELECT ServiceName, count() FROM default.otel_traces \
+   WHERE Timestamp > now() - INTERVAL 1 HOUR GROUP BY ServiceName"
 # Or push a test span to Alloy's OTLP endpoint at otel.talos00:80 (HTTP/4318 behind Traefik)
 ```
 
@@ -498,7 +490,7 @@ kubectl port-forward -n monitoring svc/mimir-distributor 8080:8080
 
 **S3 `SignatureDoesNotMatch`**: the scoped MinIO users are ESO-generated and **regenerate on
 any spec change** (`refreshInterval: 0` does not prevent reconcile-triggered regeneration).
-Check the `mimir-s3-scoped` / `loki-s3-scoped` / `tempo-s3-scoped` secrets against MinIO
+Check the `mimir-s3-scoped` / `loki-s3-scoped` secrets against MinIO
 before assuming a config bug.
 
 ### Loki Issues
@@ -554,8 +546,9 @@ the Talos EPHEMERAL partition at `/var`):
 default logs volume. These are the sizes the manifests _request_; a PVC can be bound to a larger
 pre-existing PV, so `kubectl get pvc -n monitoring` is the only answer for actual capacity.
 
-Bulk data does **not** live on these volumes: Mimir blocks, Loki chunks, and Tempo blocks
-are all in MinIO (buckets `mimir`, `loki`, `tempo`). Tempo has no PVC at all.
+Bulk data does **not** live on these volumes: Mimir blocks and Loki chunks are in MinIO
+(buckets `mimir`, `loki`). Traces are the exception — they are in ClickHouse on `local-path`,
+not in object storage, which is the durability trade made when Tempo was removed.
 
 **Available storage classes**: `local-path` (default, node NVMe),
 `fatboy-nfs-appdata` (NFS, `nfs-subdir-external-provisioner`), `synology-nfs`.
@@ -569,7 +562,7 @@ TrueNAS is decommissioned and is not a storage backend for anything here.
   is intentionally enabled**; built-in admin retained as break-glass, credentials in
   1Password via ESO
 - HyperDX: its own local auth, **not** behind Authentik yet
-- Mimir / Loki / Tempo IngressRoutes: **no authentication** — LAN-only via the `web`
+- Mimir / Loki IngressRoutes: **no authentication** — LAN-only via the `web`
   entrypoint. Traefik's LoadBalancer VIP is `192.168.1.251`; the usual `/etc/hosts`
   entry for `*.talos00` points at `192.168.1.54` (control plane NodePort), and both paths
   reach the same routes.
@@ -581,7 +574,7 @@ TrueNAS is decommissioned and is not a storage backend for anything here.
 ### Production Recommendations
 
 1. Put HyperDX behind Authentik forward-auth (the house SSO pattern)
-2. Add authentication (or drop the IngressRoutes) for Mimir/Loki/Tempo
+2. Add authentication (or drop the IngressRoutes) for Mimir/Loki
 3. Move the `web` entrypoint routes to `websecure` with TLS
 4. Restrict Alloy's RBAC to the namespaces that actually need log collection
 5. NetworkPolicies between collector and backends
@@ -601,7 +594,8 @@ local volume is reconstructible.
 
 **What actually needs protecting**:
 
-1. **MinIO buckets** `mimir`, `loki`, `tempo` — the real metric/log/trace data
+1. **MinIO buckets** `mimir`, `loki` — the real metric/log data. Traces are NOT here:
+   they are in ClickHouse's PVC, which nothing currently backs up (TALOS-0lka)
 2. **Git** — dashboards, datasources, alert rules and all config are code
 3. **ClickStack MongoDB** — HyperDX users/dashboards/saved searches (rebuildable)
 
@@ -624,7 +618,7 @@ Point any OTLP SDK at Alloy:
 - In-cluster HTTP: `http://alloy.monitoring.svc.cluster.local:4318`
 - From the LAN (e.g. a Mac): `http://otel.talos00` (Traefik → alloy:4318)
 
-Metrics land in Mimir, traces in Tempo, logs in Loki **and** ClickStack.
+Metrics land in Mimir, traces in ClickStack, logs in Loki **and** ClickStack.
 
 ### Scraping an app's Prometheus endpoint
 
@@ -650,7 +644,6 @@ Or query with SQL in HyperDX for anything Loki's label model can't express.
 - [Grafana Alloy Documentation](https://grafana.com/docs/alloy/latest/)
 - [Mimir Documentation](https://grafana.com/docs/mimir/latest/)
 - [Loki Documentation](https://grafana.com/docs/loki/latest/)
-- [Tempo Documentation](https://grafana.com/docs/tempo/latest/)
 - [ClickStack / HyperDX](https://clickhouse.com/docs/use-cases/observability/clickstack)
 - [Grafana Operator](https://grafana.github.io/grafana-operator/)
 - [`grafana-dashboards/README.md`](../../infrastructure/base/monitoring/grafana-dashboards/README.md) -
@@ -664,4 +657,4 @@ Or query with SQL in HyperDX for anything Loki's label model can't express.
 
 - [TALOS-cjny] - ClickStack / HyperDX dedicated log-analytics stack
 - [TALOS-vbr] - Baseline alerts filling the kube-prometheus-stack gap
-- [TALOS-xgrl.12] - Scoped per-service MinIO users for Mimir/Loki/Tempo
+- [TALOS-xgrl.12] - Scoped per-service MinIO users for Mimir/Loki
