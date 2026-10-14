@@ -70,6 +70,14 @@ call_lefthook()
 
 call_lefthook run "pre-push" "$@"
 
+# Capture lefthook's verdict BEFORE the beads block runs. The beads block below
+# exits 0 for its own reasons (timeout, uninitialised db), so without this the
+# status of the last `fi` becomes the hook's exit code and lefthook's verdict is
+# silently discarded. lefthook.yaml defines no pre-push jobs TODAY, which is the
+# only reason that was harmless -- TALOS-o1sb plans to add one here. Mirrors what
+# pre-commit already does. (TALOS-chgk)
+_lefthook_exit=$?
+
 # --- BEGIN BEADS INTEGRATION v1.2.2 ---
 # This section is managed by beads. Do not remove these markers.
 if command -v bd >/dev/null 2>&1; then
@@ -102,3 +110,6 @@ if command -v bd >/dev/null 2>&1; then
   if [ $_bd_exit -ne 0 ]; then exit $_bd_exit; fi
 fi
 # --- END BEADS INTEGRATION v1.2.2 ---
+
+# Propagate lefthook's verdict last -- see the note at the call site above.
+exit ${_lefthook_exit:-0}

@@ -27,6 +27,15 @@ pre-commit:
     # so the hook failed on files that were not staged, not tracked, and not the
     # committer's. yamllint still applies dev/yamllint.yaml's `ignore:` list to
     # explicitly-passed paths, so the curated exclusions below remain in force.
+    # Catch a hook rewrite when it happens, rather than the next time a gate
+    # silently passes. `lefthook install` -- and `lefthook run` without
+    # --no-auto-install -- strips the beads block and the exit propagation from
+    # the tracked hooks. ~0.05s, and it has a proven-failing selftest
+    # (task dev:hooks:verify:selftest). TALOS-chgk.
+    verify-git-hooks:
+      tags: linting
+      run: ./dev/verify-git-hooks.sh
+
     yamllint:
       tags: linting yaml
       run: yamllint -c dev/yamllint.yaml {staged_files}

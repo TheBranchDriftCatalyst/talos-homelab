@@ -32,27 +32,62 @@ tasks:
   # Git Hooks
   # ============================================
 
+  # VERIFY-FIRST, NEVER A BARE INSTALL. `lefthook install` rewrites every hook
+  # from lefthook's own template, which SILENTLY DELETED 151 lines across 5
+  # tracked hooks here -- the beads integration block, and the exit propagation
+  # that is the only reason lefthook can block anything. (TALOS-chgk)
+  #
+  # The hooks are git-tracked and already active via core.hooksPath, so there is
+  # nothing routine to install; the useful operation is checking they are still
+  # intact. If they are genuinely absent, restore them from git.
   hooks:install:
-    desc: Install git hooks with lefthook
+    desc: Verify git hooks are intact (does NOT run `lefthook install` -- see comment)
+    cmds:
+      - task: hooks:verify
+
+  hooks:verify:
+    desc: Check the git hooks still carry the beads block + exit propagation
+    cmds:
+      - ./dev/verify-git-hooks.sh
+
+  hooks:verify:selftest:
+    desc: Prove the hook verifier can actually fail (mutation cases)
+    cmds:
+      - ./dev/verify-git-hooks-selftest.sh
+
+  # Kept as an explicit dead end rather than omitted: someone WILL look for an
+  # install task, and a refusal that names the restore command is more useful
+  # than silence that sends them to `lefthook install` directly.
+  hooks:install:unsafe:
+    desc: "Refuses to run -- rewriting hooks destroys the beads block (TALOS-chgk)"
     cmds:
       - |
-        if ! command -v lefthook &> /dev/null; then
-          echo "❌ lefthook not on PATH. Enter the dev shell: direnv allow (or nix develop)"
-          exit 1
-        fi
-        lefthook install
-        echo "✅ Git hooks installed"
+        echo "Refusing. Rewriting hooks from lefthook templates destroys the" >&2
+        echo "beads integration block and the exit propagation in 5 tracked" >&2
+        echo "hooks (TALOS-chgk)." >&2
+        echo "" >&2
+        echo "If the hooks are missing, restore them instead:" >&2
+        echo "    git checkout -- .beads/hooks" >&2
+        exit 1
 
+  # `lefthook uninstall` deletes hook files. They are git-tracked here so it is
+  # recoverable, but it is never the right first move. (TALOS-chgk)
   hooks:uninstall:
-    desc: Uninstall git hooks
+    desc: "Uninstall git hooks (deletes tracked files; restore with git checkout)"
     cmds:
       - lefthook uninstall
-      - echo "✅ Git hooks uninstalled"
+      # Block scalar: a bare `- echo "...: ..."` is parsed as a MAPPING by YAML,
+      # because the quotes do not wrap the whole scalar and `: ` inside it looks
+      # like a key separator.
+      - |
+        echo "Hooks removed. Restore with: git checkout -- .beads/hooks"
 
   hooks:run:
     desc: Manually run git hooks (use -- HOOK=pre-commit)
     cmds:
-      - lefthook run {{.HOOK}}
+      # --no-auto-install: `lefthook run` INSTALLS hooks implicitly, which is the
+      # same destructive rewrite as `lefthook install`. (TALOS-chgk)
+      - lefthook run --no-auto-install {{.HOOK}}
     vars:
       HOOK: '{{.HOOK | default "pre-commit"}}'
 
