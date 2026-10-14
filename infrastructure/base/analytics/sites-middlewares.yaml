@@ -15,6 +15,28 @@
 #      (middlewares: [{name: analytics-<slug>, namespace: traefik}]).
 # The script path/extensions are IDENTICAL to the shared `analytics-inject-knowledgedump`
 # (change extensions in ONE place only if you change them everywhere).
+#
+# ---------------------------------------------------------------------------
+# WHY SOME SITES INJECT TWO SCRIPTS FROM ONE REWRITE
+# ---------------------------------------------------------------------------
+# boomtime and amber also carry the HyperDX RUM loader, and it is emitted from
+# the SAME single `rewrites` entry as the Plausible tag rather than from a
+# second middleware in the chain.
+#
+# That is not a style choice. CHAINING TWO rewriteBody MIDDLEWARES IS A
+# DOCUMENTED SILENT FAILURE MODE in this cluster: the second one can simply
+# never fire, and nothing reports it -- the page just quietly lacks a script.
+# One rewrite emitting both tags cannot fail that way.
+#
+# It does mean analytics and RUM are coupled for these two sites: turning the
+# chain off turns both off. Accepted, because these are exactly the two sites
+# that want both. An app that wants RUM WITHOUT Plausible uses its own
+# middleware in infrastructure/base/monitoring/v2-otel/hyperdx-rum/ instead
+# (grafana does).
+#
+# NOTE the commented GA drop-in at the bottom of this file still describes
+# listing two injects in one chain. That advice predates the chaining gotcha --
+# if GA is ever activated, fold its tag into the same single rewrite too.
 
 ---
 # boomtime.knowledgedump.space — Plausible inject (data-domain per THIS host).
@@ -28,8 +50,15 @@ spec:
     rewriteBody:
       lastModified: true
       rewrites:
+        # TWO tags, ONE rewrite -- see the header note on chaining. Plausible
+        # first (page analytics), then the HyperDX RUM loader (traces, console,
+        # session replay).
+        #
+        # data-mask-text="false" so the replay is watchable; data-mask-inputs is
+        # left at its default ON, which is what keeps anything typed into a form
+        # out of ClickHouse.
         - regex: "</head>"
-          replacement: '<script defer data-domain="boomtime.knowledgedump.space" src="https://analytics.knowledgedump.space/js/script.file-downloads.hash.outbound-links.pageview-props.tagged-events.js"></script></head>'
+          replacement: '<script defer data-domain="boomtime.knowledgedump.space" src="https://analytics.knowledgedump.space/js/script.file-downloads.hash.outbound-links.pageview-props.tagged-events.js"></script><script src="/hyperdx-rum/rum.js" data-service="boomtime" data-mask-text="false" defer></script></head>'
 
 ---
 # boomtime opt-in chain. Same shape as the shared `analytics` chain, but with the
@@ -58,8 +87,13 @@ spec:
     rewriteBody:
       lastModified: true
       rewrites:
+        # TWO tags, ONE rewrite -- see the header note on chaining.
+        #
+        # data-mask-text="false" so the replay is watchable. data-mask-inputs
+        # stays ON and MUST stay on: amberdark.net serves /login, and that mask
+        # is the only thing keeping typed credentials out of ClickHouse.
         - regex: "</head>"
-          replacement: '<script defer data-domain="amberdark.net" src="https://analytics.knowledgedump.space/js/script.file-downloads.hash.outbound-links.pageview-props.tagged-events.js"></script></head>'
+          replacement: '<script defer data-domain="amberdark.net" src="https://analytics.knowledgedump.space/js/script.file-downloads.hash.outbound-links.pageview-props.tagged-events.js"></script><script src="/hyperdx-rum/rum.js" data-service="amberdark" data-mask-text="false" defer></script></head>'
 
 ---
 # amber opt-in chain. Same shape as the shared `analytics` chain, but with the

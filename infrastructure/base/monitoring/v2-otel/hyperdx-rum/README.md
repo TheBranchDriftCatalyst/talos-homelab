@@ -4,59 +4,49 @@ Browser RUM + session replay into ClickStack/HyperDX. The image and loader live
 in the sister repo `workspace/catalyst-rum` (Forgejo `panda/catalyst-rum`); this
 directory is only the cluster wiring.
 
-## Status: STAGED, NOT WIRED IN
+## Status: LIVE
 
-This directory is **deliberately absent from `../kustomization.yaml`**, so
-nothing here is deployed yet. The image does not exist in Zot until the Forgejo
-repo is created and CI runs once, and a `Deployment` sitting in
-`ImagePullBackOff` would trip the baseline alerts for as long as that took.
+Wired into `../kustomization.yaml`. Image built by Forgejo from
+`panda/catalyst-rum` and pinned by tag **and** digest.
 
-### Enable sequence
+### Opted-in apps
 
-1. Create the Forgejo repo and push the sister repo:
+| App | Where the injection is declared | Replay |
+| --- | --- | --- |
+| `grafana.talos00` | `middlewares.yaml` here | masked inputs + masked text |
+| `boomtime.knowledgedump.space` | `../../analytics/sites-middlewares.yaml` | masked inputs, **text visible** |
+| `amberdark.net` | `../../analytics/sites-middlewares.yaml` | masked inputs, **text visible** |
 
-   ```bash
-   cd ../catalyst-rum   # workspace/catalyst-rum
-   git remote add origin https://forge.knowledgedump.space/panda/catalyst-rum.git
-   git push -u origin main
-   ```
+boomtime and amberdark are declared in the analytics file, not here, because
+both already carry a Plausible `rewriteBody` and **chaining two body rewriters
+is a silent failure mode** — their RUM tag is emitted from the same single
+rewrite. Only apps with no existing injector get a middleware in this directory.
 
-   CI builds, smoke-tests and pushes
-   `registry.knowledgedump.space/talos00-registry/catalyst-rum:sha-<7c>`.
+### Two ingest routes, on purpose
 
-2. Confirm the image is in Zot, then **re-pin** `server.yaml` from `:latest` to
-   that `sha-<7c>` tag and its digest. `latest` on a stale tag is an upgrade
-   trigger — it fast-forwards across every release at once the first time a node
-   re-pulls, and a digest is strictly stronger.
+`hyperdx-rum` is hostless and `lan-only`. `hyperdx-rum-public` is scoped to the
+named public hosts with **no** `lan-only`, at priority 10100 so it beats the
+hostless rule on a host both match. `lan-only` is RFC1918-only, so without the
+second route every public visitor's beacon would be 403'd — empty sessions
+table, no server-side error, console-only symptom.
 
-3. Add one line to `../kustomization.yaml`:
+Public exposure is therefore an explicit list someone has to edit, not a blanket
+opening that arrives as a side effect of instrumenting an app.
 
-   ```yaml
-     - hyperdx-rum/
-   ```
+### Verifying
 
-4. Reconcile and confirm the pod is Ready and serving:
+```bash
+kubectl -n monitoring rollout status deploy/catalyst-rum
+curl -sI https://grafana.talos00/hyperdx-rum/rum.js | head -1       # 200
+curl -s https://boomtime.knowledgedump.space/ | grep -o 'hyperdx-rum/rum.js'
+kubectl -n monitoring exec chi-hyperdx-logs-logs-0-0-0 -- \
+  clickhouse-client -q "SELECT ServiceName, count() FROM default.hyperdx_sessions GROUP BY ServiceName"
+```
 
-   ```bash
-   flux reconcile kustomization monitoring --with-source
-   kubectl -n monitoring rollout status deploy/catalyst-rum
-   curl -sI https://grafana.talos00/hyperdx-rum/rum.js | head -1   # expect 200
-   ```
+### Updating the SDK or loader
 
-5. Only then opt Grafana in, by adding to
-   `../grafana-instances/ingressroute.yaml`:
-
-   ```yaml
-         - name: hyperdx-rum-grafana
-           namespace: monitoring
-   ```
-
-6. Load Grafana, click around, then check the table that was the whole point:
-
-   ```bash
-   kubectl -n monitoring exec chi-hyperdx-logs-logs-0-0-0 -- \
-     clickhouse-client -q "SELECT count() FROM default.hyperdx_sessions"
-   ```
+Push to `panda/catalyst-rum`; CI publishes `sha-<7c>`. Then re-pin `server.yaml`
+to that tag and digest. Do not move the pin to `latest`.
 
 ## Why Grafana is the canary
 

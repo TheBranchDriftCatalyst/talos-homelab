@@ -71,6 +71,50 @@ spec:
   tls: {}
 
 ---
+# PUBLIC ingest, scoped to named hosts. The route above is lan-only, which is
+# RFC1918-only -- a visitor arriving through Cloudflare is NOT in those ranges,
+# so every public beacon would be 403'd and the sessions table would stay empty
+# with no error anywhere except the browser console.
+#
+# WHY HOST-SCOPED instead of just dropping lan-only from the hostless route:
+# this endpoint writes into ClickHouse, and the pod behind it attaches the real
+# credential, so anything that reaches it can write. Enumerating the hosts that
+# are allowed to be public keeps that surface a list someone has to edit on
+# purpose, rather than a blanket opening that arrives as a side effect of
+# instrumenting one app. Add a host here only when that app is actually public.
+#
+# PRIORITY MUST EXCEED the hostless route's 10000. Both rules match a request to
+# boomtime.knowledgedump.space/hyperdx-rum/..., and on a tie Traefik's choice is
+# not something to rely on -- if the lan-only route won, public beacons would be
+# rejected intermittently, which is far worse to debug than a clean failure.
+#
+# Control here is the shared rate-limit (100/s, burst 200 -- the same ceiling
+# the Faro receiver enforces in-process). There is deliberately no auth: the
+# browser holds no credential by design.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hyperdx-rum-public
+  labels:
+    app.kubernetes.io/name: catalyst-rum
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: (Host(`boomtime.knowledgedump.space`) || Host(`amberdark.net`)) && PathPrefix(`/hyperdx-rum/`)
+      kind: Rule
+      priority: 10100
+      middlewares:
+        - name: rate-limit
+          namespace: traefik
+        - name: hyperdx-rum-strip
+          namespace: monitoring
+      services:
+        - name: catalyst-rum
+          port: 80
+  tls: {}
+
+---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
