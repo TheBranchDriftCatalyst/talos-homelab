@@ -208,7 +208,6 @@ k8s_attach('grafana', 'deployment/grafana-deployment', namespace='monitoring',
 k8s_attach('mimir', 'deployment/mimir-nginx', namespace='monitoring',
            port_forwards=['9009:80'], labels=[LABEL_OBSERVE])
 k8s_attach('loki', 'statefulset/loki', namespace='monitoring', labels=[LABEL_OBSERVE])
-k8s_attach('tempo', 'statefulset/tempo', namespace='monitoring', labels=[LABEL_OBSERVE])
 k8s_attach('alloy', 'deployment/alloy', namespace='monitoring', labels=[LABEL_OBSERVE])
 
 cmd_button(
@@ -305,7 +304,7 @@ Ready! UI Groups:
   1-apps-home      - Home Assistant, Linkwarden, Omnitools
   1-apps-gaming    - Windows VM, Guacamole
   2-infra-platform - ArgoCD, Traefik, Registry, External Secrets
-  3-infra-observe  - Grafana, Mimir, Loki, Tempo, Alloy
+  3-infra-observe  - Grafana, Mimir, Loki, Alloy
   4-security       - Cowrie Honeypot (SSH/Telnet)
   5-ops            - Cluster status, GPU tests, deployments
   6-vpn-gateway    - Gluetun, SecureXNG, VPN rotation

@@ -38,7 +38,7 @@ LIVE = os.environ.get('POSTURE_LIVE') == '1'
 SENSITIVE_HOSTS = {
     "traefik", "argocd", "grafana", "hubble", "crowdsec", "headlamp", "goldilocks",
     "kube-ops-view", "minio", "s3", "dbgate", "rabbitmq", "guacamole", "qbittorrent",
-    "frigate", "homeassistant", "loki", "mimir", "tempo",
+    "frigate", "homeassistant", "loki", "mimir",
 }
 PUBLIC_SUFFIXES = ("knowledgedump.space", "amberdark.net")
 AUTH_MW = {"authentik", "lan-only"}
