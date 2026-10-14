@@ -98,8 +98,28 @@ spec:
         - /etc/falco/rules.d
       json_output: true
       priority: notice
-    # falcosidekick fans alerts out; route to Loki so they're queryable in Grafana alongside the
-    # honeypot logs. (enabling it auto-wires Falco's HTTP+JSON output to sidekick.)
+    # falcosidekick fans alerts out to Discord and the WebUI. (Enabling it
+    # auto-wires Falco's HTTP+JSON output to sidekick.)
+    #
+    # IT IS NOT THE DURABLE RECORD, and the comments below that said Loki was
+    # "the authoritative sink" were wrong -- corrected in TALOS-suxd.2 after
+    # measuring both stores. `falco.json_output: true` above means every alert
+    # is ALSO written to the Falco container's stdout, which Alloy's pod-log
+    # pipeline collects and dual-writes to Loki and ClickStack. So the complete
+    # event stream is already in ClickHouse independently of this output.
+    #
+    # Measured over the same 6h window: 8,328 events via the falcosidekick ->
+    # Loki push vs 8,353 rows of Falco stdout in ClickHouse -- parity. All
+    # seven substantive labels the Loki output sets (rule, priority, source,
+    # hostname, k8s_ns_name, k8s_pod_name, tags) are present inside the stdout
+    # JSON too, verified on an actual "Honeypot Container Breach" event, which
+    # carried k8s_ns_name=honeypot and the real cowrie pod name. The eighth,
+    # service_name, is falcosidekick's own constant.
+    #
+    # CONSEQUENCE: the loki output block below is redundant, not load-bearing.
+    # It is removed together with Loki in TALOS-suxd.7 rather than now, so the
+    # falco-ops dashboard keeps working until its panels are re-pointed
+    # (TALOS-suxd.6). Deleting it earlier would blank those panels for no gain.
     falcosidekick:
       enabled: true
       webui:
@@ -156,9 +176,12 @@ spec:
         # event key, an lru ceiling backstops it if TTL ever fails again, and the memory limit
         # sits ABOVE maxmemory so redis evicts rather than being OOM-killed.
         #
-        # storageEnabled: false is deliberate -- events are ephemeral telemetry (Loki is the
-        # authoritative sink), and it means no PVC to reload a huge RDB from on restart, which
-        # is what turned the growth bug into a CrashLoop in the first place.
+        # storageEnabled: false is deliberate -- this redis is a CACHE for the
+        # WebUI, not a record. The durable copy is Falco's own stdout JSON in
+        # ClickStack (see the note above falcosidekick:); redis holding nothing
+        # permanent also means no PVC to reload a huge RDB from on restart,
+        # which is what turned the growth bug into a CrashLoop in the first
+        # place.
         redis:
           enabled: true
           storageEnabled: false
@@ -177,8 +200,9 @@ spec:
           # RSS -- the number the kernel kills on -- climbs past 768Mi. 256Mi of
           # headroom had to cover both index and fragmentation, and did not.
           #
-          # The damage was not the lost events (ephemeral by design; Loki is
-          # authoritative). It was the lost INDEX: with storageEnabled:false there is
+          # The damage was not the lost events (this redis is a cache by design;
+          # the durable copy is Falco stdout -> ClickStack). It was the lost
+          # INDEX: with storageEnabled:false there is
           # nothing to reload, and falcosidekick-ui only creates eventIndex at
           # STARTUP. The UI pods were older than the redis restart, so they never
           # re-created it -- "[ERROR]: [0] Unknown index name" every few seconds for
@@ -199,7 +223,13 @@ spec:
         existingSecret: falco-discord
         loki:
           hostport: "http://loki.monitoring.svc:3100"
-          apiendpoint: "/loki/api/v1/push"
+          # `endpoint`, not `apiendpoint`. The chart renders LOKI_<KEY> from
+          # this block and has no apiendpoint key, so the old spelling was
+          # dropped silently; the live Secret carried LOKI_ENDPOINT only
+          # because the chart default happens to be this exact path. Harmless
+          # by luck, which is why dev/helm-values-lint flags it. Spelled
+          # correctly now so the value is actually ours.
+          endpoint: "/loki/api/v1/push"
           tenant: ""
           minimumpriority: "notice"
         # CRITICAL alerts now reach a human (TALOS-vy8s). Until this existed, outputs were
@@ -207,8 +237,11 @@ spec:
         # this deployment exists, fired into a log stream nobody is paged from.
         #
         # critical ONLY on purpose: at `notice` this channel would carry the ~3.7k/day
-        # false-positive stream (see TALOS-cscw) and be muted within a day. Loki keeps the
-        # full-fidelity record for investigation; Discord carries only "something escaped".
+        # false-positive stream (see TALOS-cscw) and be muted within a day.
+        # ClickStack keeps the full-fidelity record for investigation (query it
+        # as JSONExtractString(Body,'rule') over otel_logs where
+        # LogAttributes['container']='falco'); Discord carries only "something
+        # escaped".
         discord:
           minimumpriority: "critical"
     # Honeypot-breach tripwires: Cowrie + Beelzebub EMULATE the shell, so any real process exec,
