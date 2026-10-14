@@ -59,6 +59,35 @@ spec:
       name: clickstack-mongodb-password
       valuesKey: CLICKSTACK_MONGO_URI
       targetPath: hyperdx.mongoUri
+    # THE INGESTION KEY, and the reason logs and traces were silently dropped.
+    #
+    # The chart defaults hyperdx.apiKey to the literal placeholder
+    # "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx". We never set it, so the collector
+    # validated every incoming OTLP write against that placeholder while Alloy
+    # sent the real key from hyperdx-ingestion — producing a permanent 401:
+    #
+    #   request to .../v1/logs responded with HTTP Status Code 401,
+    #   Message=scheme or token does not match: 10324252-...
+    #   dropped_items=548      (every 10s, ~1000 log lines/minute)
+    #
+    # It failed SILENTLY from the UI's point of view: otel_logs, otel_traces and
+    # hyperdx_sessions all existed with correct schema and zero rows, so HyperDX
+    # offered no table to pick and the first-run wizard asked for manual setup.
+    # Metrics were unaffected because they reach ClickHouse by a different path,
+    # which is why 1.9M metric rows masked the problem.
+    #
+    # Sourced from the SAME secret Alloy reads (../alloy/helmrelease.yaml uses
+    # hyperdx-ingestion/ingestion_api_key via sys.env), so both ends of the
+    # handshake now resolve to one 1Password field: item `hyperdx`, property
+    # `ingestion_api_key`. Rotating is one edit there.
+    #
+    # NOT an ExternalSecret targeting clickstack-app-secrets: that Secret is
+    # templated BY this chart (managed-by: Helm, helm-controller owns its
+    # managedFields), so ESO would fight Helm over it every reconcile.
+    - kind: Secret
+      name: hyperdx-ingestion
+      valuesKey: ingestion_api_key
+      targetPath: hyperdx.apiKey
 
   # Soft-repel the otel-collector from talos03, applied as a postRenderer rather than a
   # values key. The hdx-oss-v2 1.1.1 chart is not confirmed to expose otel.affinity, and an
