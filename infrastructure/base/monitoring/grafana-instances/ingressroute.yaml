@@ -30,6 +30,17 @@ spec:
       middlewares:
         - name: lan-only
           namespace: traefik
+        # HyperDX RUM: traces, console capture and session replay. Grafana is
+        # the canary for this -- LAN-only and SSO-gated so the audience is the
+        # operator, a heavy SPA so the data is interesting, and it carries no
+        # other body rewriter, which matters because chaining two rewriteBody
+        # middlewares is a silent failure mode here.
+        #
+        # Replay is FULLY MASKED on this host (both masks left at their
+        # defaults): Grafana panels can show production data, and an admin
+        # surface is the wrong place to record what is on screen.
+        - name: hyperdx-rum-grafana
+          namespace: monitoring
       services:
         - name: grafana-service
           port: 3000
