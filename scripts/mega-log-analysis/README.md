@@ -51,35 +51,48 @@ investigate `"Saved checkpoint for VPA"`.
 
 ## Findings (first run, 2026-10-15)
 
-Window: 1h. Baseline: `baseline/census-2026-10-15T04-37-09Z.json`.
+Window: 1h. Baseline: `baseline/census-2026-10-15T05-10-29Z.json`.
 
 **18,112 errors/hour (5.03/sec) across 53 services** — 7.2% of all log volume.
 **515 distinct signatures**, but 63 at ≥1/min cover 90.6% of the volume, and the top 20 cover
 64.8%. The work is concentrated, not sprawling.
 
-### 1. 40.7% of "errors" are not errors
+### 1. 46.3% of "errors" are not errors
 
 | Verdict | Rows/h | Share |
 | --- | --- | --- |
-| real | 10,777 | 59.3% |
-| klog INFO (`I0115 …`) | 2,215 | 12.2% |
-| `TRC` (kyverno) | 1,677 | 9.3% |
-| JSON `"s":"I"` / `"level":"info"` | 1,574 | 8.7% |
-| logfmt `level=info` | 1,523 | 8.4% |
-| klog WARN | 392 | 2.2% |
+| real | 9,365 | 53.7% |
+| JSON `"s":"I"` / `"level":"info"` | 1,877 | 10.8% |
+| logfmt `level=info` | 1,805 | 10.3% |
+| `TRC` (kyverno) | 1,674 | 9.6% |
+| klog INFO (`I0115 …`) | 1,672 | 9.6% |
+| klog WARN | 389 | 2.2% |
+| no declared level, no error vocabulary | 362 | 2.1% |
+| numeric level 30 (pino) | 301 | 1.7% |
 
-Four services are **entirely** misclassified and vanish from the actionable set once triage runs:
-`kyverno-admission-controller` (1,672/h, all TRACE), `crowdsec-lapi` (743/h, logfmt info),
-`clickstack-mongodb-svc` (928/h, Mongo `"s":"I"` connection-accepted lines) and `vpa-recommender`
-(864/h, klog `"Saved checkpoint for VPA"`).
+Six services are **entirely** misclassified and vanish from the actionable set once triage runs:
+`kyverno-admission-controller` (1,672/h, all TRACE), `clickstack-mongodb-svc` (928/h, Mongo
+`"s":"I"` connection-accepted lines), `vpa-recommender` (864/h, klog `"Saved checkpoint for VPA"`),
+`crowdsec-lapi` (743/h, logfmt info), `crowdsec-web-ui` (346/h, no declared level) and
+`clickstack` (301/h, pino `level:30`).
 
 This is why Phase 0 is a hard gate: without it, four agent sub-swarms investigate nothing.
 
-**The logfmt rules were a gap in this tool, not in the pipeline.** The first run classified only
-31.4% as misclassified; the dry-run of `tickets` surfaced `level=info` lines sitting in the `real`
-bucket for crowdsec-lapi and mimir — 94 signatures, 1,547 rows/h. Added `body_says_logfmt_*`, plus
-an `ERROR_WINS` guard because mimir wraps an inner `level=info` component field inside an outer
-`level=error` line and the naive rule swallowed genuine errors.
+**The measurement moved twice, and both times the gap was in this tool rather than the pipeline.**
+31.4% -> 40.7% -> 46.3%:
+
+1. The `tickets` dry-run surfaced logfmt `level=info` sitting in the `real` bucket for crowdsec-lapi
+   and mimir — 94 signatures, 1,547 rows/h. Added `body_says_logfmt_*`, plus an `ERROR_WINS` guard,
+   because mimir wraps an inner `level=info` component field inside an outer `level=error` line and
+   the naive rule swallowed genuine errors.
+2. Reviewing the proposed tree surfaced two more. `clickstack` writes pino **numeric** levels, and
+   `SIG_EXPR` rewrites `{"level":30}` to `{"level":<n>}` — normalisation destroyed the only evidence
+   of what the line was. Facts that cannot survive normalisation are now read from the RAW body in
+   SQL (`LEVEL_NUM_EXPR`, `HAS_LEVEL_EXPR`, `HAS_ERRWORD_EXPR`). And `crowdsec-web-ui` declares no
+   level at all, so no level-parsing rule can reach it; that needed a last-resort heuristic keyed on
+   the **absence** of error vocabulary rather than the presence of progress words. Measured on a live
+   hour it selects 362 rows while leaving 1,098 rows that also lack a level but do carry error
+   vocabulary classified `real`.
 
 ### 2. One service, two one-line faults, 24% of all cluster errors
 

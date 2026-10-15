@@ -109,6 +109,25 @@ SIG_EXPR = (
     "Body, '\\x1b\\\\[[0-9;]*m', ''), '[0-9a-f]{8,}', '<h>'), '[0-9]+', '<n>'), 1, 160)"
 )
 
+# Facts that must be read from the RAW body, because SIG_EXPR destroys them.
+# Numeric levels are the clearest case: pino writes {"level":30} for info, and
+# normalisation rewrites that to {"level":<n>}, erasing the only evidence of
+# what the line actually was. Found while reviewing clickstack, whose 301
+# "errors"/h are all level 30.
+LEVEL_NUM_EXPR = "any(toInt32OrZero(extract(Body, '\"level\"[ ]*:[ ]*([0-9]+)')))"
+
+# Does the body declare a level AT ALL, in any convention we recognise?
+HAS_LEVEL_EXPR = (
+    "max(match(Body, '\"level\"|level=|^[IWEF][0-9]{4} |TRC|DBG|ERR|\"s\"[ ]*:'))"
+)
+
+# Does the body contain any error vocabulary? Used ONLY to protect the
+# no-declared-level heuristic from suppressing a genuine error.
+HAS_ERRWORD_EXPR = (
+    "max(match(lower(Body), 'error|fail|exception|denied|refused|timeout|unable|"
+    "cannot|panic|fatal|traceback|not found|invalid'))"
+)
+
 
 def sig_id(service: str, sig: str) -> str:
     """Stable id for a (service, signature) pair.
@@ -173,19 +192,42 @@ class Expected:
         return None
 
 
-def classify(service: str, sig: str, expected: Expected) -> tuple[str, str]:
+def classify(service: str, sig: str, expected: Expected,
+             level_num: int = 0, has_level: bool = True,
+             has_errword: bool = True) -> tuple[str, str]:
     """Return (verdict, reason). Order matters: misclassification wins.
 
     A row that is really INFO must not be filed as an app bug even if it also
     matches an `expected` pattern -- the pipeline fix changes its severity and
     the expected entry then becomes dead.
+
+    level_num / has_level / has_errword come from the RAW body (see the *_EXPR
+    constants); they cannot be recovered from the normalised signature. They
+    default to the conservative values, so a caller that does not supply them
+    gets the old text-only behaviour rather than silent over-suppression.
     """
     error_wins = bool(ERROR_WINS.search(sig))
+
+    # Numeric levels (pino/bunyan): 10 trace, 20 debug, 30 info, 40 warn,
+    # 50 error, 60 fatal. Anything under 50 is not an error.
+    if level_num and level_num < 50 and not error_wins:
+        return "misclassified", f"body_says_numeric_level_{level_num}"
+
     for name, pattern in MISCLASSIFIED_RULES:
         if re.search(pattern, sig):
             if error_wins:
                 break  # an explicit error level outranks any info/warn marker
             return "misclassified", name
+
+    # Last resort, deliberately conservative: the body declares NO level in any
+    # convention AND contains no error vocabulary at all. Requiring the ABSENCE
+    # of error words rather than the PRESENCE of progress words is what keeps
+    # this from suppressing real failures -- measured on a live hour, it selects
+    # 356 rows/h (alertmanager-config render banners, crowdsec-web-ui sync
+    # progress) while 1,098 rows that also lack a level but DO carry error
+    # vocabulary stay `real`.
+    if not has_level and not has_errword:
+        return "misclassified", "no_declared_level_and_no_error_vocabulary"
     hit = expected.match(service, sig)
     if hit:
         return "expected", hit.get("why", "listed in expected.yaml")
@@ -205,19 +247,23 @@ def collect(window_h: int) -> dict[str, Any]:
             GROUP BY ServiceName ORDER BY count() DESC""")
     ]
     sigs = [
-        {"service": r[0], "sig": r[1], "count": int(r[2])}
+        {"service": r[0], "sig": r[1], "count": int(r[2]),
+         "level_num": int(r[3]), "has_level": r[4] == "1", "has_errword": r[5] == "1"}
         for r in tsv(f"""
-            SELECT ServiceName, {SIG_EXPR} AS sig, count()
+            SELECT ServiceName, {SIG_EXPR} AS sig, count(),
+                   {LEVEL_NUM_EXPR}, {HAS_LEVEL_EXPR}, {HAS_ERRWORD_EXPR}
             FROM default.otel_logs
             WHERE TimestampTime > now() - INTERVAL {window_h} HOUR
               AND SeverityText IN ({_sev_list()})
             GROUP BY ServiceName, sig ORDER BY count() DESC""")
-        if len(r) >= 3
+        if len(r) >= 6
     ]
     expected = Expected.load(EXPECTED_FILE)
     for s in sigs:
         s["sig_id"] = sig_id(s["service"], s["sig"])
-        s["verdict"], s["reason"] = classify(s["service"], s["sig"], expected)
+        s["verdict"], s["reason"] = classify(
+            s["service"], s["sig"], expected,
+            s["level_num"], s["has_level"], s["has_errword"])
     return {
         "window_hours": window_h,
         "captured_utc": _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -479,6 +525,22 @@ def cmd_selftest(args) -> int:
     for sample in negatives:
         verdict, _ = classify("svc", sample, expected)
         say(verdict == "real", "negative-control", f"{verdict} <- {sample[:56]}")
+
+    # 2b. Numeric levels (pino). 30 is info and must be caught; 50 is error and
+    #     must NOT be, or clickstack's genuine failures disappear with its noise.
+    v, r = classify("clickstack", '[ALERT-TASK] {"level":<n>,"msg":"x"}', expected, level_num=30)
+    say(v == "misclassified" and r == "body_says_numeric_level_30", "numeric-level-30", r)
+    v, _ = classify("clickstack", '[ALERT-TASK] {"level":<n>,"msg":"x"}', expected, level_num=50)
+    say(v == "real", "numeric-level-50-stays-real", v)
+
+    # 2c. The no-declared-level heuristic, and the guard that makes it safe.
+    v, r = classify("svc", "== rendering alertmanager config ==", expected,
+                    has_level=False, has_errword=False)
+    say(v == "misclassified" and r == "no_declared_level_and_no_error_vocabulary",
+        "no-level-no-errword", r)
+    v, _ = classify("svc", "could not reach upstream: connection refused", expected,
+                    has_level=False, has_errword=True)
+    say(v == "real", "no-level-BUT-errword-stays-real", v)
 
     # 3. The signature id must be stable across counts and unique per service, or
     #    `tickets` either duplicates on every run or collides across services.
