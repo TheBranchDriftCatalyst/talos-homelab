@@ -59,25 +59,22 @@ data:
       - {model: authentik_policies.policybinding, id: b-lobe-chat-own, identifiers: {target: !KeyOf a-lobe-chat, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
       - {model: authentik_policies.policybinding, id: b-lobe-chat-ca, identifiers: {target: !KeyOf a-lobe-chat, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
 
-      # ========== SillyTavern (talos-apps) ==========
-      - model: authentik_providers_proxy.proxyprovider
-        id: p-sillytavern
-        identifiers: {name: sillytavern}
-        attrs:
-          name: sillytavern
-          mode: forward_single
-          external_host: https://sillytavern.talos00
-          access_token_validity: hours=24
-          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
-          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
-          property_mappings:
-            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
-            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
-            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
-            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
-      - {model: authentik_core.application, id: a-sillytavern, identifiers: {slug: sillytavern}, attrs: {name: SillyTavern, slug: sillytavern, group: talos-apps, provider: !KeyOf p-sillytavern, meta_launch_url: https://sillytavern.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/sillytavern.png, policy_engine_mode: any}}
-      - {model: authentik_policies.policybinding, id: b-sillytavern-own, identifiers: {target: !KeyOf a-sillytavern, group: !Find [authentik_core.group, [name, talos-apps]], order: 0}, attrs: {enabled: true}}
-      - {model: authentik_policies.policybinding, id: b-sillytavern-ca, identifiers: {target: !KeyOf a-sillytavern, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+      # ========== SillyTavern — RETIRED 2026-10-15 ==========
+      # The app was disabled in catalyst-llm@db47d6c and its Deployment never came
+      # back, but the IngressRoutes survived and Traefik retried the missing Service
+      # ~3,000 times an HOUR (TALOS-qzbh.2). Routes removed in catalyst-llm@8e626b9;
+      # these tombstones retire the matching Authentik objects.
+      #
+      # state: absent is REQUIRED -- deleting the entries alone would leave the live
+      # provider and application orphaned in Authentik's DB forever, because a
+      # blueprint only creates and updates. Precedent: talos-private-blueprint.yaml.
+      #
+      # The matching !Find in talos-private-blueprint.yaml's outpost union MUST be
+      # removed in the same change. A !Find for a provider that no longer exists is
+      # an invalid entry, and ONE invalid entry fails the WHOLE blueprint -- which is
+      # precisely how the union silently stopped accepting new providers before.
+      - {model: authentik_core.application, identifiers: {slug: sillytavern}, state: absent}
+      - {model: authentik_providers_proxy.proxyprovider, identifiers: {name: sillytavern}, state: absent}
 
       # ========== SearXNG (talos-apps) ==========
       - model: authentik_providers_proxy.proxyprovider
