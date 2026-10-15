@@ -232,6 +232,93 @@ spec:
           // otelcol.processor.batch.default.
           otelcol.receiver.loki "clickstack" {
             output {
+              logs = [otelcol.processor.groupbyattrs.clickstack.input]
+            }
+          }
+
+          // ---------------------------------------------------------------
+          // Give ClickStack a real OTel Resource. TALOS-7e6j.
+          //
+          // THE PROBLEM: everything except HyperDX's own app reaches
+          // ClickStack through otelcol.receiver.loki, which lands Loki stream
+          // labels as LOG-RECORD attributes and sets NO resource attributes at
+          // all. The ClickHouse exporter fills the ServiceName column from the
+          // resource attribute `service.name`, so 99.65% of rows (275,468 of
+          // 276,446 in one hour) arrived with ServiceName = '' AND an empty
+          // ResourceAttributes map. The only service that ever showed up in
+          // HyperDX's ServiceName facet was hdx-oss-api -- the HyperDX app
+          // itself, because it speaks native OTLP with a real SDK.
+          //
+          // That is not only cosmetic: ServiceName is the LEADING column of
+          // otel_logs' ORDER BY, so an empty value collapses the primary index
+          // to time-only, and HyperDX's Kubernetes views have no k8s.* resource
+          // attributes to filter on.
+          //
+          // WHY groupbyattrs AND NOT a transform alone: in OTTL's `log`
+          // context, `resource` is the ResourceLogs' resource, which is SHARED
+          // by every record under it. Writing resource.attributes per record
+          // would race -- the last record processed would win for the whole
+          // group. groupbyattrs is the component built for this: it regroups
+          // records so each distinct label set gets its OWN ResourceLogs, then
+          // the rename below is safe because it runs once per resource.
+          //
+          // WHY THE KEYS ARE COPIED BACK DOWN below: groupbyattrs MOVES, it
+          // does not copy. Left alone it would delete LogAttributes['namespace']
+          // and friends -- which would silently break all 44 ported dashboard
+          // panels, the abuseipdb reporter's SQL, and the Logs source's own
+          // serviceNameExpression, none of which would error; they would just
+          // return nothing.
+          otelcol.processor.groupbyattrs "clickstack" {
+            keys = ["cluster", "namespace", "pod", "container", "node", "app", "app_kubernetes_io_name"]
+
+            output {
+              logs = [otelcol.processor.transform.clickstack.input]
+            }
+          }
+
+          otelcol.processor.transform "clickstack" {
+            // ignore, not propagate: a malformed record must never take down
+            // the whole log pipeline.
+            error_mode = "ignore"
+
+            // Pass 1 -- on the RESOURCE, which groupbyattrs has now made
+            // unique per label set. Renames to k8s semantic conventions and
+            // derives service.name with the same precedence the Logs source's
+            // serviceNameExpression already uses (app -> app_kubernetes_io_name
+            // -> container -> unknown), so the column and the expression agree.
+            log_statements {
+              context = "resource"
+              statements = [
+                `set(attributes["k8s.cluster.name"],   attributes["cluster"])   where attributes["cluster"] != nil`,
+                `set(attributes["k8s.namespace.name"], attributes["namespace"]) where attributes["namespace"] != nil`,
+                `set(attributes["k8s.pod.name"],       attributes["pod"])       where attributes["pod"] != nil`,
+                `set(attributes["k8s.container.name"], attributes["container"]) where attributes["container"] != nil`,
+                `set(attributes["k8s.node.name"],      attributes["node"])      where attributes["node"] != nil`,
+                `set(attributes["service.name"], attributes["app"])                    where attributes["app"] != nil`,
+                `set(attributes["service.name"], attributes["app_kubernetes_io_name"]) where attributes["service.name"] == nil and attributes["app_kubernetes_io_name"] != nil`,
+                `set(attributes["service.name"], attributes["container"])              where attributes["service.name"] == nil and attributes["container"] != nil`,
+                `set(attributes["service.name"], "unknown")                            where attributes["service.name"] == nil`,
+              ]
+            }
+
+            // Pass 2 -- copy the flat keys back onto each log record, so every
+            // existing LogAttributes['...'] consumer keeps working. Reading
+            // from the resource and writing to the record is safe in `log`
+            // context; it is the reverse direction that races.
+            log_statements {
+              context = "log"
+              statements = [
+                `set(attributes["cluster"],   resource.attributes["cluster"])   where attributes["cluster"] == nil and resource.attributes["cluster"] != nil`,
+                `set(attributes["namespace"], resource.attributes["namespace"]) where attributes["namespace"] == nil and resource.attributes["namespace"] != nil`,
+                `set(attributes["pod"],       resource.attributes["pod"])       where attributes["pod"] == nil and resource.attributes["pod"] != nil`,
+                `set(attributes["container"], resource.attributes["container"]) where attributes["container"] == nil and resource.attributes["container"] != nil`,
+                `set(attributes["node"],      resource.attributes["node"])      where attributes["node"] == nil and resource.attributes["node"] != nil`,
+                `set(attributes["app"],       resource.attributes["app"])       where attributes["app"] == nil and resource.attributes["app"] != nil`,
+                `set(attributes["app_kubernetes_io_name"], resource.attributes["app_kubernetes_io_name"]) where attributes["app_kubernetes_io_name"] == nil and resource.attributes["app_kubernetes_io_name"] != nil`,
+              ]
+            }
+
+            output {
               logs = [otelcol.processor.batch.clickstack.input]
             }
           }
