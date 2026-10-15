@@ -36,7 +36,7 @@ LIVE = os.environ.get('POSTURE_LIVE') == '1'
 
 # Admin / infra surfaces that must always be gated (auth or lan-only) on websecure, redirect-only on web.
 SENSITIVE_HOSTS = {
-    "traefik", "argocd", "grafana", "hubble", "crowdsec", "headlamp", "goldilocks",
+    "traefik", "argocd", "grafana", "hubble", "crowdsec", "headlamp",
     "kube-ops-view", "minio", "s3", "dbgate", "rabbitmq", "guacamole", "qbittorrent",
     "frigate", "homeassistant", "loki", "mimir",
 }
