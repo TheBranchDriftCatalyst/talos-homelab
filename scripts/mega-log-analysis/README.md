@@ -35,8 +35,8 @@ Modelled on `dev/helm-values-lint/`: self-contained tool directory, own task nam
 
 ## Why `triage` exists
 
-`SeverityText` cannot be trusted on its own. 40.7% of rows marked `error` say INFO, TRACE or WARN
-in their own body. `triage` splits three ways:
+`SeverityText` cannot be trusted on its own. 46.3% of rows marked `error` are not errors — the body
+says INFO, TRACE or WARN, or declares no level at all. `triage` splits three ways:
 
 | Verdict | Meaning | Who fixes it |
 | --- | --- | --- |
@@ -53,9 +53,9 @@ investigate `"Saved checkpoint for VPA"`.
 
 Window: 1h. Baseline: `baseline/census-2026-10-15T05-10-29Z.json`.
 
-**18,112 errors/hour (5.03/sec) across 53 services** — 7.2% of all log volume.
-**515 distinct signatures**, but 63 at ≥1/min cover 90.6% of the volume, and the top 20 cover
-64.8%. The work is concentrated, not sprawling.
+**17,450 errors/hour (4.85/sec) across 51 services** — ~7% of all log volume.
+**438 distinct signatures**, but 70 at ≥1/min cover 91.8% of the volume, and the top 20 cover
+67.0%. The work is concentrated, not sprawling. Of the 17,450, **9,365/h are real**.
 
 ### 1. 46.3% of "errors" are not errors
 
@@ -76,7 +76,7 @@ Six services are **entirely** misclassified and vanish from the actionable set o
 `crowdsec-lapi` (743/h, logfmt info), `crowdsec-web-ui` (346/h, no declared level) and
 `clickstack` (301/h, pino `level:30`).
 
-This is why Phase 0 is a hard gate: without it, four agent sub-swarms investigate nothing.
+This is why Phase 0 is a hard gate: without it, six agent sub-swarms investigate nothing.
 
 **The measurement moved twice, and both times the gap was in this tool rather than the pipeline.**
 31.4% -> 40.7% -> 46.3%:
@@ -127,7 +127,7 @@ distilled up into `SESSION_STATUS.md` → Standing gotchas rather than left as "
 
 | # | Issue | Status |
 | --- | --- | --- |
-| 1 | **Severity misclassification** — 40.7% of `error` rows state a non-error level in their body. The ClickStack collector does not parse klog/logfmt/JSON levels. | Phase 0 of the mega epic |
+| 1 | **Severity misclassification** — 46.3% of `error` rows are not errors. The ClickStack collector does not parse klog, logfmt, JSON-string or JSON-numeric levels, and marks level-less lines `error` with no evidence at all. | Phase 0 of the mega epic |
 | 2 | **Log body overwrites k8s metadata** — the collector flattens body JSON into `LogAttributes`, so a body key `namespace` beats the real one. 67 of 36,287 rows (0.185%); only `namespace`, only cross-namespace controllers. `ResourceAttributes['k8s.namespace.name']` is the trustworthy copy. | **TALOS-woqh** |
 | 3 | **Dual-write misses short-lived pods** — Loki has CronJob output ClickStack never received (abuseipdb-reporter, 39 lines, pod lived 21s). Blocks Loki deletion. | **TALOS-atkc** |
 | 4 | **No k8s metrics or k8s events in ClickStack** — only 54 metric names, all self-telemetry (`v8js.*`, `otelcol_*`). HyperDX's Kubernetes dashboard is blank for this reason, not the ServiceName one. | **TALOS-suxd.8** |
@@ -140,7 +140,7 @@ distilled up into `SESSION_STATUS.md` → Standing gotchas rather than left as "
    refuse to start entirely. Use an `alloy run` probe on a minimal config. See memory
    `alloy-validate-does-not-check-ottl`.
 2. **Signature truncation can over-split one cause.** traefik's missing-Service error appears as two
-   signatures because two IngressRoutes name it. That is arguably correct — two manifests, two
+   signatures because two IngressRoutes name it (a third leaf is the unrelated TLS secret). That is arguably correct — two manifests, two
    fixes — but shared root causes are deduped at the review step, not by the tool.
 3. **`--apply` is deliberately not wired.** Propose-only is the standing rule for this campaign;
    the L2 list is reviewed with the operator before any tree is created.

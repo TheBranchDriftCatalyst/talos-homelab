@@ -404,12 +404,25 @@ def cmd_tickets(args) -> int:
 
 
 def _existing_sig_ids() -> set[str]:
-    """Signature ids already filed in beads, so re-runs do not duplicate."""
-    try:
-        out = subprocess.run(["bd", "search", "sig:"], capture_output=True, text=True, timeout=60)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return set()
-    return set(re.findall(r"sig:([0-9a-f]{12})", out.stdout))
+    """Signature ids already filed in beads, so re-runs do not duplicate.
+
+    Uses `bd list --json`, NOT `bd search`. bd search matches TITLES only, so it
+    never saw the sig:<id> marker that lives in the description -- the first
+    implementation silently reported every already-filed leaf as new. Found by
+    re-running `tickets` after creating the tree and getting "23 new" when the
+    answer was zero.
+
+    Closed tickets count as filed: a signature that was fixed and closed must
+    not reappear as new work on the next census.
+    """
+    for args in (["bd", "list", "--all", "--json"], ["bd", "list", "--json"]):
+        try:
+            out = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return set()
+        if out.returncode == 0 and out.stdout.strip():
+            return set(re.findall(r"sig:([0-9a-f]{12})", out.stdout))
+    return set()
 
 
 def cmd_prompt(args) -> int:
