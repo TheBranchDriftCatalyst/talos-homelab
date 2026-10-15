@@ -230,7 +230,12 @@ spec:
               context = "log"
               statements = [
                 `set(resource.attributes["service.name"], "kernel-capture")`,
-                `set(resource.attributes["k8s.node.name"], attributes["node"]) where attributes["node"] != nil`,
+                // There is no "node" label on this leg -- the host identity is in
+                // the tailed filename, e.g. /host-var-log/kernel-capture/talos06.log
+                // -> log.file.name "talos06.log". Strip the extension so a panic
+                // stays attributable to a host. Guarded, because an unexpected
+                // filename shape must not produce a bogus node name.
+                `set(resource.attributes["k8s.node.name"], Split(attributes["log.file.name"], ".")[0]) where attributes["log.file.name"] != nil`,
                 `set(resource.attributes["k8s.cluster.name"], attributes["cluster"]) where attributes["cluster"] != nil`,
               ]
             }
