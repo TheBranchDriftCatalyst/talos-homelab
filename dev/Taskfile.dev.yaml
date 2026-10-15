@@ -166,6 +166,61 @@ tasks:
     cmds:
       - python3 dev/helm-values-lint/helm_values_lint.py selftest
 
+  # ============================================
+  # Error-log campaign (mega-log epic)
+  # ============================================
+  # CLUSTER-DEPENDENT: every task except selftest execs into the ClickHouse
+  # behind HyperDX, so these are operator tasks, not CI tasks. Same reasoning as
+  # helm-values above -- not in `lint`, not in `ci`, own exit code.
+  #
+  # Order: selftest -> census --save -> triage -> tickets. Each stage reads the
+  # artifact the previous one wrote, so the ticket tree can be regenerated from
+  # a later window without hand-editing anything.
+
+  logs:
+    desc: "Errors per service from the centralised log stream (offline-ish: reads the newest baseline)"
+    cmds:
+      - task: logs:triage
+
+  logs:census:
+    # Pass -- --save to write a baseline/ snapshot; without it this only prints.
+    desc: "CLUSTER: count error-level logs per service for a window"
+    cmds:
+      - python3 scripts/mega-log-analysis/mega_log_analysis.py census {{.CLI_ARGS}}
+
+  logs:signatures:
+    desc: "Cluster error bodies into normalised signatures per service"
+    cmds:
+      - python3 scripts/mega-log-analysis/mega_log_analysis.py signatures {{.CLI_ARGS}}
+
+  logs:triage:
+    # The number that matters: 40.7% of rows marked `error` state a non-error
+    # level in their own body. Those are ingest-pipeline bugs, not app bugs, and
+    # `tickets` refuses to file them.
+    desc: "Classify signatures: misclassified / expected / real"
+    cmds:
+      - python3 scripts/mega-log-analysis/mega_log_analysis.py triage {{.CLI_ARGS}}
+
+  logs:tickets:
+    # Dry-run by default. --apply is deliberately not wired: propose-only is the
+    # standing rule for this campaign and the L2 list is reviewed first.
+    desc: "Dry-run the beads L1/L2/L3 ticket tree from the newest baseline"
+    cmds:
+      - python3 scripts/mega-log-analysis/mega_log_analysis.py tickets {{.CLI_ARGS}}
+
+  logs:burndown:
+    desc: "CLUSTER: diff a fresh census against the committed baseline"
+    cmds:
+      - python3 scripts/mega-log-analysis/mega_log_analysis.py burndown {{.CLI_ARGS}}
+
+  logs:selftest:
+    # Gotcha #11 again. Proves every classifier fires on a real-world body shape
+    # AND stays quiet on genuine errors -- a classifier that matched everything
+    # would pass the positive half alone.
+    desc: "Prove every log classifier fires (positives + negative controls)"
+    cmds:
+      - python3 scripts/mega-log-analysis/mega_log_analysis.py selftest
+
   lint:yaml:
     desc: Lint YAML files with yamllint
     cmds:
