@@ -43,6 +43,22 @@ spec:
                     secretKeyRef:
                       name: grafana-oidc
                       key: GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET
+                # ClickHouse datasource, needed to query logs now that Loki is
+                # gone (TALOS-suxd.6/.7). Loki's datasource was built into
+                # Grafana core; this one is not, so it has to be installed.
+                #
+                # KNOWN COST, accepted deliberately: /var/lib/grafana is an
+                # emptyDir (grafana runs as cattle -- all state is CRs), so this
+                # re-downloads from grafana.com on EVERY pod start. That makes
+                # Grafana's startup depend on egress, where before it did not.
+                # The alternative was losing the honeypot and falco log panels
+                # entirely, which are the security dashboards this cluster
+                # actually gets paged off.
+                #
+                # Pinned, not floating: an unpinned plugin would silently change
+                # version on any pod roll.
+                - name: GF_INSTALL_PLUGINS
+                  value: "grafana-clickhouse-datasource 4.10.1"
 
   # Grafana configuration
   config:

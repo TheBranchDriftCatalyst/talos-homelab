@@ -41,3 +41,49 @@ spec:
       maxLines: 1000
       timeout: 60
     editable: false
+---
+# ClickHouse datasource — the log/trace store after Loki and Tempo were removed
+# (TALOS-suxd.6/.7). Replaces what the `loki-v2` datasource used to serve.
+#
+# Needs the grafana-clickhouse-datasource plugin, installed via GF_INSTALL_PLUGINS
+# in ../../grafana-instances/grafana-instance.yaml — see the cost note there.
+#
+# Auth: `default` user, no password. That is not an oversight: this ClickHouse is
+# cluster-internal only with no exposed route, which is the same posture the
+# HyperDX app itself uses (clickstack/helmrelease.yaml defaultConnections).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: clickhouse
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: 'grafana'
+  datasource:
+    name: ClickHouse
+    uid: clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    isDefault: false
+    jsonData:
+      host: clickhouse-hyperdx-logs.monitoring.svc
+      port: 9000
+      protocol: native
+      secure: false
+      username: default
+      defaultDatabase: default
+      # Point the plugin's built-in log/trace explorers at the OTel tables so
+      # "Logs" and "Traces" query modes work without per-panel configuration.
+      logs:
+        defaultDatabase: default
+        defaultTable: otel_logs
+        otelEnabled: true
+        timeColumn: TimestampTime
+        levelColumn: SeverityText
+        messageColumn: Body
+      traces:
+        defaultDatabase: default
+        defaultTable: otel_traces
+        otelEnabled: true
+    editable: false
