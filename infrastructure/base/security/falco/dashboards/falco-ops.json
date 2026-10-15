@@ -1,6 +1,6 @@
 {
   "uid": "falco-ops",
-  "title": "Falco \u00b7 Runtime Security",
+  "title": "Falco · Runtime Security",
   "tags": [
     "security",
     "falco",
@@ -35,8 +35,8 @@
       "title": "Total alerts (range)",
       "description": "All Falco events in the window.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 5,
@@ -76,13 +76,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum(count_over_time({rule=~\".+\"}[$__range]))",
-          "queryType": "instant"
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT count() AS \"Total alerts\"\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')",
+          "refId": "A"
         }
       ]
     },
@@ -92,8 +93,8 @@
       "title": "CRITICAL+ (range)",
       "description": "Critical/Alert/Emergency events.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 5,
@@ -137,13 +138,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum(count_over_time({rule=~\".+\", priority=~\"Critical|Emergency|Alert\"}[$__range]))",
-          "queryType": "instant"
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT count() AS \"CRITICAL+\"\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')\n  AND JSONExtractString(Body, 'priority') IN ('Critical','Emergency','Alert')",
+          "refId": "A"
         }
       ]
     },
@@ -153,8 +155,8 @@
       "title": "HONEYPOT BREACHES",
       "description": "Attacker escaped the honeypot emulation into the real container. Any non-zero = investigate NOW.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 5,
@@ -198,13 +200,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum(count_over_time({rule=~\"Honeypot Container Breach.*\"}[$__range]))",
-          "queryType": "instant"
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT count() AS \"Breaches\"\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')\n  AND JSONExtractString(Body, 'rule') LIKE 'Honeypot Container Breach%'",
+          "refId": "A"
         }
       ]
     },
@@ -214,8 +217,8 @@
       "title": "Distinct rules firing",
       "description": "How many distinct Falco rules fired.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 5,
@@ -255,13 +258,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "count(sum by (rule) (count_over_time({rule=~\".+\"}[$__range])))",
-          "queryType": "instant"
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT uniqExact(JSONExtractString(Body, 'rule')) AS \"Distinct rules\"\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')",
+          "refId": "A"
         }
       ]
     },
@@ -271,8 +275,8 @@
       "title": "Alerts over time by priority",
       "description": "",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 8,
@@ -303,14 +307,15 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum by (priority) (count_over_time({rule=~\".+\"}[$__interval]))",
-          "legendFormat": "{{priority}}",
-          "queryType": "range"
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT\n  $__timeInterval(TimestampTime) AS time,\n  JSONExtractString(Body, 'priority') AS priority,\n  count() AS alerts\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')\nGROUP BY time, priority\nORDER BY time",
+          "refId": "A",
+          "legendFormat": "{{priority}}"
         }
       ]
     },
@@ -332,8 +337,8 @@
       "title": "Top rules",
       "description": "",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 9,
@@ -346,14 +351,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "topk(15, sum by (rule) (count_over_time({rule=~\".+\"}[$__range])))",
-          "queryType": "instant",
-          "format": "table"
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT\n  JSONExtractString(Body, 'rule') AS Rule,\n  JSONExtractString(Body, 'priority') AS Priority,\n  count() AS Events\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')\nGROUP BY Rule, Priority\nORDER BY Events DESC\nLIMIT 15",
+          "refId": "A"
         }
       ]
     },
@@ -363,8 +368,8 @@
       "title": "Top workloads (ns / pod)",
       "description": "",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 9,
@@ -377,21 +382,21 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "topk(15, sum by (k8s_ns_name, k8s_pod_name) (count_over_time({rule=~\".+\"}[$__range])))",
-          "queryType": "instant",
-          "format": "table"
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT\n  JSONExtractString(Body, 'output_fields', 'k8s.ns.name')  AS Namespace,\n  JSONExtractString(Body, 'output_fields', 'k8s.pod.name') AS Pod,\n  count() AS Events\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')\nGROUP BY Namespace, Pod\nORDER BY Events DESC\nLIMIT 15",
+          "refId": "A"
         }
       ]
     },
     {
       "id": 20,
       "type": "row",
-      "title": "Honeypot breach tripwire (Cowrie + Beelzebub) \u2014 should ALWAYS be empty",
+      "title": "Honeypot breach tripwire (Cowrie + Beelzebub) — should ALWAYS be empty",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -406,8 +411,8 @@
       "title": "HONEYPOT BREACH events (any = someone escaped the emulation)",
       "description": "Fires on unexpected process exec / sensitive-file read / container escape inside honeypot pods. See honeypot-breach.yaml.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 9,
@@ -424,13 +429,13 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "{rule=~\"Honeypot Container Breach.*\"}",
-          "queryType": "range"
+          "format": 2,
+          "rawSql": "SELECT\n  TimestampTime AS timestamp,\n  JSONExtractString(Body, 'output') AS body,\n  JSONExtractString(Body, 'priority') AS level\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')\n  AND JSONExtractString(Body, 'rule') LIKE 'Honeypot Container Breach%'\nORDER BY timestamp DESC\nLIMIT 500",
+          "refId": "A"
         }
       ]
     },
@@ -452,8 +457,8 @@
       "title": "Recent CRITICAL+ Falco events",
       "description": "",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 10,
@@ -470,20 +475,20 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "{rule=~\".+\", priority=~\"Critical|Emergency|Alert\"}",
-          "queryType": "range"
+          "format": 2,
+          "rawSql": "SELECT\n  TimestampTime AS timestamp,\n  JSONExtractString(Body, 'output') AS body,\n  JSONExtractString(Body, 'priority') AS level\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONHas(Body, 'rule')\n  AND JSONExtractString(Body, 'priority') IN ('Critical','Emergency','Alert')\nORDER BY timestamp DESC\nLIMIT 500",
+          "refId": "A"
         }
       ]
     },
     {
       "id": 24,
       "type": "row",
-      "title": "Rule provenance \u2014 upstream ruleset auto-follow",
+      "title": "Rule provenance — upstream ruleset auto-follow",
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -497,10 +502,10 @@
       "id": 25,
       "type": "logs",
       "title": "Upstream ruleset changed (falcoctl auto-follow)",
-      "description": "Falco's UPSTREAM ruleset is not pinned in git. A falcoctl-artifact-follow sidecar in every Falco pod polls ghcr.io/falcosecurity/rules/falco-rules:5 every 168h. ':5' is a FLOATING major tag, so any 5.x upstream publishes lands here and Falco hot-reloads it \u2014 no commit, no PR, no review.\n\nThis panel exists so that change is attributable rather than mysterious. If Falco suddenly starts paging Discord with a new false positive, or a detection you relied on goes quiet, LOOK HERE FIRST and check whether the ruleset moved on that date.\n\nEmpty is the normal state \u2014 it means the upstream ruleset has not changed in the window. falcoctl logs 'Nothing to do, artifact already up to date.' on every no-op check, including at pod start, so those are deliberately filtered out; only real changes appear.\n\nOur OWN rules (honeypot-breach etc.) are NOT affected \u2014 they live in customRules in the Falco HelmRelease and are version-controlled. Only the upstream base ruleset moves.",
+      "description": "Falco's UPSTREAM ruleset is not pinned in git. A falcoctl-artifact-follow sidecar in every Falco pod polls ghcr.io/falcosecurity/rules/falco-rules:5 every 168h. ':5' is a FLOATING major tag, so any 5.x upstream publishes lands here and Falco hot-reloads it — no commit, no PR, no review.\n\nThis panel exists so that change is attributable rather than mysterious. If Falco suddenly starts paging Discord with a new false positive, or a detection you relied on goes quiet, LOOK HERE FIRST and check whether the ruleset moved on that date.\n\nEmpty is the normal state — it means the upstream ruleset has not changed in the window. falcoctl logs 'Nothing to do, artifact already up to date.' on every no-op check, including at pod start, so those are deliberately filtered out; only real changes appear.\n\nOur OWN rules (honeypot-breach etc.) are NOT affected — they live in customRules in the Falco HelmRelease and are version-controlled. Only the upstream base ruleset moves.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "h": 9,
@@ -517,13 +522,13 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "{namespace=\"falco\", container=\"falcoctl-artifact-follow\"} |~ \"Found new artifact version|Artifact correctly installed\"",
-          "queryType": "range"
+          "format": 2,
+          "rawSql": "SELECT\n  TimestampTime AS timestamp,\n  Body AS body,\n  'info' AS level\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco'\n  AND LogAttributes['container'] = 'falcoctl-artifact-follow'\n  AND (Body ILIKE '%Found new artifact version%' OR Body ILIKE '%Artifact correctly installed%')\nORDER BY timestamp DESC\nLIMIT 200",
+          "refId": "A"
         }
       ]
     }

@@ -20,18 +20,18 @@
   "templating": {
     "list": [
       {
-        "name": "DS_LOKI",
+        "name": "DS_CLICKHOUSE",
         "type": "datasource",
-        "query": "loki",
+        "query": "grafana-clickhouse-datasource",
         "current": {
           "selected": false,
-          "text": "Loki",
-          "value": "loki-v2"
+          "text": "ClickHouse",
+          "value": "clickhouse"
         },
         "hide": 0,
         "includeAll": false,
         "multi": false,
-        "label": "Loki datasource",
+        "label": "ClickHouse datasource",
         "options": [],
         "refresh": 1,
         "regex": ""
@@ -57,7 +57,7 @@
   "panels": [
     {
       "type": "row",
-      "title": "Honeypot Overview \u2014 haproxy front (real attacker IPs, 80/20 cowrie/beelzebub split)",
+      "title": "Honeypot Overview — haproxy front (real attacker IPs, 80/20 cowrie/beelzebub split)",
       "id": 101,
       "collapsed": false,
       "gridPos": {
@@ -74,8 +74,8 @@
       "title": "Unique Attacker IPs (24h)",
       "description": "Distinct src_ip values over the range, excluding pod-CIDR (10.244.x.x) kubelet/health-probe noise.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 0,
@@ -119,15 +119,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
-          "queryType": "instant",
-          "instant": true,
-          "range": false
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT uniqExactIf(extract(Body, '^([0-9.]+):[0-9]+ '), extract(Body, '^([0-9.]+):[0-9]+ ') != '') AS \"Unique IPs\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy'",
+          "refId": "A"
         }
       ]
     },
@@ -137,8 +136,8 @@
       "title": "Total Connections",
       "description": "Distinct src_ip values over the range, excluding pod-CIDR (10.244.x.x) kubelet/health-probe noise.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 6,
@@ -182,15 +181,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range]))",
-          "queryType": "instant",
-          "instant": true,
-          "range": false
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(extract(Body, '^([0-9.]+):[0-9]+ ') != '') AS \"Connections\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy'",
+          "refId": "A"
         }
       ]
     },
@@ -200,8 +198,8 @@
       "title": "Cowrie hits (80%)",
       "description": "Distinct src_ip values over the range, excluding pod-CIDR (10.244.x.x) kubelet/health-probe noise. NOTE: 80/20 is the haproxy WEIGHT, which assigns new unique source IPs -- it is NOT the observed connection share. `stick on src` pins each attacker IP to one honeypot, so a single high-volume attacker skews the counts hard: over one 6h window the real split was beelzebub 1554 / cowrie 366 (81/19) while the weights were 50/50, because one IP (109.160.32.38) contributed 1439 of those. Compare \"Unique Attacker IPs\" for the weighted behaviour.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 12,
@@ -245,15 +243,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"haproxy\"} |~ `/cowrie ` [$__range]))",
-          "queryType": "instant",
-          "instant": true,
-          "range": false
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(extract(Body, '/(cowrie|beelzebub) ') = 'cowrie') AS \"Cowrie\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy'",
+          "refId": "A"
         }
       ]
     },
@@ -263,8 +260,8 @@
       "title": "Beelzebub hits (20%)",
       "description": "Distinct src_ip values over the range, excluding pod-CIDR (10.244.x.x) kubelet/health-probe noise. NOTE: 80/20 is the haproxy WEIGHT, which assigns new unique source IPs -- it is NOT the observed connection share. `stick on src` pins each attacker IP to one honeypot, so a single high-volume attacker skews the counts hard: over one 6h window the real split was beelzebub 1554 / cowrie 366 (81/19) while the weights were 50/50, because one IP (109.160.32.38) contributed 1439 of those. Compare \"Unique Attacker IPs\" for the weighted behaviour.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 18,
@@ -308,15 +305,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"haproxy\"} |~ `/beelzebub ` [$__range]))",
-          "queryType": "instant",
-          "instant": true,
-          "range": false
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(extract(Body, '/(cowrie|beelzebub) ') = 'beelzebub') AS \"Beelzebub\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy'",
+          "refId": "A"
         }
       ]
     },
@@ -326,8 +322,8 @@
       "title": "Backend Split (cowrie vs beelzebub)",
       "description": "Distribution of Cowrie eventid types over the range.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 0,
@@ -381,17 +377,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum by (backend) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `/(?P<backend>cowrie|beelzebub) ` | backend != \"\" [$__range]))",
-          "format": "time_series",
-          "instant": true,
-          "range": false,
-          "legendFormat": "{{backend}}",
-          "queryType": "instant"
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT extract(Body, '/(cowrie|beelzebub) ') AS backend, count() AS connections\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy' AND extract(Body, '/(cowrie|beelzebub) ') != ''\nGROUP BY backend ORDER BY connections DESC",
+          "refId": "A"
         }
       ]
     },
@@ -401,8 +394,8 @@
       "title": "Top Attacker IPs (all honeypots)",
       "description": "Most active source IPs over the range (all events), excluding pod-CIDR 10.244.x.x health-probe noise.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 8,
@@ -432,15 +425,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "topk(10, sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
-          "format": "table",
-          "instant": true,
-          "range": false
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT extract(Body, '^([0-9.]+):[0-9]+ ') AS \"Source IP\", count() AS Connections,\n  uniqExact(extract(Body, '/(cowrie|beelzebub) ')) AS Backends, max(TimestampTime) AS \"Last seen\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy' AND extract(Body, '^([0-9.]+):[0-9]+ ') != ''\nGROUP BY \"Source IP\" ORDER BY Connections DESC LIMIT 10",
+          "refId": "A"
         }
       ],
       "transformations": [
@@ -477,8 +469,8 @@
       "title": "Connections Over Time (by backend)",
       "description": "Rate of new honeypot sessions (cowrie.session.connect).",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 16,
@@ -530,12 +522,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum by (backend) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `/(?P<backend>cowrie|beelzebub) ` | backend != \"\" [$__interval]))",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(TimestampTime) AS time, extract(Body, '/(cowrie|beelzebub) ') AS backend, count() AS connections\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy' AND extract(Body, '/(cowrie|beelzebub) ') != ''\nGROUP BY time, backend ORDER BY time",
+          "refId": "A",
           "legendFormat": "{{backend}}"
         }
       ]
@@ -546,8 +540,8 @@
       "title": "Protocol Split (SSH vs Telnet)",
       "description": "Distribution of Cowrie eventid types over the range.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 0,
@@ -601,17 +595,14 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum by (proto) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `(?P<proto>ssh_in|telnet_in)` | proto != \"\" [$__range]))",
-          "format": "time_series",
-          "instant": true,
-          "range": false,
-          "legendFormat": "{{proto}}",
-          "queryType": "instant"
+          "format": 1,
+          "queryType": "table",
+          "rawSql": "SELECT extract(Body, '(ssh_in|telnet_in)') AS proto, count() AS connections\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy' AND extract(Body, '(ssh_in|telnet_in)') != ''\nGROUP BY proto ORDER BY connections DESC",
+          "refId": "A"
         }
       ]
     },
@@ -621,8 +612,8 @@
       "title": "Connections Over Time (SSH vs Telnet)",
       "description": "Rate of new honeypot sessions (cowrie.session.connect).",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 8,
@@ -674,19 +665,21 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "sum by (proto) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} | regexp `(?P<proto>ssh_in|telnet_in)` | proto != \"\" [$__interval]))",
+          "format": 0,
+          "queryType": "timeseries",
+          "rawSql": "SELECT $__timeInterval(TimestampTime) AS time, extract(Body, '(ssh_in|telnet_in)') AS proto, count() AS connections\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy' AND extract(Body, '(ssh_in|telnet_in)') != ''\nGROUP BY time, proto ORDER BY time",
+          "refId": "A",
           "legendFormat": "{{proto}}"
         }
       ]
     },
     {
       "type": "row",
-      "title": "Cowrie \u2014 medium interaction (80% tier)",
+      "title": "Cowrie — medium interaction (80% tier)",
       "id": 121,
       "collapsed": true,
       "gridPos": {
@@ -702,8 +695,8 @@
           "title": "Captured Commands (live)",
           "description": "Every command an attacker typed into the honeypot shell (cowrie.command.input). Expand a line to see src_ip, session, username and the full input. This is the primary command-capture feed.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 14,
@@ -723,12 +716,13 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "{namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` | line_format \"{{.src_ip}}  [{{.session}}]  $ {{.input}}\""
+              "format": 2,
+              "rawSql": "SELECT TimestampTime AS timestamp,\n  concat(JSONExtractString(Body,'src_ip'), '  [', JSONExtractString(Body,'session'), ']  $ ',\n         JSONExtractString(Body,'input')) AS body,\n  'info' AS level\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.command.input'\nORDER BY timestamp DESC LIMIT 500",
+              "refId": "A"
             }
           ]
         },
@@ -738,8 +732,8 @@
           "title": "Login Attempts (success vs failed)",
           "description": "Rate of successful vs failed SSH logins captured by the honeypot.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 8,
@@ -825,22 +819,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.success` [$__interval]))",
-              "legendFormat": "success"
-            },
-            {
-              "refId": "B",
-              "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
-              },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.failed` [$__interval]))",
-              "legendFormat": "failed"
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT $__timeInterval(TimestampTime) AS time,\n  countIf(JSONExtractString(Body, 'eventid') = 'cowrie.login.success') AS success,\n  countIf(JSONExtractString(Body, 'eventid') = 'cowrie.login.failed')  AS failed\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship'\n  AND JSONExtractString(Body, 'eventid') IN ('cowrie.login.success','cowrie.login.failed')\nGROUP BY time ORDER BY time",
+              "refId": "A"
             }
           ]
         },
@@ -850,8 +836,8 @@
           "title": "Sessions Over Time",
           "description": "Rate of new honeypot sessions (cowrie.session.connect).",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 8,
@@ -903,13 +889,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | src_ip!=\"\" | src_ip!~`10.244..*` | eventid=`cowrie.session.connect` [$__interval]))",
-              "legendFormat": "sessions"
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT $__timeInterval(TimestampTime) AS time, count() AS sessions\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.session.connect'\n  AND JSONExtractString(Body,'src_ip') != ''\n  AND NOT match(JSONExtractString(Body,'src_ip'), '^10\\\\.244\\\\.')\nGROUP BY time ORDER BY time",
+              "refId": "A"
             }
           ]
         },
@@ -919,8 +906,8 @@
           "title": "Top Commands",
           "description": "Most frequently executed commands captured from interactive sessions (cowrie.command.input).",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 9,
@@ -950,15 +937,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "topk(15, sum by (input) (count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` | input!=\"\" [$__range])))",
-              "format": "table",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT JSONExtractString(Body,'input') AS Command, count() AS Times,\n  uniqExact(JSONExtractString(Body,'src_ip')) AS \"Source IPs\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.command.input'\n  AND JSONExtractString(Body,'input') != ''\nGROUP BY Command ORDER BY Times DESC LIMIT 15",
+              "refId": "A"
             }
           ],
           "transformations": [
@@ -992,10 +978,10 @@
           "id": 113,
           "type": "table",
           "title": "Captured Credentials (successful logins)",
-          "description": "username / password pairs that resulted in cowrie.login.success \u2014 the credential combinations attackers believe are valid.",
+          "description": "username / password pairs that resulted in cowrie.login.success — the credential combinations attackers believe are valid.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 10,
@@ -1025,15 +1011,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "topk(20, sum by (username, password) (count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.success` [$__range])))",
-              "format": "table",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT JSONExtractString(Body,'username') AS Username,\n  JSONExtractString(Body,'password') AS Password, count() AS Times\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.login.success'\nGROUP BY Username, Password ORDER BY Times DESC LIMIT 20",
+              "refId": "A"
             }
           ],
           "transformations": [
@@ -1070,8 +1055,8 @@
           "title": "Event Breakdown",
           "description": "Distribution of Cowrie eventid types over the range.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 10,
@@ -1125,17 +1110,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum by (eventid) (count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid!=\"\" [$__range]))",
-              "format": "time_series",
-              "instant": true,
-              "range": false,
-              "legendFormat": "{{eventid}}",
-              "queryType": "instant"
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT JSONExtractString(Body, 'eventid') AS eventid, count() AS events\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') != ''\nGROUP BY eventid ORDER BY events DESC",
+              "refId": "A"
             }
           ]
         },
@@ -1145,8 +1127,8 @@
           "title": "Honeypot-Detection Attempts (24h)",
           "description": "Commands that fingerprint the host (CPU/GPU/uptime) - i.e. an attacker checking whether this is a real box. Cowrie currently sees telnet/Mirai-style bots that do NOT fingerprint, so 0 here is an accurate result, not a broken panel. Compare with the beelzebub tier, which sees heavy GPU recon.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 7,
@@ -1156,13 +1138,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo` [$__range]))",
-              "queryType": "instant"
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT count() AS \"Recon commands\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.command.input'\n  AND match(JSONExtractString(Body,'input'), 'uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo')",
+              "refId": "A"
             }
           ],
           "options": {
@@ -1194,8 +1177,8 @@
           "title": "Distinct Cowrie Source IPs (range)",
           "description": "Unique source IPs routed to the cowrie backend. Previously counted ALL haproxy IPs, duplicating \"Unique Attacker IPs\".",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 7,
@@ -1205,13 +1188,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} |~ `/cowrie ` | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
-              "queryType": "instant"
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT uniqExactIf(extract(Body, '^([0-9.]+):[0-9]+ '), extract(Body, '^([0-9.]+):[0-9]+ ') != '') AS \"Cowrie IPs\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy' AND extract(Body, '/(cowrie|beelzebub) ') = 'cowrie'",
+              "refId": "A"
             }
           ],
           "options": {
@@ -1243,8 +1227,8 @@
           "title": "Recon / Detection Commands (live)",
           "description": "The actual recon commands attackers run to fingerprint the box.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 7,
@@ -1254,13 +1238,13 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "{namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` |~ `uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo` | line_format \"{{.src_ip}} $ {{.input}}\"",
-              "queryType": "range"
+              "format": 2,
+              "rawSql": "SELECT TimestampTime AS timestamp,\n  concat(JSONExtractString(Body,'src_ip'), ' $ ', JSONExtractString(Body,'input')) AS body,\n  'warn' AS level\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.command.input'\n  AND match(JSONExtractString(Body,'input'), 'uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo')\nORDER BY timestamp DESC LIMIT 300",
+              "refId": "A"
             }
           ],
           "options": {
@@ -1276,8 +1260,8 @@
           "title": "Commands Captured",
           "description": "Total cowrie.command.input events over the selected range. These come only from real interactive sessions (not health probes).",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 4,
@@ -1321,15 +1305,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.command.input` [$__range]))",
-              "queryType": "instant",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT count() AS Commands\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.command.input'",
+              "refId": "A"
             }
           ]
         },
@@ -1339,8 +1322,8 @@
           "title": "Sessions",
           "description": "Total cowrie.session.connect events over the selected range.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 4,
@@ -1384,15 +1367,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.session.connect` [$__range]))",
-              "queryType": "instant",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT count() AS Sessions\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.session.connect'",
+              "refId": "A"
             }
           ]
         },
@@ -1402,8 +1384,8 @@
           "title": "Failed Logins",
           "description": "Total cowrie.login.failed events over the range.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 4,
@@ -1447,15 +1429,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"logship\"} | json | eventid=`cowrie.login.failed` [$__range]))",
-              "queryType": "instant",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT count() AS \"Failed logins\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'logship' AND JSONExtractString(Body, 'eventid') = 'cowrie.login.failed'",
+              "refId": "A"
             }
           ]
         }
@@ -1463,7 +1444,7 @@
     },
     {
       "type": "row",
-      "title": "Beelzebub \u2014 LLM high interaction (20% tier)",
+      "title": "Beelzebub — LLM high interaction (20% tier)",
       "id": 134,
       "collapsed": true,
       "gridPos": {
@@ -1479,8 +1460,8 @@
           "title": "[beelzebub] Captured Commands (live)",
           "description": "Every command an attacker typed into the honeypot shell (cowrie.command.input). Expand a line to see src_ip, session, username and the full input. This is the primary command-capture feed.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 14,
@@ -1500,12 +1481,13 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "{namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` | line_format \"{{.event_SourceIp}}  [{{.event_ID}}]  $ {{.event_Command}}\""
+              "format": 2,
+              "rawSql": "SELECT TimestampTime AS timestamp,\n  concat(JSONExtractString(Body, 'event', 'SourceIp'), '  [', JSONExtractString(Body, 'event', 'ID'), ']  $ ',\n         JSONExtractString(Body, 'event', 'Command')) AS body,\n  'info' AS level\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'SSH Raw Command'\nORDER BY timestamp DESC LIMIT 500",
+              "refId": "A"
             }
           ]
         },
@@ -1515,8 +1497,8 @@
           "title": "[beelzebub] Login Attempts vs Terminal Sessions",
           "description": "Beelzebub emits no success/failed distinction - every login event is Msg=\"New SSH Login Attempt\" with Status=\"Stateless\". The old panel ran the SAME query twice and labelled them success/failed. Now compares attempts against sessions that actually reached a terminal.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 8,
@@ -1602,22 +1584,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` [$__interval]))",
-              "legendFormat": "login attempts"
-            },
-            {
-              "refId": "B",
-              "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
-              },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Terminal Session` [$__interval]))",
-              "legendFormat": "terminal sessions"
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT $__timeInterval(TimestampTime) AS time,\n  countIf(JSONExtractString(Body, 'event', 'Msg') = 'New SSH Login Attempt')    AS login_attempts,\n  countIf(JSONExtractString(Body, 'event', 'Msg') = 'New SSH Terminal Session') AS terminal_sessions\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub'\n  AND JSONExtractString(Body, 'event', 'Msg') IN ('New SSH Login Attempt','New SSH Terminal Session')\nGROUP BY time ORDER BY time",
+              "refId": "A"
             }
           ]
         },
@@ -1627,8 +1601,8 @@
           "title": "[beelzebub] Sessions Over Time",
           "description": "Uses Msg=\"New SSH Terminal Session\". The old query filtered event_SourceIp!~\"10.244..*\", which excluded 100% of rows because beelzebub only ever sees haproxy pod IP (no PROXY protocol).",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 8,
@@ -1680,13 +1654,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Terminal Session` [$__interval]))",
-              "legendFormat": "sessions"
+              "format": 0,
+              "queryType": "timeseries",
+              "rawSql": "SELECT $__timeInterval(TimestampTime) AS time, count() AS sessions\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'New SSH Terminal Session'\nGROUP BY time ORDER BY time",
+              "refId": "A"
             }
           ]
         },
@@ -1696,8 +1671,8 @@
           "title": "[beelzebub] Top Commands",
           "description": "Most frequently executed commands captured from interactive sessions (cowrie.command.input).",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 9,
@@ -1727,15 +1702,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "topk(15, sum by (event_Command) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` | event_Command!=\"\" [$__range])))",
-              "format": "table",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT JSONExtractString(Body, 'event', 'Command') AS Command, count() AS Times,\n  uniqExact(JSONExtractString(Body, 'event', 'SourceIp')) AS \"Source IPs\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'SSH Raw Command'\n  AND JSONExtractString(Body, 'event', 'Command') != ''\nGROUP BY Command ORDER BY Times DESC LIMIT 15",
+              "refId": "A"
             }
           ],
           "transformations": [
@@ -1769,10 +1743,10 @@
           "id": 126,
           "type": "table",
           "title": "[beelzebub] Captured Credentials",
-          "description": "Username+password pairs tried against the beelzebub SSH tier. Requires Loki max_query_series >= ~5000 (raised from 500 in loki/helmrelease.yaml): credential-stuffing is inherently high-cardinality -- 491 distinct pairs at 2h, 837 distinct passwords at 24h. If this errors with \"maximum of series reached\" again, the range has outgrown the limit; narrow the range or raise it further.",
+          "description": "Username+password pairs tried against the beelzebub SSH tier. The old Loki version of this panel needed max_query_series raised to ~5000 and still errored with \"maximum of series reached\" as the range grew -- credential-stuffing is inherently high-cardinality (491 distinct pairs at 2h, 837 distinct passwords at 24h). The ClickHouse query aggregates server-side with an explicit LIMIT, so there is no series ceiling to outgrow.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 10,
@@ -1802,15 +1776,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "topk(20, sum by (event_User, event_Password) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` [$__range])))",
-              "format": "table",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT JSONExtractString(Body, 'event', 'User') AS Username,\n  JSONExtractString(Body, 'event', 'Password') AS Password, count() AS Times\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'New SSH Login Attempt'\nGROUP BY Username, Password ORDER BY Times DESC LIMIT 20",
+              "refId": "A"
             }
           ],
           "transformations": [
@@ -1847,8 +1820,8 @@
           "title": "[beelzebub] Event Breakdown",
           "description": "Was filtering eventid!=\"\" (a COWRIE field) with no container filter, so it displayed COWRIE events under a beelzebub heading.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 10,
@@ -1902,17 +1875,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum by (event_Msg) (count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg!=\"\" [$__range]))",
-              "format": "time_series",
-              "instant": true,
-              "range": false,
-              "legendFormat": "{{event_Msg}}",
-              "queryType": "instant"
+              "format": 1,
+              "queryType": "table",
+              "rawSql": "SELECT JSONExtractString(Body, 'event', 'Msg') AS event, count() AS events\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') != ''\nGROUP BY event ORDER BY events DESC",
+              "refId": "A"
             }
           ]
         },
@@ -1922,8 +1892,8 @@
           "title": "[beelzebub] Honeypot-Detection Attempts (24h)",
           "description": "GPU/CPU fingerprinting commands (uname, lspci, lscpu, nproc, nvidia-smi, ipinfo.io). Old sentinels matched 0 lines anywhere.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 7,
@@ -1933,13 +1903,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` |~ `uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo` [$__range]))",
-              "queryType": "instant"
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT count() AS \"Recon commands\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'SSH Raw Command'\n  AND match(JSONExtractString(Body, 'event', 'Command'), 'uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo')",
+              "refId": "A"
             }
           ],
           "options": {
@@ -1971,8 +1942,8 @@
           "title": "[beelzebub] Distinct Recon Source IPs (24h)",
           "description": "External IPs that ran the fingerprinting recon.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 7,
@@ -1982,13 +1953,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "count(sum by (src_ip) (count_over_time({namespace=\"honeypot\", container=\"haproxy\"} |~ `ssh_honeypots/beelzebub` | regexp `^(?P<src_ip>[0-9.]+):[0-9]+ ` | src_ip!=\"\" [$__range])))",
-              "queryType": "instant"
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT uniqExactIf(extract(Body, '^([0-9.]+):[0-9]+ '), extract(Body, '^([0-9.]+):[0-9]+ ') != '') AS \"Beelzebub IPs\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'haproxy' AND extract(Body, '/(cowrie|beelzebub) ') = 'beelzebub'",
+              "refId": "A"
             }
           ],
           "options": {
@@ -2020,8 +1992,8 @@
           "title": "[beelzebub] Recon / Detection Commands (live)",
           "description": "The actual recon commands attackers run to fingerprint the box.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 7,
@@ -2031,13 +2003,13 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "{namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` |~ `uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo` | line_format \"{{.event_SourceIp}} $ {{.event_Command}}\"",
-              "queryType": "range"
+              "format": 2,
+              "rawSql": "SELECT TimestampTime AS timestamp,\n  concat(JSONExtractString(Body, 'event', 'SourceIp'), ' $ ', JSONExtractString(Body, 'event', 'Command')) AS body,\n  'warn' AS level\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'SSH Raw Command'\n  AND match(JSONExtractString(Body, 'event', 'Command'), 'uname|lspci|lscpu|nproc|nvidia-smi|ipinfo|/proc/cpuinfo')\nORDER BY timestamp DESC LIMIT 300",
+              "refId": "A"
             }
           ],
           "options": {
@@ -2053,8 +2025,8 @@
           "title": "[beelzebub] Commands Captured",
           "description": "Total cowrie.command.input events over the selected range. These come only from real interactive sessions (not health probes).",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 4,
@@ -2098,15 +2070,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`SSH Raw Command` [$__range]))",
-              "queryType": "instant",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT count() AS Commands\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'SSH Raw Command'",
+              "refId": "A"
             }
           ]
         },
@@ -2116,8 +2087,8 @@
           "title": "[beelzebub] Login Attempts",
           "description": "Old query filtered event_SourceIp!~\"10.244..*\" which excluded everything (beelzebub only sees haproxy pod IP).",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 4,
@@ -2161,15 +2132,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Login Attempt` [$__range]))",
-              "queryType": "instant",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT count() AS \"Login attempts\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'New SSH Login Attempt'",
+              "refId": "A"
             }
           ]
         },
@@ -2179,8 +2149,8 @@
           "title": "[beelzebub] Terminal Sessions",
           "description": "Renamed: the old \"Failed Logins\" ran the same query as Login Attempts. Beelzebub has no failure signal; this now counts sessions that reached a terminal.",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
           "gridPos": {
             "h": 4,
@@ -2224,15 +2194,14 @@
           },
           "targets": [
             {
-              "refId": "A",
               "datasource": {
-                "type": "loki",
-                "uid": "loki-v2"
+                "type": "grafana-clickhouse-datasource",
+                "uid": "clickhouse"
               },
-              "expr": "sum(count_over_time({namespace=\"honeypot\", container=\"beelzebub\"} | json | event_Msg=`New SSH Terminal Session` [$__range]))",
-              "queryType": "instant",
-              "instant": true,
-              "range": false
+              "format": 1,
+              "queryType": "sql",
+              "rawSql": "SELECT count() AS \"Terminal sessions\"\nFROM default.otel_logs WHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'honeypot' AND LogAttributes['container'] = 'beelzebub' AND JSONExtractString(Body, 'event', 'Msg') = 'New SSH Terminal Session'",
+              "refId": "A"
             }
           ]
         }
@@ -2254,11 +2223,11 @@
     {
       "id": 136,
       "type": "logs",
-      "title": "HONEYPOT BREACH (Falco) \u2014 UNEXPLAINED execs (canary filtered out)",
+      "title": "HONEYPOT BREACH (Falco) — UNEXPLAINED execs (canary filtered out)",
       "description": "Every Honeypot Container Breach event EXCEPT the tripwire canary's own marker.\n\nThe canary (falco/falco-tripwire-canary, `41 */6 * * *`) execs `getent passwd falco-tripwire-canary` into cowrie 4x/day to prove this rule still fires. That marker is filtered here, so anything showing up is an exec nobody has accounted for -- an operator with kubectl, or an intruder.\n\nKNOWN BASELINE, ~4/day: each canary run ALSO emits one `6 init` (the runc plumbing of the exec itself), which carries no marker and cannot be filtered. Those are expected. Anything else is not.\n\nDO NOT suppress `6 init` to clean this up. python3, sh and busybox are all in honeypot_expected_procs, so an exec using them produces NO alert on the command -- the runc plumbing is the only thing that fires. Measured 2026-09-19: six operator execs produced six `6 init` events and zero python3 events. Suppressing it blinds the rule to exactly the binaries an intruder would choose.",
       "datasource": {
-        "type": "loki",
-        "uid": "loki-v2"
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
       },
       "gridPos": {
         "x": 0,
@@ -2274,13 +2243,13 @@
       },
       "targets": [
         {
-          "refId": "A",
           "datasource": {
-            "type": "loki",
-            "uid": "loki-v2"
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
           },
-          "expr": "{rule=~\"Honeypot Container Breach.*\"} != `falco-tripwire-canary`",
-          "queryType": "range"
+          "format": 2,
+          "rawSql": "SELECT TimestampTime AS timestamp,\n  JSONExtractString(Body,'output') AS body,\n  JSONExtractString(Body,'priority') AS level\nFROM default.otel_logs\nWHERE $__timeFilter(TimestampTime)\n  AND LogAttributes['namespace'] = 'falco' AND LogAttributes['container'] = 'falco'\n  AND JSONExtractString(Body,'rule') LIKE 'Honeypot Container Breach%'\n  AND Body NOT ILIKE '%falco-tripwire-canary%'\nORDER BY timestamp DESC LIMIT 300",
+          "refId": "A"
         }
       ]
     }
