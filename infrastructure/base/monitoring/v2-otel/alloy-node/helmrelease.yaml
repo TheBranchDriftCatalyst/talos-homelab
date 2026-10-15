@@ -205,6 +205,37 @@ spec:
           // Loki's deletion.
           otelcol.receiver.loki "clickstack" {
             output {
+              logs = [otelcol.processor.transform.clickstack.input]
+            }
+          }
+
+          // Name this stream. TALOS-7e6j fixed ServiceName for POD logs in the
+          // alloy Deployment, but kernel-capture originates HERE in the
+          // DaemonSet, so that fix could never reach it -- it stayed the one
+          // unnamed stream in ClickStack (94 rows / 10min with ServiceName='').
+          //
+          // Much simpler than the Deployment's version: there is exactly one
+          // stream on this leg and its identity is static, so there is nothing
+          // to group by and no per-pod labels to promote. Setting the resource
+          // directly is safe precisely BECAUSE every record here belongs to the
+          // same logical resource -- the hazard in the Deployment (OTTL `log`
+          // context shares one resource across a mixed group) does not apply.
+          //
+          // node comes from the per-node label the file tail already carries,
+          // so panics stay attributable to a host.
+          otelcol.processor.transform "clickstack" {
+            error_mode = "ignore"
+
+            log_statements {
+              context = "log"
+              statements = [
+                `set(resource.attributes["service.name"], "kernel-capture")`,
+                `set(resource.attributes["k8s.node.name"], attributes["node"]) where attributes["node"] != nil`,
+                `set(resource.attributes["k8s.cluster.name"], attributes["cluster"]) where attributes["cluster"] != nil`,
+              ]
+            }
+
+            output {
               logs = [otelcol.processor.batch.clickstack.input]
             }
           }
