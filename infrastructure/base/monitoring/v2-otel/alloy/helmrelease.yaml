@@ -269,7 +269,7 @@ spec:
           // serviceNameExpression, none of which would error; they would just
           // return nothing.
           otelcol.processor.groupbyattrs "clickstack" {
-            keys = ["cluster", "namespace", "pod", "container", "node", "app", "app_kubernetes_io_name"]
+            keys = ["cluster", "namespace", "pod", "container", "node", "app", "app_kubernetes_io_name", "job"]
 
             output {
               logs = [otelcol.processor.transform.clickstack.input]
@@ -297,6 +297,11 @@ spec:
                 `set(attributes["service.name"], attributes["app"])                    where attributes["app"] != nil`,
                 `set(attributes["service.name"], attributes["app_kubernetes_io_name"]) where attributes["service.name"] == nil and attributes["app_kubernetes_io_name"] != nil`,
                 `set(attributes["service.name"], attributes["container"])              where attributes["service.name"] == nil and attributes["container"] != nil`,
+                // kernel-capture is a FILE tail from alloy-node, not a pod log, so it
+                // has no namespace/pod/container to be named from -- fall back to the
+                // Loki job. It was the only stream left unnamed (7 rows/min) and it is
+                // the one stream that cannot be re-collected after the fact.
+                `set(attributes["service.name"], attributes["job"])                    where attributes["service.name"] == nil and attributes["job"] != nil`,
                 `set(attributes["service.name"], "unknown")                            where attributes["service.name"] == nil`,
               ]
             }
@@ -315,6 +320,7 @@ spec:
                 `set(attributes["node"],      resource.attributes["node"])      where attributes["node"] == nil and resource.attributes["node"] != nil`,
                 `set(attributes["app"],       resource.attributes["app"])       where attributes["app"] == nil and resource.attributes["app"] != nil`,
                 `set(attributes["app_kubernetes_io_name"], resource.attributes["app_kubernetes_io_name"]) where attributes["app_kubernetes_io_name"] == nil and resource.attributes["app_kubernetes_io_name"] != nil`,
+                `set(attributes["job"],       resource.attributes["job"])       where attributes["job"] == nil and resource.attributes["job"] != nil`,
               ]
             }
 
