@@ -8,5 +8,24 @@ resources:
   # namespace.yaml removed - managed by infrastructure/base/namespaces/
   - example-mongodb/ # MongoDBCommunity CR — reconciled by mongodb-kubernetes (MCK) operator (TALOS-zadf.57)
   # dbgate moved to infrastructure/base/databases/dbgate (databases ns) — TALOS-zadf
-  - frigate/
+  # frigate/ PARKED 2026-10-16 — intentionally NOT built, so Flux prunes it.
+  #
+  # It ran for 159 days and did nothing: zero cameras enabled (the only one is a
+  # placeholder rtsp://user:pass@camera-ip), zero events, and 0 files / 161 bytes
+  # in /media/frigate. What it DID do was emit 232 errors/hour — 100% of its log
+  # volume — fail Kyverno pod-security-baseline on privileged + hostPath
+  # /dev/dri, and pin itself (and scrypted, via co-location) to talos02-gpu,
+  # which was the documented blocker on TALOS-3hl8.1. TALOS-qzbh.9.
+  #
+  # The manifests are kept ON PURPOSE: frigate is wanted eventually. They have
+  # been left in the state they should return in — nodeSelector widened off the
+  # single host, the false OpenVINO claim corrected, and the broken VAAPI preset
+  # disabled with instructions for re-enabling it. Re-deploy by uncommenting
+  # this one line.
+  #
+  # Its PVCs were pruned deliberately (empty, nothing to preserve). The PVs
+  # rec-scratch-frigate-{config,media} are Retain, so they go Released rather
+  # than being wiped; on re-enable either clear their claimRef or let local-path
+  # provision fresh ones.
+  # - frigate/
   - scrypted/

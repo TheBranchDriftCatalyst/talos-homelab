@@ -1,6 +1,13 @@
 ---
-# Frigate NVR - AI-powered security camera system
-# Uses Intel Arc on talos02-gpu via OpenVINO for person detection
+# Frigate NVR - AI-powered security camera system.
+#
+# PARKED 2026-10-16 — not linked into applications/scratch/kustomization.yaml,
+# so nothing here is deployed. Manifests are kept deliberately: frigate is
+# wanted eventually, and this file is now in the state it should come back in.
+#
+# Detection runs on CPU, not the GPU (detectors: cpu, num_threads: 4). The old
+# header claimed "Intel Arc via OpenVINO for person detection" — that was never
+# true and is what TALOS-3hl8.1 was filed about.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,9 +31,17 @@ spec:
         # config only — `media` is 100Gi of surveillance recordings, not worth backing up.
         backup.velero.io/backup-volumes: config
     spec:
-      # Run on talos02-gpu with Intel Arc
+      # Widened from `kubernetes.io/hostname: talos02-gpu` (TALOS-3hl8.1).
+      # Pinning to one host was the documented blocker on that ticket and kept
+      # scrypted pinned alongside it (TALOS-3hl8.6). Both nodes carrying this
+      # label — talos02-gpu and talos06 — expose /dev/dri, so either can run it.
+      #
+      # NOTE the widening does NOT buy working hwaccel, contrary to the
+      # justification originally given on TALOS-3hl8.1: both labelled nodes are
+      # the same Arrow Lake generation, so VAAPI fails identically on both. See
+      # the hwaccel comment in configmap.yaml.
       nodeSelector:
-        kubernetes.io/hostname: talos02-gpu
+        intel.feature.node.kubernetes.io/gpu-arc: "true"
 
       securityContext:
         fsGroup: 44  # video group

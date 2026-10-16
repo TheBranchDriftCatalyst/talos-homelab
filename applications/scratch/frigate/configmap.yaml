@@ -32,9 +32,25 @@ data:
         type: cpu
         num_threads: 4
 
-    # Hardware acceleration for video decoding (Intel QSV)
-    ffmpeg:
-      hwaccel_args: preset-vaapi
+    # Hardware acceleration DISABLED, because this image cannot do it here.
+    #
+    # `hwaccel_args: preset-vaapi` made frigate.util.services shell out to
+    # vainfo on every stats tick and log the failure at ERROR — 232/hour, which
+    # was 100% of frigate's log volume (TALOS-qzbh.9).
+    #
+    # The failure is real, not cosmetic: the frigate 0.14.1 image ships
+    # intel-media-va-driver 23.1.1, whose platform table stops at Meteor Lake,
+    # while both gpu-arc nodes are Arrow Lake (PCI 8086:7D51). iHD has no device
+    # entry for it and init fails; the i965 fallback is Gen4-Gen9 only. Device
+    # passthrough is NOT the problem — /dev/dri is present and i915 is bound.
+    #
+    # TO RE-ENABLE: move to a frigate release shipping intel-media >= 24.x (the
+    # first release whose platform list names ARL-S/H), THEN restore
+    # `hwaccel_args: preset-vaapi`. Do not set LIBVA_DRIVER_NAME=iHD to silence
+    # the log — it asserts a driver that demonstrably fails to initialise and
+    # would hide the fault once a camera is actually enabled.
+    # ffmpeg:
+    #   hwaccel_args: preset-vaapi
 
     # Object detection settings
     detect:
