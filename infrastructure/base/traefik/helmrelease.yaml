@@ -221,6 +221,18 @@ spec:
     # chart v41 renamed these: logs.general→log, logs.access→accessLog, defaultmode→defaultMode. (TALOS-zadf.19)
     log:
       level: INFO
+      # The APP log, distinct from accessLog below. Left unset, the chart's
+      # `log.format: null` means Traefik falls back to its console format:
+      # zerolog with ANSI colour escapes. Measured 2026-10-16, that was 5,283
+      # rows per 2h arriving as `\x1b[90m2026-...\x1b[0m \x1b[31mERR\x1b[0m ...`
+      # -- unparseable without stripping escapes, and it made traefik look like
+      # a three-format service (zerolog app + json access + logfmt) when it is
+      # really two streams from one container.
+      #
+      # json makes the app log structured like the access log already is, so
+      # traefik becomes single-format and needs no per-service parser at all.
+      # It also moots `log.noColor`, the other half of the escape problem.
+      format: json
     accessLog:
       enabled: true
       format: json

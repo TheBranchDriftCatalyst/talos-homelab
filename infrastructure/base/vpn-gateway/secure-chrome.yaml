@@ -157,6 +157,20 @@ spec:
               value: "turbopookipanda"
             - name: KASM_DEBUG
               value: "0"
+            # KasmVNC turns smartcard passthrough on by default
+            # (vnc_startup.sh: ${KASM_SVC_SMARTCARD:-1}), which starts pcscd
+            # with a virtual reader, kasm_smartcard_bridge, and an Xvnc
+            # -UnixRelay. The bridge polls that relay every 7.5s, but a
+            # UnixRelay only has a peer while a browser client is attached --
+            # so with no session it times out forever, logging
+            # "bridge->relay: timeout: 0x01" at 480/hour, 24/7 (TALOS-qzbh.5).
+            #
+            # Nothing here uses it: no reader device is mounted (volumeMounts
+            # are shm/data/cache/dri only) and Chrome has no use for one. This
+            # removes the cause -- pcscd and the bridge do not start -- rather
+            # than filtering the line downstream.
+            - name: KASM_SVC_SMARTCARD
+              value: "0"
             # Allow internal Kubernetes network IPs
             - name: VNC_IP_ALLOW
               value: "10.244.0.0/16,10.96.0.0/12,192.168.0.0/16"
