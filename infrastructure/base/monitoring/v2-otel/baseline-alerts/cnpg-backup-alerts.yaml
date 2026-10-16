@@ -1,0 +1,126 @@
+---
+# CloudNativePG WAL-archiving and backup-integrity alerts.
+#
+# Motivated by the 2026-10-15 finding (TALOS-qzbh.4 / TALOS-tg53):
+# zipline-postgres had NOT archived a WAL since 2026-09-14 -- 31 days -- while
+# its ScheduledBackup produced base backups that reported `completed` DAILY and
+# the Cluster reported `Ready: True` the whole time. A base backup needs the
+# WALs written between its start and stop to reach a consistent recovery point,
+# so a month of "successful" backups was almost certainly not restorable.
+# Nothing alerted, because nothing was watching.
+#
+# WHY IT BROKE, for whoever reads this during the next one: barman runs
+# `barman-cloud-check-wal-archive` before the FIRST archived WAL, and that check
+# requires an EMPTY destination. The object-store prefix still held a previous
+# incarnation of the cluster (different timeline lineage), so the check failed,
+# every archive attempt failed, and the "first WAL" state that triggers the
+# check could never clear. `Expected empty archive` means lineage mismatch.
+#
+# THE SIGNAL. `cnpg_collector_pg_wal_archive_status{value="ready"}` is the count
+# of WAL files sitting in pg_wal/archive_status/ waiting to be archived -- the
+# BACKLOG. It is the right signal precisely because it is immune to the
+# idle-database false positive that makes every time-based alternative useless
+# here: `archive_timeout` only forces a segment switch when there has been WAL
+# activity, so four clusters in this fleet legitimately archive nothing for
+# weeks and a "seconds since last archival" alert would page on all of them
+# forever. An idle cluster has ZERO files waiting; a broken one accumulates.
+#
+# VALIDATED AGAINST THE REAL INCIDENT rather than assumed. Over the 6 hours
+# before the fix, zipline's `ready` count climbed 2899 -> 2923 (+1 per 15 min)
+# and then drained 2923 -> 1330 -> 0 as archiving recovered. In the same window
+# authentik (healthy, writing 359 KB of WAL per minute) and bookorbit (healthy,
+# genuinely idle, zero WAL bytes in 65 s) both sat flat at 0. So these
+# thresholds fire on the true positive and on neither near-miss.
+#
+# DO NOT alert on `cnpg_pg_stat_archiver_failed_count` as a total: it is
+# cumulative and full of ancient cluster-creation noise -- manyfold reads 927,
+# dagster 57 and postgres-knowledge 42 while all three archive fine today, each
+# with last_failed_wal = 000000010000000000000001, the very first WAL. Only a
+# RATE is meaningful.
+#
+# NOT COVERED HERE, deliberately: "this cluster has no recent base backup".
+# Both metrics that should answer it are unpopulated by the plugin-barman-cloud
+# path -- cnpg_collector_last_available_backup_timestamp reads epoch 0 and
+# Cluster.status.lastSuccessfulBackup reads <none> seconds after a successful
+# backup. Backup CRs are the only truth and are not in Prometheus yet. Shipping
+# an alert on a dead metric would be worse than shipping none. See TALOS-tg53.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cnpg-backup-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: cloudnative-pg
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    - name: cnpg.wal-archiving
+      rules:
+        # The load-bearing alert. A healthy cluster -- busy or idle -- holds 0
+        # files waiting. 10 for 30m means segments are completing and not being
+        # delivered, which is the exact shape of the zipline failure on day one
+        # instead of day 31.
+        - alert: CNPGWALArchiveBacklog
+          expr: max by (namespace, pod) (cnpg_collector_pg_wal_archive_status{value="ready"}) > 10
+          for: 30m
+          labels:
+            severity: warning
+            component: cloudnative-pg
+          annotations:
+            summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} has {{ $value }} WAL files waiting to archive'
+            description: >-
+              WAL segments are completing but not reaching the object store. Point-in-time
+              recovery is already impossible past the last archived segment, and any base
+              backup taken from here will not be restorable even though it will report
+              `completed`. Check the ContinuousArchiving condition and the
+              plugin-barman-cloud sidecar log on the PRIMARY (resolve
+              .status.currentPrimary -- pg_stat_archiver on a replica is meaningless).
+              `Expected empty archive` means the destination holds a previous incarnation's
+              data; see TALOS-qzbh.4 for the remediation.
+
+        # Sustained and large: this is the state zipline sat in for a month.
+        - alert: CNPGWALArchiveStalled
+          expr: max by (namespace, pod) (cnpg_collector_pg_wal_archive_status{value="ready"}) > 100
+          for: 1h
+          labels:
+            severity: critical
+            component: cloudnative-pg
+          annotations:
+            summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} WAL archiving is stalled ({{ $value }} files backlogged)'
+            description: >-
+              Archiving has been failing long enough to accumulate a large backlog. Treat
+              this as "this database currently has no usable backup", not as a log-noise
+              problem. zipline reached 2923 backlogged files before anyone noticed.
+
+        # Catches an actively-failing archiver even before a backlog builds --
+        # a RATE, never the cumulative total.
+        - alert: CNPGWALArchiveFailing
+          expr: sum by (namespace, pod) (rate(cnpg_pg_stat_archiver_failed_count[15m])) > 0
+          for: 30m
+          labels:
+            severity: warning
+            component: cloudnative-pg
+          annotations:
+            summary: 'CNPG {{ $labels.namespace }}/{{ $labels.pod }} is failing to archive WAL'
+            description: >-
+              archive_command is returning non-zero repeatedly. Alerting on the rate, not
+              the total, because the total carries cluster-creation noise that never clears.
+
+    - name: cnpg.archiving-condition
+      rules:
+        # The condition straight off the Cluster CR, surfaced via the KSM
+        # customResourceState entry added for this (kube-state-metrics
+        # helmrelease). Independent of the backlog metric: this catches the case
+        # where CNPG itself knows archiving is down.
+        - alert: CNPGContinuousArchivingDown
+          expr: max by (name, exported_namespace) (cnpg_cluster_condition{type="ContinuousArchiving", status="False"}) == 1
+          for: 15m
+          labels:
+            severity: critical
+            component: cloudnative-pg
+          annotations:
+            summary: 'CNPG {{ $labels.exported_namespace }}/{{ $labels.name }} reports ContinuousArchiving=False'
+            description: >-
+              The cluster itself reports that continuous archiving is not working. Note the
+              cluster will still report Ready=True and its ScheduledBackup will still
+              report `completed` -- neither is evidence of a restorable backup.

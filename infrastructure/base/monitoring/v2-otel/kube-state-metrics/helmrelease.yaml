@@ -471,3 +471,38 @@ spec:
                   labelsFromPath:
                     exported_namespace: [metadata, namespace]
                     composition: [metadata, labels, catalyst.io/composition]
+
+            # CNPG Cluster conditions (TALOS-tg53). Added because NOTHING was
+            # watching whether a Postgres cluster was actually archiving its
+            # WAL: zipline-postgres had ContinuousArchiving=False for 31 days
+            # while its scheduled base backups reported `completed` DAILY, and a
+            # base backup without the WALs written during it cannot reach a
+            # consistent recovery point. The condition lives only on the Cluster
+            # CR, so KSM is the only way to get it into Prometheus --
+            # cnpg_collector_last_available_backup_timestamp reads epoch 0 and
+            # Cluster.status.lastSuccessfulBackup reads <none> even seconds after
+            # a backup the cluster itself reports as succeeded, because neither
+            # is maintained by the plugin-barman-cloud path.
+            #
+            # RBAC for postgresql.cnpg.io/clusters is already granted above for
+            # the Crossplane composition-adoption metrics, so this needs none.
+            - groupVersionKind:
+                group: postgresql.cnpg.io
+                version: v1
+                kind: Cluster
+              metricNamePrefix: cnpg_cluster
+              metrics:
+                - name: 'condition'
+                  help: 'A CNPG Cluster status condition (one-hot over True/False/Unknown).'
+                  commonLabels:
+                    type: ContinuousArchiving
+                  labelsFromPath:
+                    name: [metadata, name]
+                    exported_namespace: [metadata, namespace]
+                  each:
+                    type: StateSet
+                    stateSet:
+                      labelName: status
+                      path: [status, conditions, '[type=ContinuousArchiving]']
+                      valueFrom: [status]
+                      list: ['True', 'False', 'Unknown']
