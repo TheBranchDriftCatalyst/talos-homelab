@@ -2,8 +2,8 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-15
-**Pick up here:** `TALOS-tg53` (CNPG WAL archiving — two clusters' archiving is suspect and nothing alerts when it breaks; zipline sat broken 31 days with backups reporting `completed`) · **Deadline item:** none outstanding
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-16
+**Pick up here:** `TALOS-tvaw` (six credentials are known-exposed and unrotated, one of them `minio123` in a PUBLIC repo) · **Deadline item:** none dated, but every day `TALOS-tvaw` stays open is a day those credentials stay valid
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -39,7 +39,17 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-### Active — `TALOS-tg53`, CNPG WAL archiving and the alert that does not exist
+### Active — `TALOS-tvaw`, rotate every exposed credential
+
+|                 |                                                                                                                                                                                                                 |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| What it is      | Six open tickets whose job is to REPLACE a credential already known to be exposed, collected 2026-10-16 because they were scattered and kept outliving the sessions that filed them.                             |
+| Order by REACHABILITY, not the priority field | A secret in public git is readable by anyone forever; one in a local transcript needs this machine first. `TALOS-tmqq` goes first — `minio123` across 12 files in a PUBLIC repo, and MinIO backs CNPG backups, Loki, Mimir and the ClickHouse store. It outranks the two P1 transcript leaks despite sharing their priority. |
+| Then            | `TALOS-1e9` (GitHub PAT, global `curl -v`) and `TALOS-7e8z` (HyperDX key, pod env dump) — same class, two mechanisms. Then `TALOS-z7b6` (git history, needs provider-side checks), `TALOS-pmbi` (.envrc), `TALOS-lvec` (bouncer keys in Loki). |
+| Done means REVOKED | Not "a new credential exists". Rotating without revoking leaves the exposure exactly where it was. Verify the old value is rejected, and never print either value — compare sha256 prefixes or byte lengths.  |
+| Why it needed an epic | The failure mode is social, not technical: each was filed correctly, at the right priority, by whoever caused it, and then the session ended. Prevention (`TALOS-031k`, `TALOS-tdec`) is tagged `credential-rotation-adjacent` and deliberately NOT parented here, so this epic can close. |
+
+### Also open — `TALOS-tg53`, CNPG WAL archiving and the alert that does not exist
 
 |                |                                                                                                                                                                                                                             |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -116,9 +126,9 @@ If you are here to do something else entirely, that is fine and probably correct
 
 **Commits:** 16 · **Scope:** `infrastructure/base/monitoring/`, `scripts/mega-log-analysis/`, `infrastructure/base/infra-control/`, `infrastructure/base/authentik/`, `dev/`
 
-**Filed:** `TALOS-qzbh` (+34 children), `TALOS-tg53`, `TALOS-7e6j`, `TALOS-atkc`, `TALOS-woqh`, `TALOS-a1fm`, `TALOS-7e8z`, `TALOS-0lka`
+**Filed:** `TALOS-qzbh` (+34 children), `TALOS-tg53`, `TALOS-tvaw`, `TALOS-n0wb`, `TALOS-7e6j`, `TALOS-atkc`, `TALOS-woqh`, `TALOS-a1fm`, `TALOS-7e8z`, `TALOS-0lka`
 **Closed:** `TALOS-suxd.1`–`.5`, `TALOS-suxd.10`, `TALOS-7e6j`, `TALOS-qzbh.2.1`, `.2.2`, `TALOS-qzbh.3` (+8 leaves), `TALOS-qzbh.4` (+4 leaves)
-**Carried:** `TALOS-tg53` (P1 — two more clusters' WAL archiving is suspect and **nothing alerts** when it breaks), `TALOS-qzbh.1` (Phase 0, the hard gate), `TALOS-suxd.7` (Loki deletion, on operator hold pending UI review), `TALOS-7e8z` (P1 — rotate the HyperDX key I leaked)
+**Carried:** `TALOS-tvaw` (P1 — six exposed credentials, now grouped; `TALOS-tmqq` is `minio123` in a PUBLIC repo), `TALOS-qzbh.1` (Phase 0, the hard gate), `TALOS-n0wb` (fchat has no ScheduledBackup; the fix is in a sister repo), `TALOS-suxd.7` (Loki deletion, on operator hold pending UI review)
 
 Tempo is gone; traces go to ClickStack. Then the actual unlock: ClickStack logs had no OTel
 Resource, so `ServiceName` was empty on **99.65%** of rows. Fixing that (`TALOS-7e6j`) took
@@ -149,6 +159,19 @@ one. My own tool's classifier was wrong twice — 31.4% → 40.7% → 46.3% misc
 found by dry-running it, not by its selftest; and its idempotency had never worked at all, because
 `bd search` only matches titles. Three "breakages" during the goldilocks removal turned out to be a
 Flux dependency cascade, a Postgres deadlock, and a dying pod's last log lines.
+
+**Closed out, then kept going.** `TALOS-tg53` got its durable half: four CNPG alerts plus a
+kube-state-metrics `customResourceState` entry for the Cluster condition. The signal is the WAL
+**backlog**, not the clock — every time-based alternative pages forever on the four clusters here that
+are legitimately idle. Replaying the expression over the real outage returns exactly one series
+(zipline, 2900→2923) and nothing for the other 21, including both near-miss shapes. The audit also
+**retracted two of my own findings**: whisparr and bt-radar looked broken only because I had queried
+replicas, and `pg_stat_archiver` on a replica is meaningless. Deliberately not shipped — a "no recent
+backup" alert, because both metrics that should answer it are dead on the plugin path.
+
+Then `TALOS-tvaw`, grouping the scattered rotation tickets. The search is noisy: "rotation" here also
+means VPN **server** rotation and **certificate** rotation, and a first pass caught 50 tickets
+including memory leaks and a mermaid chore.
 
 ### 2026-10-13 — Haven + openGym shipped; ArgoCD got SSO, and its RBAC turned out to be dead
 
