@@ -2,8 +2,8 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-13
-**Pick up here:** `TALOS-fzt7` (align the hot-ones overlays into base + overlays/{local,cluster} — the extraction is done and prune is restored on both apps, this is the tidy-up) · **Deadline item:** none outstanding
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-15
+**Pick up here:** `TALOS-tg53` (CNPG WAL archiving — two clusters' archiving is suspect and nothing alerts when it breaks; zipline sat broken 31 days with backups reporting `completed`) · **Deadline item:** none outstanding
 <!-- /closeout:header -->
 
 > Maintained by `/closeout-session`. Newest session first. The index keeps the **last 10**;
@@ -39,7 +39,26 @@ If you are here to do something else entirely, that is fine and probably correct
 
 ## Now / next
 
-### Active — `TALOS-fzt7`, align the hot-ones overlays
+### Active — `TALOS-tg53`, CNPG WAL archiving and the alert that does not exist
+
+|                |                                                                                                                                                                                                                             |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Why this first | zipline's archiving was dead for **31 days** while its base backups reported `completed` daily. Backups you cannot restore are worse than none, because they stop anyone looking. Fixed and verified; the fleet is not.      |
+| Suspect        | `whisparr-postgres` — `pg_stat_archiver.failed_count = 18`. `bt-radar-postgres` — `last_archived_wal` **empty**, apparently never archived a WAL, yet 31 completed base backups. Both report `ContinuousArchiving: True`.    |
+| Method         | Per-cluster `pg_stat_archiver`, not directory mtimes — mtimes cannot distinguish broken from idle, and three of four "stale" clusters turned out merely idle. See Standing gotchas.                                          |
+| The durable fix | Alerts: one on `ContinuousArchiving: False`, one on archive staleness that is **immune to the idle-database false positive**. Their absence is why this went unnoticed for a month.                                         |
+| Also in scope  | `fchat-postgres` has no ScheduledBackup (21 for 22 clusters); `s3://cnpg-backups/poc2` is orphaned data from a deleted cluster.                                                                                              |
+
+### Also open — `TALOS-qzbh`, the MEGA-LOG error campaign
+
+|              |                                                                                                                                                                                                                      |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Where it is  | 19 of 36 closed. traefik, goldilocks and zipline done; real errors roughly 9,365 → 5,600/h. Tooling and the burn-down metric are in `scripts/mega-log-analysis/` (`task dev:logs:*`).                                 |
+| Next cheapest | `TALOS-qzbh.5` secure-chrome (1 signature), `.7` sabnzbd (1), `.8` kube-controller-manager (1), `.9` frigate (1), `.10` mimir (1). `.6` cowrie is already filed as `TALOS-3qe4`/`TALOS-39am` — adopt, don't re-file. |
+| The gate     | `TALOS-qzbh.1` (Phase 0) still blocks the severity re-baseline. 46% of rows marked `error` are not errors; until it lands every burn-down number mixes real fixes with mislabelled noise.                             |
+| Standing rule | Swarm agents are **propose-only** — no commits, no cluster changes.                                                                                                                                                 |
+
+### Also open — `TALOS-fzt7`, align the hot-ones overlays
 
 |                  |                                                                                                                                                                                                                      |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -81,6 +100,8 @@ If you are here to do something else entirely, that is fine and probably correct
 | Removing KEDA                                          | Core is load-bearing for `openscad/manyfold-performance-worker`, `boomtime/boomtime-jobs` and `crossplane-demo/demo-celery`. Only the nginx proxy was deleted; leave both HelmReleases alone. |
 | Raising G/VT quota past 48                             | One rig at a time is the invariant. Quota should be headroom, never a brake — that mistake is already recorded in `aws/apps/kustomization.yaml`. |
 | Pointing the hot-ones ArgoCD app at `k8s/base` or `k8s/overlays/local` | That is the **Tilt/local-dev** set, not a second copy of production: own `hot-ones` namespace, plain `postgres:18` StatefulSet instead of CNPG, a dev-registry image, and no ingressroute/ExternalSecrets/chat/cam/Stash wiring. It would deploy a different app with the wrong database into the wrong namespace. Production manifests are the talos-private ones. |
+| Filing or chasing `kyverno-admission-controller` / `crowdsec-lapi` error volume | They are the #1 and #4 error sources by raw count and **100% misclassified** — kyverno logs `TRC`, crowdsec logs logfmt `level=info`, and the ClickStack collector marks both `error`. Six services are entirely noise. They dissolve when `TALOS-qzbh.1` lands; investigating them now sends someone after `"Saved checkpoint for VPA"`. |
+| Reinstating goldilocks or VPA | Removed deliberately (`da4b3b82`). Its 1,808 err/h were missing RBAC to list the operator CRDs that own pods here, which was fixable — the operator's call was that the dashboard "barely works right". All 94 VPAs were `updateMode: Off`, so nothing ever acted on a recommendation. |
 | Moving hot-ones out of `media-private` (`TALOS-17hl`) | Costed, not forgotten. It needs the `scene-engine-metadata` Secret reflected (Secrets do not cross namespaces) **and** `STASH_URL` changed off the bare `http://stash:9999`. That turns a zero-diff ownership move into a live reconfiguration of the app's content source. |
 
 <!-- /closeout:next -->
@@ -90,6 +111,44 @@ If you are here to do something else entirely, that is fine and probably correct
 <!-- closeout:sessions -->
 
 ## Sessions
+
+### 2026-10-14/15 — logs got a ServiceName, and that exposed a backup that had not worked in 31 days
+
+**Commits:** 16 · **Scope:** `infrastructure/base/monitoring/`, `scripts/mega-log-analysis/`, `infrastructure/base/infra-control/`, `infrastructure/base/authentik/`, `dev/`
+
+**Filed:** `TALOS-qzbh` (+34 children), `TALOS-tg53`, `TALOS-7e6j`, `TALOS-atkc`, `TALOS-woqh`, `TALOS-a1fm`, `TALOS-7e8z`, `TALOS-0lka`
+**Closed:** `TALOS-suxd.1`–`.5`, `TALOS-suxd.10`, `TALOS-7e6j`, `TALOS-qzbh.2.1`, `.2.2`, `TALOS-qzbh.3` (+8 leaves), `TALOS-qzbh.4` (+4 leaves)
+**Carried:** `TALOS-tg53` (P1 — two more clusters' WAL archiving is suspect and **nothing alerts** when it breaks), `TALOS-qzbh.1` (Phase 0, the hard gate), `TALOS-suxd.7` (Loki deletion, on operator hold pending UI review), `TALOS-7e8z` (P1 — rotate the HyperDX key I leaked)
+
+Tempo is gone; traces go to ClickStack. Then the actual unlock: ClickStack logs had no OTel
+Resource, so `ServiceName` was empty on **99.65%** of rows. Fixing that (`TALOS-7e6j`) took
+coverage to 100% across 93 services and made per-service error attribution possible for the first
+time — which is what the rest of the session is built on.
+
+Built `scripts/mega-log-analysis/` (modelled on `dev/helm-values-lint/`, own `dev:logs:*`
+namespace, mandatory `selftest`) and opened `TALOS-qzbh` from its artifacts: 17,450 err/h across
+51 services, but the top 30 real signatures cover 89%. Three services fixed. **traefik** was 24% of
+all cluster errors from one half-finished disable — `catalyst-llm@db47d6c` commented out the
+sillytavern Deployment and left its two IngressRoutes behind, so Traefik resolved a dead Service
+~3,000×/h for a month. **goldilocks** (1,808/h) was removed entirely rather than given the RBAC it
+wanted; all 94 VPAs it produced were `updateMode: Off`, so nothing acted on them and the VPA stack
+went with it.
+
+**The find that justifies the whole campaign:** zipline's postgres logged 698/h, and it was WAL
+archiving dead since Sep 14 — while base backups reported `completed` **daily**. The two fail
+independently; only one is visible. A base backup without its WALs cannot reach consistency, so a
+month of "successful" backups was almost certainly unrestorable. Auditing the fleet then found
+`whisparr` (18 archive failures) and `bt-radar` (never archived a single WAL), both reporting
+healthy, and no alert anywhere on `ContinuousArchiving: False`.
+
+**What it cost.** I leaked the HyperDX ingestion key by dumping a pod's env (`TALOS-7e8z`, rotation
+still outstanding). I claimed kernel-capture was fixed when the change had gone into the wrong Alloy
+release, and only the audit caught it. `alloy validate` gave a false green on a broken OTTL
+statement. I nearly reported phantom log loss from comparing a sliding window against a bucketed
+one. My own tool's classifier was wrong twice — 31.4% → 40.7% → 46.3% misclassified — both times
+found by dry-running it, not by its selftest; and its idempotency had never worked at all, because
+`bd search` only matches titles. Three "breakages" during the goldilocks removal turned out to be a
+Flux dependency cascade, a Postgres deadlock, and a dying pod's last log lines.
 
 ### 2026-10-13 — Haven + openGym shipped; ArgoCD got SSO, and its RBAC turned out to be dead
 
@@ -495,6 +554,13 @@ worth keeping is distilled up into this list first. Fuller detail lives in
     fault is entirely the union. Fix by re-applying the union blueprint via the Importer
     (`BlueprintInstance.apply()` does not exist; `tasks.apply_blueprint()` raises
     `CurrentTaskNotFound` outside a worker). `[TALOS-87bw]`
+35. **A CNPG base backup succeeding tells you nothing about WAL archiving.** The two fail independently and only the backup is visible: zipline reported `completed` backups daily for a month while archiving had been dead since Sep 14, and a base backup without the WALs written during it cannot reach a consistent recovery point. `Cluster.status.lastSuccessfulBackup` is **not maintained** by the plugin-barman-cloud path — it reads `<none>` seconds after a backup the same cluster reports as `LastBackupSucceeded: True`, and is `<none>` or months stale fleet-wide. Check the `ContinuousArchiving` condition and `pg_stat_archiver`, never that field. `[TALOS-qzbh.4, TALOS-tg53]`
+36. **Archive directory mtimes cannot tell "broken" from "idle".** `archive_timeout` only forces a segment switch when there has been WAL activity, so a genuinely idle database legitimately archives nothing for weeks and looks identical to a broken one. `pg_stat_archiver` separates them: `failed_count` plus a current WAL only one segment past `last_archived_wal` means idle; a non-zero `failed_count` or an empty `last_archived_wal` means broken. Three of four "stale" clusters were fine. `[TALOS-tg53]`
+37. **`barman-cloud-check-wal-archive` demands an EMPTY destination, and runs on every archive call until the first WAL lands.** If the object-store path holds a previous incarnation's data, the check fails, archiving never starts, and the state that triggers the check can never clear — a closed loop. `Expected empty archive` means lineage mismatch, not corruption: the fix is a fresh `serverName` or an emptied prefix, then an immediate base backup. `[TALOS-qzbh.4]`
+38. **MinIO objects are erasure-coded directories containing `xl.meta`, not files.** `ls` inside the pod shows `drwxr-xr-x` for what is logically one object, `cat` fails, and deleting by filesystem path corrupts the bucket's view. Always mutate through the S3 API (`mc`), scoped to the prefix, and verify sibling prefix count before and after. `[TALOS-qzbh.4]`
+39. **`bd search` matches titles only.** Any marker you embed in a description — a signature id, a correlation key — is invisible to it, so an idempotency check built on `bd search` silently reports every already-filed item as new. Use `bd list --all --json` and scan descriptions; `--all` matters, or closed items reappear as fresh work. `[TALOS-qzbh]`
+40. **Normalising a log body can destroy the evidence that classifies it.** Rewriting digits to `<n>` to group signatures also turns pino's `{"level":30}` into `{"level":<n>}`, erasing the only proof the line was INFO. Read level facts from the RAW body in SQL, before normalisation. Corollary: a green selftest proves the rules you wrote fire, not that you wrote the right rules — both classifier gaps were found by dry-running against real data. `[TALOS-qzbh]`
+41. **`flux reconcile source git` can time out and leave the Kustomization applying the PREVIOUS revision — while reporting success.** An Authentik blueprint then reported `successful` for the old ConfigMap content. Always confirm `lastAppliedRevision` equals the commit you pushed before trusting any downstream status. Related: blueprint discovery can outrun ConfigMap propagation into the pod, so a transient `status: error` or a `psycopg DeadlockDetected` exit is not a bad blueprint — check the end state. `[TALOS-qzbh.3]`
 
 <!-- /closeout:gotchas -->
 
