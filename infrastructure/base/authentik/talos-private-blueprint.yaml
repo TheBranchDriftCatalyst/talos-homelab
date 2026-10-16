@@ -146,6 +146,34 @@ data:
         id: embedded-outpost
         identifiers: {managed: goauthentik.io/outposts/embedded}
         attrs:
+          # Stop Authentik auto-creating a Kubernetes Ingress (TALOS-qzbh.2.3).
+          #
+          # It generated `ak-outpost-authentik-embedded-outpost` across 59 hosts
+          # with secretName: authentik-outpost-tls -- Authentik's DEFAULT name,
+          # for a Secret that has never existed here. Traefik logged
+          # "Error configuring TLS" ~1,570 times an HOUR, the single largest
+          # error source left in the cluster after the severity fix.
+          #
+          # It is REDUNDANT, and strictly weaker than the route we already
+          # declare in ingressroute.yaml (`authentik-outpost-priv`):
+          #   - its host list is DERIVED from committed providers (59 hosts for
+          #     59 providers), so a new forward-auth app is uncovered until its
+          #     provider lands AND the union below picks it up -- which is
+          #     exactly the TALOS-87bw outage, where a raced !Find silently
+          #     dropped providers and new apps answered 404 behind forward-auth.
+          #     Our HostRegexp covers present AND future hosts.
+          #   - it has ZERO .priv.knowledgedump.space hosts; our regex matches
+          #     that domain.
+          #   - an Ingress cannot express `priority: 1000`, which is what makes
+          #     our route beat each app's own Host() rule for this path.
+          # And its TLS has never worked for a single request, so nothing can
+          # have depended on it: HTTPS /outpost.goauthentik.io/ping returns 204
+          # today via the IngressRoute, verified before this change.
+          #
+          # ONLY `ingress` is disabled. `service` must keep being created --
+          # the outpost needs it.
+          kubernetes_disabled_components:
+            - ingress
           providers:
             - !KeyOf p-kubeview
             - !KeyOf p-headlamp
