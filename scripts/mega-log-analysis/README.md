@@ -127,7 +127,7 @@ distilled up into `SESSION_STATUS.md` → Standing gotchas rather than left as "
 
 | # | Issue | Status |
 | --- | --- | --- |
-| 1 | **Severity misclassification** — 46.3% of `error` rows are not errors. The ClickStack collector does not parse klog, logfmt, JSON-string or JSON-numeric levels, and marks level-less lines `error` with no evidence at all. | Phase 0 of the mega epic |
+| 1 | **Severity misclassification — FIXED 2026-10-16** (`12a7b841`). The ClickStack collector did not *fail to parse* levels; it **invented** them. Its `ExtractPatterns` keyword alternation has **no word boundary**, so `clust`**err**`oles` made kyverno emit 1,688 errors/h, `MultiTenant`**Alert**`manager` made mimir FATAL, and `maintain`**err** / `post`**err** / `se`**err** made authentik error. Fixed in upstream `main` but **unreleased** (we run the newest published, chart 1.1.1 / app 2.8.0), so Alloy now derives severity itself — the collector's inference is gated on `severity_text == ""`, so setting it upstream disables it. misclassified 46.3% → **0.5%**. | **DONE** — TALOS-qzbh.1 |
 | 2 | **Log body overwrites k8s metadata** — the collector flattens body JSON into `LogAttributes`, so a body key `namespace` beats the real one. 67 of 36,287 rows (0.185%); only `namespace`, only cross-namespace controllers. `ResourceAttributes['k8s.namespace.name']` is the trustworthy copy. | **TALOS-woqh** |
 | 3 | **Dual-write misses short-lived pods** — Loki has CronJob output ClickStack never received (abuseipdb-reporter, 39 lines, pod lived 21s). Blocks Loki deletion. | **TALOS-atkc** |
 | 4 | **No k8s metrics or k8s events in ClickStack** — only 54 metric names, all self-telemetry (`v8js.*`, `otelcol_*`). HyperDX's Kubernetes dashboard is blank for this reason, not the ServiceName one. | **TALOS-suxd.8** |
@@ -136,13 +136,22 @@ distilled up into `SESSION_STATUS.md` → Standing gotchas rather than left as "
 
 ## Gotchas
 
-1. **`alloy validate` does not check OTTL.** A bad statement passes validation and then makes Alloy
-   refuse to start entirely. Use an `alloy run` probe on a minimal config. See memory
-   `alloy-validate-does-not-check-ottl`.
-2. **Signature truncation can over-split one cause.** traefik's missing-Service error appears as two
+1. **`alloy validate` does not check OTTL — measured, not assumed.** On Alloy v1.18.1 it returned
+   **rc=0** for an unknown function, a typo'd field (`log.sevirity_text`) *and* an unclosed regex
+   `([unclosed`. Only `alloy run` rejects them ("unable to parse OTTL statement"), and a bad statement
+   makes Alloy refuse to start **entirely** — metrics, logs and traces together. Probe with `alloy run`
+   on a minimal config, and prove the probe FAILS on a deliberate mutant before trusting a pass. On the
+   full config, compare HEAD vs candidate vs a mutant: 0 / 0 / 3 OTTL errors is a meaningful result;
+   0 alone is not.
+2. **`flux reconcile helmrelease --with-source` can report success while rendering OLD values.** It
+   said "Helm upgrade succeeded … v40" while the ConfigMap stayed at 44,772 bytes against git's 50,827,
+   because it re-renders the HelmRelease **object as it exists in-cluster** and the Kustomization had
+   not yet updated that object. Reconcile the **Kustomization** first, then verify the file *inside the
+   pod*.
+3. **Signature truncation can over-split one cause.** traefik's missing-Service error appears as two
    signatures because two IngressRoutes name it (a third leaf is the unrelated TLS secret). That is arguably correct — two manifests, two
    fixes — but shared root causes are deduped at the review step, not by the tool.
-3. **`--apply` is deliberately not wired.** Propose-only is the standing rule for this campaign;
+4. **`--apply` is deliberately not wired.** Propose-only is the standing rule for this campaign;
    the L2 list is reviewed with the operator before any tree is created.
 
 ---
