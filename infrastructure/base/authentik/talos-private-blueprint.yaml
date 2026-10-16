@@ -172,8 +172,41 @@ data:
           #
           # ONLY `ingress` is disabled. `service` must keep being created --
           # the outpost needs it.
-          kubernetes_disabled_components:
+          # `config` is ONE JSON field on the Outpost, not a set of attrs, so it
+          # must be given WHOLE -- setting it with only the key we care about
+          # would wipe `authentik_host`, which the outpost needs to reach
+          # authentik, and break forward-auth for all 59 apps. These 22 keys were
+          # GENERATED from the live config (not hand-typed) and differ from it in
+          # exactly one key: kubernetes_disabled_components.
+          #
+          # Safe to pin: every field on the OutpostConfig dataclass has a default,
+          # so a key added by a future Authentik version simply takes its default
+          # rather than breaking. The one value that is environment-specific and
+          # therefore needs updating by hand if it ever changes is authentik_host.
+          config:
+            authentik_host: https://auth.knowledgedump.space
+            authentik_host_browser: ''
+            authentik_host_insecure: false
+            container_image: null
+            docker_labels: null
+            docker_map_ports: true
+            docker_network: null
+            kubernetes_disabled_components:
             - ingress
+            kubernetes_httproute_annotations: {}
+            kubernetes_httproute_parent_refs: []
+            kubernetes_image_pull_secrets: []
+            kubernetes_ingress_annotations: {}
+            kubernetes_ingress_class_name: null
+            kubernetes_ingress_path_type: null
+            kubernetes_ingress_secret_name: authentik-outpost-tls
+            kubernetes_json_patches: null
+            kubernetes_namespace: authentik
+            kubernetes_replicas: 1
+            kubernetes_service_type: ClusterIP
+            log_level: info
+            object_naming_template: ak-outpost-%(name)s
+            refresh_interval: minutes=5
           providers:
             - !KeyOf p-kubeview
             - !KeyOf p-headlamp
