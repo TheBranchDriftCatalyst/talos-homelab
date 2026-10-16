@@ -324,6 +324,66 @@ spec:
               ]
             }
 
+            // Pass 3 -- SEVERITY. See TALOS-qzbh.1.
+            log_statements {
+              context = "log"
+              statements = [
+                // Severity, derived HERE so the ClickStack collector never guesses.
+                // Its inference is gated on `severity_number == 0 and severity_text == ""`,
+                // so setting these fields upstream disables it entirely -- which is the
+                // point: the released collector (2.8.0, the newest published) matches
+                // level keywords with NO word boundary, so the word "clusterroles"
+                // contains "err" and made kyverno emit ~1,688 ERRORs/hour. Fixed in
+                // upstream main but unreleased. Drop this block when a release ships it.
+                `set(log.cache["lvl"], log.body.string) where log.body != nil`,
+                `replace_pattern(log.cache["lvl"], "\x1b\\[[0-9;]*m", "")`,
+                // structured  (logfmt level= / JSON "level"|"severity" string / Mongo "s")
+                `set(log.severity_text, "fatal") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)(\\blevel=(fatal|panic|emerg|crit)|\"(level|severity)\"\\s*:\\s*\"(fatal|panic|emerg|crit)|\"s\"\\s*:\\s*\"F\")")`,
+                `set(log.severity_text, "error") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)(\\blevel=(error|err)\\b|\"(level|severity)\"\\s*:\\s*\"(error|err)|\"s\"\\s*:\\s*\"E\")")`,
+                `set(log.severity_text, "warn") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)(\\blevel=(warn|warning)|\"(level|severity)\"\\s*:\\s*\"(warn|warning)|\"s\"\\s*:\\s*\"W\")")`,
+                `set(log.severity_text, "info") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)(\\blevel=(info|information)|\"(level|severity)\"\\s*:\\s*\"(info|information)|\"s\"\\s*:\\s*\"I\")")`,
+                `set(log.severity_text, "debug") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)(\\blevel=(debug|dbug)|\"(level|severity)\"\\s*:\\s*\"(debug|dbug)|\"s\"\\s*:\\s*\"D\")")`,
+                `set(log.severity_text, "trace") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)(\\blevel=trace|\"(level|severity)\"\\s*:\\s*\"trace)")`,
+                // numeric     (pino/bunyan "level":NN)
+                `set(log.severity_text, "fatal") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\"level\"\\s*:\\s*(6[0-9]|[7-9][0-9])")`,
+                `set(log.severity_text, "error") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\"level\"\\s*:\\s*5[0-9]")`,
+                `set(log.severity_text, "warn") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\"level\"\\s*:\\s*4[0-9]")`,
+                `set(log.severity_text, "info") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\"level\"\\s*:\\s*3[0-9]")`,
+                `set(log.severity_text, "debug") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\"level\"\\s*:\\s*2[0-9]")`,
+                `set(log.severity_text, "trace") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\"level\"\\s*:\\s*1[0-9]")`,
+                // klog        (^E0115 ...)
+                `set(log.severity_text, "fatal") where log.severity_text == "" and IsMatch(log.cache["lvl"], "^F[0-9]{4} ")`,
+                `set(log.severity_text, "error") where log.severity_text == "" and IsMatch(log.cache["lvl"], "^E[0-9]{4} ")`,
+                `set(log.severity_text, "warn") where log.severity_text == "" and IsMatch(log.cache["lvl"], "^W[0-9]{4} ")`,
+                `set(log.severity_text, "info") where log.severity_text == "" and IsMatch(log.cache["lvl"], "^I[0-9]{4} ")`,
+                // zerolog     (TRC/DBG/INF/WRN/ERR/FTL, ANSI already stripped)
+                `set(log.severity_text, "fatal") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\\bFTL\\b")`,
+                `set(log.severity_text, "error") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\\bERR\\b")`,
+                `set(log.severity_text, "warn") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\\bWRN\\b")`,
+                `set(log.severity_text, "info") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\\bINF\\b")`,
+                `set(log.severity_text, "debug") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\\bDBG\\b")`,
+                `set(log.severity_text, "trace") where log.severity_text == "" and IsMatch(log.cache["lvl"], "\\bTRC\\b")`,
+                // exception   (compound Error/Exception tokens)
+                `set(log.severity_text, "error") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)\\b\\w*(error|exception)s?\\b")`,
+                `set(log.severity_text, "error") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)\\b(errno|traceback|stacktrace)\\b")`,
+                // keyword     (word-bounded last resort)
+                `set(log.severity_text, "fatal") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)\\b(fatal|panic|emerg)")`,
+                `set(log.severity_text, "error") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)\\b(error|err)\\b")`,
+                `set(log.severity_text, "warn") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)\\b(warn|notice)")`,
+                `set(log.severity_text, "debug") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)\\b(debug|dbug)")`,
+                `set(log.severity_text, "trace") where log.severity_text == "" and IsMatch(log.cache["lvl"], "(?i)\\btrace\\b")`,
+                // Nothing declared a level: info. NEVER leave it empty, or the
+                // collector reclaims the line and guesses.
+                `set(log.severity_text, "info") where log.severity_text == ""`,
+                `set(log.severity_number, SEVERITY_NUMBER_FATAL) where log.severity_number == 0 and log.severity_text == "fatal"`,
+                `set(log.severity_number, SEVERITY_NUMBER_ERROR) where log.severity_number == 0 and log.severity_text == "error"`,
+                `set(log.severity_number, SEVERITY_NUMBER_WARN) where log.severity_number == 0 and log.severity_text == "warn"`,
+                `set(log.severity_number, SEVERITY_NUMBER_INFO) where log.severity_number == 0 and log.severity_text == "info"`,
+                `set(log.severity_number, SEVERITY_NUMBER_DEBUG) where log.severity_number == 0 and log.severity_text == "debug"`,
+                `set(log.severity_number, SEVERITY_NUMBER_TRACE) where log.severity_number == 0 and log.severity_text == "trace"`,
+              ]
+            }
+
             output {
               logs = [otelcol.processor.batch.clickstack.input]
             }
