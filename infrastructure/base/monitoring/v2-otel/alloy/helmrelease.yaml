@@ -522,12 +522,264 @@ spec:
 
           loki.source.kubernetes "pods" {
             targets    = discovery.relabel.pod_logs.output
-            // DUAL-WRITE: same stream to Loki AND (via the loki->OTLP
+            // DUAL-WRITE: same stream to Loki AND (via loki.process -> the loki->OTLP
             // converter) to ClickStack.
+            //
+            // THE LOKI LEG IS DELIBERATELY LEFT RAW. Only the ClickStack leg goes
+            // through loki.process.pod_logs, for three reasons:
+            //   1. Loki's limits_config sets max_line_size: 512kb with
+            //      max_line_size_truncate unset, so an oversized joined block is
+            //      REJECTED, not truncated -- a join bug there is SILENT data loss.
+            //      ClickHouse's Body is a String column with no such limit.
+            //   2. Loki is scheduled for deletion (TALOS-suxd.7). Do not spend risk
+            //      on a leg that is going away.
+            //   3. It keeps an unmodified control: if the join misbehaves, Loki still
+            //      has the raw line-per-row data to diff against.
             forward_to = [
               loki.write.default.receiver,
-              otelcol.receiver.loki.clickstack.receiver,
+              loki.process.pod_logs.receiver,
             ]
+          }
+
+          // =================================================================
+          // Re-assemble multi-line events, then extract a few fields. TALOS-<id>.
+          // =================================================================
+          // THE PROBLEM: one Python exception is one EVENT but ~12 log LINES, and
+          // every line became its own otel_logs row at the same millisecond. Measured
+          // over 1h: sabnzbd emitted `Exception ignored while calling deallocator` 481
+          // times, `Traceback (most recent call last):` 488 and
+          // `OSError: [Errno 9] Bad file descriptor` 482 -- three near-identical counts
+          // because they are ONE event counted three times. Worse for clustering:
+          // `Traceback (most recent call last):` shows up under THREE unrelated
+          // services (sabnzbd 481, litellm 6, aws-inventory-exporter 1), so as a
+          // signature key it merges unrelated failures and fragments related ones.
+          //
+          // WHY HERE AND NOT IN otelcol.processor.transform: once a traceback has
+          // become three OTel log records, nothing downstream can reliably reassemble
+          // it -- the records are separate, may land in different batches, and OTTL has
+          // no cross-record state. Joining is a COLLECTION-stage concern, and
+          // loki.source.kubernetes had no processing stage at all; it forwarded
+          // straight to the two sinks. stage.multiline keys its buffer per stream
+          // fingerprint (one buffer per container), joins with "\n", and the joined
+          // entry inherits the FIRST line's timestamp and labels.
+          loki.process "pod_logs" {
+
+            // ---------------------------------------------------------------
+            // 0. The CRI parser leaves the terminating newline on every line
+            //    (measured: 99.2% of Body values end in "\n"). stage.multiline
+            //    joins with "\n" of its own, so without this trim every joined
+            //    block comes out double-spaced. source is unset, so this edits
+            //    the line itself -- the only place Body is touched.
+            // ---------------------------------------------------------------
+            stage.replace {
+              expression = `\n+$`
+              replace    = ""
+            }
+
+            // ---------------------------------------------------------------
+            // 1a. PER-SERVICE FIRST-LINE ANCHORS.
+            //
+            // These three services are the ones that emit a bare Python traceback,
+            // and they are exactly the three that collide on the
+            // `Traceback (most recent call last):` signature key. A Python traceback
+            // cannot be joined by indentation alone: its header, the `Traceback`
+            // line, and -- critically -- the terminal `SomeError: message` line are
+            // all at COLUMN 0. So for these three the rule is inverted: only a
+            // recognised log-line shape starts a new event, and everything else is a
+            // continuation.
+            //
+            // CONSEQUENCE, STATED PLAINLY: an unrecognised column-0 line from one of
+            // these three services is appended to the PREVIOUS event rather than
+            // starting its own. That is bounded by max_lines and max_wait_time, and
+            // it is the right trade here -- over 24h sabnzbd emitted exactly four
+            // distinct column-0 shapes, three of which are this one exception.
+            // ---------------------------------------------------------------
+            stage.match {
+              selector = `{app="sabnzbd"}`
+              stage.multiline {
+                // `Exception ignored while calling deallocator ...` plus sabnzbd's
+                // real log format `2026-10-16 10:46:20,321::WARNING::[...]`.
+                firstline     = `^(Exception ignored|\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})`
+                max_lines     = 64
+                max_wait_time = "3s"
+              }
+            }
+
+            stage.match {
+              selector = `{app="litellm"}`
+              stage.multiline {
+                // uvicorn `INFO:     1.2.3.4:5 - "GET /health..."` and litellm's own
+                // `20:14:03 - LiteLLM Proxy:ERROR: common_request_processing...`.
+                firstline     = `^((INFO|DEBUG|WARNING|ERROR|CRITICAL):|\d{2}:\d{2}:\d{2} - )`
+                max_lines     = 64
+                max_wait_time = "3s"
+              }
+            }
+
+            stage.match {
+              selector = `{app="aws-inventory-exporter"}`
+              stage.multiline {
+                // Its own `[aws-inventory-exporter] ...` lines, plus the
+                // `Exception occurred during processing of request from (...)` header
+                // that http.server prints above the traceback.
+                firstline     = `^(\[aws-inventory-exporter\]|Exception occurred during processing)`
+                max_lines     = 64
+                max_wait_time = "3s"
+              }
+            }
+
+            // ---------------------------------------------------------------
+            // 1b. CONSERVATIVE GLOBAL DEFAULT -- indentation.
+            //
+            // A line starts a new event unless it is indented. Three alternatives,
+            // each one measured against the real corpus rather than guessed:
+            //
+            //   [^ \t]      column 0 -> new event. Covers nearly everything,
+            //               including cowrie, whose twisted tracebacks are entirely
+            //               TAB-indented (31.4 tab lines per `Unhandled Error`
+            //               header, measured over 3h) so the whole block joins.
+            //
+            //   ` [^ \t-]`  EXACTLY ONE leading space then a non-dash -> new event.
+            //               secure-chrome prefixes every ordinary line with a single
+            //               space (` 2026-10-16 20:20:32,638 [INFO] websocket ...`),
+            //               5,940 of 8,114 lines in 3h, and it has ZERO genuinely
+            //               indented lines. Without this exemption its entire log
+            //               would collapse into 64-line blobs. The `-` exclusion is
+            //               what keeps .NET inner-exception markers (` ---> System.
+            //               IO.IOException: ...`, seen on whisparr-eros and jellyfin,
+            //               and the ONLY producers of `^ -` in 6h) as continuations.
+            //
+            //   `[ \t]*\r`  indented, then a CARRIAGE RETURN -> new event. This is a
+            //               progress-bar redraw, never a stack frame. It exists for
+            //               kometa, which is the ONLY service in the cluster emitting
+            //               bodies over 50KB (max 345,579 bytes) and whose indented
+            //               lines are all progress bars: 210 of 210 over 24h start
+            //               `^[ \t]*\r`. Without this, two of them joined would be a
+            //               ~700KB row. Written as a shape, not a service name, so it
+            //               keeps working for the next TUI-ish container.
+            //
+            // NOT MATCHED = CONTINUATION. Tab-indented lines, 2+ space-indented
+            // lines, blank lines and ` --->` markers are all appended to the block
+            // in progress. A block is flushed when the next first-line arrives, when
+            // it reaches max_lines, or after max_wait_time of silence.
+            //
+            // BOUNDS. max_lines 64 covers cowrie's ~32-line tracebacks with headroom.
+            // Worst case per block is 64 x the stream's longest line; with kometa
+            // excluded by the \r rule the longest line in the cluster is ~10KB
+            // (kustomize-controller), so ~640KB absolute worst case and ~10KB in
+            // practice. Buffer memory is one partial block per container stream:
+            // ~500 streams x 64 lines x ~300B ~= 10MB against a 3750MiB GOMEMLIMIT.
+            // max_wait_time 3s is also the worst-case added latency for a QUIET
+            // stream; a chatty stream flushes as soon as its next line arrives.
+            //
+            // The negated matcher needs job= alongside it: a selector made only of
+            // matchers that can match the empty string is rejected outright.
+            // ---------------------------------------------------------------
+            stage.match {
+              selector = `{job="kubernetes-pods", app!~"sabnzbd|litellm|aws-inventory-exporter"}`
+              stage.multiline {
+                firstline     = `^([^ \t]| [^ \t-]|[ \t]*\r)`
+                max_lines     = 64
+                max_wait_time = "3s"
+              }
+            }
+
+            // ---------------------------------------------------------------
+            // 2. FIELD EXTRACTION.
+            //
+            // Runs AFTER the join, so `^` anchors to the event's first line and
+            // `(?P<msg>.*)` stops at the first newline -- i.e. msg is the event
+            // header, which is exactly the clustering key we want.
+            //
+            // Extracted values go to structured_metadata, NOT to stage.labels: Loki
+            // stream labels are indexed and this config's own cardinality budget
+            // (see loki.process.faro) forbids promoting anything per-request.
+            // otelcol.receiver.loki -> loki_translator.ConvertEntryToLogRecord copies
+            // StructuredMetadata straight into log-record attributes, so these land
+            // in ClickHouse LogAttributes. None of this reaches loki.write, which is
+            // not downstream of this component.
+            //
+            // Detection is by LINE SHAPE, not by service name, so one block covers
+            // every component that speaks the format.
+            //
+            // DELIBERATELY NOT PARSED:
+            //   * Python logging (secure-chrome, 2.7k rows/h). One service; the only
+            //     field worth having is the level and the severity ladder in
+            //     otelcol.processor.transform.clickstack already derives it. An
+            //     extracted msg would be the whole line minus a fixed prefix -- ~95%
+            //     duplicated bytes for no new grouping power.
+            //   * ANSI-wrapped zerolog (traefik, both kyverno controllers, stash,
+            //     seerr, tdarr; ~8k rows/h). Stripping the escapes would mean copying
+            //     the entire body into an attribute, because Body must not be
+            //     overwritten -- doubling storage for those rows. The level, the one
+            //     thing the escapes hide, is already handled by the ladder's
+            //     replace_pattern de-ANSI. The real fix is upstream (log.format=json
+            //     / NO_COLOR), not a parser here.
+            //   * cowrie's bracketed `[HoneyPotSSHTransport (...),272921,10.244.2.104]`
+            //     context. It embeds a per-connection id and the client IP, so it is
+            //     useless as a grouping key, and cowrie already emits every event a
+            //     SECOND time as JSON with those same fields named properly.
+            // ---------------------------------------------------------------
+
+            // klog -- `I1016 20:00:01.366044       1 discovery.go:273] "msg"`.
+            // kube-state-metrics, node-feature-discovery, altinity-clickhouse-operator,
+            // alloy itself and more: 5,740 rows/h.
+            stage.match {
+              selector = `{job="kubernetes-pods"} |~ "^[IWEF][0-9]{4} [0-9]{2}:"`
+              stage.regex {
+                expression = `^[IWEF]\d{4} [\d:.]+ +\d+ (?P<caller>[^ \]]+)\] (?P<msg>.*)`
+              }
+              stage.structured_metadata {
+                values = {
+                  caller = "",
+                  msg    = "",
+                }
+              }
+            }
+
+            // logfmt -- `ts=2026-10-16T19:40:17Z caller=evaluator.go:94 level=info msg="..."`.
+            // The whole Grafana stack: mimir (the single highest-volume service in the
+            // cluster) and loki, 17,325 rows/h. level is left alone on purpose; the
+            // severity ladder owns severity.
+            stage.match {
+              selector = `{job="kubernetes-pods"} |~ "^ts=[0-9]{4}-"`
+              stage.logfmt {
+                mapping = {
+                  msg       = "",
+                  caller    = "",
+                  component = "",
+                }
+              }
+              stage.structured_metadata {
+                values = {
+                  msg       = "",
+                  caller    = "",
+                  component = "",
+                }
+              }
+            }
+
+            // falco JSON. `rule` is the natural grouping key and today it is buried in
+            // a ~1.4KB body that also carries the full output_fields map.
+            stage.match {
+              selector = `{app_kubernetes_io_name="falco", namespace="falco"}`
+              stage.json {
+                expressions = {
+                  rule         = "rule",
+                  priority     = "priority",
+                  falco_source = "source",
+                }
+              }
+              stage.structured_metadata {
+                values = {
+                  rule         = "",
+                  priority     = "",
+                  falco_source = "",
+                }
+              }
+            }
+
+            forward_to = [otelcol.receiver.loki.clickstack.receiver]
           }
 
           // ============================================
