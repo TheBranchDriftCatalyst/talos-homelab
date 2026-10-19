@@ -1,0 +1,58 @@
+---
+# Auto-rolls both logAIrr Deployments when a new image tag appears in Zot.
+#
+# Same shape as fchat-bouncer-image-updater.yaml, and for the same reason: logAIrr is
+# published to the in-cluster registry by Forgejo Actions, in this cluster, from a Forgejo
+# repo. Nothing in the chain is off-site. Read that file too — the notes there about the
+# finalizer and about what writeBackConfig actually writes apply here verbatim.
+#
+# WHY THIS EXISTS. Until now the deployed tag was whatever a developer last ran
+# `task image:push` with, and the overlay pinned it by hand. CI could not even produce a
+# usefully-named image: its checkout fetched no tags, so `git describe` returned a bare sha.
+# Both halves are fixed together — CI now publishes `sha-<7>`, and this watches for it.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: logairr
+  namespace: argocd
+  # DECLARED, because the controller cannot add it itself — see the long note in
+  # fchat-bouncer-image-updater.yaml. v1.2.2 fails its own finalizer-add with
+  # "spec.namespace: Required value" on an object that has spec.namespace, and the reconcile
+  # aborts before any registry work happens. Any CR created after that upgrade hits it.
+  finalizers:
+    - resources-finalizer.argocd-image-updater.argoproj.io
+spec:
+  namespace: argocd
+  commonUpdateSettings:
+    updateStrategy: newest-build
+    # `latest` is allowed but is not what gets written: newest-build resolves the immutable
+    # per-commit tag, which is what every app here carries today (fchat-bouncer is on
+    # sha-11314e1, boomtime on sha-a3e5598). Pinning :latest would be the one outcome that
+    # breaks auto-deploy, because a mutable tag produces no manifest diff on the next push
+    # and therefore no sync and no restart.
+    allowTags: "regexp:^(latest|main|sha-[a-f0-9]{7,40})$"
+    # Zot DOES need a credential, despite its defaultPolicy ["read"]. That policy covers
+    # repositories; the updater's first call is the /v2/ base endpoint, which challenges
+    # anyway. Measured again while adding this: an anonymous GET of
+    # /v2/talos00-registry/logairr/tags/list returns UNAUTHORIZED, not an empty tag list.
+    pullSecret: pullsecret:argocd-image-updater-system/zot-secret
+    forceUpdate: false
+  writeBackConfig:
+    # Patches spec.source.kustomize.images on the Application — a LIVE override that never
+    # touches the repo. The newTag pinned in logAIrr's k8s/talos00/kustomization.yaml is a
+    # starting hint and will stay behind on purpose; `argocd app get logairr` is where the
+    # deployed tag is true.
+    method: argocd
+  applicationRefs:
+    - namePattern: logairr
+      images:
+        # ONE entry, not two. Both Deployments — manager and serve — run the same image
+        # from the same binary, so a single kustomize image override moves both.
+        - alias: logairr
+          # This name must match THREE places or the updater no-ops in silence: here, the
+          # `images:` key in logAIrr's k8s/talos00/kustomization.yaml, and the image in
+          # k8s/base/deployment-{manager,serve}.yaml.
+          imageName: registry.talos00/talos00-registry/logairr
+          manifestTargets:
+            kustomize:
+              name: registry.talos00/talos00-registry/logairr
