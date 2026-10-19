@@ -25,12 +25,21 @@ spec:
   namespace: argocd
   commonUpdateSettings:
     updateStrategy: newest-build
-    # `latest` is allowed but is not what gets written: newest-build resolves the immutable
-    # per-commit tag, which is what every app here carries today (fchat-bouncer is on
-    # sha-11314e1, boomtime on sha-a3e5598). Pinning :latest would be the one outcome that
-    # breaks auto-deploy, because a mutable tag produces no manifest diff on the next push
-    # and therefore no sync and no restart.
-    allowTags: "regexp:^(latest|main|sha-[a-f0-9]{7,40})$"
+    # ONLY the immutable per-commit tag. This deviates from the other CRs here, which also
+    # allow `latest` and `main`, and the deviation is deliberate — it was measured.
+    #
+    # With `latest` permitted, the first reconcile pinned the Application to
+    # :latest, because at that moment no sha- tag existed yet and :latest was the newest
+    # build. That is the one outcome that breaks auto-deploy for good: a mutable tag
+    # produces no manifest diff on the next push, so ArgoCD never syncs, the pods never
+    # restart, and the registry quietly moves on without the cluster. The updater log still
+    # reads errors=0, which is what makes it worth a comment rather than a shrug.
+    #
+    # The other apps get away with it on tie-breaking luck: a single build tagged three
+    # times gives `latest` and `sha-<7>` the SAME creation timestamp, and newest-build has
+    # no defined order for a tie. fchat-bouncer landed on sha-11314e1; this one landed on
+    # latest. Removing the mutable tags from the candidate set removes the coin flip.
+    allowTags: "regexp:^sha-[a-f0-9]{7,40}$"
     # Zot DOES need a credential, despite its defaultPolicy ["read"]. That policy covers
     # repositories; the updater's first call is the /v2/ base endpoint, which challenges
     # anyway. Measured again while adding this: an anonymous GET of
