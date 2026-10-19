@@ -57,14 +57,17 @@ spec:
         maxDuration: 3m
 
   ignoreDifferences:
-    # ESO injects conversionStrategy / decodingStrategy / metadataPolicy into
-    # spec.data[].remoteRef that are not in git.
+    # ESO defaults four fields into spec.data[].remoteRef that are not in git.
+    # nullBytePolicy is the newest of them and was missing here, which left the app
+    # permanently OutOfSync even though the sync itself reported success — the state that
+    # hides real drift, because nobody investigates a red that is always red.
     - group: external-secrets.io
       kind: ExternalSecret
       jqPathExpressions:
         - .spec.data[].remoteRef.conversionStrategy
         - .spec.data[].remoteRef.decodingStrategy
         - .spec.data[].remoteRef.metadataPolicy
+        - .spec.data[].remoteRef.nullBytePolicy
     # The manager writes status on every run; that is its job, not drift.
     - group: logairr.io
       kind: LogTriagePolicy
