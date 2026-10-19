@@ -1,0 +1,72 @@
+---
+# WE BUILD THE IMAGE, SO THE MANIFESTS LIVE WITH THE CODE (docs/02-architecture/dual-gitops.md).
+# Everything logAIrr is — CRDs, RBAC, PVC, both Deployments, Service, IngressRoute, the Policy —
+# lives in the logAIrr repo under k8s/. This file is the only piece that belongs here.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: logairr
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: logairr
+    app.kubernetes.io/part-of: catalyst
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  info:
+    - name: Source (Forgejo)
+      value: https://forge.knowledgedump.space/panda/logAIrr
+    - name: Container Registry (Zot)
+      value: https://registry.knowledgedump.space/talos00-registry/logairr
+    - name: Application
+      value: https://logairr.talos00
+
+  source:
+    # The IN-CLUSTER Forgejo service, deliberately: sync must not depend on Traefik,
+    # external-dns or the WAN. Credentials come from the `repo-creds` secret, whose url prefix
+    # must keep matching this one.
+    repoURL: http://forgejo.forgejo.svc.cluster.local:3000/panda/logAIrr.git
+    targetRevision: main
+    path: k8s/talos00
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: logairr
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      # NOT OPTIONAL. The LogTriageRun CRD exceeds the client-side annotation size limit;
+      # without server-side apply the sync fails with "metadata.annotations: Too long".
+      - ServerSideApply=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    # ESO injects conversionStrategy / decodingStrategy / metadataPolicy into
+    # spec.data[].remoteRef that are not in git.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+    # The manager writes status on every run; that is its job, not drift.
+    - group: logairr.io
+      kind: LogTriagePolicy
+      jsonPointers:
+        - /status
