@@ -42,6 +42,14 @@ spec:
                     operator: NotIn
                     values: [talos03]
       serviceAccountName: version-checker
+      # Required because the image above is the patched fork in Zot rather than
+      # quay.io. Zot challenges /v2/ even with defaultPolicy read, so an
+      # anonymous pull fails with "no basic auth credentials". The secret is
+      # already templated into this namespace by ESO from the 1Password
+      # nexus-admin item; it just was never referenced here. Drop this along
+      # with the fork when upstream ships the client fixes.
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
