@@ -118,6 +118,12 @@ spec:
           #      beginning of value". Fixed host-awarely, NOT by dropping
           #      *.k8s.io from the regex -- that regressed
           #      registry.k8s.io/coredns/coredns from 244 tags to a failure.
+          #   5. oci.Tags fetched a manifest for every cosign/SBOM artefact
+          #      tag before pkg/version/filters.go threw them away. Measured
+          #      on ghcr.io: 953 of kedacore/keda's first 1,000 tags are
+          #      .att/.sig/.sbom (95%), and 76 of cloudnative-pg's 375 (20%).
+          #      Now filtered before the fetch: keda drops from 2,867 manifest
+          #      requests to 1,208 and from a 30s timeout to 3s.
           #   4. oci.Manifests created ONE GOROUTINE PER TAG up front
           #      (wg.Add(len(tags)) + go func in the range); the semaphore
           #      bounded only concurrent fetches, not goroutine creation. This
@@ -136,9 +142,26 @@ spec:
           # OCI client does the scoped-bearer dance anonymously and simply was
           # never reached.
           #
-          # The 512Mi limit below is deliberately UNCHANGED from the OOM
-          # attempt: extra headroom would have hidden whether fix 4 works.
-          image: registry.talos00/talos00-registry/version-checker:v0.11.0-registryfix2
+          # The 512Mi limit below is UNCHANGED. What was missing was not
+          # headroom but GOMEMLIMIT (see env). A heap profile of the patched
+          # binary running the real workload showed heap in-use of 224MB
+          # against an RSS of 511MB: the Go runtime had no idea a 512Mi cgroup
+          # limit existed, so it grew into it instead of collecting. Fixes 4
+          # and 5 cut the genuine working set; GOMEMLIMIT makes the GC respect
+          # the ceiling. Raising the limit without it would just move the
+          # OOM.
+          image: registry.talos00/talos00-registry/version-checker:v0.11.0-registryfix3
+          env:
+            # Tell the Go runtime about the container limit. Without this the
+            # GC targets GOGC=100 against available system memory, which on a
+            # 64Gi node means it will happily let RSS pass 512Mi and be
+            # OOMKilled -- measured: 224MB heap in-use, 511MB RSS, exit 137.
+            # As a SOFT limit the GC simply works harder as it approaches,
+            # which is the correct trade for an exporter: slower is fine,
+            # dead is not. 400MiB leaves headroom for stacks and off-heap
+            # allocations under the 512Mi hard limit.
+            - name: GOMEMLIMIT
+              value: "400MiB"
           command: ["version-checker"]
           args:
             # Automatically check EVERY container on the cluster without needing
