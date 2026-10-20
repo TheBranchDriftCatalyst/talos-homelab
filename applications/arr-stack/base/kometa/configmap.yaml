@@ -336,7 +336,24 @@ data:
       run_again_delay: 2
       missing_only_released: false
       only_filter_missing: false
-      show_missing: true
+      # show_missing OFF, and this is a logging decision rather than a feature one.
+      #
+      # It prints one console row per missing item per collection, and Kometa's console is
+      # a 100-column ASCII report with no timestamp and no severity field on any line. So
+      # every one of those rows reaches the log pipeline as an undifferentiated line.
+      # Measured with logAIrr over 24h: kometa emitted 5,252 error-classified lines, and
+      # 63 distinct signatures were nothing but film titles — "Toy Story of Terror!",
+      # "Dr. Terror's House of Horrors" — flagged only because the triage heuristic looks
+      # for error vocabulary and `terror` contains `error`.
+      #
+      # Turning it off removes that whole class without losing one real error: the genuine
+      # ones are `TMDb Error:`, `TVDb Error:`, `Overlay Error:` and `File Error:`, and
+      # those are emitted regardless of this setting.
+      #
+      # save_report stays TRUE, which is the point — the missing-item data is still
+      # written to the report file where it belongs and can be read deliberately. This
+      # only stops it being narrated line by line into the cluster's error stream.
+      show_missing: false
       save_report: true
       tvdb_language: eng
       item_refresh_delay: 0

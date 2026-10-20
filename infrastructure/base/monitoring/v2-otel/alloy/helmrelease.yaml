@@ -737,6 +737,59 @@ spec:
               }
             }
 
+            // kometa -- a 100-column ASCII REPORT, not a log. Every line arrives intact;
+            // nothing here is fixing broken multiline. The problem is the shape:
+            //
+            //   |     1 | TMDb Error: No Movie found for TMDb ID: 1758786            |
+            //   |====================================================================|
+            //
+            // No timestamp, no severity field, and the content wrapped in borders and
+            // padded to a fixed width. Two consequences, both measured with logAIrr over
+            // 24h: the decoration rows are pure noise, and the padding means two
+            // occurrences of the same error differ by trailing spaces, so they normalise
+            // to the same key only by luck of width.
+            //
+            // Kometa has no structured or JSON console mode — this is where structure
+            // gets added, which is what a collector is for.
+            //
+            // level is NOT set here, deliberately, for the same reason the logfmt block
+            // above leaves it alone: the severity ladder owns severity.
+            stage.match {
+              selector = `{app="kometa"}`
+
+              // Pure decoration: a row containing nothing but borders, rules and space.
+              // `|====...====|`, `|            |`. Never carries information.
+              stage.drop {
+                expression          = `^\|[=\-\s]*\|$`
+                drop_counter_reason = "kometa_box_decoration"
+              }
+
+              // Unwrap the borders so the body is the content. Two replaces rather than
+              // one with a capture group: no templating to get subtly wrong, and each
+              // half is independently obvious.
+              stage.replace {
+                expression = `^\|\s*`
+                replace    = ""
+              }
+              stage.replace {
+                expression = `\s*\|$`
+                replace    = ""
+              }
+
+              // What is left is either a real error -- `TMDb Error:`, `TVDb Error:`,
+              // `Overlay Error:`, `File Error:` -- or ordinary progress. The source
+              // prefix is the useful grouping key, so promote it when present.
+              stage.regex {
+                expression = `^(?:\s*\d+\s*\|\s*)?(?P<kometa_source>[A-Za-z0-9+]+) Error:\s*(?P<msg>.*)`
+              }
+              stage.structured_metadata {
+                values = {
+                  kometa_source = "",
+                  msg           = "",
+                }
+              }
+            }
+
             // logfmt -- `ts=2026-10-16T19:40:17Z caller=evaluator.go:94 level=info msg="..."`.
             // The whole Grafana stack: mimir (the single highest-volume service in the
             // cluster) and loki, 17,325 rows/h. level is left alone on purpose; the
