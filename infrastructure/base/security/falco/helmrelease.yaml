@@ -354,6 +354,37 @@ spec:
       #      runs update-ca-certificates, c_rehash, envsubst and curl on every start, which is
       #      exactly what "binary not part of base image" is designed to detect. Genuinely
       #      benign, and it runs every 15 minutes.
+      #   3. The Go toolchain in the forgejo-runner dind container -- 19,221 events/day,
+      #      measured, of which `vet` alone is 11,487 because logAIrr's lint is `go vet ./...`.
+      #      In a container whose PURPOSE is to compile and execute freshly written binaries
+      #      this rule has no detection value by construction: every one of those events is a
+      #      true positive that means nothing.
+      #
+      #      Scoped by EXEPATH, deliberately not by namespace and not by absence of k8s
+      #      metadata. The dind-launched containers report container_name=<NA> with no
+      #      k8s_ns_name, so "ignore containers lacking k8s metadata" would have been the easy
+      #      fix -- and it would have blinded this rule to every container dind ever starts.
+      #      What is conceded instead is one directory and two files:
+      #        - a payload written to /usr/local/go/pkg/tool/linux_amd64/<anything> and exec'd
+      #          by a process whose comm is `go`
+      #        - a payload written to exactly /usr/local/go/bin/go or /usr/local/go/bin/gofmt
+      #      Application containers do not have that path at all, so for them the exception is
+      #      unreachable without the attacker first building the whole directory tree.
+      #
+      #      Note honestly: proc.pname = "go" is FORGEABLE. It raises cost and stops the
+      #      exception matching a payload run straight from a shell, but the exepath prefix is
+      #      the real boundary, not the parent name.
+      #
+      #      NOT excepted, on purpose, though they are the same CI phenomenon: /tmp/logairr,
+      #      *.test binaries and the cached controller-gen (~20 events/day total). Excepting
+      #      /tmp or the build cache would be a broad blind spot for almost no volume, and "a
+      #      new binary executed there" is genuinely worth seeing. Their continued firing is
+      #      also the live proof that this rule still works for dind.
+      #
+      #      Defence in depth inside the CI container is untouched: Run shell untrusted
+      #      (439/day, live), Read sensitive file untrusted, Redirect STDOUT/STDIN and Packet
+      #      socket created all remain active and unexcepted there. An attacker who does
+      #      anything beyond compiling still alerts.
       #
       # This narrows ONE upstream rule. It does not touch the honeypot breach rules.
       drop-and-execute-exceptions.yaml: |-
@@ -361,6 +392,9 @@ spec:
           condition: >
             and not (proc.exepath = "/opt/cni/bin/cilium-cni" and container.id = "runtime")
             and not (k8s.ns.name = "monitoring" and k8s.pod.name startswith "alertmanager-config-pusher")
+            and not (proc.pname = "go"
+                     and proc.exepath startswith "/usr/local/go/pkg/tool/linux_amd64/")
+            and not (proc.exepath in ("/usr/local/go/bin/go", "/usr/local/go/bin/gofmt"))
           # `override: {condition: append}`, NOT the bare `append: true` key -- falco --validate
           # reports that one as LOAD_DEPRECATED_ITEM. A deprecated key on a security rule is
           # precisely the thing that stops working on a chart bump and takes the exception with
