@@ -42,14 +42,10 @@ spec:
                     operator: NotIn
                     values: [talos03]
       serviceAccountName: version-checker
-      # Required because the image above is the patched fork in Zot rather than
-      # quay.io. Zot challenges /v2/ even with defaultPolicy read, so an
-      # anonymous pull fails with "no basic auth credentials". The secret is
-      # already templated into this namespace by ESO from the 1Password
-      # nexus-admin item; it just was never referenced here. Drop this along
-      # with the fork when upstream ships the client fixes.
-      imagePullSecrets:
-        - name: nexus-pull-dockercfg
+      # No imagePullSecrets: upstream quay.io needs none. (A
+      # nexus-pull-dockercfg ExternalSecret does exist in this namespace, and
+      # referencing it is what a Zot-hosted image would need -- Zot challenges
+      # /v2/ even with defaultPolicy read.)
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -93,7 +89,26 @@ spec:
           # Upstream's own client tests still pass; the patch adds tests to
           # pkg/client/fallback, which had none, and each fix was verified by
           # mutation -- reverting it turns the new tests red.
-          image: registry.talos00/talos00-registry/version-checker:v0.11.0-registryfix1
+          # REVERTED TO UPSTREAM on 2026-10-20 after the patched fork above was
+          # OOMKilled into CrashLoopBackOff (exit 137, 5 restarts in 7 minutes,
+          # zero metrics exported). The patch is correct about the three client
+          # bugs and does resolve 2/14 -> 14/14 refs, but making those lookups
+          # WORK exposes a second defect it does not address: the OCI client
+          # fetches a manifest PER TAG, at runtime.NumCPU()*5 concurrency, with
+          # no bound on tag count. kyverno has 14,877 tags and
+          # cloudnative-pg/postgresql 11,452, so ~114 newly-resolving refs blew
+          # straight through the 512Mi limit in seconds.
+          #
+          # A crashlooping exporter is worse than a noisy one: before the patch
+          # this under-reported (~117 containers untracked); during it, it
+          # reported nothing at all. So upstream it is -- the real fix is to
+          # sort tags before fetching metadata and only pull manifests for
+          # candidates, which is a change that belongs in review, not in a
+          # local fork.
+          #
+          # Patch + tests kept at scratchpad/version-checker-v0.11.0.patch.
+          # The OOM is evidence FOR the upstream issue, not against it.
+          image: quay.io/jetstack/version-checker:v0.11.0
           command: ["version-checker"]
           args:
             # Automatically check EVERY container on the cluster without needing
