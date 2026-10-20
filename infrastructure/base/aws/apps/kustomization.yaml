@@ -30,18 +30,24 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - hello-whoami.yaml
-  # ── ON (2026-10-20) ── TALOS-outpost: the first OUTPOST. THIS LINE IS THE
-  # ON-SWITCH AND IT SPENDS REAL MONEY: ~$10.6/mo always-on (t4g.micro + 10GiB
-  # gp3 + public IPv4). Unlike every GPU claim below, this one is MEANT to stay
-  # uncommented — it is an always-on box, there is no reaper, and Flux
-  # reasserting it after a crash is the desired behaviour. See the file header.
-  # Serves http://outpost.amberdark.net (plain HTTP, grey-cloud, port 80 open to
-  # 0.0.0.0/0 — the composition hardcodes that CIDR).
-  # TEARDOWN IS THREE STEPS, not one: comment this line, confirm no instance
-  # survives, AND delete the Cloudflare record by hand — external-dns runs
-  # --policy=upsert-only and will leave outpost.amberdark.net pointing at a
-  # released public IP that AWS reassigns to a stranger.
-  - outpost-demo.yaml
+  # ── ON (2026-10-20) ── THE OUTPOST (TALOS-jegu). THIS LINE IS THE ON-SWITCH AND
+  # IT SPENDS REAL MONEY: ~$10.6/mo always-on (t4g.micro + 10GiB gp3 + EIP).
+  # Serves https://outpost.amberdark.net with a real Let's Encrypt cert that the
+  # box obtains itself via Caddy + ACME HTTP-01 — no cert delivery, no secret.
+  #
+  # Unlike every GPU claim below, this one is MEANT to stay uncommented: it is
+  # always-on, there is NO reaper (a reaper on a committed XR is an outage
+  # generator), and Flux reasserting it after a crash is the desired behaviour.
+  #
+  # Replaced the XInstance claim `outpost-demo`, which could only ever serve plain
+  # HTTP — one open port, no EIP — and browsers refused it because amberdark.net
+  # sends HSTS with includeSubDomains.
+  #
+  # TEARDOWN IS THREE STEPS: comment this line (which also RELEASES the EIP, since
+  # an unattached EIP is still billed), confirm no instance/address survives, AND
+  # delete the Cloudflare record by hand — external-dns is --policy=upsert-only and
+  # a released public IP gets reassigned to a stranger.
+  - outpost.yaml
   # ALWAYS-ON: the shared SSM instance profile (catalyst-ssm). Not an on-switch —
   # it is a free IAM primitive any box references via spec.instanceProfileName to
   # get Session Manager interactive access. See ssm-instance-profile.yaml header.

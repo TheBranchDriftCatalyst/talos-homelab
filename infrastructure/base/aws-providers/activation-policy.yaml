@@ -79,11 +79,14 @@ spec:
     # address. (An UNattached EIP is also billed, so do not leave one orphaned after a
     # teardown -- that is the one new cost footgun these two lines introduce.)
     #
-    # Both are needed: aws_eip's inline `instance` attribute would avoid the second kind,
-    # but using the separate association resource keeps the allocation and the attachment
-    # independently reconcilable, so replacing the instance does not release the address.
+    # ONLY `eips` -- CORRECTED after inspecting the schema. The first version of this
+    # block also activated eipassociations, claiming both were needed. They are not:
+    # eips.spec.forProvider exposes `instanceSelector`, so the Eip resolves and holds
+    # its own association via matchControllerRef (exactly like the composition's
+    # vpcSecurityGroupIdSelector). Replacing the instance RE-ASSOCIATES rather than
+    # releasing the address, which is the property we actually wanted. One fewer
+    # activated kind, which is the entire discipline of this file.
     - eips.ec2.aws.upbound.io
-    - eipassociations.ec2.aws.upbound.io
     # EC2 Fleet needs AWSServiceRoleForEC2Fleet to exist before its FIRST CreateFleet in
     # an account; AWS auto-creates it on that call and the call itself loses the race
     # (TALOS-grb7). Declaring the role means a fresh account never sees that failure.

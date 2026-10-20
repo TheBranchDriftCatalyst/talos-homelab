@@ -1,0 +1,89 @@
+---
+# XOutpost — a small always-on box with a PUBLIC web endpoint and a STABLE
+# address (TALOS-jegu). This is the thing XInstance could not be.
+#
+# ── WHY A SEPARATE XRD RATHER THAN XInstance v1alpha2 ────────────────────────────
+# XInstance is explicitly POC-DEMO and its header states the contract: "ONE
+# optional open port, no EIP (spot boxes tunnel OUT via userData)". An outpost
+# needs the opposite of both, and bolting them on would change behaviour for
+# every existing consumer:
+#   * TWO ingress ports (80 for the ACME HTTP-01 challenge, 443 for the service).
+#     function-patch-and-transform cannot loop, so a port LIST is unimplementable
+#     anyway -- it would be openPort/openPort2/openPort3 scalars. And worse, with
+#     openPort defaulting to 0 a second inert rule would render IDENTICALLY to the
+#     first and AWS rejects duplicate security-group rules outright.
+#   * AN EIP, which p-and-t cannot render CONDITIONALLY (there is no `condition`
+#     field in pt.fn.crossplane.io Resources). An always-rendered Eip on XInstance
+#     would bill every aws-redteam throwaway for an address it never wanted.
+# So: a dedicated composition that always renders what an outpost always needs,
+# and XInstance stays the cheap egress-only POC box it was designed to be.
+#
+# ── WHAT IT DELIBERATELY DOES NOT DO ────────────────────────────────────────────
+# No spot (an interruption takes the public endpoint away and returns it on a new
+# address -- see the `spot` removal in xinstance-xrd.yaml). No cidrBlocks field:
+# an outpost's 80/443 are public by definition, and anything that needs narrowing
+# is not an outpost. No TLS plumbing -- the box does its own ACME, so there is no
+# cert to deliver and no secret to hold (see apps/outpost-demo.yaml).
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xoutposts.aws.catalyst.io
+  labels: {catalyst.io/stage: poc-demo}
+spec:
+  group: aws.catalyst.io
+  names: {kind: XOutpost, plural: xoutposts}
+  defaultCompositionRef: {name: xoutpost-aws}
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [instanceName, ami, vpcId, subnetId]
+              properties:
+                instanceName: {type: string}
+                instanceType:
+                  type: string
+                  default: t4g.micro
+                  description: >-
+                    1 GiB suits a reverse proxy plus a small service. NOT enough for k3s +
+                    Cilium (whose agent alone requests 1536Mi) -- that is a t4g.medium.
+                ami:
+                  type: string
+                  description: >-
+                    CONCRETE ami-... id, region-specific. upjet passes resolve:ssm: aliases
+                    through literally and DescribeImages rejects them (InvalidAMIID.Malformed).
+                    Match the arch to instanceType -- an x86_64 AMI will not boot a t4g.
+                rootVolumeGb: {type: integer, default: 10}
+                region: {type: string, default: us-west-2}
+                vpcId: {type: string}
+                subnetId:
+                  type: string
+                  description: Use a default-for-az subnet so the instance gets public connectivity.
+                instanceProfileName:
+                  type: string
+                  description: >-
+                    IAM instance profile NAME (e.g. catalyst-ssm) for SSM shell access -- no
+                    key pair, no inbound 22. Optional: unset means no profile, and therefore
+                    no way in. Note metadataOptions below blocks CONTAINERS from IMDS, so a
+                    workload needing AWS creds at runtime wants hop limit 2, set deliberately.
+                userData:
+                  type: string
+                  default: ""
+                  description: >-
+                    Cloud-init / shell. COMMITTED TO GIT and readable from IMDS and via
+                    ec2:DescribeInstanceAttribute -- so it must contain NO secrets. Anything
+                    secret goes 1Password -> ESO PushSecret -> SSM Parameter Store and is read
+                    at boot with the instance profile (see gpu-inference/api-key-push.yaml).
+            status:
+              type: object
+              properties:
+                publicIp:
+                  type: string
+                  description: The EIP's address. STABLE across instance stop/start and replacement.
+                instanceId: {type: string}
+                eipAllocationId: {type: string}

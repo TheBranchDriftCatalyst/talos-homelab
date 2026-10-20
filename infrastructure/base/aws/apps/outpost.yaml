@@ -1,0 +1,118 @@
+---
+# ██ THE OUTPOST ██ (TALOS-jegu) — a small always-on AWS box with a STABLE
+# public address, serving https://outpost.amberdark.net with a real
+# Let's Encrypt certificate.
+#
+# Replaces the XInstance claim `outpost-demo` (deleted in the same commit).
+# That box proved the chain end to end but could only ever serve plain HTTP,
+# because XInstance allows exactly ONE open port and has no EIP. Browsers then
+# refused it outright: amberdark.net sends
+#   strict-transport-security: max-age=31536000; includeSubDomains; preload
+# so any browser that has ever loaded an https://*.amberdark.net page silently
+# upgrades http://outpost.amberdark.net to https:// for a YEAR -- and port 443
+# was closed. curl worked (it ignores HSTS) which made it look fine from the
+# command line. HSTS is why this needed real TLS rather than a DNS fix.
+#
+# ── ALWAYS-ON, AND THEREFORE NOT THE gpu-inference SHAPE ───────────────────────
+# Those rigs are ephemeral: HOT->WARM->COLD reapers plus a deliberately
+# uncommitted XR so Flux cannot resurrect a self-terminated box. This inverts
+# all three. The XR IS committed, Flux SHOULD reassert it, and there is NO
+# reaper -- a reaper on a committed XR is an outage generator (delete -> Flux
+# recreates -> new box, ~2min down, every cycle). The cost backstop is a budget
+# alarm instead (TALOS-jegu.4).
+#
+# ── COST ──────────────────────────────────────────────────────────────────────
+# t4g.micro $6.13 + 10GiB gp3 $0.80 + EIP-while-attached $3.65 = ~$10.6/mo.
+# The EIP costs nothing extra: AWS bills every IN-USE public IPv4 the same
+# $0.005/hr whether auto-assigned or elastic. But an UNATTACHED EIP is ALSO
+# billed, so teardown must RELEASE it, not just terminate the box.
+#
+# ── TEARDOWN IS THREE STEPS ───────────────────────────────────────────────────
+# 1. comment this file's line in kustomization.yaml and let Flux prune (this
+#    releases the EIP too, because the Eip is a composed resource)
+# 2. confirm nothing survives:
+#      aws ec2 describe-instances --region us-west-2 \
+#        --filters Name=tag:Name,Values=outpost
+#      aws ec2 describe-addresses --region us-west-2
+# 3. DELETE the outpost.amberdark.net record in Cloudflare BY HAND. external-dns
+#    runs --policy=upsert-only and will not remove it, and a released public IP
+#    is reassigned to another AWS customer -- an orphaned A record on a domain we
+#    treat as pre-trusted is a subdomain-takeover vector.
+apiVersion: aws.catalyst.io/v1alpha1
+kind: XOutpost
+metadata:
+  name: outpost
+  labels:
+    catalyst.io/stage: poc-demo
+    catalyst.io/cloud: aws
+    catalyst.io/component: outpost
+spec:
+  instanceName: outpost
+  instanceType: t4g.micro
+  # AL2023 arm64 for t4g, us-west-2, resolved 2026-10-20:
+  #   aws ssm get-parameter --region us-west-2 \
+  #     --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+  # Must be a CONCRETE id (upjet passes resolve:ssm: aliases through literally and
+  # DescribeImages rejects them). Do NOT copy ami-075d448db8fb256af from the
+  # aws-redteam claims -- that is x86_64 and will not boot a t4g.
+  ami: ami-0957e38de3db270cc
+  rootVolumeGb: 10
+  region: us-west-2
+  vpcId: vpc-3536d651 # default VPC
+  subnetId: subnet-36191741 # us-west-2a, default-for-az
+  instanceProfileName: catalyst-ssm # SSM shell; no key pair, no inbound 22
+  # NO SECRETS IN HERE, EVER. userData is committed to git AND readable from IMDS
+  # and via ec2:DescribeInstanceAttribute. Caddy needs no credential -- it solves
+  # ACME HTTP-01 on :80, which is exactly why the composition opens that port even
+  # though the service itself is HTTPS-only. Anything that ever does need a secret
+  # goes 1Password -> ESO PushSecret -> SSM Parameter Store and is read at boot
+  # with the instance profile (pattern: gpu-inference/api-key-push.yaml).
+  #
+  # No `set -eu`: the gpu-inference userData learned that it aborts before the
+  # workload ever starts on any transient error. Log to a file instead, readable
+  # over SSM since there is no SSH.
+  userData: |
+    #!/bin/bash
+    exec > >(tee -a /var/log/outpost-init.log) 2>&1
+    echo "=== outpost init $(date -Is) ==="
+
+    dnf install -y docker || echo "FATAL: docker install failed"
+    systemctl enable --now docker || echo "FATAL: docker failed to start"
+
+    # Shared network so caddy can reach the backend by container name.
+    docker network create outpost 2>/dev/null || true
+
+    docker run -d --restart=always --name whoami --network outpost \
+      traefik/whoami:v1.11 || echo "FATAL: whoami failed to start"
+
+    install -d /opt/caddy
+    cat > /opt/caddy/Caddyfile <<'CADDY'
+    {
+    	# HTTP/3 DISABLED DELIBERATELY. Caddy would bind UDP/443 and advertise
+    	# Alt-Svc for it, but the security group opens TCP only -- so clients
+    	# would try QUIC, hang, and fall back, adding latency for nothing.
+    	# Open UDP/443 in the composition first if h3 is ever wanted.
+    	servers {
+    		protocols h1 h2
+    	}
+    }
+
+    outpost.amberdark.net {
+    	encode zstd gzip
+    	reverse_proxy whoami:80
+    }
+    CADDY
+
+    # caddy_data holds the ACME account key and issued certs. A named volume
+    # survives container restarts; it does NOT survive instance replacement
+    # (root volume is deleteOnTermination), so a rebuild re-issues. That is fine
+    # against Let's Encrypt's 50-certs-per-domain-per-week limit, but it is the
+    # reason the EIP matters: a stable address means HTTP-01 keeps validating.
+    docker run -d --restart=always --name caddy --network outpost \
+      -p 80:80 -p 443:443 \
+      -v /opt/caddy/Caddyfile:/etc/caddy/Caddyfile:ro \
+      -v caddy_data:/data -v caddy_config:/config \
+      caddy:2-alpine || echo "FATAL: caddy failed to start"
+
+    docker ps
+    echo "=== outpost init done $(date -Is) ==="

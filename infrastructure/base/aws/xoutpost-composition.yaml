@@ -1,0 +1,143 @@
+---
+# Composition for XOutpost (TALOS-jegu). Members: SG, egress-all, TWO ingress
+# rules (80 + 443), Instance, and an Eip that attaches itself.
+#
+# The two ingress rules are SEPARATE resources with literal ports rather than
+# patched-from-spec, on purpose: there is no openPorts field to patch from (see
+# the XRD header on why a list is unimplementable under
+# function-patch-and-transform), and an outpost's ports are not a per-claim
+# decision. 80 is not optional even for an HTTPS-only service -- Caddy/certbot
+# need it for the ACME HTTP-01 challenge, and it also serves the HTTP->HTTPS
+# redirect.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: xoutpost-aws
+  labels: {catalyst.io/stage: poc-demo}
+spec:
+  compositeTypeRef: {apiVersion: aws.catalyst.io/v1alpha1, kind: XOutpost}
+  mode: Pipeline
+  pipeline:
+    - step: patch-and-transform
+      functionRef: {name: function-patch-and-transform}
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: sg
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: SecurityGroup
+              spec:
+                forProvider:
+                  region: us-west-2
+                  description: xoutpost (managed by crossplane) — public 80/443, egress all
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.vpcId, toFieldPath: spec.forProvider.vpcId}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceName, toFieldPath: spec.forProvider.name}
+          # :80 — REQUIRED even for an HTTPS-only outpost. Caddy's ACME HTTP-01
+          # challenge is served here, so closing it means no certificate and no
+          # renewal. Also carries the HTTP->HTTPS redirect.
+          - name: sg-ingress-http
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: SecurityGroupRule
+              spec:
+                forProvider:
+                  region: us-west-2
+                  type: ingress
+                  protocol: tcp
+                  fromPort: 80
+                  toPort: 80
+                  cidrBlocks: ["0.0.0.0/0"]
+                  securityGroupIdSelector: {matchControllerRef: true}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+          - name: sg-ingress-https
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: SecurityGroupRule
+              spec:
+                forProvider:
+                  region: us-west-2
+                  type: ingress
+                  protocol: tcp
+                  fromPort: 443
+                  toPort: 443
+                  cidrBlocks: ["0.0.0.0/0"]
+                  securityGroupIdSelector: {matchControllerRef: true}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+          - name: sg-egress
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: SecurityGroupRule
+              spec:
+                forProvider:
+                  region: us-west-2
+                  type: egress
+                  protocol: "-1"
+                  fromPort: 0
+                  toPort: 0
+                  cidrBlocks: ["0.0.0.0/0"]
+                  securityGroupIdSelector: {matchControllerRef: true}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+          - name: instance
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Instance
+              spec:
+                forProvider:
+                  region: us-west-2
+                  vpcSecurityGroupIdSelector: {matchControllerRef: true}
+                  # IMDSv2 required, hop limit 1. metadataOptions is a LIST on
+                  # instances.ec2 v1beta1 (an OBJECT only on v1beta2) -- writing the
+                  # map form fails the whole composition with "expected list, got
+                  # &{map[...]}", and `kubectl explain` wrongly reports the field
+                  # absent entirely, so trust the CRD schema for the version you
+                  # are TARGETING. Hop limit 1 lets the HOST reach IMDS (all the SSM
+                  # agent and boot-time get-parameter need) while blocking
+                  # containers -- which matters a lot more here than on a private
+                  # box, because this one answers the internet on two ports.
+                  metadataOptions:
+                    - httpEndpoint: enabled
+                      httpTokens: required
+                      httpPutResponseHopLimit: 1
+                  rootBlockDevice:
+                    - volumeSize: 10
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.ami, toFieldPath: spec.forProvider.ami}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceType, toFieldPath: spec.forProvider.instanceType}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.subnetId, toFieldPath: spec.forProvider.subnetId}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.userData, toFieldPath: spec.forProvider.userData}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.rootVolumeGb, toFieldPath: "spec.forProvider.rootBlockDevice[0].volumeSize"}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceName, toFieldPath: "spec.forProvider.tags[Name]"}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceProfileName, toFieldPath: spec.forProvider.iamInstanceProfile, policy: {fromFieldPath: Optional}}
+              - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.id, toFieldPath: status.instanceId}
+          # The stable address. `instanceSelector: matchControllerRef` makes the Eip
+          # resolve and hold its own association, so eipassociations is NOT needed --
+          # one fewer activated kind. Replacing the instance re-associates rather
+          # than releasing the address, which is the entire point: DNS and the
+          # Pi-hole override keep pointing somewhere real.
+          #
+          # ⚠ domain: vpc is required for an EIP in a VPC. And note the inverse cost
+          # footgun of the usual advice: an in-use public IPv4 and an attached EIP
+          # cost the SAME $0.005/hr, but an UNATTACHED EIP is also billed -- so a
+          # teardown must release it, not just terminate the box.
+          - name: eip
+            base:
+              apiVersion: ec2.aws.upbound.io/v1beta1
+              kind: Eip
+              spec:
+                forProvider:
+                  region: us-west-2
+                  domain: vpc
+                  instanceSelector: {matchControllerRef: true}
+            patches:
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
+              - {type: FromCompositeFieldPath, fromFieldPath: spec.instanceName, toFieldPath: "spec.forProvider.tags[Name]"}
+              - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.publicIp, toFieldPath: status.publicIp}
+              - {type: ToCompositeFieldPath, fromFieldPath: status.atProvider.allocationId, toFieldPath: status.eipAllocationId}
