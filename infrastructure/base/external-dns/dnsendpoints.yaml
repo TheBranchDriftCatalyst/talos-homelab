@@ -1,18 +1,66 @@
 ---
-# DNSEndpoint for Nebula lighthouse
-# Creates CNAME record without needing an IngressRoute
+# DNSEndpoints — records that need no IngressRoute because their backend is not
+# an in-cluster Service. external-dns picks these up via `--source=crd
+# --crd-source-kind=DNSEndpoint` (set in workload/deployment.yaml), and the
+# amberdark overlay's domain-filter decides WHICH instance claims each record:
+# *.knowledgedump.space -> external-dns, *.amberdark.net -> external-dns-amberdark.
+#
+# ⚠ external-dns runs `--policy=upsert-only`: it CREATES and UPDATES records but
+# NEVER DELETES them. Removing a DNSEndpoint from git does not remove the record
+# from Cloudflare — it must be deleted by hand (or by the suspended sweepers in
+# orphan-cronjobs.yaml). For a record pointing at an EC2 public IP that matters a
+# lot: a released AWS address gets reassigned to another customer, so an orphan
+# becomes a subdomain-takeover vector on a domain we treat as pre-trusted.
+#
+# ── REMOVED 2026-10-20 (TALOS-outpost) ── `nebula-lighthouse`
+# (nebula.knowledgedump.space CNAME -> knowledgedump.space) went with the rest of
+# the abandoned Nebula/ClusterMesh stack; see infrastructure/base/aws/ROADMAP.md
+# for the autopsy. Its Cloudflare record is orphaned by upsert-only and needs a
+# manual delete — low risk, since it is a CNAME to the apex rather than to a
+# released IP, so it merely resolves home.
+
+# ── THE OUTPOST (TALOS-outpost) ──────────────────────────────────────────────
+# A small always-on EC2 box (XInstance `outpost-demo`,
+# infrastructure/base/aws/apps/outpost-demo.yaml) serving traefik/whoami.
+#
+# WHY A HAND-WRITTEN TARGET IP: XInstance surfaces status.publicIp on the XR but
+# nothing propagates it here, and the XRD has no EIP support — so this address is
+# EPHEMERAL and a stop/start or instance replacement silently moves the record.
+# Re-read it with:
+#   kubectl get xinstance outpost-demo -o jsonpath='{.status.publicIp}'
+# The durable fix is an EIP (needs `eips` + `eipassociations` added to
+# aws-providers/activation-policy.yaml) plus automating this value; both are
+# tracked follow-ups, deliberately not done for a POC.
+#
+# proxied: "false" (grey cloud) is REQUIRED, not a preference: the origin serves
+# plain HTTP on :80 (openPort takes exactly one port, so 80+443 is not
+# expressible in XInstance v1alpha1). Orange-clouding an HTTP-only origin would
+# need the zone's SSL mode relaxed, which would affect every homelab service on
+# knowledgedump.space/amberdark.net. Matches the posture of origin.amberdark.net.
+#
+# NOTE this is a DNSEndpoint, not an IngressRoute, so the Kyverno policy
+# `restrict-public-hostname-claims` (which gates *.amberdark.net IngressRoutes to
+# the media-private/authentik namespaces) does not apply. Its threat model —
+# serving a pre-trusted hostname under the shared *.amberdark.net wildcard cert
+# via allowCrossNamespace — also does not apply, because the outpost terminates
+# nothing and never sees that cert. If the outpost ever needs an in-cluster
+# IngressRoute, that policy WILL deny it until its namespace is allowlisted.
 apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
-  name: nebula-lighthouse
+  name: outpost-demo
   namespace: external-dns
+  labels:
+    app.kubernetes.io/name: external-dns
+    app.kubernetes.io/component: dns
+    catalyst.io/component: outpost
 spec:
   endpoints:
-    - dnsName: nebula.knowledgedump.space
-      recordType: CNAME
+    - dnsName: outpost.amberdark.net
+      recordType: A
       recordTTL: 300
       targets:
-        - knowledgedump.space
+        - 34.215.174.32 # ephemeral: XInstance has no EIP — see header
       providerSpecific:
         - name: external-dns.alpha.kubernetes.io/cloudflare-proxied
-          value: "false"  # DNS-only for VPN (no HTTP proxy)
+          value: "false" # grey cloud: HTTP-only origin, see header
