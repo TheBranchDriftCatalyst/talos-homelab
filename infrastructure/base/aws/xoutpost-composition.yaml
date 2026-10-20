@@ -130,7 +130,15 @@ spec:
           - name: eip
             base:
               apiVersion: ec2.aws.upbound.io/v1beta1
-              kind: Eip
+              # `EIP`, not `Eip` — upbound spells this acronym in CAPS (the kind is
+              # EIP and the association kind is EIPAssociation). Kubernetes kinds are
+              # case-sensitive, and the failure is the same opaque message an MRAP
+              # omission gives you: `no matches for kind "Eip" in version
+              # "ec2.aws.upbound.io/v1beta1"`. The MRD name, the plural and the CRD
+              # name are ALL lowercase `eips`, which is what makes this easy to get
+              # wrong by inference. Read the KIND column of `kubectl api-resources`
+              # filtered to the ec2 upbound group instead of guessing from the plural.
+              kind: EIP
               spec:
                 forProvider:
                   region: us-west-2
