@@ -68,6 +68,22 @@ spec:
     # working and the XR sitting Synced=False forever.
     - launchtemplates.ec2.aws.upbound.io
     - fleets.ec2.aws.upbound.io
+    # eips + eipassociations: a STABLE public address for the outpost (TALOS-jegu.2).
+    # Needed because XInstance/XOutpost otherwise rely on the subnet's auto-assigned
+    # public IPv4, which changes on every stop/start or instance replacement -- and that
+    # address is referenced by hand in TWO places (external-dns/dnsendpoints.yaml and
+    # pihole/statefulset.yaml), so a replacement silently breaks both.
+    #
+    # This costs NOTHING extra: since Feb 2024 AWS bills every in-use public IPv4 at
+    # $0.005/hr whether it is auto-assigned or an EIP. The EIP buys stability, not the
+    # address. (An UNattached EIP is also billed, so do not leave one orphaned after a
+    # teardown -- that is the one new cost footgun these two lines introduce.)
+    #
+    # Both are needed: aws_eip's inline `instance` attribute would avoid the second kind,
+    # but using the separate association resource keeps the allocation and the attachment
+    # independently reconcilable, so replacing the instance does not release the address.
+    - eips.ec2.aws.upbound.io
+    - eipassociations.ec2.aws.upbound.io
     # EC2 Fleet needs AWSServiceRoleForEC2Fleet to exist before its FIRST CreateFleet in
     # an account; AWS auto-creates it on that call and the call itself loses the race
     # (TALOS-grb7). Declaring the role means a fresh account never sees that failure.
