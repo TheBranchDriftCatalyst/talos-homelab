@@ -87,10 +87,17 @@ spec:
                   # from INSIDE its container on every boot. If an outpost workload
                   # ever needs AWS creds at runtime rather than at boot, raise this to
                   # 2 deliberately -- do not discover it by accident.
+                  # A LIST, not a map -- same shape as rootBlockDevice below.
+                  # metadataOptions is `type: array` on v1beta1 (what this
+                  # composition writes) and `type: object` on v1beta2. Writing the
+                  # map form fails the composition outright with
+                  # ".spec.forProvider.metadataOptions: expected list, got &{map[...]}"
+                  # -- so check the version you are TARGETING, not just the storage
+                  # version `kubectl explain` shows you.
                   metadataOptions:
-                    httpEndpoint: enabled
-                    httpTokens: required
-                    httpPutResponseHopLimit: 1
+                    - httpEndpoint: enabled
+                      httpTokens: required
+                      httpPutResponseHopLimit: 1
                   rootBlockDevice:
                     - volumeSize: 30
             patches:
