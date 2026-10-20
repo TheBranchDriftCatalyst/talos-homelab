@@ -49,7 +49,43 @@ spec:
           type: RuntimeDefault
       containers:
         - name: version-checker
-          image: quay.io/jetstack/version-checker:v0.11.0
+          # PATCHED FORK, not upstream. Built from v0.11.0 + three fixes; the
+          # patch and its tests are in scratchpad/version-checker-v0.11.0.patch.
+          # Revert to quay.io/jetstack/version-checker as soon as a release
+          # contains them (v0.11.0 was still the latest as of 2026-10-20).
+          #
+          # WHAT WAS BROKEN. 12,015 error lines/day across 165 signatures, all
+          # "no tags found for given image URL", and -- the part that actually
+          # mattered -- ~117 containers silently NOT version-checked at all,
+          # which defeats the point of this exporter. It was never a
+          # credentials problem: no workload in the cluster was failing to pull.
+          #
+          #   1. pkg/client/fallback: RepoImageFromPath returned ("", ""), so
+          #      every host without a dedicated client asked the whole fallback
+          #      chain for the EMPTY image.
+          #   2. pkg/client/fallback: a client answering "no error, zero tags"
+          #      counted as success. Once (1) is fixed the anonymous Docker Hub
+          #      client gets asked for foreign registries' paths -- e.g.
+          #      "kyverno/kyverno", "forgejo/forgejo" -- replies HTTP 200 with
+          #      no results, ends the search before the OCI client is ever
+          #      tried, and gets cached for that host for five hours. Fixing
+          #      (1) alone takes a representative sample from 2/14 to 5/14.
+          #   3. pkg/client/gcr: the host regex claims *.k8s.io and injected the
+          #      gcr.io legacy "google-containers" org, requesting
+          #      /v2/google-containers/kube-apiserver/tags/list -> 404 with a
+          #      text/plain body -> the logged "invalid character 'r' looking
+          #      for beginning of value".
+          #
+          # Measured on a sample mirroring the failing refs: 2/14 -> 14/14
+          # resolved, WITH NO CREDENTIALS AT ALL. So the Docker Hub and private
+          # registry auth sketched under NOISE GUARD (b) is not needed for
+          # these lookups; the OCI client does the scoped-bearer dance
+          # anonymously, it was simply never being reached.
+          #
+          # Upstream's own client tests still pass; the patch adds tests to
+          # pkg/client/fallback, which had none, and each fix was verified by
+          # mutation -- reverting it turns the new tests red.
+          image: registry.talos00/talos00-registry/version-checker:v0.11.0-registryfix1
           command: ["version-checker"]
           args:
             # Automatically check EVERY container on the cluster without needing
@@ -69,22 +105,23 @@ spec:
           # acceptable for a first pass. If Docker Hub 429s become noisy, add
           # Docker Hub creds via the env below (see NOISE GUARD (b)).
           #
-          # NOISE GUARD (b) — PRIVATE REGISTRY AUTH (TODO, not wired this pass):
-          # These in-cluster private registries need credentials to be checked
-          # and WILL error/log failures until wired (only a handful of images):
-          #   - registry.knowledgedump.space (Zot)
-          #   - forge.knowledgedump.space / codeberg.org (Forgejo)
-          # version-checker reads per-registry creds from env vars, e.g.:
-          #   env:
-          #     - name: VERSION_CHECKER_SELFHOSTED_HOST_ZOT
-          #       value: https://registry.knowledgedump.space
-          #     - name: VERSION_CHECKER_SELFHOSTED_USERNAME_ZOT
-          #       valueFrom: { secretKeyRef: { name: version-checker-registry-creds, key: zot-user } }
-          #     - name: VERSION_CHECKER_SELFHOSTED_PASSWORD_ZOT
-          #       valueFrom: { secretKeyRef: { name: version-checker-registry-creds, key: zot-pass } }
-          # (and DOCKERHUB_USERNAME/DOCKERHUB_PASSWORD to lift the Docker Hub
-          # rate limit). Provision the Secret via ESO, then uncomment. Until then
-          # those few images simply report a lookup error — not fatal.
+          # NOISE GUARD (b) — PRIVATE REGISTRY AUTH. This block used to say the
+          # lookup failures were an auth gap affecting "only a handful of
+          # images", and that was wrong on both counts: 114 of 153 failing refs
+          # were in that group, 69 of them PUBLIC ghcr.io images needing no
+          # auth whatsoever. The cause was the three client bugs described on
+          # the image above, and the patched image resolves all of them
+          # anonymously. Credentials are not the fix and were never missing.
+          #
+          # Two notes kept because they remain true:
+          #   - registry.talos00 resolves only on the nodes (Talos
+          #     extraHostEntries -> 192.168.1.54); CoreDNS has never heard of
+          #     it. version-checker has no prefix/api_url split like
+          #     argocd-image-updater, so reaching Zot from this pod needs a
+          #     hostAliases entry plus VERSION_CHECKER_SELFHOSTED_* creds from
+          #     ESO. Not wired; those refs still fail, and that is a known gap.
+          #   - DOCKERHUB_USERNAME/DOCKERHUB_PASSWORD would still lift the
+          #     anonymous Docker Hub rate limit in NOISE GUARD (a).
           #
           # NOISE GUARD (c) — TAG NOISE: pre-release / SHA / date-stamped tags can
           # produce false "out-of-date" flips. Suppress per-container with pod
