@@ -141,7 +141,42 @@ spec:
         annotations:
           prometheus.io/scrape: "false"
       webui:
-        enabled: true
+        # RETIRED. Not scaled to zero -- disabled at the chart, which is a different thing.
+        #
+        # Scaling the Deployment to 0 would have been worse than leaving it running:
+        # falcosidekick would keep POSTing to the webui output and log a connection
+        # failure for each one, so the ~113,000 error lines a day would have changed
+        # wording and not volume. Flux would also have scaled it straight back up, because
+        # the replica count comes from the chart. `enabled: false` removes the Deployment,
+        # its redis StatefulSet and both Services, AND stops falcosidekick wiring the
+        # output at all.
+        #
+        # WHY RETIRE IT. It broke on 2026-10-19 when its redis was OOMKilled, taking the
+        # RediSearch index with it, and the UI only creates that index at process startup
+        # -- so every POST returned 500 from then on, forever, while /healthz kept
+        # answering ok without ever touching redis. It ran like that for 24 days, 1/1
+        # Running the whole time, emitting ~170,000 error lines a day across three
+        # signatures: 54% of everything this cluster logged.
+        #
+        # None of that is fixable here. The startup-only CreateIndex is byte-identical in
+        # the deployed 2.2.0 and in latest 2.3.1; healthz has never referenced redis in the
+        # repo's history; the chart has pinned 2.2.0 since 2023-09-15. Upstream knows:
+        # falcosidekick-ui#146 carries character-identical logs, was opened 2024-06-05 and
+        # closed by a stale-bot in 2025 without a fix, and #255 sits unanswered. The
+        # component is falcosecurity "Incubating", whose own definition is "not
+        # recommended... not safe for mission-critical purposes".
+        #
+        # NOTHING IS LOST, and that is the only reason this is the right call rather than
+        # a capitulation. falco.json_output is true, so every alert already reaches the
+        # Falco container's stdout, is collected by Alloy and dual-written to Loki and
+        # ClickStack. That is the full-fidelity record and it never depended on this UI.
+        # The falco-ops and honeypot-ops dashboards were already ported to ClickHouse in
+        # 98a16ed6; rebuild any remaining view there.
+        #
+        # TO BRING IT BACK: flip this to true and restore ingress.yaml and
+        # webui-network-policy.yaml in kustomization.yaml. Fix the index fragility first,
+        # or it will simply happen again the next time that redis restarts.
+        enabled: false
         # --- Local basic auth: NOT admin:admin (security audit) ---
         # The UI has its OWN basic auth underneath the Authentik forward-auth at the ingress,
         # and upstream defaults it to admin:admin. Authentik only guards the Traefik hop, so

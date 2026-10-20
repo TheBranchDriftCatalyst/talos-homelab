@@ -45,33 +45,20 @@ spec:
             summary: "falcosidekick cannot deliver to {{ $labels.destination }}"
             description: >-
               Every alert routed to this output is being lost and logged as an error.
-              Check the RECEIVER first, not falcosidekick: for the webui destination the
-              usual cause is that its redis restarted and the eventIndex is gone, which the
-              UI only recreates at startup -- confirm with
-              `kubectl -n falco exec falco-falcosidekick-ui-redis-0 -- redis-cli FT._LIST`
-              and restart the UI deployment if it is empty. Note that the sender logs a 500
-              as "exceeding post rate limit (500)"; that string is an upstream mislabel and
-              does not mean rate limiting.
+              Check the RECEIVER first, not falcosidekick -- this fires on the sender's
+              view, so the fault is almost always at the other end.
+              READ THE LOG LINE CAREFULLY: falcosidekick logs an HTTP 500 as "exceeding
+              post rate limit (500)". That string is an upstream mislabel (outputs/client.go
+              formats ErrTooManyRequest in the 500 branch) and does NOT mean rate limiting.
+              The number in brackets is the real status; a genuine rate limit is 429.
+              Chasing the words rather than the code is what turned one outage into a
+              fortnight of looking for throttling that was never happening.
 
-        # The cause, caught before it becomes the symptom. The redis behind the UI is a
-        # cache with no persistence, so a restart silently destroys the index.
-        - alert: FalcosidekickUIRedisRestarted
-          expr: |
-            increase(kube_pod_container_status_restarts_total{
-              job="kube-state-metrics", namespace="falco",
-              pod="falco-falcosidekick-ui-redis-0"
-            }[15m]) > 0
-          labels:
-            severity: warning
-          annotations:
-            summary: "The falcosidekick UI's redis restarted; its search index is gone"
-            description: >-
-              storageEnabled is false and save is empty, so this redis comes back with an
-              empty keyspace. falcosidekick-ui creates eventIndex only at startup, so until
-              the UI is restarted every POST to it returns 500. Restart
-              deploy/falco-falcosidekick-ui. If the restart was an OOMKill, note that
-              maxmemory does not account for the RediSearch index or for allocator
-              fragmentation -- the memory limit has to cover both above the cap.
+        # A rule for the UI's redis restarting lived here and has been removed with the UI
+        # (helmrelease.yaml, webui.enabled: false). It watched a specific pod name, so
+        # with that pod gone the expression matches no series and can never fire — an
+        # alert that cannot fire is worse than no alert, because it reads as coverage.
+        # Restore it alongside the UI if the UI ever comes back.
 
         # The sender itself going quiet. Distinct from the above: those fire when delivery
         # fails, this fires when nothing is reporting at all.
