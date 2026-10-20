@@ -1,10 +1,24 @@
 ---
 # Trivial first XFargateApp: traefik/whoami — echoes request info on :80.
-# ~$9/mo while running; delete the file to deprovision everything.
+# ~$9/mo Fargate + ~$3.65/mo public IPv4 = ~$12.70/mo while running.
+# Delete/comment the line in kustomization.yaml to deprovision everything.
 #
-# ██ HUMAN GATE (TALOS-3g8f + console walk) ██ Fill the two REPLACE values:
-#   AWS console → VPC → Your VPCs → copy the DEFAULT VPC id (vpc-...)
-#   AWS console → VPC → Subnets → copy TWO subnet ids from that VPC (subnet-...)
+# IDs resolved 2026-10-20 (TALOS-outpost). The former "HUMAN GATE + console walk"
+# is CLOSED — these are the us-west-2 DEFAULT VPC and two of its default public
+# subnets (MapPublicIpOnLaunch=true), the same vpc/subnet pair already proven by
+# aws-redteam/redteam-interactive.yaml:
+#   aws ec2 describe-vpcs    --region us-west-2 --filters Name=isDefault,Values=true
+#   aws ec2 describe-subnets --region us-west-2 --filters Name=default-for-az,Values=true
+#
+# This XR sat SYNCED=True / READY=False for 66 days on nothing but these three
+# placeholders. It is a SMOKE TEST for the ECS/IAM/CloudWatch-Logs chain, not a
+# service anybody depends on — re-comment its line once it reports READY.
+#
+# NOTE XFargateApp v1alpha1 is "public-IP direct (no ALB)" and its status exposes
+# only securityGroupId, NOT the task's public IP. So this cannot feed a DNS record
+# declaratively, and the task IP changes on every replacement. Find it with:
+#   aws ecs list-tasks --cluster hello-whoami --region us-west-2
+#   -> describe-tasks -> ENI -> public IP
 apiVersion: aws.catalyst.io/v1alpha1
 kind: XFargateApp
 metadata:
@@ -17,7 +31,7 @@ spec:
   memory: "512"
   desiredCount: 1
   region: us-west-2
-  vpcId: vpc-REPLACE-ME
+  vpcId: vpc-3536d651
   subnetIds:
-    - subnet-REPLACE-ME-a
-    - subnet-REPLACE-ME-b
+    - subnet-36191741 # us-west-2a
+    - subnet-6d58b209 # us-west-2b

@@ -69,6 +69,28 @@ spec:
                 forProvider:
                   region: us-west-2
                   vpcSecurityGroupIdSelector: {matchControllerRef: true}
+                  # IMDSv2 REQUIRED, hop limit 1 (TALOS-outpost). Static in the base:
+                  # metadataOptions is a real field on instances.ec2 v1beta1/v1beta2
+                  # (confirmed against the live CRD schema -- note `kubectl explain`
+                  # wrongly reports it absent), and there is no XRD field for it
+                  # because there is no reason any claim would want it weaker.
+                  #
+                  # WHY THIS MATTERS HERE: an XInstance can be PUBLIC (outpost-demo
+                  # opens :80 to 0.0.0.0/0, and the composition hardcodes that CIDR).
+                  # Under IMDSv1 a single SSRF in anything running on the box yields
+                  # the instance profile's credentials with one unauthenticated GET.
+                  #
+                  # hopLimit 1 is deliberate and is the stronger setting: the HOST can
+                  # reach IMDS (which is all the SSM agent and boot-time `aws ssm
+                  # get-parameter` need), but a CONTAINER is one hop further and is
+                  # blocked. XGPUInstance uses 2 only because vLLM authenticates to S3
+                  # from INSIDE its container on every boot. If an outpost workload
+                  # ever needs AWS creds at runtime rather than at boot, raise this to
+                  # 2 deliberately -- do not discover it by accident.
+                  metadataOptions:
+                    httpEndpoint: enabled
+                    httpTokens: required
+                    httpPutResponseHopLimit: 1
                   rootBlockDevice:
                     - volumeSize: 30
             patches:

@@ -215,10 +215,58 @@ openPort: 0 # KubeSpan dials out; no inbound needed with discovery service
 ```
 
 So it replaces the whole dormant stack — no lighthouse, no DDNS, no Nebula certs, no socat
-forwarders, no Cilium ClusterMesh. Worth knowing that `clusters/aws-k3s/` *tried* the mesh
-route and is **DORMANT** (verified 2026-08-22): clustermesh apiserver at 0 replicas, no
-`nebula` namespace, forwarders never wired into Flux, `aws-lighthouse` context not
-answering. A tried and abandoned path, not an untried alternative.
+forwarders, no Cilium ClusterMesh.
+
+### Autopsy: the `clusters/aws-k3s/` mesh attempt (DELETED 2026-10-20, TALOS-outpost)
+
+`clusters/aws-k3s/` *tried* the mesh route — k3s + Nebula `10.100.0.0/16` + Cilium
+ClusterMesh, cluster id 2, `aws-k3s`/`aws-lighthouse`. It was **deleted** on 2026-10-20
+along with `infrastructure/base/cilium/clustermesh/`,
+`infrastructure/base/cilium/clustermesh-forwarders/` and
+`clustermesh-port-forwarder.yaml` (21 files). Nothing referenced any of them: the cilium
+`kustomization.yaml` lists only `eastwest-alerts`, `helmrelease`, `ingressroute`,
+`kube-system-namespace`, `lb-ipam`, and `grep -rn aws-k3s` returned zero external hits.
+A dormant directory that looks like a live cluster is worse than no directory.
+
+**Why it failed — recorded so it is not re-attempted the same way:**
+
+1. **It was never GitOps.** The `Tiltfile` was a ~700-line imperative provisioner shelling
+   out to `aws ec2 run-instances` and then SSHing in to run `cilium install` and
+   `kubectl apply <<EOF`. State lived in untracked dotfiles on the operator's Mac. No Flux
+   Kustomization, no ArgoCD Application, no on-switch. Git was a notepad, so there was
+   nothing to reconcile and nothing to resurrect.
+2. **The AMIs could not be rebuilt.** Both Packer templates began with a `file` provisioner
+   copying `clusters/bin/linux-amd64/worker-agent` — a path that no longer exists (it came
+   from `tools/carrierarr/`, archived in `48c96104`). The only artifact was
+   `ami-0f24e5b7febd29ea3`, baking k3s v1.31.2 + Cilium 1.16.6 against a cluster now on
+   k8s v1.36.4 — a 5-minor skew. **That AMI no longer exists in AWS either** (verified
+   2026-10-20: no self-owned AMIs, instances, snapshots or orphaned volumes in us-west-2,
+   and Secrets Manager is empty, so there is no lingering spend).
+3. **Five independent links, three of them manual**: hand-signed Nebula certs in gitignored
+   `configs/nebula-certs/`, a lighthouse Deployment, an inbound WAN port-forward chasing a
+   dynamic IP, ClusterMesh apiservers on both sides, and **four** socat forwarders — of
+   which only three were ever written, and none were in any kustomization.
+4. **Wrong secret bridge.** It wrote Nebula certs to **AWS Secrets Manager**, used nowhere
+   else in this repo, from a Tilt shell-out. The house bridges are 1Password→ESO and ESO
+   `PushSecret`→SSM Parameter Store.
+5. **No cost or security safety.** The SG opened `22, 4242, 6443, 8080, 32379, 32380` to
+   `0.0.0.0/0` — including a Kubernetes API server to the whole internet. No reaper, no
+   `catalyst.io/stage` tag, no on-switch; teardown was a Tilt button on a laptop. Every
+   safety idiom this repo now relies on post-dates that directory and contradicts it.
+
+**Scar tissue still live in `infrastructure/base/cilium/values.yaml`, deliberately NOT
+touched** (it is CNI datapath on a cluster with meltdown history, the Kustomization is
+`prune: false`, and a ConfigMap change needs a manual `ds/cilium` restart via
+`scripts/safe-restart-cilium.sh`):
+
+| setting | why it is scar tissue |
+|---|---|
+| `MTU: 1250` | sized for a Nebula TUN that was never deployed. Harmless today — it is ≤ every candidate underlay, and because it is set *explicitly* it also stops cilium auto-detecting 9001 on a future EC2 node. Raising it to ~1400 would reclaim 150 bytes of pod MTU but **raising MTU is the dangerous direction** (PMTUD inside VXLAN-inside-WireGuard black-holes UDP rather than degrading). Own ticket, own window. |
+| `ipv4NativeRoutingCIDR: "10.100.0.0/16"` | the Nebula CIDR, kept as a masquerade exclusion for a TUN that does not exist |
+| `nodePort.addresses: [..., 10.100.0.0/16]` | same |
+| `clustermesh.useAPIServer: true` + `apiserver.replicas: 0` + `extraIpAddresses: [192.168.1.54, 10.100.0.1, 10.100.2.1]` | the mesh that was scaled to 0 on 2026-05-29 *during the control-plane meltdown work* |
+
+A tried and abandoned path, not an untried alternative.
 
 ### Two prerequisites, both verified 2026-10-01, both non-trivial
 

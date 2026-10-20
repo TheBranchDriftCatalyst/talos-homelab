@@ -6,9 +6,23 @@ An always-addressable Ollama-compatible endpoint at `http://ollama.talos00`. Req
 arriving while no GPU exists are **held**, an AWS GPU box is provisioned, and the request
 is released once it is genuinely serving. Idle traffic ⇒ the GPU is destroyed.
 
-**Nothing here bills anything today.** The gateway is at 0 replicas, `gpu-broker` is at 0
-with an unbuilt image, and both reapers exit cleanly while the AWS XR CRDs are absent.
-Scaling `gpu-broker` to 1 is the single switch that arms real AWS spend.
+**Nothing here bills anything today** — but the reasons given here were stale and are
+corrected (verified live 2026-10-20, TALOS-outpost):
+
+* the nginx `ollama-gateway` was **DELETED** 2026-10-01, and `gpu-broker` was **DELETED**
+  2026-10-02. Neither exists, so "at 0 replicas" / "unbuilt image" no longer describe
+  anything, and **scaling `gpu-broker` is no longer the switch that arms spend.**
+* **the AWS XR CRDs are PRESENT, not absent.** All five providers are Installed+Healthy
+  (`provider-aws-{s3,ec2,iam,ecs,cloudwatchlogs}:v2.7.0`), and `aws/apps/kustomization.yaml`
+  records a successful end-to-end GPU run on 2026-10-02.
+* the reapers now guard on the RESOURCE rather than `kubectl get crd` (fixed 2026-10-02).
+
+**What actually arms spend: an uncommented claim line in `../aws/apps/kustomization.yaml`.**
+That is the only switch. All GPU claims there are currently commented OFF.
+
+**Already live and worth knowing**: the `gpu-relay` Pod is armed (17d, 1/2 Ready — the SSM
+tunnel is up, socat is idle because no rig exists), along with IAM user `catalyst-gpu-relay`
+and secret `gpu-relay-creds`. Free, but it is a static AWS key with `ssm:StartSession`.
 
 ## Cost tiers
 
@@ -84,11 +98,27 @@ independent of the broker and why `alerts.yaml` exists.
 
 ## Blocked on
 
-- **TALOS-3g8f** (human gate) — 1Password `aws-crossplane` item. Its recorded policy is
-  S3-only and needs EC2 + IAM PassRole added.
-- **TALOS-t88y** — crossplane-core memory, **before** re-adding the ec2 provider. The
-  2026-08-15 incident that removed those providers was CRD-load driven (~250 CRDs).
-- `vpcId` / `subnetId` in `gpuprofile.yaml` are still `REPLACE-ME`.
+**Nothing. This section was stale and is cleared (verified 2026-10-20, TALOS-outpost).**
+
+All three former blockers are resolved, and leaving them listed cost real debugging time:
+
+* ~~**TALOS-3g8f** — 1Password `aws-crossplane` policy is S3-only~~ → **RESOLVED.** The
+  credential was restored in `bef5dddd`; EC2+IAM work. Evidence: all five AWS providers
+  Installed+Healthy, three `xbuckets` Synced+Ready, four `users.iam` Synced+Ready, and a
+  logged end-to-end GPU run on 2026-10-02 that placed `i-009d3f4bb019620e2`.
+* ~~**TALOS-t88y** — crossplane-core memory, before re-adding the ec2 provider~~ →
+  **RESOLVED.** `provider-aws-ec2:v2.7.0` has been installed and healthy for 58 days.
+  The 2026-08-15 incident was CRD-load driven (~250 CRDs from the monolithic
+  `provider-aws`); the fix was per-service providers plus the
+  `ManagedResourceActivationPolicy` allowlist in `../aws-providers/activation-policy.yaml`,
+  under which non-activated MRDs are never installed as CRDs at all. Keep it that way and
+  **never use `*`**.
+* ~~`vpcId` / `subnetId` in `gpuprofile.yaml` are still `REPLACE-ME`~~ → **MOOT.** Those
+  keys no longer exist in `gpuprofile.yaml` (removed with the AZ pin, TALOS-rkg0 — the
+  fleet picks its own subnet). The remaining `REPLACE-ME` surface is only
+  `../aws/apps/vllm-8b.yaml`, which is OFF and whose spec also predates the
+  `models`→`hfModel` rename. For the record, the real us-west-2 ids are
+  `vpc-3536d651` / `subnet-36191741`.
 
 ## Related
 

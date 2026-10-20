@@ -28,7 +28,20 @@ spec:
                 instanceName: {type: string}
                 instanceType: {type: string, default: t4g.small}
                 ami: {type: string, description: "AMI id or SSM alias (resolve:ssm:/aws/service/...)"}
-                spot: {type: boolean, default: false}
+                # ── `spot` REMOVED 2026-10-20 (TALOS-outpost) ──────────────────
+                # It was declared here as `spot: {type: boolean, default: false}`
+                # and xinstance-composition.yaml had NO PATCH FOR IT. Setting it
+                # did nothing: every claim got on-demand while the schema implied
+                # otherwise. Deleted rather than implemented, for three reasons:
+                #   * on a BARE Instance, spot needs instanceMarketOptions, and
+                #     patch-and-transform cannot express "omit this field" -- so a
+                #     bool would need a convert+map that errors on the unmatched key
+                #   * real spot here is LaunchTemplate + Fleet, which is exactly what
+                #     XGPUInstance already does properly via `capacityType`
+                #   * spot is WRONG for the outpost, the only always-on consumer:
+                #     a 2-minute interruption notice means the public endpoint
+                #     vanishes and comes back on a different IP
+                # A dead value key that silently lies is worse than its absence.
                 rootVolumeGb: {type: integer, default: 30}
                 region: {type: string, default: us-west-2}
                 vpcId: {type: string}

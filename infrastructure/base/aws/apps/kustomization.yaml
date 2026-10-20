@@ -30,6 +30,18 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - hello-whoami.yaml
+  # ── ON (2026-10-20) ── TALOS-outpost: the first OUTPOST. THIS LINE IS THE
+  # ON-SWITCH AND IT SPENDS REAL MONEY: ~$10.6/mo always-on (t4g.micro + 10GiB
+  # gp3 + public IPv4). Unlike every GPU claim below, this one is MEANT to stay
+  # uncommented — it is an always-on box, there is no reaper, and Flux
+  # reasserting it after a crash is the desired behaviour. See the file header.
+  # Serves http://outpost.amberdark.net (plain HTTP, grey-cloud, port 80 open to
+  # 0.0.0.0/0 — the composition hardcodes that CIDR).
+  # TEARDOWN IS THREE STEPS, not one: comment this line, confirm no instance
+  # survives, AND delete the Cloudflare record by hand — external-dns runs
+  # --policy=upsert-only and will leave outpost.amberdark.net pointing at a
+  # released public IP that AWS reassigns to a stranger.
+  - outpost-demo.yaml
   # ALWAYS-ON: the shared SSM instance profile (catalyst-ssm). Not an on-switch —
   # it is a free IAM primitive any box references via spec.instanceProfileName to
   # get Session Manager interactive access. See ssm-instance-profile.yaml header.
@@ -38,10 +50,21 @@ resources:
   # XGPUInstance uses this now, because the seed-on-miss weights path WRITES to the
   # model bucket. See gpu-seeder-profile.yaml header (TALOS-iymy).
   - gpu-seeder-profile.yaml
-  # ── OFF ── LEVEL 2 (TALOS-x1sb): the scoped IAM identity the in-cluster SSM relay
-  # Pod uses. Free IAM, no spend — but it is NOT always-on, because it mints a static
-  # access key with ssm:StartSession, and there is no reason for that key to exist
-  # until the relay does. Uncomment together with gpu-inference/relay-deployment.yaml.
+  # ── ON ── LEVEL 2 (TALOS-x1sb): the scoped IAM identity the in-cluster SSM relay
+  # Pod uses. Free IAM, no spend, but it DOES mint a static access key with
+  # ssm:StartSession, so it should exist only while the relay does.
+  #
+  # COMMENT CORRECTED 2026-10-20: this block said "── OFF ──" while the line below
+  # was uncommented, and had done for 18 days — `catalyst-gpu-relay` (user, Synced/
+  # Ready 18d) and secret `gpu-inference/gpu-relay-creds` (18d) are both live. That
+  # is CORRECT and intended, because gpu-inference/relay-deployment.yaml is itself
+  # armed (gpu-relay Pod, 17d, 1/2 Ready — tunnel up, socat idle with no rig). The
+  # state was right; only the comment lied. Flagged because a header that
+  # contradicts its own resource list is how a live credential goes unnoticed.
+  #
+  # NOTE the policy is scoped `Resource: arn:aws:ec2:*:744062333585:instance/*` —
+  # i.e. ANY port on ANY SSM-managed instance in the account. Tightening it with a
+  # `ssm:resourceTag/Name` condition is a tracked follow-up.
   - gpu-relay-user.yaml
   - ec2fleet-service-linked-role.yaml
   - gpu-api-key-push.yaml
