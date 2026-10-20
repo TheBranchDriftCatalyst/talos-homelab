@@ -31,7 +31,16 @@ spec:
               spec:
                 forProvider:
                   region: us-west-2
-                  description: xoutpost (managed by crossplane) — public 80/443, egress all
+                  # ASCII ONLY. AWS rejects non-ASCII in GroupDescription outright:
+                  #   InvalidParameterValue: ... for parameter GroupDescription is
+                  #   invalid. Character sets beyond ASCII are not supported.
+                  # An em-dash here failed CreateSecurityGroup, and because every other
+                  # member depends on the SG that single character left the whole
+                  # composite stuck: rules had no group to attach to, the Instance had no
+                  # security group, and the EIP could not resolve its instance reference
+                  # ("referenced field was empty"). Comments in this file may use any
+                  # character; VALUES that reach an AWS API may not.
+                  description: xoutpost (managed by crossplane) - public 80/443, egress all
             patches:
               - {type: FromCompositeFieldPath, fromFieldPath: spec.region, toFieldPath: spec.forProvider.region}
               - {type: FromCompositeFieldPath, fromFieldPath: spec.vpcId, toFieldPath: spec.forProvider.vpcId}
