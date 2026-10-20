@@ -98,12 +98,38 @@ spec:
             #      — no per-endpoint edit needed. External clients still use the public
             #      Cloudflare records. Any *.knowledgedump.space host Traefik doesn't
             #      route just 404s on the LAN (use the external path). TALOS-6vf/6nf.
+            #   4) LONGEST-MATCH OVERRIDES punch holes in those wildcards. dnsmasq
+            #      prefers the most specific `address=/.../` match, which is how
+            #      pihole.${CLUSTER_DOMAIN} already escapes the *.talos00 wildcard.
+            #      The outpost needs the same treatment: it is a real EC2 box on a
+            #      public IP, NOT a Traefik-routed service, so the *.amberdark.net
+            #      wildcard would send LAN clients to ${TALOS_NODE_IP} where no
+            #      IngressRoute serves that host — a bare 404 that looks exactly
+            #      like the outpost being down, while external clients are fine.
+            #      This is the same class of trap as the *.talos00 wildcard hiding a
+            #      single-node ingress failure. TALOS-jegu.1.
+            #
+            #      ⚠ THE OUTPOST IP IS HARDCODED AND WILL GO STALE. XInstance has no
+            #      EIP support, so 34.215.174.32 is the EPHEMERAL auto-assigned
+            #      address of outpost-demo; a stop/start or instance replacement
+            #      silently moves it. Re-read it with
+            #        kubectl get xinstance outpost-demo -o jsonpath='{.status.publicIp}'
+            #      and fix it in TWO places — here and
+            #      external-dns/dnsendpoints.yaml. That duplication is precisely
+            #      what TALOS-jegu.2 (openPorts + EIP) exists to remove.
+            #
+            #      Keep every line in the block scalar below a bare `address=`
+            #      directive. It is NOT a YAML comment context — anything written
+            #      there is injected verbatim into FTLCONF_misc_dnsmasq_lines, i.e.
+            #      into FTL's dnsmasq config, where a line it refuses to parse takes
+            #      out LAN DNS for the whole house.
             - name: FTLCONF_misc_dnsmasq_lines
               value: |-
                 address=/${CLUSTER_DOMAIN}/${TALOS_NODE_IP}
                 address=/pihole.${CLUSTER_DOMAIN}/192.168.1.240
                 address=/knowledgedump.space/${TALOS_NODE_IP}
                 address=/amberdark.net/${TALOS_NODE_IP}
+                address=/outpost.amberdark.net/34.215.174.32
           resources:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {cpu: 500m, memory: 384Mi}
