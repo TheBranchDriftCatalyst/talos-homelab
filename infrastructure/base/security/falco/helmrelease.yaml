@@ -212,15 +212,37 @@ spec:
             requests: {cpu: 50m, memory: 128Mi}
             limits: {memory: 1Gi}
       config:
-        # The webhook URL is NEVER in git: this secret is the ESO-managed copy of the same
-        # 1Password item CrowdSec posts its bans to. The chart reads every UPPERCASE key in
-        # it as a config env var, so DISCORD_WEBHOOKURL wires the output.
+        # DISCORD IS OFF. Configured, documented, and deliberately unset.
         #
-        # Path matters: this is config.existingSecret. An earlier attempt put it at
-        # falcosidekick.existingSecret, one level too high, where the chart never reads it --
-        # the deployment came up with no DISCORD env at all and the output silently did
-        # nothing. The only `existingSecret` in the PARENT chart is for certs.
-        existingSecret: falco-discord
+        # It was the single largest source of error log in the whole cluster: 74,383 lines
+        # in 24 hours across three signatures, all of them "exceeding post rate limit" —
+        # 24% of every error line the cluster produced. Discord rate-limits the webhook,
+        # falcosidekick logs each rejection, and at `notice` priority there is simply more
+        # alert volume than one webhook can take. The channel was not conveying much by
+        # then either: it was rate-limited more often than it was delivering.
+        #
+        # Nothing is lost by turning it off. falco.json_output is true, so every alert is
+        # already on the Falco container's stdout, collected by Alloy and dual-written to
+        # Loki and ClickStack — the full-fidelity record, independent of this output.
+        #
+        # TO RE-ENABLE: uncomment the line below. The ESO secret and its ExternalSecret are
+        # left in place precisely so that is the only edit required. Do the volume
+        # arithmetic first, though — at `notice` the rate limit comes straight back.
+        # Raising falcosidekick's own priority filter above notice is what would make this
+        # channel usable again.
+        #
+        # The webhook URL is NEVER in git: that secret is the ESO-managed copy of the same
+        # 1Password item CrowdSec posts its bans to. The chart reads every UPPERCASE key in
+        # it as a config env var, so DISCORD_WEBHOOKURL wires the output — and
+        # falco-discord carries that one key and nothing else, which is why removing this
+        # reference disables Discord and touches nothing further.
+        #
+        # Path matters when it goes back: this is config.existingSecret. An earlier attempt
+        # put it at falcosidekick.existingSecret, one level too high, where the chart never
+        # reads it -- the deployment came up with no DISCORD env at all and the output
+        # silently did nothing. The only `existingSecret` in the PARENT chart is for certs.
+        #
+        # existingSecret: falco-discord
         loki:
           hostport: "http://loki.monitoring.svc:3100"
           # `endpoint`, not `apiendpoint`. The chart renders LOKI_<KEY> from
