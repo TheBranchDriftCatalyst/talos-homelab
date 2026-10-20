@@ -2,7 +2,7 @@
 
 <!-- closeout:header -->
 
-**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-16
+**Kind:** Talos Kubernetes homelab · infra + GitOps · **Tracker:** beads (`bd`) · **Updated:** 2026-10-20
 **Pick up here:** `TALOS-tvaw` (six credentials are known-exposed and unrotated, one of them `minio123` in a PUBLIC repo) · **Deadline item:** none dated, but every day `TALOS-tvaw` stays open is a day those credentials stay valid
 <!-- /closeout:header -->
 
@@ -63,10 +63,11 @@ If you are here to do something else entirely, that is fine and probably correct
 
 |              |                                                                                                                                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Where it is  | 22 of 36 closed. traefik, goldilocks, zipline and Phase 0 done; real errors roughly 9,365 → 6,200/h. **The tooling has MOVED** to the sibling repo `../logAIrr` (`reference/mega-log-analysis/`), where it is being ported to Go as a weekly operator — see `../logAIrr/SPEC.md`. `task dev:logs:*` no longer exists here. |
-| Next cheapest | `TALOS-qzbh.5` secure-chrome (1 signature), `.7` sabnzbd (1), `.8` kube-controller-manager (1), `.9` frigate (1), `.10` mimir (1). `.6` cowrie is already filed as `TALOS-3qe4`/`TALOS-39am` — adopt, don't re-file. |
+| Where it is  | **24 of 36 closed.** traefik, goldilocks, zipline, Phase 0 and kube-controller-manager done; real errors roughly 9,365 → 6,200/h on the original basis. A fresh census on 2026-10-20 measured **181,992 error lines/24h against a 309,410 baseline (41% down)** — different basis, do not mix the two figures — and **the 24h window still contains pre-fix errors**, so the three largest services in it (falcosidekick 86k, version-checker 29k, kube-controller-manager 29k) are residue from fixes already shipped. First clean read is 2026-10-21. **The tooling has MOVED** to the sibling repo `../logAIrr` (`reference/mega-log-analysis/`), where it is being ported to Go as a weekly operator — see `../logAIrr/SPEC.md`. `task dev:logs:*` no longer exists here. |
+| Next cheapest | **`TALOS-qzbh.7` sabnzbd (1 signature) — start here.** The 2026-10-20 census puts it at ~480/h, matching its 2026-10-15 baseline of 479/h, so it is untouched and now the largest real source. Then `.10` mimir (1), `.9` frigate (1). `.6` cowrie is already filed as `TALOS-3qe4`/`TALOS-39am` — adopt, don't re-file; it is a honeypot and logging attacks is its job, so weigh whether it belongs in this campaign at all. |
 | The gate     | `TALOS-qzbh.1` (Phase 0) still blocks the severity re-baseline. 46% of rows marked `error` are not errors; until it lands every burn-down number mixes real fixes with mislabelled noise.                             |
 | Standing rule | Swarm agents are **propose-only** — no commits, no cluster changes.                                                                                                                                                 |
+| **Explicitly NOT next** | The Falco **redirect-STDOUT** rule (7,204/day, 6,729 of it two busybox `metrics` httpd sidecars). Both an exception and a dashboard filter were proposed on 2026-10-20 and **both were declined** — the rule is `notice` and Discord is critical-only, so it pages nobody, and the exception would buy readability at the price of a real blind spot. Do not re-propose unasked. Likewise version-checker's 26 remaining `registry.talos00` failures: that hostname resolves only on the nodes via Talos `extraHostEntries`, and version-checker has no `prefix`/`api_url` split, so it needs `hostAliases` plus ESO credentials — a project, not a cleanup. |
 
 ### Also open — `TALOS-fzt7`, align the hot-ones overlays
 
@@ -121,6 +122,55 @@ If you are here to do something else entirely, that is fine and probably correct
 <!-- closeout:sessions -->
 
 ## Sessions
+
+### 2026-10-19/20 — Four error sources removed, and a fork that OOMKilled the exporter it fixed
+
+**Commits:** 14 · **Scope:** `infrastructure/base/{security,monitoring,argocd}`, `applications/arr-stack/base`
+(this session also landed 13 commits in `../logAIrr` and 1 in `../dungeon-library`)
+
+**Filed:** none
+**Closed:** `TALOS-qzbh.8`, `TALOS-qzbh.8.1`
+**Carried:** `TALOS-qzbh.7` (sabnzbd — a fresh census this session confirms it still live at ~480/h, and with the big three now fixed it is the largest genuinely unaddressed source) · `TALOS-zpoa` (version-checker non-semver tags — read gotcha 43 before starting it, `match-regex` cannot do what it looks like it does)
+
+Four sources of cluster error volume were removed at the cause. **falcosidekick Discord
+output off** (74,383 lines/day, 24% of all cluster errors — configured but unset, the
+ExternalSecret retained). **falcosidekick-ui retired** (~168,000/day across 3 signatures):
+its redis was OOMKilled, RediSearch index went with it, and the UI only calls `CreateIndex`
+at process start, so it 500'd on every POST for **24 days** while staying 1/1 Running —
+because its `/healthz` never touches redis. Scaling to zero would **not** have worked;
+falcosidekick keeps POSTing and Flux rescales. **kometa `show_missing: false`** plus an Alloy
+stage (5,252/day, of which 63 signatures were film titles matched only because `terror`
+contains `error`). **kube-controller-manager** reflector loop, closed above.
+
+The best find came from a sub-agent and was a one-line workload bug, not rule tuning:
+`pg_isready` with no `-p` resolves which cluster to talk to via a Perl wrapper that calls
+`getpwuid`, which opens `/etc/shadow` on every probe. 18 execs/min = **25,919 Falco alerts a
+day, 49% of all alert volume**, from two probes. Proven by positive control, by a decisive
+experiment (`-p 5544` → 0 events, same command without `-p` → one per call), and by a natural
+control: the identical image digest elsewhere emits zero because its probe already passes
+`-p`. Fixed in `../dungeon-library`. A Go-toolchain Falco exception (19,221/day) was scoped
+by exepath, deliberately **not** by absence of k8s metadata — that was the easy fix available
+and would have blinded the rule to every dind-launched container.
+
+**The expensive part was version-checker, and it is worth reading before touching it.** Three
+client bugs make every host without a dedicated client resolve zero tags — so ~117 containers
+were silently not version-checked, which is the exporter's entire purpose. Fixing them took a
+sample from 2/14 to 14/14 resolved **with no credentials at all**, which also disproves the
+long-standing comment claiming this was a private-registry auth gap. But shipping that fork
+**OOMKilled the exporter twice** (exit 137, first in 7 s, then in 5.5 min) because making the
+lookups work exposed two more defects: a goroutine per tag, and a manifest fetched for every
+cosign `.att`/`.sig` artefact before `pkg/version/filters.go` throws them away (953 of
+kedacore/keda's first 1,000 tags). I reverted to upstream in between rather than leave a
+crashlooping exporter — before the patch it under-reported, during it, it reported nothing.
+Five fixes now live; patch and tests are not in this repo, see the deployment comment.
+
+Costs and mistakes, plainly. I twice diagnosed the OOM wrong before profiling it (blamed ghcr
+rate limiting, which self-settled; then assumed the worker pool sufficed) — only a heap
+profile of the real workload settled it, and gotcha 44 is why. I "restarted" the KCM leader
+with `kubectl delete pod` and it did nothing at all (gotcha 42). I told the user a census run
+had finished when it had failed and exited 0 anyway (gotcha 47). The Falco exception is
+validated and live but **not yet confirmed firing** — no CI build has run since. The
+redirect-STDOUT rule (7,204/day) was deliberately left alone.
 
 ### 2026-10-14/15 — logs got a ServiceName, and that exposed a backup that had not worked in 31 days
 
@@ -584,6 +634,38 @@ worth keeping is distilled up into this list first. Fuller detail lives in
 39. **`bd search` matches titles only.** Any marker you embed in a description — a signature id, a correlation key — is invisible to it, so an idempotency check built on `bd search` silently reports every already-filed item as new. Use `bd list --all --json` and scan descriptions; `--all` matters, or closed items reappear as fresh work. `[TALOS-qzbh]`
 40. **Normalising a log body can destroy the evidence that classifies it.** Rewriting digits to `<n>` to group signatures also turns pino's `{"level":30}` into `{"level":<n>}`, erasing the only proof the line was INFO. Read level facts from the RAW body in SQL, before normalisation. Corollary: a green selftest proves the rules you wrote fire, not that you wrote the right rules — both classifier gaps were found by dry-running against real data. `[TALOS-qzbh]`
 41. **`flux reconcile source git` can time out and leave the Kustomization applying the PREVIOUS revision — while reporting success.** An Authentik blueprint then reported `successful` for the old ConfigMap content. Always confirm `lastAppliedRevision` equals the commit you pushed before trusting any downstream status. Related: blueprint discovery can outrun ConfigMap propagation into the pod, so a transient `status: error` or a `psycopg DeadlockDetected` exit is not a bad blueprint — check the end state. `[TALOS-qzbh.3]`
+
+42. **`kubectl delete pod` does not restart a Talos static control-plane pod.** It recreates
+    only the _mirror_ object; the kubelet leaves the container running. The pod shows a fresh
+    `AGE` while `restartCount` and `state.running.startedAt` are unchanged, and any leader
+    `Lease` keeps the **same `holderIdentity` UUID** — a real restart generates a new one. So
+    "restart the KCM pod to drop stale in-memory state" silently does nothing. What works:
+    `talosctl -n <ip> service kubelet restart`, or deleting the leader Lease (the process exits
+    on losing leadership, and if it re-acquires, leadership has still moved to a clean node).
+43. **version-checker's `match-regex` and `pin-*` annotations filter AFTER the registry fetch,
+    so they cannot reduce load, memory or error volume.** `LatestTagFromImage` reads
+    `imageCache.Get(imageURL)` — keyed on the image URL alone — and `Fetch` takes
+    `_ *api.Options`, discarding them by design, because the tag cache is shared across every
+    pod using that image. The regex is applied in `pkg/version/filters.go`. Their real and only
+    job is stopping false "out-of-date" flips.
+44. **A Go process in a container needs `GOMEMLIMIT`, and a healthy heap profile does not mean
+    healthy RSS.** Goroutine stacks are **not counted in `HeapAlloc`**: version-checker showed
+    224 MB heap in use against 511 MB RSS and was OOMKilled at a 512Mi limit. Without
+    `GOMEMLIMIT` the GC targets `GOGC` against the _node's_ memory and will walk straight into
+    the cgroup ceiling. Set it below the hard limit; raising the limit alone just moves the OOM.
+45. **falcosidekick logs an HTTP 500 as `exceeding post rate limit (500)`.** Upstream formats
+    `ErrTooManyRequest` in the 500 branch. The number in brackets is the real status; a genuine
+    rate limit is 429. Chasing the words instead of the code turned one outage into a fortnight
+    of looking for throttling that never happened.
+46. **A `/healthz` that does not touch the dependency it needs is not a health check.**
+    falcosidekick-ui returned `{"status":"ok"}` without consulting redis and so stayed 1/1
+    Running for 24 days while failing every write. The only honest signal was the _sender's_
+    view — falcosidekick counting its own deliveries as failed. Alert on the producer, not the
+    endpoint that claims to be fine.
+47. **A failed run can still exit 0.** `logairr run --clickhouse clickhouse://host:port` dies
+    with "too many colons in address" — it wants `host:port`, not a URL — logs the error at
+    ERROR level and exits 0 anyway. Grep the output for `level=ERROR` before believing a run
+    happened; this one was reported as finished when it had not run at all.
 
 <!-- /closeout:gotchas -->
 
