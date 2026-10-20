@@ -50,6 +50,21 @@ kind: DNSEndpoint
 metadata:
   name: outpost-demo
   namespace: external-dns
+  annotations:
+    # ⚠ LOAD-BEARING, AND THE REASON THIS SOURCE NEVER WORKED BEFORE.
+    # Both external-dns Deployments run `--annotation-filter=
+    # external-dns.alpha.kubernetes.io/hostname`, and annotation-filter is applied
+    # to EVERY source object -- CRD sources included, not just Ingress/Service.
+    # A DNSEndpoint without this annotation is discarded before its endpoints are
+    # even read, and external-dns logs the cheerful and totally misleading
+    # "All records are already up to date".
+    #
+    # Evidence that this was never caught: the DNSEndpoint this file used to carry
+    # (`nebula-lighthouse`) had no such annotation. nebula.knowledgedump.space
+    # does resolve -- but `dig TXT _externaldns.nebula.knowledgedump.space` is
+    # EMPTY, i.e. external-dns never owned or created it. That record was made by
+    # hand and the manifest was decorative. Do not treat it as a working example.
+    external-dns.alpha.kubernetes.io/hostname: outpost.amberdark.net
   labels:
     app.kubernetes.io/name: external-dns
     app.kubernetes.io/component: dns
