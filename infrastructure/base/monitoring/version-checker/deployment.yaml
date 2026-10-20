@@ -42,10 +42,13 @@ spec:
                     operator: NotIn
                     values: [talos03]
       serviceAccountName: version-checker
-      # No imagePullSecrets: upstream quay.io needs none. (A
-      # nexus-pull-dockercfg ExternalSecret does exist in this namespace, and
-      # referencing it is what a Zot-hosted image would need -- Zot challenges
-      # /v2/ even with defaultPolicy read.)
+      # Needed because the image above is the patched fork in Zot, and Zot
+      # challenges /v2/ even with defaultPolicy read -- an anonymous pull fails
+      # with "no basic auth credentials". ESO already templates this secret
+      # into the namespace from the 1Password nexus-admin item. Goes away with
+      # the fork.
+      imagePullSecrets:
+        - name: nexus-pull-dockercfg
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -89,26 +92,53 @@ spec:
           # Upstream's own client tests still pass; the patch adds tests to
           # pkg/client/fallback, which had none, and each fix was verified by
           # mutation -- reverting it turns the new tests red.
-          # REVERTED TO UPSTREAM on 2026-10-20 after the patched fork above was
-          # OOMKilled into CrashLoopBackOff (exit 137, 5 restarts in 7 minutes,
-          # zero metrics exported). The patch is correct about the three client
-          # bugs and does resolve 2/14 -> 14/14 refs, but making those lookups
-          # WORK exposes a second defect it does not address: the OCI client
-          # fetches a manifest PER TAG, at runtime.NumCPU()*5 concurrency, with
-          # no bound on tag count. kyverno has 14,877 tags and
-          # cloudnative-pg/postgresql 11,452, so ~114 newly-resolving refs blew
-          # straight through the 512Mi limit in seconds.
+          # PATCHED FORK, not upstream. v0.11.0 + four fixes; the patch and
+          # its tests are in scratchpad/version-checker-v0.11.0.patch. Revert
+          # to quay.io/jetstack/version-checker once a release carries them
+          # (v0.11.0 was still latest on 2026-10-20).
           #
-          # A crashlooping exporter is worse than a noisy one: before the patch
-          # this under-reported (~117 containers untracked); during it, it
-          # reported nothing at all. So upstream it is -- the real fix is to
-          # sort tags before fetching metadata and only pull manifests for
-          # candidates, which is a change that belongs in review, not in a
-          # local fork.
+          # WHAT WAS BROKEN: 12,015 error lines/day over 165 signatures, all
+          # "no tags found for given image URL" -- and, the part that actually
+          # mattered, ~117 containers silently NOT version-checked, which
+          # defeats the point of this exporter. Never a credentials problem; no
+          # workload in the cluster was failing to pull.
           #
-          # Patch + tests kept at scratchpad/version-checker-v0.11.0.patch.
-          # The OOM is evidence FOR the upstream issue, not against it.
-          image: quay.io/jetstack/version-checker:v0.11.0
+          #   1. fallback.RepoImageFromPath returned ("", ""), so every host
+          #      without a dedicated client asked the chain for the EMPTY image.
+          #   2. fallback treated "no error, zero tags" as success. With (1)
+          #      fixed the anonymous Docker Hub client gets asked for foreign
+          #      registries' paths (kyverno/kyverno, forgejo/forgejo), answers
+          #      HTTP 200 with no results, ends the search before the OCI
+          #      client is tried, and caches itself for that host for 5h.
+          #      Fixing (1) alone only gets a sample from 2/14 to 5/14.
+          #   3. gcr injected the gcr.io legacy "google-containers" org for
+          #      *.k8s.io too, so registry.k8s.io/kube-apiserver requested
+          #      /v2/google-containers/kube-apiserver/tags/list -> 404 with a
+          #      text/plain body -> "invalid character 'r' looking for
+          #      beginning of value". Fixed host-awarely, NOT by dropping
+          #      *.k8s.io from the regex -- that regressed
+          #      registry.k8s.io/coredns/coredns from 244 tags to a failure.
+          #   4. oci.Manifests created ONE GOROUTINE PER TAG up front
+          #      (wg.Add(len(tags)) + go func in the range); the semaphore
+          #      bounded only concurrent fetches, not goroutine creation. This
+          #      is what OOMKilled the first attempt at this fork (exit 137,
+          #      CrashLoopBackOff, 5 restarts, zero metrics). Measured on
+          #      kyverno's 14,877 tags, one repo:
+          #        goroutines 15,289 -> 296
+          #        stacks     62.3MiB -> 6.3MiB   (NOT counted in HeapAlloc,
+          #                                        which is why heap looked fine)
+          #        total Sys  126.7MiB -> 49.4MiB
+          #      Several large repos are reached concurrently, so ~4 of them
+          #      exceeded this container's 512Mi. Now a bounded worker pool.
+          #
+          # Measured 2/14 -> 14/14 refs resolved, WITH NO CREDENTIALS. So the
+          # auth sketched under NOISE GUARD (b) is not needed for these; the
+          # OCI client does the scoped-bearer dance anonymously and simply was
+          # never reached.
+          #
+          # The 512Mi limit below is deliberately UNCHANGED from the OOM
+          # attempt: extra headroom would have hidden whether fix 4 works.
+          image: registry.talos00/talos00-registry/version-checker:v0.11.0-registryfix2
           command: ["version-checker"]
           args:
             # Automatically check EVERY container on the cluster without needing
