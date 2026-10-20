@@ -122,6 +122,24 @@ spec:
     # (TALOS-suxd.6). Deleting it earlier would blank those panels for no gain.
     falcosidekick:
       enabled: true
+      # SCRAPED ONCE, NOT TWICE.
+      #
+      # The chart stamps prometheus.io/scrape: "true" on the Service, which the
+      # cluster-wide kubernetes-service-endpoints job picks up -- while podmonitor.yaml
+      # in this directory ALSO scrapes the same pods. Verified with
+      # `count by (job,instance) (falcosecurity_falcosidekick_outputs_total)`: both jobs
+      # returned both pod IPs.
+      #
+      # The consequence is quiet and nasty: every falcosidekick series in Mimir was
+      # duplicated, so any `sum(rate(...))` -- including panels on the falco-ops
+      # dashboard -- read exactly DOUBLE. Nothing errors; the numbers are simply wrong.
+      #
+      # The PodMonitor wins because it is ours: versioned here, explicit about port and
+      # interval, and it gives the series a stable job label (falco/falcosidekick) that
+      # alert rules can pin to. Annotation-driven discovery is implicit and unversioned.
+      service:
+        annotations:
+          prometheus.io/scrape: "false"
       webui:
         enabled: true
         # --- Local basic auth: NOT admin:admin (security audit) ---
@@ -157,7 +175,21 @@ spec:
         disableauth: true
         # X<unit> format, NOT raw seconds -- the chart documents `ttl: X<unit>` with unit in
         # s/m/d/w. An earlier 604800 here was not 7 days, it was an invalid value.
-        ttl: "7d"
+        #
+        # 24h, down from 7d, and this is the OOM fix rather than a retention preference.
+        # maxmemory stays at 512mb deliberately: the cap was never the thing that failed.
+        # It caps `used_memory`, which does not account for the RediSearch eventIndex nor
+        # for allocator fragmentation, so redis sat at its ceiling never evicting while RSS
+        # -- the number the kernel kills on -- climbed past the limit. Measured before the
+        # 2026-10-19 kill: working set 677-691 MiB for thirteen days, then 767 MiB, then
+        # exit 137. Fragmentation ratio on the replacement is 14.32.
+        #
+        # Shortening the TTL attacks the part maxmemory cannot see. Roughly a seventh of
+        # the documents means roughly a seventh of the index, and the index is the
+        # unmeasured half of the footprint. Retention drops to one day, which costs
+        # nothing real: this redis is a cache by design and the durable copy of every
+        # alert is Falco's stdout in ClickStack.
+        ttl: "24h"
         # BUNDLED redis-stack, NOT Dragonfly. Dragonfly was tried (78612fd6) and REVERTED:
         # falcosidekick-ui writes every event through github.com/Issif/redisearch-go, whose
         # Index() emits FT.ADD -- the deprecated RediSearch v1 API. redis-stack keeps FT.ADD

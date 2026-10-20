@@ -1,0 +1,89 @@
+---
+# Alerting on falcosidekick's own delivery failures.
+#
+# WHY THIS EXISTS. On 2026-10-19 the UI's redis was OOMKilled, its RediSearch index went
+# with it, and falcosidekick-ui returned 500 on every POST from that moment on -- it only
+# creates the index at process startup and never retries. It ran broken for 24 days before
+# anyone noticed, producing ~170,000 error lines a day while doing so.
+#
+# Nothing caught it, for a specific and repeatable reason: the UI's /healthz returns
+# {"status":"ok"} without touching redis, so the pod stayed 1/1 Running throughout and
+# every liveness signal in the cluster said healthy. The only honest signal is the sender's
+# own view -- falcosidekick counting its deliveries as failed.
+#
+# JOB LABEL PINNED ON PURPOSE. falcosidekick was being scraped twice (the chart's
+# prometheus.io/scrape annotation plus this directory's PodMonitor), which doubled every
+# series. The annotation is now disabled in helmrelease.yaml, and pinning the job here
+# means these rules keep meaning the same thing even if annotation-based discovery is ever
+# re-enabled by a chart upgrade.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: falcosidekick-delivery
+  namespace: falco
+  labels:
+    app.kubernetes.io/name: falcosidekick
+spec:
+  groups:
+    - name: falcosidekick.delivery
+      rules:
+        # The one that would have caught the 24-day outage on day one.
+        #
+        # ANY sustained error rate to ANY output, rather than a threshold on volume: a
+        # broken output fails every single POST, so the rate is either ~zero or
+        # ~everything. "Greater than zero for ten minutes" therefore has no tuning to get
+        # wrong, and ten minutes rides out a rollout or a brief restart.
+        - alert: FalcosidekickOutputFailing
+          expr: |
+            sum by (destination) (
+              rate(falcosecurity_falcosidekick_outputs_total{job="falco/falcosidekick",status="error"}[10m])
+            ) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "falcosidekick cannot deliver to {{ $labels.destination }}"
+            description: >-
+              Every alert routed to this output is being lost and logged as an error.
+              Check the RECEIVER first, not falcosidekick: for the webui destination the
+              usual cause is that its redis restarted and the eventIndex is gone, which the
+              UI only recreates at startup -- confirm with
+              `kubectl -n falco exec falco-falcosidekick-ui-redis-0 -- redis-cli FT._LIST`
+              and restart the UI deployment if it is empty. Note that the sender logs a 500
+              as "exceeding post rate limit (500)"; that string is an upstream mislabel and
+              does not mean rate limiting.
+
+        # The cause, caught before it becomes the symptom. The redis behind the UI is a
+        # cache with no persistence, so a restart silently destroys the index.
+        - alert: FalcosidekickUIRedisRestarted
+          expr: |
+            increase(kube_pod_container_status_restarts_total{
+              job="kube-state-metrics", namespace="falco",
+              pod="falco-falcosidekick-ui-redis-0"
+            }[15m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "The falcosidekick UI's redis restarted; its search index is gone"
+            description: >-
+              storageEnabled is false and save is empty, so this redis comes back with an
+              empty keyspace. falcosidekick-ui creates eventIndex only at startup, so until
+              the UI is restarted every POST to it returns 500. Restart
+              deploy/falco-falcosidekick-ui. If the restart was an OOMKill, note that
+              maxmemory does not account for the RediSearch index or for allocator
+              fragmentation -- the memory limit has to cover both above the cap.
+
+        # The sender itself going quiet. Distinct from the above: those fire when delivery
+        # fails, this fires when nothing is reporting at all.
+        - alert: FalcosidekickMetricsMissing
+          expr: absent(up{job="falco/falcosidekick"})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "falcosidekick is not being scraped"
+            description: >-
+              Without this scrape the delivery alerts above cannot fire, so a silent
+              falcosidekick hides a broken output. Check the PodMonitor in
+              infrastructure/base/security/falco/podmonitor.yaml and that the pods still
+              carry app.kubernetes.io/name=falcosidekick.
