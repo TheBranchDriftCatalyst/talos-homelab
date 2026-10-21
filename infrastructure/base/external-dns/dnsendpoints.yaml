@@ -23,14 +23,13 @@
 # A small always-on EC2 box (XInstance `outpost-demo`,
 # infrastructure/base/aws/apps/outpost-demo.yaml) serving traefik/whoami.
 #
-# WHY A HAND-WRITTEN TARGET IP: XInstance surfaces status.publicIp on the XR but
+# THE TARGET IS AN EIP, so it is STABLE across instance stop/start and replacement,
 # nothing propagates it here, and the XRD has no EIP support — so this address is
-# EPHEMERAL and a stop/start or instance replacement silently moves the record.
-# Re-read it with:
-#   kubectl get xinstance outpost-demo -o jsonpath='{.status.publicIp}'
-# The durable fix is an EIP (needs `eips` + `eipassociations` added to
-# aws-providers/activation-policy.yaml) plus automating this value; both are
-# tracked follow-ups, deliberately not done for a POC.
+# the claim out RELEASES it -- which matters, because an unattached EIP is billed
+# while an in-use one costs no extra. Re-read it with:
+#   kubectl get xoutpost outpost -o jsonpath='{.status.publicIp}'
+# Still hand-written in TWO places (here and pihole/statefulset.yaml); deriving
+# both from status.publicIp instead is the remaining follow-up.
 #
 # proxied: "false" (grey cloud) is REQUIRED, not a preference: the origin serves
 # plain HTTP on :80 (openPort takes exactly one port, so 80+443 is not
@@ -75,7 +74,7 @@ spec:
       recordType: A
       recordTTL: 300
       targets:
-        - 34.215.174.32 # ephemeral: XInstance has no EIP — see header
+        - 52.89.86.58  # STABLE: an EIP (eipalloc-0db93fe8c3f952ade)
       providerSpecific:
         - name: external-dns.alpha.kubernetes.io/cloudflare-proxied
           value: "false" # grey cloud: HTTP-only origin, see header
