@@ -1,0 +1,218 @@
+---
+# BookOrbit OIDC provider — DECLARATIVE PROVISIONER.
+#
+# WHY THIS EXISTS AT ALL. BookOrbit stores its OIDC provider config in its OWN
+# database (table `oidc_providers`, schema server/src/db/schema/oidc.ts) and exposes
+# NO environment variable for issuer / client id / client secret / redirect uri — the
+# only OIDC_* vars it reads are discovery/JWKS/state cache TTLs. So there is no
+# manifest field that configures SSO. The upstream-intended path is a human pasting
+# three values into Settings > OIDC. This CronJob does that write from git instead,
+# so the config is reviewable, reproducible on a rebuild, and cannot be silently
+# diverged in the UI.
+#
+# CONFIRMED AUTHORITATIVE TARGET (verified against the running 2.7.0 image, not
+# assumed): `app_settings` ALSO holds a legacy `oidc_config` blob, but
+# dist/modules/auth/oidc/oidc.service.js resolves providers through
+# oidc-provider.repository.js -> schema.oidcProviders (findBySlug). It never reads
+# the app_settings blob. Writing only `oidc_providers` is correct; writing only the
+# blob would leave SSO dead.
+#
+# WHY A CRONJOB, NOT A JOB:
+#   * A Job's spec is IMMUTABLE — Flux cannot re-apply an edited one, so every change
+#     to the desired OIDC config would need a manual delete.
+#   * Self-healing hourly matches the provisioner pattern already used for the MinIO
+#     scoped users: drift (including someone editing the UI) is corrected, not just
+#     detected.
+#   * Flux's `wait: true` waits on EVERY applied object and ignores spec.healthChecks,
+#     so a TTL'd one-shot Job can stall this whole Kustomization for the full timeout.
+#     A CronJob has no such completion semantics.
+#
+# >>> THIS MEANS THE UI IS NOT THE SOURCE OF TRUTH. <<<
+# Edits made in Settings > OIDC are REVERTED within the hour. Change this file.
+#
+# NO RESTART NEEDED after a change: the service re-reads the provider row per login
+# (findBySlug), so the next sign-in picks up the new values.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bookorbit-oidc-provisioner
+  labels:
+    app: bookorbit
+    app.kubernetes.io/name: bookorbit
+    app.kubernetes.io/component: oidc-provisioner
+spec:
+  # Staggered off the hour so it does not pile onto the other hourly provisioners.
+  schedule: "23 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app: bookorbit
+            app.kubernetes.io/component: oidc-provisioner
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: provision
+              # Same CNPG operand image the app's wait-for-extensions initContainer
+              # uses — already present in-cluster, carries psql, adds no new dependency.
+              image: ghcr.io/cloudnative-pg/postgresql:18.4-standard-trixie
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: bookorbit-postgres-app
+                      key: uri
+                # The SAME generated value Authentik's provider uses: an ESO Password
+                # generator mints Secret authentik-bookorbit-oidc in ns authentik for
+                # the blueprint's !Env, and reflector fans the identical bytes here.
+                # optional: true so a not-yet-reflected secret produces a clear log
+                # line from the guard below instead of CreateContainerConfigError.
+                - name: OIDC_CLIENT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: authentik-bookorbit-oidc
+                      key: client-secret
+                      optional: true
+                - name: OIDC_SLUG
+                  value: authentik
+                - name: OIDC_DISPLAY_NAME
+                  value: "Sign in with Authentik"
+                # per_provider issuer on the PUBLIC-cert host: the pod resolves it
+                # in-cluster via the CoreDNS rewrite to traefik, a phone resolves it
+                # via Pi-hole/Cloudflare, and both trust the cert with no homelab-CA
+                # plumbing. Same rationale as komga/kavita/audiobookshelf.
+                - name: OIDC_ISSUER
+                  value: https://auth.knowledgedump.space/application/o/bookorbit/
+                - name: OIDC_CLIENT_ID
+                  value: bookorbit
+              command:
+                - bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  if [ -z "${OIDC_CLIENT_SECRET:-}" ]; then
+                    echo "FATAL: OIDC_CLIENT_SECRET is empty."
+                    echo "  Secret authentik-bookorbit-oidc has not been reflected into"
+                    echo "  this namespace yet. It originates from the ESO Password"
+                    echo "  generator in infrastructure/base/authentik/externalsecret.yaml"
+                    echo "  and is mirrored here by reflector. Refusing to write an empty"
+                    echo "  client_secret for a CONFIDENTIAL client."
+                    exit 1
+                  fi
+
+                  # --- wait for the table (the app runs 72 Drizzle migrations on boot) ---
+                  until psql "$DATABASE_URL" -tAc \
+                    "select 1 from information_schema.tables
+                       where table_schema='public' and table_name='oidc_providers'" \
+                    | grep -q 1; do
+                    echo "waiting for oidc_providers (app migrations still running)..."
+                    sleep 5
+                  done
+
+                  # --- SCHEMA GUARD -------------------------------------------------
+                  # The one real cost of writing another app's database is coupling to
+                  # its schema. Upstream ships ~weekly. So assert every column this
+                  # provisioner writes still exists and FAIL LOUDLY if not, rather than
+                  # silently half-configuring SSO on a column rename.
+                  MISSING=$(psql "$DATABASE_URL" -tAc "
+                    with expected(c) as (values
+                      ('slug'),('display_name'),('enabled'),('issuer_uri'),('client_id'),
+                      ('client_secret'),('scopes'),('claim_mapping'),('auto_provision'),
+                      ('display_order'),('updated_at'))
+                    select coalesce(string_agg(e.c, ', '), '')
+                    from expected e
+                    left join information_schema.columns col
+                      on col.table_schema='public'
+                     and col.table_name='oidc_providers'
+                     and col.column_name=e.c
+                    where col.column_name is null")
+                  MISSING=$(echo "$MISSING" | tr -d '[:space:]' | sed 's/,/, /g')
+                  if [ -n "$MISSING" ]; then
+                    echo "FATAL: oidc_providers schema has drifted."
+                    echo "  Columns this provisioner writes are now missing: $MISSING"
+                    echo "  BookOrbit was likely upgraded. Re-read"
+                    echo "  server/src/db/schema/oidc.ts for the new shape and update"
+                    echo "  oidc-provisioner.yaml + OIDC.md before this can succeed."
+                    exit 1
+                  fi
+
+                  # --- UPSERT -------------------------------------------------------
+                  # ON CONFLICT (slug): idempotent, and reconciles UI drift back to git.
+                  # NOTE issuer_uri also carries a UNIQUE constraint. If a DIFFERENT slug
+                  # ever holds this issuer the insert errors out loudly rather than
+                  # creating a second provider for the same IdP — which is what we want.
+                  #
+                  # auto_provision is set HERE, declaratively, which is the real win over
+                  # the UI: both of OIDC.md's traps become git-enforced.
+                  #   enabled:true           -> without it a valid Authentik login lands on
+                  #                             "Your account has not been set up".
+                  #   allowLocalLinking:true -> local accounts already exist (the setup
+                  #                             wizard made the first admin). Without this,
+                  #                             SSO creates DUPLICATE accounts alongside
+                  #                             them instead of adopting them. Matching is
+                  #                             on the username claim, and authentik's
+                  #                             username matches BookOrbit's exactly.
+                  #   defaultPermissionNames:[] -> upstream's own default, deliberately
+                  #                             kept empty: a newly auto-provisioned user
+                  #                             gets an account and NO privileges, granted
+                  #                             explicitly per user afterwards. Group->
+                  #                             permission mappings re-sync on every login
+                  #                             and CAN REVOKE, so they stay unmanaged here.
+                  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+                    -v slug="$OIDC_SLUG" \
+                    -v display_name="$OIDC_DISPLAY_NAME" \
+                    -v issuer="$OIDC_ISSUER" \
+                    -v client_id="$OIDC_CLIENT_ID" \
+                    -v client_secret="$OIDC_CLIENT_SECRET" <<'SQL'
+                  insert into oidc_providers
+                    (slug, display_name, enabled, issuer_uri, client_id, client_secret,
+                     scopes, claim_mapping, auto_provision, display_order)
+                  values
+                    (:'slug', :'display_name', true, :'issuer', :'client_id', :'client_secret',
+                     'openid profile email',
+                     '{"username":"preferred_username","name":"name","email":"email","groups":"groups"}'::jsonb,
+                     '{"enabled":true,"allowLocalLinking":true,"defaultPermissionNames":[]}'::jsonb,
+                     0)
+                  on conflict (slug) do update set
+                    display_name   = excluded.display_name,
+                    enabled        = excluded.enabled,
+                    issuer_uri     = excluded.issuer_uri,
+                    client_id      = excluded.client_id,
+                    client_secret  = excluded.client_secret,
+                    scopes         = excluded.scopes,
+                    claim_mapping  = excluded.claim_mapping,
+                    auto_provision = excluded.auto_provision,
+                    updated_at     = now();
+                  SQL
+
+                  echo "provisioned OIDC provider '${OIDC_SLUG}':"
+                  psql "$DATABASE_URL" -c \
+                    "select slug, display_name, enabled, issuer_uri, client_id,
+                            auto_provision, updated_at
+                       from oidc_providers where slug = '${OIDC_SLUG}'"
+              securityContext:
+                readOnlyRootFilesystem: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: [ALL]
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi

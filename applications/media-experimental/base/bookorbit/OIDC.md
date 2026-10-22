@@ -1,16 +1,17 @@
 # BookOrbit — Authentik OIDC (operator runbook)
 
-**TL;DR:** **NOT wired, deliberately.** Unlike komga/kavita/audiobookshelf, BookOrbit
-cannot be configured declaratively — it stores its OIDC provider config **in its own
-database**, editable only through its admin UI. Everything that *can* be prepared in
-git has been; the rest is a documented manual step, not a half-finished config.
+**TL;DR:** **Fully provisioned from git — no manual step.** The Authentik half is a
+native OIDC provider in the shared media blueprint. The BookOrbit half cannot be set
+by any manifest (the config lives in BookOrbit's own database), so an hourly CronJob
+upserts the provider row directly. **The UI is not the source of truth** — edits in
+Settings → OIDC are reverted within the hour.
 
 - BookOrbit **is** a supported Authentik client — upstream lists Authentik as tested
   and working out of the box.
-- Callback (register this in Authentik): `https://bookorbit.talos00/oauth2-callback`
-- The route is already on `websecure` so this URL works the moment SSO is enabled.
+- Callback (already registered in the blueprint): `https://bookorbit.talos00/oauth2-callback`
+- The route is already on `websecure`, so this URL works today.
 - The pod already carries `catalyst.io/oidc: "true"`, so Kyverno injects the
-  `auth.knowledgedump.space` hostAlias before the first token exchange ever happens.
+  `auth.knowledgedump.space` hostAlias before the first token exchange happens.
 
 ## Why this is not declarative
 
@@ -34,55 +35,105 @@ consumes. That is the "half-configured app that appears to work" case, so the
 Authentik side was **not** added either — both halves should land together, in one
 deliberate pass.
 
-## What enabling it requires
+## What is already done (git-managed)
 
-**1. Authentik side** — a native OIDC provider, matching the pattern in
-`infrastructure/base/authentik/media-oidc-blueprint.yaml` (the komga / kavita /
-audiobookshelf blueprint), *not* the `forward_single` proxy providers in
-`media-experimental-blueprint.yaml`. BookOrbit has first-party Kobo / KOReader / OPDS
-clients that a forward-auth proxy would break, exactly as it would for komga.
-
-Needs, mirroring the existing entries there:
+**Authentik side — DONE.** Mirrors the komga entry in
+`infrastructure/base/authentik/media-oidc-blueprint.yaml` (native OIDC, *not* the
+`forward_single` proxy providers in `media-experimental-blueprint.yaml` — BookOrbit's
+first-party Kobo / KOReader / OPDS clients cannot satisfy a browser cookie challenge,
+exactly as for komga):
 
 - `authentik_providers_oauth2.oauth2provider`, `client_type: confidential`,
   `client_id: bookorbit`
-- `client_secret: !Env [BOOKORBIT_OIDC_CLIENT_SECRET, ""]`
+- `client_secret: !Env BOOKORBIT_OIDC_CLIENT_SECRET` — **bare `!Env`, no `""` default.**
+  A two-arg `!Env [VAR, ""]` mints a *confidential* client with an **empty** secret when
+  the var is unset (TALOS-lxz5.5.2 / finding 013); bare `!Env` resolves to null and the
+  serializer rejects the entry, so a missing secret fails loudly instead.
 - redirect URI `https://bookorbit.talos00/oauth2-callback` (strict)
-- `issuer_mode: per_provider` → issuer `https://auth.knowledgedump.space/application/o/bookorbit/`
-  (the public-cert host, so the pod and any phone both trust it with no homelab-CA
-  plumbing — same rationale as the other three)
-- an `authentik_core.application` (slug `bookorbit`, group `talos-media`,
-  `policy_engine_mode: any`) plus the two PolicyBindings (`talos-media`,
-  `cluster-admin`)
-- an ESO `Password` generator producing Secret `authentik-bookorbit-oidc` in ns
-  `authentik`, reflected into `media-experimental`
+- `issuer_mode: per_provider` → issuer
+  `https://auth.knowledgedump.space/application/o/bookorbit/` (the public-cert host, so
+  the pod and any phone both trust it with no homelab-CA plumbing — same rationale as
+  the other three)
+- `authentik_core.application` (slug `bookorbit`, group `talos-media`,
+  `policy_engine_mode: any`) plus the two PolicyBindings (`talos-media`, `cluster-admin`)
+- an ESO `Password` generator → Secret `authentik-bookorbit-oidc` in ns `authentik`
+  (`infrastructure/base/authentik/externalsecret.yaml`), reflected into
+  `media-experimental`. `refreshInterval: "0"` — generate once; a rotation would
+  silently break the provider's other half.
+- `BOOKORBIT_OIDC_CLIENT_SECRET` on the authentik **worker**
+  (`infrastructure/base/authentik/helmrelease.yaml`), `optional: true` so a missing
+  secret can never CrashLoop the worker.
 
-Note two orchestrator-owned files must also be touched for a blueprint to take
-effect at all, which is part of why this was left as one deliberate change:
-`infrastructure/base/authentik/helmrelease.yaml` (`blueprints.configMaps` list, plus
-the worker's `BOOKORBIT_OIDC_CLIENT_SECRET` env) and
-`infrastructure/base/authentik/kustomization.yaml`.
+The blueprint ConfigMap `authentik-media-oidc-blueprint` was **already** in that
+helmrelease's `blueprints.configMaps` list and the file already in
+`authentik/kustomization.yaml`, because the komga/kavita/audiobookshelf entries share
+them — so adding BookOrbit needed no new mount.
 
-**2. BookOrbit side** — manual, in the UI, at **Settings → OIDC / SSO**. Paste:
+## The app side: `oidc-provisioner.yaml`
 
-| Field | Value |
+Because there is no env var to set (see above), an hourly **CronJob**
+(`oidc-provisioner.yaml`) upserts the provider row into BookOrbit's `oidc_providers`
+table. It reads the client secret from the reflected `authentik-bookorbit-oidc`
+Secret, so both ends of the handshake are the same generated bytes with no manual
+coordination.
+
+Settings written declaratively:
+
+| Column | Value |
 | --- | --- |
-| Issuer URI | `https://auth.knowledgedump.space/application/o/bookorbit/` |
-| Client ID | `bookorbit` |
-| Client secret | value of `authentik-bookorbit-oidc` key `client-secret` |
-| Scopes | `openid profile email` (the default) |
+| `slug` | `authentik` |
+| `display_name` | `Sign in with Authentik` |
+| `enabled` | `true` |
+| `issuer_uri` | `https://auth.knowledgedump.space/application/o/bookorbit/` |
+| `client_id` | `bookorbit` |
+| `client_secret` | from `authentik-bookorbit-oidc` (reflected from ns `authentik`) |
+| `scopes` | `openid profile email` |
+| `claim_mapping` | `preferred_username` / `name` / `email` / `groups` |
+| `auto_provision` | `enabled:true`, `allowLocalLinking:true`, `defaultPermissionNames:[]` |
 
-Then enable the provider.
+Three design points worth keeping:
 
-## Two traps worth knowing before you turn it on
+- **CronJob, not Job.** A Job's spec is immutable so Flux could not re-apply an
+  edited one; hourly also self-heals UI drift, and it avoids Flux's `wait: true`
+  waiting on a TTL'd one-shot Job and stalling the Kustomization.
+- **It carries a schema guard.** Writing another app's database couples us to that
+  app's schema, and BookOrbit ships roughly weekly. The job asserts every column it
+  writes still exists and **exits 1 with an explicit message** on drift, rather than
+  silently half-configuring SSO after a column rename.
+- **`oidc_providers` is the authoritative table**, verified against the running 2.7.0
+  image: `app_settings` also holds a legacy `oidc_config` blob, but
+  `dist/modules/auth/oidc/oidc.service.js` resolves providers via
+  `oidc-provider.repository.js` → `schema.oidcProviders` (`findBySlug`) and never
+  reads that blob.
+
+No restart is needed after a change — the provider row is re-read per login.
+
+To change the config, **edit this file**, not the UI. To force it immediately instead
+of waiting for the hour:
+
+```bash
+kubectl -n media-experimental create job --from=cronjob/bookorbit-oidc-provisioner \
+  bookorbit-oidc-manual
+kubectl -n media-experimental logs job/bookorbit-oidc-manual
+```
+
+## Two traps — both now git-enforced by the provisioner
+
+These are the two settings that silently break SSO. The provisioner sets both in the
+`auto_provision` jsonb column, which is the main advantage of writing the row from
+git rather than ticking boxes in a UI. Recorded here because they explain *why*
+those values are what they are.
 
 - **Auto-provisioning is OFF by default** (`autoProvision.enabled: false`). Without
   it, a valid Authentik login lands on *"Your account has not been set up"*.
-- If any **local BookOrbit accounts already exist** (they will — the setup wizard
-  creates the first admin), you must ALSO enable **Allow local account linking**,
-  which matches on the username claim. Upstream flags this as a `:::danger:::` —
-  skip it and SSO logins create duplicate accounts alongside the local ones instead
-  of adopting them.
+- If any **local BookOrbit accounts already exist** (they do — the setup wizard
+  created the first admin), **Allow local account linking** must ALSO be on. It
+  matches on the **username claim**. Upstream flags this as a `:::danger:::` — skip
+  it and SSO logins create duplicate accounts alongside the local ones instead of
+  adopting them. Verified at provisioning time: the authentik username and the
+  BookOrbit username are both `Panda`, an exact match, so the existing superuser
+  account is adopted rather than duplicated. **A username mismatch is the thing to
+  check first** if a new SSO login lands in an unprivileged account.
 
 Group→permission mappings re-sync on every login and *can revoke* permissions;
 default permissions are applied once, at account creation.
