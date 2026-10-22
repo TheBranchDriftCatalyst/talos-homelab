@@ -208,28 +208,10 @@
     return a;
   }
 
-  function buildGroup(group) {
-    var wrap = el('div', C + '__group');
-    var label = el('div', C + '__label');
-    label.appendChild(document.createTextNode(group.name));
-    label.appendChild(el('span', C + '__caret', '▾'));
-    label.tabIndex = 0;
-    label.setAttribute('role', 'button');
-    label.setAttribute('aria-haspopup', 'true');
-    label.setAttribute('aria-expanded', 'false');
-
-    var menu = el('ul', C + '__menu');
-    var active = false;
-    group.items.forEach(function (item) {
-      if (isCurrent(item.href)) active = true;
-      var li = el('li');
-      li.appendChild(linkFor(item));
-      menu.appendChild(li);
-    });
-    if (active) wrap.className += ' ' + C + '__group--active';
-
-    // Hover opens it via CSS alone. This adds keyboard and touch, which hover
-    // cannot serve.
+  /* Hover opens a dropdown via CSS alone. This adds keyboard and touch, which
+   * hover cannot serve. Shared by the app groups and the settings gear so the
+   * two can never drift apart in focus or aria behaviour. */
+  function wireDropdown(wrap, label) {
     function toggle(open) {
       wrap.classList.toggle('is-open', open);
       label.setAttribute('aria-expanded', open ? 'true' : 'false');
@@ -251,6 +233,143 @@
         if (!wrap.contains(document.activeElement)) toggle(false);
       }, 0);
     });
+  }
+
+  /* -- User preferences -----------------------------------------------------
+   * PER ORIGIN, and that is a constraint rather than a choice: every app is its
+   * own hostname, so one localStorage is not shared between them, and a cookie
+   * scoped to `.talos00` would be rejected outright -- a single-label domain is
+   * treated as a public suffix. So a preference set on one app is remembered
+   * for THAT app, and turning it on everywhere means turning it on per app.
+   *
+   * Every read and write is wrapped. localStorage THROWS on access in some
+   * privacy modes, and this bar is cosmetic: it must never surface an error
+   * into an app we did not write.
+   * ------------------------------------------------------------------------ */
+  var PREF_KEY = 'catalyst-nav:prefs';
+
+  function readPrefs() {
+    try {
+      return JSON.parse(window.localStorage.getItem(PREF_KEY)) || {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function writePrefs(prefs) {
+    try {
+      window.localStorage.setItem(PREF_KEY, JSON.stringify(prefs));
+    } catch (e) {
+      // Storage disabled or full. The toggle still applies for this page view;
+      // it just will not be remembered. Silent on purpose.
+    }
+  }
+
+  /* "Always visible" stops the auto-hide and leaves the bar resting on screen.
+   *
+   * It deliberately does NOT switch to mode:'push'. Push reserves the strip by
+   * padding <html>, which only works for a document in normal flow -- layer 50
+   * of the stylesheet says so outright, and almost every app here is an SPA
+   * with a position:fixed header that padding cannot move. Pinning via push
+   * would therefore slide the bar under the app's own header on exactly the
+   * apps people use most, and fail differently in each one. Floating over the
+   * top strip is the honest reading of "always visible" and behaves the same
+   * everywhere. */
+  function applyPinned(nav, on) {
+    nav.classList.toggle(C + '--pinned', !!on);
+    nav.classList.toggle(C + '--hidden', !on);
+  }
+
+  /* The settings menu's contents. Add an entry here and it renders itself --
+   * label, hint, checkbox, persistence and the live apply all come from this
+   * one object, so the next switch needs no new DOM code. */
+  var SETTINGS = [
+    {
+      key: 'pinned',
+      label: 'Always visible',
+      hint: 'Keep the bar on screen instead of revealing it on hover.',
+      apply: applyPinned
+    }
+  ];
+
+  function buildSettings(nav, cfg, prefs) {
+    var wrap = el('div', C + '__group ' + C + '__group--settings');
+    var label = el('div', C + '__label');
+    label.appendChild(el('span', C + '__gear', '\u2699'));
+    label.tabIndex = 0;
+    label.setAttribute('role', 'button');
+    label.setAttribute('aria-haspopup', 'true');
+    label.setAttribute('aria-expanded', 'false');
+    label.setAttribute('aria-label', 'Nav bar settings');
+    label.title = 'Nav bar settings';
+
+    // Right-anchored: the gear sits at the right edge, so a left-anchored
+    // panel would hang off the viewport.
+    var menu = el('ul', C + '__menu ' + C + '__menu--right');
+
+    SETTINGS.forEach(function (setting) {
+      var row = el('label', C + '__setting');
+      var box = document.createElement('input');
+      box.type = 'checkbox';
+      box.className = C + '__checkbox';
+      box.checked = !!prefs[setting.key];
+
+      var text = el('span', C + '__setting-text');
+      text.appendChild(el('span', C + '__setting-label', setting.label));
+      var hint = setting.hint;
+
+      // An app configured mode:'push' already reserves the strip, so the bar is
+      // permanently visible there no matter what this says. Show that as a
+      // checked, disabled switch rather than an unchecked one that appears to
+      // do nothing when clicked.
+      if (setting.key === 'pinned' && cfg.mode === 'push') {
+        box.checked = true;
+        box.disabled = true;
+        hint = 'This app is configured mode:push, so the bar is always visible here.';
+      }
+
+      if (hint) text.appendChild(el('span', C + '__setting-hint', hint));
+
+      box.addEventListener('change', function () {
+        prefs[setting.key] = box.checked;
+        writePrefs(prefs);
+        setting.apply(nav, box.checked);
+      });
+
+      row.appendChild(box);
+      row.appendChild(text);
+      var li = el('li');
+      li.appendChild(row);
+      menu.appendChild(li);
+    });
+
+    wireDropdown(wrap, label);
+    wrap.appendChild(label);
+    wrap.appendChild(menu);
+    return wrap;
+  }
+
+  function buildGroup(group) {
+    var wrap = el('div', C + '__group');
+    var label = el('div', C + '__label');
+    label.appendChild(document.createTextNode(group.name));
+    label.appendChild(el('span', C + '__caret', '▾'));
+    label.tabIndex = 0;
+    label.setAttribute('role', 'button');
+    label.setAttribute('aria-haspopup', 'true');
+    label.setAttribute('aria-expanded', 'false');
+
+    var menu = el('ul', C + '__menu');
+    var active = false;
+    group.items.forEach(function (item) {
+      if (isCurrent(item.href)) active = true;
+      var li = el('li');
+      li.appendChild(linkFor(item));
+      menu.appendChild(li);
+    });
+    if (active) wrap.className += ' ' + C + '__group--active';
+
+    wireDropdown(wrap, label);
 
     wrap.appendChild(label);
     wrap.appendChild(menu);
@@ -295,6 +414,11 @@
     nav.appendChild(el('div', C + '__spacer'));
     nav.appendChild(el('div', C + '__here', location.hostname));
 
+    // Rightmost, after __here: the gear is a property of the bar itself rather
+    // than of any app in it, so it sits apart from the groups on the left.
+    var prefs = readPrefs();
+    nav.appendChild(buildSettings(nav, cfg, prefs));
+
     document.body.appendChild(nav);
 
     if (cfg.mode === 'push') {
@@ -308,6 +432,10 @@
     }
 
     autoHide(nav, cfg);
+
+    // AFTER autoHide, which installs HIDDEN as the resting state -- applying
+    // the preference last is what lets it win.
+    if (prefs.pinned) applyPinned(nav, true);
   }
 
   /* -- Overlay mode: hidden at rest, revealed by the pointer ----------------
@@ -327,6 +455,10 @@
     nav.classList.add(HIDDEN);
 
     document.addEventListener('mousemove', function (ev) {
+      // Pinned by the user: the bar does not move. Guarded at every hide path
+      // rather than by uninstalling the listeners, so the gear can toggle it
+      // back off live without a reload.
+      if (nav.classList.contains(C + '--pinned')) return;
       // Never hide while the pointer is inside the bar or an open dropdown.
       // Menus are several times taller than the bar, so a pure clientY test
       // slid the whole thing away mid-hover the moment you reached for the
@@ -348,6 +480,7 @@
     // Leaving the window entirely re-hides: otherwise the bar stays open behind
     // whatever the user switched to and is still open when they come back.
     document.addEventListener('mouseleave', function () {
+      if (nav.classList.contains(C + '--pinned')) return;
       nav.classList.add(HIDDEN);
     }, { passive: true });
 
