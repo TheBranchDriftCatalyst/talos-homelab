@@ -36,6 +36,19 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: bookorbit-oidc-provisioner
+  annotations:
+    # OPT OUT OF FLUX POSTBUILD VARIABLE SUBSTITUTION. Required, not optional.
+    # The cluster Kustomization runs envsubst in STRICT mode over every rendered
+    # resource, and the provisioner script below is full of SHELL variables
+    # (${OIDC_SLUG}, ${OIDC_CLIENT_SECRET:-}, ...). Without this annotation Flux
+    # tries to resolve them as cluster variables and the build fails with
+    #   envsubst error: variable not set (strict mode): "OIDC_SLUG"
+    # which fails the ENTIRE media-experimental Kustomization — all twelve apps
+    # stop reconciling, not just this one. Nothing in this file needs
+    # substitution (no ${CLUSTER_DOMAIN}; the issuer host is literal), so
+    # disabling it here costs nothing. The sibling IngressRoutes still get
+    # substitution because this annotation is per-resource.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
   labels:
     app: bookorbit
     app.kubernetes.io/name: bookorbit
