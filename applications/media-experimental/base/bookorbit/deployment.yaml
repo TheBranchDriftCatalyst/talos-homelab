@@ -192,6 +192,20 @@ spec:
                 secretKeyRef:
                   name: bookorbit-secrets
                   key: SETUP_BOOTSTRAP_TOKEN
+            # Encrypts download-client credentials for the Requests feature
+            # (Prowlarr / SABnzbd), new in 3.0.0. Sourced from its OWN
+            # ExternalSecret rather than bookorbit-secrets above: that one is
+            # generate-once, and editing its spec would regenerate it and rotate
+            # JWT_SECRET, logging out every session and paired device. See
+            # externalsecret.yaml. optional:true so a not-yet-synced secret
+            # degrades to the app's own "key is not set" banner instead of
+            # holding the pod in CreateContainerConfigError.
+            - name: BOOK_REQUEST_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bookorbit-request-key
+                  key: BOOK_REQUEST_ENCRYPTION_KEY
+                  optional: true
             # ---- storage behaviour ----------------------------------------------
             - name: APP_DATA_PATH
               value: /data
