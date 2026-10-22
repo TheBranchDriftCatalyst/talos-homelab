@@ -161,8 +161,15 @@ def main() -> int:
             for r in routes
             for mw in (r.get("middlewares") or [])
         } - SHARED
+        # "nav" in the name means nav-only, by convention: catalyst-nav itself,
+        # and any merged injector that adds the bar alongside something else
+        # (catalyst-nav-rum-grafana, where the bar and the RUM tag share one
+        # rewriteBody because chaining two is a silent failure). Testing the
+        # exact string "catalyst-nav" instead would classify every such merged
+        # middleware as a FULL theme and dim its entry, promising a restyled
+        # destination that keeps its own look.
         injected = any(n.startswith("catalyst") for n in names)
-        themed = any(n.startswith("catalyst-") and n != "catalyst-nav" for n in names)
+        themed = any(n.startswith("catalyst-") and "nav" not in n for n in names)
 
         # Prefer a host from a plain route over one carrying a PathPrefix: the
         # asset route we add for the theme also matches Host(), and picking it

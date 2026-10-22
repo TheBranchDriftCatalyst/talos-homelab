@@ -53,22 +53,52 @@ spec:
     rewriteBody:
       lastModified: true
       rewrites:
+        # TWO payloads, ONE rewriteBody -- the RUM tag AND the catalyst navbar.
+        #
+        # This is the boomtime/amberdark pattern described at the top of this
+        # file, applied to grafana: an app that needs two injections gets them
+        # from a SINGLE rewrite, never from two chained rewriteBody middlewares.
+        # Adding traefik/catalyst-nav alongside this one would be exactly the
+        # silent failure rule 1 warns about -- the second regex may never match
+        # and nothing reports it.
+        #
+        # The two rewrites below target DIFFERENT anchors (<head> vs </head>) so
+        # neither can consume the other's match. The nav stylesheet rides along
+        # in the </head> replacement rather than taking a third rewrite, because
+        # a second rewrite also keyed on </head> would have to match the output
+        # of the first -- which works, but depends on the plugin's rewrite order
+        # staying sequential. One anchor, one rewrite.
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
         # ONE tag, NO inline JS. An onload= handler would need CSP
         # 'unsafe-inline'; the loader reads its config from data-* instead and
         # appends the SDK itself. See rum.js in the catalyst-rum repo.
         - regex: "</head>"
-          replacement: '<script src="/hyperdx-rum/rum.js" data-service="grafana" defer></script></head>'
+          replacement: '<script src="/hyperdx-rum/rum.js" data-service="grafana" defer></script><link rel="stylesheet" type="text/css" href="/catalyst/css/catalyst-nav.css"></head>'
 
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
-  name: hyperdx-rum-grafana
+  # RENAMED from hyperdx-rum-grafana (it now injects the navbar too). The
+  # `catalyst` prefix is LOAD-BEARING, not cosmetic: themepark's nav manifest
+  # builder only advertises a route that carries a middleware whose name starts
+  # with "catalyst" (build_nav.py, `injected`), so under the old name grafana
+  # would get the bar injected and still never appear as a LINK in it.
+  #
+  # The name also contains "nav", which build_nav.py's `themed` test reads as
+  # nav-only -- grafana keeps its own styling, so its entry must not be dimmed
+  # like a fully re-themed app. Those two tests and these names move together.
+  name: catalyst-nav-rum-grafana
   labels:
     app.kubernetes.io/name: catalyst-rum
 spec:
   chain:
     middlewares:
+      # Left exactly as it was: no catalyst-compress. This chain has served
+      # grafana uncompressed since the RUM canary landed and works; adding
+      # compression here would be an unrelated behaviour change to a route
+      # whose body is now being rewritten for two consumers.
       - name: strip-accept-encoding
         namespace: traefik
       - name: hyperdx-rum-inject-grafana
