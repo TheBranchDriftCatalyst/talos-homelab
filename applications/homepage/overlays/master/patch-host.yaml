@@ -10,6 +10,24 @@ apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
   name: homepage
+  annotations:
+    # MASTER ONLY, and that scoping is the whole point of putting this here
+    # rather than in base/instance.
+    #
+    # The other seven instances are *.homepage.talos00 -- TWO labels. The asset
+    # route that publishes /catalyst/ is gated on
+    # HostRegexp(`^[a-z0-9-]+\.talos00$`) (themepark/asset-route.yaml), which a
+    # two-label host never matches. Injecting the bar there would 404 the script,
+    # the stylesheet and the manifest on every page view, in exchange for
+    # nothing. master is homepage.talos00 -- single label -- so it is the one
+    # instance that CAN carry the bar.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "Homepage"
+    gethomepage.dev/description: "The god-view dashboard across every board"
+    gethomepage.dev/group: "Home & Tools"
+    gethomepage.dev/weight: "1"
+    gethomepage.dev/icon: "homepage.png"
 spec:
   routes:
     - match: Host(`homepage.${CLUSTER_DOMAIN}`)
@@ -17,6 +35,10 @@ spec:
       middlewares:
         - name: authentik
           namespace: authentik
+        # Consolidated catalyst navbar. Last in the chain so auth runs first and
+        # the body injector only ever rewrites an already-authorised response.
+        - name: catalyst-nav
+          namespace: traefik
       services:
         - name: homepage-master
           port: 3000

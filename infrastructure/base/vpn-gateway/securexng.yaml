@@ -240,6 +240,17 @@ metadata:
     app.kubernetes.io/component: ingress
   annotations:
     description: "VPN-protected SearXNG behind Authentik forward-auth SSO (talos-apps)"
+    # Advertised in the catalyst navbar. themepark's build_nav.py needs BOTH this
+    # annotation AND a catalyst* middleware on the route; carrying only one of the
+    # two is the silent half-configured case. Kyverno derives siteMonitor / href
+    # (and widget.url when a widget.type is set) from these -- do not hand-write them.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "SearXNG"
+    gethomepage.dev/description: "Private metasearch, egressing through the VPN gateway"
+    gethomepage.dev/group: "Home & Tools"
+    gethomepage.dev/weight: "40"
+    gethomepage.dev/icon: "searxng.png"
 spec:
   entryPoints:
     - websecure
@@ -249,6 +260,10 @@ spec:
       middlewares:
         - name: authentik
           namespace: authentik
+        # Consolidated catalyst navbar. Last in the chain so auth runs first and the
+        # body injector only ever rewrites an already-authorised response.
+        - name: catalyst-nav
+          namespace: traefik
       services:
         - name: securexng
           port: 8080

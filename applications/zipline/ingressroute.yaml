@@ -15,6 +15,18 @@ metadata:
   name: zipline-lan
   labels:
     app: zipline
+  annotations:
+    # LAN surface only. The PUBLIC route below gets neither of these: it has no
+    # asset route (a knowledgedump.space host cannot fetch /catalyst/) and it
+    # serves unauthenticated file URLs. rewriteBody only touches GET text/html,
+    # so the injected bar never reaches a served image either way.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "Zipline"
+    gethomepage.dev/description: "File and screenshot host (LAN surface)"
+    gethomepage.dev/group: "Home & Tools"
+    gethomepage.dev/weight: "45"
+    gethomepage.dev/icon: "zipline.png"
 spec:
   entryPoints:
     - web
@@ -23,6 +35,10 @@ spec:
       kind: Rule
       middlewares:
         - name: lan-only
+          namespace: traefik
+        # Consolidated catalyst navbar. Last in the chain so auth runs first and the
+        # body injector only ever rewrites an already-authorised response.
+        - name: catalyst-nav
           namespace: traefik
       services:
         - name: zipline

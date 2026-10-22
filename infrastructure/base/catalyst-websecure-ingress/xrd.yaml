@@ -81,6 +81,50 @@ spec:
                     properties:
                       name: {type: string}
                       namespace: {type: string}
+                homepage:
+                  type: object
+                  description: >-
+                    OPTIONAL. Advertises this app in the catalyst navbar and on the homepage
+                    dashboards by emitting gethomepage.dev/* annotations onto the websecure
+                    IngressRoute. Omit the block entirely and nothing is emitted — every patch
+                    is skipped when its source field is absent.
+
+                    WHY THIS EXISTS: themepark's build_nav.py only advertises a route carrying
+                    gethomepage.dev/enabled="true". The composition previously emitted no
+                    annotations at all, so every app created through this XR was structurally
+                    invisible to the navbar — not an oversight on any one claim, but a property
+                    of the abstraction. A claim ALSO needs a catalyst* middleware in
+                    spec.middlewares before a link appears; the annotation alone is half of it.
+
+                    siteMonitor / href (and widget.url when a widget.type is set) are DERIVED by
+                    the kyverno homepage-annotation-derivation policy from `enabled` — do not add
+                    fields for them here.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: true
+                      description: Emitted as gethomepage.dev/enabled. Set false to register the fields but stay hidden.
+                    name:
+                      type: string
+                      description: Display name in the bar and on the dashboards.
+                    description:
+                      type: string
+                      description: One-line subtitle shown on the dashboard card.
+                    group:
+                      type: string
+                      description: >-
+                        Dashboard/navbar section, e.g. Infrastructure, Monitoring, Home & Tools.
+                        A group that no other app uses creates a new section with one member.
+                    icon:
+                      type: string
+                      description: dashboard-icons filename, e.g. kubeview.png.
+                    weight:
+                      type: integer
+                      description: Sort order within the group. Lower sorts first; build_nav.py defaults to 50.
+                    instance:
+                      type: string
+                      default: main
+                      description: gethomepage.dev/instance. `main` unless this app belongs to a specific board.
                 redirectMiddleware:
                   type: object
                   description: Middleware on the :80 companion route (HTTPS redirect).

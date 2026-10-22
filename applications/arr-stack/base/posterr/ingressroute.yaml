@@ -10,6 +10,18 @@ metadata:
   name: posterr
   labels:
     app: posterr
+  annotations:
+    # Posterr is closer to signage than a browsing surface, so the bar is of
+    # little use ON it -- but a LINK TO it is, and build_nav.py cannot offer the
+    # link without the middleware, so it gets both. On a wall display there is no
+    # pointer, and the bar only reveals on hover, so it stays invisible there.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/instance: "main"
+    gethomepage.dev/name: "Posterr"
+    gethomepage.dev/description: "Rotating poster wall for the media libraries"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/weight: "60"
+    gethomepage.dev/icon: "posterr.png"
 spec:
   entryPoints:
     - websecure
@@ -25,6 +37,10 @@ spec:
       middlewares:
         - name: authentik
           namespace: authentik
+        # Consolidated catalyst navbar. Last in the chain so auth runs first and the
+        # body injector only ever rewrites an already-authorised response.
+        - name: catalyst-nav
+          namespace: traefik
       services:
         - name: posterr
           port: 3000

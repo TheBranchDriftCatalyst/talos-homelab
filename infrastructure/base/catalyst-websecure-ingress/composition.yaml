@@ -75,6 +75,41 @@ spec:
               - fromFieldPath: spec.middlewares
                 toFieldPath: spec.forProvider.manifest.spec.routes[0].middlewares
 
+              # ---- gethomepage.dev/* : navbar + dashboard advertisement ----------
+              # Without these the composition emitted NO annotations, so every app
+              # built from this XR was structurally invisible to themepark's
+              # build_nav.py -- which only advertises a route annotated
+              # gethomepage.dev/enabled="true". That was a property of the
+              # abstraction, not a mistake on any one claim.
+              #
+              # Each patch is skipped when its source field is absent (Crossplane's
+              # default fromFieldPath policy is Optional), so a claim with no
+              # spec.homepage block renders exactly as before.
+              #
+              # NOTE a link also needs a catalyst* middleware in spec.middlewares.
+              # The annotation is only half of build_nav.py's test; carrying one
+              # without the other is the silent half-configured case.
+              #
+              # enabled and weight are converted because annotation VALUES must be
+              # strings -- a bool or int here is rejected by the API server, and the
+              # XRD types them honestly rather than forcing the operator to quote.
+              - fromFieldPath: spec.homepage.enabled
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/enabled"]
+                transforms: [{type: convert, convert: {toType: string}}]
+              - fromFieldPath: spec.homepage.instance
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/instance"]
+              - fromFieldPath: spec.homepage.name
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/name"]
+              - fromFieldPath: spec.homepage.description
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/description"]
+              - fromFieldPath: spec.homepage.group
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/group"]
+              - fromFieldPath: spec.homepage.icon
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/icon"]
+              - fromFieldPath: spec.homepage.weight
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/weight"]
+                transforms: [{type: convert, convert: {toType: string}}]
+
           # ---- 2. web IngressRoute (:80 -> HTTPS redirect) -------------------------
           - name: ir-web
             base:
