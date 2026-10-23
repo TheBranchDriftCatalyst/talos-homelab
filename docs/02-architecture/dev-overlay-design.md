@@ -21,6 +21,19 @@ resolve back to the repo they came from.
 Start at **M0** (fix the themepark drift) then **M1** (slot API + loader). Full milestone
 table and the fresh-session handoff are below.
 
+> **READ "Reconnaissance findings (2026-10-23)" AT THE END OF THIS DOC FIRST.** Three
+> post-approval sweeps changed two things materially:
+>
+> 1. **`./build.sh --publish` would silently destroy the navbar gear** — it rebuilds from
+>    `src/` before copying, and `--check`'s own failure message tells you to run it. M0
+>    must port into `src/` *before* anyone publishes. catalyst-themepark has no git remote,
+>    so there is no second copy.
+> 2. **catalyst-ui is NOT safely consumable inside an injected overlay.** `ThemeProvider`
+>    assigns `document.documentElement.className`, wiping the host's classes, and its
+>    always-on effect layer targets host elements by substring selector. The applet
+>    hand-rolls shadow-scoped CSS instead. This reverses the original "use catalyst-ui
+>    where necessary".
+
 ---
 
 ## Context
@@ -491,3 +504,182 @@ produced it.
 
 `bd ready` currently surfaces **TALOS-x0hb (M0)** as the only startable task; the rest are
 dependency-gated into build order.
+
+---
+
+## Reconnaissance findings (2026-10-23)
+
+Three read-only agents swept `catalyst-themepark`, `catalyst-ui` and `logAIrr` after the
+design was approved. Everything below is evidence, not opinion, and several items change
+the plan. Read this before starting any milestone.
+
+### M0 — a landmine: `./build.sh --publish` would DESTROY the gear
+
+Both `--check` and `--publish` **rebuild `dist/` from `src/` first** (the dispatch at
+`build.sh:207` runs after `build_css`/`build_js`), and `publish_one` is a bare `cp` with no
+diff and no backup (`build.sh:196`). Publishing today overwrites the vendored navbar with
+the **gear-less rebuild** and silently deletes the feature.
+
+Worse, `--check`'s own failure message says:
+
+> `FAIL: dist/ and the homelab copies have diverged. Run ./build.sh --publish`
+
+which is **exactly the wrong direction for this drift**. And there is no safety net:
+`catalyst-themepark` has **no git remote** (`git remote -v` empty, despite
+`catalyst_repo.yaml` declaring a GitHub URL). The gear exists only in talos-homelab commit
+`b2999734` and in two working-tree files.
+
+**Port into `src/` first. Never publish before the port.**
+
+Good news:
+
+- `catalyst.css` is **byte-identical** (md5 match). Only 2 of 3 artifacts drifted.
+- The drift is **exactly one commit** — 83 + 177 lines, matching `b2999734 --stat`.
+- `dist/` is **100% generated**, verified mechanically:
+  `diff <(tail -n +18 dist/catalyst-nav.js) src/60-nav.js` is identical. No hand edits.
+- `--check` compares **byte equality** (`cmp -s`), not line counts.
+- M0 needs **no `build.sh` change** — the gear CSS belongs in `src/60-nav.css`, already in
+  both build lists.
+
+The port is five edits to `src/60-nav.js` (extract `wireDropdown`; add the prefs block
+`PREF_KEY`/`readPrefs`/`writePrefs`/`applyPinned`/`SETTINGS`; add `buildSettings`; two
+`build()` call sites; two `autoHide` guards) plus one 83-line block in `src/60-nav.css` at
+`:165`. Four ordering constraints are real — notably `buildGroup` moves *below*
+`buildSettings`, and `if (prefs.pinned) applyPinned(...)` must come **after**
+`autoHide(nav, cfg)` because autoHide installs `HIDDEN` as the resting state.
+
+Also: `task lint:theme-drift` **exits 0 and skips** when the sister repo is absent
+(`dev/Taskfile.dev.yaml:110-130`), so in CI the guard is a no-op. That is why nobody caught
+this. Fixing it belongs to M7.
+
+### M1 — the slot API
+
+`src/60-nav.js` has **no hooks whatsoever**: zero `dispatchEvent`, `CustomEvent`, `export`
+or `window.catalyst*`. The only global is the SPA re-entry guard at `:25-26`:
+
+```js
+if (window.__catalystNav) return;
+window.__catalystNav = true;
+```
+
+**Promote that boolean to an object.** Truthiness preserves the SPA guard unchanged, and it
+becomes the natural slot namespace. Three things to get right:
+
+1. **Registration races the manifest fetch.** `build()` is only reached via
+   `start()` → `fetch(MANIFEST)` → `.then(build)` with 3 tries and 1s/2s backoff. An applet
+   script usually wins, but not always. The registry must work **both** directions:
+   register-before-build queues; register-after-build renders into the existing slot.
+2. **Failure must stay silent.** Nothing in this file may surface an error into a host app.
+   Wrap every applet callback in try/catch.
+3. **Manifest-driven applets need a `DEFAULTS` key** — `assign()` (`:82-88`) copies only
+   declared keys as deliberate hardening, so an undeclared `applets` field is stripped.
+
+Insertion point is `src/60-nav.js:279-280`, between the `__here` append and
+`document.body.appendChild(nav)`, so the whole bar enters the DOM in one insertion. Note
+the early returns at `:252` (`mode:'off'`) and `:255` (empty manifest) — applets never
+render there unless the slot is hoisted next to `applyFx()`.
+
+**THE CSS SUBSET TRAP (confirmed).** `build.sh:103` is a glob; `build.sh:143` is an
+explicit list. A new `src/65-applet.css` lands in `catalyst.css` automatically and is
+**silently absent from `catalyst-nav.css`** — i.e. unstyled on every nav-only app, which is
+most of the cluster. It must be appended to `build.sh:143` by hand, and must be
+self-contained: the nav subset carries no `30-effects` or `40-components`, and an animation
+naming a missing keyframe never runs and never warns.
+
+### M2 — logAIrr's IngressRoute is the WRONG template
+
+Use **`infrastructure/base/monitoring/v2-otel/alloy/faro-route.yaml`** instead: hostless,
+path-prefixed, `lan-only`, `priority: 10000`, two objects. logAIrr's route is wrong in
+every dimension (Host match, authentik, catalyst-nav, default priority, no prefix).
+
+- **`priority: 10000` is the most important number in the file.** Traefik derives priority
+  from rule length when unset, and `Host(...)` is longer than a `PathPrefix` rule, so each
+  app's catch-all swallows `/catalyst/`. Failure is per-host and nondeterministic — works
+  on `grafana.talos00`, 404s on `sonarr.talos00`. Three tiers exist: **10000**
+  cluster-wide prefixes, **100** an app's own `/api` carve-out, **unset** the app's UI.
+- **`HostRegexp` + `lan-only`, both, `lan-only` first.** Host headers are client-supplied;
+  source addresses are not. faro has *no* host matcher — do not copy that part.
+- **The `web` route must NOT redirect to HTTPS.** Plex and Jellyfin are plain HTTP; an
+  HTTPS-only origin makes the applet mixed-content and silently dropped.
+- **No `authentik`.** Browsers fetch the bundle as a subresource with no session, and a
+  302-to-login served in place of JS is a parse error in someone else's app. Do not create
+  an Authentik blueprint either.
+- **Recommended: do NOT `stripPrefix`.** Make the Go mux prefix-aware. Two prefixes would
+  need two strip middlewares, and the bundle must emit its real public path anyway.
+
+**Delete logAIrr's SPA fallback.** `internal/web/server.go:596-607` rewrites unknown paths
+to `/` and serves `index.html`. For an injected script that means a missing JS file answers
+**200-with-HTML**, the host app's parser chokes, and the error lands in *their* console —
+violating this project's own success criterion. 404 instead, and drop `mux.Handle("/", spa)`.
+
+**Vite `base` must be `/catalyst/applets/dev-overlay/`.** The default `"/"` emits absolute
+`/assets/*.js` that resolve against the *host app's* root. Prefer a single-file IIFE over
+hashed chunks, since the loader injects one `<script src>`.
+
+**Probes never traverse Traefik** — the kubelet hits the pod IP directly and sees neither
+prefix nor `lan-only`. Dual-register health at `/healthz` (probe-only) and the prefixed
+path.
+
+**No cookies at all.** No cookie domain spans the 40 hosts; per-host cookies would be 40
+independent sessions, which is the exact failure that killed the catalyst-ui version. No
+CORS headers either — writing them would signal the mount is wrong.
+
+Most transferable artifact is the **Dockerfile** (3-stage: node UI → Go build with
+`//go:embed all:dist` → `scratch`). One trap inside: **`emptyOutDir: false` is mandatory**,
+or Vite deletes the `.gitkeep` that makes the embed directory exist and *every* Go command
+then fails to compile. Also `--legacy-peer-deps`, and `d3` must be an explicit dependency
+(it resolved for months only via monorepo hoisting that does not exist in the image).
+
+Put `appdb.yaml` in `k8s/talos00/`, not `base/` — `storageClass: local-path` is cluster
+knowledge and would fail bt-radar's base-purity grep. Copy the **deployed**
+`logairr.yaml` `ignoreDifferences` (4 jqPathExpressions incl. `nullBytePolicy`), not the
+repo's 3.
+
+### M3 — catalyst-ui is NOT safely consumable in an injected overlay
+
+This contradicts the original "use catalyst-ui where necessary" and should be treated as
+settled unless someone builds the missing scaffolding.
+
+- `lib/contexts/Theme/ThemeProvider.tsx:163` does
+  `document.documentElement.className = ...` — **assignment, not `classList.add`**. It
+  wipes the host's `<html>` classes, including themepark's per-app prefixes.
+- ThemeProvider unconditionally loads five effect stylesheets (`:41-45`) whose selectors
+  are `[class*="card"]`, `[class*="border"]`, `input:focus`, `*`, and
+  `body::before { position: fixed; z-index: 9999 }` — substring matches against the
+  **host's** classes.
+- `setup.css:103-112` ships `* { border-color }` and a `body` repaint.
+- `fonts.ts:160-165` appends `<link>` to the host head — blocked under a strict host CSP.
+- The host has no Tailwind, so utility classes emit nothing. And there is **no escape
+  hatch**: no Shadow DOM, no CSS modules, no Tailwind `prefix`, and Tailwind v4 CSS-first
+  means no config file and therefore no `preflight: false`.
+
+**Decision: hand-roll shadow-scoped CSS for the applet.** Import only non-visual code
+(`cn` from `lib/utils.ts`), or copy the ~150 lines of variant definitions outright. The
+precedent agrees: catalyst-themepark deliberately did not consume catalyst-ui as a package.
+
+Incidental: `vite.config.ts:143-146` flattens all ~25 Radix packages into one
+**558 KB `vendor-radix`** chunk, so importing one Button references all of it. Worth a DRY
+epic entry.
+
+### M6 — deletion scope is clean, but `yarn build` will NOT catch mistakes
+
+Entanglement is confined to **three files**: `lib/dev/index.ts:5`,
+`lib/dev/context/index.ts:2`, and `lib/dev/components/DevProviders.tsx` (plus surgery on
+`DevModeToggle.tsx`). `lib/catalyst.ts` has no `dev` export, so the public API is
+unaffected. **Zero tests and zero stories** reference annotations.
+
+`SettingsDropdown.tsx:22` destructures **seven** members of `useLocalizationContext`, so
+the full 650-line `LocalizationContext` must survive verbatim.
+
+**`yarn build` alone is insufficient** — it runs `tsc -p tsconfig-build.json`, which
+*excludes* `lib/dev` and will happily pass over a dangling import. Run
+`yarn lint && yarn test && yarn build && yarn docs:api`.
+
+**Live finding:** `lib/dev/` **is shipped in the published npm tarball** today. The
+`tsconfig-build.json:18` exclude only covers the `tsc` pass; `vite.config.ts:49` (`dts()`)
+and `:102` (entry glob) do not exclude it, and `files` includes `dist/lib`. 63 files, 21
+`.d.ts`. Unreachable via the exports map, so deleting it is **non-breaking** and a small
+size win.
+
+**Before starting M6:** catalyst-ui's working tree is dirty (modified
+`lib/llm/client/generated/modelHints.json`, four untracked files). Branch first.
