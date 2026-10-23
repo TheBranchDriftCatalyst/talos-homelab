@@ -871,3 +871,56 @@ stale.
 profile, a hard reload, or a `cache: 'reload'` fetch. Reading "the feature is missing" off a
 warm tab will send you debugging a deploy that already worked. This will matter most at M3,
 where the applet bundle changes often.
+
+---
+
+## M2 outcome — scaffold, API, CNPG and ArgoCD (closed 2026-10-23)
+
+`dev-overlay` exists at `https://forge.knowledgedump.space/panda/dev-overlay`, is deployed by
+ArgoCD from the in-cluster Forgejo Service, and answers on every `*.talos00` host.
+
+Verified from a **real LAN client**, not an in-cluster fetch:
+
+| Request (`http://grafana.talos00`) | Result |
+|---|---|
+| `/catalyst/api/dev-overlay/health` | `200` JSON, `database: ok`, `version: 17a744e` |
+| same, on `jellyfin.talos00` | `host: jellyfin.talos00` — not grafana-specific |
+| `/catalyst/applets/dev-overlay/dev-overlay.js` | `200 text/javascript` |
+| `/catalyst/applets/dev-overlay/nope.js` | `404 text/plain` — never HTML |
+| `Origin: evil.example` | zero `Access-Control-*`, zero `Set-Cookie` |
+
+ArgoCD `Synced`/`Healthy`; CNPG `3/3` ready and healthy on the 04:45 backup slot, which was
+confirmed free against all 21 live `ScheduledBackup`s before the claim was applied.
+
+### The one number this design got wrong: priority is 10100, not 10000
+
+This document said `priority: 10000` for the applet routes, seven times, and that would have
+shipped the bug the rule exists to prevent.
+
+themepark's asset route **already** matches `PathPrefix(/catalyst/) && HostRegexp(^[a-z0-9-]+\.talos00$)`
+at priority `10000` on both entrypoints (`asset-route.yaml:87,115`), and every `/catalyst/`
+sub-prefix sits underneath it. Two matching routers at **equal** priority is settled by a sort
+with no secondary key — so the winner becomes a per-host coin flip, re-tossed on every config
+reload. That is precisely the nondeterministic "works on grafana, 404s on sonarr" failure the
+10000 convention was written to stop; the convention just never contemplated a second
+cluster-wide prefix route.
+
+`10100` beats themepark deterministically and still beats every app's catch-all `Host()` rule.
+
+Proven rather than reasoned: `/catalyst/api/dev-overlay/` answers from Go (no `Server` header)
+while `/catalyst/resources/catalyst-nav.js` **and** an unknown `/catalyst/` path both still
+answer from `nginx`. The new route wins exactly its own prefixes; themepark keeps the rest.
+
+**A corollary worth keeping:** a `404` carrying `Server: nginx` means themepark answered and
+your route never matched. A `404` with no `Server` header is your own handler. The status code
+alone cannot tell those apart, and they have opposite remedies.
+
+### Two things M2 does not have
+
+- **The off-LAN gate is unverified.** Both controls are in place (`HostRegexp` + `lan-only`),
+  but inbound WAN is DNAT-only while hairpinned LAN traffic is SNAT'd, so a LAN `--resolve`
+  test is not merely weak evidence — it is a false pass. Needs cellular, or Traefik's logged
+  `ClientHost`. Tracked as `TALOS-maet.1`, and it is the control that already failed once.
+- **Auto-deploy is off.** The image tag is pinned by hand; CI publishes a fresh `sha-` tag on
+  every push that nothing rewrites, so a push builds an image that never deploys, silently.
+  The annotations are written as prose at the foot of the ArgoCD `Application`. `TALOS-maet.2`.
