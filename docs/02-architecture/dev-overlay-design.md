@@ -683,3 +683,94 @@ size win.
 
 **Before starting M6:** catalyst-ui's working tree is dirty (modified
 `lib/llm/client/generated/modelHints.json`, four untracked files). Branch first.
+
+---
+
+## Seam audit (2026-10-23)
+
+A fourth sweep mapped every mechanical dependency edge across the four repos — 30 directed
+edges. The conclusion is not "add more checks". It is that **the enforcement model is
+inverted from what the prose assumes**, and that the recurring fix is a shared artifact
+rather than a guard.
+
+### There is exactly one mechanical cross-repo check, and it is inert
+
+`build.sh --check`, reached via `task lint:theme-drift`. It is:
+
+- **not** in `lefthook.yaml` (all three stages checked),
+- **not** in `.github/workflows/`,
+- `exit 0`-ing when the sibling repo is absent,
+
+so it runs only when a human types it. It is currently **red**. That is why one commit's
+drift went unnoticed. Everything else in the graph — ArgoCD git sources, cross-repo
+middleware name strings, the npm semver spread, the palette — is enforced by **nothing**,
+or by a comment.
+
+### The token cycle is real
+
+The author saw the component cycle coming and refused it
+(`catalyst-ui/k8s/ingressroute.yaml:35-41`: *"it IS the design system the theme is derived
+from, so restyling it would be circular"*). But `catalyst-nav.css` carries `00-tokens.css`
+(`build.sh:143`), so the **token** cycle survives:
+
+```
+catalyst-ui/styles/catalyst.css  --hand-retyped-->  themepark/src/00-tokens.css
+         ^                                                     |
+         |                                               build.sh --publish
+     rewriteBody                                               v
+    injects <link>  <-------------------  talos-homelab/.../catalyst-nav.css
+```
+
+Inside the deployed showcase app, `--neon-gold` resolves to a value mistyped two repos away.
+catalyst-ui: `hsl(38,95%,52%)` ≈ `#f9a410`. themepark: `#ffb800` — which is catalyst-ui's
+**`--neon-yellow`**. themepark took the yellow, renamed it gold, and dropped the real gold.
+
+**The guarding comment is actively false.** `src/00-tokens.css:31-33` asserts the divergence
+"is CLOSED" and instructs the reader not to treat the `DRIFT was` markers as warnings. A
+false comment is worse than no comment. (Intra-repo bonus: catalyst-ui's `--neon-gold` hex
+and `--neon-gold-rgb` disagree with each other.)
+
+Three palette generations are live simultaneously: `2.10.0` in catalyst-ui's own app,
+themepark's copy injected over 42 routes, and `2.1.1`'s `dist/themes/catalyst.css` still
+serving factorio-calculator and dungeon-library. Nine consumers span `^2.1.1`, `^2.9.0`,
+exact `2.9.0`, a `file:` path and a five-deep `link:`.
+
+### Two findings that changed milestones
+
+**M5 — `build_nav.py:171` will dim any new `catalyst-*` middleware.** It computes
+`themed = starts with "catalyst-" AND does not contain "nav"`. A middleware named
+`catalyst-inject-devoverlay` satisfies both, so every route carrying it would be classified
+as fully restyled and its nav entry **dimmed** — the exact regression the comment at
+`:163-169` exists to prevent. The current design dodges it only because it mints no
+middleware. That is now a second, independent reason to keep it that way. If a merged
+injector is ever needed, its name must start with `catalyst` **and** contain `nav`.
+`build_nav.py` has no tests, and its docstring at `:16` names the wrong prefix (`theme-*`).
+
+**M4 — derive the host→repo map, do not hand-write it.** The knowledge already exists in
+`ArgoCD Application.spec.source.repoURL` across 12 Applications. A hand map would rot on
+every rename with no feedback, reproducing the precise failure mode this audit documents
+everywhere else. Hosts with no Application (Flux-deployed third-party apps) are legitimately
+`confidence: "unknown"`, which is the designed degraded tier.
+
+### Cheapest high-value fix
+
+`catalyst-themepark/catalyst_repo.yaml:5` declares a GitHub `repo_url`, but
+`git remote -v` is **empty**. The declared source of truth for three deployed artifacts
+exists on one disk, unbacked. Create the remote and push, or correct the metadata.
+
+### The architectural read
+
+Both catalyst-themepark and (now) dev-overlay declined to consume catalyst-ui as a package,
+each for sound and independent reasons — themepark because a Tailwind-v4 global-token design
+system cannot be injected into foreign pages, dev-overlay because `ThemeProvider` corrupts
+the host document. When two consumers independently refuse the same dependency, the missing
+piece is not discipline; **it is an artifact neither can refuse**: a tokens package
+consumable both by a Tailwind build and by raw injected CSS.
+
+Checks are the interim mitigation (M7). The artifact is the fix (TALOS-36m6).
+
+> **dev-overlay must not become the fifth copy.** It runs only in pages that already carry
+> `catalyst-nav.css`, which already defines the palette on `:root`. CSS custom properties are
+> inherited, so they pierce a Shadow DOM boundary — `:host { color: var(--neon-cyan) }`
+> resolves against the outer page. The applet should therefore declare **no colour literals
+> and no tokens of its own**, and inherit the bar's.
