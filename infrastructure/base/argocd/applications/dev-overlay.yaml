@@ -1,0 +1,145 @@
+---
+# dev-overlay — the injected developer-annotation applet (M2 of TALOS-maet).
+#
+# THIS IS THE LIVE OBJECT. A byte-comparable reference copy lives at
+# dev-overlay/docs/deploy/argocd-application.yaml so that a change to
+# k8s/talos00/ needing a matching ignoreDifferences entry is visible in the
+# same review as the manifest it covers. Keep the two in step.
+#
+# WE BUILD THE IMAGE, SO THE MANIFESTS LIVE WITH THE CODE
+# (docs/02-architecture/dual-gitops.md). Everything dev-overlay is — Deployment,
+# Service, NetworkPolicies, the CNPG claim, both IngressRoutes — lives in the
+# dev-overlay repo under k8s/, NOT here. This Application is the only piece of
+# it that belongs in talos-homelab; do not be tempted to mirror the workloads.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dev-overlay
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: dev-overlay
+    app.kubernetes.io/part-of: catalyst
+  annotations:
+    # REQUIRED for the `managedFieldsManagers` entry in ignoreDifferences below
+    # to do anything at all. Without this annotation Argo falls back to a legacy
+    # client-side diff that ignores managed-field ownership, the CNPG-owned
+    # fields still show as drift, and the managedFields block sits there looking
+    # like it works. (boomtime.yaml:10-14 carries the same note.)
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  info:
+    - name: Source (Forgejo)
+      value: https://forge.knowledgedump.space/panda/dev-overlay
+    - name: Container Registry (Zot)
+      value: https://registry.knowledgedump.space/talos00-registry/dev-overlay
+    - name: Design
+      value: talos-homelab/docs/02-architecture/dev-overlay-design.md
+
+  # DELIBERATELY NO `Application` info link. dev-overlay has no hostname and no
+  # page to visit: it is reached same-origin from inside ~40 other apps, under
+  # /catalyst/applets/dev-overlay/ and /catalyst/api/dev-overlay/.
+
+  source:
+    # THE IN-CLUSTER FORGEJO SERVICE, DELIBERATELY. Sync must not depend on
+    # Traefik, external-dns or the WAN — ArgoCD runs metres from Forgejo inside
+    # the same cluster, and routing its polling out through the ingress path and
+    # back in again would make application sync depend on all of it being
+    # healthy. The `info` link above points at the public URL, because that one
+    # is for humans with browsers.
+    #
+    # Credentials come from the `forgejo-repo-creds` secret
+    # (talos-homelab/infrastructure/base/argocd/externalsecret-forgejo-repo.yaml),
+    # which is a `repo-creds` entry scoped to the URL PREFIX
+    # http://forgejo.forgejo.svc.cluster.local:3000/panda — so this repo is
+    # covered with no new secret, AS LONG AS THAT PREFIX KEEPS MATCHING. Change
+    # the host or the owner here and the repo silently fails to authenticate.
+    repoURL: http://forgejo.forgejo.svc.cluster.local:3000/panda/dev-overlay.git
+    targetRevision: main
+    path: k8s/talos00
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev-overlay
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      # The CNPG claim must be pruned last: removing it ahead of the Deployment
+      # would tear the database out from under a running pod.
+      - PruneLast=true
+      - ServerSideApply=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    # ESO defaults FOUR fields into spec.data[].remoteRef that are not in git.
+    # ALL FOUR, and this list is copied from the DEPLOYED logairr Application
+    # rather than the three-entry copy in talos-homelab's git. nullBytePolicy is
+    # the newest of them, and its absence left logAIrr permanently OutOfSync
+    # while the sync itself reported success — the state that hides real drift,
+    # because nobody investigates a red that is always red.
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+        - .spec.data[].remoteRef.nullBytePolicy
+
+    # The CNPG operator defaults a large number of Cluster spec fields at
+    # runtime (postgresUID, monitoring, replicationSlots, the operand image it
+    # chose...). Ignoring anything its field manager owns is what keeps the
+    # database from reporting permanent drift. Requires the ServerSideDiff
+    # annotation above.
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      managedFieldsManagers:
+        - manager
+
+    # The Crossplane claim's status is written by the composition on every
+    # reconcile; that is its job, not drift.
+    - group: db.catalyst.io
+      kind: CatalystCNPGAppDB
+      jsonPointers:
+        - /status
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMPANION NOTES — argocd-image-updater, once the first image is published.
+# ═══════════════════════════════════════════════════════════════════════════════
+# Deliberately prose rather than a second object: the updater config is a set of
+# annotations ON the Application above, and the per-app ConfigMaps live in
+# talos-homelab/infrastructure/base/argocd/image-updater/ with their siblings.
+#
+# Annotations to add to metadata.annotations above:
+#
+#   argocd-image-updater.argoproj.io/image-list: >-
+#     devoverlay=registry.talos00/talos00-registry/dev-overlay
+#   argocd-image-updater.argoproj.io/devoverlay.allow-tags: >-
+#     regexp:^sha-[a-f0-9]{7,40}$
+#   argocd-image-updater.argoproj.io/devoverlay.update-strategy: newest-build
+#   argocd-image-updater.argoproj.io/write-back-method: git
+#   argocd-image-updater.argoproj.io/git-branch: main
+#
+# allowTags EXCLUDES latest and main on purpose. With mutable tags allowed the
+# first reconcile pins `:latest`, which then produces no manifest diff — ArgoCD
+# never syncs, the pods never restart, and the updater still logs errors=0. The
+# `sha-` prefix is part of the regexp, so a bare commit sha does not match
+# either; CI emits the prefix for exactly this reason.
+#
+# The resources-finalizer on the Application must be declared BY HAND (it is,
+# above): image-updater v1.2.2 fails its own finalizer-add with
+# `spec.namespace: Required value`.
