@@ -981,3 +981,75 @@ arity, or the manifest key drifts.
   panel has no scope control, so by default you only ever see the current host's notes.
 - Auto-deploy is still off; the image tag is pinned by hand (`TALOS-maet.2`).
 - The off-LAN gate remains unverified from off-net (`TALOS-maet.1`).
+
+---
+
+## M4 outcome — CodeLocation, derived (closed 2026-10-23)
+
+Every new annotation now answers "which repo do I open to fix this?". Verified live on all
+three tiers:
+
+| host | tier | resolved to |
+|---|---|---|
+| `grafana.talos00` | Flux | `talos-homelab` · `infrastructure/base/monitoring/v2-otel` |
+| `catalyst.talos00` | ArgoCD | `catalyst-ui` · `k8s` |
+| `kubeview.talos00` | neither | `unknown` — no repo invented |
+
+### The spec was wrong, and checking coverage first is what caught it
+
+This document and the issue both said to derive from ArgoCD `spec.source.repoURL`. Measured
+against the nav's 51 hosts, **that resolves 3**. Nearly every app carrying the bar is a
+third-party app Flux deploys from talos-homelab and has no Application at all, so the
+specified design would have shipped `unknown` for 94% of the annotatable surface.
+
+The fix is a second derived source, not a hand map: the IngressRoute's
+`kustomize.toolkit.fluxcd.io/name` label → that Kustomization's `sourceRef` →
+`GitRepository.spec.url`. For those hosts the repo genuinely **is** talos-homelab — to change
+Grafana you edit its HelmRelease there — so this is the correct answer, not a fallback.
+
+```
+ArgoCD Application  →  first-party source repo      3
+Flux Kustomization  →  talos-homelab + ks path     47
+neither             →  unknown                      1
+```
+
+The Flux tier reads the repo from the live `GitRepository` rather than hardcoding
+`"talos-homelab"`, because a hardcoded string is the same rot the design rejects everywhere
+else; a spec fails if anyone puts it back.
+
+**47, not 48** — `fchat.talos00` is both Flux-labelled and ArgoCD-owned, and ArgoCD wins.
+
+### Ambiguity resolves to unknown, never to a guess
+
+Two real cases. `amberdark.net` maps to two distinct ArgoCD repos → `unknown`.
+`forge.knowledgedump.space` maps to two Flux Kustomizations that share a repo but differ in
+path → the repo is kept and the path dropped, rather than discarding a true answer to punish
+a partial disagreement.
+
+### Delivery, and the traps it avoids
+
+A CronJob projects four `kubectl -o json` documents through jq into a ConfigMap; the server
+mounts it **as a directory, never `subPath`** (kubelet freezes a subPath mount at pod start),
+re-reads on mtime change, and fails soft to `unknown` on a missing, empty or malformed map.
+`client-go` stays out of an 11 MB scratch image. The join, priority and ambiguity policy live
+in Go — a jq derivation would be a second, untested copy of the policy.
+
+Measured: raw lists are 1.7 MB and will not fit a ConfigMap; projected is 76 KB, and the
+script asserts that headroom rather than letting `apply` fail on the etcd limit and silently
+freeze the map.
+
+`/health` reports `codeLocationHosts` as a **count**. The map enumerates internal hostnames,
+and publishing it on an unauthenticated endpoint reachable from ~40 origins is precisely the
+disclosure `asset-route.yaml` records as a past incident.
+
+### Verified rather than taken on report
+
+RBAC under the CronJob's **own** ServiceAccount: six required allows, five correct denials —
+including `update` on a *different* ConfigMap, which proves the `resourceNames` pin holds.
+The running server picked up 132 hosts with **zero pod restarts**, which is what actually
+proves the directory mount and the mtime watch.
+
+### Known gap
+
+Rows created before this are not rewritten, by design, so earlier notes still read
+`repo-only` with no repo — the state M4 exists to fix. `TALOS-maet.4`.
