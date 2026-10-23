@@ -924,3 +924,60 @@ alone cannot tell those apart, and they have opposite remedies.
 - **Auto-deploy is off.** The image tag is pinned by hand; CI publishes a fresh `sha-` tag on
   every push that nothing rewrites, so a push builds an image that never deploys, silently.
   The annotations are written as prose at the foot of the ArgoCD `Application`. `TALOS-maet.2`.
+
+---
+
+## M3 outcome — the applet (closed 2026-10-23)
+
+Annotation mode works on a real page. Verified in a browser on `grafana.talos00`,
+end to end: arm → pick the `<h1>` → compose → submit → the note comes back from Postgres.
+
+```json
+{ "host": "grafana.talos00", "url": "http://grafana.talos00/login",
+  "kind": "todo", "priority": "medium", "body": "M3 live", "status": "open",
+  "anchor": { "selector": "h1", "textSnippet": "Welcome to Grafana",
+              "componentName": "Ef", "treePath": ["Va","Ze","Ft","Kt","Oa","Stack","Kt","Ef"] },
+  "codeLocation": { "confidence": "repo-only" } }
+```
+
+`host` is server-derived from the Host header; the client never sends it. The badge showed
+`1`, the panel `1 open / 1 total`, and the compose form closed on success. **The applet
+printed nothing to the host console** across arming, picking, composing and a successful
+POST — the one error on the page is pre-existing `catalyst-rum`.
+
+### The gap that made M1 and M2 both correct and jointly useless
+
+`build_nav.py` never emitted `applets`, so `loadApplets()` was called with `undefined` on
+every page and the bundle was **never injected anywhere**. M1 shipped the loader; M2 shipped
+and deployed the bundle; the connection between them did not exist, and both milestones
+verified green in isolation. The live manifest carried only `groups` and `hosts`.
+
+Fixed by deriving `applets[]` from a `catalyst.nav/applet-src` annotation on the applet's own
+IngressRoute — a **separate pass**, because the entry loop skips anything without
+`gethomepage.dev/enabled` and an applet deliberately has none. M5's XRD will stamp that
+annotation, so the composite inherits discovery rather than needing a second mechanism.
+
+A second, quieter instance of the same class: the M2 placeholder registered against
+`window.catalystNav.applets.register({...})`, a shape **no version of the nav has ever
+published**. It read as "no nav on this page" rather than "wrong API", because the contract
+is silent by default. Both failures are now covered by specs that fail if the global, the
+arity, or the manifest key drifts.
+
+### What the real world showed that jsdom could not
+
+- **Minified hosts make the fiber tier nearly worthless.** Grafana's treePath came back as
+  `Va > Ze > Ft > Kt > Oa > Stack > Kt > Ef` — one meaningful name out of eight. The tier is
+  honest (`repo-only`, no repo claimed), but M4 should not expect component names to carry
+  weight on third-party apps. The `exact` tier and a host→repo map are what will matter.
+- **A closed shadow root is opaque to tooling, not just to script.** Playwright's selector
+  engine and its accessibility snapshot both fail to see the applet's UI. That is the
+  isolation working, and it means browser automation of the applet must go through real
+  mouse coordinates or the keyboard. Tab reaches the buttons, so the UI is keyboard-operable.
+
+### Known gaps, filed not glossed
+
+- **"Visible from a different app" is not met through the UI.** The data is cross-app — a
+  `?scope=all` request on `jellyfin.talos00` returns the `grafana.talos00` note — but the
+  panel has no scope control, so by default you only ever see the current host's notes.
+- Auto-deploy is still off; the image tag is pinned by hand (`TALOS-maet.2`).
+- The off-LAN gate remains unverified from off-net (`TALOS-maet.1`).
