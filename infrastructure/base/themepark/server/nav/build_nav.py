@@ -79,6 +79,80 @@ CONFIG_KEYS = {
 }
 
 
+# ── Applet discovery ─────────────────────────────────────────────────────────
+# An applet is a separately-built, separately-deployed bundle that docks into
+# the bar (the first is dev-overlay). It is advertised the same DERIVED way
+# everything else here is: annotate the applet's own IngressRoute and it joins
+# the bar on the next refresh, with nothing to edit in this file.
+#
+#   catalyst.nav/applet-src   REQUIRED. Same-origin path to the bundle.
+#   catalyst.nav/applet-name  optional, for the log line only. The authoritative
+#                             name is the one the bundle passes to register().
+#
+# The route carrying these annotations is NOT itself a nav entry: dev-overlay has
+# no page to visit, so it deliberately has no gethomepage.dev/* annotations and
+# is skipped by the entry loop below. That is why this is a separate pass over
+# the same document rather than a branch inside that loop.
+
+# Mirrors APPLET_URL_RULES in catalyst-nav.js. Duplicated on purpose: the client
+# rule is the one that actually protects the ~40 host pages, and this one keeps a
+# bad annotation from ever reaching them -- a refusal visible in the sidecar log
+# at build time instead of a silent client-side drop nobody reads. If you widen
+# one, widen both.
+APPLET_SRC_RULES = (
+    ("not a non-empty string", lambda s: not isinstance(s, str) or not s),
+    ("protocol-relative", lambda s: s[:2] == "//"),
+    ("absolute or schemed", lambda s: re.match(r"^[a-zA-Z][a-zA-Z0-9+.\-]*:", s) is not None),
+    ("contains a backslash", lambda s: "\\" in s),
+    ("contains ..", lambda s: ".." in s),
+    ("percent-encoded", lambda s: "%" in s),
+    # The prefix is the whole trust story: /catalyst/ is the one path gated by
+    # HostRegexp + lan-only, so a bundle served from anywhere else is not
+    # subject to the controls that keep the applet off the public hostnames.
+    ("outside /catalyst/", lambda s: not s.startswith("/catalyst/")),
+)
+
+
+def applet_src_refusal(src):
+    """Return why `src` is unacceptable, or None if it is fine."""
+    for why, bad in APPLET_SRC_RULES:
+        try:
+            if bad(src):
+                return why
+        except TypeError:
+            return "not a non-empty string"
+    return None
+
+
+def discover_applets(doc):
+    """Collect `{src}` entries from catalyst.nav/applet-src annotations.
+
+    Sorted by src so the manifest is byte-stable across refreshes -- an
+    unstable manifest would change the file every 300 seconds and make any
+    future "did the nav change?" check useless.
+    """
+    found = {}
+    for item in doc.get("items", []) or []:
+        meta = item.get("metadata", {}) or {}
+        ann = meta.get("annotations") or {}
+        src = ann.get(NAV + "applet-src")
+        if src is None:
+            continue
+        why = applet_src_refusal(src)
+        if why:
+            print(f"[nav] refusing {NAV}applet-src={src!r}: {why}", file=sys.stderr)
+            continue
+        # Deduplicated by src: the same applet is routed on both `web` and
+        # `websecure`, so its annotation legitimately appears twice.
+        if src in found:
+            continue
+        found[src] = {"src": src}
+        name = ann.get(NAV + "applet-name")
+        if name:
+            print(f"[nav] applet {name} -> {src}", file=sys.stderr)
+    return [found[k] for k in sorted(found)]
+
+
 def nav_config(ann):
     """Extract catalyst.nav/* into the manifest's camelCase config shape.
 
@@ -248,6 +322,14 @@ def main() -> int:
 
     out = {"groups": groups}
     defaults = env_defaults()
+    # defaults, not per-host: an applet docks into every app carrying the bar,
+    # which is the point of it. The per-host override path still exists --
+    # hosts.<h>.applets resolves last -- so one app can opt out or carry an
+    # extra bundle without this becoming a curated list.
+    applets = discover_applets(doc)
+    if applets:
+        defaults = dict(defaults)
+        defaults["applets"] = applets
     if defaults:
         out["defaults"] = defaults
     # Only hosts that actually made it into the nav — an annotation on a route
