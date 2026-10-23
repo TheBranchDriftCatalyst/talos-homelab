@@ -1,0 +1,57 @@
+---
+# Auto-rolls dev-overlay when Forgejo Actions publishes a new image to Zot.
+#
+# Same shape and same chain as logairr-image-updater.yaml — built in this cluster, from a
+# Forgejo repo, published to the in-cluster registry, nothing off-site. Read that file for
+# the long-form notes; the finalizer, the Zot credential and the allowTags reasoning all
+# apply here verbatim and are summarised below.
+#
+# WHY THIS EXISTS. Until now dev-overlay's tag was pinned BY HAND in its overlay, and CI
+# published a fresh sha- tag on every push that nothing rewrote. A push therefore built an
+# image that never deployed — silently, with no error anywhere, which is the worst shape a
+# break can take. It cost one manual pin per milestone already (M2, then M3).
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: dev-overlay
+  namespace: argocd
+  # DECLARED, because the controller cannot add it itself: v1.2.2 fails its own
+  # finalizer-add with "spec.namespace: Required value" on an object that HAS
+  # spec.namespace, and the reconcile aborts before any registry work happens.
+  finalizers:
+    - resources-finalizer.argocd-image-updater.argoproj.io
+spec:
+  namespace: argocd
+  commonUpdateSettings:
+    updateStrategy: newest-build
+    # ONLY the immutable per-commit tag — no `latest`, no `main`. This matches logairr and
+    # deliberately deviates from the three older CRs here, for a reason that was measured
+    # rather than assumed: CI tags one build three times, so `latest` and `sha-<7>` share a
+    # creation timestamp and newest-build has no defined order for a tie. logairr lost that
+    # coin flip and pinned :latest, which breaks auto-deploy permanently — a mutable tag
+    # produces no manifest diff on the next push, so ArgoCD never syncs and the pods never
+    # restart, while the updater log still reads errors=0.
+    allowTags: "regexp:^sha-[a-f0-9]{7,40}$"
+    # Zot DOES need a credential despite defaultPolicy ["read"]: that policy covers
+    # repositories, but the updater's first call is the /v2/ base endpoint, which challenges
+    # anyway and returns UNAUTHORIZED rather than an empty tag list.
+    pullSecret: pullsecret:argocd-image-updater-system/zot-secret
+    forceUpdate: false
+  writeBackConfig:
+    # Patches spec.source.kustomize.images on the Application — a LIVE override that never
+    # touches the repo. So the newTag in dev-overlay's k8s/talos00/kustomization.yaml is a
+    # STARTING HINT that will fall behind on purpose; `argocd app get dev-overlay` (or the
+    # Application's spec.source.kustomize) is where the deployed tag is true. That is the
+    # cluster-wide convention here, not a dev-overlay quirk.
+    method: argocd
+  applicationRefs:
+    - namePattern: dev-overlay
+      images:
+        - alias: devoverlay
+          # This name must match THREE places or the updater no-ops in silence: here, the
+          # `images:` key in dev-overlay's k8s/talos00/kustomization.yaml, and the image in
+          # k8s/base/deployment.yaml.
+          imageName: registry.talos00/talos00-registry/dev-overlay
+          manifestTargets:
+            kustomize:
+              name: registry.talos00/talos00-registry/dev-overlay

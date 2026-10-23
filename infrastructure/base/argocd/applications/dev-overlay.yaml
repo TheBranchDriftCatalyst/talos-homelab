@@ -118,28 +118,18 @@ spec:
       jsonPointers:
         - /status
 # ═══════════════════════════════════════════════════════════════════════════════
-# COMPANION NOTES — argocd-image-updater, once the first image is published.
+# AUTO-DEPLOY — handled by an ImageUpdater CR, NOT by annotations on this object.
 # ═══════════════════════════════════════════════════════════════════════════════
-# Deliberately prose rather than a second object: the updater config is a set of
-# annotations ON the Application above, and the per-app ConfigMaps live in
-# talos-homelab/infrastructure/base/argocd/image-updater/ with their siblings.
+# infrastructure/base/argocd/image-updater/dev-overlay-image-updater.yaml
 #
-# Annotations to add to metadata.annotations above:
+# argocd-image-updater v1.2.x is CRD-based in this cluster, so the annotation
+# form that older guides describe is dead config here: it would sit on this
+# object looking authoritative and do nothing. Every sibling app uses a CR.
 #
-#   argocd-image-updater.argoproj.io/image-list: >-
-#     devoverlay=registry.talos00/talos00-registry/dev-overlay
-#   argocd-image-updater.argoproj.io/devoverlay.allow-tags: >-
-#     regexp:^sha-[a-f0-9]{7,40}$
-#   argocd-image-updater.argoproj.io/devoverlay.update-strategy: newest-build
-#   argocd-image-updater.argoproj.io/write-back-method: git
-#   argocd-image-updater.argoproj.io/git-branch: main
-#
-# allowTags EXCLUDES latest and main on purpose. With mutable tags allowed the
-# first reconcile pins `:latest`, which then produces no manifest diff — ArgoCD
-# never syncs, the pods never restart, and the updater still logs errors=0. The
-# `sha-` prefix is part of the regexp, so a bare commit sha does not match
-# either; CI emits the prefix for exactly this reason.
-#
-# The resources-finalizer on the Application must be declared BY HAND (it is,
-# above): image-updater v1.2.2 fails its own finalizer-add with
-# `spec.namespace: Required value`.
+# ONE CONSEQUENCE WORTH KNOWING BEFORE READING ANY TAG. The CR's writeBackConfig
+# method is `argocd`, which patches spec.source.kustomize.images on THIS object
+# — a live override that never touches the repo. So the newTag pinned in
+# dev-overlay's k8s/talos00/kustomization.yaml is a starting hint that falls
+# behind on purpose, and git is NOT the truth for the running image. Read it
+# from this Application's spec.source.kustomize, or `argocd app get dev-overlay`.
+# That is the cluster-wide convention (see logairr), not a dev-overlay quirk.
