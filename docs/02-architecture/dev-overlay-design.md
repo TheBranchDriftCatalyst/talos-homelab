@@ -825,3 +825,49 @@ Its invocation is **`task dev:lint:theme-drift`**, not `task lint:theme-drift`. 
 does not exist; the root Taskfile includes `dev/Taskfile.dev.yaml` under a `dev:` prefix.
 Two independent reconnaissance passes reported the un-prefixed name by reading the
 Taskfile's internal key, and it was wrong in this document until it was actually run.
+
+---
+
+## M1 outcome (2026-10-23)
+
+**Done.** `catalyst-themepark` `3eb3a83`, published here as `0caf3d0e`.
+`task dev:lint:theme-drift` green.
+
+`window.__catalystNav` is now an object — `{version, slot, applets, register}` — and
+truthiness still short-circuits the SPA re-entry guard, so that behaviour is unchanged.
+Registration is race-proof in both directions, which matters because `build()` is only
+reached via `fetch(MANIFEST).then(build)` with three tries and backoff: an applet script can
+arrive either side of it. The loader allowlists to same-origin `/catalyst/` paths only.
+
+Verified in a real browser on **both** injection paths:
+
+| | nav-only (`grafana`) | full-theme (`jellyfin`) |
+|---|---|---|
+| links / groups | 51 / 12 — no regression | 51 |
+| gear | present, styled | present, 14px |
+| global keys | `version, slot, applets, register` | same |
+| slot position | between `__here` and the gear | same |
+| applet docks | yes, synchronously | yes |
+
+And the criterion that actually matters: with `console.*` instrumented, a **throwing render
+callback produced zero console output** and left the bar intact at 51 links. A duplicate name
+is refused without adding a second dock. With no `applets` key in the manifest the loader is
+inert — zero script tags injected.
+
+### ⚠ Stale bundles persist for ~65 minutes after any nav publish
+
+The asset route sets `Cache-Control: public, max-age=300, stale-while-revalidate=3600`
+(`catalyst-asset-cache`, `middlewares.yaml:73-87`). So after publishing a change to
+`catalyst-nav.js`, an already-visited tab can keep running the **previous** bundle for up to
+`300 + 3600` seconds.
+
+This was observed, not theorised: immediately after the M1 publish, `jellyfin.talos00`
+reported `window.__catalystNav === true` — the old boolean guard — while a
+`fetch(..., {cache:'reload'})` from the same page proved the origin was serving the new
+35,857-byte bundle containing `__catalystNav = {`. The deployment was correct; the client was
+stale.
+
+**When verifying a nav change, force-revalidate before concluding anything.** A fresh
+profile, a hard reload, or a `cache: 'reload'` fetch. Reading "the feature is missing" off a
+warm tab will send you debugging a deploy that already worked. This will matter most at M3,
+where the applet bundle changes often.
