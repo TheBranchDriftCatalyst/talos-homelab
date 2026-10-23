@@ -33,14 +33,46 @@
  *
  * Defensive by design — this runs inside fourteen third-party applications:
  *   - every failure is silent, because a broken nav must never break the app
- *   - one namespaced class prefix, no globals beyond a single guard flag
+ *   - one namespaced class prefix, and ONE global: window.__catalystNav,
+ *     which is both the re-entry guard and the applets' registration surface
  *   - re-entrant: SPAs re-run scripts, so it refuses to build twice
  * ========================================================================== */
 (function () {
   'use strict';
 
+  /* -- The one global -------------------------------------------------------
+   * This was a bare `true`. It is an object now so that applets have somewhere
+   * to register, and the SPA guard below is unchanged by the promotion: it only
+   * ever tested truthiness, and an object is truthy.
+   *
+   * THIS SHAPE IS A CROSS-REPO API. An applet is built, versioned and deployed
+   * from its own repo and only meets this file at runtime, so the keys below
+   * are a contract rather than an internal:
+   *
+   *   version   integer. Bumped on any breaking change to this object.
+   *   slot      the dock element, or null until the bar is in the document.
+   *             Published here precisely so a LATE applet can see that it has
+   *             somewhere to render immediately.
+   *   applets   name -> { name, render, dock, failed }. Introspection; also
+   *             the pending queue (see the applet section below).
+   *   register(name, render) -> boolean
+   *             name    unique non-empty string. A second registration under a
+   *                     name already taken is refused; the first one wins.
+   *             render  function (dock, nav). Called at most ONCE, with its own
+   *                     empty <div> already appended to the bar. Append into
+   *                     that; do not touch anything outside it.
+   *             returns true if the registration was ACCEPTED -- not that
+   *                     render has run, because it may still be waiting for
+   *                     the bar -- and false if it was refused or threw.
+   *             Safe before OR after the bar is built. Both orders happen.
+   * ---------------------------------------------------------------------- */
   if (window.__catalystNav) return;           // SPA re-execution guard
-  window.__catalystNav = true;
+  var NAV = window.__catalystNav = {
+    version: 1,
+    slot: null,
+    applets: {},
+    register: register                        // hoisted; defined below
+  };
 
   var MANIFEST = '/catalyst/resources/catalyst-nav.json';
   var C = 'catalyst-nav';
@@ -87,7 +119,19 @@
     //            stops all animation. Distinct from intensity 0, which keeps
     //            the horizon and bloom rendering as static texture.
     intensity: 1,
-    fx: true
+    fx: true,
+    // applets    bundles to dock into the bar, as an array of paths or of
+    //            { src: path }. Allowlisted to same-origin paths under
+    //            /catalyst/ -- see APPLET_URL_RULES, and the asset route's own
+    //            writeup for why that prefix is the only trustworthy one.
+    //
+    //            Declared HERE and not only in the manifest because assign()
+    //            copies only the keys this object names: an undeclared
+    //            `applets` would be silently stripped out of every manifest.
+    //            Being part of the config surface also means it resolves
+    //            through the usual precedence, so one host can carry an applet
+    //            the rest of the cluster does not, for free.
+    applets: []
   };
 
   // Touch has no hover, so a 6px target is unusable. Deliberately NOT part of
@@ -233,6 +277,194 @@
         if (!wrap.contains(document.activeElement)) toggle(false);
       }, 0);
     });
+  }
+
+  /* -- Applets: the dock, the registry, the loader --------------------------
+   * An applet cannot inject itself. A second `rewriteBody` middleware stacked
+   * onto a route that already has one silently never fires, so there is exactly
+   * one injected script on these apps and this is it. An applet therefore rides
+   * in here: the bar renders a slot, this file loads the bundles the manifest
+   * names, and each bundle calls register() to get an element of its own.
+   *
+   * TWO ORDERS, BOTH REAL, AND THE ORDER IS NOT OURS TO CHOOSE. build() is only
+   * reached through start() -> fetch(MANIFEST) -> .then(build), with three tries
+   * and 1s/2s backoff; a bundle is a <script defer> the browser schedules on its
+   * own. Either can win:
+   *
+   *   register() BEFORE build()   NAV.slot is null, so the entry simply sits in
+   *                               NAV.applets with dock null, and build()
+   *                               flushes it once the slot exists.
+   *   register() AFTER  build()   NAV.slot is already published, so renderApplet
+   *                               runs on the spot.
+   *
+   * There is no second data structure for the first case. An entry whose dock is
+   * null IS the queue, and both paths go through the same renderApplet call --
+   * which is what stops the early path and the late path from drifting, the way
+   * three hand-maintained copies of this file once did.
+   *
+   * EVERYTHING HERE IS SILENT. Not quietly, deliberately: the manifest is parsed
+   * and these bundles are run inside forty applications we did not write, and
+   * the existing fetch gives up without a word after three tries for exactly
+   * that reason. A refused URL, a 404, a bundle that throws on load and a render
+   * callback that throws all leave the bar fully working and say nothing.
+   * ------------------------------------------------------------------------ */
+
+  // Same-origin, under the asset prefix -- which is the only route gated by
+  // both HostRegexp and lan-only, and so the only place an applet may come
+  // from. Anywhere else is either another origin or ungated.
+  var APPLET_PREFIX = '/catalyst/';
+
+  /* Every reason to refuse an applet URL, declared once and walked by a generic
+   * loop, in the same spirit as SETTINGS below: adding a rule needs no new
+   * control flow. `why` is documentation and test-fixture naming only -- it is
+   * never logged, never thrown and never shown.
+   *
+   * It is an ALLOWLIST with deny rules in front of it. The last two rules alone
+   * would be sufficient, being an anchored whole-string match on a conservative
+   * charset under a fixed prefix. The deny rules above them name the specific
+   * attack each one closes, so a reader does not have to derive them from a
+   * regex, and so widening that charset later cannot silently reopen one. */
+  var APPLET_URL_RULES = [
+    { why: 'not a non-empty string',
+      bad: function (s) { return typeof s !== 'string' || !s; } },
+
+    // '//evil.example/x.js' takes the page's scheme and somebody else's host,
+    // and looks like a path at a glance.
+    { why: 'protocol-relative',
+      bad: function (s) { return s.slice(0, 2) === '//'; } },
+
+    // Any scheme at all: https:, data:, javascript:. A colon before the first
+    // slash is a scheme by RFC 3986, which covers every one of them including
+    // schemes that do not exist yet.
+    { why: 'absolute or schemed',
+      bad: function (s) { return /^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(s); } },
+
+    // '/\\evil.example/x.js'. The URL parser folds a backslash to a slash, so
+    // this is a protocol-relative URL that no substring test for '//' sees.
+    { why: 'contains a backslash',
+      bad: function (s) { return s.indexOf('\\') !== -1; } },
+
+    // Traversal. The prefix test below does not stop '/catalyst/../../x.js',
+    // which leaves the gated route while still starting inside it.
+    { why: 'contains ..',
+      bad: function (s) { return s.indexOf('..') !== -1; } },
+
+    // Percent-encoding hides the two rules above from a substring test:
+    // '%2e%2e' and '%5c' are '..' and '\\' by the time the browser fetches.
+    { why: 'percent-encoded',
+      bad: function (s) { return s.indexOf('%') !== -1; } },
+
+    { why: 'outside ' + APPLET_PREFIX,
+      bad: function (s) {
+        return s.slice(0, APPLET_PREFIX.length) !== APPLET_PREFIX;
+      } },
+
+    // The allowlist proper, anchored at both ends: a plain path built only from
+    // characters a path needs, ending .js. No query, no fragment, no host, no
+    // whitespace, no quotes, nothing that could carry a second meaning. Version
+    // an applet in its path, not in a query string.
+    { why: 'not a plain .js path',
+      bad: function (s) { return !/^[A-Za-z0-9._~\/-]+\.js$/.test(s); } }
+  ];
+
+  // Returns the `why` of the first rule that refuses `src`, or null if every
+  // rule passed. Null means allowed -- the inverse is deliberate, so the
+  // interesting case has a name and the dull one does not.
+  function appletUrlRefusal(src) {
+    for (var i = 0; i < APPLET_URL_RULES.length; i++) {
+      if (APPLET_URL_RULES[i].bad(src)) return APPLET_URL_RULES[i].why;
+    }
+    return null;
+  }
+
+  /* Render one registration into the slot. The guard does all three jobs: no
+   * slot yet means stay queued, an existing dock means already rendered, and
+   * `failed` means do not try a second time. */
+  function renderApplet(entry) {
+    if (!NAV.slot || entry.dock || entry.failed) return;
+
+    var dock = el('div', C + '__applet');
+    dock.setAttribute('data-catalyst-applet', entry.name);
+    // Appended BEFORE render runs, so the applet can measure and position
+    // against a dock that is already laid out in the bar.
+    NAV.slot.appendChild(dock);
+    entry.dock = dock;
+
+    try {
+      entry.render(dock, NAV);
+    } catch (e) {
+      // Leave no half-built stub in the bar, and never retry: a render that
+      // throws once throws again, and retrying would spend the session growing
+      // empty divs in somebody else's header.
+      entry.failed = true;
+      entry.dock = null;
+      if (dock.parentNode) dock.parentNode.removeChild(dock);
+    }
+  }
+
+  function register(name, render) {
+    try {
+      if (typeof name !== 'string' || !name) return false;
+      if (typeof render !== 'function') return false;
+      // A plain `in`-style truth test rather than hasOwnProperty, so that
+      // inherited names ('__proto__', 'constructor', 'hasOwnProperty') are
+      // refused rather than written. Refusing them is the safe failure.
+      if (NAV.applets[name]) return false;
+      NAV.applets[name] = {
+        name: name, render: render, dock: null, failed: false
+      };
+      // A no-op while slot is null, and that no-op IS the queue.
+      renderApplet(NAV.applets[name]);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Called once, by build(), immediately after the slot is published.
+  function flushApplets() {
+    for (var name in NAV.applets) {
+      if (Object.prototype.hasOwnProperty.call(NAV.applets, name)) {
+        renderApplet(NAV.applets[name]);
+      }
+    }
+  }
+
+  // Sources already injected, so two `hosts` entries naming the same bundle --
+  // or any future second call to the loader -- cannot load one twice.
+  var APPLETS_LOADED = {};
+
+  function loadApplet(spec) {
+    try {
+      var src = (spec && typeof spec === 'object') ? spec.src : spec;
+      if (appletUrlRefusal(src)) return;       // silently, always
+      if (APPLETS_LOADED[src]) return;
+      APPLETS_LOADED[src] = true;
+
+      var s = document.createElement('script');
+      // defer rather than async: two applets should run in the order the
+      // manifest lists them, and neither should block the host app's parse.
+      s.defer = true;
+      s.setAttribute('data-catalyst-applet', 'true');
+      // Consume the element's error event and take the tag back out. This does
+      // NOT suppress the browser's own network log for a 404 -- nothing in
+      // script can -- but it does mean a missing bundle leaves no handler-less
+      // error event and no dead tag behind in the host's <head>.
+      s.onerror = function () {
+        if (s.parentNode) s.parentNode.removeChild(s);
+      };
+      s.src = src;
+      (document.head || document.documentElement).appendChild(s);
+    } catch (e) {
+      // Nothing to report to, and nowhere to report it. See the file header.
+    }
+  }
+
+  // Array-ish, not Array.isArray: this value came out of somebody's JSON and
+  // the whole point of the surrounding block is that it may be anything.
+  function loadApplets(list) {
+    if (!list || typeof list.length !== 'number') return;
+    for (var i = 0; i < list.length; i++) loadApplet(list[i]);
   }
 
   /* -- User preferences -----------------------------------------------------
@@ -414,12 +646,29 @@
     nav.appendChild(el('div', C + '__spacer'));
     nav.appendChild(el('div', C + '__here', location.hostname));
 
+    // The applet dock, between __here and the gear. An applet is a property of
+    // the BAR, like the gear, rather than one more destination among the groups
+    // on the left. Created and appended here, before the single
+    // document.body.appendChild below, so the whole bar still enters the DOM in
+    // one insertion -- NAV.slot is published only once it is actually in the
+    // document, which is what the registry's two paths switch on.
+    var slot = el('div', C + '__slot');
+    nav.appendChild(slot);
+
     // Rightmost, after __here: the gear is a property of the bar itself rather
     // than of any app in it, so it sits apart from the groups on the left.
     var prefs = readPrefs();
     nav.appendChild(buildSettings(nav, cfg, prefs));
 
     document.body.appendChild(nav);
+
+    // AFTER the insertion, so the slot an applet renders into is already laid
+    // out; and BEFORE the mode:'push' return below, so applets work in push
+    // mode too. Publishing the slot is what flips register() from its queueing
+    // path to its immediate one, so both lines below have to follow it.
+    NAV.slot = slot;
+    flushApplets();                 // whatever registered before the bar existed
+    loadApplets(cfg.applets);       // and whatever the manifest names
 
     if (cfg.mode === 'push') {
       // Reserve the strip instead of floating over the app. The class goes on
