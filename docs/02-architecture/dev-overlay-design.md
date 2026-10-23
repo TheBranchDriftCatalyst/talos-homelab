@@ -101,7 +101,7 @@ into a named, reusable abstraction instead of a copy-paste of the navbar's chain
   returns **not-200**. Verified from outside, not with `--resolve`.
 - A broken or missing applet bundle leaves the navbar fully functional and prints nothing
   to the host app's console.
-- `task lint:theme-drift` green, and the gear feature lives in `src/60-nav.js`.
+- `task dev:lint:theme-drift` green, and the gear feature lives in `src/60-nav.js`.
 - Adding a *second* applet requires one claim and zero edits to shared middleware.
 
 ## Non-goals (explicitly out of scope)
@@ -324,11 +324,11 @@ apps and must never be able to inject arbitrary script URLs. **Allowlist to same
 ## Prerequisite: fix the themepark drift (mine)
 
 `catalyst-themepark` publishes three artifacts into talos-homelab via `./build.sh --publish`,
-guarded by `task lint:theme-drift`. Today's commit `b2999734` (the settings gear) was written
+guarded by `task dev:lint:theme-drift`. Today's commit `b2999734` (the settings gear) was written
 **directly into the vendored copy**, never into `src/60-nav.js`. The files are now **557 vs
 424 lines** and the drift check fails on `main`.
 
-Port the gear back into `src/60-nav.js`, rebuild, republish, confirm `task lint:theme-drift`
+Port the gear back into `src/60-nav.js`, rebuild, republish, confirm `task dev:lint:theme-drift`
 is green. This is step zero — the slot API and loader both land in that same file, and
 building on a drifted base would deepen exactly the divergence the check exists to catch.
 
@@ -338,7 +338,7 @@ building on a drifted base would deepen exactly the divergence the check exists 
 
 | # | Sub-project | Output |
 |---|---|---|
-| **M0** | Fix themepark drift | `lint:theme-drift` green |
+| **M0** | Fix themepark drift | `dev:lint:theme-drift` green |
 | **M1** | Nav slot API + applet loader | nav can dock and load *any* applet; no applet yet |
 | **M2** | dev-overlay scaffold: repo, API, CNPG, ArgoCD | `/catalyst/api/dev-overlay/health` answers |
 | **M3** | The applet: anchoring + annotation UI | end-to-end note on a real app |
@@ -356,7 +356,7 @@ annotations *and* i18n text editing (`DevProviders.tsx:33-34`), and the i18n hal
 live consumers — so `DevProviders`/`DevModeToggle` must be split, not deleted wholesale.
 
 **M7** closes the loop on objective 6: a check on catalyst-ui → themepark token parity
-(the `--neon-gold` inversion is a live bug a check would have caught), `lint:theme-drift`
+(the `--neon-gold` inversion is a live bug a check would have caught), `dev:lint:theme-drift`
 wired into CI rather than only lefthook, and a dev-overlay → catalyst-ui version pin.
 
 **Recommendation: spec and build M0+M1 first.** They are the risky, load-bearing part
@@ -449,7 +449,7 @@ produced it.
 - **Never verify an IP gate with `curl --resolve` from the LAN.** Inbound WAN is DNAT-only
   so the source survives; it is hairpinned LAN traffic that gets SNAT'd. Test from cellular
   or read Traefik's logged `ClientHost`.
-- **`task lint:theme-drift` is currently red** (M0). Do not build on the vendored copy.
+- **`task dev:lint:theme-drift` is currently red** (M0). Do not build on the vendored copy.
 
 **Conventions that are easy to get wrong**
 
@@ -478,7 +478,11 @@ produced it.
 
 ## Verification
 
-- **M0:** `task lint:theme-drift` exits 0; `diff` of all three artifacts is empty.
+- **M0:** `task dev:lint:theme-drift` exits 0; `diff` of all three artifacts is empty.
+  Note the task is namespaced **`dev:`** (the root Taskfile includes `dev/Taskfile.dev.yaml`
+  under that prefix). `task lint:theme-drift` does not exist and errors out.
+  Invoke with `CATALYST_THEMEPARK_DIR=../catalyst-themepark` if the sibling is not at the
+  default relative path.
 - **M1:** `flux build kustomization themepark --path infrastructure/base/themepark` (catches
   the strict-envsubst trap that `kubectl kustomize` misses); then Playwright on
   `http://grafana.talos00/login` — assert the bar still builds, 51 links, 12 groups, gear
@@ -548,7 +552,7 @@ The port is five edits to `src/60-nav.js` (extract `wireDropdown`; add the prefs
 `buildSettings`, and `if (prefs.pinned) applyPinned(...)` must come **after**
 `autoHide(nav, cfg)` because autoHide installs `HIDDEN` as the resting state.
 
-Also: `task lint:theme-drift` **exits 0 and skips** when the sister repo is absent
+Also: `task dev:lint:theme-drift` **exits 0 and skips** when the sister repo is absent
 (`dev/Taskfile.dev.yaml:110-130`), so in CI the guard is a no-op. That is why nobody caught
 this. Fixing it belongs to M7.
 
@@ -695,7 +699,7 @@ rather than a guard.
 
 ### There is exactly one mechanical cross-repo check, and it is inert
 
-`build.sh --check`, reached via `task lint:theme-drift`. It is:
+`build.sh --check`, reached via `task dev:lint:theme-drift`. It is:
 
 - **not** in `lefthook.yaml` (all three stages checked),
 - **not** in `.github/workflows/`,
@@ -774,3 +778,50 @@ Checks are the interim mitigation (M7). The artifact is the fix (TALOS-36m6).
 > inherited, so they pierce a Shadow DOM boundary — `:host { color: var(--neon-cyan) }`
 > resolves against the outer page. The applet should therefore declare **no colour literals
 > and no tokens of its own**, and inherit the bar's.
+
+---
+
+## M0 outcome (2026-10-23) — and a production bug it exposed
+
+**Done.** `catalyst-themepark` commit `79f90f3`; talos-homelab publish below.
+`task dev:lint:theme-drift` exits 0 for the first time.
+
+The port turned out to be byte-exact **by construction** rather than by hand. `build_js` is
+`banner + blank + cat src/60-nav.js`, and `banner()` is a pure heredoc with no timestamp,
+so `tail -n +18 <vendored> > src/60-nav.js` reproduces the source exactly (540 = 557 − 17).
+The same trick worked for the CSS: `src/60-nav.css` is the final 313 lines of the 4-partial
+concatenation. Verified rather than assumed — `head -17` of both files matched first.
+
+### The bug: the gear has been unstyled on ~14 apps since `b2999734`
+
+Porting correctly made `--check` fail on a *third* artifact, and the reason is the real
+finding. `src/60-nav.css` feeds **both** output sheets (`build.sh:103` glob and `:143`
+explicit list). The gear CSS had been hand-written only into the vendored
+**`catalyst-nav.css`**, never into **`catalyst.css`** — so porting it to source necessarily
+added 83 lines to `catalyst.css` too, and `cmp` flagged the difference.
+
+That difference was not noise. It was the fix for a live bug:
+
+- `catalyst-inject-<app>` injects **`catalyst-nav.js`** at `<head>` — which *builds the
+  gear* — and `theme-options/catalyst.css` at `</head>` (e.g. `middlewares.yaml:286-289`).
+- The vendored `catalyst.css` had **0** gear selectors; `catalyst-nav.css` had 5.
+
+So every full-theme app — plex, sonarr, radarr, jellyfin, gitea, overseerr, prowlarr,
+qbittorrent, sabnzbd, tautulli, whisparr, mylar3, audiobookshelf — rendered a gear with no
+styling at all. This is the subset trap from M1, arriving from the opposite direction: the
+documented hazard is a new partial missing from the **nav-only** list, but here a hand-edit
+landed in the nav-only artifact and missed the **full theme**.
+
+**Keeping `catalyst.css` gear-less to make `cmp` pass would have cemented the bug.** The
+correct resolution was to publish, which is safe once the feature is in `src/`.
+
+### Lesson for the enforcement work (M7)
+
+The drift check did its job twice over — it caught the original divergence *and*, once the
+source was correct, refused to go green until a real production bug was fixed. That is a
+strong argument for wiring it somewhere that runs, which is M7 item 1.
+
+Its invocation is **`task dev:lint:theme-drift`**, not `task lint:theme-drift`. The latter
+does not exist; the root Taskfile includes `dev/Taskfile.dev.yaml` under a `dev:` prefix.
+Two independent reconnaissance passes reported the un-prefixed name by reading the
+Taskfile's internal key, and it was wrong in this document until it was actually run.
