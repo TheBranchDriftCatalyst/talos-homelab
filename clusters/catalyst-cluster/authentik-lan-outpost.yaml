@@ -1,0 +1,37 @@
+---
+# Runtime for the dedicated *.talos00 Authentik proxy outpost (TALOS-22nn).
+#
+# SPLIT OUT FROM `authentik` ON PURPOSE. That Kustomization has `wait: true`,
+# which in Flux waits on every applied object regardless of spec.healthChecks.
+# The new outpost Deployment is intentionally un-Available until its token
+# Secret exists, so keeping it in ../infrastructure/base/authentik would stall
+# and then fail the Kustomization that owns live SSO (and `whoami` + `zipline`,
+# which dependOn it).
+#
+# wait: false for the same reason — the outpost's readiness is not a gate on
+# anything, because nothing routes to it until a human performs the cutover.
+#
+# NO postBuild. token-sync.yaml embeds a shell script using ordinary `$VAR`
+# expansion; Flux's strict envsubst would blank those out. Do not add
+# substitute/substituteFrom here without rewriting that script.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: authentik-lan-outpost
+  namespace: flux-system
+spec:
+  interval: 30m
+  retryInterval: 1m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/base/authentik-lan-outpost
+  prune: true
+  wait: false
+  dependsOn:
+    # The outpost's blueprint ConfigMap, the authentik-server Service it talks
+    # to, and the authentik-worker it execs into all come from here.
+    - name: authentik
+    # websecure entrypoint + the TLSStore that serves the talos00 wildcard cert.
+    - name: traefik

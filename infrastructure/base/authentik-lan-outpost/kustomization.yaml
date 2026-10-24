@@ -1,0 +1,22 @@
+---
+# Dedicated Authentik proxy outpost for the 60 *.talos00 forward-auth apps
+# (TALOS-22nn). The Outpost OBJECT is declared by a blueprint ConfigMap that
+# must live in ../authentik (the chart mounts blueprints from its own
+# `blueprints.configMaps` list); everything in THIS directory is the runtime.
+#
+# WHY A SEPARATE DIRECTORY AND FLUX KUSTOMIZATION, not just more files in
+# ../authentik: the `authentik` Kustomization runs with `wait: true`, and Flux's
+# wait ignores spec.healthChecks and waits on EVERY applied object. A new
+# Deployment that cannot become Available — which is exactly the state this one
+# is in until the token-sync CronJob has run once — would hold the authentik
+# Kustomization in reconciling until its 10m timeout and then fail it, taking
+# `whoami` and `zipline` (which dependOn it) with it. Isolating the new workload
+# means its bootstrap cannot touch the Kustomization that owns live SSO.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - deployment.yaml # Deployment + Service + PodDisruptionBudget
+  - middleware.yaml # `authentik-lan` forward-auth middleware — UNREFERENCED on purpose
+  - ingressroute.yaml # https://auth.talos00 (the host currently 404s on websecure)
+  - token-sync.yaml # exports the outpost's authentik-minted API token into a Secret

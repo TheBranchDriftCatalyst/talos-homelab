@@ -1,0 +1,55 @@
+---
+# https://auth.talos00 — the LAN login hostname, on the websecure entrypoint.
+#
+# WHY THIS IS NEW RATHER THAN A CHANGE: `auth.talos00` currently has exactly one
+# route, `authentik-local` in infrastructure/base/authentik/ingressroute.yaml,
+# and it is on the `web` (cleartext) entrypoint only. Verified 2026-10-24:
+#
+#   http://auth.talos00/   -> 302 (authentik flow)
+#   https://auth.talos00/  -> 404 (no route)
+#
+# So this route claims a host+port combination that nothing serves today. It
+# cannot change the behaviour of any existing request. The one exception is
+# https://auth.talos00/outpost.goauthentik.io/*, which `authentik-outpost-priv`
+# already catches at priority 1000 — a plain Host() rule scores far below that,
+# so that path keeps its current target and is unaffected.
+#
+# WHY HTTPS AT ALL: all 60 proxy providers have an https://*.talos00
+# external_host, so sending their login redirects to a cleartext IdP would
+# downgrade every LAN auth flow. `auth.talos00` is already an explicit SAN on
+# the talos00-wildcard Certificate (it was added for in-cluster server-side OIDC
+# clients, TALOS-6vf), so the cert side needs nothing — only the route was
+# missing. Explicit SANs rather than the bare wildcard because Apple devices
+# reject `*.talos00` outright (single-label parent).
+#
+# websecure ONLY on this object. Never add `web` here: Kyverno's
+# ingressroute-tls-default policy injects `tls: {}` into any websecure
+# IngressRoute, which makes the ROUTER TLS-only — a combined web+websecure route
+# silently 404s on HTTP. (The repo has a dedicated policy,
+# ingressroute-no-combined-entrypoints, that refuses exactly that mistake.) The
+# cleartext path keeps living in its own object, `authentik-local`.
+#
+# No `tls:` stanza here for the same reason: Kyverno adds it. Hand-setting it is
+# allowed and always wins, but the fleet convention is to let the policy fill it.
+#
+# ROLLBACK: delete this file. https://auth.talos00 returns to 404, and the
+# outpost's browser host must then be changed to http://auth.talos00 in BOTH
+# infrastructure/base/authentik/talos00-outpost-blueprint.yaml and
+# ../authentik-lan-outpost/deployment.yaml (AUTHENTIK_HOST_BROWSER).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: authentik-local-websecure
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`auth.talos00`)
+      kind: Rule
+      services:
+        - name: authentik-server
+          port: 80

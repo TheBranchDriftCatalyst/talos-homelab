@@ -1,0 +1,177 @@
+---
+# `talos00-outpost` — a dedicated Authentik proxy outpost for the 60 *.talos00
+# forward-auth apps (TALOS-22nn).
+#
+# ============================== CHANGES NOTHING ==============================
+# This Deployment serves zero traffic on arrival. The only thing that can route
+# a request to it is the `authentik-lan` Middleware (middleware.yaml) plus a
+# per-host /outpost.goauthentik.io/ route, and NOTHING references either yet.
+# The staged cutover is a deliberate human step — see middleware.yaml.
+# =============================================================================
+#
+# Modelled on `amberdark-outpost` (talos-private repo,
+# authentik-brand-talos-private/amber-outpost.yaml), which has run here for 45
+# days: a hand-written Deployment for an Outpost whose `service_connection` is
+# null, so authentik's Kubernetes controller provisions nothing and Flux owns
+# every field.
+#
+# IMAGE VERSION MUST TRACK THE SERVER. authentik refuses to consider an outpost
+# healthy when its version differs from the server's, and surfaces a System Task
+# warning. Server is 2025.12.4 (and amberdark's proxy is pinned to the same).
+# Bump this in lockstep with the authentik HelmRelease, never independently.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: talos00-outpost
+  namespace: authentik
+  labels:
+    app: talos00-outpost
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+    app.kubernetes.io/component: proxy-outpost
+spec:
+  # THREE, and the reasoning matters more than the number.
+  #
+  # Forward-auth sits in the request path of ALL 60 LAN apps, so its
+  # unavailability is indistinguishable from "the entire homelab is down" — and
+  # a 200 on /ping does not prove it can complete an auth flow
+  # (probe-returns-200-while-broken). The embedded outpost it replaces is a
+  # single in-process server and already fails at six concurrent flows with a
+  # bare HTTP 400 (TALOS-mz87).
+  #
+  # 2 would be redundant at rest but degrades to 1 during any rolling update or
+  # node drain — i.e. back to exactly the single-instance ceiling this is meant
+  # to remove, at the moment of highest change risk. 3 keeps >=2 serving through
+  # a node loss AND through a rollout, and the cluster has 5 nodes so all three
+  # land in distinct failure domains.
+  #
+  # The cost is negligible: amberdark-outpost, same image, measures 2m CPU /
+  # 16Mi RSS. More than 3 buys nothing until a measurement says otherwise.
+  #
+  # NOT A PROVEN FIX FOR TALOS-mz87. That 400 is still undiagnosed; one live
+  # hypothesis is oversized accumulated cookies on the shared auth domain, which
+  # replicas would not help (though moving LAN sessions onto auth.talos00 would).
+  # Replicas give the knob the embedded outpost structurally cannot have.
+  replicas: 3
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: talos00-outpost
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0 # never dip below `replicas` while rolling
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: talos00-outpost
+        app.kubernetes.io/name: authentik-outpost
+        app.kubernetes.io/instance: talos00
+        app.kubernetes.io/component: proxy-outpost
+    spec:
+      # One per node, best-effort. ScheduleAnyway (not DoNotSchedule) so a
+      # cordoned or full node can never leave a replica Pending — availability
+      # beats perfect spread for something in every request path.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: talos00-outpost
+      containers:
+        - name: proxy
+          image: ghcr.io/goauthentik/proxy:2025.12.4
+          env:
+            # The outpost's own API/WebSocket channel. In-cluster service DNS:
+            # no Traefik hop, and no dependence on the CoreDNS
+            # `rewrite name auth.talos00` entry. Same value amberdark uses.
+            - name: AUTHENTIK_HOST
+              value: http://authentik-server.authentik.svc.cluster.local
+            # Where BROWSERS are sent to log in. THIS is the line that keeps LAN
+            # auth on the LAN. Mirrors `authentik_host_browser` in the blueprint
+            # (infrastructure/base/authentik/talos00-outpost-blueprint.yaml) —
+            # the env var wins over the API-delivered config, so the two must
+            # agree or the redirect target depends on startup ordering.
+            - name: AUTHENTIK_HOST_BROWSER
+              value: https://auth.talos00
+            - name: AUTHENTIK_INSECURE
+              value: "false"
+            # Minted by authentik when the Outpost object is created, and copied
+            # into this Secret by the token-sync CronJob (token-sync.yaml). The
+            # key is derived from the Outpost's uuid, so it CANNOT be declared
+            # in a blueprint or generated by ESO — see that file.
+            - name: AUTHENTIK_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: talos00-outpost-token
+                  key: token
+          ports:
+            - name: http
+              containerPort: 9000
+              protocol: TCP
+          readinessProbe:
+            httpGet: {path: /outpost.goauthentik.io/ping, port: http}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /outpost.goauthentik.io/ping, port: http}
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          # No startupProbe by design: the startupprobe-from-liveness Kyverno
+          # ClusterPolicy derives one from the livenessProbe httpGet at
+          # admission (failurePolicy: Ignore). Declaring one here would only
+          # duplicate the fleet-wide default.
+          resources:
+            requests:
+              cpu: 50m
+              # 2x amberdark's request for 10x the providers. amberdark measures
+              # 16Mi RSS with 6; provider config is held in memory.
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+              # NO CPU LIMIT, deliberately. This is a latency-path proxy whose
+              # open bug is a concurrency ceiling (TALOS-mz87); a CPU quota is
+              # the one thing guaranteed to re-create that ceiling under exactly
+              # the burst it needs to absorb. The memory limit still bounds the
+              # blast radius of a leak.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: talos00-outpost
+  namespace: authentik
+  labels:
+    app: talos00-outpost
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+spec:
+  selector:
+    app: talos00-outpost
+  ports:
+    - name: http
+      port: 9000
+      targetPort: http
+---
+# A drain must not be able to take forward-auth for 60 apps to zero. With
+# replicas: 3 this still permits one voluntary eviction at a time.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: talos00-outpost
+  namespace: authentik
+  labels:
+    app: talos00-outpost
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: talos00-outpost

@@ -1,0 +1,227 @@
+---
+# Export the `talos00` Outpost's API token into the Secret its Deployment reads.
+#
+# WHY THIS EXISTS AT ALL — and why it cannot be replaced by a blueprint or ESO.
+#
+# A non-embedded outpost authenticates to authentik with a token that AUTHENTIK
+# mints, not one we choose. From authentik/outposts/models.py (2025.12.4):
+#
+#     @property
+#     def token_identifier(self) -> str:
+#         return f"ak-outpost-{self.pk}-api"
+#     @property
+#     def user_identifier(self):
+#         return f"ak-outpost-{self.uuid.hex}"
+#
+# Both are derived from a uuid generated when the Outpost row is created. The
+# token's `key` is random. So:
+#   * a blueprint CANNOT declare the token (its identifier is unknowable until
+#     the outpost exists, and the key is not ours to set), and
+#   * an ESO Password generator CANNOT produce it (authentik would not recognise
+#     a value it did not mint) — unlike the OIDC client secrets in this repo,
+#     where WE own the shared secret and generate it.
+#
+# So the token has to be read out of authentik and written into a Secret. That
+# is exactly what the `amberdark` outpost does (talos-private repo,
+# base/auth/outpost_sync.py, running every 30 min for 45 days). This is the same
+# mechanism, self-contained in this repo: no custom image, no cross-repo
+# ServiceAccount.
+#
+# IDEMPOTENT AND QUIET. It compares before writing, exits 0 (not failure) when
+# the outpost does not exist yet, and never logs the token.
+#
+# NO POSTBUILD ON THE OWNING KUSTOMIZATION. The script below uses ordinary
+# `$VAR` shell expansion, which Flux's strict envsubst would blank out if
+# `postBuild.substitute`/`substituteFrom` were ever added to
+# clusters/catalyst-cluster/authentik-lan-outpost.yaml. Do not add it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: talos00-outpost-token-sync
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: talos00-outpost-token-sync
+  namespace: authentik
+rules:
+  # Read-compare-write the one Secret it owns. `create` cannot be scoped by
+  # resourceName (the name does not exist yet at admission time), so it is a
+  # separate, unavoidable rule — same shape as the private-sso-reconciler Role.
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [talos00-outpost-token]
+    verbs: [get, patch, update]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+  # `kubectl exec deploy/authentik-worker` resolves the Deployment, then lists
+  # its pods, then opens an exec stream.
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [authentik-worker, talos00-outpost]
+    verbs: [get, watch]
+  - apiGroups: [apps]
+    resources: [deployments/status]
+    resourceNames: [talos00-outpost]
+    verbs: [get, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  # Only needed on the rare path where the token CHANGED (outpost recreated):
+  # the running pods hold the old value in an env var and must be replaced.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: talos00-outpost-token-sync
+  namespace: authentik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: talos00-outpost-token-sync
+subjects:
+  - kind: ServiceAccount
+    name: talos00-outpost-token-sync
+    namespace: authentik
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: talos00-outpost-token-sync
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+    app.kubernetes.io/component: token-sync
+spec:
+  # Every 15 min. The token is non-expiring, so steady state is a no-op compare;
+  # the schedule only bounds how long bootstrap waits after the blueprint lands.
+  # Not faster, because each run boots a full Django process inside
+  # authentik-worker. To bootstrap immediately instead of waiting:
+  #
+  #   kubectl -n authentik create job --from=cronjob/talos00-outpost-token-sync \
+  #     talos00-outpost-token-sync-now
+  #
+  schedule: "*/15 * * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: authentik-outpost
+            app.kubernetes.io/instance: talos00
+            app.kubernetes.io/component: token-sync
+        spec:
+          serviceAccountName: talos00-outpost-token-sync
+          restartPolicy: Never
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: sync
+              image: alpine/kubectl:1.36.4
+              env:
+                # kubectl writes a discovery cache under $HOME; the root
+                # filesystem is read-only, so point it at the emptyDir.
+                - name: HOME
+                  value: /tmp
+              resources:
+                requests: {cpu: 20m, memory: 64Mi}
+                limits: {memory: 128Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+
+                  AK_NS=authentik
+                  AK_OUTPOST=talos00
+                  AK_SECRET=talos00-outpost-token
+                  AK_DEPLOY=talos00-outpost
+
+                  echo "== $(date -u) sync token for outpost '$AK_OUTPOST' =="
+
+                  # `ak shell` logs copiously to stdout; the sentinel prefix is
+                  # the only line we read, and stderr is discarded. The token
+                  # value is never echoed.
+                  AK_TOKEN="$(kubectl -n "$AK_NS" exec deploy/authentik-worker -c worker -- \
+                    ak shell -c "
+                  from authentik.outposts.models import Outpost
+                  o = Outpost.objects.filter(name='$AK_OUTPOST').first()
+                  print('AKTOKEN:' + (o.token.key if o else 'ABSENT'))
+                  " 2>/dev/null | sed -n 's/^AKTOKEN://p' | tr -d '\r')"
+
+                  if [ -z "$AK_TOKEN" ] || [ "$AK_TOKEN" = "ABSENT" ]; then
+                    echo "outpost '$AK_OUTPOST' not present in authentik yet."
+                    echo "its blueprint may not have been discovered -- discovery is HOURLY. force it with:"
+                    echo "  kubectl -n authentik exec deploy/authentik-worker -c worker -- ak shell -c 'from authentik.blueprints.v1.tasks import blueprints_discovery; blueprints_discovery.send()'"
+                    echo "exiting 0; will retry on the next schedule"
+                    exit 0
+                  fi
+
+                  AK_CURRENT=""
+                  if kubectl -n "$AK_NS" get secret "$AK_SECRET" >/dev/null 2>&1; then
+                    AK_CURRENT="$(kubectl -n "$AK_NS" get secret "$AK_SECRET" \
+                      -o jsonpath='{.data.token}' | base64 -d)"
+                  fi
+
+                  if [ "$AK_CURRENT" = "$AK_TOKEN" ]; then
+                    echo "secret $AK_SECRET already current -- no change"
+                    exit 0
+                  fi
+
+                  kubectl -n "$AK_NS" create secret generic "$AK_SECRET" \
+                    --from-literal=token="$AK_TOKEN" --dry-run=client -o yaml \
+                    | kubectl -n "$AK_NS" apply -f -
+                  echo "secret $AK_SECRET written"
+
+                  if [ -z "$AK_CURRENT" ]; then
+                    echo "first write -- pods will start on their own"
+                    exit 0
+                  fi
+
+                  # Token rotated (outpost recreated => new uuid => new token).
+                  # Running pods hold the old value in an env var. Replace them
+                  # ONE AT A TIME: this Deployment is in the request path of 60
+                  # apps once the cutover happens. `kubectl delete pod` rather
+                  # than `rollout restart` on purpose -- Flux strips the
+                  # restartedAt annotation it adds and the workload bounces
+                  # twice.
+                  echo "token CHANGED -- replacing pods serially"
+                  for AK_POD in $(kubectl -n "$AK_NS" get pod -l app=talos00-outpost -o name); do
+                    kubectl -n "$AK_NS" delete "$AK_POD"
+                    kubectl -n "$AK_NS" rollout status "deploy/$AK_DEPLOY" --timeout=3m
+                  done
+                  echo "== $(date -u) done =="
+          volumes:
+            - name: tmp
+              emptyDir:
+                sizeLimit: 16Mi

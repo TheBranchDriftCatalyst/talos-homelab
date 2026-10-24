@@ -1,0 +1,185 @@
+---
+# Authentik Blueprint: `talos00` — a DEDICATED proxy outpost for the 60 *.talos00
+# forward-auth apps, so LAN authentication stops leaving the LAN (TALOS-22nn).
+#
+# ============================== WHAT THIS IS NOT ==============================
+# This blueprint creates the Outpost OBJECT only. It does NOT move any traffic.
+# Nothing references the resulting outpost until a human performs the staged
+# cutover described in TALOS-22nn (and in authentik-lan-outpost/middleware.yaml).
+# Creating it is a no-op for every live request.
+# ==============================================================================
+#
+# WHY A SECOND OUTPOST AT ALL
+# The "authentik Embedded Outpost" already holds all 60 *.talos00 proxy
+# providers, but it runs IN-PROCESS inside authentik-server and its
+# `authentik_host` is https://auth.knowledgedump.space. So every LAN login
+# round-trips out through Cloudflare and back. `authentik_host_browser` and
+# `kubernetes_replicas` are both INERT on the embedded outpost (they are read
+# only by the controllers that provision a *separate* Deployment), so neither
+# the egress nor the single-process capacity ceiling (TALOS-mz87) can be fixed
+# in place. A separate outpost is the only lever.
+#
+# SHAPE COPIED FROM `amberdark`, the working precedent in this cluster
+# (talos-private repo, authentik-brand-talos-private/amber-outpost.yaml):
+#   service_connection: null  -> authentik's Kubernetes controller provisions
+#                                NOTHING. The Deployment/Service/Middleware are
+#                                hand-written and Flux-managed, in
+#                                infrastructure/base/authentik-lan-outpost/.
+# This is deliberate, and it is why the `kubernetes_*` config keys are absent
+# below: they would be dead values. Replicas live in the Deployment, in git.
+# It is also why authentik's Ingress-generating controller — which cost this
+# cluster ~1,570 Traefik TLS errors an hour on the embedded outpost
+# (TALOS-qzbh.2.3) — cannot touch this outpost at all.
+#
+# THE `config` TRAP: it is ONE JSON field, not a set of attributes, so it is
+# supplied WHOLE. The four keys below are exactly the four the live `amberdark`
+# outpost stores (dumped from `Outpost._config` on 2026-10-24, not hand-typed);
+# every other field on the OutpostConfig dataclass has a default and is omitted
+# on purpose. Setting a partial config on an EXISTING outpost would wipe
+# `authentik_host` and break forward-auth, so never edit this to a subset.
+#
+#   authentik_host          the outpost's own API/WebSocket channel to authentik.
+#                           In-cluster service DNS: no Traefik hop, no dependence
+#                           on the CoreDNS `rewrite name auth.talos00` entry, and
+#                           no hairpin out to Cloudflare. Identical to amberdark.
+#   authentik_host_browser  where BROWSERS are sent to log in. This is the line
+#                           that makes LAN auth stay on the LAN. https:// (not
+#                           http://) because all 60 providers' external_host is
+#                           https://*.talos00 and `auth.talos00` is an explicit
+#                           SAN on the talos00-wildcard cert — see
+#                           authentik-lan-outpost/ingressroute.yaml, which adds
+#                           the websecure route that makes that URL resolvable.
+#                           To fall back to cleartext, change this one value to
+#                           http://auth.talos00 (that route already exists) and
+#                           delete that IngressRoute.
+#
+# PROVIDERS — all 60, generated from live state (`Outpost.providers` of the
+# embedded outpost) on 2026-10-24, every one verified to have a `.talos00`
+# external_host. A provider may belong to MORE THAN ONE outpost (authentik's
+# OutpostSerializer has no exclusivity check), which is what makes a staged,
+# app-by-app cutover possible: both outposts serve all 60, and the Traefik
+# middleware on each app decides which one actually answers.
+#
+# THIS LIST IS A DUPLICATE and must stay in sync with the embedded outpost's
+# union in talos-private-blueprint.yaml. It is duplicated rather than shared
+# because (a) blueprint ids are file-local so `!KeyOf` cannot reach across, and
+# (b) one bad entry fails the WHOLE blueprint file — keeping this out of
+# talos-private-blueprint.yaml means a mistake here cannot stop the embedded
+# outpost (which serves all 60 apps TODAY) from accepting providers. That exact
+# failure caused the TALOS-87bw outage.
+#
+# VERIFY THE COUNT, NOT THE EXISTENCE. A provider assigned via a `!Find` that
+# evaluates before the provider commits is SILENTLY DROPPED
+# (authentik-outpost-union-find-ordering-race). Re-check with:
+#
+#   kubectl exec -n authentik deploy/authentik-worker -c worker -- ak shell -c "
+#   from authentik.outposts.models import Outpost
+#   o = Outpost.objects.filter(name='talos00').first()
+#   print('COUNT', o.providers.count() if o else 'MISSING')" 2>/dev/null | grep COUNT
+#
+# Expect `COUNT 60`. Anything less means a !Find was dropped; re-apply by
+# forcing discovery (it is otherwise HOURLY):
+#
+#   kubectl exec -n authentik deploy/authentik-worker -c worker -- ak shell -c "
+#   from authentik.blueprints.v1.tasks import blueprints_discovery
+#   blueprints_discovery.send()"
+#
+# (`.send()` — this authentik is on dramatiq, not celery; `.delay()` does not
+# exist.)
+#
+# Mounted on the WORKER at /blueprints/mounted/cm-authentik-talos00-outpost-blueprint/
+# via `blueprints.configMaps` in helmrelease.yaml. There is NO label
+# auto-discovery: the ConfigMap must be listed there AND in kustomization.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authentik-talos00-outpost-blueprint
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik
+    app.kubernetes.io/component: blueprint
+data:
+  talos00-outpost.yaml: |
+    version: 1
+    metadata:
+      name: talos00 dedicated proxy outpost
+      labels:
+        blueprints.goauthentik.io/description: "Dedicated proxy outpost for the 60 *.talos00 forward-auth apps; browser host auth.talos00 (TALOS-22nn)"
+    entries:
+      - model: authentik_outposts.outpost
+        id: talos00-outpost
+        identifiers: {name: talos00}
+        attrs:
+          name: talos00
+          type: proxy
+          # null => authentik provisions no Kubernetes objects for this outpost.
+          # The Deployment/Service are hand-written and Flux-managed.
+          service_connection: null
+          config:
+            authentik_host: http://authentik-server.authentik.svc.cluster.local
+            authentik_host_browser: https://auth.talos00
+            authentik_host_insecure: false
+            log_level: info
+          # All 60 *.talos00 proxy providers. Generated from live state; see the
+          # count-verification command in the header before trusting this list.
+          providers:
+            - !Find [authentik_providers_proxy.proxyprovider, [name, bindery]] # bindery.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, booksonic]] # booksonic.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, catalyst-ui]] # catalyst.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, chaptarr]] # chaptarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, crowdsec]] # crowdsec.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, dagster]] # dagster.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, dbgate]] # dbgate.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, dungeon-library]] # dungeon-library.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, falco]] # falco.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, fchat-bouncer]] # fchat.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, frigate]] # frigate.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, guacamole]] # guacamole.priv.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, haven]] # haven.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, headlamp]] # headlamp.priv.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, homepage-apps]] # apps.homepage.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, homepage-arrs]] # arrs.homepage.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, homepage-data]] # data.homepage.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, homepage-home]] # home.homepage.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, homepage-infra]] # infra.homepage.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, homepage-llm]] # llm.homepage.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, homepage-master]] # homepage.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, homepage-obs]] # obs.homepage.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, hubble]] # hubble.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, hyperdx]] # hyperdx.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, irc]] # irc.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, kube-ops-view]] # kube-ops-view.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, kubeview]] # kubeview.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, libation]] # libation.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, librarr]] # librarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, livrarr]] # livrarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, lobe-chat]] # lobechat.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, logairr]] # logairr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, maintainerr]] # maintainerr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, media-explorer]] # media-explorer.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, metube]] # metube.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, mylar3]] # mylar3.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, neo4j-browser]] # neo4j.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, omnitools]] # omnitools.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, opengym]] # opengym.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, plausible]] # plausible.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, posterizarr]] # posterizarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, posterr]] # posterr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, prowlarr]] # prowlarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, pulsarr]] # pulsarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, qbittorrent]] # qbittorrent.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, radarr]] # radarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, readarr]] # readarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, sabnzbd]] # sabnzbd.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, scrypted]] # scrypted.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, searxng]] # searxng.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, securexng]] # securexng.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, seerr]] # seerr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, sonarr]] # sonarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, stackarr]] # stackarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, storyteller]] # storyteller.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, tautulli]] # tautulli.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, tdarr]] # tdarr.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, traefik]] # traefik.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, tubesync]] # tubesync.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, windows-vnc]] # windows-vnc.priv.talos00
