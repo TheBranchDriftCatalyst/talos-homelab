@@ -168,3 +168,80 @@ def test_existing_nav_entries_still_work():
     }]})
     names = [i["name"] for g in out["groups"] for i in g["items"]]
     assert "Grafana" in names
+
+
+# ── the injected / themed classifier ─────────────────────────────────────────
+# Untested until now, and it is load-bearing in a way that fails SILENTLY: a
+# wrongly-classified app gets a dimmed nav entry promising a restyled
+# destination that in fact keeps its own look. Nothing errors, nothing logs.
+#
+# It is also the specific regression an injected-applet composite could cause.
+# `themed` is computed over middleware NAMES, so a middleware called
+# catalyst-inject-<applet> — which starts with "catalyst-" and contains no
+# "nav" — would flip every route carrying it to themed. That is exactly why the
+# CatalystInjectedApplet composite mints no middleware at all, and these specs
+# are what make that constraint enforceable rather than a comment.
+
+def entry(middlewares, host="app.talos00", name="App"):
+    """A nav-eligible route carrying the given middleware names."""
+    return {
+        "metadata": {"name": name.lower(), "namespace": "default", "annotations": {
+            "gethomepage.dev/enabled": "true",
+            "gethomepage.dev/name": name,
+            "gethomepage.dev/group": "Group",
+            "gethomepage.dev/href": f"http://{host}",
+        }},
+        "spec": {"routes": [{
+            "match": f"Host(`{host}`)",
+            "middlewares": [{"name": n, "namespace": "traefik"} for n in middlewares],
+        }]},
+    }
+
+
+def only_item(out):
+    items = [i for g in out["groups"] for i in g["items"]]
+    assert len(items) == 1, items
+    return items[0]
+
+
+def test_nav_only_middleware_is_not_themed():
+    """catalyst-nav adds the bar and leaves the app's own styling alone."""
+    out, _ = run({"items": [entry(["catalyst-nav"])]})
+    assert only_item(out)["themed"] is False
+
+
+def test_per_app_full_theme_is_themed():
+    out, _ = run({"items": [entry(["catalyst-sonarr"])]})
+    assert only_item(out)["themed"] is True
+
+
+def test_merged_nav_injector_is_not_themed():
+    """catalyst-nav-rum-grafana merges the bar with a RUM tag in ONE rewriteBody,
+    because chaining two is a silent no-op. Testing the exact string
+    "catalyst-nav" instead of a substring would dim every such merged app."""
+    out, _ = run({"items": [entry(["catalyst-nav-rum-grafana"])]})
+    assert only_item(out)["themed"] is False
+
+
+def test_a_hypothetical_catalyst_inject_middleware_would_wrongly_theme():
+    """THE REGRESSION THIS GUARDS. If anything ever mints a middleware named
+    catalyst-inject-<applet>, every route carrying it is classified as fully
+    restyled. This spec asserts the misclassification so the consequence is
+    visible and deliberate rather than discovered in the bar — and so a future
+    fix to the classifier has a failing test to flip."""
+    out, _ = run({"items": [entry(["catalyst-nav", "catalyst-inject-devoverlay"])]})
+    assert only_item(out)["themed"] is True, (
+        "if this now reports False the classifier was fixed — invert this spec"
+    )
+
+
+def test_shared_middlewares_alone_do_not_make_an_app_injected():
+    """compress/accept-encoding/asset-cache ride along inside every chain, so
+    counting them would make `injected` tautologically true."""
+    out, _ = run({"items": [entry(["catalyst-compress", "catalyst-asset-cache"])]})
+    assert out["groups"] == []
+
+
+def test_an_app_with_no_catalyst_middleware_is_not_in_the_bar():
+    out, _ = run({"items": [entry(["authentik"])]})
+    assert out["groups"] == []
