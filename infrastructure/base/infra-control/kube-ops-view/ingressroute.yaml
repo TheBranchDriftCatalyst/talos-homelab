@@ -21,7 +21,18 @@ spec:
     - match: Host(`kube-ops-view.talos00`)
       kind: Rule
       middlewares:
-        - name: authentik
+        # MIGRATED to the dedicated *.talos00 outpost (TALOS-22nn stage 1), so
+        # this app's login stays on the LAN (https://auth.talos00) instead of
+        # round-tripping out to https://auth.knowledgedump.space.
+        #
+        # PAIRED EDIT, NOT STANDALONE: this needs the priority-2000 callback
+        # route in infrastructure/base/authentik-lan-outpost/app-callbacks.yaml,
+        # because authentik-outpost-priv sends EVERY *.talos00
+        # /outpost.goauthentik.io/ path to the embedded outpost at priority 1000.
+        # Without it the auth check and the callback are answered by two
+        # different outposts advertising different browser hosts, and the flow
+        # 400s or loops. Revert both or neither.
+        - name: authentik-lan
           namespace: authentik
         # Consolidated catalyst navbar. Last in the chain so auth runs first and the
         # body injector only ever rewrites an already-authorised response.

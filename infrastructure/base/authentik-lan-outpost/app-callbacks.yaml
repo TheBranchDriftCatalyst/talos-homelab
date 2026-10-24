@@ -1,0 +1,72 @@
+---
+# Per-host /outpost.goauthentik.io/ routes for the apps MIGRATED to the LAN
+# outpost (TALOS-22nn, stage 1). One route per migrated app, added at the same
+# time as that app's middleware is switched to `authentik-lan`.
+#
+# ================== WHY THIS FILE IS LOAD-BEARING, NOT TIDY-UP ==============
+# `authentik-outpost-priv` (infrastructure/base/authentik/ingressroute.yaml)
+# matches
+#
+#   HostRegexp(`^[a-z0-9.-]+\.talos00$`) && PathPrefix(`/outpost.goauthentik.io/`)
+#
+# at priority 1000 and sends it to authentik-server:80 — i.e. to the EMBEDDED
+# outpost. That is every *.talos00 host, including any app whose forward-auth
+# middleware has been repointed at `authentik-lan`.
+#
+# Switch an app's middleware WITHOUT a route here and the two halves of its
+# login disagree: the auth check is answered by talos00-outpost (which sends the
+# browser to https://auth.talos00) while the callback is answered by the
+# embedded outpost (which advertises https://auth.knowledgedump.space). The
+# outpost that receives the callback never issued that state, so the flow either
+# 400s or loops — and it looks exactly like the new middleware is broken, which
+# is the wrong thing to go debugging.
+#
+# So each migrated app needs TWO edits, and they are a pair:
+#   (a) its IngressRoute middleware ref:  authentik -> authentik-lan
+#   (b) an entry here
+#
+# PRIORITY 2000 beats authentik-outpost-priv's 1000, so the specific host wins
+# over the catch-all while every UNMIGRATED host keeps landing on the embedded
+# outpost untouched. This is the same mechanism amberdark already uses
+# (`amberdark-outpost-callbacks`, priority 1000 over nothing).
+#
+# WHY ONE OBJECT PER APP rather than one HostRegexp covering *.talos00: a
+# priority-1000-or-higher regex here would move ALL 60 apps' callbacks in a
+# single apply, which is precisely the fleet-wide cutover stage 1 exists to
+# avoid. Stage 3 may collapse these into one object; until then, migrating an
+# app is adding a block below and rolling it back is deleting it.
+#
+# websecure ONLY. Never add `web`: Kyverno's ingressroute-tls-default injects
+# `tls: {}` into any websecure IngressRoute, which makes the ROUTER TLS-only, so
+# a combined web+websecure object silently 404s on HTTP — and a dedicated
+# policy, ingressroute-no-combined-entrypoints, refuses it outright. No `tls:`
+# stanza for the same reason: the policy fills it in (verified on the sibling
+# authentik-local-websecure route). These live in ns `authentik`, which Kyverno
+# CAN mutate — unlike kube-system, where hubble has to hand-write its own tls.
+#
+# ROLLBACK (per app): delete that app's block here and revert its middleware ref
+# to `authentik`. The embedded outpost still holds all 60 providers and is
+# unmodified, so the old path resumes immediately.
+#
+# ---------------------------------------------------------------------------
+# kube-ops-view — stage 1, app 1 of 3. Admin-only cluster visualiser, no data
+# path, so a failed login costs nothing but a rollback.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kube-ops-view-outpost-lan
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+    app.kubernetes.io/component: callback-route
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`kube-ops-view.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)
+      kind: Rule
+      priority: 2000
+      services:
+        - name: talos00-outpost
+          port: 9000
