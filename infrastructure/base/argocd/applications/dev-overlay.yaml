@@ -111,10 +111,17 @@ spec:
       managedFieldsManagers:
         - manager
 
-    # The Crossplane claim's status is written by the composition on every
-    # reconcile; that is its job, not drift.
+    # The Crossplane claims' status is written by their compositions on every
+    # reconcile; that is their job, not drift. BOTH composite kinds need an
+    # entry — a missing one does not fail anything, it just parks the app at
+    # permanently OutOfSync, and a red that is always red is a red nobody
+    # investigates (the same trap as the ESO nullBytePolicy above).
     - group: db.catalyst.io
       kind: CatalystCNPGAppDB
+      jsonPointers:
+        - /status
+    - group: net.catalyst.io
+      kind: CatalystInjectedApplet
       jsonPointers:
         - /status
 # ═══════════════════════════════════════════════════════════════════════════════
