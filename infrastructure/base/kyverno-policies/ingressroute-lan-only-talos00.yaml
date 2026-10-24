@@ -1,0 +1,216 @@
+---
+# Default `lan-only` onto every INTERNAL (*.talos00) IngressRoute route.
+#
+# WHY THIS EXISTS (TALOS-a8vo.4). Traefik routes on the `Host:` header regardless of
+# entrypoint, and the WAN origin IP is published at the knowledgedump.space apex. So an
+# off-net attacker who sends `Host: grafana.talos00` to `origin:443` is routed straight to
+# Grafana — every internal *.talos00 service was WAN-reachable by Host-spoof. An external
+# red-team sweep (2026-10-24) measured it: of 208 literal-Host talos00 routes, the ones
+# behind only `catalyst-nav` (injection, not auth) served their app from genuine off-net.
+#
+# This is the DRY, automatic form of the fix: instead of hand-adding `lan-only` to ~168
+# routes (and every future one), a single mutate adds it to any route whose Host is literally
+# *.talos00 and which does not already carry it. `lan-only` (traefik ns) gates by source IP
+# (10/8 + 172.16/12 + 192.168/16 + loopback), so LAN browsers, node image-pulls and
+# in-cluster (pod-CIDR) callers are unaffected; only genuine off-net is blocked. It is
+# prepended FIRST so it runs before forward-auth / body-injection in the chain.
+#
+# WHY NOT the dedicated weblan/websecurelan entrypoints (docs/.../p0-4-lan-entrypoint-design.md):
+# that design moves internal routes to :8443, but :8443 is a node hostPort NOT on the LB VIP,
+# so `https://grafana.talos00` (VIP :443) would stop resolving for LAN browsers — an unsolved
+# access gap that is why 0 routes ever migrated. Per-route `lan-only` on :443 keeps the URL
+# people use and closes the same hole. (Option C, chosen 2026-10-24.)
+#
+# ---------------------------------------------------------------------------------------
+# SCOPE — four preconditions, each load-bearing. Proven against the live route set (208 in
+# scope) before landing:
+#   1. match contains 'talos00'            — internal only
+#   2. match does NOT contain 'knowledgedump' / 3. 'amberdark' — never touch a public route,
+#        even a mixed-domain `||` route that happens to also list a talos00 host
+#   4. match does NOT contain 'HostRegexp' — THE LANDMINE GUARD. The authentik outpost
+#        callback route uses HostRegexp(`^...talos00$` || `^...priv.knowledgedump.space$`);
+#        lan-only on it would 403 the PUBLIC priv.knowledgedump.space forward-auth flow for
+#        every app. Literal `Host(` routes are the only ones mutated; the 7 regex talos00
+#        routes are left alone (the themepark asset route already carries lan-only; the
+#        outpost callback must not). Excluding all HostRegexp never breaks public and leaves
+#        no internal route ungated that a measured spoof could reach.
+#
+# ADD-IF-ABSENT: a route already carrying `lan-only` is skipped (the 40 that do — incl. the
+# five hand-set in TALOS-a8vo.4 and the 35 already gated — see zero churn). Those literals
+# can be stripped later and this policy re-adds on Flux re-apply (land-policy-then-strip;
+# see ingressroute-tls-default.yaml for the same ordering rule).
+#
+# WHY patchesJson6902 AND NOT a strategic-merge `+(middlewares)` anchor: `middlewares` is a
+# bare list with no x-kubernetes-list-map-key, so SMP REPLACES it rather than appending, and
+# an SMP anchor cannot express "prepend if absent" on a keyless list. JSON6902 is the only
+# mechanism that both appends to an existing list (index 0 = prepend) and creates one when
+# the route has no `middlewares` key at all (25 routes do not). Two cases => two rule pairs.
+#
+# mutateExisting (background) retrofits the 208 live routes on policy apply; the admission
+# rules cover every future CREATE/UPDATE (Flux re-apply). The background-controller already
+# holds traefik.io/ingressroutes update/patch (granted by kyverno:background:homepage-instance),
+# so this policy needs NO new RBAC. All 208 in-scope routes are Flux-managed (0 ArgoCD), so
+# the injected field is invisible to reconciliation and shows as no drift
+# (kyverno-mutation-invisible-to-flux-ssa) — safe. failurePolicy Ignore: a wedged webhook
+# must never block an IngressRoute from applying.
+# ---------------------------------------------------------------------------------------
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: ingressroute-lan-only-talos00
+  labels:
+    app.kubernetes.io/part-of: kyverno
+  annotations:
+    policies.kyverno.io/title: Default lan-only on internal (*.talos00) IngressRoutes
+    policies.kyverno.io/category: Traefik
+    policies.kyverno.io/subject: IngressRoute
+    policies.kyverno.io/description: >-
+      Prepends the lan-only middleware to any traefik.io IngressRoute route whose match is a
+      literal Host(*.talos00) and does not already carry it, closing the Host-spoof WAN
+      exposure of internal services. Public (knowledgedump.space/amberdark.net) and
+      HostRegexp routes — including the shared authentik outpost callback — are never touched.
+      Add-if-absent; retrofits existing routes via the background controller and covers new
+      ones at admission.
+spec:
+  failurePolicy: Ignore
+  admission: true
+  background: true
+  rules:
+    # ── ADMISSION: new/updated routes ──────────────────────────────────────────────
+    - name: admission-prepend-lan-only
+      match:
+        any:
+          - resources:
+              kinds:
+                - traefik.io/v1alpha1/IngressRoute
+      mutate:
+        foreach:
+          - list: "request.object.spec.routes"
+            preconditions:
+              all:
+                - key: "{{ contains(element.match, 'talos00') }}"
+                  operator: Equals
+                  value: true
+                - key: "{{ contains(element.match, 'knowledgedump') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(element.match, 'amberdark') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(element.match, 'HostRegexp') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(keys(element), 'middlewares') }}"
+                  operator: Equals
+                  value: true
+                - key: "{{ contains(element.middlewares[].name || to_array('_none'), 'lan-only') }}"
+                  operator: Equals
+                  value: false
+            patchesJson6902: |-
+              - op: add
+                path: "/spec/routes/{{ elementIndex }}/middlewares/0"
+                value: {name: lan-only, namespace: traefik}
+    - name: admission-add-lan-only-list
+      match:
+        any:
+          - resources:
+              kinds:
+                - traefik.io/v1alpha1/IngressRoute
+      mutate:
+        foreach:
+          - list: "request.object.spec.routes"
+            preconditions:
+              all:
+                - key: "{{ contains(element.match, 'talos00') }}"
+                  operator: Equals
+                  value: true
+                - key: "{{ contains(element.match, 'knowledgedump') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(element.match, 'amberdark') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(element.match, 'HostRegexp') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(keys(element), 'middlewares') }}"
+                  operator: Equals
+                  value: false
+            patchesJson6902: |-
+              - op: add
+                path: "/spec/routes/{{ elementIndex }}/middlewares"
+                value:
+                  - {name: lan-only, namespace: traefik}
+    # ── BACKGROUND: one-time retrofit of the live fleet ────────────────────────────
+    - name: existing-prepend-lan-only
+      match:
+        any:
+          - resources:
+              kinds:
+                - traefik.io/v1alpha1/IngressRoute
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+        foreach:
+          - list: "target.spec.routes"
+            preconditions:
+              all:
+                - key: "{{ contains(element.match, 'talos00') }}"
+                  operator: Equals
+                  value: true
+                - key: "{{ contains(element.match, 'knowledgedump') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(element.match, 'amberdark') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(element.match, 'HostRegexp') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(keys(element), 'middlewares') }}"
+                  operator: Equals
+                  value: true
+                - key: "{{ contains(element.middlewares[].name || to_array('_none'), 'lan-only') }}"
+                  operator: Equals
+                  value: false
+            patchesJson6902: |-
+              - op: add
+                path: "/spec/routes/{{ elementIndex }}/middlewares/0"
+                value: {name: lan-only, namespace: traefik}
+    - name: existing-add-lan-only-list
+      match:
+        any:
+          - resources:
+              kinds:
+                - traefik.io/v1alpha1/IngressRoute
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: traefik.io/v1alpha1
+            kind: IngressRoute
+        foreach:
+          - list: "target.spec.routes"
+            preconditions:
+              all:
+                - key: "{{ contains(element.match, 'talos00') }}"
+                  operator: Equals
+                  value: true
+                - key: "{{ contains(element.match, 'knowledgedump') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(element.match, 'amberdark') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(element.match, 'HostRegexp') }}"
+                  operator: Equals
+                  value: false
+                - key: "{{ contains(keys(element), 'middlewares') }}"
+                  operator: Equals
+                  value: false
+            patchesJson6902: |-
+              - op: add
+                path: "/spec/routes/{{ elementIndex }}/middlewares"
+                value:
+                  - {name: lan-only, namespace: traefik}
