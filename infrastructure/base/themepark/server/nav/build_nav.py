@@ -11,9 +11,18 @@ Every field is derived from annotations that already exist in this cluster:
     gethomepage.dev/weight    sort order within the group
     gethomepage.dev/icon      reserved; not rendered yet
 
-The host comes from the route's own Host(`...`) rule, and "themed" is true when
-any route on that object references a middleware named theme-*. Nothing is
-hardcoded, so the nav tracks the cluster automatically.
+The host comes from the route's own Host(`...`) rule. "themed" is true when any
+route on the object references a middleware whose name starts with `catalyst-`
+and does NOT contain `nav` -- a per-app FULL theme, as opposed to catalyst-nav,
+which adds the bar and leaves the app's own styling alone. See the comment at
+the classifier itself; tests/nav/test_build_nav.py pins the behaviour, including
+the merged-injector case the substring test exists for.
+
+(This paragraph said `theme-*` until 2026-10-24. No middleware has ever been
+named that, so a reader checking the docstring against the cluster would have
+concluded the nav was broken.)
+
+Nothing is hardcoded, so the nav tracks the cluster automatically.
 
 PER-APP BAR BEHAVIOUR is carried the same way, on the app's own route, so it
 lives next to the annotations that already describe that app rather than in a

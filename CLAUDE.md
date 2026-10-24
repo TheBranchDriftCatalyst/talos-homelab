@@ -268,7 +268,7 @@ task etcd-status
 
 ## Architecture & Dual GitOps Pattern
 
-**READ FIRST:** `docs/DUAL-GITOPS.md` - Complete dual GitOps documentation
+**READ FIRST:** `docs/02-architecture/dual-gitops.md` - Complete dual GitOps documentation
 
 ### Two Distinct Patterns
 
@@ -622,8 +622,7 @@ task provision             # Rebuild from scratch
 ## Documentation References
 
 - `README.md` - Quick start and cluster overview
-- `docs/DUAL-GITOPS.md` - **CRITICAL** - Dual GitOps architecture
-- `docs/catalyst-ui-deployment.md` - Application deployment example
+- `docs/02-architecture/dual-gitops.md` - **CRITICAL** - Dual GitOps architecture
 - `docs/02-architecture/traefik.md` - Ingress configuration
 - `docs/08-monitoring/observability.md` - Monitoring and logging stack
 - `docs/01-getting-started/quickstart.md` - Quick reference guide

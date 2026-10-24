@@ -105,7 +105,23 @@ tasks:
       - task: lint:format
       - task: lint:secrets
       - task: lint:theme-drift
+      - task: lint:token-parity
       - echo "✅ All linters passed"
+
+  lint:token-parity:
+    desc: Fail if catalyst-themepark's palette has drifted from catalyst-ui's
+    # catalyst-ui is the design system of record; catalyst-themepark hand-copies
+    # its palette because it ships raw injected CSS and cannot consume a React
+    # package. A hand-copy guarded only by a comment drifts -- and this one did,
+    # for months: --neon-gold held catalyst-ui's --neon-YELLOW, so every rule
+    # using that token painted a different colour from the same name across ~60
+    # injected apps, while the guarding comment asserted the two were in sync.
+    #
+    # Skipped, not failed, when the sibling is absent -- same rule as
+    # lint:theme-drift, so this repo stays lintable alone. Set
+    # CATALYST_SIBLINGS_REQUIRED=1 to make a missing sibling a failure instead.
+    cmds:
+      - python3 dev/check-token-parity.py
 
   lint:theme-drift:
     desc: Fail if the vendored theme assets have drifted from catalyst-themepark

@@ -200,6 +200,29 @@ pre-push:
         - merge
         - rebase
 
+    # Cross-repo parity with the sibling checkouts.
+    #
+    # WHY PRE-PUSH AND NOT PRE-COMMIT: both read sibling repos that may be mid-edit
+    # locally, and both are cheap but not free. Push is the point at which drift
+    # starts affecting anyone else.
+    #
+    # THE WHOLE REASON THESE ARE WIRED AT ALL: until now the only mechanical
+    # cross-repo check in the graph (theme-drift) ran nowhere — not in lefthook, not
+    # in CI — so it only ran when a human typed it. It was RED on main for a day
+    # before anyone noticed, which is how a settings-gear change written directly
+    # into the vendored copy survived.
+    #
+    # Both SKIP when the sibling is not checked out, so this repo stays pushable on
+    # its own. That silence is itself a hazard, so CATALYST_SIBLINGS_REQUIRED=1 turns
+    # a missing sibling into a failure — set it wherever the siblings are guaranteed.
+    theme-drift:
+      tags: quality
+      run: task dev:lint:theme-drift
+
+    token-parity:
+      tags: quality
+      run: task dev:lint:token-parity
+
     # Check for TODO/FIXME in infrastructure code
     check-todos:
       tags: quality
