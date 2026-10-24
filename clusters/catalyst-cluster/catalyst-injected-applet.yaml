@@ -1,0 +1,22 @@
+---
+# The CatalystInjectedApplet XRD + Composition. Composes in-cluster Traefik IngressRoutes
+# via provider-kubernetes, so — like catalyst-cnpg-appdb and catalyst-websecure-ingress —
+# it depends on provider-kubernetes (owned by the crossplane-demo Kustomization) and is
+# kept separate from the AWS providers.
+#
+# NO postBuild.substituteFrom, matching catalyst-websecure-ingress. That is load-bearing
+# here, not incidental: the Composition carries `HostRegexp(^[a-z0-9-]+\.talos00$)` and the
+# XRD carries anchored regex patterns, so the manifests are full of literal `$`. Flux's
+# strict envsubst would be reading those, and a single mis-substitution fails the WHOLE
+# Kustomization rather than one resource. Nothing in this directory is cluster-templated,
+# so the safe thing is to not run the substitution at all.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: catalyst-injected-applet, namespace: flux-system}
+spec:
+  interval: 30m
+  path: ./infrastructure/base/catalyst-injected-applet
+  prune: true
+  sourceRef: {kind: GitRepository, name: flux-system}
+  dependsOn: [{name: crossplane-demo}]
+  timeout: 5m

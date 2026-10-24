@@ -1,0 +1,204 @@
+---
+# CatalystInjectedApplet — the house abstraction for "register an injected applet".
+#
+# An APPLET is a separately-built, separately-deployed bundle that docks into the catalyst
+# navbar already injected into ~40 app pages. It is not an app with a hostname: it has no
+# page to visit, no Host() rule, no SSO login and no dashboard tile. One CR yields the
+# three things an applet actually needs, all of which dev-overlay hand-wrote first:
+#   - traefik.io/IngressRoute (websecure)  same-origin asset + API routes, TLS
+#   - traefik.io/IngressRoute (web)        the plain-:80 twin (NOT a redirect, see below)
+#   - the catalyst.nav/applet-* annotations on BOTH, which is how the bundle is discovered
+#
+# WHY THIS EXISTS. dev-overlay's hand-written ingressroute.yaml carried ~120 lines of
+# comment for ~60 lines of YAML, and every one of those comments records a measured trap.
+# The second applet should not have to re-derive them: of the eight constraints below,
+# five were each found by a debugging session and three are load-bearing for security.
+# An abstraction is the only place a constraint can be enforced rather than remembered.
+#
+# ── WHAT THIS DELIBERATELY DOES NOT DO ────────────────────────────────────────────────
+#
+# IT MINTS NO TRAEFIK MIDDLEWARE, and there is no field to make it. Two independent
+# reasons, either one sufficient:
+#   - A second `rewriteBody` chained onto the ~40 routes that already carry
+#     `catalyst-nav` SILENTLY NO-OPS. The entire applet-loader design — a bundle that
+#     rides inside the EXISTING nav injection — exists because of this. An applet that
+#     mints its own injector reintroduces the bug the loader was built to avoid.
+#   - themepark's build_nav.py computes
+#       themed = any(n.startswith("catalyst-") and "nav" not in n)
+#     over a route's middleware names. A middleware named `catalyst-inject-<applet>`
+#     would flip `themed` true for EVERY route carrying it, dimming those nav entries
+#     and promising a restyled destination that is not restyled. If a merged injector is
+#     ever genuinely needed, its name must start with `catalyst` AND contain `nav`.
+#
+# IT EXPOSES NO `middlewares` FIELD. Unlike the sibling CatalystWebSecureIngress, the
+# chain here is fixed at `[lan-only]`. A configurable chain is an invitation to add
+# exactly the four things that must never appear on an applet route:
+#   - authentik / any forward-auth: a browser fetches the bundle as a subresource with
+#     no session and cannot follow a 302 to SSO. A login page served where JavaScript
+#     was expected is a parse error in SOMEONE ELSE'S application, logged in a console
+#     nobody reads. Access control here is lan-only + NetworkPolicy, not auth.
+#   - catalyst-nav: it is a rewriteBody, and attaching one to a JSON API would rewrite
+#     response bodies the applet parses.
+#   - stripPrefix: applet servers are prefix-aware and register their routes at their
+#     real public mount. Two prefixes would need two strip middlewares, and the bundle
+#     has to emit its real public path anyway.
+#   - gethomepage.dev/*: those make a nav ENTRY. An applet has no page to visit.
+#     Applet discovery is a SEPARATE pass in build_nav.py over the same IngressRoute
+#     list, precisely so an applet needs no homepage annotations to be found.
+#
+# IT MINTS NO NetworkPolicy. The sibling does, because it exposes apps whose policy was
+# being silently omitted. An applet is a backend the applet repo already owns and already
+# locks down (dev-overlay: k8s/base/networkpolicy.yaml), and a second composed policy
+# would be a second selector over the same pods with no owner.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: catalystinjectedapplets.net.catalyst.io
+spec:
+  group: net.catalyst.io
+  scope: Namespaced
+  names:
+    kind: CatalystInjectedApplet
+    plural: catalystinjectedapplets
+  defaultCompositionRef:
+    name: catalyst-injected-applet
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [name, backend]
+              properties:
+                name:
+                  type: string
+                  pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+                  maxLength: 40
+                  description: >-
+                    The applet's identity. Drives BOTH public mounts —
+                    /catalyst/applets/<name>/ and /catalyst/api/<name>/ — and the
+                    catalyst.nav/applet-name annotation.
+
+                    DELIBERATELY NOT derived from metadata.name. These two paths are a
+                    public contract: the bundle emits them, catalyst-nav.js fetches them,
+                    and the applet's own HTTP mux registers them. Deriving them from the
+                    Kubernetes object name would mean renaming the XR silently relocates
+                    a URL that three other things hardcode.
+
+                    The pattern is DNS-label shaped on purpose: the value lands inside a
+                    Traefik PathPrefix and inside build_nav.py's APPLET_SRC_RULES, which
+                    reject `..`, `%`, `\` and anything outside /catalyst/. Rejecting those
+                    characters at admission turns a silent client-side drop into a loud
+                    CR validation error.
+                backend:
+                  type: object
+                  required: [service]
+                  properties:
+                    service:
+                      type: string
+                      description: >-
+                        Name of the Service both routes point at, in the XR's own
+                        namespace. REQUIRED rather than defaulted to `name`: a CRD default
+                        cannot be derived from another field, and a wrong-by-default
+                        Service name produces a 404 Traefik reports as a healthy route.
+                    port:
+                      type: integer
+                      default: 8080
+                      description: >-
+                        Service port. MUST be numeric. Traefik's Kubernetes provider reads
+                        a STRING port as a Service port NAME, so quoting this silently
+                        changes its meaning.
+                bundle:
+                  type: string
+                  pattern: '^[A-Za-z0-9]([A-Za-z0-9._-]*)\.js$'
+                  maxLength: 60
+                  description: >-
+                    Filename of the bundle entrypoint served under
+                    /catalyst/applets/<name>/. Defaults to <name>.js — set this only when
+                    the applet serves its entrypoint under a different filename.
+
+                    The pattern enforces, at admission, the rules build_nav.py and
+                    catalyst-nav.js both apply at runtime (APPLET_SRC_RULES): no `/`, no
+                    `..`, no `%`, no `\`, no scheme. A violation there is dropped with a
+                    line in a sidecar log; a violation here is a rejected CR.
+
+                    The composed annotation always stays under /catalyst/, which is the
+                    one prefix gated by HostRegexp + lan-only. Both the server-side and
+                    client-side loaders refuse anything outside it.
+                api:
+                  type: object
+                  description: >-
+                    Renders the same-origin JSON API route at /catalyst/api/<name>/.
+
+                    PRESENCE IS THE SWITCH. Include the block (`api: {}` is enough) to get
+                    the API route; OMIT it entirely for a static-only applet that ships a
+                    bundle and no backend API.
+
+                    WHY PRESENCE AND NOT `enabled: true|false`. This composition renders
+                    through function-patch-and-transform, whose ONLY conditional is
+                    "skip the patch when its source field path is absent"
+                    (function-patch-and-transform v0.10.9, fn.go:221). A boolean with
+                    `default: true` is materialised by the API server on every CR, so it
+                    is never absent, so `enabled: false` could not be honoured — it would
+                    render the route anyway and report success. A flag that cannot be
+                    turned off is worse than no flag, so the switch is the one thing P&T
+                    can actually act on.
+                  properties:
+                    segment:
+                      type: string
+                      pattern: '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$'
+                      default: api
+                      maxLength: 20
+                      description: >-
+                        Path segment under /catalyst/ carrying the API, i.e.
+                        /catalyst/<segment>/<name>/. `api` unless the applet's HTTP mux
+                        mounts somewhere else.
+
+                        This field is also what makes the whole API route skippable: it
+                        defaults INSIDE the `api` object, and CRD defaulting only fills in
+                        a nested default when its parent object exists. So it resolves to
+                        `api` whenever the block is present and is absent whenever it is
+                        not — which is exactly the signal the composition's gate reads.
+                priority:
+                  type: integer
+                  default: 10100
+                  description: >-
+                    Traefik router priority for every composed route.
+
+                    10100, NOT 10000, AND NOT UNSET. Three facts stack:
+
+                    (1) Unset, Traefik derives priority from RULE LENGTH, and every app's
+                    `Host(...)` catch-all is longer than a PathPrefix rule — so the app
+                    swallows /catalyst/ and serves it itself. That failure is per-host and
+                    nondeterministic: fine on grafana.talos00, 404 on sonarr.talos00.
+
+                    (2) themepark's asset route already matches
+                    `PathPrefix(/catalyst/) && HostRegexp(^[a-z0-9-]+\.talos00$)` at
+                    priority 10000 on BOTH entrypoints, and every /catalyst/ sub-prefix
+                    sits underneath it. Measured 2026-10-23:
+                    `curl -si http://grafana.talos00/catalyst/applets/nope.js` answers 404
+                    from nginx, i.e. themepark owns that prefix today.
+
+                    (3) Traefik sorts routers by priority with NO secondary key, so two
+                    matching routers at EQUAL priority is a coin flip re-tossed on every
+                    configuration reload — precisely the nondeterminism the 10000
+                    convention exists to prevent.
+
+                    10100 beats themepark deterministically and still beats every app's
+                    catch-all. Measured with 10100: /catalyst/api/dev-overlay/ answers
+                    from the applet while catalyst-nav.js and unknown /catalyst/ paths
+                    still answer from nginx. The +100 step follows hyperdx-rum/route.yaml.
+            status:
+              type: object
+              properties:
+                appletSrc:
+                  type: string
+                  description: >-
+                    The same-origin path build_nav.py will publish as this applet's
+                    bundle. Mirrors the catalyst.nav/applet-src annotation on the composed
+                    websecure route, so the one value that decides whether the applet ever
+                    loads is readable from the CR instead of only from the rendered route.

@@ -1,0 +1,321 @@
+---
+# Composition for CatalystInjectedApplet. Renders TWO objects through provider-kubernetes
+# (kubernetes.m.crossplane.io/v1alpha1 Object — the NAMESPACED group, required because a
+# v2 namespaced composite may only compose namespaced resources):
+#   - the websecure IngressRoute (TLS, asset route + optional API route)
+#   - the web IngressRoute       (plain :80, the same two routes, NO redirect)
+#
+# Every composed resource carries catalyst.io/composition + catalyst.io/managed-by so the
+# adoption dashboard counts it (and can spot hand-written look-alikes that lack the label).
+#
+# ── TWO OBJECTS, NEVER ONE WITH BOTH ENTRYPOINTS ──────────────────────────────────────
+# Two Kyverno ClusterPolicies cover this, both probed live on 2026-10-23:
+#   ingressroute-no-combined-entrypoints (validate, Enforce) REJECTS a single IngressRoute
+#     listing web and websecure:
+#       "...blocked due to the following policies ingressroute-no-combined-entrypoints:
+#        no-web-and-websecure-on-one-router"
+#   ingressroute-tls-default (mutate) adds `tls: {}` when entryPoints contains websecure
+#     and tls is absent. That is WHY the validate policy exists: a combined router would
+#     be mutated TLS-only at admission and the plaintext route would silently 404, never
+#     showing as GitOps drift.
+# The websecure base therefore declares `tls: {}` EXPLICITLY. Omitting it works too, but
+# then the live object differs from git by a field nothing in this repo mentions.
+#
+# ── THE :80 TWIN IS NOT A REDIRECT ────────────────────────────────────────────────────
+# This is the one thing that is easy to "fix" into a bug, so there is no field for it.
+# Plex and Jellyfin are served over plain HTTP as well as HTTPS. An HTTPS-only origin for
+# the bundle and the API makes both MIXED CONTENT on those pages, and browsers drop
+# mixed-content subresources SILENTLY — the applet would simply never appear, with nothing
+# in any log to say why. Same reasoning as themepark/asset-route.yaml and alloy's
+# faro-route.yaml, both of which also omit redirect-https for this exact reason.
+#
+# ── BOTH GATES, lan-only FIRST ────────────────────────────────────────────────────────
+# Every route carries `HostRegexp(^[a-z0-9-]+\.talos00$)` AND the `lan-only` middleware,
+# in that order, because each closes the other's bypass:
+#   - HostRegexp alone is defeated by a client-supplied `Host:` header against the WAN IP
+#     — measured at 200 against themepark's asset route with the full manifest. This exact
+#     pairing exists because of a CONFIRMED PUBLIC DISCLOSURE; the writeup is
+#     infrastructure/base/themepark/asset-route.yaml.
+#   - lan-only closes that, because the source address is the one thing a client cannot
+#     choose. It is FIRST in the chain so a rejection happens before any other work.
+# The host regexp is hardcoded here rather than exposed in the XRD: it is the trust
+# boundary, not a tuning knob, and it is identical in every route in this cluster.
+#
+# NEVER verify the gate with `curl --resolve` from the LAN. Inbound WAN is DNAT-only so
+# the real source survives, but HAIRPINNED LAN traffic is SNAT'd — so a LAN test passes
+# lan-only unconditionally and reads as "the gate is broken". Test from cellular, or
+# assert on Traefik's own logged ClientHost.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: catalyst-injected-applet
+  labels:
+    catalyst.io/provider: kubernetes
+spec:
+  compositeTypeRef:
+    apiVersion: net.catalyst.io/v1alpha1
+    kind: CatalystInjectedApplet
+  mode: Pipeline
+  pipeline:
+    - step: render
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+
+          # ---- 1. websecure IngressRoute (TLS) -----------------------------------
+          - name: ir-websecure
+            base:
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: traefik.io/v1alpha1
+                    kind: IngressRoute
+                    metadata:
+                      labels:
+                        catalyst.io/composition: catalyst-injected-applet
+                        catalyst.io/managed-by: crossplane
+                    spec:
+                      entryPoints: [websecure]
+                      # routes[0] is the asset route and is always rendered.
+                      # routes[1] is the API route and is APPENDED by the gated patch
+                      # below — it is absent from this base on purpose, because a base
+                      # entry can never be removed by a patch.
+                      routes:
+                        - kind: Rule
+                          match: "PLACEHOLDER"
+                          priority: 10100
+                          middlewares:
+                            # FIRST: reject before any work happens.
+                            - name: lan-only
+                              namespace: traefik
+                          services:
+                            - name: PLACEHOLDER
+                              port: 8080
+                      # Explicit, matching the hand-written routes this replaces, so the
+                      # live object does not differ from git by a Kyverno-injected field.
+                      tls: {}
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-ir-websecure"}}]
+              # The IngressRoute name is derived from spec.name, not metadata.name, and
+              # uses an `-applet` suffix rather than dev-overlay's historical `-catalyst`.
+              # That is deliberate: a DIFFERENT name from the hand-written objects means
+              # the migration is an additive coexistence (two routers, identical rules,
+              # same Service, same bytes) rather than an ownership fight between ArgoCD's
+              # pruner and provider-kubernetes over one object name.
+              - fromFieldPath: spec.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-applet"}}]
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - fromFieldPath: spec.name
+                toFieldPath: spec.forProvider.manifest.metadata.labels["app.kubernetes.io/name"]
+
+              # ---- the asset route -------------------------------------------------
+              - fromFieldPath: spec.name
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].match
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: 'PathPrefix(`/catalyst/applets/%s/`) && HostRegexp(`^[a-z0-9-]+\.talos00$`)'
+              - fromFieldPath: spec.priority
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].priority
+              - fromFieldPath: spec.backend.service
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].services[0].name
+              - fromFieldPath: spec.backend.port
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].services[0].port
+
+              # ---- the API route, appended only when spec.api is present -----------
+              # ONE patch writes the whole route object, because that is the only shape
+              # P&T can make conditional. The mechanics, all three load-bearing:
+              #
+              #   - A combine patch is SKIPPED when ANY of its variables resolves to a
+              #     missing field path (function-patch-and-transform v0.10.9:
+              #     patches.go:163 returns the fieldpath not-found error, fn.go:221 treats
+              #     it as a skip). spec.api.segment exists only when the `api` block is
+              #     present, so omitting the block omits the route.
+              #   - It writes routes[1] WHOLESALE rather than field-by-field, because a
+              #     per-field patch to routes[1].match would still create routes[1] on a
+              #     static-only applet. fieldpath grows an array by one, so index 1 on a
+              #     one-element array appends.
+              #   - The JSON -> object conversion is P&T's string/object/json pair
+              #     (transforms.go:563). Numbers come back as float64 and re-serialise as
+              #     integers, which is what both `priority` (strict integer) and
+              #     `services[].port` (int-or-string, where a STRING means a Service port
+              #     NAME) require.
+              #
+              # The route is byte-identical in shape to routes[0] apart from its prefix:
+              # same priority, same single lan-only middleware, same Service and port.
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: spec.api.segment
+                    - fromFieldPath: spec.name
+                    - fromFieldPath: spec.priority
+                    - fromFieldPath: spec.backend.service
+                    - fromFieldPath: spec.backend.port
+                  strategy: string
+                  string:
+                    # Folded across lines: YAML collapses each break to a single space,
+                    # and every break here is between JSON tokens where whitespace is
+                    # insignificant. Never break inside the "match" string value.
+                    fmt: '{"kind":"Rule",
+                      "match":"PathPrefix(`/catalyst/%s/%s/`) && HostRegexp(`^[a-z0-9-]+\\.talos00$`)",
+                      "priority":%v,
+                      "middlewares":[{"name":"lan-only","namespace":"traefik"}],
+                      "services":[{"name":"%s","port":%v}]}'
+                toFieldPath: spec.forProvider.manifest.spec.routes[1]
+                transforms:
+                  - type: convert
+                    convert: {toType: object, format: json}
+
+              # ---- discovery: HOW THE BUNDLE ACTUALLY REACHES A PAGE ---------------
+              # Without this pair the applet is fully deployed and completely unreachable.
+              # The nav's loader is driven by cfg.applets, which build_nav.py derives from
+              # catalyst.nav/applet-src. dev-overlay shipped the loader in M1 and the
+              # bundle in M2 while nothing emitted the manifest entry — neither side was
+              # wrong and the applet still never loaded. That is the failure this
+              # composite exists to make impossible.
+              #
+              # Emitted on BOTH IngressRoute objects. build_nav.py deduplicates by src, so
+              # annotating both advertises the applet exactly once; annotating only one
+              # would make the manifest depend on which entrypoint's route kubectl
+              # happened to list first.
+              #
+              # NOT gethomepage.dev/* — those make a nav ENTRY and an applet has no page
+              # to visit. Applet discovery is a separate pass over the same IngressRoute
+              # list for exactly this reason.
+              - fromFieldPath: spec.name
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["catalyst.nav/applet-name"]
+              # Derived default: /catalyst/applets/<name>/<name>.js. Combine with spec.name
+              # twice because a Format transform takes a single input and this needs two.
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: spec.name
+                    - fromFieldPath: spec.name
+                  strategy: string
+                  string:
+                    fmt: '/catalyst/applets/%s/%s.js'
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["catalyst.nav/applet-src"]
+              # Override, applied AFTER the derived default and skipped when spec.bundle is
+              # unset (same skip-on-missing-variable rule as the API route above). Patches
+              # run in declaration order, so the last one to write this annotation wins.
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: spec.name
+                    - fromFieldPath: spec.bundle
+                  strategy: string
+                  string:
+                    fmt: '/catalyst/applets/%s/%s'
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["catalyst.nav/applet-src"]
+
+              # Surface the one value that decides whether the applet ever loads.
+              - type: ToCompositeFieldPath
+                fromFieldPath: spec.forProvider.manifest.metadata.annotations["catalyst.nav/applet-src"]
+                toFieldPath: status.appletSrc
+
+          # ---- 2. web IngressRoute (plain :80, NOT a redirect) --------------------
+          - name: ir-web
+            base:
+              apiVersion: kubernetes.m.crossplane.io/v1alpha1
+              kind: Object
+              spec:
+                forProvider:
+                  manifest:
+                    apiVersion: traefik.io/v1alpha1
+                    kind: IngressRoute
+                    metadata:
+                      labels:
+                        catalyst.io/composition: catalyst-injected-applet
+                        catalyst.io/managed-by: crossplane
+                    spec:
+                      entryPoints: [web]
+                      # NO tls block and NO redirect-https middleware. See the header.
+                      routes:
+                        - kind: Rule
+                          match: "PLACEHOLDER"
+                          priority: 10100
+                          middlewares:
+                            - name: lan-only
+                              namespace: traefik
+                          services:
+                            - name: PLACEHOLDER
+                              port: 8080
+            patches:
+              - fromFieldPath: metadata.name
+                toFieldPath: metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-ir-web"}}]
+              - fromFieldPath: spec.name
+                toFieldPath: spec.forProvider.manifest.metadata.name
+                transforms: [{type: string, string: {type: Format, fmt: "%s-applet-http"}}]
+              - fromFieldPath: metadata.namespace
+                toFieldPath: spec.forProvider.manifest.metadata.namespace
+              - fromFieldPath: spec.name
+                toFieldPath: spec.forProvider.manifest.metadata.labels["app.kubernetes.io/name"]
+
+              - fromFieldPath: spec.name
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].match
+                transforms:
+                  - type: string
+                    string:
+                      type: Format
+                      fmt: 'PathPrefix(`/catalyst/applets/%s/`) && HostRegexp(`^[a-z0-9-]+\.talos00$`)'
+              - fromFieldPath: spec.priority
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].priority
+              - fromFieldPath: spec.backend.service
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].services[0].name
+              - fromFieldPath: spec.backend.port
+                toFieldPath: spec.forProvider.manifest.spec.routes[0].services[0].port
+
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: spec.api.segment
+                    - fromFieldPath: spec.name
+                    - fromFieldPath: spec.priority
+                    - fromFieldPath: spec.backend.service
+                    - fromFieldPath: spec.backend.port
+                  strategy: string
+                  string:
+                    # Folded across lines: YAML collapses each break to a single space,
+                    # and every break here is between JSON tokens where whitespace is
+                    # insignificant. Never break inside the "match" string value.
+                    fmt: '{"kind":"Rule",
+                      "match":"PathPrefix(`/catalyst/%s/%s/`) && HostRegexp(`^[a-z0-9-]+\\.talos00$`)",
+                      "priority":%v,
+                      "middlewares":[{"name":"lan-only","namespace":"traefik"}],
+                      "services":[{"name":"%s","port":%v}]}'
+                toFieldPath: spec.forProvider.manifest.spec.routes[1]
+                transforms:
+                  - type: convert
+                    convert: {toType: object, format: json}
+
+              - fromFieldPath: spec.name
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["catalyst.nav/applet-name"]
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: spec.name
+                    - fromFieldPath: spec.name
+                  strategy: string
+                  string:
+                    fmt: '/catalyst/applets/%s/%s.js'
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["catalyst.nav/applet-src"]
+              - type: CombineFromComposite
+                combine:
+                  variables:
+                    - fromFieldPath: spec.name
+                    - fromFieldPath: spec.bundle
+                  strategy: string
+                  string:
+                    fmt: '/catalyst/applets/%s/%s'
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["catalyst.nav/applet-src"]
