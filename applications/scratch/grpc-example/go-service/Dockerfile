@@ -1,5 +1,5 @@
 # Build stage - using Go 1.24 for latest grpc/protobuf support
-FROM golang:1.24-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 WORKDIR /app
 
@@ -28,7 +28,7 @@ RUN mkdir -p gen/echopb && \
 RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -o /grpc-server .
 
 # Runtime stage
-FROM alpine:3.19
+FROM alpine:3.24
 
 RUN apk add --no-cache ca-certificates
 
