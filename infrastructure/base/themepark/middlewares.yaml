@@ -218,6 +218,54 @@ spec:
       - name: catalyst-accept-encoding
       - name: catalyst-inject-dbgate
 ---
+# argocd is the SECOND full-theme app whose base stylesheet does not come from
+# the theme.park image (dbgate above was the first; theme.park's css/base/ holds
+# 58 apps and argocd is not among them either). The sheet that maps Argo CD's
+# DOM onto our variables is authored in workspace/catalyst-themepark
+# (src/app-argocd.css) and served from the same nginx at
+# /catalyst/css/catalyst-argocd.css. Injection shape identical to every app
+# here: the app's own sheet first, css/theme-options/catalyst.css second.
+#
+# Injecting at </head>: argocd's index.html emits a literal </head>, and the app
+# ships ALL of its CSS inside the JS bundle (style-loader), so the theme must be
+# in place before first paint or the page flashes stock white. Same choice as
+# dbgate and gitea, same reason.
+#
+# ONE rewriteBody for the whole chain -- the nav script and both stylesheets are
+# three `rewrites:` entries on this single middleware. Chaining a second
+# body-rewriting middleware behind the first is a SILENT no-op, which is why
+# every injector here is one object and never two.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-argocd
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/catalyst-argocd.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
+---
+# Named `catalyst-argocd`, not `catalyst-nav-argocd`. build_nav.py classifies a
+# route as themed with `n.startswith("catalyst-") and "nav" not in n`, so a name
+# containing "nav" would dim this app's entry in the cross-app bar and promise a
+# destination that keeps its own look. See tests/nav/test_build_nav.py.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-argocd
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-argocd
+---
 # Forgejo rides theme.park's `gitea` base sheet — Forgejo is a Gitea fork and the
 # upstream sheet maps the same DOM. Injecting at </head> rather than </body>: the
 # Gitea template emits a literal </head>, so the theme lands before first paint

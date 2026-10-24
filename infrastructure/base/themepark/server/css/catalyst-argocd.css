@@ -1,0 +1,1320 @@
+/* ============================================================================
+ *  ____      _        _           _
+ * / ___|__ _| |_ __ _| |_   _ ___| |_
+ * | |   / _` | __/ _` | | | | / __| __|
+ * | |__| (_| | || (_| | | |_| \__ \ |_
+ * \____\__,_|\__\__,_|_|\__, |___/\__|
+ *                       |___/
+ *  a theme.park theme for the Catalyst homelab
+ *
+ * GENERATED — do not edit. Source: workspace/catalyst-themepark/src/*.css
+ * Rebuild:   ./build.sh            Publish: ./build.sh --publish
+ *
+ * Palette is catalyst-ui's `catalyst` dark theme (the design system of record).
+ * Fonts are inlined as data: URIs so the whole theme is a single request with
+ * no cross-origin font fetch. See src/10-fonts.css.tmpl for why.
+ * ========================================================================== */
+
+
+/* ============================================================================
+ * CATALYST — argocd
+ * ----------------------------------------------------------------------------
+ * A FULL theme for Argo CD (v3.5.x), the cluster's application GitOps UI.
+ *
+ * ── WHY THIS IS NOT A src/NN-*.css LAYER ────────────────────────────────────
+ * Same structural scoping as app-dbgate.css: build.sh globs `src/[0-9][0-9]-*`
+ * into dist/catalyst.css, which every full-theme app loads. This file targets
+ * Argo CD's own class names (.argo-button, .white-box, .sliding-panel ...) and
+ * belongs on exactly one app's routes. It is built as its own artifact
+ * (dist/catalyst-argocd.css) and linked ONLY by the catalyst-argocd middleware.
+ *
+ * ── THE THEMING SURFACE, MEASURED NOT ASSUMED ───────────────────────────────
+ * dbgate hands its engine ~280 custom properties; Argo CD hands it NOTHING.
+ * The UI is compiled SCSS — every colour is a literal hex in the bundle — and
+ * the built-in dark mode is a `.theme-light` / `.theme-dark` class pair on a
+ * wrapper div with parallel hardcoded blocks. The only custom properties in
+ * the bundle are FontAwesome's. (Measured against main.31c5af20478b51216159.js
+ * from the running v3.5.6 pod: the extracted CSS is 260 KB, 0 themeable vars.)
+ * So the dbgate strategy does not transfer, and this file is what theme.park
+ * would have shipped as css/base/argocd/argocd-base.css: a hand-authored
+ * DOM-to-token mapping, selector by selector.
+ *
+ * ── WHY !important IS STRUCTURAL HERE, NOT A SLEDGEHAMMER ───────────────────
+ * Argo CD ships its CSS inside the JS bundle (style-loader): every stylesheet
+ * is a <style> element appended to <head> at RUNTIME, which lands after the
+ * <link> the middleware injects at </head>. Equal-specificity rules therefore
+ * lose to the app on document order, every time, by construction. !important
+ * is what makes an authored declaration reach the page at all — the same role
+ * it plays in every upstream theme.park base sheet. Rules that do not fight
+ * the app (new hover states, font assignments on bare elements) are left clean.
+ *
+ * This sheet wins over BOTH theme classes, deliberately: the route is themed,
+ * so it should look themed whether the user's stored preference says light or
+ * dark. The handful of places Argo CD uses !important itself (orphaned and pod
+ * node backgrounds, the appset node border, the repos-list input underline, two
+ * button hovers) are matched at equal importance and >= specificity, each one
+ * marked below.
+ *
+ * ── WHAT IS DELIBERATELY LEFT ALONE: THE STATUS PALETTE ─────────────────────
+ * Argo CD is a status dashboard; its colours ARE the data. Green #18be94 =
+ * Healthy/Synced, red #e96d76 = Degraded, yellow #f4c030 = OutOfSync/Missing,
+ * blue #0dadea = Progressing/Running, violet #766f94 = Suspended, grey =
+ * Unknown — two independent axes (health, sync) an operator reads across forty
+ * tiles before reading a single word. Recolouring that to brand hues would
+ * destroy the app's only job. So this file never touches:
+ *
+ *   .applications-list__entry--health-*      tile left-edge health bars
+ *   .application-resource-tree__node--lower-section__pod-group__pod--*
+ *   .pod-view__node__pod--*                  pod-square state fills
+ *   .application-status-panel__item-value--* operation phase colours
+ *   .popup-container__icon i.*               confirm-dialog verdict icons
+ *   .status-bar__segment fills               (inline styles, semantic)
+ *   health/sync ICON colours                 (inline styles — CSS can't reach
+ *                                             them, and should not want to)
+ *
+ * It is the exact analogue of dbgate's untouched --theme-usercolor-* rainbow.
+ * The TEAL family (#1fbdd0 #00a2b3 #006f8a #99e1ea) is brand, not status, and
+ * is remapped to the cyan channel; semantic reds/yellows used for form errors
+ * and danger headers are re-pointed at the SAME semantic slot in our palette
+ * (--neon-red, --neon-yellow) — hue preserved, register matched.
+ *
+ * LOAD ORDER: linked FIRST, catalyst.css second, matching every per-app
+ * injector. Nothing here depends on that order — see the dbgate header for why
+ * (importance and specificity settle every fight, not <link> position).
+ * ========================================================================== */
+
+/* ============================================================================
+ * 1. GROUND: page, chrome, scrollbars, atmosphere restraint
+ * ========================================================================== */
+
+/* The bundle sets `body { color:#495763; background:#dee6eb }` unscoped, from a
+ * runtime <style> that outranks us on position. The shared layers never paint
+ * body (they only declare tokens), so without this the page ground stays
+ * foundation-grey behind every themed panel. */
+body {
+  background: var(--cat-bg) !important;
+  color: var(--text) !important;
+  /* The shared typography layer sets the house body face WITHOUT !important --
+   * right for apps whose CSS arrives as static links, beaten here by Argo CD's
+   * runtime `body { font-family: Heebo }` on document order. Measured in the
+   * browser: Heebo survived until this carried !important. */
+  font-family: var(--cat-font-body) !important;
+}
+.theme-light .layout,
+.theme-dark .layout,
+.theme-light .cd-layout,
+.theme-dark .cd-layout {
+  background-color: var(--cat-bg) !important;
+}
+/* The full-screen loading veil: a dark page should dim to dark, not flash
+ * light grey (the stock dark value is rgba(222,230,235,.4) — a WHITE wash). */
+.theme-light .layout__loader,
+.theme-dark .layout__loader {
+  background-color: rgba(5, 5, 10, 0.6) !important;
+}
+
+/* Brand teal anchors -> the cyan channel. a:hover keeps the same hue; the
+ * shared link-glow in 30-effects carries the hover feedback instead. */
+a,
+a:hover {
+  color: var(--neon-cyan);
+}
+
+/* Scrollbars, same reversal as dbgate and for the same measured reason: the
+ * shared layer's cyan->magenta gradient thumb is right beside a poster wall and
+ * wrong under a resource tree that scrolls BOTH axes — the horizontal thumb
+ * becomes a near-full-width neon bar. And the override must be scrollbar-color,
+ * not ::-webkit-scrollbar-*: the shared `* { scrollbar-color }` makes Chromium
+ * ignore every ::-webkit-scrollbar rule outright. body-scoped so it outranks
+ * the shared `*` on specificity. */
+body,
+body * {
+  scrollbar-color: rgba(var(--neon-cyan-rgb), 0.38) var(--cat-bg);
+  scrollbar-width: thin;
+}
+
+/* Atmosphere restraint: this is a dense ops surface (40 tiles of 13px text, a
+ * resource graph of hairline edges), so the CRT mask and grid are halved the
+ * same way the dbgate sheet halves them — set the existing tokens, which is
+ * what they are for. :root + !important because 00-tokens declares these on
+ * :root and link order is a weaker guarantee than the cascade. */
+:root {
+  --scanline-opacity: 0.01 !important;
+  --grid-opacity: 0.025 !important;
+}
+
+/* ============================================================================
+ * 2. CHROME: top bar, sidebar
+ * ========================================================================== */
+
+/* Same register as the house header treatment in the shared component layer:
+ * near-opaque panel, hairline rule, a tight cyan bloom instead of a black
+ * shadow (invisible on this ground). */
+.theme-light .top-bar,
+.theme-dark .top-bar {
+  background: rgba(13, 13, 21, 0.97) !important;
+  border-color: var(--cat-hairline-dim) !important;
+  box-shadow: 0 4px 18px -6px rgba(var(--neon-cyan-rgb), 0.35);
+}
+/* The page title is the one display slot in the chrome — same voice as the
+ * injected bar's wordmark sitting directly above it. */
+.theme-light .top-bar__title,
+.theme-dark .top-bar__title {
+  color: var(--neon-cyan) !important;
+  font-family: var(--cat-font-display);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  font-size: 11px;
+}
+.theme-light .top-bar__breadcrumbs,
+.theme-dark .top-bar__breadcrumbs {
+  color: var(--text) !important;
+}
+.top-bar__breadcrumbs a {
+  color: var(--neon-cyan) !important;
+}
+.top-bar__breadcrumbs a:hover {
+  background-color: rgba(var(--neon-cyan-rgb), 0.1) !important;
+}
+.top-bar__sep {
+  border-left-color: var(--cat-border) !important;
+}
+.top-bar__filter-item a {
+  color: var(--text-muted) !important;
+}
+/* "a filter is active" dot: caution state, not selection — gold, like dbgate's
+ * filtered search boxes. */
+.top-bar__filter--selected::before {
+  background-color: var(--neon-gold) !important;
+}
+
+/* The left sidebar: stock is a flat teal-navy slab (#0f2733). Panel surface +
+ * hairline, with the active item carried by a cyan rail rather than a colour
+ * swap — the same affordance the shared layer gives servarr's sidebar. */
+.sidebar {
+  background-color: rgba(13, 13, 21, 0.98) !important;
+  border-right: 1px solid var(--cat-hairline-dim);
+  color: var(--text) !important;
+}
+.sidebar__nav-item {
+  color: var(--text-muted) !important;
+  transition: color 0.2s ease, background 0.2s ease;
+}
+.sidebar__nav-item i {
+  color: var(--text-muted) !important;
+}
+.sidebar__nav-item:hover,
+.sidebar__nav-item:hover i {
+  color: var(--neon-cyan) !important;
+  background: rgba(var(--neon-cyan-rgb), 0.05);
+}
+.sidebar__nav-item--active {
+  color: var(--text) !important;
+  background: linear-gradient(90deg, rgba(var(--neon-cyan-rgb), 0.14), transparent) !important;
+  box-shadow: inset 3px 0 0 var(--neon-cyan);
+}
+/* Stock active icon is #fe733f — Argo's orange brand accent, not a status. */
+.sidebar__nav-item--active i {
+  color: var(--neon-cyan) !important;
+}
+.sidebar__collapse-button,
+.sidebar--collapsed .sidebar__filter-button i {
+  color: var(--text-muted) !important;
+}
+.sidebar__logo-container {
+  color: var(--text-muted) !important;
+}
+
+/* ============================================================================
+ * 3. PANELS: white-box, table-list rows, tabs, misc surfaces
+ * ----------------------------------------------------------------------------
+ * .white-box and .argo-table-list__row are Argo CD's two universal panel
+ * primitives — mapping these correctly themes most of the settings pages,
+ * project pages, repo/cert/key lists and the app summary for free.
+ * ========================================================================== */
+
+.theme-light .white-box,
+.theme-dark .white-box {
+  background-color: var(--cat-surface) !important;
+  color: var(--text-muted) !important;
+  border: 1px solid var(--cat-border);
+  border-radius: 0 !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+/* Panel headings: stock hardcodes #000, which beats the shared h6 rule on
+ * specificity — re-assert the house heading colour. */
+.white-box h6 {
+  color: var(--neon-cyan) !important;
+}
+.theme-light .white-box__details-row,
+.theme-dark .white-box__details-row {
+  color: var(--text) !important;
+}
+.theme-light .white-box__details-row .columns,
+.theme-dark .white-box__details-row .columns {
+  border-bottom-color: var(--cat-border) !important;
+}
+.white-box__details-label {
+  color: var(--text-muted) !important;
+}
+
+.argo-table-list__head {
+  color: var(--text-muted) !important;
+}
+.argo-table-list__row,
+.theme-light .argo-table-list__row,
+.theme-dark .argo-table-list__row {
+  background: var(--cat-surface) !important;
+  color: var(--text) !important;
+  /* NEVER a `border:` shorthand here. An application tile is the SAME element
+   * as .applications-list__entry, whose border-LEFT is the semantic health bar
+   * (0-1-0); a shorthand at 0-2-0 erases it — measured in the fixture: both the
+   * Healthy and Degraded bars computed to --cat-border until this was split
+   * into three sides. The left edge belongs to the health axis, not to us. */
+  border-top: 1px solid var(--cat-border);
+  border-right: 1px solid var(--cat-border);
+  border-bottom: 1px solid var(--cat-border);
+  border-radius: 0 !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+/* Rows that are NOT application entries still get a framed left edge; the
+ * :not() keeps this rule structurally incapable of touching a health bar. */
+.argo-table-list__row:not(.applications-list__entry) {
+  border-left: 1px solid var(--cat-border);
+}
+.argo-table-list__row .title-text {
+  color: var(--text) !important;
+}
+.argo-table-list__row.selected {
+  background-color: color-mix(in srgb, var(--neon-cyan) 14%, var(--cat-surface)) !important;
+}
+.argo-table-list--clickable .argo-table-list__row:hover,
+.repos-list .argo-table-list .item-clickable:hover {
+  border-color: rgba(var(--neon-cyan-rgb), 0.5);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), 0 0 12px rgba(var(--neon-cyan-rgb), 0.15) !important;
+}
+
+.theme-light .tabs__nav,
+.theme-dark .tabs__nav {
+  background-color: var(--cat-surface) !important;
+  box-shadow: 0 1px 0 var(--cat-hairline-dim) !important;
+}
+.theme-light .tabs__nav a,
+.theme-dark .tabs__nav a {
+  color: var(--text-muted) !important;
+}
+.tabs__nav a.active,
+.tabs__nav.transparent a {
+  color: var(--neon-cyan) !important;
+}
+.theme-light .tabs__nav.transparent a.active,
+.theme-dark .tabs__nav.transparent a.active {
+  color: var(--text) !important;
+}
+.tabs__nav.transparent {
+  border-bottom-color: var(--cat-border) !important;
+}
+.tabs__indicator {
+  background: var(--neon-cyan) !important;
+  box-shadow: 0 0 8px rgba(var(--neon-cyan-rgb), 0.6);
+}
+
+/* The odd panels that are neither white-box nor row. */
+.theme-light .help-box,
+.theme-dark .help-box,
+.theme-light .appearance-list__panel,
+.theme-dark .appearance-list__panel {
+  background-color: var(--cat-surface) !important;
+  color: var(--text) !important;
+}
+.theme-light .help-text,
+.theme-dark .help-text {
+  color: var(--text) !important;
+}
+.theme-light .help-text a,
+.theme-dark .help-text a,
+.theme-light .help-text a:hover,
+.theme-dark .help-text a:hover {
+  color: var(--neon-cyan) !important;
+}
+.theme-light .settings-overview__redirect-panel,
+.theme-dark .settings-overview__redirect-panel {
+  background-color: var(--cat-surface) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--cat-border);
+}
+.theme-light .settings-overview__redirect-panel:hover,
+.theme-dark .settings-overview__redirect-panel:hover {
+  background-color: var(--cat-surface-2) !important;
+  border-color: var(--cat-hairline);
+}
+.theme-light .settings-overview__redirect-panel__description,
+.theme-dark .settings-overview__redirect-panel__description {
+  color: var(--text-muted) !important;
+}
+.theme-light .editable-panel__collapsible-button__override,
+.theme-dark .editable-panel__collapsible-button__override,
+.theme-light .editable-panel__subsection-title,
+.theme-dark .editable-panel__subsection-title {
+  color: var(--neon-cyan) !important;
+}
+
+/* Deployment history: the revision column was a pale blue chip in light and a
+ * slate one in dark — raised surface either way. */
+.theme-light .application-deployment-history__item,
+.theme-dark .application-deployment-history__item {
+  background: var(--cat-surface) !important;
+  color: var(--text) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+}
+.theme-light .application-deployment-history__item > .columns:first-child,
+.theme-dark .application-deployment-history__item > .columns:first-child {
+  background: var(--cat-surface-2) !important;
+  color: var(--text) !important;
+}
+.theme-light .application-deployment-history .collapsible-section,
+.theme-dark .application-deployment-history .collapsible-section {
+  border-color: var(--cat-border) !important;
+}
+.application-deployment-history .separator {
+  background-color: var(--cat-border) !important;
+}
+
+/* ============================================================================
+ * 4. THE APPLICATIONS LIST: search, filters, tiles
+ * ========================================================================== */
+
+.theme-light .applications-list__search-wrapper .applications-list__search,
+.theme-dark .applications-list__search-wrapper .applications-list__search {
+  background-color: var(--cat-surface-2) !important;
+  border: 1px solid var(--cat-border) !important;
+  border-radius: 0 !important;
+}
+.applications-list__search-wrapper .applications-list__search:focus-within {
+  border-color: var(--neon-cyan) !important;
+  box-shadow: var(--glow-accent);
+}
+.applications-list__search-wrapper .applications-list__search .keyboard-hint {
+  border-color: var(--cat-border) !important;
+  color: var(--text-muted) !important;
+}
+.applications-list__search-wrapper .applications-list__search i {
+  color: var(--text-muted) !important;
+}
+.applications-list__search-wrapper .applications-list__search:focus-within i {
+  color: var(--neon-cyan) !important;
+}
+
+.theme-light .applications-list__title,
+.theme-dark .applications-list__title {
+  color: var(--text) !important;
+}
+.applications-list__entry {
+  color: var(--text) !important;
+  /* border-left is the HEALTH bar — its per-state colours are semantic and
+   * stay exactly as shipped. Only the no-state default is chrome. */
+}
+.applications-list__view-type i {
+  color: var(--text-muted) !important;
+}
+.applications-list__view-type i.selected,
+.application-details__view-type i.selected {
+  color: var(--neon-cyan) !important;
+}
+.applications-tiles__selected {
+  box-shadow: 0 0 0 1px var(--neon-cyan), var(--glow-accent) !important;
+}
+.applications-tiles .applications-list__external-link button:hover {
+  color: var(--neon-cyan) !important;
+}
+
+/* The filter rail. Stock hardcodes near-black chips (#191826/#30303d) in both
+ * themes — the one corner of the app that was already dark. Re-pointed at the
+ * tokens so it matches the rest of the page instead of being a third palette.
+ * The two hovers carry !important upstream, so these must too. */
+.filter__header {
+  color: var(--text-muted) !important;
+}
+.filter__header .argo-button,
+.filters-group__header .argo-button {
+  background: var(--cat-surface-2) !important;
+  color: var(--neon-cyan) !important;
+}
+.filter__header .argo-button.argo-button:hover,
+.filters-group__header .argo-button.argo-button:hover {
+  background: var(--cat-border) !important;
+}
+.filter__item--selected {
+  background-color: var(--cat-surface-2) !important;
+  color: var(--neon-cyan) !important;
+  box-shadow: inset 2px 0 0 var(--neon-cyan);
+}
+.filter__item:not(.filter__item--selected):hover {
+  background-color: rgba(var(--neon-cyan-rgb), 0.06);
+}
+.filter__collapse {
+  color: var(--text-muted) !important;
+}
+.filters-group .filters-group__title {
+  color: var(--text-muted) !important;
+  border-bottom-color: var(--cat-border);
+}
+
+.paginate li.disabled a {
+  color: var(--text-muted) !important;
+}
+.paginate li.selected a {
+  color: var(--text) !important;
+}
+
+/* The segmented sync bar on each tile: the FILLS are inline semantic colours
+ * and stay; only the white frame is chrome. */
+.status-bar {
+  border-color: var(--cat-surface-2) !important;
+}
+.status-bar__segment:not(:first-child) {
+  border-left-color: var(--cat-surface-2) !important;
+}
+
+/* ============================================================================
+ * 5. APPLICATION DETAILS: status panel, resource tree, pod view
+ * ========================================================================== */
+
+.theme-light .application-status-panel,
+.theme-dark .application-status-panel {
+  background-color: var(--cat-surface) !important;
+  color: var(--text) !important;
+  box-shadow: 0 1px 0 var(--cat-hairline-dim) !important;
+}
+.theme-light .application-status-panel__item,
+.theme-dark .application-status-panel__item,
+.theme-light .application-status-panel__item label,
+.theme-dark .application-status-panel__item label {
+  color: var(--text-muted) !important;
+}
+.theme-light .application-status-panel__item:not(:first-child),
+.theme-dark .application-status-panel__item:not(:first-child) {
+  border-left-color: var(--cat-border) !important;
+}
+/* The big value line. Its per-phase modifiers (--Running, --Failed ...) and the
+ * health/sync icons are semantic and untouched; only the base ink is chrome. */
+.theme-light .application-status-panel__item-value,
+.theme-dark .application-status-panel__item-value {
+  color: var(--text) !important;
+}
+.application-status-panel__item-value--highlight {
+  color: var(--neon-cyan) !important;
+}
+.application-status-panel__more-button {
+  color: var(--text-muted) !important;
+  border-color: var(--cat-border) !important;
+}
+.application-status-panel__item-value__status-button {
+  border-color: var(--cat-border) !important;
+}
+.application-status-panel__item-value__status-button:hover {
+  background-color: var(--cat-surface-2) !important;
+}
+.application-details__refreshing-label {
+  background-color: var(--cat-surface-2) !important;
+  border-color: var(--cat-border) !important;
+}
+.application-details__container span {
+  color: var(--neon-cyan) !important;
+}
+.application-details__view-type i {
+  color: var(--text-muted) !important;
+}
+
+/* -- the resource tree ----------------------------------------------------
+ * Node cards are chrome: panel surface, hairline on hover, cyan ring when
+ * active. Status icons inside them are inline-styled and semantic. */
+.theme-light .application-resource-tree__node,
+.theme-dark .application-resource-tree__node {
+  background-color: var(--cat-surface) !important;
+  color: var(--text) !important;
+  border-radius: 0 !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5) !important;
+  border: 1px solid var(--cat-border) !important;
+}
+.application-resource-tree__node.active {
+  border-color: var(--neon-cyan) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5), var(--glow-accent) !important;
+}
+.application-resource-tree__node-kind {
+  color: var(--text-muted) !important;
+}
+.application-resource-tree__node-kind-icon {
+  color: var(--text-muted) !important;
+}
+.application-resource-tree__node-kind-icon--big {
+  background: var(--cat-surface-2) !important;
+  color: var(--neon-cyan) !important;
+}
+.theme-light .application-resource-tree__node-kind-icon--big,
+.theme-dark .application-resource-tree__node-kind-icon--big {
+  border-color: var(--cat-bg) !important;
+}
+.application-resource-tree__node .icon-background {
+  color: var(--cat-border) !important;
+}
+/* Edges. Stock is a slate dash; a dim cyan hairline keeps the circuit-diagram
+ * read without competing with node content. The arrowhead glyph follows. */
+.application-resource-tree__line {
+  border-top-color: rgba(var(--neon-cyan-rgb), 0.3) !important;
+}
+.application-resource-tree__edge .application-resource-tree__line:last-child:after {
+  color: rgba(var(--neon-cyan-rgb), 0.55) !important;
+}
+/* The animated network-flow edge repaints its gradient from a hardcoded teal;
+ * same hue family, token-sourced. */
+.application-resource-tree--network .application-resource-tree__line {
+  background-image: linear-gradient(90deg, var(--neon-cyan) 50%, transparent 50%) !important;
+}
+/* Pod nodes: stock tints them a FOURTH surface colour to say "this is a pod,
+ * not a controller". The distinction is worth keeping — as a cyan-washed
+ * surface, not a pastel. Upstream is theme-scoped !important, matched. */
+/* Upstream is theme-scoped !important at 0-2-0 and arrives LATER (runtime
+ * <style>), so an equal-specificity override loses on document order — measured
+ * in the fixture: the pod tile stayed stock #e0ffff until the class was doubled
+ * to 0-3-0. Same trick everywhere this file fights an upstream !important. */
+.theme-light .application-resource-tree__node--pod.application-resource-tree__node--pod,
+.theme-dark .application-resource-tree__node--pod.application-resource-tree__node--pod {
+  background-color: color-mix(in srgb, var(--neon-cyan) 9%, var(--cat-surface)) !important;
+}
+/* Orphaned resources read DIMMER than managed ones — stock does this with a
+ * grey step, here the card drops to the page ground. Upstream !important. */
+.theme-light .application-resource-tree__node--orphaned.application-resource-tree__node--orphaned,
+.theme-dark .application-resource-tree__node--orphaned.application-resource-tree__node--orphaned,
+.theme-light .application-resource-list .argo-table-list__row.application-resource-list__row--orphaned.application-resource-list__row--orphaned,
+.theme-dark .application-resource-list .argo-table-list__row.application-resource-list__row--orphaned.application-resource-list__row--orphaned {
+  background-color: var(--cat-bg) !important;
+}
+/* ApplicationSet nodes: dashed outline is the "template, not instance" signal.
+ * Upstream border is unscoped !important. */
+.application-resource-tree__node--applicationset.application-resource-tree__node--applicationset {
+  border: 1.5px dashed rgba(var(--neon-cyan-rgb), 0.6) !important;
+}
+.theme-light .application-resource-tree__node--applicationset,
+.theme-dark .application-resource-tree__node--applicationset {
+  background-color: var(--cat-surface-2) !important;
+}
+.theme-light .application-resource-tree__node--expansion,
+.theme-dark .application-resource-tree__node--expansion,
+.theme-light .application-resource-tree__node--podgroup--expansion,
+.theme-dark .application-resource-tree__node--podgroup--expansion {
+  background-color: var(--cat-surface-2) !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5) !important;
+}
+/* The pod-square WELL is chrome (the squares inside it are semantic fills and
+ * untouched — see the header contract). */
+.application-resource-tree__node--lower-section__pod-group__pod-container__pods,
+.pod-view__node__pod-container__pods {
+  background-color: var(--cat-surface-2) !important;
+}
+.application-resource-tree__node-label {
+  background-color: var(--cat-surface-2) !important;
+  color: var(--text-muted) !important;
+  border-color: var(--cat-border) !important;
+}
+.application-resource-tree__node-label--appset {
+  background-color: color-mix(in srgb, var(--neon-cyan) 14%, var(--cat-surface)) !important;
+  color: var(--neon-cyan) !important;
+  border-color: var(--cat-hairline) !important;
+}
+/* Load-balancer / network nodes: stock pale cyan chip. */
+.application-resource-tree__node--load-balancer {
+  background-color: color-mix(in srgb, var(--neon-blue) 10%, var(--cat-surface)) !important;
+}
+
+/* The zoom / group-nodes toolbox floating over the graph. */
+.theme-light .application-details .graph-options-panel,
+.theme-dark .application-details .graph-options-panel {
+  background: var(--cat-surface) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5) !important;
+  border: 1px solid var(--cat-border);
+}
+.application-details .graph-options-panel a {
+  color: var(--text-muted) !important;
+}
+.application-details .graph-options-panel a.group-nodes-button:hover {
+  background-color: var(--cat-surface-2) !important;
+}
+.application-details .graph-options-panel a.group-nodes-button-on {
+  color: var(--cat-bg) !important;
+  background-color: var(--neon-cyan) !important;
+  border-color: var(--neon-cyan) !important;
+}
+.theme-light .application-details .graph-options-panel .separator,
+.theme-dark .application-details .graph-options-panel .separator {
+  border-right-color: var(--cat-border) !important;
+}
+.application-details .graph-options-panel .zoom-value {
+  background-color: var(--cat-surface-2) !important;
+  color: var(--text) !important;
+  border-color: var(--cat-border) !important;
+}
+
+/* Pod view (the grouped-by-node rendering): chrome only, squares untouched. */
+.pod-view__node__info div,
+.pod-view__node__info--large {
+  background-color: var(--cat-surface-2) !important;
+  color: var(--text-muted) !important;
+}
+.pod-view__settings__section {
+  border-right-color: var(--cat-border) !important;
+}
+
+/* Sync panel: zebra rows. Upstream dark variant hardcodes slate #6d7f8b which
+ * reads as a light band on this ground. */
+.application-sync-panel__resource:nth-of-type(odd),
+.theme-dark .application-sync-panel__resource:nth-of-type(odd) {
+  background: color-mix(in srgb, var(--neon-cyan) 5%, var(--cat-surface)) !important;
+}
+
+.theme-light .resource-details__header h1,
+.theme-dark .resource-details__header h1 {
+  color: var(--text) !important;
+}
+.theme-light .application-node-info__manifest .tabs__content,
+.theme-dark .application-node-info__manifest .tabs__content,
+.theme-light .appset-generated-apps-diff__manifest .tabs__content,
+.theme-dark .appset-generated-apps-diff__manifest .tabs__content {
+  background-color: var(--cat-surface) !important;
+}
+.theme-light .application-node-info__checkboxes label,
+.theme-dark .application-node-info__checkboxes label,
+.theme-light .application-resources-diff__checkboxes label,
+.theme-dark .application-resources-diff__checkboxes label {
+  color: var(--text) !important;
+}
+
+/* ============================================================================
+ * 6. OVERLAYS: sliding panels, popups, dropdowns, selects, tooltips
+ * ========================================================================== */
+
+.sliding-panel__wrapper,
+.theme-light .sliding-panel__wrapper,
+.theme-dark .sliding-panel__wrapper {
+  background-color: var(--cat-surface) !important;
+  color: var(--text) !important;
+  border-left: 1px solid var(--cat-hairline-dim);
+  box-shadow: var(--shadow-neon-lg);
+}
+.sliding-panel__header,
+.theme-light .sliding-panel__header,
+.theme-dark .sliding-panel__header,
+.theme-light .sliding-panel--off-canvas .sliding-panel__header,
+.theme-dark .sliding-panel--off-canvas .sliding-panel__header {
+  background-color: var(--cat-surface-2) !important;
+  border-bottom-color: var(--cat-hairline-dim) !important;
+  color: var(--text-muted) !important;
+}
+.sliding-panel__header strong {
+  color: var(--neon-cyan) !important;
+  font-family: var(--cat-font-display);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+}
+/* Panel body drops to the page ground so the white-boxes inside it read as
+ * raised panels again instead of panel-on-panel. */
+.sliding-panel__body,
+.theme-light .sliding-panel__body,
+.theme-dark .sliding-panel__body {
+  background-color: var(--cat-bg) !important;
+}
+.sliding-panel__footer {
+  border-top-color: var(--cat-border) !important;
+}
+.sliding-panel__close {
+  color: var(--text-muted) !important;
+}
+.sliding-panel__close:hover {
+  background-color: var(--cat-surface-2) !important;
+  color: var(--neon-red) !important;
+}
+.sliding-panel {
+  background-color: rgba(0, 0, 0, 0.55) !important;
+}
+/* The not-opened state zeroes its own background for the fade; keep that. */
+.sliding-panel:not(.sliding-panel--opened) {
+  background-color: rgba(0, 0, 0, 0) !important;
+}
+
+.popup-overlay,
+.theme-light .popup-overlay,
+.theme-dark .popup-overlay {
+  background-color: rgba(0, 0, 0, 0.72) !important;
+}
+.popup-overlay .popup-container,
+.theme-light .popup-overlay .popup-container,
+.theme-dark .popup-overlay .popup-container {
+  box-shadow: var(--shadow-neon-lg) !important;
+  border: 1px solid var(--cat-hairline-dim);
+  border-radius: 0 !important;
+}
+.popup-overlay .popup-container__header__normal,
+.theme-light .popup-overlay .popup-container__header__normal,
+.theme-dark .popup-overlay .popup-container__header__normal {
+  background-color: var(--cat-surface-2) !important;
+}
+/* Danger / caution headers keep their MEANING, re-pointed at the same semantic
+ * slots in this palette. Dark ink on both: they are bright fills. */
+.popup-overlay .popup-container__header__red {
+  background-color: var(--neon-red) !important;
+  color: #ffffff !important;
+}
+.popup-overlay .popup-container__header__yellow {
+  background-color: var(--neon-yellow) !important;
+  color: var(--cat-bg) !important;
+}
+.popup-overlay .popup-container__body,
+.popup-overlay .popup-container__footer,
+.theme-light .popup-overlay .popup-container__body,
+.theme-dark .popup-overlay .popup-container__body,
+.theme-light .popup-overlay .popup-container__footer,
+.theme-dark .popup-overlay .popup-container__footer {
+  background-color: var(--cat-surface) !important;
+}
+.popup-overlay .popup-container__body h4,
+.popup-overlay .popup-container__body p,
+.popup-overlay .popup-container__body ul,
+.theme-light .popup-overlay .popup-container__body h4,
+.theme-dark .popup-overlay .popup-container__body h4,
+.theme-light .popup-overlay .popup-container__body p,
+.theme-dark .popup-overlay .popup-container__body p,
+.theme-light .popup-overlay .popup-container__body ul,
+.theme-dark .popup-overlay .popup-container__body ul {
+  color: var(--text) !important;
+}
+
+.argo-dropdown__content {
+  background-color: var(--cat-surface) !important;
+  border: 1px solid var(--cat-hairline-dim);
+  box-shadow: var(--shadow-neon-md) !important;
+}
+.argo-dropdown__content.is-menu ul li {
+  color: var(--text-muted) !important;
+  border-bottom-color: var(--cat-border) !important;
+}
+.argo-dropdown__content.is-menu ul li:hover {
+  background-color: rgba(var(--neon-cyan-rgb), 0.1) !important;
+  color: var(--neon-cyan) !important;
+}
+.application-details__action-menu:focus {
+  background-color: var(--cat-surface-2) !important;
+}
+.application-details__action-menu.disabled {
+  color: var(--text-muted) !important;
+}
+.application-details .argo-button:has(.application-details__dropdown-anchor-inner):hover .application-details__dropdown-anchor-inner {
+  background-color: var(--cat-border) !important;
+}
+.application-details__dropdown-anchor-inner {
+  border-left-color: var(--cat-border) !important;
+}
+.application-details__dropdown-anchor-inner:hover {
+  background-color: var(--cat-border) !important;
+}
+
+.theme-light .select__value,
+.theme-dark .select__value {
+  border-bottom-color: var(--cat-border) !important;
+  color: var(--text);
+}
+.select__options {
+  background-color: var(--cat-surface) !important;
+  border: 1px solid var(--cat-hairline-dim);
+  box-shadow: var(--shadow-neon-md) !important;
+}
+.select__option {
+  color: var(--text-muted) !important;
+}
+.select__option:hover {
+  background-color: rgba(var(--neon-cyan-rgb), 0.1) !important;
+  color: var(--neon-cyan) !important;
+}
+.select__option.selected {
+  background-color: color-mix(in srgb, var(--neon-cyan) 16%, var(--cat-surface)) !important;
+  color: var(--text) !important;
+}
+.select__search {
+  color: var(--text) !important;
+}
+.select__search::placeholder {
+  color: var(--text-muted) !important;
+}
+.select__empty {
+  color: var(--text-muted) !important;
+}
+.select-container {
+  background: var(--cat-surface) !important;
+  border-color: var(--cat-border) !important;
+}
+.select-options .select-option:hover {
+  background-color: rgba(var(--neon-cyan-rgb), 0.1) !important;
+}
+.select-options .select-option.selected {
+  background-color: color-mix(in srgb, var(--neon-cyan) 16%, var(--cat-surface)) !important;
+}
+
+.autocomplete__items {
+  background-color: var(--cat-surface) !important;
+  border-color: var(--cat-hairline-dim) !important;
+  box-shadow: var(--shadow-neon-md) !important;
+}
+.autocomplete__items__item {
+  border-bottom-color: var(--cat-border) !important;
+  color: var(--text-muted);
+}
+.autocomplete__items__item:hover {
+  background-color: rgba(var(--neon-cyan-rgb), 0.1) !important;
+  color: var(--neon-cyan);
+}
+.autocomplete__items__item--selected {
+  background-color: color-mix(in srgb, var(--neon-cyan) 16%, var(--cat-surface)) !important;
+  color: var(--text);
+}
+.autocomplete__items--dark {
+  background-color: var(--cat-surface) !important;
+  border-color: var(--cat-hairline-dim) !important;
+  color: var(--text) !important;
+}
+
+.dropdown-pane {
+  background-color: var(--cat-surface) !important;
+  border-color: var(--cat-border) !important;
+  color: var(--text);
+}
+
+.tooltip {
+  background-color: var(--cat-surface-2) !important;
+  border-color: var(--cat-hairline-dim) !important;
+  color: var(--text) !important;
+}
+.theme-light .pod-terminal-viewer__container .tooltip {
+  background-color: var(--cat-surface-2) !important;
+  border-color: var(--cat-hairline-dim) !important;
+  color: var(--text) !important;
+}
+/* tippy carries the arrow colour per placement; all four re-pointed so the
+ * arrow matches the new body instead of floating as a #333 wedge. */
+.tippy-tooltip {
+  background-color: var(--cat-surface-2) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--cat-hairline-dim);
+  border-radius: 0 !important;
+}
+.tippy-tooltip[data-placement^='top'] > .tippy-arrow {
+  border-top-color: var(--cat-surface-2) !important;
+}
+.tippy-tooltip[data-placement^='bottom'] > .tippy-arrow {
+  border-bottom-color: var(--cat-surface-2) !important;
+}
+.tippy-tooltip[data-placement^='left'] > .tippy-arrow {
+  border-left-color: var(--cat-surface-2) !important;
+}
+.tippy-tooltip[data-placement^='right'] > .tippy-arrow {
+  border-right-color: var(--cat-surface-2) !important;
+}
+.nav-bar__item-tooltip {
+  background-color: var(--cat-surface-2) !important;
+}
+.nav-bar__item-tooltip::after {
+  border-right-color: var(--cat-surface-2) !important;
+}
+
+/* ============================================================================
+ * 7. BUTTONS
+ * ----------------------------------------------------------------------------
+ * The filled primary (--base, --special, --radius) becomes the one solid cyan
+ * slab with dark text, hover swings to magenta — the same contract as dbgate's
+ * form buttons and the shared servarr primary. Outline and link variants stay
+ * quiet: cyan ink, cyan hairline, subtle wash on hover.
+ * ========================================================================== */
+
+.argo-button {
+  border-radius: 0 !important;
+  color: var(--neon-cyan);
+}
+.argo-button:not(.disabled):not([disabled]):hover,
+.argo-button:not(.disabled):not([disabled]):focus {
+  background-color: rgba(var(--neon-cyan-rgb), 0.12) !important;
+  color: var(--neon-cyan);
+}
+.argo-button--base {
+  color: var(--cat-bg) !important;
+  background-color: var(--neon-cyan) !important;
+  font-weight: 600;
+  box-shadow: var(--glow-accent);
+}
+.argo-button--base:not(.disabled):not([disabled]):hover,
+.argo-button--base:not(.disabled):not([disabled]):focus {
+  color: #ffffff !important;
+  background-color: var(--neon-purple) !important;
+  box-shadow: var(--glow-secondary);
+}
+.argo-button--special {
+  color: var(--cat-bg) !important;
+  background: var(--neon-cyan) !important;
+  box-shadow: var(--glow-accent);
+}
+/* Upstream hovers here are !important. */
+.argo-button--special:not(.disabled):hover,
+.argo-button--special:not(.disabled):focus {
+  color: #ffffff !important;
+  background: var(--neon-purple) !important;
+}
+.argo-button--base-o {
+  color: var(--neon-cyan) !important;
+  box-shadow: inset 0 0 0 1px var(--cat-hairline) !important;
+}
+.argo-button--base-o:not(.disabled):not([disabled]):hover,
+.argo-button--base-o:not(.disabled):not([disabled]):focus {
+  color: var(--cat-bg) !important;
+  background-color: var(--neon-cyan) !important;
+}
+.theme-light .yaml-editor__buttons .argo-button--base-o,
+.theme-dark .yaml-editor__buttons .argo-button--base-o {
+  background-color: var(--cat-surface) !important;
+}
+.argo-button--link {
+  color: var(--neon-cyan) !important;
+}
+.argo-button--link:not(.disabled):not([disabled]):hover,
+.argo-button--link:not(.disabled):not([disabled]):focus {
+  background-color: rgba(var(--neon-cyan-rgb), 0.12) !important;
+}
+/* The round floating-action button; upstream hover/focus are !important. */
+.argo-button--radius {
+  background-color: var(--neon-cyan) !important;
+  color: var(--cat-bg) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), var(--glow-accent) !important;
+}
+.argo-button--radius.argo-button--radius:hover,
+.argo-button--radius.argo-button--radius:focus {
+  background: var(--neon-purple) !important;
+}
+.argo-button--radius:not(.disabled):hover,
+.argo-button--radius:not(.disabled):focus {
+  color: #ffffff !important;
+}
+.argo-button--radius-2 {
+  border-color: var(--cat-hairline) !important;
+}
+.argo-button--radius-2::before,
+.argo-button--radius-2::after {
+  background: var(--neon-cyan) !important;
+}
+/* Disabled: the one state that must read QUIETER than the page, not just grey. */
+.argo-button.disabled,
+.argo-button[disabled],
+.argo-button.disabled:hover,
+.argo-button[disabled]:hover,
+.argo-button.disabled:focus,
+.argo-button[disabled]:focus {
+  color: var(--text-muted) !important;
+}
+.argo-button--base.disabled,
+.argo-button--base[disabled] {
+  background-color: var(--cat-surface-2) !important;
+  box-shadow: none;
+}
+.argo-button--base-o.disabled,
+.argo-button--base-o[disabled] {
+  box-shadow: inset 0 0 0 1px var(--cat-border) !important;
+}
+.argo-button-close::before,
+.argo-button-close::after {
+  background: var(--text-muted) !important;
+}
+.argo-button-close:hover::before,
+.argo-button-close:hover::after {
+  background: var(--neon-red) !important;
+}
+
+/* Split buttons share the pill; square them with the rest. */
+.argo-split-button__primary,
+.argo-split-button__toggle {
+  border-radius: 0 !important;
+}
+
+/* ============================================================================
+ * 8. FORMS: the underline fields, and the shared-layer repairs
+ * ----------------------------------------------------------------------------
+ * REPAIR, measured on dbgate and known to hit here too: the shared component
+ * layer paints EVERY input/select/textarea with a boxed surface, a border and
+ * a chamfer clip (`input { background: var(--cat-surface-2) !important ... }`).
+ * Argo CD's .argo-field is a borderless UNDERLINE input with a floating label
+ * that slides up through the space the box would occupy — boxed, the label
+ * overlaps the frame and the form reads broken. The underline is re-asserted
+ * at higher specificity. Plain inputs that are NOT argo-fields (dropdown search
+ * boxes etc.) keep the shared boxed treatment, which suits them.
+ * ========================================================================== */
+
+input.argo-field,
+textarea.argo-field,
+input.argo-textarea,
+textarea.argo-textarea {
+  background: rgba(0, 0, 0, 0) !important;
+  border: 0 !important;
+  border-bottom: 2px solid var(--cat-border) !important;
+  border-radius: 0 !important;
+  clip-path: none !important;
+  color: var(--text) !important;
+}
+input.argo-field:focus,
+textarea.argo-field:focus,
+input.argo-textarea:focus,
+textarea.argo-textarea:focus,
+input.argo-field:focus-visible,
+textarea.argo-field:focus-visible {
+  border-bottom-color: var(--neon-cyan) !important;
+  /* The shared layer's inset focus ring draws a box around what must stay an
+   * underline; the glow moves to the rule itself. */
+  box-shadow: 0 8px 12px -10px rgba(var(--neon-cyan-rgb), 0.7) !important;
+  outline: none !important;
+  filter: none;
+}
+.theme-light .argo-field,
+.theme-dark .argo-field,
+.theme-light .argo-textarea,
+.theme-dark .argo-textarea {
+  color: var(--text) !important;
+  border-bottom-color: var(--cat-border) !important;
+}
+.error .argo-field,
+.error .argo-textarea {
+  border-bottom-color: var(--neon-red) !important;
+}
+.theme-light .argo-form-row label,
+.theme-dark .argo-form-row label {
+  color: var(--text-muted) !important;
+}
+.argo-field-container > label.argo-label-placeholder {
+  color: var(--text-muted);
+}
+.argo-field-container > .argo-field:focus + label.argo-label-placeholder,
+.argo-field-container > .argo-textarea:focus + label.argo-label-placeholder {
+  color: var(--neon-cyan) !important;
+}
+.theme-light .revision-form-field .argo-field-container > label.argo-label-placeholder,
+.theme-dark .revision-form-field .argo-field-container > label.argo-label-placeholder,
+.theme-light .application-create-panel__multi-source-block .argo-field-container > label.argo-label-placeholder,
+.theme-dark .application-create-panel__multi-source-block .argo-field-container > label.argo-label-placeholder {
+  color: var(--text-muted) !important;
+}
+.theme-light .revision-form-field .argo-field-container > .argo-field:focus + label.argo-label-placeholder,
+.theme-dark .revision-form-field .argo-field-container > .argo-field:focus + label.argo-label-placeholder {
+  color: var(--neon-cyan) !important;
+}
+.argo-form-row__error-msg {
+  color: var(--neon-red) !important;
+}
+.argo-field__with-action-btn {
+  background-color: var(--cat-surface-2) !important;
+  border-color: var(--cat-border) !important;
+  color: var(--text);
+}
+/* Repo connect form keeps a teal underline via theme-scoped !important. */
+.theme-light .repos-list.repos-list .argo-container input.argo-field,
+.theme-dark .repos-list.repos-list .argo-container input.argo-field {
+  border-bottom: 2px solid var(--cat-border) !important;
+}
+.repos-list .argo-container input.argo-field:focus {
+  border-bottom: 2px solid var(--neon-cyan) !important;
+}
+.theme-light .pod-logs-viewer__settings .argo-field,
+.theme-dark .pod-logs-viewer__settings .argo-field {
+  background-color: rgba(0, 0, 0, 0) !important;
+}
+
+.tags-input input {
+  background: rgba(0, 0, 0, 0) !important;
+  border: 0 !important;
+  clip-path: none !important;
+}
+.tags-input__tag {
+  background-color: var(--cat-surface-2) !important;
+  color: var(--text) !important;
+  box-shadow: none !important;
+  border: 1px solid var(--cat-border);
+  border-radius: 0 !important;
+}
+
+/* -- checkboxes / radios / toggles: the appearance:none repair -------------
+ * Argo CD draws all three as an invisible <input> positioned OVER a styled
+ * <span>. The shared layer's blanket input rule gives that invisible input a
+ * solid surface, a border and a chamfer — a 20px opaque tile covering the
+ * real control, so every box reads unchecked forever. Same defect class the
+ * dbgate sheet repaired; verified live there, re-verified here. */
+.argo-checkbox input,
+.argo-radio input,
+.argo-checkbox-slide input {
+  appearance: none;
+  -webkit-appearance: none;
+  background: rgba(0, 0, 0, 0) !important;
+  border: 0 !important;
+  clip-path: none !important;
+}
+.argo-checkbox input:focus,
+.argo-radio input:focus,
+.argo-checkbox-slide input:focus,
+.argo-checkbox input:focus-visible,
+.argo-radio input:focus-visible,
+.argo-checkbox-slide input:focus-visible {
+  background: rgba(0, 0, 0, 0) !important;
+  box-shadow: none !important;
+  filter: none;
+}
+/* ...and the spans they overlay, in Catalyst terms. */
+.argo-checkbox input + span {
+  border-color: var(--cat-hairline) !important;
+  border-radius: 0 !important;
+  background: var(--cat-surface-2);
+}
+.argo-checkbox input:checked + span {
+  background-color: var(--neon-cyan) !important;
+  color: var(--cat-bg) !important;
+}
+.argo-checkbox input:focus {
+  outline: 2px solid var(--neon-cyan) !important;
+  outline-offset: 2px;
+}
+.argo-checkbox input:disabled + span {
+  background-color: var(--cat-surface) !important;
+  border: 2px solid var(--cat-border) !important;
+}
+.argo-radio input + span {
+  border-color: var(--cat-hairline) !important;
+  background: var(--cat-surface-2);
+}
+/* The checked radio is a cyan donut; the inset ring must be the SURFACE colour
+ * (stock uses near-white) or the hole vanishes on a dark page. */
+.argo-radio input:checked + span {
+  background-color: var(--neon-cyan) !important;
+  border-color: var(--neon-cyan) !important;
+  box-shadow: inset 0 0 0 3px var(--cat-surface) !important;
+}
+.argo-checkbox-slide input + span {
+  background-color: var(--cat-border) !important;
+  box-shadow: none !important;
+}
+.argo-checkbox-slide input + span::before {
+  background-color: var(--text-muted) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.6) !important;
+}
+.argo-checkbox-slide input:checked + span {
+  background-color: rgba(var(--neon-cyan-rgb), 0.35) !important;
+}
+.argo-checkbox-slide input:checked + span::before {
+  background-color: var(--neon-cyan) !important;
+  box-shadow: 0 0 6px rgba(var(--neon-cyan-rgb), 0.6) !important;
+}
+
+/* ============================================================================
+ * 9. THE LOGIN PAGE
+ * ----------------------------------------------------------------------------
+ * Stock is a violet star-field gradient with a white card. The shared effects
+ * layer already provides the atmosphere (grid + scanlines); the page just has
+ * to stop fighting it.
+ * ========================================================================== */
+
+.login {
+  background: radial-gradient(
+      ellipse at 30% 40%,
+      rgba(var(--neon-purple-rgb), 0.08),
+      rgba(0, 0, 0, 0) 60%
+    ),
+    radial-gradient(ellipse at 70% 70%, rgba(var(--neon-cyan-rgb), 0.07), rgba(0, 0, 0, 0) 55%),
+    var(--cat-bg) !important;
+}
+.login__box {
+  background-color: var(--cat-surface) !important;
+  border-left: 1px solid var(--cat-hairline-dim);
+  box-shadow: var(--shadow-neon-lg);
+}
+.login__box h3,
+.login__box h4,
+.login__box h5 {
+  color: var(--neon-cyan) !important;
+}
+/* The hero line beside the mascot is the page's one display slot -- a <div>,
+ * so the shared h1 treatment misses it. Same declarations, same order as the
+ * dbgate modal title: the filter must follow the clip or there is no glow. */
+.login__text {
+  color: var(--text) !important;
+  font-family: var(--cat-font-display);
+  font-weight: 700;
+  font-size: 2rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: var(--cat-grad);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(var(--glow-primary));
+}
+@media (forced-colors: active) {
+  .login__text {
+    background: none;
+    -webkit-text-fill-color: CanvasText;
+    color: CanvasText;
+    filter: none;
+  }
+}
+.login__more-row a {
+  color: var(--text-muted) !important;
+}
+.login__saml-separator {
+  color: var(--text-muted) !important;
+  border-bottom-color: var(--cat-border) !important;
+}
+.login__saml-separator > span {
+  background: var(--cat-surface) !important;
+}
+.login__footer .ver {
+  color: var(--text-muted) !important;
+}
+.theme-light .login-logout-button,
+.theme-dark .login-logout-button {
+  color: var(--neon-cyan) !important;
+}
+.theme-light .login-logout-button:hover,
+.theme-dark .login-logout-button:hover {
+  color: var(--neon-blue) !important;
+}
+.login-logout-button:focus {
+  color: var(--neon-cyan) !important;
+  box-shadow: 0 0 0 0.1em var(--neon-cyan) !important;
+}
+
+/* ============================================================================
+ * 10. LOGS, BANNERS, LEFTOVER DARK CORNERS
+ * ----------------------------------------------------------------------------
+ * NOT themed, stated rather than discovered later: the Monaco YAML editor and
+ * the xterm pod terminal colour themselves from JS at runtime (Monaco per
+ * token, xterm per cell) — CSS cannot re-theme their content and should not
+ * try. Their chrome inherits the panels above; their content keeps upstream
+ * colours. Log LINE colouring inside the viewer is semantic and untouched.
+ * ========================================================================== */
+
+.pod-logs-viewer {
+  background-color: var(--cat-bg) !important;
+  color: var(--text) !important;
+  font-family: var(--cat-font-mono) !important;
+}
+.pod-logs-viewer--inverted {
+  background-color: var(--cat-bg) !important;
+  color: var(--text) !important;
+}
+.theme-dark .application-fullscreen-logs {
+  background-color: var(--cat-bg) !important;
+}
+.application-details__refreshing-label,
+.application-details__warning {
+  color: var(--neon-gold) !important;
+}
