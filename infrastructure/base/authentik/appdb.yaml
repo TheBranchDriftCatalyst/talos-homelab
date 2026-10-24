@@ -36,10 +36,16 @@ spec:
   # max_connections bumped 100 (CNPG default) -> 200 after the 2026-09-12 connection-exhaustion
   # incident (authentik's persistent conns + LISTEN/advisory-lock sessions filled the default pool,
   # crash-looping authentik-server). Paired with a session-mode Pooler (pooler.yaml) + lower
-  # CONN_MAX_AGE. Memory raised so the extra backends have headroom (~2MB/conn + shared_buffers).
+  # CONN_MAX_AGE.
+  #
+  # limitsMemory 1Gi -> 2Gi (TALOS-og7m, 2026-10-24): the earlier "memory raised" never actually
+  # covered 200 backends. 200 conns x ~2MB alone is ~400Mi, before shared_buffers (CNPG defaults it
+  # to ~25% of the limit) and per-sort work_mem; the primary OOMKilled at ~14h uptime (exit 137)
+  # taking SSO down fleet-wide for 2-4 min. 2Gi gives shared_buffers ~512Mi plus real backend room;
+  # requestsMemory 512Mi -> 1Gi so QoS/scheduling reflect the ~500Mi idle floor.
   parameters:
     max_connections: "200"
   resources:
     requestsCpu: 50m
-    requestsMemory: 512Mi
-    limitsMemory: 1Gi
+    requestsMemory: 1Gi
+    limitsMemory: 2Gi
