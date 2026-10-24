@@ -23,7 +23,18 @@ spec:
   # ingress, only from 192.168/10.x. (operator directive 2026-09-10)
   middlewares:
     - {name: lan-only, namespace: traefik}
-    - {name: authentik, namespace: authentik}
+    # MIGRATED to the dedicated *.talos00 outpost (TALOS-22nn stage 1): this
+    # app's login now stays on the LAN (https://auth.talos00) instead of
+    # round-tripping out to https://auth.knowledgedump.space. The composite
+    # copies this list verbatim onto the rendered websecure IngressRoute.
+    #
+    # NEEDS ITS PARTNER EDIT -- the priority-2000 callback route in
+    # infrastructure/base/authentik-lan-outpost/app-callbacks.yaml. Without it
+    # authentik-outpost-priv still sends this host's /outpost.goauthentik.io/
+    # paths to the embedded outpost at priority 1000, so the auth check and the
+    # callback are answered by two outposts advertising different browser hosts
+    # and the flow 400s or loops. Revert both or neither.
+    - {name: authentik-lan, namespace: authentik}
     # Consolidated catalyst navbar, last so both gates run before the body
     # injector touches the response. Needed as well as spec.homepage below:
     # build_nav.py requires BOTH a catalyst* middleware AND the annotation.

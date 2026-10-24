@@ -101,3 +101,41 @@ spec:
       services:
         - name: talos00-outpost
           port: 9000
+---
+# ---------------------------------------------------------------------------
+# kubeview — stage 1, app 3 of 3. Admin-only cluster object browser, already
+# LAN-restricted by an ipAllowList ahead of forward-auth, so its blast radius is
+# the smallest of the three.
+#
+# CHOSEN TO EXERCISE A SECOND DELIVERY PATH, not just for a third data point.
+# kube-ops-view and hubble are hand-written IngressRoutes; kubeview is rendered
+# by the CatalystWebSecureIngress composite (3 of the LAN apps are). Its
+# middlewares come verbatim from the claim's spec.middlewares, so the migration
+# is the same one-word change -- but that it round-trips through Crossplane
+# composition is worth proving HERE, on one app, rather than discovering it
+# during a batch.
+#
+# The composite renders the web-redirect route and the websecure route as a
+# pair; only the websecure one carries forward-auth, so only it moves. The
+# callback route still belongs here rather than in the composite: it is keyed on
+# the outpost, not on the app, and stage 3 may collapse all of these into one
+# object.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: kubeview-outpost-lan
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+    app.kubernetes.io/component: callback-route
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`kubeview.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)
+      kind: Rule
+      priority: 2000
+      services:
+        - name: talos00-outpost
+          port: 9000
