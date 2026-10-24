@@ -70,3 +70,34 @@ spec:
       services:
         - name: talos00-outpost
           port: 9000
+---
+# ---------------------------------------------------------------------------
+# hubble — stage 1, app 2 of 3. Cilium's flow viewer; read-only observability,
+# admin-gated, and not a dependency of anything.
+#
+# ITS OWN IngressRoute LIVES IN kube-system, where Kyverno cannot mutate
+# (the webhook namespaceSelector excludes kube-system/kyverno/kube-public/
+# kube-node-lease), which is why infrastructure/base/cilium/ingressroute.yaml
+# hand-writes its `tls: {}` and its gethomepage href. THIS object is in ns
+# `authentik`, so the normal ingressroute-tls-default injection applies and no
+# tls stanza is written here -- do not copy hubble's hand-written tls down here
+# by analogy, the two namespaces behave differently on purpose.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: hubble-outpost-lan
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+    app.kubernetes.io/component: callback-route
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`hubble.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)
+      kind: Rule
+      priority: 2000
+      services:
+        - name: talos00-outpost
+          port: 9000

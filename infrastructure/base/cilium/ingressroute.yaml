@@ -33,7 +33,18 @@ spec:
     - match: Host(`hubble.talos00`)
       kind: Rule
       middlewares:
-        - name: authentik
+        # MIGRATED to the dedicated *.talos00 outpost (TALOS-22nn stage 1), so
+        # this app's login stays on the LAN (https://auth.talos00) rather than
+        # round-tripping out to https://auth.knowledgedump.space.
+        #
+        # NEEDS ITS PARTNER EDIT: the priority-2000 callback route in
+        # infrastructure/base/authentik-lan-outpost/app-callbacks.yaml. Without
+        # it, authentik-outpost-priv still sends this host's
+        # /outpost.goauthentik.io/ paths to the embedded outpost at priority
+        # 1000, so the auth check and the callback get answered by two outposts
+        # advertising different browser hosts and the flow 400s or loops.
+        # Revert both or neither.
+        - name: authentik-lan
           namespace: authentik
         # Consolidated catalyst navbar (catalyst-inject-nav). Last in the chain so
         # auth runs first and the injector only ever rewrites an authorised body.
