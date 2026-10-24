@@ -1,0 +1,844 @@
+/* ============================================================================
+ *  ____      _        _           _
+ * / ___|__ _| |_ __ _| |_   _ ___| |_
+ * | |   / _` | __/ _` | | | | / __| __|
+ * | |__| (_| | || (_| | | |_| \__ \ |_
+ * \____\__,_|\__\__,_|_|\__, |___/\__|
+ *                       |___/
+ *  a theme.park theme for the Catalyst homelab
+ *
+ * GENERATED — do not edit. Source: workspace/catalyst-themepark/src/*.css
+ * Rebuild:   ./build.sh            Publish: ./build.sh --publish
+ *
+ * Palette is catalyst-ui's `catalyst` dark theme (the design system of record).
+ * Fonts are inlined as data: URIs so the whole theme is a single request with
+ * no cross-origin font fetch. See src/10-fonts.css.tmpl for why.
+ * ========================================================================== */
+
+
+/* ============================================================================
+ * CATALYST — dbgate
+ * ----------------------------------------------------------------------------
+ * A FULL theme for DbGate (dbgate.org), the cluster's database GUI.
+ *
+ * ── WHY THIS IS NOT A src/NN-*.css LAYER ────────────────────────────────────
+ * build.sh globs `src/[0-9][0-9]-*.css` into dist/catalyst.css, which is served
+ * to EVERY app carrying a `catalyst-<slug>` middleware. This file is excluded
+ * from that glob on purpose: it defines ~280 custom properties in the generic
+ * `--theme-*` namespace, and planting those on :root for a dozen unrelated apps
+ * is a collision waiting for the next person to theme something. It is built as
+ * its own artifact (dist/catalyst-dbgate.css) and linked ONLY by the
+ * catalyst-dbgate middleware, so its scope is structural rather than a guess at
+ * a selector that happens to be unique today.
+ *
+ * LOAD ORDER. The middleware links this file FIRST and catalyst.css second,
+ * matching every other per-app injector and theme.park's own architecture, where
+ * the theme-options slot is defined by loading last. Nothing here depends on
+ * that order: a var() inside a custom property resolves against the CASCADED
+ * value of the referent, not against declaration order, so section 1 referring
+ * to --cat-bg before catalyst.css declares it is fine. The three places where
+ * this file genuinely has to beat catalyst.css win on importance or specificity
+ * instead -- the --scanline-opacity re-point carries !important, and the
+ * checkbox and scrollbar overrides are more specific than the generic rules
+ * they correct. Verified in a browser with the links in the SHIPPED order.
+ *
+ * It is the file theme.park would have shipped as `css/base/dbgate/dbgate-base.
+ * css` if theme.park supported dbgate. It does not: the image's css/base/ holds
+ * 58 apps and dbgate is not among them (checked against the pinned digest). So
+ * the DOM-to-token mapping that an upstream base sheet normally provides has to
+ * be written here, and the catalyst-dbgate middleware links this file where
+ * every other per-app injector links the upstream one. It is loaded ALONGSIDE
+ * css/theme-options/catalyst.css, which supplies the tokens, the @font-face
+ * declarations and the shared component/effects layers this file builds on.
+ *
+ * ── WHY !important IS EVERYWHERE IN SECTION 1, AND IS CORRECT THERE ─────────
+ * DbGate does not ship its themes as stylesheets. It writes the ACTIVE theme
+ * into the style ATTRIBUTE of <html> — ~280 `--theme-*` declarations, rewritten
+ * whenever the user changes theme. A style attribute outranks every selector,
+ * so a plain `:root { --theme-x: ... }` here would never be seen.
+ *
+ * Important author declarations DO outrank a non-important style attribute
+ * (CSS Cascading 4 sorts on origin+importance BEFORE it considers whether a
+ * declaration came from a style attribute), so `!important` is the one thing
+ * that reaches these. Note what it is being applied TO: custom property
+ * declarations, not component properties. Nothing below forces a colour onto an
+ * element; it hands dbgate's own theming engine a different palette and lets the
+ * app apply it through its own rules. That is the opposite of an `!important`
+ * sledgehammer, and it is why sections 3-6 need almost no overrides at all.
+ *
+ * A side effect worth knowing: this wins over whichever theme the user picked in
+ * dbgate's own settings, light or dark. Deliberate — the route is themed, so it
+ * should look themed. The app still believes it is in its light theme (the
+ * `theme-type-light` class stays on .dbgate-screen), which matters in exactly
+ * two places, both handled below: the ace editor theme it chose, and the gutter
+ * run-arrow icon it picked.
+ *
+ * ── WHAT IS DELIBERATELY LEFT ALONE ────────────────────────────────────────
+ * --theme-usercolor-*  30 variables, a 10-hue rainbow the OPERATOR assigns to
+ *                      connections to tell prod from dev at a glance. Recolouring
+ *                      user-assigned semantics into brand colours would destroy
+ *                      the only thing they are for. They are light chips with
+ *                      dark text and stay legible on a dark page.
+ * --dim-*              geometry, not colour.
+ * --theme-widget-icon-transition
+ *                      a transition, not a colour.
+ * --theme-table-{added,changed,deleted}-background
+ *                      dbgate declares these as `var(--theme-datagrid-*-row-
+ *                      background)`. A var() reference inside a custom property
+ *                      resolves against the CASCADED value of the referent, so
+ *                      overriding the three datagrid properties below carries
+ *                      these three with it. Restating them would be a second
+ *                      place to keep in step for no gain.
+ *
+ * Checked against the live app: every other --theme-* and --token-* declaration
+ * dbgate writes into the <html> style attribute is accounted for below.
+ * ========================================================================== */
+
+/* ============================================================================
+ * 1. THE PALETTE REMAP
+ * ----------------------------------------------------------------------------
+ * dbgate's variable contract, in Catalyst terms. Grouped and ordered exactly as
+ * the app declares them so a future dbgate release can be diffed against this.
+ *
+ * Four elevations carry the whole UI, and the mapping is consistent:
+ *   --cat-bg         the void       canvas: grid body, editor, content area
+ *   --cat-surface    panels         sidebars, tab strip, toolstrip, modals
+ *   --cat-surface-2  raised         section headers, buttons, column headers
+ *   --cat-border     structure      inert dividers
+ * Accents come from the neon channel; cyan is "the app is pointing at this",
+ * magenta is "you changed this", acid is "this is new", red is "this is gone".
+ * ========================================================================== */
+
+html {
+  /* -- page ------------------------------------------------------------- */
+  --theme-background: var(--cat-bg) !important;
+  --theme-foreground: var(--text) !important;
+
+  /* -- generic text ------------------------------------------------------ */
+  --theme-generic-font: var(--text) !important;
+  --theme-generic-font-hover: var(--neon-cyan) !important;
+  --theme-generic-font-grayed: var(--text-muted) !important;
+  --theme-generic-font-error: var(--neon-red) !important;
+  --theme-generic-font-success: var(--neon-acid) !important;
+  --theme-link-foreground: var(--neon-cyan) !important;
+  --theme-content-background: var(--cat-bg) !important;
+  --theme-content-background-hover: var(--cat-surface) !important;
+
+  /* -- the left icon rail ------------------------------------------------ */
+  --theme-widget-panel-background: var(--cat-surface) !important;
+  --theme-widget-panel-foreground: var(--text-muted) !important;
+  --theme-widget-icon-background-active: var(--cat-surface-2) !important;
+  --theme-widget-icon-foreground-active: var(--neon-cyan) !important;
+  --theme-widget-icon-foreground-hover: var(--neon-cyan) !important;
+  /* The active rail icon is marked by a 1px box. White reads as a UI accident
+   * on this background; the hairline is the house marker. */
+  --theme-widget-icon-border-active: 1px solid var(--cat-hairline) !important;
+
+  /* -- scrollbars --------------------------------------------------------
+   * The shared component layer paints ::-webkit-scrollbar-thumb with a cyan ->
+   * magenta gradient and wins (it is a pseudo-element rule, these are only the
+   * fallback colours dbgate hands the same pseudo). Kept in step so the track
+   * still belongs to the page if that rule is ever scoped away. */
+  --theme-scrollbar-background: var(--cat-bg) !important;
+  --theme-scrollbar-thumb-background: var(--cat-border) !important;
+  --theme-scrollbar-thumb-background-hover: var(--cat-hairline) !important;
+  --theme-scrollbar-corner-background: var(--cat-bg) !important;
+
+  /* -- the tab strip ----------------------------------------------------- */
+  --theme-tabs-panel-background: var(--cat-surface) !important;
+  --theme-tabs-panel-active-background: var(--cat-bg) !important;
+  --theme-tabs-panel-item-background: var(--cat-surface-2) !important;
+  --theme-tabs-panel-border: 1px solid var(--cat-border) !important;
+  --theme-tabs-panel-foreground: var(--text-muted) !important;
+  --theme-tabs-panel-active-foreground: var(--neon-cyan) !important;
+  /* The active tab is the single most-read piece of state in this app. A 2px
+   * cyan rule on a tab whose fill already matches the canvas below it reads as
+   * one continuous surface, which is exactly what a tab is supposed to say. */
+  --theme-tabs-panel-active-border: 2px solid var(--neon-cyan) !important;
+  --theme-tabs-panel-active-border-db: 2px solid var(--neon-purple) !important;
+
+  /* -- splitters --------------------------------------------------------- */
+  --theme-splitter-active: var(--neon-cyan) !important;
+  --theme-splitter-button-background: var(--cat-surface-2) !important;
+  --theme-splitter-button-background-active: var(--cat-border) !important;
+  --theme-splitter-button-foreground: var(--text) !important;
+
+  /* -- the connection tree (sidebar) ------------------------------------- */
+  --theme-sidebar-background: var(--cat-surface) !important;
+  --theme-sidebar-background-hover: color-mix(in srgb, var(--neon-cyan) 7%, var(--cat-surface)) !important;
+  --theme-sidebar-background-active: var(--cat-surface-2) !important;
+  --theme-sidebar-background-focused: color-mix(in srgb, var(--neon-cyan) 16%, var(--cat-surface)) !important;
+  --theme-sidebar-foreground: var(--text) !important;
+  --theme-sidebar-foreground-button: var(--text-muted) !important;
+  --theme-sidebar-foreground-grayed: var(--text-muted) !important;
+  --theme-sidebar-foreground-hover: var(--neon-cyan) !important;
+  --theme-sidebar-section-background: var(--cat-surface-2) !important;
+  --theme-sidebar-section-foreground: var(--neon-cyan) !important;
+  --theme-sidebar-section-border: none !important;
+  --theme-sidebar-section-border-top: 1px solid var(--cat-hairline-dim) !important;
+  --theme-sidebar-border: none !important;
+
+  /* -- the object tree (alt sidebar) ------------------------------------- */
+  --theme-altsidebar-background: var(--cat-surface) !important;
+  --theme-altsidebar-background-grayed: var(--cat-bg) !important;
+  --theme-altsidebar-background-hover: color-mix(in srgb, var(--neon-cyan) 7%, var(--cat-surface)) !important;
+  --theme-altsidebar-background-active: var(--cat-surface-2) !important;
+  --theme-altsidebar-background-focused: color-mix(in srgb, var(--neon-cyan) 16%, var(--cat-surface)) !important;
+  --theme-altsidebar-foreground: var(--text) !important;
+  --theme-altsidebar-foreground-button: var(--text-muted) !important;
+  --theme-altsidebar-foreground-grayed: var(--text-muted) !important;
+  --theme-altsidebar-foreground-hover: var(--neon-cyan) !important;
+  --theme-altsidebar-section-background: var(--cat-surface-2) !important;
+  --theme-altsidebar-section-foreground: var(--neon-cyan) !important;
+  --theme-altsidebar-section-border: none !important;
+  --theme-altsidebar-section-border-top: 1px solid var(--cat-hairline-dim) !important;
+  --theme-altsidebar-border: 1px solid var(--cat-border) !important;
+
+  /* -- search boxes ------------------------------------------------------
+   * `-filtered` means "this box is narrowing what you see". Gold, because it is
+   * a caution state rather than a selection, and it must not be mistaken for a
+   * focus ring. */
+  --theme-searchbox-background: var(--cat-surface-2) !important;
+  --theme-searchbox-placeholder: var(--text-muted) !important;
+  --theme-searchbox-border: 1px solid var(--cat-border) !important;
+  --theme-searchbox-background-filtered: color-mix(in srgb, var(--neon-gold) 22%, var(--cat-surface)) !important;
+  --theme-altsearchbox-background: var(--cat-surface-2) !important;
+  --theme-altsearchbox-placeholder: var(--text-muted) !important;
+  --theme-altsearchbox-border: 1px solid var(--cat-border) !important;
+
+  /* -- inline (icon) buttons --------------------------------------------- */
+  --theme-inlinebutton-foreground: var(--text-muted) !important;
+  --theme-inlinebutton-foreground-disabled: var(--cat-border) !important;
+  --theme-inlinebutton-foreground-hover: var(--neon-cyan) !important;
+  --theme-inlinebutton-circle-hover-background: var(--cat-surface-2) !important;
+  --theme-inlinebutton-bordered-border: 1px solid var(--cat-border) !important;
+  --theme-inlinebutton-bordered-hover-border: 1px solid var(--cat-hairline) !important;
+  --theme-inlinebutton-bordered-background: linear-gradient(to bottom, var(--cat-surface-2) 5%, var(--cat-surface) 100%) !important;
+  --theme-inlinebutton-bordered-hover-background: linear-gradient(to bottom, var(--cat-surface) 5%, var(--cat-surface-2) 100%) !important;
+
+  /* -- the result grid ---------------------------------------------------
+   * The densest surface in the app and the one the operator actually reads, so
+   * every value here is chosen for separation rather than for colour.
+   *
+   * Zebra striping is a 4% cyan wash, not a grey step: on a #05050a ground a
+   * neutral stripe has to be ~8% lighter before the eye catches it, by which
+   * point it is competing with the selection state. A hue shift reads at half
+   * the luminance distance.
+   *
+   * Horizontal and vertical gridlines are the SAME weight, which is a reversal of
+   * the first attempt here. The argument for weaker verticals -- a row is the unit
+   * you track, so equal gridlines read as graph paper -- is sound on a light
+   * ground and wrong on this one. Measured in the browser: at 55% alpha over
+   * #05050a the vertical rule disappears completely, and adjacent columns of
+   * timestamps run into each other with no visible boundary at all. Column
+   * separation is worth more here than the graph-paper risk. */
+  --theme-datagrid-background: var(--cat-bg) !important;
+  --theme-datagrid-foreground: var(--text) !important;
+  --theme-datagrid-foreground-grayed: var(--text-muted) !important;
+  --theme-datagrid-border-horizontal: 1px solid var(--cat-border) !important;
+  --theme-datagrid-border-vertical: 1px solid var(--cat-border) !important;
+  --theme-datagrid-cell-background: var(--cat-bg) !important;
+  --theme-datagrid-cell-background-alt: color-mix(in srgb, var(--neon-cyan) 4%, var(--cat-bg)) !important;
+  --theme-datagrid-cell-background-alt2: color-mix(in srgb, var(--neon-purple) 5%, var(--cat-bg)) !important;
+  --theme-datagrid-headercell-background: var(--cat-surface-2) !important;
+  --theme-datagrid-filter-background: var(--cat-surface) !important;
+  --theme-datagrid-filter-border: 1px solid var(--cat-border) !important;
+  --theme-datagrid-filter-ok-background: color-mix(in srgb, var(--neon-gold) 20%, var(--cat-bg)) !important;
+  --theme-datagrid-filter-error-background: color-mix(in srgb, var(--neon-red) 24%, var(--cat-bg)) !important;
+  /* Pending-edit states. Each is a WASH behind unchanged text, never a fill:
+   * these mark rows you are about to write to a real database, so the text has
+   * to stay as readable as it was before you touched it. */
+  --theme-datagrid-modified-row-background: color-mix(in srgb, var(--neon-purple) 14%, var(--cat-bg)) !important;
+  --theme-datagrid-modified-cell-background: color-mix(in srgb, var(--neon-purple) 26%, var(--cat-bg)) !important;
+  --theme-datagrid-inserted-row-background: color-mix(in srgb, var(--neon-acid) 14%, var(--cat-bg)) !important;
+  --theme-datagrid-deleted-row-background: color-mix(in srgb, var(--neon-red) 16%, var(--cat-bg)) !important;
+  /* Selection vs focus. Two distinct strengths plus a border on the focused one,
+   * because "the cells I dragged across" and "the cell the keyboard is on" are
+   * different questions and a single highlight answers neither. */
+  --theme-datagrid-selected-cell-background: color-mix(in srgb, var(--neon-cyan) 16%, var(--cat-bg)) !important;
+  --theme-datagrid-focused-cell-background: color-mix(in srgb, var(--neon-cyan) 28%, var(--cat-bg)) !important;
+  --theme-datagrid-focused-cell-border-horizontal: 1px solid var(--neon-cyan) !important;
+  --theme-datagrid-focused-cell-border-vertical: 1px solid var(--neon-cyan) !important;
+  --theme-datagrid-selected-point-marker: var(--neon-cyan) !important;
+  --theme-datagrid-corner-label-background: var(--cat-surface-2) !important;
+  --theme-datagrid-corner-label-border: 1px solid var(--cat-hairline-dim) !important;
+  --theme-datagrid-detail-header-background: var(--cat-surface-2) !important;
+  --theme-datagrid-detail-header-border: 1px solid var(--cat-hairline-dim) !important;
+  /* Numeric cells. Muted toward the body text rather than full acid: this
+   * applies to EVERY integer on screen and the channel at full strength makes a
+   * result set look like an alarm. */
+  --theme-datagrid-cell-foreground-value-green: color-mix(in srgb, var(--neon-acid) 65%, var(--text)) !important;
+
+  /* -- checkboxes -------------------------------------------------------- */
+  --theme-checkbox-check: var(--cat-surface-2) !important;
+  --theme-checkbox-background: var(--neon-cyan) !important;
+  --theme-checkbox-border: 1px solid var(--cat-border) !important;
+  --theme-checkbox-mark: var(--cat-bg) !important;
+  --theme-checkbox-background-disabled: var(--cat-surface) !important;
+  --theme-checkbox-background-disabled-before: var(--cat-border) !important;
+  --theme-checkbox-hover-not-disabled: var(--cat-hairline) !important;
+  --theme-checkbox-background-inherited: var(--cat-surface-2) !important;
+
+  /* -- plain tables (structure view, object lists) ----------------------- */
+  --theme-table-border: 1px solid var(--cat-border) !important;
+  --theme-table-cell-background: var(--cat-bg) !important;
+  --theme-table-cell-empty-background: var(--cat-surface) !important;
+  --theme-table-cell-empty-foreground: var(--text-muted) !important;
+  --theme-table-header-background: var(--cat-surface-2) !important;
+  --theme-table-selected-background: color-mix(in srgb, var(--neon-cyan) 16%, var(--cat-bg)) !important;
+  --theme-table-active-background: var(--cat-surface-2) !important;
+  --theme-table-hover-background: color-mix(in srgb, var(--neon-cyan) 6%, var(--cat-bg)) !important;
+  --theme-cell-active-border: 2px solid var(--neon-cyan) !important;
+  --theme-object-header-background: var(--cat-surface-2) !important;
+
+  /* -- modals ------------------------------------------------------------ */
+  --theme-modal-background: var(--cat-surface) !important;
+  --theme-modal-header-background: var(--cat-surface-2) !important;
+  --theme-modal-footer-background: var(--cat-surface) !important;
+  --theme-modal-border: 1px solid var(--cat-hairline-dim) !important;
+  --theme-modal-overlay-background: rgba(0, 0, 0, 0.72) !important;
+  --theme-modal-shadow: var(--shadow-neon-lg) !important;
+  --theme-modal-close-hover-background: var(--cat-border) !important;
+
+  /* -- form buttons -----------------------------------------------------
+   * The primary button is the one solid cyan slab in the app. Dark text on it,
+   * which is what --button-text is for in the shared token layer. */
+  --theme-formbutton-foreground: var(--button-text) !important;
+  --theme-formbutton-background: var(--neon-cyan) !important;
+  --theme-formbutton-background-hover: var(--neon-purple) !important;
+  --theme-formbutton-background-active: var(--neon-purple) !important;
+  --theme-formbutton-border: 1px solid var(--neon-cyan) !important;
+  --theme-formbutton-border-hover: 1px solid var(--neon-purple) !important;
+  --theme-formbutton-border-active: 2px solid var(--neon-cyan) !important;
+  --theme-formbutton-background-disabled: var(--cat-surface-2) !important;
+  --theme-formbutton-border-disabled: 1px solid var(--cat-border) !important;
+  --theme-formbutton-foreground-disabled: var(--text-muted) !important;
+  --theme-outlinebutton-foreground: var(--text) !important;
+  --theme-outlinebutton-border: 1px solid var(--cat-hairline-dim) !important;
+  --theme-outlinebutton-hover-foreground: var(--neon-cyan) !important;
+  --theme-outlinebutton-hover-border: 1px solid var(--neon-cyan) !important;
+
+  /* -- in-page tab controls ---------------------------------------------- */
+  --theme-tabs-control-background: var(--cat-surface) !important;
+  --theme-tabs-control-border: 1px solid var(--cat-border) !important;
+  --theme-tabs-control-selected-background: var(--cat-surface-2) !important;
+  --theme-tabs-control-selected-border: 2px solid var(--neon-cyan) !important;
+  --theme-inline-tabs-border: 1px solid var(--cat-border) !important;
+  --theme-inline-tabs-border-active: 2px solid var(--neon-cyan) !important;
+
+  /* -- the toolstrip (Execute / Refresh / Save ...) ---------------------- */
+  --theme-toolstrip-background: var(--cat-surface) !important;
+  --theme-toolstrip-border: 1px solid var(--cat-border) !important;
+  --theme-toolstrip-button-foreground: var(--text) !important;
+  --theme-toolstrip-button-foreground-disabled: var(--text-muted) !important;
+  --theme-toolstrip-button-foreground-icon: var(--neon-cyan) !important;
+  --theme-toolstrip-button-background: var(--cat-surface) !important;
+  --theme-toolstrip-button-background-hover: var(--cat-surface-2) !important;
+  --theme-toolstrip-button-background-active: var(--cat-border) !important;
+  --theme-toolstrip-button-border: 1px solid var(--cat-border) !important;
+  --theme-toolstrip-button-border-hover: 1px solid var(--cat-hairline) !important;
+  --theme-toolstrip-button-border-disabled: 1px solid var(--cat-border) !important;
+  --theme-toolstrip-button-split-separator-border: 1px solid var(--cat-border) !important;
+  --theme-panel-border-subtle: 1px solid var(--cat-border) !important;
+  --theme-panel-type-label-color: var(--text-muted) !important;
+
+  /* -- the ER / query designer ------------------------------------------
+   * The three header backgrounds distinguish tables on the canvas, so they have
+   * to stay three visibly different things. Dark tints of three different
+   * channels, since the stock pastels put near-black text on near-white chips
+   * and the rest of the page is no longer near-white. */
+  --theme-designer-background: var(--cat-bg) !important;
+  --theme-designer-item-background: var(--cat-surface) !important;
+  --theme-designer-item-border: 1px solid var(--cat-border) !important;
+  --theme-designer-selection-marker: var(--neon-cyan) !important;
+  --theme-designer-stroke-color: var(--cat-hairline-dim) !important;
+  --theme-designer-arrow-color: var(--neon-cyan) !important;
+  --theme-designer-select-reactangle-foreground: var(--neon-cyan) !important;
+  --theme-designer-header-background-1: color-mix(in srgb, var(--neon-cyan) 26%, var(--cat-surface)) !important;
+  --theme-designer-header-background-2: color-mix(in srgb, var(--neon-purple) 26%, var(--cat-surface)) !important;
+  --theme-designer-header-background-3: color-mix(in srgb, var(--neon-gold) 26%, var(--cat-surface)) !important;
+  --theme-designer-header-background-grayed: var(--cat-surface-2) !important;
+  --theme-designer-close-background: var(--cat-surface-2) !important;
+  --theme-designer-close-background-hover: var(--cat-border) !important;
+  --theme-designer-close-background-active: var(--cat-hairline-dim) !important;
+  --theme-designer-drag-column-background: color-mix(in srgb, var(--neon-gold) 28%, var(--cat-surface)) !important;
+  --theme-designer-select-column-background: var(--cat-surface-2) !important;
+
+  /* -- the status bar ---------------------------------------------------
+   * Stock this is a solid sky-blue band, which on a dark page is the brightest
+   * thing on screen and sits directly under the densest. Demoted to a panel
+   * surface; the connection state carries the colour instead, which is the only
+   * part of it anyone reads. */
+  --theme-statusbar-background: var(--cat-surface) !important;
+  --theme-statusbar-foreground: var(--text) !important;
+  --theme-statusbar-background-hover: color-mix(in srgb, var(--neon-cyan) 12%, transparent) !important;
+  --theme-statusbar-button-background: var(--cat-surface-2) !important;
+  --theme-statusbar-button-foreground: var(--text) !important;
+  --theme-statusbar-icon-error: var(--neon-red) !important;
+  --theme-statusbar-icon-ok: var(--neon-acid) !important;
+
+  /* -- misc panels ------------------------------------------------------- */
+  --theme-aichat-user-background: color-mix(in srgb, var(--neon-cyan) 10%, var(--cat-surface)) !important;
+  --theme-aichat-assistant-background: var(--cat-surface-2) !important;
+  --theme-applog-details-background: var(--cat-surface-2) !important;
+
+  /* -- inputs -----------------------------------------------------------
+   * The shared component layer already paints and chamfers every <input>,
+   * <select> and <textarea>. These exist so dbgate's OWN composed strings
+   * (--theme-input-border is consumed as a whole `1px solid X` value) stay in
+   * step rather than falling back to a zinc border nothing else uses. */
+  --theme-input-background: var(--cat-surface-2) !important;
+  --theme-input-foreground: var(--text) !important;
+  --theme-input-placeholder: var(--text-muted) !important;
+  --theme-input-border: 1px solid var(--cat-border) !important;
+  --theme-input-border-hover-color: var(--cat-hairline) !important;
+  --theme-input-border-hover: 1px solid var(--cat-hairline) !important;
+  --theme-input-border-focus-color: var(--neon-cyan) !important;
+  --theme-input-border-focus: 1px solid var(--neon-cyan) !important;
+  --theme-input-border-disabled: 1px solid var(--cat-border) !important;
+  --theme-input-background-disabled: var(--cat-surface) !important;
+  --theme-input-foreground-disabled: var(--text-muted) !important;
+  --theme-input-focus-ring: var(--glow-primary) !important;
+  --theme-input-multi-clear-background: var(--cat-surface-2) !important;
+  --theme-input-multi-clear-foreground: var(--text-muted) !important;
+  --theme-input-multi-clear-hover: var(--cat-border) !important;
+  /* Stock these are white-ish drop shadows that do nothing on a dark ground. */
+  --theme-input-shadow: none !important;
+  --theme-input-shadow-hover: none !important;
+  --theme-input-shadow-focus: none !important;
+  --theme-input-inplace-select-shadow: var(--shadow-neon-md) !important;
+  --theme-color-selected-border: 2px solid var(--neon-cyan) !important;
+
+  /* -- connection status chips ------------------------------------------
+   * Semantic, and they are what tells you whether a connection is safe to use.
+   * Recoloured but never collapsed: valid / testing / error / untested stay four
+   * distinguishable hues. */
+  --theme-new-object-button-background: var(--cat-surface-2) !important;
+  --theme-new-object-button-background-hover: var(--cat-border) !important;
+  --theme-status-valid-background: color-mix(in srgb, var(--neon-acid) 18%, var(--cat-surface)) !important;
+  --theme-status-testing-background: color-mix(in srgb, var(--neon-cyan) 18%, var(--cat-surface)) !important;
+  --theme-status-error-background: color-mix(in srgb, var(--neon-red) 22%, var(--cat-surface)) !important;
+  --theme-status-unconfigured-background: var(--cat-surface-2) !important;
+  --theme-status-untested-background: color-mix(in srgb, var(--neon-gold) 18%, var(--cat-surface)) !important;
+
+  /* -- dropdowns, icon picker, redis, chips, titlebar, cards, admin ------ */
+  --theme-dropdown-icon-hover: var(--neon-cyan) !important;
+  --theme-icon-picker-background: var(--cat-surface-2) !important;
+  --theme-icon-picker-border: 1px solid var(--cat-border) !important;
+  --theme-icon-picker-hover: var(--cat-border) !important;
+  --theme-icon-picker-selected: color-mix(in srgb, var(--neon-cyan) 24%, var(--cat-surface)) !important;
+  --theme-redis-background: var(--cat-surface) !important;
+  --theme-redis-border: 1px solid var(--cat-border) !important;
+  --theme-redis-icon-hover: var(--cat-border) !important;
+  --theme-chip-background: var(--cat-surface-2) !important;
+  --theme-titlebar-background: var(--cat-surface-2) !important;
+  --theme-titlebar-button-hover: var(--cat-border) !important;
+  --theme-card-background: var(--cat-surface) !important;
+  --theme-card-border: 1px solid var(--cat-border) !important;
+  --theme-admin-menu-background: var(--cat-surface) !important;
+  --theme-admin-menu-border: 1px solid var(--cat-border) !important;
+  --theme-admin-menu-item-hover: var(--cat-surface-2) !important;
+  --theme-admin-menu-item-active: var(--cat-border) !important;
+
+  /* -- the JSON tree (document databases, JSON columns) -----------------
+   * This is the one place a wide hue spread earns its keep: the colour IS the
+   * type, and a reader scanning a nested document is using it to tell a quoted
+   * number from a real one. Mapped across the channels rather than compressed
+   * into cyan. */
+  --theme-json-tree-label-color: var(--neon-cyan) !important;
+  --theme-json-tree-string-color: var(--neon-gold) !important;
+  --theme-json-tree-symbol-color: var(--neon-gold) !important;
+  --theme-json-tree-number-color: var(--neon-acid) !important;
+  --theme-json-tree-boolean-color: var(--neon-purple) !important;
+  --theme-json-tree-function-color: var(--neon-purple) !important;
+  --theme-json-tree-date-color: var(--neon-blue) !important;
+  --theme-json-tree-arrow-color: var(--text-muted) !important;
+  --theme-json-tree-null-color: var(--text-muted) !important;
+  --theme-json-tree-undefined-color: var(--text-muted) !important;
+  --theme-json-tree-deleted-background: color-mix(in srgb, var(--neon-red) 16%, var(--cat-bg)) !important;
+  --theme-json-tree-modified-background: color-mix(in srgb, var(--neon-purple) 16%, var(--cat-bg)) !important;
+  --theme-json-tree-inserted-background: color-mix(in srgb, var(--neon-acid) 16%, var(--cat-bg)) !important;
+
+  /* -- object-type icons -------------------------------------------------
+   * Table vs view vs procedure vs key. Six hues the operator reads as a type
+   * code in the tree, so they are remapped onto the neon channels one-for-one
+   * and never collapsed. */
+  --theme-icon-blue: var(--neon-blue) !important;
+  --theme-icon-green: var(--neon-acid) !important;
+  --theme-icon-red: var(--neon-red) !important;
+  --theme-icon-gold: var(--neon-gold) !important;
+  --theme-icon-yellow: var(--neon-yellow) !important;
+  --theme-icon-magenta: var(--neon-purple) !important;
+
+  /* -- the SQL / code highlighter (highlight.js token set) ---------------
+   * Stock this is the Visual Studio light scheme: black on white with #a31515
+   * strings. Every one of these is read against --cat-bg now.
+   *
+   * Keywords cyan, identifiers plain, literals gold, numbers acid, comments
+   * muted. Comments are the one thing deliberately pushed DOWN rather than
+   * coloured: they are the only text here you are meant to skip. */
+  --token-base: var(--cat-bg) !important;
+  --token-text: var(--text) !important;
+  --token-comment: var(--text-muted) !important;
+  --token-quote: var(--text-muted) !important;
+  --token-doctag: var(--text-muted) !important;
+  --token-variable: var(--neon-blue) !important;
+  --token-keyword: var(--neon-cyan) !important;
+  --token-selector-tag: var(--neon-cyan) !important;
+  --token-built_in: var(--neon-cyan) !important;
+  --token-name: var(--neon-cyan) !important;
+  --token-tag: var(--neon-cyan) !important;
+  --token-string: var(--neon-gold) !important;
+  --token-title: var(--neon-purple) !important;
+  --token-section: var(--neon-purple) !important;
+  --token-attribute: var(--neon-purple) !important;
+  --token-literal: var(--neon-acid) !important;
+  --token-symbol: var(--neon-acid) !important;
+  --token-bullet: var(--neon-acid) !important;
+  --token-template-tag: var(--neon-purple) !important;
+  --token-template-variable: var(--neon-purple) !important;
+  --token-type: var(--neon-blue) !important;
+  --token-addition: var(--neon-acid) !important;
+  --token-deletion: var(--neon-red) !important;
+  --token-selector-attr: var(--neon-blue) !important;
+  --token-selector-pseudo: var(--neon-blue) !important;
+  --token-meta: var(--text-muted) !important;
+  --token-attr: var(--neon-purple) !important;
+  --token-link: var(--neon-cyan) !important;
+}
+
+/* ============================================================================
+ * 2. STRUCTURAL REPAIRS
+ * ----------------------------------------------------------------------------
+ * Three places where something outside dbgate's variable contract is painted,
+ * so no remap can reach it.
+ * ========================================================================== */
+
+/* dbgate never sets a <body> background — it relies on the browser default and
+ * covers it with .dbgate-screen. During boot, and in the gap left by a panel
+ * that has not laid out yet, white shows through. */
+body {
+  background: var(--cat-bg);
+  color: var(--text);
+}
+
+/* CHECKBOX REPAIR. The shared component layer (40-components) paints every
+ * `input` with `background: var(--cat-surface-2) !important` and chamfers it,
+ * which is right for a text field and wrong for dbgate's checkbox: that element
+ * is `appearance: none` with its CHECKED state drawn as a background-colour
+ * change, so the blanket rule leaves a ticked box looking identical to an empty
+ * one. Verified in the browser, not inferred. Re-asserting the checked fill and
+ * dropping the chamfer on a 16px square fixes it without touching the generic
+ * rule the other dozen apps depend on. */
+.dbgate-screen input[type='checkbox'] {
+  clip-path: none;
+  background: var(--cat-surface-2) !important;
+}
+.dbgate-screen input[type='checkbox']:checked {
+  background: var(--neon-cyan) !important;
+  border-color: var(--neon-cyan) !important;
+}
+
+/* Corners are cut, not rounded, everywhere else in this theme. dbgate hardcodes
+ * `border-radius: 4px` in its own global.css on inputs, selects and checkboxes,
+ * where no variable can reach it. Squared rather than chamfered: these are
+ * 16-24px controls and a bevel at that size reads as a rendering artefact. */
+.dbgate-screen input,
+.dbgate-screen select,
+.dbgate-screen textarea {
+  border-radius: 0;
+}
+
+/* ============================================================================
+ * 3. DENSITY: THE RESULT GRID
+ * ----------------------------------------------------------------------------
+ * SPECIFICITY NOTE for everything below. dbgate is a Svelte app and its own
+ * rules carry a per-component hash class (`td.header-cell.svelte-1ce8ry4`,
+ * 0-2-1). Those hashes change on every dbgate release, so nothing here may
+ * reference one. `.dbgate-screen table.table td.header-cell` is 0-3-2 and wins
+ * on specificity instead of on a build artefact.
+ * ========================================================================== */
+
+/* Values are data, not prose. Monospace with tabular figures is what stops a
+ * column of ids and timestamps from jittering as you scroll, and what makes a
+ * trailing space or a doubled character visible at all.
+ *
+ * 12.5px against dbgate's 14px: Space Mono runs wide, and holding the stock size
+ * would cost roughly one column per screen. The x-height is large enough that
+ * this is still the more legible of the two. */
+.dbgate-screen table.table td {
+  font-family: var(--cat-font-mono);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Column headers. NOT the display face: the shared typography layer puts
+ * Orbitron on <th>, which dbgate's grid does not use, and that is the right
+ * outcome here — Orbitron is wide and these are snake_case identifiers that are
+ * already truncating. Same mono as the values, separated by weight, colour and
+ * surface instead of by typeface.
+ *
+ * The bottom hairline and the shadow are what keep the header readable as a
+ * header once rows are scrolling underneath it. */
+.dbgate-screen table.table td.header-cell {
+  font-family: var(--cat-font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--neon-cyan);
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--cat-hairline-dim);
+  /* A black drop shadow is invisible against #05050a -- the first version of this
+   * rule shipped one and it did nothing. The separation that reads on this ground
+   * is a short cyan bloom below the hairline. Tight and dim on purpose: it has to
+   * mark the boundary, not light up the first row of data. */
+  box-shadow: 0 2px 8px -4px rgba(var(--neon-cyan-rgb), 0.35);
+}
+
+/* The filter row sits between the headers and the data and is neither. Keep it
+ * quiet so it does not read as a first result row. */
+.dbgate-screen table.table td.filter-cell {
+  background: var(--cat-surface);
+}
+
+/* Row hover. dbgate has no hover state on grid rows at all; under this density
+ * the pointer loses its row constantly. Cheap to add, and it is the one piece
+ * of feedback that makes a wide result set navigable with a mouse. */
+.dbgate-screen table.table tr:hover > td {
+  background-color: color-mix(in srgb, var(--neon-cyan) 8%, var(--cat-bg));
+}
+
+/* The row-number gutter is an index, not a value: mute it so it stops competing
+ * with the first real column. */
+.dbgate-screen table.table tr > td:first-child {
+  color: var(--text-muted);
+  background: var(--cat-surface);
+}
+
+/* SCROLLBARS. The shared component layer sets a cyan -> magenta gradient thumb,
+ * which is right for an app whose scrollbar is a thin strip beside a poster
+ * wall. It is wrong here: a result set is wider than the viewport almost
+ * always, so dbgate's horizontal thumb is a near-full-width neon bar sitting
+ * directly under the densest text on the page, and the tree panels each carry
+ * another one.
+ *
+ * NOTE WHICH PROPERTY THIS OVERRIDES, because the obvious one does nothing.
+ * The same layer also sets `* { scrollbar-color: ... }`, and in Chromium a
+ * specified `scrollbar-color` makes the browser paint the standard scrollbar
+ * and IGNORE every ::-webkit-scrollbar-* rule on that element. A
+ * `.dbgate-screen ::-webkit-scrollbar-thumb` override therefore wins the
+ * cascade and still changes nothing on screen — which is exactly what the first
+ * attempt here did, and it looked correct in the stylesheet. Verified by
+ * reading the computed `scrollbar-color` off a live scrollable element, not by
+ * looking at the rule.
+ *
+ * `thin` as well as dim: these are chrome around a dense grid, not content. */
+.dbgate-screen,
+.dbgate-screen * {
+  scrollbar-color: rgba(var(--neon-cyan-rgb), 0.38) var(--cat-bg);
+  scrollbar-width: thin;
+}
+
+/* ============================================================================
+ * 4. THE SQL EDITOR (ace)
+ * ----------------------------------------------------------------------------
+ * dbgate embeds ace, and picks the ace theme from its OWN theme type. Because
+ * section 1 recolours the app without changing that type, ace is still running
+ * `ace-github` — a light theme — inside a dark app. That is the one visible
+ * consequence of winning the cascade this way, and this section is the fix.
+ *
+ * Written against ace's STRUCTURAL classes (.ace_editor, .ace_gutter,
+ * .ace_keyword) rather than against `.ace-github`, so it holds if dbgate ever
+ * hands ace a different theme. Ace injects its theme as a <style> element at
+ * runtime, which lands after our <link>, so matching its 0-2-0 selectors would
+ * lose on document order; the `.dbgate-screen` prefix takes the rules to 0-3-0
+ * and wins on specificity instead of needing !important.
+ * ========================================================================== */
+
+.dbgate-screen .ace_editor {
+  background: var(--cat-bg);
+  color: var(--text);
+  font-family: var(--cat-font-mono);
+}
+
+.dbgate-screen .ace_editor .ace_gutter {
+  background: var(--cat-surface);
+  color: var(--text-muted);
+  border-right: 1px solid var(--cat-border);
+}
+.dbgate-screen .ace_editor .ace_gutter-active-line {
+  background: var(--cat-surface-2);
+  color: var(--neon-cyan);
+}
+
+.dbgate-screen .ace_editor .ace_cursor {
+  color: var(--color-caret);
+}
+.dbgate-screen .ace_editor .ace_marker-layer .ace_active-line {
+  background: color-mix(in srgb, var(--neon-cyan) 6%, var(--cat-bg));
+}
+.dbgate-screen .ace_editor .ace_marker-layer .ace_selection {
+  background: color-mix(in srgb, var(--neon-cyan) 22%, var(--cat-bg));
+}
+.dbgate-screen .ace_editor .ace_marker-layer .ace_selected-word {
+  background: color-mix(in srgb, var(--neon-purple) 20%, var(--cat-bg));
+  border: 1px solid var(--cat-hairline-dim);
+}
+.dbgate-screen .ace_editor .ace_marker-layer .ace_bracket {
+  margin: -1px 0 0 -1px;
+  border: 1px solid var(--neon-cyan);
+}
+.dbgate-screen .ace_editor .ace_print-margin {
+  background: var(--cat-border);
+}
+.dbgate-screen .ace_editor .ace_invisible,
+.dbgate-screen .ace_editor .ace_indent-guide {
+  color: var(--cat-border);
+}
+
+/* Syntax. Same assignment as the highlight.js token set above, so a query reads
+ * identically in the editor and in a generated-SQL preview. */
+.dbgate-screen .ace_editor .ace_comment {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.dbgate-screen .ace_editor .ace_keyword,
+.dbgate-screen .ace_editor .ace_constant.ace_language,
+.dbgate-screen .ace_editor .ace_boolean {
+  color: var(--neon-cyan);
+  /* ace-github bolds keywords, and a bold-vs-regular mix inside a monospace
+   * editor shifts the glyph advance on some faces. Weight is not the signal
+   * here; colour is. */
+  font-weight: 400;
+}
+.dbgate-screen .ace_editor .ace_string {
+  color: var(--neon-gold);
+}
+.dbgate-screen .ace_editor .ace_constant.ace_numeric {
+  color: var(--neon-acid);
+}
+.dbgate-screen .ace_editor .ace_support.ace_function,
+.dbgate-screen .ace_editor .ace_constant.ace_buildin {
+  color: var(--neon-purple);
+}
+.dbgate-screen .ace_editor .ace_variable.ace_class,
+.dbgate-screen .ace_editor .ace_variable.ace_instance,
+.dbgate-screen .ace_editor .ace_variable.ace_language {
+  color: var(--neon-blue);
+}
+.dbgate-screen .ace_editor .ace_paren {
+  color: var(--text);
+  font-weight: 400;
+}
+
+/* ace's autocomplete popup is an .ace_editor in its own right, mounted outside
+ * .dbgate-screen — hence the separate, unprefixed block. Nothing else on the
+ * page carries .ace_autocomplete, so the loose selector is still scoped. */
+.ace_editor.ace_autocomplete {
+  background: var(--cat-surface);
+  color: var(--text);
+  border: 1px solid var(--cat-hairline-dim);
+  box-shadow: var(--shadow-neon-md);
+}
+.ace_editor.ace_autocomplete .ace_marker-layer .ace_active-line {
+  background: color-mix(in srgb, var(--neon-cyan) 20%, var(--cat-surface));
+}
+.ace_editor.ace_autocomplete .ace_completion-highlight {
+  color: var(--neon-cyan);
+  text-shadow: none;
+}
+.ace_editor.ace_autocomplete .ace_completion-meta {
+  color: var(--text-muted);
+}
+
+/* The run-arrow in the editor gutter is a base64 SVG chosen by dbgate from the
+ * `theme-type-light` class, which still says light — so it is a #444 arrow on a
+ * near-black gutter, effectively invisible. Replaced rather than inverted: a
+ * filter here would also hit the gutter's active-line background. */
+.dbgate-screen .ace_gutter-cell.ace-gutter-sql-run {
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath fill='%2300ffd5' d='M2 0.4l13.8 8.6L2 17.6z'/%3E%3C/svg%3E");
+}
+.dbgate-screen .ace_gutter-cell.ace-gutter-sql-run:hover {
+  background-color: color-mix(in srgb, var(--neon-cyan) 14%, var(--cat-surface));
+}
+
+/* ============================================================================
+ * 5. THE TWO DISPLAY SLOTS
+ * ----------------------------------------------------------------------------
+ * Everything above is legibility work. This is the part that makes the app read
+ * as Catalyst rather than as a competently darkened dbgate, and it is confined
+ * to the only two places in this UI that are not dense: the panel labels and the
+ * modal title. Orbitron is the house display face and it does not belong
+ * anywhere near 12.5px of tabular data, so these are the whole budget.
+ * ========================================================================== */
+
+/* Panel labels — CONNECTIONS / TABLES, VIEWS, FUNCTIONS / COLUMNS / FILTERS.
+ * dbgate already renders them uppercase on their own row, so the typeface is the
+ * only change; nothing reflows. The size, weight and 0.14em tracking are lifted
+ * verbatim from .catalyst-nav__brand in layer 60, which is the wordmark sitting
+ * directly above these in the injected bar — the panel labels and the cross-app
+ * bar end up speaking in the same voice, which is the point.
+ *
+ * Specificity: `.title-content` alone ties with dbgate's own hashed rule and
+ * would be settled by <link> order. `.main-container .title-content` is 0-3-0
+ * and settles it on the cascade. */
+.dbgate-screen .main-container .title-content {
+  font-family: var(--cat-font-display);
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+}
+
+/* The modal title. This is the one hero slot in the app — 21px, uppercase,
+ * alone on its line with nothing competing — and layer 20 reserves exactly this
+ * treatment (gradient clipped through the glyphs, drop-shadow for the glow once
+ * the fill is transparent) for h1/h2. It misses here only because dbgate builds
+ * the title as a <div>. Same declarations, same order: `filter` has to follow
+ * the clip or there is no glow to cast. */
+.dbgate-screen .create-header {
+  font-family: var(--cat-font-display);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  background: var(--cat-grad);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(var(--glow-primary));
+}
+
+/* Forced colours: a transparent text fill is invisible against a system-forced
+ * background, so the clip has to be reverted outright. Layer 30 does this for
+ * h1/h2 and cannot know about this selector. */
+@media (forced-colors: active) {
+  .dbgate-screen .create-header {
+    background: none;
+    -webkit-text-fill-color: CanvasText;
+    color: CanvasText;
+    filter: none;
+  }
+}
+
+/* ============================================================================
+ * 6. ATMOSPHERE RESTRAINT
+ * ----------------------------------------------------------------------------
+ * The shared effects layer lays a CRT scanline mask over the whole viewport at
+ * --scanline-opacity, and a perspective grid behind it. Both are tuned for
+ * servarr's poster walls and large type.
+ *
+ * This app is 12.5px monospace in a grid of hairlines. A 3px-stride mask over
+ * that is the one place in the theme where the atmosphere genuinely competes
+ * with the thing you are trying to read — the stride beats against the row
+ * rhythm. Halved rather than removed: the register stays, the interference does
+ * not. Setting the EXISTING token rather than overriding the two html::*
+ * rules, which is what the token is for.
+ * ========================================================================== */
+
+/* `:root` and `!important`, not a bare `html`: 00-tokens.css declares both of
+ * these on `:root` (0-1-0), which outranks `html` (0-0-1) outright, and relying
+ * on the two <link> tags staying in the right order is a weaker guarantee than
+ * the cascade. */
+:root {
+  --scanline-opacity: 0.01 !important;
+  --grid-opacity: 0.025 !important;
+}

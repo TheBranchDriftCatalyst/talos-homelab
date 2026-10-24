@@ -30,6 +30,27 @@ configMapGenerator:
       # Nav-bar-only subset: tokens + one font face + the bar. For apps that
       # should get the cross-app nav WITHOUT having their UI restyled.
       - css/catalyst-nav.css
+  # Per-app DOM mapping for dbgate, in its OWN ConfigMap rather than alongside
+  # the two sheets above. Two reasons, and the second is the load-bearing one:
+  #
+  #   1. It is not the Catalyst theme. theme.park ships css/base/<app>/<app>-
+  #      base.css for 58 apps and dbgate is not among them, so this is the file
+  #      that would have come from the image — one app's DOM mapping, authored in
+  #      the sister repo (src/app-dbgate.css) and vendored here like the rest.
+  #
+  #   2. SIZE. The two sheets above are 215 KB together and this one is 46 KB.
+  #      Folding it in takes that ConfigMap to 269 KB, past the 256 KiB ceiling
+  #      on the kubectl.kubernetes.io/last-applied-configuration annotation —
+  #      which would make `kubectl apply -k` on this directory fail outright with
+  #      "metadata.annotations: Too long". Flux would not care (kustomize-
+  #      controller uses server-side apply and writes no such annotation, and the
+  #      1 MiB ConfigMap DATA limit is still far off), so the breakage would show
+  #      up only for whoever next tried to apply this by hand while debugging.
+  #      Split, every ConfigMap here stays under the ceiling, and the next
+  #      per-app sheet gets its own rather than making this worse.
+  - name: themepark-catalyst-dbgate
+    files:
+      - css/catalyst-dbgate.css
   # The nav script. Lands in resources/, which the image's init copies into the
   # served tree — a new top-level directory would NOT be copied, so it has to
   # live under css/ or resources/.

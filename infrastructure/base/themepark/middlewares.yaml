@@ -25,10 +25,17 @@
 # every host. See asset-route.yaml.
 #
 # ── WHY TWO KINDS ────────────────────────────────────────────────────────────
-# `catalyst-<slug>`  full theme + nav. Only for apps theme.park ships a base
-#                    stylesheet for, since that sheet is what maps the app's DOM
-#                    onto our variables. Without one an app is half-themed, which
-#                    looks worse than not themed at all.
+# `catalyst-<slug>`  full theme + nav. Normally only for apps theme.park ships a
+#                    base stylesheet for, since that sheet is what maps the app's
+#                    DOM onto our variables. Without one an app is half-themed,
+#                    which looks worse than not themed at all.
+#
+#                    dbgate is the one exception, and it is an exception to WHERE
+#                    the sheet comes from, not to the rule: its base sheet is
+#                    written by hand in the sister repo and served from the same
+#                    nginx. The rule still holds -- do not point a
+#                    `catalyst-<slug>` middleware at an app that has no base
+#                    sheet from EITHER source.
 # `catalyst-nav`     the cross-app bar and nothing else. The app keeps its own
 #                    look entirely. One shared middleware, any number of apps.
 
@@ -154,6 +161,62 @@ spec:
       - name: catalyst-compress
       - name: catalyst-accept-encoding
       - name: catalyst-inject-audiobookshelf
+---
+# dbgate is the ONE full-theme app whose base stylesheet does not come from the
+# theme.park image. theme.park ships css/base/<app>/<app>-base.css for 58 apps
+# and dbgate is not among them, so the sheet that maps its DOM onto our
+# variables is authored in workspace/catalyst-themepark (src/app-dbgate.css) and
+# served from the same nginx at /catalyst/css/catalyst-dbgate.css. The shape of
+# the injection is otherwise identical to every app here: the app's own sheet
+# first, css/theme-options/catalyst.css second.
+#
+# The dbgate sheet is linked FIRST and catalyst.css second, which is the same
+# order as every injector above and is what theme.park's architecture expects --
+# the theme-options slot is defined by loading last. Nothing in the dbgate sheet
+# depends on that order: a var() inside a custom property resolves against the
+# cascaded value of the referent rather than against declaration order, and the
+# three rules that genuinely have to beat catalyst.css (the --scanline-opacity
+# re-point, the checkbox repair, the scrollbar mute) win on importance or
+# specificity. Verified in a browser with the links in this order, not reasoned.
+#
+# Injecting at </head>: dbgate emits a literal </head>, so the theme lands before
+# first paint rather than repainting the app after it. Same choice as gitea
+# below, same reason.
+#
+# ONE rewriteBody for the whole chain -- the nav script and both stylesheets are
+# three `rewrites:` entries on this single middleware. Chaining a second
+# body-rewriting middleware behind the first is a SILENT no-op, which is why
+# every injector here is one object and never two.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-inject-dbgate
+  namespace: traefik
+spec:
+  plugin:
+    rewriteBody:
+      lastModified: true
+      rewrites:
+        - regex: '<head>'
+          replacement: '<head><script defer src="/catalyst/resources/catalyst-nav.js"></script>'
+        - regex: '</head>'
+          replacement: '<link rel="stylesheet" type="text/css" href="/catalyst/css/catalyst-dbgate.css"><link rel="stylesheet" type="text/css" href="/catalyst/css/theme-options/catalyst.css"></head>'
+---
+# Named `catalyst-dbgate`, not `catalyst-nav-dbgate`. build_nav.py classifies a
+# route as themed with `n.startswith("catalyst-") and "nav" not in n`, so a name
+# containing "nav" would dim this app's entry in the cross-app bar and promise a
+# destination that keeps its own look. See tests/nav/test_build_nav.py.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: catalyst-dbgate
+  namespace: traefik
+spec:
+  chain:
+    middlewares:
+      - name: catalyst-compress
+      - name: catalyst-accept-encoding
+      - name: catalyst-inject-dbgate
 ---
 # Forgejo rides theme.park's `gitea` base sheet — Forgejo is a Gitea fork and the
 # upstream sheet maps the same DOM. Injecting at </head> rather than </body>: the

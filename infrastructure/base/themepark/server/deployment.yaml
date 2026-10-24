@@ -101,6 +101,15 @@ spec:
               mountPath: /app/themepark/css/catalyst-nav.css
               subPath: catalyst-nav.css
               readOnly: true
+            # Same reasoning as catalyst-nav.css above: NOT under theme-options/.
+            # It is one app's base stylesheet, not a theme, and putting it there
+            # would make themes.py generate a `catalyst-dbgate` theme stub for
+            # all ~60 apps. Its own ConfigMap, not catalyst-theme -- see
+            # ../server/kustomization.yaml for the size reason.
+            - name: catalyst-dbgate
+              mountPath: /app/themepark/css/catalyst-dbgate.css
+              subPath: catalyst-dbgate.css
+              readOnly: true
             # s6 init copies the whole css tree here and runs themes.py against
             # it, so /config MUST be writable. Contents are fully regenerated on
             # every boot -- there is nothing to persist, hence emptyDir and not a
@@ -187,6 +196,9 @@ spec:
         - name: catalyst-theme
           configMap:
             name: themepark-catalyst-css
+        - name: catalyst-dbgate
+          configMap:
+            name: themepark-catalyst-dbgate
         - name: catalyst-nav
           configMap:
             name: themepark-catalyst-nav
