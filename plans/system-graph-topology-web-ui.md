@@ -14,6 +14,37 @@ End goal: a looksmaxed flex for r/homelab. Scope = maximal (App/Service/Database
 serves/owns-db/deployed-from/depends-on/talks-to/netpol edges), so **layout/clustering is the
 make-or-break** — and (per review) that clustering is net-new ENGINE work, not a config tweak.
 
+## Phase plan + v1 re-scope (AUTHORITATIVE — dev-team 2026-10-25)
+
+The PM/Architect/Dev/QA review was unanimous: maximal scope fights the primary goal (a legible,
+shareable screenshot), and the showpiece rides on the one component that doesn't exist yet
+(clustering). Re-scoped by the operator:
+
+- **v1 = MVP.** Dedicated page `system-graph.talos00` only, the **4 STATIC declarative edge kinds**
+  (serves / owns-db / deployed-from / depends-on), **clustering/collapse as a v1 PREREQUISITE**
+  (not the last step), a **golden-fixture oracle + legibility bar**, and SVG/PNG export.
+  Steps: **S1, S2a, S2b, S3, S4, S8** (all P2).
+- **Phase 2.** The **applet rail (S5)** and the **Hubble talks-to + netpol flow edges (S7)** —
+  the latter is a streaming/sampled data model needing its own aggregated/decay pipeline + tolerance
+  tests, not the v1 batch pipeline.
+- **Phase 3.** Deeper annotation enrichment (S6 `catalyst.graph/depends-on`, non-CNPG datastore
+  attribution) beyond what intrinsic derivation gives for free.
+
+**Clustering is a v1 GATE, re-sequenced to the front.** The page never ships as a hairball: if the
+collapse/convex-hull/semantic-zoom engine (S2b) slips, ship the documented **dagre-grouped STATIC
+fallback** instead — but something legible gates S3, it is not deferred.
+
+**DERIVATION PRINCIPLE — intrinsic-first, annotations as a thin layer on top.** The graph is built
+primarily by interrogating the **live k8s API for INTRINSIC relationships** that exist whether or
+not anyone annotated: `ownerReferences`, Service label-selectors → pods, IngressRoute → service,
+CNPG `Cluster` → owning namespace, Flux/ArgoCD provenance labels, `CatalystCNPGAppDB` claims.
+Annotations (`gethomepage.dev/*`, `catalyst.graph/*`) are an **enrichment layer** for display,
+grouping, and logical edges **where intrinsic data is thin — never the primary source.** Therefore
+an un-annotated app **still renders** from its intrinsic facts, flagged `unknown-provenance`, and is
+**never silently omitted** (a missing node is invisible and worse than a wrong one). This is the
+answer to QA's "no oracle / annotation-drift" concern: intrinsic relationships are closer to ground
+truth than annotations, and the golden fixture (S8) pins them.
+
 ## Review corrections (what the adversarial pass changed)
 
 - **codeloc reuse is small, not "80%"**: `dev-overlay/internal/codeloc/codeloc.go` has **no
@@ -225,7 +256,7 @@ shareable image. **Rollback:** revert (additive UI).
 
 ---
 
-## S5 — Applet variant (second delivery rail)
+## S5 — Applet variant (second delivery rail) — PHASE 2 (descoped from v1)
 **Repo:** system-graph · **Model:** default · **Depends:** S3 · **Parallel with:** S4
 
 **Context brief.** Expose the graph as an in-app overlay loaded by `catalyst-nav.js` on every
@@ -239,7 +270,7 @@ real browser; a broken bundle leaves the nav intact. **Exit:** reachable as page
 
 ---
 
-## S6 — `catalyst.graph/depends-on` annotation + non-CNPG datastore attribution
+## S6 — `catalyst.graph/depends-on` annotation + non-CNPG datastore attribution — PHASE 3 (enrichment)
 **Repo:** talos-homelab (+ S1 backend reads it) · **Model:** default · **Depends:** S0 · **Parallel with:** S1/S2a
 
 **Context brief.** App→app *logical* deps aren't derivable today. Define
@@ -252,7 +283,29 @@ nodes. **Verify.** Annotation present; S1 emits the edges; attributed store show
 
 ---
 
-## S7 — Hubble talks-to + netpol edges (maximal, toggle-gated)
+## S8 — Golden-fixture oracle + derivation tests + legibility bar (v1)
+**Repo:** system-graph · **Model:** default · **Depends:** S1 · **Blocks:** S3
+
+**Context brief.** The graph is derived from live cluster state, so "is it correct?" needs an
+oracle. Capture a read-only **golden snapshot** of the cluster (the same documents S1's joiner
+reads: IngressRoutes, ArgoCD/Flux, CNPG, Services, ownerRefs) and assert deterministic node/edge
+derivation against it (golden before pixels; no tautologies — mutate the fixture and prove each
+derivation can fail). Because derivation is intrinsic-first, un-annotated apps MUST render as
+flagged `unknown-provenance` nodes, never be omitted.
+
+**Tasks.** Record the fixture; node/edge derivation unit tests over it; a CI coverage lint that
+surfaces apps missing enrichment annotations (warn, not block); a **measurable legibility bar**
+(max visible edge crossings / cluster count / time-to-find-a-node) so "legible not hairball" is
+testable; SVG/PNG export verified by visual-regression against the DOM render; assert both delivery
+surfaces are Authentik-gated (the graph discloses full topology).
+
+**Verify.** Tests fail when a derivation is broken (proven by mutation); lint flags a
+deliberately-unannotated app; the legibility metric computes on the ~70-node fixture. **Exit:**
+derivation has an oracle + a measurable legibility gate. **Rollback:** tests are additive.
+
+---
+
+## S7 — Hubble talks-to + netpol edges (maximal, toggle-gated) — PHASE 2 (descoped from v1)
 **Repo:** system-graph (dump+backend+SPA) · **Model:** default · **Depends:** S1, S2b, S3
 
 **Context brief.** Runtime `talks-to` from Cilium Hubble eBPF flows + declared `netpol` from
