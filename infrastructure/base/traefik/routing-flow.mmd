@@ -1,0 +1,32 @@
+%% Talos-homelab request flow: DNS -> Traefik entrypoint -> middleware -> service.
+%% Full audit + reference: docs/02-architecture/routing-and-auth-topology.md
+%% Render: paste into a mermaid previewer, or `mmdc -i routing-flow.mmd -o routing-flow.svg`.
+flowchart TB
+  subgraph DNS["DNS (Pi-hole split-horizon)"]
+    T[".talos00 — LAN only"]
+    K[".knowledgedump.space — split-horizon"]
+    A[".amberdark.net — public canonical"]
+  end
+  subgraph EP["Traefik entrypoints (DaemonSet, all nodes)"]
+    WS["websecure :443 — WAN"]
+    W["web :80 — WAN"]
+    WSL["weblan/websecurelan :8081/:8443 — LAN (inert, 0 routes)"]
+  end
+  DEF["entrypoint default chain: strip-authentik-headers -> bouncer (CrowdSec)"]
+  subgraph MW["per-route middleware"]
+    LAN["lan-only (Kyverno-injected on every *.talos00 route)"]
+    AUTH["authentik / authentik-lan (forward-auth -> outpost)"]
+    NAV["catalyst-nav / catalyst-theme (rewriteBody inject)"]
+    PUB["bot-wrangler -> rate-limit (public routes)"]
+  end
+  OUT["Authentik embedded outpost: /outpost.goauthentik.io/* (priority 1000, no-auth carve-out)"]
+  subgraph SVC["services -> apps (~60 forward-auth + ~15 OIDC)"]
+    APP["app.talos00 -> Service:port"]
+    FORGE["forge.knowledgedump.space -> forgejo"]
+  end
+  T --> WS --> DEF --> LAN --> AUTH --> NAV --> APP
+  AUTH -. "302 / callback" .-> OUT
+  W --> DEF2["redirect-https"] --> WS
+  K --> WS
+  K --> PUB --> FORGE
+  APP -. "GET /catalyst/*" .-> ASSET["asset route: PathPrefix(/catalyst/) and HostRegexp(talos00), priority 10000 -> lan-only -> themepark"]
