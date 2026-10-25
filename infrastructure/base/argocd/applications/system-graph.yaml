@@ -1,0 +1,88 @@
+---
+# WE BUILD THE IMAGE, SO THE MANIFESTS LIVE WITH THE CODE (docs/02-architecture/dual-gitops.md).
+# Everything system-graph is — Deployment, Service, RBAC, the CatalystWebSecureIngress claim and
+# the ESO pull secret — lives in the system-graph repo under k8s/. This file is the only piece
+# that belongs here. (Same shape as logairr.yaml; read that for the long-form notes.)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: system-graph
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: system-graph
+    app.kubernetes.io/part-of: catalyst
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  info:
+    - name: Source (Forgejo)
+      value: https://forge.knowledgedump.space/panda/system-graph
+    - name: Container Registry (Zot)
+      value: https://registry.knowledgedump.space/talos00-registry/system-graph
+    - name: Application
+      value: https://system-graph.talos00
+
+  source:
+    # The IN-CLUSTER Forgejo service, deliberately: sync must not depend on Traefik,
+    # external-dns or the WAN. Credentials come from the `forgejo-repo-creds` repo-creds secret,
+    # whose URL prefix (http://forgejo.forgejo.svc.cluster.local:3000/panda) must keep matching
+    # this one — change the host or owner here and the repo silently fails to authenticate.
+    repoURL: http://forgejo.forgejo.svc.cluster.local:3000/panda/system-graph.git
+    targetRevision: main
+    path: k8s/talos00
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: system-graph
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      # Server-side apply is the cluster-wide convention for these first-party apps and keeps
+      # large composite/claim objects under the client-side annotation size limit.
+      - ServerSideApply=true
+
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  ignoreDifferences:
+    # ESO defaults four fields into spec.data[].remoteRef that are not in git. nullBytePolicy is
+    # the newest of them; its absence leaves the app permanently OutOfSync even though the sync
+    # itself reports success — the state that hides real drift, because nobody investigates a red
+    # that is always red. (Copied verbatim from the deployed logairr/dev-overlay apps.)
+    - group: external-secrets.io
+      kind: ExternalSecret
+      jqPathExpressions:
+        - .spec.data[].remoteRef.conversionStrategy
+        - .spec.data[].remoteRef.decodingStrategy
+        - .spec.data[].remoteRef.metadataPolicy
+        - .spec.data[].remoteRef.nullBytePolicy
+    # The CatalystWebSecureIngress composition writes .status on every reconcile; that is its job,
+    # not drift. A missing entry does not fail anything — it just parks the app at permanently
+    # OutOfSync, and a red that is always red is a red nobody investigates (same trap as the ESO
+    # nullBytePolicy above). dev-overlay ignores net.catalyst.io/CatalystInjectedApplet the same way.
+    - group: net.catalyst.io
+      kind: CatalystWebSecureIngress
+      jsonPointers:
+        - /status
+# ═══════════════════════════════════════════════════════════════════════════════
+# AUTO-DEPLOY — handled by an ImageUpdater CR, NOT by annotations on this object.
+# infrastructure/base/argocd/image-updater/system-graph-image-updater.yaml
+# The CR's writeBackConfig method is `argocd`, which patches spec.source.kustomize.images on THIS
+# object — a live override that never touches the repo. So the newTag pinned in system-graph's
+# k8s/talos00/kustomization.yaml is a starting hint that falls behind on purpose; read the
+# deployed tag from `argocd app get system-graph`. Cluster-wide convention (see logairr/dev-overlay).
+# ═══════════════════════════════════════════════════════════════════════════════

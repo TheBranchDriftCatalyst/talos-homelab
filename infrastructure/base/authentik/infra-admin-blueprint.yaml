@@ -183,3 +183,31 @@ data:
       - {model: authentik_core.application, id: a-plausible, identifiers: {slug: plausible}, attrs: {name: Plausible, slug: plausible, group: talos-admin, provider: !KeyOf p-plausible, meta_launch_url: https://plausible.talos00, meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/plausible-analytics.png, policy_engine_mode: any}}
       - {model: authentik_policies.policybinding, id: b-plausible-own, identifiers: {target: !KeyOf a-plausible, group: !Find [authentik_core.group, [name, talos-admin]], order: 0}, attrs: {enabled: true}}
       - {model: authentik_policies.policybinding, id: b-plausible-ca, identifiers: {target: !KeyOf a-plausible, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}
+
+      # ========== system-graph (read-only cluster topology / object graph) ==========
+      # First-party ArgoCD app (Forgejo panda/system-graph); a window onto cluster objects, so
+      # like the other infra UIs here it is talos-admin OR cluster-admin, never talos-apps.
+      # EMBEDDED outpost (same as every app in this blueprint): forward_single routes
+      # /outpost.goauthentik.io/* to authentik-server via the broadened HostRegexp route in
+      # authentik/ingressroute.yaml (authentik-outpost-priv, priority 1000) — no app-callbacks
+      # entry needed. The provider is ALSO unioned into the embedded outpost in
+      # talos-private-blueprint.yaml (and the talos00 outpost list), or the outpost answers 404
+      # instead of redirecting to login.
+      - model: authentik_providers_proxy.proxyprovider
+        id: p-system-graph
+        identifiers: {name: system-graph}
+        attrs:
+          name: system-graph
+          mode: forward_single
+          external_host: https://system-graph.talos00
+          access_token_validity: hours=24
+          authorization_flow: !Find [authentik_flows.flow, [slug, default-provider-authorization-implicit-consent]]
+          invalidation_flow: !Find [authentik_flows.flow, [slug, default-provider-invalidation-flow]]
+          property_mappings:
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/oauth2/scope-profile]]
+            - !Find [authentik_core.propertymapping, [managed, goauthentik.io/providers/proxy/scope-proxy]]
+      - {model: authentik_core.application, id: a-system-graph, identifiers: {slug: system-graph}, attrs: {name: System Graph, slug: system-graph, group: talos-admin, provider: !KeyOf p-system-graph, meta_launch_url: https://system-graph.talos00, meta_description: "Read-only cluster topology and object graph", meta_icon: https://raw.githubusercontent.com/walkxcode/dashboard-icons/main/png/kubernetes.png, policy_engine_mode: any}}
+      - {model: authentik_policies.policybinding, id: b-system-graph-own, identifiers: {target: !KeyOf a-system-graph, group: !Find [authentik_core.group, [name, talos-admin]], order: 0}, attrs: {enabled: true}}
+      - {model: authentik_policies.policybinding, id: b-system-graph-ca, identifiers: {target: !KeyOf a-system-graph, group: !Find [authentik_core.group, [name, cluster-admin]], order: 1}, attrs: {enabled: true}}

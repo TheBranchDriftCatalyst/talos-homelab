@@ -1,0 +1,49 @@
+---
+# Auto-rolls system-graph when Forgejo Actions publishes a new image to Zot.
+#
+# Same shape and same chain as logairr-image-updater.yaml and dev-overlay-image-updater.yaml —
+# built in this cluster, from a Forgejo repo, published to the in-cluster registry, nothing
+# off-site. Read those files for the long-form notes; the finalizer, the Zot credential and the
+# allowTags reasoning all apply here verbatim and are summarised below.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: system-graph
+  namespace: argocd
+  # DECLARED, because the controller cannot add it itself: v1.2.2 fails its own finalizer-add
+  # with "spec.namespace: Required value" on an object that HAS spec.namespace, and the reconcile
+  # aborts before any registry work happens.
+  finalizers:
+    - resources-finalizer.argocd-image-updater.argoproj.io
+spec:
+  namespace: argocd
+  commonUpdateSettings:
+    updateStrategy: newest-build
+    # ONLY the immutable per-commit tag — no `latest`, no `main`. This matches logairr/dev-overlay:
+    # CI tags one build several times, so `latest` and `sha-<7>` share a creation timestamp and
+    # newest-build has no defined order for a tie. A mutable tag produces no manifest diff on the
+    # next push, so ArgoCD never syncs and the pods never restart — while the updater log still
+    # reads errors=0. Removing the mutable tags from the candidate set removes the coin flip.
+    allowTags: "regexp:^sha-[a-f0-9]{7,40}$"
+    # Zot DOES need a credential despite defaultPolicy ["read"]: that policy covers repositories,
+    # but the updater's first call is the /v2/ base endpoint, which challenges anyway and returns
+    # UNAUTHORIZED rather than an empty tag list.
+    pullSecret: pullsecret:argocd-image-updater-system/zot-secret
+    forceUpdate: false
+  writeBackConfig:
+    # Patches spec.source.kustomize.images on the Application — a LIVE override that never touches
+    # the repo. So the newTag in system-graph's k8s/talos00/kustomization.yaml is a STARTING HINT
+    # that falls behind on purpose; `argocd app get system-graph` is where the deployed tag is true.
+    method: argocd
+  applicationRefs:
+    - namePattern: system-graph
+      images:
+        - alias: systemgraph
+          # This name must match THREE places or the updater no-ops in silence: here, the `images:`
+          # key in system-graph's k8s/talos00/kustomization.yaml, and the image in
+          # k8s/base deployment. Uses the in-cluster registry name (registry.talos00/...), the same
+          # form every sibling CR uses — NOT the public registry.knowledgedump.space alias.
+          imageName: registry.talos00/talos00-registry/system-graph
+          manifestTargets:
+            kustomize:
+              name: registry.talos00/talos00-registry/system-graph
