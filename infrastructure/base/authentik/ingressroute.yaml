@@ -66,16 +66,16 @@ metadata:
   namespace: authentik
 spec:
   entryPoints:
-  - websecure
+    - websecure
   routes:
-  - match: Host(`auth.priv.talos00`)
-    kind: Rule
-    services:
-    - name: authentik-server
-      port: 80
-    middlewares:
-    - name: private-domain-redirect
-      namespace: traefik
+    - match: Host(`auth.priv.talos00`)
+      kind: Rule
+      services:
+        - name: authentik-server
+          port: 80
+      middlewares:
+        - name: private-domain-redirect
+          namespace: traefik
 ---
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
@@ -84,16 +84,16 @@ metadata:
   namespace: authentik
 spec:
   entryPoints:
-  - web
+    - web
   routes:
-  - match: Host(`auth.priv.talos00`)
-    kind: Rule
-    middlewares:
-    - name: private-domain-redirect
-      namespace: traefik
-    services:
-    - name: authentik-server
-      port: 80
+    - match: Host(`auth.priv.talos00`)
+      kind: Rule
+      middlewares:
+        - name: private-domain-redirect
+          namespace: traefik
+      services:
+        - name: authentik-server
+          port: 80
 ---
 # forward_single outpost routing (TALOS-xgrl.13): every *.talos00 forward-auth app's
 # /outpost.goauthentik.io/* path must reach the embedded outpost (authentik-server), not the
@@ -117,56 +117,11 @@ spec:
         - name: authentik-server
           port: 80
 
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: authentik-priv-domain
-  namespace: authentik
-  annotations:
-    external-dns.alpha.kubernetes.io/hostname: auth.priv.knowledgedump.space
-    external-dns.alpha.kubernetes.io/target: knowledgedump.space
-    external-dns.alpha.kubernetes.io/cloudflare-proxied: 'false'
-spec:
-  entryPoints:
-  - websecure
-  routes:
-  - match: Host(`auth.priv.knowledgedump.space`)
-    kind: Rule
-    services:
-    - name: authentik-server
-      port: 80
-    middlewares:
-    - name: private-portal
-      namespace: authentik
-  tls: {}
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: authentik-priv-http-domain
-  namespace: authentik
-spec:
-  entryPoints:
-  - web
-  routes:
-  - match: Host(`auth.priv.knowledgedump.space`)
-    kind: Rule
-    middlewares:
-    - name: private-portal
-      namespace: authentik
-    services:
-    - name: authentik-server
-      port: 80
----
-# One IdP hostname keeps portal and outpost logins on the same browser session.
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: private-portal
-  namespace: authentik
-spec:
-  redirectRegex:
-    regex: '^https?://auth\.priv\.knowledgedump\.space(.*)$'
-    replacement: 'https://auth.amberdark.net${1}'
-    permanent: false
+# auth.priv.knowledgedump.space retired 2026-10-24 — the legacy *.priv.knowledgedump.space
+# redirect layer was removed (canonical is *.amberdark.net). The authentik-priv-domain /
+# authentik-priv-http-domain routes and the private-portal redirect middleware lived here;
+# external-dns drops the auth.priv.knowledgedump.space record when the route goes. The
+# auth.priv.talos00 routes (authentik-priv / authentik-priv-http, above) are a SEPARATE LAN
+# redirect and stay. The authentik-outpost-priv callback still lists a priv.knowledgedump.space
+# HostRegexp arm; it is now dormant (no app served there) but left intact — it also serves
+# every *.talos00 forward-auth callback and must not be disturbed.
