@@ -45,6 +45,60 @@ an un-annotated app **still renders** from its intrinsic facts, flagged `unknown
 answer to QA's "no oracle / annotation-drift" concern: intrinsic relationships are closer to ground
 truth than annotations, and the golden fixture (S8) pins them.
 
+## Entity & derivation model — the DSL (decided 2026-10-25)
+
+The "DSL" is a typed **`ClusterModel`** (Option C — code-config, like the existing ForceGraph
+config; NOT a runtime-interpreted template language) with three readable sections —
+`nodes` / `collapse` / `edges` — implemented as typed resolver functions and unit-tested against
+the S8 golden fixture. Two layers: this derivation model (backend) produces `GraphData`; the
+catalyst-ui `GraphConfig` (render: label/color/icon/filters per kind) is downstream.
+
+**Node catalog (v1):** `App`, `Database`, `Service` (toggle), `Repo`. (`Applet` = phase 2.)
+
+```ts
+const ClusterModel = {
+  nodes: [
+    // one App PER HOST (multi-host apps = multiple nodes), clustered by group
+    { kind:"App",      from:"IngressRoute.Host()",
+      id: label("app.kubernetes.io/name") ?? ownerRoot() ?? host,
+      group: anno("gethomepage.dev/group") ?? namespace },
+    { kind:"Database", from:"cnpg.io/Cluster", id:"{ns}/{name}", attrs:{ replicas } },
+    { kind:"Service",  from:"core/Service",   id:"{ns}/{name}" },   // see collapse toggle
+    { kind:"Repo",     from:"ArgoCD source | Flux kustomize/name label", id: normalizedURL },  // HUB
+  ],
+  collapse: [
+    // ALWAYS: whole workload tree folds into the App that owns it
+    { into:"App", absorb:["Deployment","StatefulSet","DaemonSet","ReplicaSet","Pod","Container",
+                          "IngressRoute(hosts become App attrs)"],
+      key: label("app.kubernetes.io/name") ?? ownerRoot() },
+    // ALWAYS: a CNPG cluster's 3 instance pods + rw/ro/r Services + PVCs = ONE Database node
+    { into:"Database", absorb:["Pod","Service","PersistentVolumeClaim"], key: label("cnpg.io/cluster") },
+    // TOGGLEABLE collapse strategy (your call): collapseServices=true by DEFAULT (Service folds into
+    // App; edges go App->Database/Repo directly). Toggle OFF -> Service becomes its own node and
+    // App->serves->Service->workload is revealed. Just another level of the S2b collapse engine
+    // (same mechanism as expanding a group), so the model keeps BOTH relations; the toggle picks
+    // the render. First of a general "collapse-strategy" family (future: collapse-by-namespace).
+    { into:"App", absorb:["Service"], key: serviceOwnerApp(), strategy:"collapseServices", default:true },
+  ],
+  edges: [
+    { kind:"serves",        from:"App", to:"Service",  via: ingressRoute.services },  // visible only when Services expanded
+    { kind:"owns-db",       from:"App", to:"Database", via:[CatalystCNPGAppDB.owner, "<name>-postgres-app reflection", sameNamespace] },
+    { kind:"deployed-from", from:["App","Database"], to:"Repo", via: argoFluxProvenance },
+    { kind:"depends-on",    from:"App", to:"App",      via:[Flux.dependsOn /* v1 */, "catalyst.graph/depends-on" /* phase 3 */] },
+  ],
+};
+```
+
+**Decided model choices (2026-10-25):**
+- **Service = toggleable collapse** (collapsed into App by default; a `collapseServices` strategy
+  flag expands them). Not a fixed choice — a render toggle over a model that keeps both relations.
+- **Multi-host apps = one App node per host**, clustered by `gethomepage.dev/group` (Homepage's 8
+  dashboards = 8 nodes in a Home cluster; arr-stack = 12 in a Media cluster). No host-merging.
+- **Repo is a hub**, and **talos-homelab IS the repo** for every Flux-deployed (third-party) app
+  (correct — their HelmReleases/manifests live there), so ~48 Apps draw `deployed-from` to it;
+  first-party apps point at their own Forgejo repo. That big hub is itself a flex-worthy GitOps fact.
+- **unknown-provenance**: any App whose repo can't be resolved still renders, flagged — never omitted.
+
 ## Review corrections (what the adversarial pass changed)
 
 - **codeloc reuse is small, not "80%"**: `dev-overlay/internal/codeloc/codeloc.go` has **no
