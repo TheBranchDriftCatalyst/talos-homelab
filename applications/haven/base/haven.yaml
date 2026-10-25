@@ -109,9 +109,34 @@ spec:
               value: https://haven.${CLUSTER_DOMAIN}
             - name: SERVER_NAME
               value: Catalyst Haven
-            # The FIRST account registered with this username becomes admin.
+            # Haven's admin bit CANNOT be inherited from an Authentik group.
+            # This build has NO OIDC support whatsoever: there is no OIDC_* env
+            # var anywhere in the image, and no group/role claim handling in any
+            # auth path. What Haven calls "SSO" (src/auth.js:1007) is
+            # Haven-to-Haven federation — "sign in with an existing Haven
+            # server" — not an OIDC client. All four is_admin write paths are
+            # local: this bootstrap, the password-recovery endpoint
+            # (src/auth.js:937), the explicit admin transfer in
+            # socketHandlers/roles.js:716, and the admin password reset.
+            #
+            # Authentik still owns ACCESS — talos-apps OR cluster-admin gate the
+            # browser UI through forward-auth, per
+            # infrastructure/base/authentik/haven-blueprint.yaml — it simply
+            # cannot grant the in-app flag. Group-derived access, username-
+            # pinned admin.
+            #
+            # BOOTSTRAP SEMANTICS (src/auth.js:356-362, mirrored for socket auth
+            # at src/socketHandlers/index.js:1027): the promotion fires on LOGIN,
+            # not only at registration, and only while NO admin exists in
+            # haven.db. So changing this value and logging in is enough — and it
+            # will not override a later explicit admin transfer.
+            #
+            # Pinned to ThePrimordial because that is the only account that
+            # exists and it had is_admin=0. The value was `admin`, an account
+            # nobody ever registered, so the server had no admin at all and the
+            # admin panel — hence webhook creation — was unreachable.
             - name: ADMIN_USERNAME
-              value: admin
+              value: ThePrimordial
             # Bot callbacks to RFC1918 addresses stay blocked (the default).
             # Everything in this cluster is private, so flipping it on would let
             # any bot webhook reach every internal service — SSRF by config.

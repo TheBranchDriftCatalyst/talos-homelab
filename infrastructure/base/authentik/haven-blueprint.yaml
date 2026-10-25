@@ -14,10 +14,22 @@
 # SCOPE NOTE: this gates the BROWSER UI only. /api, /socket.io and /uploads are
 # excluded at the IngressRoute (applications/haven/base/ingressroute.yaml)
 # because Haven's desktop and Android clients authenticate with Haven's own JWT
-# and cannot follow a forward-auth 302. Haven does have an OIDC_CLIENT_SECRET
-# env var, so a native OIDC integration would fold both logins into one — but
-# the issuer/client-id half is configured in Haven's admin UI rather than by
-# environment, so it cannot be declared here. Tracked as a follow-up.
+# and cannot follow a forward-auth 302.
+#
+# CORRECTION (verified against the running 3.14.1 image, 2026-10-25): an earlier
+# version of this note claimed Haven has an OIDC_CLIENT_SECRET env var and that
+# a native OIDC integration was therefore just a follow-up. That is wrong.
+# Grepping server.js + src/ for `OIDC`/`openid` in the live container returns
+# NOTHING — no OIDC_* env var, no group or role claim handling in any auth path.
+# Haven's "SSO" (src/auth.js:1007) is Haven-to-Haven federation: "sign in with
+# an existing Haven server". So forward-auth is not a stopgap here, it is the
+# only integration available, and the login genuinely stays double (Authentik
+# for the UI, Haven's own JWT for the app).
+#
+# CONSEQUENCE for admin rights: this blueprint cannot confer them. The in-app
+# is_admin flag has four purely-local write paths and no claim-driven one, so it
+# is bootstrapped from ADMIN_USERNAME in applications/haven/base/haven.yaml.
+# These groups govern who may REACH the UI, not who is admin inside it.
 #
 # The provider must ALSO be unioned into the embedded outpost, whose list is
 # authoritative in talos-private-blueprint.yaml and is REPLACE-not-merge.
