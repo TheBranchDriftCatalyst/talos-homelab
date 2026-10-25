@@ -59,41 +59,12 @@ spec:
         - name: authentik-server
           port: 80
 ---
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: authentik-priv
-  namespace: authentik
-spec:
-  entryPoints:
-    - websecure
-  routes:
-    - match: Host(`auth.priv.talos00`)
-      kind: Rule
-      services:
-        - name: authentik-server
-          port: 80
-      middlewares:
-        - name: private-domain-redirect
-          namespace: traefik
----
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: authentik-priv-http
-  namespace: authentik
-spec:
-  entryPoints:
-    - web
-  routes:
-    - match: Host(`auth.priv.talos00`)
-      kind: Rule
-      middlewares:
-        - name: private-domain-redirect
-          namespace: traefik
-      services:
-        - name: authentik-server
-          port: 80
+# auth.priv.talos00 retired 2026-10-24 — it only private-domain-redirect'd to
+# auth.amberdark.net (a LAN bookmark bouncing to the canonical amber login), which the
+# amberdark-canonical strategy obviates; nothing references it as an issuer/redirect_uri
+# (only a redteam probe host-list and an immich doc comment, neither a consumer). The
+# private-domain-redirect middleware (traefik ns) stays — the amber .priv.talos00
+# redirectors in talos-private still use it.
 ---
 # forward_single outpost routing (TALOS-xgrl.13): every *.talos00 forward-auth app's
 # /outpost.goauthentik.io/* path must reach the embedded outpost (authentik-server), not the
