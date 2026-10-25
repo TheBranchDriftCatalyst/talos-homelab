@@ -3,6 +3,7 @@
 > Construction plan for epic **TALOS-gsgh**. Cold-start executable: each step is self-contained —
 > a fresh agent can execute any unblocked step without reading the others.
 > Design record / annotation model: `docs/02-architecture/routing-and-auth-topology.md`.
+> Reviewed adversarially 2026-10-25 (Opus); C1–C4 corrections applied — see "Review corrections".
 
 ## Objective
 
@@ -11,243 +12,268 @@ page (`system-graph.talos00`) **and** an injected applet overlay — rendered wi
 `catalyst-ui` ForceGraph, fed by a Go backend that joins live cluster state, with SVG/PNG export.
 End goal: a looksmaxed flex for r/homelab. Scope = maximal (App/Service/Database/Repo/Applet nodes;
 serves/owns-db/deployed-from/depends-on/talks-to/netpol edges), so **layout/clustering is the
-make-or-break**.
+make-or-break** — and (per review) that clustering is net-new ENGINE work, not a config tweak.
+
+## Review corrections (what the adversarial pass changed)
+
+- **codeloc reuse is small, not "80%"**: `dev-overlay/internal/codeloc/codeloc.go` has **no
+  client-go** (deliberately — 11 MB scratch image). It consumes 4 JSON files produced by a separate
+  **kubectl CronJob** (`dev-overlay/k8s/base/code-locations/{cronjob,rbac,sync-script}.yaml`,
+  `alpine/k8s`) and outputs `map[host]Location` — a host→repo map, **not** nodes/edges. The only
+  reusable asset is its ArgoCD-decisive-over-Flux **repo-attribution tier** (1 of 5 node kinds, 1 of
+  6 edges). The backend is a new build, RBAC modeled on `code-locations/rbac.yaml` (not kubeview).
+- **Hubble doesn't fit the batch-JSON model** → moved entirely into S7 (streaming/periodic ingest).
+- **ForceGraph types are hardcoded unions**: `NodeKind`/`EdgeKind` in
+  `catalyst-ui/lib/components/ForceGraph/types/index.ts` are closed unions
+  (`"container"|"network"|…`). Adding App/Service/Database/Repo/Applet **widens shared types** →
+  S2 is NOT additive; it touches `ReactD3Graph`, `useGraphFilters`, `VisibilityState`,
+  `GraphNavigator`, `DockerGraphConfig`. The Docker story must still typecheck.
+- **Clustering is net-new engine code**: no node collapse/expand, no convex hulls, no semantic
+  zoom/LOD exist today (`_zoomScale` is captured but unused). Split into S2a (config+types) + S2b
+  (engine) with a concrete fallback.
+- **Cross-repo publish gate**: `system-graph` is NOT in the yarn workspace; it imports catalyst-ui
+  from the registry. Real edge is **S2 merged → catalyst-ui published → S3**.
+- **Edge wire-contract**: backend emits `{src,dst,kind}`; `ReactD3Graph` `enrichGraph()` hydrates
+  the type-required `source`/`target` node refs at runtime. Backend must NOT embed node objects.
 
 ## Repos & workflow (multi-repo)
 
 | Repo | Hosts | VCS | PR workflow |
 |---|---|---|---|
-| `panda/system-graph` **(new)** | Go backend + frontend SPA + `k8s/{base,talos00}` | **Forgejo** (`forge.knowledgedump.space`) | branch → PR → `.forgejo/workflows/ci.yml` (runner: `node:22-bookworm`, **no** third-party actions, **no** `docker login` — read-only `DOCKER_CONFIG` bind-mount, plain `docker build` not buildx). Template: dev-overlay. |
-| `catalyst-ui` (existing) | `lib/components/ForceGraph/config/ClusterGraphConfig.ts` | GitHub | normal PR |
-| `talos-homelab` (existing) | ArgoCD `Application` + `ImageUpdater` + (applet) `CatalystInjectedApplet` | GitHub | branch → PR (lefthook gates; commit via private `GIT_INDEX_FILE` — 58 nav-e2e artifacts are force-staged in the index) |
+| `panda/system-graph` **(new)** | Go backend + kubectl-dump CronJob + frontend SPA + `k8s/{base,talos00}` | **Forgejo** | branch → PR → `.forgejo/workflows/ci.yml` (runner `node:22-bookworm`, **no** third-party actions, **no** `docker login` — read-only `DOCKER_CONFIG`, plain `docker build` not buildx, `fetch-depth:0`). Template: `panda/dev-overlay`. |
+| `catalyst-ui` (existing, published lib `@thebranchdriftcatalyst/catalyst-ui`) | `ForceGraph/config/ClusterGraphConfig.ts` + shared-type widening + the clustering engine feature | GitHub | normal PR **+ version bump + publish** (gates S3) |
+| `talos-homelab` (existing) | ArgoCD `Application` + `ImageUpdater` CR + (applet) `CatalystInjectedApplet` | GitHub | branch → PR (lefthook; commit via private `GIT_INDEX_FILE` — 58 nav-e2e artifacts force-staged) |
 
-Image: built → Zot `registry.knowledgedump.space/talos00-registry/system-graph`, tag `sha-<7>`.
+Image → Zot `registry.knowledgedump.space/talos00-registry/system-graph:sha-<7>`.
 ArgoCD source = in-cluster Forgejo `http://forgejo.forgejo.svc.cluster.local:3000/panda/system-graph.git`.
 
-## Reuse (do NOT rebuild — these are the load-bearing prior art)
+## Reuse (load-bearing prior art — validated 2026-10-25)
 
-- **Frontend renderer**: `catalyst-ui/lib/components/ForceGraph/` — D3 force graph consuming
-  `{nodes:{id,kind,name,...}, edges:[{src,dst,kind}]}` (`types/index.ts`). Exports `ForceGraph`,
-  `Legend`, `NodeDetails`, `FilterPanel`. Config template: `config/DockerGraphConfig.ts`.
-  Layout deps already present: `d3 ^7.9`, `dagre ^0.8.5`, `@dagrejs/dagre ^3.1.1`.
-- **Backend join engine**: `dev-overlay/internal/codeloc/codeloc.go` — already joins ArgoCD
-  Applications + IngressRoutes + Flux Kustomizations + GitRepositories into a host→repo map
-  (`Derive()` L256; ArgoCD tier L326; Flux tier L362; `collapse` L407). Fork/extend, don't rewrite.
-- **Annotation discovery pattern**: `infrastructure/base/themepark/server/nav/build_nav.py`
-  (gethomepage.dev/* scan, group/weight, middleware-name classification).
-- **Deploy templates**: `infrastructure/base/argocd/applications/{dev-overlay,logairr}.yaml` +
-  `image-updater/dev-overlay-image-updater.yaml`; ingress `CatalystWebSecureIngress` (see
-  `infra-control/kubeview/websecure-ingress.yaml`); applet `CatalystInjectedApplet`
-  (`dev-overlay/k8s/talos00/applet.yaml` + `infrastructure/base/catalyst-injected-applet/`).
-- **DB ownership**: CNPG `Cluster` via `CatalystCNPGAppDB` claim in the owning app's namespace;
-  secret `<name>-postgres-app` reflected into the app ns.
+- **Frontend renderer** `catalyst-ui/lib/components/ForceGraph/` — exports `ForceGraph`, `Legend`,
+  `NodeDetails`, `FilterPanel` (confirmed). `GraphData.nodes` is `Record<id, NodeData>`; edges accept
+  the wire shape `{src,dst,kind}` (hydrated by `enrichGraph`). `GraphConfig<TNodeKind,TEdgeKind>` is
+  generic; the DATA/visibility types are closed unions that must be widened (C2). Deps present:
+  `d3 ^7.9`, `dagre ^0.8.5`, **`@dagrejs/dagre ^3.1.1`** (prefer the @dagrejs one; legacy `dagre`
+  drives `utils/layering/dagre.ts` today — confirm before extending).
+- **Repo-attribution tier** `dev-overlay/internal/codeloc/codeloc.go` — reuse ONLY the
+  ArgoCD-over-Flux host→repo normalization logic (`Derive` L256, ArgoCD tier L326, Flux tier L362,
+  `collapse` L407). The k8s read is the sibling kubectl CronJob, not this Go.
+- **kubectl dump pattern** `dev-overlay/k8s/base/code-locations/{cronjob,rbac,sync-script}.yaml` —
+  the model for S1's cluster read (extend the GVR list; scope RBAC `get/list` only).
+- **Annotation discovery** `infrastructure/base/themepark/server/nav/build_nav.py`.
+- **Deploy templates** `infrastructure/base/argocd/applications/{dev-overlay,logairr}.yaml`;
+  ImageUpdater CR `infrastructure/base/argocd/image-updater/dev-overlay-image-updater.yaml`
+  (registered in `argocd/image-updater/kustomization.yaml`) — **note: `image-updater/`, not
+  `applications/image-updater/`** (N1); ingress `infra-control/kubeview/websecure-ingress.yaml`
+  (`CatalystWebSecureIngress`); applet `dev-overlay/k8s/talos00/applet.yaml` +
+  `infrastructure/base/catalyst-injected-applet/`.
+- **DB ownership** CNPG `Cluster` via `CatalystCNPGAppDB` claim in the owning app's ns; secret
+  `<name>-postgres-app` reflected into the app ns.
 
 ## Dependency graph & parallelism
 
 ```
-S0 scaffold ─┬─► S1 backend (Go join → /api/graph)   ─┐
-             └─► S2 ClusterGraphConfig (catalyst-ui)  ─┼─► S3 dedicated app ─► S4 export
-                                                        │                      ├─► S5 applet
-                                                        │                      └─► (ship/flex)
-             S6 depends-on annotation (independent) ────┘
-                                                            S7 Hubble/netpol ─ after S1+S2+S3
+S0 scaffold ─┬─► S1 backend (dump+nodes+3 static edges -> /api/graph)  ─┐
+             ├─► S2a ClusterGraphConfig + shared-type widening ─► S2b clustering ENGINE ─┐
+             └─► S6 depends-on annotation (independent)                                   │
+                                                                                          ▼
+   (S1 merged) + (catalyst-ui PUBLISHED after S2a/S2b) ───────────────► S3 dedicated app ─► S4 export
+                                                                                          ├─► S5 applet
+                                                                                          └─► S7 Hubble/netpol
 ```
-- **Parallel after S0:** S1 (Go, system-graph repo) and S2 (TS, catalyst-ui repo) — different repos,
-  contract fixed by ForceGraph's `GraphData` type. S6 is independent (talos-homelab annotations).
-- **Serial:** S3 needs S1+S2; S4 needs S3; S5 needs S3; S7 needs S1+S2+S3.
-- **Model tier — strongest:** S1 (join correctness), S2 (clustering/layout = make-or-break).
-  Default: S0, S3, S4, S5, S6, S7.
+- **Parallel after S0:** S1 (Go, system-graph) ∥ S2a (TS, catalyst-ui) — contract fixed by the
+  string-kind `GraphData`. S6 independent (talos-homelab annotations).
+- **Serial:** S2a → S2b; **S3 needs S1 merged AND catalyst-ui published** (C4); S4/S5/S7 need S3;
+  S7 also needs S2b's edge toggles + S1's dump extended for flows.
+- **Model — strongest:** S1 (join correctness), S2b (clustering engine). Default: S0, S2a, S3, S4,
+  S5, S6, S7.
+- **Multi-PR steps (flagged):** S1 ≈ 1 PR after Hubble removed; S3 = 2 PRs (system-graph SPA +
+  talos-homelab wiring); S2 = S2a + S2b (2 PRs).
 
 ---
 
 ## S0 — Scaffold `panda/system-graph` (Forgejo repo + CI + k8s skeleton)
-**Repo:** system-graph · **Model:** default · **Depends:** none · **Parallel with:** S6
+**Repo:** system-graph · **Model:** default · **Depends:** none · **Parallel with:** S1/S2a/S6
 
-**Context brief.** No repo exists yet. First-party apps live on in-cluster Forgejo and deploy via
-ArgoCD (house rule: "do we build the image? → yes → ArgoCD, manifests with the code"). dev-overlay
-is the closest twin. The repo needs a base/overlay split (`k8s/base` portable, `k8s/talos00`
-cluster-specific) and a Forgejo CI that builds+pushes to Zot under the runner constraints.
+**Context brief.** No repo exists. First-party apps live on in-cluster Forgejo, deploy via ArgoCD.
+`panda/dev-overlay` is the twin to copy. Needs base/overlay split + a Forgejo CI that builds+pushes
+to Zot under the runner constraints.
 
-**Tasks.**
-- Create the Forgejo repo via API/CLI (token minted from the `forgejo` admin like the
-  catalyst-themepark push; revoke after). Scaffold from `workspace/@git-repo-template` + copy
-  dev-overlay's `.forgejo/workflows/ci.yml`, `Taskfile.yml`, `catalyst_repo.yaml`, `CLAUDE.md`.
-- `k8s/base/`: Namespace `system-graph`, Deployment (Go backend + static SPA), Service,
-  NetworkPolicies, a `task manifests` base-purity check (fails on `registry.talos00`/`192.168.`/
-  `talos00`/`onepassword`/`nexus-pull` leaking into base).
-- `k8s/talos00/`: pull secret (ESO → `nexus-pull-dockercfg`), `kustomization.yaml` with the image
-  tag, placeholder for the ingress/applet (added in S3/S5).
-- CI: `runs-on: docker` → `node:22-bookworm`; plain `docker build` (not buildx); push
-  `sha-<7>` + `<git-describe>` + `latest` to Zot; `fetch-depth: 0` for describe.
+**Tasks.** Create the Forgejo repo (mint a `forgejo` admin token like the catalyst-themepark push,
+revoke after). Copy dev-overlay's `.forgejo/workflows/ci.yml` (incl. the base-purity CI grep —
+`kustomize build k8s/base | grep -nE 'registry\.talos00|192\.168|talos00|onepassword|nexus-pull'`,
+which is a CI step, not a `task` target — N6), `Taskfile.yml`, `catalyst_repo.yaml`, `CLAUDE.md`.
+`k8s/base/`: Namespace, Deployment (Go backend + kubectl-dump CronJob + static SPA), Service,
+NetworkPolicies. `k8s/talos00/`: ESO pull secret, kustomization with image tag, ingress/applet
+placeholders. CI pushes `sha-<7>`/`<describe>`/`latest`.
 
-**Verify.** `task manifests` passes; `git push` triggers CI; CI pushes an image (probe pullable via
-`registry.knowledgedump.space/talos00-registry/system-graph:latest`). **Exit:** repo exists, CI
-green, a (stub) image in Zot.
-**Rollback:** delete the Forgejo repo; nothing deployed yet.
+**Verify.** base-purity grep clean; `git push` → CI green → stub image pullable from Zot.
+**Exit:** repo + green CI + stub image. **Rollback:** delete the Forgejo repo.
 
 ---
 
-## S1 — Graph backend (Go): live cluster join → `GET /api/graph`
-**Repo:** system-graph · **Model:** STRONGEST · **Depends:** S0 · **Parallel with:** S2
+## S1 — Graph backend: extended kubectl dump + node/edge builder → `GET /api/graph`
+**Repo:** system-graph · **Model:** STRONGEST · **Depends:** S0 · **Parallel with:** S2a
 
-**Context brief.** Fork `dev-overlay/internal/codeloc/codeloc.go`'s join (it already reads ArgoCD
-Applications, IngressRoutes, Flux Kustomizations, GitRepositories via the k8s API with read-only
-RBAC). Extend the document set with CNPG `Cluster` (`postgresql.cnpg.io`), `CatalystCNPGAppDB`
-claims (`db.catalyst.io`), `CiliumNetworkPolicy`, `CatalystInjectedApplet` (`net.catalyst.io`), and
-Hubble flows. Emit the exact shape `catalyst-ui/ForceGraph` consumes (see `types/index.ts`).
+**Context brief.** Build a new Go backend (NOT a "fork" of codeloc — codeloc has no client-go). The
+live cluster read is a **kubectl CronJob** modeled on `dev-overlay/k8s/base/code-locations/` that
+dumps JSON for: IngressRoutes, ArgoCD Applications, Flux Kustomizations, GitRepositories, **CNPG
+`Cluster`, `CatalystCNPGAppDB`, `CiliumNetworkPolicy`, `CatalystInjectedApplet`, Services**. The Go
+reads those files (codeloc's `Load(dir)` pattern) and builds the graph. REUSE codeloc's
+ArgoCD-decisive-over-Flux repo-attribution tier verbatim (that's the only directly reusable logic).
+Hubble/netpol edges are OUT of this step (S7).
 
 **Tasks.**
-- Nodes: App (IngressRoute + `gethomepage.dev/{name,group,description,icon,weight}`; host from
-  `Host(...)`), Service (`routes[].services[]` name+port), Database (CNPG Cluster via claim ns),
-  Repo (ArgoCD `spec.source` tier-1 / Flux `kustomize.toolkit.fluxcd.io/name` tier-2, codeloc's
-  normalization), Applet (`CatalystInjectedApplet` + `catalyst.nav/applet-src`).
-- Edges: serves, owns-db (claim ns + `<name>-postgres-app` reflection), deployed-from, depends-on
-  (Flux `dependsOn`), talks-to (Hubble — relay API or `hubble observe --output jsonl`), netpol
-  (`CiliumNetworkPolicy` ingress/egress). Tag each edge `kind` + `source` so the frontend can toggle.
-- Grouping metadata on nodes: `group` (gethomepage), `namespace`, `part-of`.
-- Serve `GET /api/graph` (JSON) + `GET /healthz`. Read-only ServiceAccount RBAC modeled on
-  kubeview (`infra-control/kubeview/deployment.yaml:14-60` — note the secrets-read exception
-  comment; do NOT grant secret read beyond what owns-db strictly needs, prefer label-only).
-- Cache the join (~30s TTL) so the graph endpoint is cheap under repeated loads.
+- kubectl CronJob + RBAC: extend `code-locations/` to the GVR list above; RBAC `get/list` ONLY,
+  scoped to those GVRs (model on `code-locations/rbac.yaml`, NOT kubeview; do not broaden secret
+  read — owns-db can work from the claim+label without reading secret values).
+- Node extractors (5): App (IngressRoute+gethomepage, host from `Host(...)`), Service
+  (`routes[].services[]`), Database (CNPG Cluster via claim ns), Repo (codeloc tier), Applet
+  (`CatalystInjectedApplet`+`catalyst.nav/applet-src`).
+- Edge builders (3 here): serves, owns-db (claim ns + `<name>-postgres-app` reflection),
+  deployed-from (codeloc tier). Emit edges as **`{src,dst,kind}`** (do NOT embed node objects;
+  `enrichGraph` hydrates `source`/`target`). Node `kind` is a string; `group`/`namespace`/`part-of`
+  carried as metadata.
+- Serve `GET /api/graph` (→ `{nodes:Record<id,NodeData>, edges:[{src,dst,kind}]}`) + `/healthz`;
+  cache ~30s.
 
-**Verify.** `go test ./...` (unit-test the join against recorded fixtures — no tautological tests,
-prove each edge kind can fail); `curl localhost:PORT/api/graph | jq '.nodes|length'` ≈ 70 apps +
-23 DBs locally against the live cluster via port-forward. **Exit:** `/api/graph` returns a valid
-`GraphData` with all 5 node kinds + at least 5 edge kinds populated.
-**Rollback:** revert the PR; no cluster write (read-only RBAC).
+**Verify.** `go test ./...` (fixtures per node/edge kind; prove each can fail — no tautologies);
+`curl …/api/graph | jq '.nodes|length'` ≈ 70 apps + 23 DBs via port-forward. **Exit:** valid
+`GraphData`, 5 node kinds + 3 edge kinds. **Rollback:** revert PR; read-only, no cluster write.
 
 ---
 
-## S2 — `ClusterGraphConfig.ts` + clustering/layout (the headline work)
-**Repo:** catalyst-ui · **Model:** STRONGEST · **Depends:** S0 · **Parallel with:** S1
+## S2a — `ClusterGraphConfig.ts` + widen shared NodeKind/EdgeKind
+**Repo:** catalyst-ui · **Model:** default · **Depends:** S0 · **Parallel with:** S1
 
-**Context brief.** `catalyst-ui/lib/components/ForceGraph/config/DockerGraphConfig.ts` is a complete
-reference domain-config (node kinds, edge kinds, status filters, quick-filter presets, legend).
-Fork it to `ClusterGraphConfig.ts`. Maximal scope = hairball risk, so clustering is the deliverable,
-not an afterthought. The `GraphData` contract is fixed by `types/index.ts` (matches S1's output).
+**Context brief.** `config/DockerGraphConfig.ts` is the fork template, but `types/index.ts` hardcodes
+`NodeKind`/`EdgeKind` as closed unions and `VisibilityState = Record<NodeKind,boolean>`, consumed by
+`ReactD3Graph`, `useGraphFilters`, `GraphNavigator`, `DockerGraphConfig`. Adding the cluster kinds
+is therefore a **shared-type change**, not additive.
 
-**Tasks.**
-- Node kinds App/Service/Database/Repo/Applet; edge kinds serves/owns-db/deployed-from/depends-on/
-  talks-to/netpol; synthwave palette per kind (reuse catalyst-themepark tokens); legend; NodeDetails.
-- **Clustering (make-or-break):** cluster by `gethomepage.dev/group` first, namespace second, as
-  collapsible hulls — **collapsed by default**, expand on click. Semantic zoom (clusters → apps →
-  services/DBs as you zoom in). dagre (existing dep) for the layered/grouped backbone; force only
-  *within* a cluster — never a global uncontrolled force layout (that is what makes these look bad).
-- Edge-type toggles via `FilterPanel`; **talks-to + netpol default OFF** so the default view is
-  legible. Quick-filter presets (e.g. "SSO map", "data layer", "by repo").
-- A "clean screenshot" mode that hides chrome/controls (for the Reddit grab).
+**Tasks.** Widen `NodeKind`/`EdgeKind` (to `string`, or a union incl. both Docker + cluster kinds)
+in `types/index.ts`; keep `GraphConfig<TNodeKind,TEdgeKind>` generic. Author `ClusterGraphConfig.ts`
+(kinds App/Service/Database/Repo/Applet; edges serves/owns-db/deployed-from/depends-on/talks-to/
+netpol; synthwave palette via catalyst-themepark tokens; legend; quick-filter presets "SSO map" /
+"data layer" / "by repo"; talks-to+netpol default OFF). Use a **hand-authored synthetic fixture**
+for the story (swap to S1's real snapshot once S1 lands — N2).
 
-**Verify.** Storybook story renders `ClusterGraphConfig` against a recorded `GraphData` fixture
-(the ~70-node real snapshot from S1); `yarn build` + `tsc --noEmit` clean; visual check that
-collapsed-by-default is legible and expand/zoom work. **Exit:** the config renders the real snapshot
-without a hairball; toggles + collapse + semantic zoom functional in Storybook.
-**Rollback:** revert the PR; it is additive (new file + export), no existing config touched.
+**Verify.** `tsc --noEmit` + `yarn build` clean **AND the existing Docker story still typechecks**;
+Storybook renders ClusterGraphConfig on the synthetic fixture. **Exit:** both graph domains
+typecheck; cluster config renders. **Rollback:** revert PR — note this touches shared types, so
+re-verify the Docker graph after revert (NOT purely additive).
+
+---
+
+## S2b — Clustering engine: collapsible hulls + semantic zoom (the make-or-break)
+**Repo:** catalyst-ui · **Model:** STRONGEST · **Depends:** S2a
+
+**Context brief.** None of the anti-hairball pieces exist in `ReactD3Graph` today: no node
+collapse/expand, no convex-hull rendering, no semantic zoom/LOD (`_zoomScale` is captured but
+unused; `d3.zoom` only pans/zooms pixels). This is net-new SHARED engine code with blast radius on
+every ForceGraph consumer (incl. the Docker graph) — scope it as engine work, not config.
+
+**Tasks.** Collapse/expand state machine (group → super-node); convex-hull rendering per cluster
+(cluster by `group` then namespace), **collapsed by default**; semantic zoom/LOD driven by the
+(currently unused) zoom scale (clusters → apps → services/DBs); nested force *inside* a cluster over
+a `@dagrejs/dagre` grouped backbone (N5 — pick one dagre). Keep the Docker graph working (regression
+story). **Fallback (define concretely):** if collapse/LOD slips, ship a dagre-grouped STATIC layout
+with edge-type toggles and a "focus selected node" mode — still legible, no hulls.
+
+**Verify.** Storybook renders the ~70-node fixture collapsed-by-default without a hairball;
+expand/zoom/LOD work; the Docker story is visually unchanged. **Exit:** collapsible semantic-zoom
+graph (or the documented fallback) + Docker graph non-regressed. **Rollback:** revert; re-verify
+Docker graph (shared-engine change).
 
 ---
 
 ## S3 — Dedicated app `system-graph.talos00` (first shippable showpiece)
-**Repo:** system-graph (frontend) + talos-homelab (wiring) · **Model:** default · **Depends:** S1, S2
+**Repo:** system-graph (SPA) + talos-homelab (wiring) · **Model:** default
+**Depends:** S1 merged **AND catalyst-ui published** (bump + `yarn publish` after S2a/S2b) · 2 PRs
 
-**Context brief.** Wire the SPA (consuming `catalyst-ui` `ForceGraph` + the S2 `ClusterGraphConfig`,
-fetching S1's `/api/graph`) into a deployed, SSO-gated page. talos-homelab holds ONLY the ArgoCD
-Application + ImageUpdater; everything else is in the system-graph repo.
+**Context brief.** Wire the SPA (imports the PUBLISHED `catalyst-ui` ForceGraph + ClusterGraphConfig,
+fetches S1's `/api/graph`) into a deployed SSO-gated page. system-graph is NOT in the yarn
+workspace — it pulls catalyst-ui from the registry, so **catalyst-ui must be version-bumped and
+published first** (or pin a git/prerelease dep and document it). Two PRs, merge SPA before wiring
+(the ArgoCD app can't go Healthy until the SPA image exists).
 
-**Tasks.**
-- system-graph frontend: SPA shell that loads `/api/graph` and mounts `ForceGraph` with
-  `ClusterGraphConfig`; synthwave theme; served by the same pod (nginx static + proxy `/api` → Go).
-- talos-homelab: `infrastructure/base/argocd/applications/system-graph.yaml` (template:
-  dev-overlay.yaml — `repoURL` the in-cluster Forgejo, `path: k8s/talos00`, `ServerSideApply`,
-  `ignoreDifferences` for ESO/CNPG/claims) + register in that dir's `kustomization.yaml`;
-  `image-updater/system-graph-image-updater.yaml` (CR form, `allowTags: regexp:^sha-[a-f0-9]{7,40}$`,
-  hand-declared finalizer) + register.
-- system-graph `k8s/talos00`: `CatalystWebSecureIngress` (host `system-graph.talos00`, LAN-only +
-  authentik + NetworkPolicy + `catalyst-nav`) + `gethomepage.dev/*` annotations (most derived by
-  Kyverno) so it auto-joins the nav; the CatalystCNPGAppDB claim only if the backend needs state
-  (it likely does NOT — the graph is derived live; skip the DB unless caching needs persistence).
+**Tasks.** (PR1, system-graph) SPA shell loading `/api/graph` → `ForceGraph` + `ClusterGraphConfig`;
+nginx static + `/api` proxy → Go; synthwave theme; `k8s/talos00` `CatalystWebSecureIngress`
+(`system-graph.talos00`, LAN-only + authentik + NetworkPolicy + `catalyst-nav`) + `gethomepage.dev/*`
+annotations. (PR2, talos-homelab) `infrastructure/base/argocd/applications/system-graph.yaml`
+(template dev-overlay.yaml; register in `applications/kustomization.yaml`) +
+`infrastructure/base/argocd/image-updater/system-graph-image-updater.yaml` (**image-updater/ dir**,
+CR form, `allowTags: regexp:^sha-[a-f0-9]{7,40}$`, hand-declared finalizer; register in
+`image-updater/kustomization.yaml`). No CNPG claim unless caching needs persistence (the graph is
+derived live — default NO DB).
 
-**Verify.** ArgoCD app Synced/Healthy; `https://system-graph.talos00` → 302 forward-auth; after
-login the graph loads with live node counts ≈ cluster; nav entry appears. Verify from a real
-browser (Playwright), not an in-cluster fetch (injection/SSO caveats). **Exit:** the page is live,
-SSO-gated, renders the real cluster graph. **This milestone alone is a postable showpiece.**
-**Rollback:** re-comment the ArgoCD Application (git-off) → ArgoCD prunes; one-file revert.
+**Verify.** ArgoCD Synced/Healthy; `https://system-graph.talos00` → 302 → after login the real graph
+loads (node counts ≈ cluster); nav entry appears. Real browser (Playwright), not in-cluster fetch.
+**Exit:** live, SSO-gated, renders the cluster graph — **postable showpiece on its own.**
+**Rollback:** re-comment the ArgoCD Application (git-off) → prune; one-file revert.
 
 ---
 
 ## S4 — SVG/PNG export (the Reddit deliverable)
-**Repo:** system-graph (frontend) · **Model:** default · **Depends:** S3
+**Repo:** system-graph (SPA) · **Model:** default · **Depends:** S3 · **Parallel with:** S5
 
-**Context brief.** ForceGraph renders SVG. Add a "download as SVG/PNG" that serializes the live
-SVG (+ rasterizes via canvas) and a "clean screenshot" mode (S2) that hides chrome.
-
-**Tasks.** Export button → serialize SVG (inline computed styles so the synthwave palette survives)
-→ offer SVG download + canvas-rasterized PNG. Honor the clean-screenshot toggle.
-
-**Verify.** Click export → a standalone SVG opens correctly in a browser with the theme intact; PNG
-downloads at a Reddit-friendly resolution. **Exit:** one-click export produces a shareable image.
-**Rollback:** revert the PR (additive UI).
+**Context brief.** ForceGraph renders SVG. Add "download as SVG/PNG" + a "clean screenshot" mode
+(hide chrome). **Tasks.** Serialize the live SVG with computed styles inlined (so the synthwave
+palette survives) → SVG download + canvas-rasterized PNG at Reddit resolution; honor clean mode.
+**Verify.** Exported SVG opens standalone with theme intact; PNG downloads. **Exit:** one-click
+shareable image. **Rollback:** revert (additive UI).
 
 ---
 
 ## S5 — Applet variant (second delivery rail)
 **Repo:** system-graph · **Model:** default · **Depends:** S3 · **Parallel with:** S4
 
-**Context brief.** Besides the dedicated page, expose the graph as an in-app overlay loaded by
-`catalyst-nav.js` on every `*.talos00` host — the dev-overlay `CatalystInjectedApplet` pattern
-(hostless, served same-origin under `/catalyst/applets/system-graph/` + `/catalyst/api/system-graph/`).
-
-**Tasks.** Add a `CatalystInjectedApplet` claim (`net.catalyst.io`, template
-`dev-overlay/k8s/talos00/applet.yaml`); build a compact applet bundle that registers via
-`window.__catalystNav.register("system-graph", render)` and reuses the S1 backend + S2 config in a
-panel layout. Verify `build_nav.py`'s `discover_applets` advertises it (defaults.applets).
-
-**Verify.** From a real browser inside any `*.talos00` app, the applet docks and renders; a broken
-bundle leaves the nav intact (silent-fail discipline). **Exit:** graph reachable as both a page and
-an overlay. **Rollback:** remove the applet claim; the dedicated page is unaffected.
+**Context brief.** Expose the graph as an in-app overlay loaded by `catalyst-nav.js` on every
+`*.talos00` host — the dev-overlay `CatalystInjectedApplet` pattern (hostless, same-origin under
+`/catalyst/applets/system-graph/` + `/catalyst/api/system-graph/`). **Tasks.** `CatalystInjectedApplet`
+claim (template `dev-overlay/k8s/talos00/applet.yaml`); compact applet bundle registering via
+`window.__catalystNav.register("system-graph", render)`, reusing the S1 backend + ClusterGraphConfig
+in a panel; confirm `build_nav.py` `discover_applets` advertises it. **Verify.** Applet docks in a
+real browser; a broken bundle leaves the nav intact. **Exit:** reachable as page AND overlay.
+**Rollback:** remove the applet claim; page unaffected.
 
 ---
 
 ## S6 — `catalyst.graph/depends-on` annotation + non-CNPG datastore attribution
-**Repo:** talos-homelab (+ system-graph backend reads it) · **Model:** default · **Depends:** S0 · **Parallel with:** S1/S2
+**Repo:** talos-homelab (+ S1 backend reads it) · **Model:** default · **Depends:** S0 · **Parallel with:** S1/S2a
 
-**Context brief.** App→app *logical* deps are not derivable today (Hubble talks-to is noisy; Flux
-`dependsOn` is infra-only). Define a `catalyst.graph/depends-on: <app>[,<app>]` annotation
-convention on IngressRoutes, backfill the obvious edges, and a label convention
+**Context brief.** App→app *logical* deps aren't derivable today. Define
+`catalyst.graph/depends-on: <app>[,<app>]` on IngressRoutes + a label convention
 (`app.kubernetes.io/part-of`) to attribute non-CNPG datastores (Dragonfly/Redis) to an owning app.
-
-**Tasks.** Document the annotation in `docs/02-architecture/routing-and-auth-topology.md`; backfill
-the dozen obvious edges (arr-stack → prowlarr, apps → their Dragonfly, etc.); S1 backend reads the
-annotation into `depends-on` edges + promotes attributed datastores to Database nodes.
-
-**Verify.** The annotation appears on backfilled routes; S1 emits the new edges; a datastore with
-the label shows as a Database node. **Exit:** logical deps + non-CNPG stores in the graph.
-**Rollback:** annotations are additive; remove them (no behavior change elsewhere).
+**Tasks.** Document in `docs/02-architecture/routing-and-auth-topology.md`; backfill the ~dozen
+obvious edges; S1 reads them into `depends-on` edges + promotes attributed datastores to Database
+nodes. **Verify.** Annotation present; S1 emits the edges; attributed store shows as a Database.
+**Exit:** logical deps + non-CNPG stores in the graph. **Rollback:** annotations are additive.
 
 ---
 
 ## S7 — Hubble talks-to + netpol edges (maximal, toggle-gated)
-**Repo:** system-graph (backend + frontend) · **Model:** default · **Depends:** S1, S2, S3
+**Repo:** system-graph (dump+backend+SPA) · **Model:** default · **Depends:** S1, S2b, S3
 
-**Context brief.** Add runtime `talks-to` edges from Cilium Hubble eBPF flows and declared `netpol`
-edges from `CiliumNetworkPolicy`. Default OFF in the UI so the baseline view stays legible; power
-users opt into the full mesh.
-
-**Tasks.** S1 ingests Hubble (relay API / `hubble observe`, aggregated to app↔app, rate-limited);
-parse `CiliumNetworkPolicy` for declared edges; frontend toggles (from S2) surface them, OFF by
-default; consider a "show flows for selected node only" mode to avoid the global hairball.
-
-**Verify.** With the toggle on, selecting an app shows its real observed peers; with it off the
-view is unchanged from S3. **Exit:** the full mesh is available but never the default.
-**Rollback:** feature-flag off; revert the edge ingestion.
+**Context brief.** Runtime `talks-to` from Cilium Hubble eBPF flows + declared `netpol` from
+`CiliumNetworkPolicy`. Hubble does NOT fit the batch kubectl-JSON dump (it's a stream) — ingest via
+the Hubble relay API or a periodic `hubble observe --output jsonl`, aggregate to app↔app,
+rate-limited. Default OFF in the UI (from S2b's toggles) so the baseline stays legible. **Tasks.**
+Add a Hubble ingester (separate from the kubectl dump); parse `CiliumNetworkPolicy` for declared
+edges; frontend toggles surface them OFF by default; "flows for selected node only" mode to avoid
+the global hairball. **Verify.** Toggle on → selected app shows real peers; toggle off → identical
+to S3. **Exit:** full mesh available, never default. **Rollback:** feature-flag off; revert ingest.
 
 ---
 
 ## Invariants (verify after every step)
-- `catalyst-ui` + `talos-homelab` existing tests/lints stay green; no regression to the nav.
-- The backend RBAC stays read-only and does NOT broaden secret access.
+- `catalyst-ui` + `talos-homelab` existing tests/lints stay green; **the Docker ForceGraph graph is
+  non-regressed** (S2a/S2b touch shared code); no regression to the nav.
+- Backend RBAC stays read-only `get/list`; does NOT broaden secret access.
 - talos-homelab commits never sweep the 58 staged `tests/nav-e2e/.artifacts` (private `GIT_INDEX_FILE`).
-- The graph is legible at first paint (clusters collapsed, talks-to/netpol off) — the hairball test.
+- Graph legible at first paint (clusters collapsed, talks-to/netpol off) — the hairball test.
 
 ## Done = TALOS-gsgh closeable
 `system-graph.talos00` live + SSO-gated, the applet docks, `/api/graph` matches the live cluster
-(~70 apps / 23 DBs), clusters collapse/expand with semantic zoom, SVG/PNG export works, and a
-Reddit screenshot has been taken.
+(~70 apps / 23 DBs), clusters collapse/expand with semantic zoom (or the documented fallback),
+SVG/PNG export works, and a Reddit screenshot has been taken.
