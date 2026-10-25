@@ -40,6 +40,13 @@ spec:
           - resources:
               kinds:
                 - traefik.io/v1alpha1/IngressRoute
+              # CREATE/UPDATE only — never validate a DELETE. Without this, a route that
+              # predates this policy (grandfathered with both web+websecure) can NEVER be
+              # removed: the webhook denies its own deletion, and on DELETE request.object is
+              # null anyway. Hit 2026-10-24 retiring amber-legacy-private. (TALOS-a8vo.4)
+              operations:
+                - CREATE
+                - UPDATE
       validate:
         failureAction: Enforce
         message: >-
