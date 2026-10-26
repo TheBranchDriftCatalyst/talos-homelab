@@ -1,5 +1,14 @@
 ---
 # IngressRoute for Grafana managed by grafana-operator
+#
+# Split into a websecure (TLS) router carrying the theme/RUM injector and a web
+# router that 301s to HTTPS (TALOS-wyxh). The themepark nav-sweep had left
+# Grafana on the `web` entrypoint ONLY, so the theme middleware was reachable
+# over plaintext but browsers (which use HTTPS) got a 404. Two SEPARATE
+# IngressRoute objects, never web+websecure on one router: Kyverno
+# `ingressroute-no-combined-entrypoints` forbids that. No `tls:` stanza here —
+# Kyverno `ingressroute-tls-default` injects it so the default *.talos00 wildcard
+# TLSStore serves via SNI.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -21,7 +30,7 @@ metadata:
     gethomepage.dev/widget.password: "{{HOMEPAGE_VAR_GRAFANA_PASS}}"
 spec:
   entryPoints:
-    - web
+    - websecure
   routes:
     - kind: Rule
       match: Host(`grafana.talos00`)
@@ -50,6 +59,29 @@ spec:
         # surface is the wrong place to record what is on screen.
         - name: catalyst-nav-rum-grafana
           namespace: monitoring
+      services:
+        - name: grafana-service
+          port: 3000
+---
+# HTTP→HTTPS redirect for grafana.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: grafana-http
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: grafana
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`grafana.talos00`)
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: redirect-https
+          namespace: traefik
       services:
         - name: grafana-service
           port: 3000
