@@ -1,4 +1,12 @@
 ---
+# Jellyfin on jellyfin.${CLUSTER_DOMAIN}. Split into a websecure (TLS) router
+# carrying the catalyst theme and a web router that 301s to HTTPS (TALOS-wyxh).
+# The themepark nav-sweep had left this on the `web` entrypoint ONLY, so the
+# theme served over plaintext but browsers (HTTPS) got a 404. Two SEPARATE
+# IngressRoute objects, never web+websecure on one router (Kyverno
+# ingressroute-no-combined-entrypoints). No `tls:` stanza — Kyverno
+# ingressroute-tls-default injects it so the *.talos00 wildcard TLSStore serves
+# via SNI. Jellyfin does its own auth, so no forward-auth middleware here.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -19,12 +27,36 @@ metadata:
     gethomepage.dev/widget.enableBlocks: "true"
 spec:
   entryPoints:
+    - websecure
+  routes:
+    - match: Host(`jellyfin.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: catalyst-jellyfin
+          namespace: traefik
+      services:
+        - name: jellyfin
+          port: 8096
+---
+# HTTP→HTTPS redirect for jellyfin.${CLUSTER_DOMAIN}.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: jellyfin-http
+  labels:
+    app: jellyfin
+spec:
+  entryPoints:
     - web
   routes:
     - match: Host(`jellyfin.${CLUSTER_DOMAIN}`)
       kind: Rule
       middlewares:
-        - name: catalyst-jellyfin
+        - name: lan-only
+          namespace: traefik
+        - name: redirect-https
           namespace: traefik
       services:
         - name: jellyfin

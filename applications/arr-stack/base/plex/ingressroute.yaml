@@ -1,4 +1,13 @@
 ---
+# Plex on plex.${CLUSTER_DOMAIN}. Split into a websecure (TLS) router carrying
+# the catalyst theme and a web router that 301s to HTTPS (TALOS-wyxh). The
+# themepark nav-sweep had left this on the `web` entrypoint ONLY, so the theme
+# served over plaintext but browsers (HTTPS) got a 404. Two SEPARATE IngressRoute
+# objects, never web+websecure on one router (Kyverno
+# ingressroute-no-combined-entrypoints). No `tls:` stanza — Kyverno
+# ingressroute-tls-default injects it so the *.talos00 wildcard TLSStore serves
+# via SNI. This route is only the LAN plex.talos00 surface; Plex does its own
+# auth and remote access runs over plex.tv, so no forward-auth middleware here.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -18,12 +27,36 @@ metadata:
     gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_PLEX_KEY}}"
 spec:
   entryPoints:
+    - websecure
+  routes:
+    - match: Host(`plex.${CLUSTER_DOMAIN}`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: catalyst-plex
+          namespace: traefik
+      services:
+        - name: plex
+          port: 32400
+---
+# HTTP→HTTPS redirect for plex.${CLUSTER_DOMAIN}.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: plex-http
+  labels:
+    app: plex
+spec:
+  entryPoints:
     - web
   routes:
     - match: Host(`plex.${CLUSTER_DOMAIN}`)
       kind: Rule
       middlewares:
-        - name: catalyst-plex
+        - name: lan-only
+          namespace: traefik
+        - name: redirect-https
           namespace: traefik
       services:
         - name: plex

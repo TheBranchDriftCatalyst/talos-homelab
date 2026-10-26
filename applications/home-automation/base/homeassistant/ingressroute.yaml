@@ -1,4 +1,12 @@
 ---
+# Home Assistant on homeassistant.${CLUSTER_DOMAIN} (homeassistant.talos00).
+# Split into a websecure (TLS) router carrying the catalyst navbar and a web
+# router that 301s to HTTPS (TALOS-wyxh). The themepark nav-sweep had left this
+# on the `web` entrypoint ONLY, so the nav served over plaintext but browsers
+# (HTTPS) got a 404. Two SEPARATE IngressRoute objects, never web+websecure on
+# one router (Kyverno ingressroute-no-combined-entrypoints). No `tls:` stanza —
+# Kyverno ingressroute-tls-default injects it so the *.talos00 wildcard TLSStore
+# serves via SNI. HA does its own auth; no forward-auth middleware here.
 apiVersion: traefik.io/v1alpha1
 kind: IngressRoute
 metadata:
@@ -18,14 +26,38 @@ metadata:
     gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_HOMEASSISTANT_KEY}}"
 spec:
   entryPoints:
-    - web
+    - websecure
   routes:
     - match: Host(`homeassistant.talos00`)
       kind: Rule
       # Consolidated catalyst navbar. Last in the chain so auth runs first and the
       # body injector only ever rewrites an already-authorised response.
       middlewares:
+        - name: lan-only
+          namespace: traefik
         - name: catalyst-nav
+          namespace: traefik
+      services:
+        - name: homeassistant
+          port: 8123
+---
+# HTTP→HTTPS redirect for homeassistant.talos00.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: homeassistant-http
+  labels:
+    app: homeassistant
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`homeassistant.talos00`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: redirect-https
           namespace: traefik
       services:
         - name: homeassistant

@@ -15,8 +15,13 @@ metadata:
     gethomepage.dev/icon: "minio.png"
     gethomepage.dev/siteMonitor: "http://minio.minio.svc.cluster.local/minio/health/live"
 spec:
+  # websecure (TLS). The themepark nav-sweep had left this on the `web`
+  # entrypoint ONLY, so the nav served over plaintext but browsers (HTTPS) got a
+  # 404 (TALOS-wyxh). The web→HTTPS redirect is a SEPARATE object below (Kyverno
+  # ingressroute-no-combined-entrypoints). No `tls:` stanza — Kyverno
+  # ingressroute-tls-default injects it (*.talos00 wildcard via SNI).
   entryPoints:
-    - web
+    - websecure
   routes:
     - match: Host(`minio.talos00`)
       kind: Rule
@@ -29,6 +34,27 @@ spec:
         # auth runs first and the injector only ever rewrites an authorised body.
         # Console only -- the s3.talos00 API route below must NOT be injected.
         - name: catalyst-nav
+          namespace: traefik
+      services:
+        - name: minio-console
+          port: 9090
+---
+# HTTP→HTTPS redirect for minio.talos00 (console).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: minio-console-http
+  namespace: minio
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`minio.talos00`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: redirect-https
           namespace: traefik
       services:
         - name: minio-console
