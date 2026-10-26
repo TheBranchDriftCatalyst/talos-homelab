@@ -1,0 +1,74 @@
+---
+# ═══════════════════════════════════════════════════════════════════════════════
+# REFERENCE ARTIFACT — NOT RECONCILED FROM HERE.
+# ═══════════════════════════════════════════════════════════════════════════════
+# This is the CatalystInjectedApplet claim for system-graph (TALOS-gsgh.5). It is
+# staged in talos-homelab for review but its REAL HOME is the system-graph repo, so
+# that it is ArgoCD-synced into ns system-graph alongside the Deployment/Service it
+# points at — exactly like dev-overlay keeps its claim in dev-overlay/k8s/talos00/
+# and exactly as the system-graph ArgoCD Application already declares:
+#   "Everything system-graph is ... lives in the system-graph repo under k8s/."
+#
+#   DESTINATION:  system-graph/k8s/talos00/applet.yaml
+#   ALSO ADD:     the filename to system-graph/k8s/talos00/kustomization.yaml `resources:`
+#
+# It is deliberately NOT listed in this directory's kustomization.yaml, so Flux never
+# applies it from talos-homelab (which would create a dual-owner fight with ArgoCD over
+# an object in ns system-graph).
+#
+# WHY THIS EXISTS. system-graph already has a hostname (system-graph.talos00) via its
+# CatalystWebSecureIngress claim, SSO-gated behind the embedded authentik outpost. That
+# is one page you navigate TO. This claim adds the SECOND rail: the live topology docks
+# into the catalyst navbar as an in-app overlay on EVERY *.talos00 host, reached
+# same-origin under /catalyst/ with no SSO, no CORS and no new hostname — the whole
+# reason the injected-applet abstraction exists. The two rails coexist; neither replaces
+# the other.
+#
+# Read the XRD/composition before changing anything here — they are the only copy of the
+# constraints this claim relies on:
+#   talos-homelab:infrastructure/base/catalyst-injected-applet/xrd.yaml
+#   talos-homelab:infrastructure/base/catalyst-injected-applet/composition.yaml
+#
+# THREE-SIDED PATH CONTRACT (same as dev-overlay). spec.name drives all of:
+#   /catalyst/applets/system-graph/system-graph.js   the loader bundle   (derived from name)
+#   /catalyst/applets/system-graph/                  the UI (iframe src)  (same prefix)
+#   /catalyst/api/system-graph/graph                 the live graph JSON  (the `api:` block)
+# The system-graph server's Go mux must be PREFIX-AWARE and mount its UI + /api/graph at
+# these real public paths (it currently serves `/` and `/api/graph` at the root only).
+# That server change is tracked in this directory's README and is the orchestrator's to
+# land — this claim is inert until the backend answers under /catalyst/.
+apiVersion: net.catalyst.io/v1alpha1
+kind: CatalystInjectedApplet
+metadata:
+  name: system-graph
+  namespace: system-graph
+  labels:
+    app.kubernetes.io/name: system-graph
+spec:
+  # Drives both public mounts and the catalyst.nav/applet-name annotation. MUST stay
+  # "system-graph": the bundle, the nav loader and the server's prefix-aware mux all
+  # hardcode these paths.
+  name: system-graph
+
+  backend:
+    # The existing system-graph Service (k8s/base/service.yaml). Same Service that already
+    # backs the CatalystWebSecureIngress claim — the applet routes are additive.
+    service: system-graph
+    # NUMERIC, and 80 not 8080: the system-graph Service fronts container :8080 on port 80
+    # (ClusterIP :80 -> targetPort http). Traefik's Kubernetes provider reads a STRING port
+    # as a Service port NAME, so this must never be quoted.
+    port: 80
+
+  # PRESENCE IS THE SWITCH. `{}` renders /catalyst/api/system-graph/ at priority 10100 with
+  # the single lan-only middleware, pointing at the same Service — this is where the UI
+  # inside the overlay fetches its live topology same-origin (GET /catalyst/api/system-graph/graph).
+  # Omit the block only if the overlay ever ships a static snapshot and needs no backend.
+  api: {}
+
+  # bundle: omitted — defaults to <name>.js, i.e.
+  #   /catalyst/applets/system-graph/system-graph.js
+  # Set it only if the server serves the loader entrypoint under a different filename.
+  #
+  # priority: omitted — defaults to 10100 (beats themepark's /catalyst/ asset route at
+  # 10000 and every app's Host() catch-all, deterministically). The reasoning is in the
+  # XRD field description; do not set it to 10000.
