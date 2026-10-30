@@ -1,0 +1,114 @@
+---
+# mariadb-operator
+# Provides: MariaDB, Database, User, Grant, Connection, Backup, PhysicalBackup,
+#           Restore, PointInTimeRecovery, SqlJob, MaxScale, ExternalMariaDB CRDs
+# Docs: https://github.com/mariadb-operator/mariadb-operator
+#
+# Why this exists: Youtarr (downloads ns) requires MariaDB 10.3+ / MySQL 8.0+ and
+# has no PostgreSQL support, so CNPG cannot serve it. This is the MariaDB analogue
+# of the cloudnative-pg operator: the operator lives here in `databases`, while the
+# MariaDB instances live in their consuming app's namespace (same as CNPG Clusters).
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: mariadb-operator
+  namespace: databases
+spec:
+  interval: 1h
+  url: https://helm.mariadb.com/mariadb-operator
+---
+# CRDs are shipped as a SEPARATE chart on purpose. The operator chart defaults to
+# crds.enabled=false and its values carry this warning verbatim:
+#   "This should only be set to true during the initial deployment. If this chart
+#    manages the CRDs and is later uninstalled, all MariaDB instances will be DELETED."
+# Keeping CRDs in their own release decouples their lifecycle from the operator's.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mariadb-operator-crds
+  namespace: databases
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: mariadb-operator-crds
+      version: '26.10.2'
+      sourceRef:
+        kind: HelmRepository
+        name: mariadb-operator
+        namespace: databases
+      interval: 12h
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: mariadb-operator
+  namespace: databases
+spec:
+  interval: 30m
+  dependsOn:
+    - name: mariadb-operator-crds
+  chart:
+    spec:
+      chart: mariadb-operator
+      version: '26.10.2'
+      sourceRef:
+        kind: HelmRepository
+        name: mariadb-operator
+        namespace: databases
+      interval: 12h
+  values:
+    # CRDs are owned by the mariadb-operator-crds HelmRelease above. Never flip
+    # this to true — on uninstall it would cascade-delete every MariaDB instance.
+    crds:
+      enabled: false
+
+    # Cluster DNS name must match the cluster's domain for the operator to build
+    # correct FQDNs for MariaDB Services.
+    clusterName: cluster.local
+
+    # Watch all namespaces so MariaDB CRs can live beside their consuming app
+    # (downloads/youtarr-mariadb), mirroring how CNPG Clusters are placed.
+    currentNamespaceOnly: false
+
+    # Single replica for each component. ha.enabled is false by default in this
+    # chart (it would otherwise request 3 replicas per component). One small
+    # MariaDB instance with a single consumer does not justify 9 operator pods.
+    ha:
+      enabled: false
+
+    # Prometheus metrics. metrics.enabled is false by default; the nested
+    # serviceMonitor.enabled is already true, so this one key turns both on.
+    # ServiceMonitor CRDs come from bootstrap-crds (prometheus-operator-crds).
+    metrics:
+      enabled: true
+
+    # PROVISIONAL sizing — no measurements exist yet for a workload that has
+    # never run here. These are conservative Go-controller starting points, not
+    # measured values. Right-size from a 7d window once it has history, per the
+    # method used for the cloudnative-pg block above.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+    # Admission webhook for MariaDB CR validation (chart default: enabled).
+    webhook:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+
+    # Self-managed webhook TLS. Avoids a cert-manager dependency for this
+    # operator; it issues and rotates its own serving certs.
+    certController:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
