@@ -71,3 +71,48 @@ spec:
       services:
         - name: youtarr
           port: 3011
+---
+# BasicAuth for the single API path the utarr extension calls.
+# Credential comes from the youtarr-api-basicauth ExternalSecret (key `users`).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: youtarr-api-basicauth
+  namespace: downloads
+spec:
+  basicAuth:
+    secret: youtarr-api-basicauth
+---
+# utarr extension API route.
+#
+# Path() not PathPrefix() — exactly ONE endpoint is exempted from Authentik.
+# Youtarr runs AUTH_ENABLED=false, so it does NOT check the API key itself:
+# upstream warns that in that mode it "accepts every request without checking
+# the API key". This BasicAuth middleware is therefore the ONLY thing standing
+# in front of the endpoint. Widening this match, or dropping the middleware,
+# makes it openly callable by anything that can reach the ingress.
+#
+# priority is EXPLICIT. Traefik otherwise orders by rule length, which is too
+# implicit for a security boundary: if the Authentik route won, the extension
+# would silently 302 instead of working.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: youtarr-api
+  namespace: downloads
+  labels:
+    app: youtarr
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`youtarr.talos00`) && Path(`/api/videos/download`)
+      kind: Rule
+      priority: 3000
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+        - name: youtarr-api-basicauth
+      services:
+        - name: youtarr
+          port: 3011
