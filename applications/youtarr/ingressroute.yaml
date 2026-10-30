@@ -73,7 +73,15 @@ spec:
           port: 3011
 ---
 # BasicAuth for the single API path the utarr extension calls.
-# Credential comes from the youtarr-api-basicauth ExternalSecret (key `users`).
+#
+# Secret is youtarr-api-basicauth-htpasswd, NOT youtarr-api-basicauth: Traefik's
+# basicAuth middleware hard-requires its secret to contain EXACTLY ONE key.
+# youtarr-api-basicauth (the ExternalSecret from Task 2) carries both `users`
+# AND `password` for its other consumer (the human/extension), so pointing
+# here at that 2-key secret makes Traefik silently drop this whole router --
+# no error outside the controller logs, traffic just falls through to the
+# Authentik-gated host route (302 instead of 401). See secret.yaml for the
+# single-key sibling this actually references.
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
@@ -81,7 +89,7 @@ metadata:
   namespace: downloads
 spec:
   basicAuth:
-    secret: youtarr-api-basicauth
+    secret: youtarr-api-basicauth-htpasswd
 ---
 # utarr extension API route.
 #
