@@ -77,28 +77,33 @@ Plus, in `applications/youtarr/secret.yaml`, an ESO `Password` generator +
 `ExternalSecret` producing the BasicAuth secret. Follows the existing `youtarr-admin`
 generator pattern; the credential never appears in git.
 
-> **OPEN IMPLEMENTATION DETAIL — resolve this FIRST, before any extension code.**
-> Traefik's `basicAuth` expects a Secret whose `users` key holds **htpasswd** lines
-> with an MD5/SHA1/bcrypt-hashed password, not a plaintext one. The ESO `Password`
-> generator emits plaintext, and the extension needs that same plaintext to send.
-> So the ExternalSecret must emit BOTH: the hash for Traefik and the plaintext for us.
-> Resolution order to try:
-> 1. An ESO v2.6.0 template function that produces an htpasswd/bcrypt hash, if one
->    exists in this version — fully declarative, preferred.
-> 2. Sprig primitives in the template to build the `{SHA}base64(sha1(pw))` form.
-> 3. Last resort: a one-shot Job to mint it. This is imperative glue and conflicts
->    with the repo's operator-CRD preference — only if 1 and 2 both fail.
-> If none of these is clean, STOP and re-open the auth decision rather than shipping a
-> hand-made secret: a manually-created credential is exactly the kind of thing that
-> silently rots and is not reproducible on a rebuild.
-> Reference: `media-private/desec-basic-auth` has the right shape (a `users` key) but
-> is NOT in git, so there is no in-repo pattern to copy.
-
-Precedent in-cluster: `media-private/desec-basic-auth` already uses
-`basicAuth: { secret: ... }`, and `media-private/authentik-stash-api` shows per-route
-auth variance is an established pattern here.
-
-`Path()` not `PathPrefix()` — exactly one endpoint is exempted, nothing else.
+> **RESOLVED DURING IMPLEMENTATION — this took TWO Secrets, not one.**
+>
+> The design above said "one ExternalSecret must emit BOTH". That is impossible:
+> **Traefik's `basicAuth` requires its referenced Secret to contain exactly one key.**
+> Pointing it at a two-key Secret makes the router silently fail to register
+> (`found 2 elements for secret ..., must be single element exactly` ->
+> `middleware ... does not exist`), and the endpoint answers 302 instead of 401.
+>
+> Shipped shape — two ExternalSecrets, both sourced from the SAME 1Password item
+> (`ClusterSecretStore/onepassword`, vault `catalyst-eso`, item
+> `youtarr-api-basicauth`, field `password`):
+>
+> - `youtarr-api-basicauth` -> key `password` only. A human reads this to configure
+>   the extension.
+> - `youtarr-api-basicauth-htpasswd` -> key `users` only. Traefik's basicAuth reads it.
+>
+> Each Secret has exactly one key and one consumer, and each one's comment names the
+> other so neither looks redundant and gets deleted.
+>
+> Two further corrections to what this spec originally assumed:
+>
+> - **sprig's `htpasswd` is NOT usable on this cluster's ESO v2.6.0** — it exists but
+>   has the wrong arity (`want 3 got 2`). `bcrypt` works and is what shipped.
+> - **bcrypt re-salts on every refresh**, so the `users` hash changes on each sync even
+>   when the password has not. That is routine churn, not a rotation. `refreshInterval`
+>   is 24h rather than 1h to keep the noise down; after a real rotation, force-sync
+>   BOTH ExternalSecrets or auth breaks (closed, not open) until the second timer fires.
 
 ## Extension host: @catalyst-swiss-army-knife
 
