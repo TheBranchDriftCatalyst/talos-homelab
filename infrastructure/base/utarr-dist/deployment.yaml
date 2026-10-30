@@ -1,0 +1,149 @@
+---
+# Static host for the self-signed utarr CRX and its update manifest.
+# Deliberately NOT behind Authentik: Chrome fetches updates headlessly and
+# cannot complete an SSO redirect. `lan-only` is the access control.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: utarr-dist-nginx
+  namespace: downloads
+data:
+  default.conf: |
+    server {
+      listen 80;
+      root /usr/share/nginx/html;
+      # THE critical line. Chrome rejects a CRX served as
+      # application/octet-stream, and does so without a useful error.
+      types { application/x-chrome-extension crx; }
+      default_type application/octet-stream;
+      location / { autoindex off; }
+    }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: utarr-dist
+  namespace: downloads
+  labels:
+    app: utarr-dist
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: utarr-dist
+  namespace: downloads
+  labels:
+    app: utarr-dist
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: utarr-dist
+  template:
+    metadata:
+      labels:
+        app: utarr-dist
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+            - name: conf
+              mountPath: /etc/nginx/conf.d
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: html
+          persistentVolumeClaim:
+            claimName: utarr-dist
+        - name: conf
+          configMap:
+            name: utarr-dist-nginx
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: utarr-dist
+  namespace: downloads
+  labels:
+    app: utarr-dist
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    app: utarr-dist
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: utarr-dist
+  namespace: downloads
+  labels:
+    app: utarr-dist
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`utarr-dist.talos00`)
+      kind: Rule
+      middlewares:
+        - name: lan-only
+          namespace: traefik
+      services:
+        - name: utarr-dist
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: utarr-dist-http
+  namespace: downloads
+  labels:
+    app: utarr-dist
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`utarr-dist.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: utarr-dist
+          port: 80
