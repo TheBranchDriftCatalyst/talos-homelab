@@ -1,0 +1,31 @@
+---
+# Same east-west gate as youtarr. The CRX and its update manifest are not
+# secret, but this host is deliberately un-authenticated (Chrome fetches
+# updates headlessly and cannot complete an SSO redirect), so `lan-only` on
+# the IngressRoute is its only north-south control. Restricting ingress to
+# Traefik means a pod cannot enumerate the dist root to discover what is
+# published.
+#
+# This is what the CatalystWebSecureIngress XRD would have emitted had these
+# routes been declared through it rather than hand-written.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: utarr-dist
+  namespace: downloads
+  labels:
+    app: utarr-dist
+spec:
+  podSelector:
+    matchLabels:
+      app: utarr-dist
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: 8080

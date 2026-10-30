@@ -12,10 +12,17 @@ data:
     server {
       listen 8080;
       root /usr/share/nginx/html;
-      # THE critical line. Chrome rejects a CRX served as
-      # application/octet-stream, and does so without a useful error.
-      types { application/x-chrome-extension crx; }
       default_type application/octet-stream;
+      # The CRX content-type is THE critical setting: Chrome rejects a CRX
+      # served as application/octet-stream and does so without a useful
+      # error. It is set per-location via default_type rather than with a
+      # server-level `types { ... }` block, because a types block REPLACES
+      # the mime map inherited from nginx.conf rather than extending it --
+      # which is why updates.xml was also being served as octet-stream.
+      # mime.types has no .crx entry, so default_type is what applies here.
+      location ~ \.crx$ {
+        default_type application/x-chrome-extension;
+      }
       location / { autoindex off; }
     }
 ---
@@ -60,6 +67,52 @@ spec:
         fsGroup: 101
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # Breaks a bootstrap deadlock. Publishing a release is a manual
+        # `kubectl cp` into the PVC, so NOTHING in git populates it -- on a
+        # fresh cluster, or after the PVC is lost, /usr/share/nginx/html is
+        # empty. The readinessProbe below then can never pass, the Deployment
+        # never goes Available, and because this Kustomization is wait: true
+        # it stays red forever while the Service has no endpoints and Traefik
+        # answers 503.
+        #
+        # Seeding a valid-but-empty update manifest makes the component
+        # self-bootstrapping: Chrome reads a gupdate response with no <app>
+        # element as "no update available", which is the honest answer when
+        # nothing has been published yet.
+        #
+        # Idempotent BY DESIGN: it writes only when the file is absent, so a
+        # real published manifest is never clobbered by a pod restart.
+        - name: seed-manifest
+          image: nginxinc/nginx-unprivileged:1.27-alpine
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              if [ -f /usr/share/nginx/html/updates.xml ]; then
+                echo "updates.xml present - leaving the published manifest untouched"
+                exit 0
+              fi
+              cat > /usr/share/nginx/html/updates.xml <<'XML'
+              <?xml version="1.0" encoding="UTF-8"?>
+              <gupdate xmlns="http://www.google.com/update2/response" protocol="2.0">
+              </gupdate>
+              XML
+              echo "seeded an empty updates.xml (no release published yet)"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
       containers:
         - name: nginx
           image: nginxinc/nginx-unprivileged:1.27-alpine
@@ -79,9 +132,12 @@ spec:
             # httpGet on /updates.xml, NOT tcpSocket and NOT "/".
             # tcpSocket only proves the port is open — it would report Ready even
             # if the PVC failed to mount or nginx were serving nothing. Probing
-            # /updates.xml proves nginx is actually serving the published artifact.
+            # /updates.xml proves nginx is actually serving from the PVC.
             # "/" cannot be used: the directory has no index.html and autoindex is
             # off, so it returns 403 forever and would deadlock Flux's wait: true.
+            # This probe is only safe to point at PVC content because the
+            # seed-manifest initContainer guarantees the file exists; without it
+            # the same deadlock returns on any fresh cluster.
             httpGet:
               path: /updates.xml
               port: http

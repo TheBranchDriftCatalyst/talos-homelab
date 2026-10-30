@@ -1,0 +1,39 @@
+---
+# East-west gate for the Youtarr API.
+#
+# AUTH_ENABLED=false, so Youtarr itself authenticates nobody. The Traefik
+# BasicAuth middleware on the /api/videos/download route is the ONLY
+# north-south control, and it is reachable only through the ingress — any pod
+# in any namespace could otherwise POST straight to
+# youtarr.downloads.svc.cluster.local:3011 and queue downloads with no
+# credential at all. This closes that path: once this policy selects the
+# Youtarr pod, ingress from everything except the traefik namespace is
+# default-denied.
+#
+# policyTypes is Ingress ONLY — Youtarr must keep reaching MariaDB, the NFS
+# backing store and YouTube itself, and an egress section here would break
+# all three.
+#
+# Follows the NetworkPolicy the CatalystWebSecureIngress composition emits
+# (infrastructure/base/catalyst-websecure-ingress/composition.yaml).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: youtarr
+  namespace: downloads
+  labels:
+    app: youtarr
+spec:
+  podSelector:
+    matchLabels:
+      app: youtarr
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: 3011
