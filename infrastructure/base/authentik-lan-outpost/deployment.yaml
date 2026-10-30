@@ -52,7 +52,24 @@ spec:
   # hypothesis is oversized accumulated cookies on the shared auth domain, which
   # replicas would not help (though moving LAN sessions onto auth.talos00 would).
   # Replicas give the knob the embedded outpost structurally cannot have.
-  replicas: 3
+  # ONE replica, deliberately (TALOS-hj2m).
+  #
+  # Sessions live in a FILESYSTEM store under /dev/shm, private to each pod, and
+  # this image has no shared backend (see the env comment below). With 3 replicas
+  # a login begun on one pod had its /outpost.goauthentik.io/callback served by
+  # another, which logged
+  #   "failed to get session: open /dev/shm/session_...: no such file"
+  #   "mismatched session ID" -> "invalid state" -> HTTP 400
+  # breaking ~2 of every 3 FRESH logins across all ~60 apps on this outpost.
+  #
+  # sessionAffinity: ClientIP on the Service is NOT sufficient: the client IP the
+  # Service sees is the TRAEFIK pod, and there are 5 of them, so one browser's
+  # requests still fan out across multiple outpost pods mid-flow.
+  #
+  # Cost: a restart or node drain briefly interrupts forward-auth for every app
+  # here. That is strictly better than 2-in-3 logins failing permanently. Revisit
+  # if an authentik release adds a shared session backend to the proxy outpost.
+  replicas: 1
   revisionHistoryLimit: 3
   selector:
     matchLabels:
@@ -98,49 +115,14 @@ spec:
               value: https://auth.talos00
             - name: AUTHENTIK_INSECURE
               value: "false"
-            # ── Shared session store (TALOS-hj2m) ──────────────────────────
-            # Without these, proxy:2025.12.x falls back to a FILESYSTEM session
-            # store under /dev/shm that is PRIVATE TO EACH POD. With replicas: 3
-            # a login begun on one pod had its /outpost.goauthentik.io/callback
-            # round-robined to another, which logged
-            #   "failed to get session: open /dev/shm/session_...: no such file"
-            #   "mismatched session ID" -> "invalid state" -> HTTP 400
-            # i.e. ~2-in-3 of every FRESH login failed, for all ~60 apps here.
-            #
-            # NOT redis: `grep -a redis /proxy` in the outpost image returns
-            # NOTHING. The binary ships FilesystemStore and PostgresStore only,
-            # and reads AUTHENTIK_POSTGRESQL__*. The Dragonfly `authentik-cache`
-            # is used by the server/worker and cannot back this outpost.
-            #
-            # Values are pulled from the SAME secrets authentik-server consumes
-            # so host/credentials stay in lockstep and nothing is duplicated in
-            # git. Postgres is authentik's own CNPG cluster (authentik-postgres);
-            # no NetworkPolicy guards :5432 in this namespace, only the cache.
-            - name: AUTHENTIK_POSTGRESQL__HOST
-              valueFrom:
-                secretKeyRef:
-                  name: authentik
-                  key: AUTHENTIK_POSTGRESQL__HOST
-            - name: AUTHENTIK_POSTGRESQL__PORT
-              valueFrom:
-                secretKeyRef:
-                  name: authentik
-                  key: AUTHENTIK_POSTGRESQL__PORT
-            - name: AUTHENTIK_POSTGRESQL__NAME
-              valueFrom:
-                secretKeyRef:
-                  name: authentik
-                  key: AUTHENTIK_POSTGRESQL__NAME
-            - name: AUTHENTIK_POSTGRESQL__USER
-              valueFrom:
-                secretKeyRef:
-                  name: authentik
-                  key: AUTHENTIK_POSTGRESQL__USER
-            - name: AUTHENTIK_POSTGRESQL__PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: authentik-secrets
-                  key: AUTHENTIK_POSTGRESQL__PASSWORD
+            # NO SHARED SESSION STORE EXISTS IN THIS IMAGE (TALOS-hj2m).
+            # proxy:2025.12.4 logs "using filesystem session backend" and that
+            # is the ONLY backend string in the binary — there is no postgres or
+            # redis session backend in the proxy path. (A PostgresStore symbol is
+            # present but unused here, and `grep -a redis /proxy` returns
+            # nothing.) Setting AUTHENTIK_POSTGRESQL__* changed NOTHING; it only
+            # produced a 'POSTGRES_PASSWORD not found' warning. Do not re-add it.
+            # The single replica below is what actually makes login work.
             # Minted by authentik when the Outpost object is created, and copied
             # into this Secret by the token-sync CronJob (token-sync.yaml). The
             # key is derived from the Outpost's uuid, so it CANNOT be declared
@@ -225,8 +207,8 @@ spec:
       port: 9000
       targetPort: http
 ---
-# A drain must not be able to take forward-auth for 60 apps to zero. With
-# replicas: 3 this still permits one voluntary eviction at a time.
+# With replicas: 1 (see above) a drain necessarily takes forward-auth to zero
+# briefly. This PDB exists only so a drain is not blocked outright.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -235,7 +217,9 @@ metadata:
   labels:
     app: talos00-outpost
 spec:
-  minAvailable: 2
+  # replicas: 1 — minAvailable: 2 would be unsatisfiable and block every node
+  # drain forever. maxUnavailable: 1 still permits a drain to evict the pod.
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: talos00-outpost
