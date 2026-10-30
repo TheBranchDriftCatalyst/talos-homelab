@@ -122,7 +122,12 @@ spec:
             # contract exactly, so no remapping is needed.
             - secretRef:
                 name: youtarr-mariadb-conn
-            # AUTH_PRESET_USERNAME / AUTH_PRESET_PASSWORD
+            # AUTH_PRESET_USERNAME / AUTH_PRESET_PASSWORD. INERT while
+            # AUTH_ENABLED=false (below) — Youtarr only reads the preset to seed
+            # its own local admin, and nothing does local logins now that
+            # Authentik forward-auth is the gate (TALOS-8pbo). Kept mounted, with
+            # the ESO Password generator in secret.yaml, so flipping AUTH_ENABLED
+            # back to "true" is a one-line rollback and not a credential hunt.
             - secretRef:
                 name: youtarr-admin
           env:
@@ -134,11 +139,13 @@ spec:
             # limiting see the proxy IP instead of the client.
             - name: TRUST_PROXY
               value: "true"
-            # Youtarr's built-in auth stays ON for now. When the Authentik
-            # forward-auth middleware is added (TALOS-8pbo) set AUTH_ENABLED=false
-            # so there is no double login.
+            # Youtarr's built-in auth is OFF: Authentik forward-auth via the
+            # authentik-lan middleware on the websecure IngressRoute is the only
+            # gate (TALOS-8pbo). Leaving this "true" would be a double login.
+            # Nothing but the IngressRoute protects Youtarr now — never remove
+            # that middleware without flipping this back to "true".
             - name: AUTH_ENABLED
-              value: "true"
+              value: "false"
             # DATA_PATH makes the container write to the SAME absolute path Plex
             # reads from. Keeping them identical avoids any path translation in
             # the generated .m3u files and in Plex item matching.

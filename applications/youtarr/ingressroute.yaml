@@ -1,10 +1,18 @@
 ---
-# Youtarr — HTTPS on youtarr.talos00 (TALOS-l5c3).
+# Youtarr — HTTPS + Authentik forward-auth SSO on youtarr.talos00
+# (TALOS-l5c3, gated in TALOS-8pbo).
 #
-# AUTH: Youtarr's OWN login is enabled (AUTH_ENABLED=true, admin seeded from the
-# youtarr-admin ESO secret), so this route is NOT yet behind authentik-lan. When
-# the Authentik app/provider is added (TALOS-8pbo), add the authentik-lan
-# middleware here and flip AUTH_ENABLED=false to avoid a double login.
+# AUTH: Youtarr's OWN Express login is DISABLED (AUTH_ENABLED=false in
+# deployment.yaml), so authentik-lan is the only gate and there is no double
+# login. The youtarr-admin ESO secret is still mounted but AUTH_PRESET_* is
+# inert while AUTH_ENABLED=false — see the note in deployment.yaml.
+#
+# Provider/application: infrastructure/base/authentik/media-experimental-blueprint.yaml
+# (forward_single, talos-media group). Unioned into BOTH outposts
+# (talos00-outpost-blueprint.yaml + talos-private-blueprint.yaml) and paired with
+# the priority-2000 callback route in authentik-lan-outpost/app-callbacks.yaml —
+# the middleware ref and that callback route are a PAIR; one without the other
+# makes the login loop or 400.
 #
 # web and websecure are SEPARATE IngressRoutes on purpose: combining entrypoints
 # on one route lets the injected default TLS config make the router TLS-only,
@@ -30,9 +38,14 @@ spec:
     - match: Host(`youtarr.talos00`)
       kind: Rule
       middlewares:
-        # Consolidated catalyst navbar, matching every sibling app. If the
-        # Youtarr SPA renders oddly, remove this first — body injection is a
-        # known silent-failure source against single-page apps.
+        # LAN forward-auth via the dedicated talos00 outpost: login stays on
+        # auth.talos00. FIRST in the chain so auth runs before anything else.
+        - name: authentik-lan
+          namespace: authentik
+        # Consolidated catalyst navbar. LAST in the chain so auth runs first and
+        # the body injector only ever rewrites an already-authorised response.
+        # If the Youtarr SPA renders oddly, remove this first — body injection is
+        # a known silent-failure source against single-page apps.
         - name: catalyst-nav
           namespace: traefik
       services:

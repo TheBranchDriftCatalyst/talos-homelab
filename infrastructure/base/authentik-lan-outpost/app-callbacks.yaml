@@ -1105,3 +1105,26 @@ spec:
       services:
         - name: talos00-outpost
           port: 9000
+---
+# youtarr — TALOS-8pbo. Pairs with the `authentik-lan` middleware ref in
+# applications/youtarr/ingressroute.yaml; without this route the auth check is
+# answered by talos00-outpost while the callback lands on the embedded outpost.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: youtarr-outpost-lan
+  namespace: authentik
+  labels:
+    app.kubernetes.io/name: authentik-outpost
+    app.kubernetes.io/instance: talos00
+    app.kubernetes.io/component: callback-route
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`youtarr.talos00`) && PathPrefix(`/outpost.goauthentik.io/`)
+      kind: Rule
+      priority: 2000
+      services:
+        - name: talos00-outpost
+          port: 9000

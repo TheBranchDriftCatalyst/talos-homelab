@@ -77,7 +77,8 @@
 #   o = Outpost.objects.filter(name='talos00').first()
 #   print('COUNT', o.providers.count() if o else 'MISSING')" 2>/dev/null | grep COUNT
 #
-# Expect `COUNT 60`. Anything less means a !Find was dropped; re-apply by
+# Expect `COUNT 62` (the original 60, plus system-graph and youtarr appended
+# below). Anything less means a !Find was dropped; re-apply by
 # forcing discovery (it is otherwise HOURLY):
 #
 #   kubectl exec -n authentik deploy/authentik-worker -c worker -- ak shell -c "
@@ -120,7 +121,8 @@ data:
             authentik_host_browser: https://auth.talos00
             authentik_host_insecure: false
             log_level: info
-          # All 60 *.talos00 proxy providers. Generated from live state; see the
+          # The *.talos00 proxy providers (the original 60 + later additions).
+          # Generated from live state; see the
           # count-verification command in the header before trusting this list.
           providers:
             - !Find [authentik_providers_proxy.proxyprovider, [name, bindery]] # bindery.talos00
@@ -184,3 +186,4 @@ data:
             - !Find [authentik_providers_proxy.proxyprovider, [name, tubesync]] # tubesync.talos00
             - !Find [authentik_providers_proxy.proxyprovider, [name, windows-vnc]] # windows-vnc.talos00
             - !Find [authentik_providers_proxy.proxyprovider, [name, system-graph]] # system-graph.talos00
+            - !Find [authentik_providers_proxy.proxyprovider, [name, youtarr]] # youtarr.talos00 (TALOS-8pbo)
