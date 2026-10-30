@@ -76,11 +76,15 @@ spec:
             - name: conf
               mountPath: /etc/nginx/conf.d
           readinessProbe:
-            # tcpSocket, not httpGet: `location / { autoindex off; }` has no
-            # index file and returns 403 (fails an httpGet probe) both before
-            # and after the CRX/updates.xml are published — those only ever
-            # live at /utarr.crx and /updates.xml, never at /.
-            tcpSocket: { port: http }
+            # httpGet on /updates.xml, NOT tcpSocket and NOT "/".
+            # tcpSocket only proves the port is open — it would report Ready even
+            # if the PVC failed to mount or nginx were serving nothing. Probing
+            # /updates.xml proves nginx is actually serving the published artifact.
+            # "/" cannot be used: the directory has no index.html and autoindex is
+            # off, so it returns 403 forever and would deadlock Flux's wait: true.
+            httpGet:
+              path: /updates.xml
+              port: http
             periodSeconds: 15
           resources:
             requests:
