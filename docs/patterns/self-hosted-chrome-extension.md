@@ -56,7 +56,12 @@ openssl rsa -in utarr.pem -pubout -outform DER \
 
 ---
 
-> 🔑 **`utarr.pem` is a secret and is gitignored (`*.pem`).** Lose it and every
+> 🔑 **`utarr.pem` is a secret and is gitignored (`*.pem`).** It is backed up as a
+> 1Password document in vault `catalyst-eso` — retrieve with
+> `op document get 'utarr extension signing key (rotated 2026-10-30)' --vault catalyst-eso --output utarr.pem`
+> (then `chmod 600`). Verify any restore by checksum, never by printing it: an earlier
+> rotation here was forced precisely because two lines of key material were echoed to a
+> terminal while debugging. Lose it and every
 > policy-installed browser needs reinstalling under a new ID. Leak it and someone can
 > sign a counterfeit update your machines will accept. Back it up outside the repo —
 > 1Password, alongside the app's other credentials.
@@ -66,7 +71,7 @@ openssl rsa -in utarr.pem -pubout -outform DER \
 ```xml
 <?xml version='1.0' encoding='UTF-8'?>
 <gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
-  <app appid='hlfldchkbjkafeghegikgbolmplaphhb'>
+  <app appid='mngmmkjkalahaifjgffmgnljjjpeienh'>
     <updatecheck codebase='https://utarr-dist.talos00/utarr.crx' version='1.0.0' />
   </app>
 </gupdate>
@@ -140,7 +145,7 @@ means nothing happens, silently.
 
 ```bash
 sudo defaults write /Library/Preferences/com.google.Chrome ExtensionInstallForcelist \
-  -array "hlfldchkbjkafeghegikgbolmplaphhb;https://utarr-dist.talos00/updates.xml"
+  -array "mngmmkjkalahaifjgffmgnljjjpeienh;https://utarr-dist.talos00/updates.xml"
 sudo defaults write /Library/Preferences/com.google.Chrome ExtensionInstallSources \
   -array "https://utarr-dist.talos00/*"
 ```
