@@ -154,6 +154,27 @@ metadata:
     app.kubernetes.io/name: authentik-outpost
     app.kubernetes.io/instance: talos00
 spec:
+  # The proxy outpost keeps OAuth login-flow state in a FILESYSTEM session store
+  # under /dev/shm, which is private to each pod — there is no shared Redis for
+  # the outpost (authentik's own Dragonfly `authentik-cache` is used by the
+  # server/worker, not by this standalone outpost). With replicas: 3 and plain
+  # round-robin, a login begun on one pod had its /outpost.goauthentik.io/callback
+  # land on a different pod, which logged
+  #   "failed to get session: open /dev/shm/session_...: no such file or directory"
+  #   "mismatched session ID"  ->  "invalid state"  ->  HTTP 400
+  # i.e. roughly a 2-in-3 chance of failing EVERY fresh login, for every app on
+  # this outpost. Traefik issues both the forward-auth subrequest and the proxied
+  # callback from the SAME pod IP, so pinning on client IP keeps a whole login
+  # flow on one outpost pod.
+  #
+  # This is a mitigation, not a cure: a session minted via one outpost pod is
+  # still unknown to the other two, so a client later balanced to a different
+  # Traefik pod can be asked to log in again. A shared session store is the real
+  # fix - see TALOS-hj2m.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
   selector:
     app: talos00-outpost
   ports:
