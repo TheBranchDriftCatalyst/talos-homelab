@@ -82,10 +82,21 @@ update. `manifest.json` also carries `"update_url"` pointing back at this file.
 
 ### 3. The host
 
-A one-pod nginx serving a PVC, behind Traefik on the `*.talos00` cert.
+A one-pod nginx serving a PVC, behind Traefik.
+
+The hostname needs an **exact SAN** on the cert. The wildcard is not enough: a
+single-label parent makes `*.talos00` invalid on Apple platforms, so Chrome there
+rejects a cert that only matches by wildcard no matter how the CA is trusted. The
+hourly SAN CronJob derives the exact entry, so a route created between runs is
+un-installable until it fires — check for the SAN, do not assume the wildcard covers you.
 
 ```nginx
-types { application/x-chrome-extension crx; }
+# default_type per-location, NOT a server-level `types { ... }` block: a types
+# block REPLACES the mime map inherited from nginx.conf instead of extending
+# it, which silently serves updates.xml as octet-stream too.
+location ~ \.crx$ {
+  default_type application/x-chrome-extension;
+}
 ```
 
 > ⚠️ **The MIME type is the whole thing.** Serving `.crx` as
@@ -125,10 +136,30 @@ kubectl cp release/updates.xml downloads/$POD:/usr/share/nginx/html/updates.xml
 
 **Verify the MIME type before trusting the install:**
 
+Never verify this with `curl -k`. `-k` skips certificate validation, which is
+precisely what Chrome will not skip — a `-k` check passes against a cert Chrome
+refuses. Verify against the homelab CA instead, so the check covers the chain and
+the hostname:
+
 ```bash
-curl -sk -I --resolve utarr-dist.talos00:443:192.168.1.54 \
-  https://utarr-dist.talos00/utarr.crx | grep -i content-type
-# expect: application/x-chrome-extension
+# Homebrew curl carries its OWN CA bundle and ignores the macOS keychain, so a
+# bare curl fails with rc=60 even when Chrome is perfectly happy. Pass the CA.
+security find-certificate -a -c homelab-ca -p \
+  /Library/Keychains/System.keychain > /tmp/homelab-ca.pem
+
+curl -sI --cacert /tmp/homelab-ca.pem \
+  --resolve utarr-dist.talos00:443:192.168.1.54 \
+  -w 'ssl_verify=%{ssl_verify_result}\n' \
+  https://utarr-dist.talos00/utarr.crx | grep -iE 'content-type|ssl_verify'
+# expect: application/x-chrome-extension  AND  ssl_verify=0
+```
+
+To confirm the exact SAN is present at all:
+
+```bash
+echo | openssl s_client -connect 192.168.1.54:443 \
+  -servername utarr-dist.talos00 2>/dev/null \
+  | openssl x509 -noout -ext subjectAltName | grep -o 'DNS:utarr-dist.talos00'
 ```
 
 ### Shipping an update
@@ -159,9 +190,12 @@ Then `chrome://extensions` should list the extension as managed by policy, with 
 
 Debug order when it does not appear:
 
-1. `chrome://policy` — policy missing means the plist did not take
-2. policy present but no extension — the update XML or the MIME type is wrong
-3. extension present but stale — version in `updates.xml` was not bumped
+1. **The cert first** — no exact SAN for the host means Chrome never gets as far as
+   reading the manifest, and every later check looks fine. Verify with the openssl
+   command above, never with `curl -k`.
+2. `chrome://policy` — policy missing means the plist did not take
+3. policy present but no extension — the update XML or the MIME type is wrong
+4. extension present but stale — version in `updates.xml` was not bumped
 
 **Cost of this approach:** policy install is per-machine and needs sudo. There is no MDM
 here, so it is not push-button across devices. That is the trade for not publishing.
