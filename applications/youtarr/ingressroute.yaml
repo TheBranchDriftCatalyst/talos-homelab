@@ -1,0 +1,60 @@
+---
+# Youtarr — HTTPS on youtarr.talos00 (TALOS-l5c3).
+#
+# AUTH: Youtarr's OWN login is enabled (AUTH_ENABLED=true, admin seeded from the
+# youtarr-admin ESO secret), so this route is NOT yet behind authentik-lan. When
+# the Authentik app/provider is added (TALOS-8pbo), add the authentik-lan
+# middleware here and flip AUTH_ENABLED=false to avoid a double login.
+#
+# web and websecure are SEPARATE IngressRoutes on purpose: combining entrypoints
+# on one route lets the injected default TLS config make the router TLS-only,
+# silently 404ing plain HTTP.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: youtarr
+  namespace: downloads
+  labels:
+    app: youtarr
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Youtarr"
+    gethomepage.dev/description: "YouTube channel/playlist sync to Plex"
+    gethomepage.dev/group: "Downloads"
+    gethomepage.dev/icon: "youtube.png"
+    gethomepage.dev/siteMonitor: "http://youtarr.downloads.svc.cluster.local:3011"
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`youtarr.talos00`)
+      kind: Rule
+      middlewares:
+        # Consolidated catalyst navbar, matching every sibling app. If the
+        # Youtarr SPA renders oddly, remove this first — body injection is a
+        # known silent-failure source against single-page apps.
+        - name: catalyst-nav
+          namespace: traefik
+      services:
+        - name: youtarr
+          port: 3011
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: youtarr-http
+  namespace: downloads
+  labels:
+    app: youtarr
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`youtarr.talos00`)
+      kind: Rule
+      middlewares:
+        - name: redirect-https
+          namespace: traefik
+      services:
+        - name: youtarr
+          port: 3011

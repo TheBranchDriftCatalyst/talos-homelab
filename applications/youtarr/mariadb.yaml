@@ -1,0 +1,73 @@
+---
+# Youtarr MariaDB — provisioned by mariadb-operator (TALOS-9b2y).
+#
+# Instance lives in the CONSUMING app's namespace (downloads), mirroring how CNPG
+# Clusters sit beside their apps rather than in the databases namespace.
+#
+# STORAGE: local-path, NOT fatboy-nfs-appdata. Youtarr's own docs warn that
+# bind-mounted MariaDB data on "NAS/virtualized filesystems" can be CORRUPTED
+# during schema migrations. This is the same lesson that broke tubesync (SQLite
+# WAL mmap over NFS -> SIGBUS): database files do not belong on this NFS share.
+# local-path pins the pod to one node; Velero velero-daily-all covers the PVC.
+#
+# replicas: 1 — deliberate. Galera/replication is heavy for a single-consumer
+# YouTube index, and this data is reconstructible (re-subscribe + rescan).
+# Unlike the CNPG local-path rule, losing it is an inconvenience, not data loss.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: youtarr-mariadb
+  namespace: downloads
+  labels:
+    app: youtarr
+spec:
+  # 11.4 LTS. The bundled compose pins mariadb:10.3, which reached EOL in May
+  # 2023; Youtarr's external-db docs require only 10.3+, so a supported LTS is
+  # both allowed and correct.
+  image: mariadb:11.4
+
+  rootPasswordSecretKeyRef:
+    name: youtarr-mariadb-root
+    key: password
+    generate: true
+
+  # Operator creates the database + application user directly — no provisioning
+  # Job, no mysql client glue.
+  database: youtarr
+  username: youtarr
+  passwordSecretKeyRef:
+    name: youtarr-mariadb-app
+    key: password
+    generate: true
+
+  # Connection Secret keys are named to match Youtarr's env contract exactly, so
+  # the Deployment can envFrom it with no remapping.
+  connection:
+    secretName: youtarr-mariadb-conn
+    secretTemplate:
+      hostKey: DB_HOST
+      portKey: DB_PORT
+      usernameKey: DB_USER
+      passwordKey: DB_PASSWORD
+      databaseKey: DB_NAME
+
+  replicas: 1
+
+  storage:
+    size: 5Gi
+    storageClassName: local-path
+
+  # Youtarr requires utf8mb4 / utf8mb4_unicode_ci (external-db docs).
+  myCnf: |
+    [mariadb]
+    character-set-server=utf8mb4
+    collation-server=utf8mb4_unicode_ci
+    innodb_file_per_table=1
+
+  # PROVISIONAL — no measured history for this workload yet.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 768Mi

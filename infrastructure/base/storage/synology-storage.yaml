@@ -288,3 +288,52 @@ spec:
   resources:
     requests:
       storage: 500Gi
+
+---
+# ============================================================================
+# YouTube library (TALOS-ksu6) — Youtarr writes here, Plex reads it.
+# Youtarr holds its OWN PV against this same export in applications/youtarr/,
+# because an NFS PV binds 1:1 to a single PVC (same split as the movies/tv
+# exports, which each carry a second PV for the tdarr namespace).
+# ============================================================================
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: synology-media-youtube
+  labels:
+    type: synology-nfs
+    media-type: youtube
+spec:
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: synology-nfs
+  capacity:
+    storage: 30Ti
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+    - rsize=1048576
+    - wsize=1048576
+  nfs:
+    server: '${SYNOLOGY_IP}'
+    path: '${SYNOLOGY_VOLUME}/media/youtube'
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: synology-youtube
+  namespace: media
+  labels:
+    app.kubernetes.io/component: media-storage
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: synology-nfs
+  volumeName: synology-media-youtube
+  resources:
+    requests:
+      storage: 10Ti

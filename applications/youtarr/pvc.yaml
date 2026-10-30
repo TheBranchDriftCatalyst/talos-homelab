@@ -1,0 +1,66 @@
+---
+# Youtarr media volume -> the shared Synology media library.
+#
+# Points at /volume1/media/youtube, a sibling of movies/tv/books/comics. Plex
+# gets its OWN PV against the same export (see infrastructure/base/storage/
+# synology-storage.yaml) because an NFS PV binds 1:1 to a single PVC — the same
+# dual-PV approach already used for synology-media-movies vs tdarr-synology-movies.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: downloads-youtarr-media
+  labels:
+    app: youtarr
+spec:
+  capacity:
+    storage: 10Ti
+  accessModes:
+    - ReadWriteMany
+  nfs:
+    server: 192.168.1.36
+    path: /volume1/media/youtube
+  persistentVolumeReclaimPolicy: Retain
+  mountOptions:
+    - hard
+    - nfsvers=4.1
+    - noatime
+    - nodiratime
+    - rsize=1048576
+    - wsize=1048576
+  claimRef:
+    namespace: downloads
+    name: youtarr-media
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: youtarr-media
+  namespace: downloads
+  labels:
+    app: youtarr
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: downloads-youtarr-media
+  resources:
+    requests:
+      storage: 10Ti
+---
+# Config / jobs / channel-thumbnail state. Safe on NFS: Youtarr keeps all
+# relational state in MariaDB, so there is no SQLite/WAL file here — the exact
+# thing that broke tubesync on this same share.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: youtarr-config
+  namespace: downloads
+  labels:
+    app: youtarr
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: fatboy-nfs-appdata
+  resources:
+    requests:
+      storage: 5Gi

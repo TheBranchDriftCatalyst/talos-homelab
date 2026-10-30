@@ -1,0 +1,119 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: youtarr
+  namespace: downloads
+  labels:
+    app: youtarr
+    app.kubernetes.io/name: youtarr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single RWO config PVC + single MariaDB writer
+  selector:
+    matchLabels:
+      app: youtarr
+  template:
+    metadata:
+      labels:
+        app: youtarr
+        app.kubernetes.io/name: youtarr
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: youtarr
+          # Pinned, not :latest. Multi-arch (amd64/arm64).
+          image: dialmaster/youtarr:v1.90.2
+          ports:
+            - name: http
+              containerPort: 3011
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            # DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME — keys are named
+            # by the MariaDB CR's connection.secretTemplate to match Youtarr's env
+            # contract exactly, so no remapping is needed.
+            - secretRef:
+                name: youtarr-mariadb-conn
+            # AUTH_PRESET_USERNAME / AUTH_PRESET_PASSWORD
+            - secretRef:
+                name: youtarr-admin
+          env:
+            - name: TZ
+              value: America/Los_Angeles
+            - name: LOG_LEVEL
+              value: info
+            # Express sits behind Traefik; without this, redirects and rate
+            # limiting see the proxy IP instead of the client.
+            - name: TRUST_PROXY
+              value: "true"
+            # Youtarr's built-in auth stays ON for now. When the Authentik
+            # forward-auth middleware is added (TALOS-8pbo) set AUTH_ENABLED=false
+            # so there is no double login.
+            - name: AUTH_ENABLED
+              value: "true"
+            # DATA_PATH makes the container write to the SAME absolute path Plex
+            # reads from. Keeping them identical avoids any path translation in
+            # the generated .m3u files and in Plex item matching.
+            - name: DATA_PATH
+              value: /data/synology/youtube
+            - name: YOUTUBE_OUTPUT_DIR
+              value: /data/synology/youtube
+          volumeMounts:
+            - name: media
+              mountPath: /data/synology/youtube
+            - name: config
+              mountPath: /app/config
+              subPath: config
+            - name: config
+              mountPath: /app/jobs
+              subPath: jobs
+            - name: config
+              mountPath: /app/server/images
+              subPath: images
+          # startupProbe guards the liveness probe: Youtarr runs schema
+          # migrations against MariaDB on boot, and a slow start would otherwise
+          # trip liveness and restart it forever.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          # PROVISIONAL — yt-dlp downloads and remux spike; revisit with 7d data.
+          resources:
+            requests:
+              cpu: 50m
+              memory: 384Mi
+            limits:
+              memory: 1536Mi
+      volumes:
+        - name: media
+          persistentVolumeClaim:
+            claimName: youtarr-media
+        - name: config
+          persistentVolumeClaim:
+            claimName: youtarr-config
