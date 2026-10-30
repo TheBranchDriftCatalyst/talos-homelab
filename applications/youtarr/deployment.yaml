@@ -67,28 +67,36 @@ spec:
                 echo "waiting for mariadb ($i)"; sleep 3
               done
               q() { mariadb -h "$DB_HOST" -uroot -p"$ROOT_PW" -N -B -e "$1"; }
+              # Resolve real table names: Youtarr's early migrations create
+              # them capitalised (Jobs/JobVideos) but later ones recreate them
+              # lower-case, so match case-insensitively rather than hard-coding.
+              NAMES="SELECT TABLE_NAME FROM information_schema.TABLES"
+              NAMES="$NAMES WHERE TABLE_SCHEMA='youtarr' AND LOWER(TABLE_NAME)="
+              TJ=$(q "$NAMES'jobs'" || true)
+              TJV=$(q "$NAMES'jobvideos'" || true)
+              if [ -z "$TJ" ] || [ -z "$TJV" ]; then
+                echo "jobs/jobvideos not present yet - nothing to repair"; exit 0
+              fi
               SEL="SELECT COLLATION_NAME FROM information_schema.COLUMNS"
               SEL="$SEL WHERE TABLE_SCHEMA='youtarr'"
-              SEL="$SEL AND TABLE_NAME='Jobs' AND COLUMN_NAME='id'"
+              SEL="$SEL AND TABLE_NAME='$TJ' AND COLUMN_NAME='id'"
               COL=$(q "$SEL" || true)
-              if [ -z "$COL" ]; then
-                echo "Jobs table absent - first boot, nothing to repair"; exit 0
-              fi
               if [ "$COL" = "utf8mb4_bin" ]; then
                 echo "schema already utf8mb4_bin - no-op"; exit 0
               fi
-              echo "repairing charset: Jobs.id is $COL, converting to utf8mb4_bin"
+              echo "repairing charset: $TJ.id is '$COL', converting to utf8mb4_bin"
               q "ALTER DATABASE youtarr CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-              q "ALTER TABLE youtarr.JobVideos DROP FOREIGN KEY JobVideos_ibfk_1"
-              for t in Jobs Videos JobVideos channels channelvideos Sessions; do
-                q "ALTER TABLE youtarr.$t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" || true
+              q "ALTER TABLE youtarr.$TJV DROP FOREIGN KEY ${TJV}_ibfk_1" || true
+              CONV="CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+              for t in "$TJ" "$TJV"; do
+                q "ALTER TABLE youtarr.$t $CONV" || true
               done
               BIN="CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL"
-              q "ALTER TABLE youtarr.Jobs MODIFY \`id\` $BIN"
-              q "ALTER TABLE youtarr.JobVideos MODIFY \`job_id\` $BIN"
-              FK="ADD CONSTRAINT JobVideos_ibfk_1 FOREIGN KEY (job_id)"
-              FK="$FK REFERENCES youtarr.Jobs(id) ON UPDATE CASCADE"
-              q "ALTER TABLE youtarr.JobVideos $FK"
+              q "ALTER TABLE youtarr.$TJ MODIFY \`id\` $BIN"
+              q "ALTER TABLE youtarr.$TJV MODIFY \`job_id\` $BIN"
+              FK="ADD CONSTRAINT ${TJV}_ibfk_1 FOREIGN KEY (job_id)"
+              FK="$FK REFERENCES youtarr.$TJ(id) ON UPDATE CASCADE"
+              q "ALTER TABLE youtarr.$TJV $FK"
               echo "charset repair complete"
           resources:
             requests:
