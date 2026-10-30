@@ -76,7 +76,11 @@ spec:
             - name: conf
               mountPath: /etc/nginx/conf.d
           readinessProbe:
-            httpGet: { path: /, port: http }
+            # tcpSocket, not httpGet: `location / { autoindex off; }` has no
+            # index file and returns 403 (fails an httpGet probe) both before
+            # and after the CRX/updates.xml are published — those only ever
+            # live at /utarr.crx and /updates.xml, never at /.
+            tcpSocket: { port: http }
             periodSeconds: 15
           resources:
             requests:
