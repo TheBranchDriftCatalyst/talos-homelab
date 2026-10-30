@@ -27,6 +27,75 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # Youtarr's own charset migration cannot complete on MariaDB 11.4.
+        #
+        # Its migrations create tables as utf8mb3 and then run
+        #   ALTER TABLE `Jobs` MODIFY `id` CHAR(36) ... COLLATE utf8mb4_bin
+        # but Jobs.id is referenced by JobVideos_ibfk_1, so MariaDB rejects the
+        # column change with ER_FK_COLUMN_CANNOT_CHANGE_CHILD (1833) and the app
+        # boots in permanent "degraded mode" with schemaValid=false.
+        # Setting FOREIGN_KEY_CHECKS=0 does NOT lift this - the constraint has to
+        # be dropped and recreated around the change.
+        #
+        # This runs BEFORE Youtarr each boot and is idempotent: it no-ops when the
+        # column is already utf8mb4_bin, and when the table does not exist yet (very
+        # first boot, before Youtarr creates the schema). On that first boot Youtarr
+        # still lands in degraded mode, its startupProbe fails, the pod restarts, and
+        # this container then repairs the schema - so the deployment self-heals
+        # without manual SQL.
+        - name: schema-charset-fix
+          image: mariadb:11.4
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef: {name: youtarr-mariadb-conn, key: DB_HOST}
+            - name: ROOT_PW
+              valueFrom:
+                secretKeyRef: {name: youtarr-mariadb-root, key: password}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              for i in $(seq 1 60); do
+                mariadb -h "$DB_HOST" -uroot -p"$ROOT_PW" -e 'SELECT 1' >/dev/null 2>&1 && break
+                echo "waiting for mariadb ($i)"; sleep 3
+              done
+              q() { mariadb -h "$DB_HOST" -uroot -p"$ROOT_PW" -N -B -e "$1"; }
+              SEL="SELECT COLLATION_NAME FROM information_schema.COLUMNS"
+              SEL="$SEL WHERE TABLE_SCHEMA='youtarr'"
+              SEL="$SEL AND TABLE_NAME='Jobs' AND COLUMN_NAME='id'"
+              COL=$(q "$SEL" || true)
+              if [ -z "$COL" ]; then
+                echo "Jobs table absent - first boot, nothing to repair"; exit 0
+              fi
+              if [ "$COL" = "utf8mb4_bin" ]; then
+                echo "schema already utf8mb4_bin - no-op"; exit 0
+              fi
+              echo "repairing charset: Jobs.id is $COL, converting to utf8mb4_bin"
+              q "ALTER DATABASE youtarr CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+              q "ALTER TABLE youtarr.JobVideos DROP FOREIGN KEY JobVideos_ibfk_1"
+              for t in Jobs Videos JobVideos channels channelvideos Sessions; do
+                q "ALTER TABLE youtarr.$t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" || true
+              done
+              BIN="CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL"
+              q "ALTER TABLE youtarr.Jobs MODIFY \`id\` $BIN"
+              q "ALTER TABLE youtarr.JobVideos MODIFY \`job_id\` $BIN"
+              FK="ADD CONSTRAINT JobVideos_ibfk_1 FOREIGN KEY (job_id)"
+              FK="$FK REFERENCES youtarr.Jobs(id) ON UPDATE CASCADE"
+              q "ALTER TABLE youtarr.JobVideos $FK"
+              echo "charset repair complete"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
       containers:
         - name: youtarr
           # Pinned, not :latest. Multi-arch (amd64/arm64).
