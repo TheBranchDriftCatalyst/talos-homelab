@@ -8,7 +8,8 @@ ship one to your own machines without publishing to the Web Store is an
 
 - Sign a CRX with a persistent key -> stable extension ID
 - Serve `utarr.crx` + `updates.xml` from the cluster as `application/x-chrome-extension`
-- Add one `ExtensionInstallForcelist` entry per machine, pointing at the **XML**
+- Add one `ExtensionSettings` entry per machine, pointing at the **XML**, with
+  `override_update_url: true` so the host stays policy-configurable
 - Chrome then installs it, auto-updates it, and shows no developer-mode nag
 
 Worked example: `utarr`, an applet in `@catalyst-swiss-army-knife`.
@@ -175,17 +176,51 @@ means nothing happens, silently.
 ## Installing on a machine (macOS, one-time, needs sudo)
 
 ```bash
-sudo defaults write /Library/Preferences/com.google.Chrome ExtensionInstallForcelist \
-  -array "mngmmkjkalahaifjgffmgnljjjpeienh;https://utarr-dist.talos00/updates.xml"
-sudo defaults write /Library/Preferences/com.google.Chrome ExtensionInstallSources \
-  -array "https://utarr-dist.talos00/*"
+sudo plutil -replace ExtensionSettings -json '{
+  "mngmmkjkalahaifjgffmgnljjjpeienh": {
+    "installation_mode": "force_installed",
+    "update_url": "https://utarr-dist.talos00/updates.xml",
+    "override_update_url": true
+  }
+}' /Library/Preferences/com.google.Chrome.plist
 ```
 
-> The forcelist entry points at the **XML, not the CRX**. Pointing it at the `.crx` is a
-> common mistake and fails silently.
+> The policy's `update_url` points at the **XML, not the CRX**. Pointing it at the
+> `.crx` is a common mistake and fails silently.
 
-Quit Chrome fully, reopen, and check `chrome://policy` — both policies should show OK.
-Then `chrome://extensions` should list the extension as managed by policy, with no
+### Why `override_update_url: true`
+
+Chrome's updater reads `update_url` from the **signed** manifest, so no in-extension
+setting can ever reach it — and that immutability is deliberate: an extension able to
+rewrite its own update URL at runtime would be a supply-chain attack primitive.
+
+By default the policy URL is used for the *initial install only*; every later update
+check falls back to the manifest's baked-in `update_url`. That means moving the dist
+host would require a rebuild, a version bump and a re-release to walk existing clients
+across. `override_update_url: true` makes the policy URL authoritative for updates
+too, which moves the host out of the signed artifact and into machine policy — so
+changing hosts (e.g. `.talos00` -> a publicly-trusted `knowledgedump.space` name)
+becomes a one-line policy edit with no release at all.
+
+### Use `plutil -replace -json`, never `defaults write`
+
+`ExtensionSettings` is a dictionary of dictionaries containing a real boolean.
+`defaults write ... -dict-add` with an old-style plist stores that boolean as the
+**string** `"true"`, which is not what Chrome's policy parser wants: the override then
+silently does nothing and Chrome quietly keeps using the manifest URL — a failure with
+no error anywhere. Measured with `plutil -p`:
+
+| form | stored as |
+|---|---|
+| `plutil -replace -json` | `"override_update_url" => true` |
+| `defaults write -dict-add` | `"override_update_url" => "true"` |
+
+`ExtensionInstallSources` is NOT required for this path. It gates *user-initiated*
+installs from off-store URLs, and a `force_installed` extension does not use that
+path. Add it only to also allow dragging the `.crx` in by hand.
+
+Quit Chrome fully, reopen, and check `chrome://policy` — ExtensionSettings should show
+OK. Then `chrome://extensions` should list the extension as managed by policy, with no
 "Disable developer mode extensions" bubble.
 
 Debug order when it does not appear:
@@ -193,7 +228,9 @@ Debug order when it does not appear:
 1. **The cert first** — no exact SAN for the host means Chrome never gets as far as
    reading the manifest, and every later check looks fine. Verify with the openssl
    command above, never with `curl -k`.
-2. `chrome://policy` — policy missing means the plist did not take
+2. `chrome://policy` — policy missing means the plist did not take; policy present
+   but `override_update_url` showing as a string means `defaults write` was used
+   instead of `plutil -replace -json`
 3. policy present but no extension — the update XML or the MIME type is wrong
 4. extension present but stale — version in `updates.xml` was not bumped
 
