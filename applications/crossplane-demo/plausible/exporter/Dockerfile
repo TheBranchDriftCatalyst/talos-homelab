@@ -5,7 +5,7 @@
 #   docker build -t registry.talos00/talos00-registry/plausible-stats-exporter:latest \
 #     applications/crossplane-demo/plausible/exporter
 #   docker push registry.talos00/talos00-registry/plausible-stats-exporter:latest
-FROM golang:1.22-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 # go.mod first for layer caching; stdlib-only so there is no go.sum / no download.
 COPY go.mod ./
