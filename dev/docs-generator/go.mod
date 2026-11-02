@@ -1,10 +1,10 @@
 module github.com/TheBranchDriftCatalyst/talos-homelab/dev/docs-generator
 
-go 1.25.0
+go 1.27.3
 
 require (
-	github.com/onsi/ginkgo/v2 v2.33.0
-	github.com/onsi/gomega v1.43.1
+	github.com/onsi/ginkgo/v2 v2.33.1
+	github.com/onsi/gomega v1.44.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
