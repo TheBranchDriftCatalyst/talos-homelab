@@ -703,11 +703,59 @@
     // absorbs that.
     nav.classList.add(HIDDEN);
 
+    // True for the whole span between a pointerdown and its matching
+    // pointerup/pointercancel, anywhere on the page -- not just inside the
+    // bar, since the mousedown that starts a click on a nav link is the exact
+    // thing this guards.
+    //
+    // WHY THIS EXISTS: `nav.contains(ev.target)` below is a hit test, re-run
+    // on every mousemove, and hit-testing only reflects where the pointer
+    // physically is RIGHT NOW -- it has no memory of "a click is in
+    // progress." A dropdown link sits well past hidePast, so once a
+    // mousemove's target resolves to anything outside nav (a host-app
+    // element, because the overlay never fully tiles the page under it) the
+    // bar slides away immediately. If that happens between mousedown and
+    // mouseup on a link, the link is gone by the time the pointer comes back
+    // to release, mouseup lands on a different element than mousedown did,
+    // and the browser never synthesizes a `click` for the two -- the link
+    // never activates. Right-click is immune only because the context menu
+    // is built from the mousedown hit-test and then captures the pointer.
+    var pressed = false;
+    document.addEventListener('pointerdown', function () { pressed = true; }, { passive: true });
+    document.addEventListener('pointerup', function () { pressed = false; }, { passive: true });
+    document.addEventListener('pointercancel', function () { pressed = false; }, { passive: true });
+
+    // True while a dropdown was opened by the SCRIPT -- wireDropdown's own
+    // state, reused rather than re-invented, so there is exactly one place
+    // that tracks it.
+    //
+    // SCOPE, precisely, because the obvious reading is wrong: 60-nav.css
+    // opens a menu on `:hover` OR `.is-open`, and wireDropdown sets
+    // `.is-open` only for keyboard and touch. So this covers a menu opened
+    // by Enter/Space or a tap; it does NOT cover the ordinary mouse-hover
+    // menu, where no class is ever set. A hover-opened menu is still held
+    // open only by `nav.contains(ev.target)` below, exactly as before this
+    // fix -- a no-button jitter whose target resolves outside nav at
+    // clientY > hidePast can still yank it shut.
+    //
+    // That residual race is narrower than the held-pointer one `pressed`
+    // closes: it costs you the menu, not a swallowed click. Closing it needs
+    // a different mechanism -- hiding on mouseleave of the nav subtree
+    // instead of on a global clientY test. Do not read this guard as
+    // covering hover; it does not.
+    function dropdownOpen() {
+      return !!nav.querySelector('.is-open');
+    }
+
     document.addEventListener('mousemove', function (ev) {
       // Pinned by the user: the bar does not move. Guarded at every hide path
       // rather than by uninstalling the listeners, so the gear can toggle it
       // back off live without a reload.
       if (nav.classList.contains(C + '--pinned')) return;
+      // An interaction is already in flight -- a held pointer button, or an
+      // open dropdown -- so do not act on this mousemove's hit test at all,
+      // in either direction. See `pressed` above for why.
+      if (pressed || dropdownOpen()) return;
       // Never hide while the pointer is inside the bar or an open dropdown.
       // Menus are several times taller than the bar, so a pure clientY test
       // slid the whole thing away mid-hover the moment you reached for the
@@ -728,8 +776,12 @@
 
     // Leaving the window entirely re-hides: otherwise the bar stays open behind
     // whatever the user switched to and is still open when they come back.
+    // Guarded the same way as every other hide path above -- a drag that
+    // ends outside the viewport (the pointer is released over the OS chrome,
+    // not this document) must not cut a click short either.
     document.addEventListener('mouseleave', function () {
       if (nav.classList.contains(C + '--pinned')) return;
+      if (pressed || dropdownOpen()) return;
       nav.classList.add(HIDDEN);
     }, { passive: true });
 
