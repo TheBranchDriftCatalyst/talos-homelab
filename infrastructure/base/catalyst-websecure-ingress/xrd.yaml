@@ -20,6 +20,14 @@
 # registration stays a hand-written blueprint until that discovery gap is solved
 # (TALOS-lxz5.5.6). The composition references the shared `authentik` forward-auth
 # middleware by name; the app's Authentik Application is wired separately.
+#
+# PHASE 5 OF THE CATALYST-NAV STRANGLER FIG added spec.nav alongside spec.homepage: nav
+# membership DECLARED (group as a reference to the reviewed NavGroup taxonomy, themed stated
+# and cross-checked against the middleware chain, order on the taxonomy's scale) instead of
+# inferred from annotation strings and middleware name substrings. spec.homepage still works
+# exactly as before and the two paths coexist for the rest of the migration — see
+# docs/05-runbooks/catalyst-nav-xrd-migration.md for the per-app order, the prune guard that
+# has to land first, and how to tell adoption from recreation.
 apiVersion: apiextensions.crossplane.io/v2
 kind: CompositeResourceDefinition
 metadata:
@@ -43,6 +51,97 @@ spec:
             spec:
               type: object
               required: [host, backend]
+              # ---- spec-level validation (phase 5) -----------------------------------
+              # These live at spec level, not inside `nav`, because every one of them
+              # relates the nav declaration to ANOTHER field — the middleware chain, or
+              # the homepage block it supersedes — and CEL's `self` is the object the rule
+              # is attached to. Each rule is a no-op on a claim with no `nav` block, which
+              # is what keeps every pre-phase-5 claim admissible unchanged.
+              #
+              # Verified admissible against a real apiserver, including the CEL cost
+              # estimate, by internal/xrdschema in the catalyst-nav operator module —
+              # these are not rules that merely look right in YAML.
+              x-kubernetes-validations:
+                # 1. nav needs homepage, because gethomepage.dev/enabled is still the
+                #    opt-in build_nav.py tests FIRST. A nav block with no homepage block
+                #    emits no `enabled` annotation at all, so the app would carry a
+                #    complete, correct, reviewed nav declaration and be invisible to the
+                #    only thing that reads it. That is the silent half-configured state
+                #    this XRD's homepage comment already warns about, so refuse it.
+                #    Phase 6 relaxes this when nav.catalyst.io/* becomes the opt-in.
+                - rule: "!has(self.nav) || has(self.homepage)"
+                  message: >-
+                    spec.nav requires spec.homepage: gethomepage.dev/enabled is still the
+                    nav pipeline's opt-in, and without the homepage block nothing emits it,
+                    so the declared nav membership would never be read. Add
+                    `homepage: {name: ..., icon: ...}` (enabled defaults true).
+                # 2+3. group/weight move INTO nav, they do not coexist with it. Both keys
+                #      are emitted from the nav fields, so allowing the homepage twins as
+                #      well would make the annotation depend on patch ORDER — a silent
+                #      precedence rule nobody reading the claim could see. Mutual exclusion
+                #      means there is exactly one source for each emitted annotation.
+                - rule: "!has(self.nav) || !has(self.homepage) || !has(self.homepage.group)"
+                  message: >-
+                    spec.homepage.group and spec.nav.group are mutually exclusive: nav.group
+                    is the migrated form and the composition derives gethomepage.dev/group
+                    from it. Delete spec.homepage.group when you add spec.nav.
+                - rule: "!has(self.nav) || !has(self.homepage) || !has(self.homepage.weight)"
+                  message: >-
+                    spec.homepage.weight and spec.nav.order are mutually exclusive: nav.order
+                    is the migrated form and the composition derives gethomepage.dev/weight
+                    from it. Carry the old weight across into spec.nav.order (rounded to a
+                    multiple of 10) and delete spec.homepage.weight.
+                # 4. The taxonomy's documented scale, actually enforced — the same rule
+                #    NavGroup and NavEntry carry. Written with has() rather than relying on
+                #    the default being materialised first, so the rule does not depend on
+                #    apiserver defaulting order.
+                - rule: "!has(self.nav) || !has(self.nav.order) || self.nav.order % 10 == 0"
+                  message: >-
+                    spec.nav.order must be a multiple of 10. See NavGroup.spec.order for the
+                    scale — the nine gaps between consecutive values are insertion room, so a
+                    group can take a new member without renumbering its existing ones.
+                # 5. INJECTION. build_nav.py only advertises a route carrying a catalyst*
+                #    middleware (NAV_SCOPE=themed, the default), so a nav declaration on a
+                #    claim with no injection describes an entry that cannot appear. This is
+                #    the same "the annotation is only half of it" trap the homepage block
+                #    documents, except now it is refused instead of documented.
+                - rule: >-
+                    !has(self.nav) || (has(self.middlewares) && self.middlewares.exists(m,
+                    m.name.startsWith('catalyst') &&
+                    !(m.name in ['catalyst-compress', 'catalyst-accept-encoding', 'catalyst-asset-cache'])))
+                  message: >-
+                    spec.nav requires at least one catalyst* middleware in spec.middlewares
+                    (the shared catalyst-compress / catalyst-accept-encoding /
+                    catalyst-asset-cache do not count — they ride along in every chain). The
+                    nav pipeline's default scope only advertises injected routes, so without
+                    one this app declares a nav entry that can never render. Add
+                    `{name: catalyst-nav, namespace: traefik}` last in the chain.
+                # 6. THE SUBSTRING INFERENCE, TURNED INTO A CHECKED CONTRACT. This rule is
+                #    the literal translation of build_nav.py's `themed` classifier:
+                #      themed = any(n.startswith("catalyst-") and "nav" not in n
+                #                   for n in names - SHARED)
+                #    Declaring a value that disagrees with it is refused, so the declaration
+                #    and the convention cannot drift apart while both are live — and the day
+                #    a middleware is renamed, the claim fails admission instead of the nav
+                #    quietly emptying.
+                #
+                #    THE SHARED LIST IS NOW IN FOUR PLACES (this rule, build_nav.py's SHARED,
+                #    navmodel's sharedMiddlewares, themepark/middlewares.yaml). That is a
+                #    drift surface, so tests/test_nav_taxonomy_drift.py compares the first
+                #    three and fails when they diverge. If you widen one, widen all.
+                - rule: >-
+                    !has(self.nav) || self.nav.themed == (has(self.middlewares) &&
+                    self.middlewares.exists(m, m.name.startsWith('catalyst-') &&
+                    !m.name.contains('nav') &&
+                    !(m.name in ['catalyst-compress', 'catalyst-accept-encoding', 'catalyst-asset-cache'])))
+                  message: >-
+                    spec.nav.themed disagrees with spec.middlewares. themed=true requires a
+                    per-app full-theme middleware (name starts `catalyst-` and does NOT
+                    contain `nav`, excluding the shared compress/accept-encoding/asset-cache
+                    trio); themed=false requires that no such middleware is present —
+                    catalyst-nav alone is nav-only and is therefore themed=false. This is
+                    exactly what build_nav.py derives today, so the two can never disagree
+                    about what renders.
               properties:
                 host:
                   type: string
@@ -75,12 +174,20 @@ spec:
                     IP allowlist is checked first). For infra/admin tools use
                     [{name: lan-only, namespace: traefik}, {name: authentik, namespace: authentik}]
                     so they are reachable only from the LAN, never external ingress.
+
+                    maxItems/maxLength ARE LOAD BEARING, not tidiness. The spec-level CEL
+                    rules below walk this list, and the apiserver refuses a CRD whose CEL
+                    cost ESTIMATE exceeds its budget — an estimate computed from exactly
+                    these bounds, so an unbounded array of unbounded strings makes the rules
+                    unadmissible rather than merely expensive. 10 is well clear of the
+                    longest live chain (3: lan-only, authentik-lan, catalyst-nav).
+                  maxItems: 10
                   items:
                     type: object
                     required: [name, namespace]
                     properties:
-                      name: {type: string}
-                      namespace: {type: string}
+                      name: {type: string, maxLength: 253}
+                      namespace: {type: string, maxLength: 253}
                 homepage:
                   type: object
                   description: >-
@@ -125,6 +232,163 @@ spec:
                       type: string
                       default: main
                       description: gethomepage.dev/instance. `main` unless this app belongs to a specific board.
+                nav:
+                  type: object
+                  description: >-
+                    OPTIONAL. The MIGRATED form of nav membership (phase 5 of the catalyst-nav
+                    strangler fig). Declares what the nav pipeline currently INFERS: which
+                    taxonomy group this app joins, where it sorts inside it, and whether it is
+                    fully themed. Omit the block and nothing here applies — the app keeps
+                    exactly the annotation-derived behaviour described under `homepage`, which
+                    is what every claim written before this field existed does.
+
+                    WHY THIS EXISTS. themepark's build_nav.py decides `themed` — whether the
+                    bar renders this app undimmed, promising the destination looks like where
+                    you came from — by testing middleware NAMES:
+                    `n.startswith("catalyst-") and "nav" not in n`. A naming convention is not
+                    a contract, and this one has already failed twice: the script's docstring
+                    claimed the prefix was `theme-*` until 2026-10-24 (no middleware was ever
+                    named that, so a reader checking the docs against the cluster would have
+                    concluded the nav was broken), and a comment at the classifier itself
+                    records that conflating *injected* with *themed* "emptied the nav once
+                    already when middlewares were renamed". Separately, gethomepage.dev/group
+                    is free text, which is how this cluster came to carry BOTH "Monitoring"
+                    and "Observability" as distinct dropdown groups — two sessions, six months
+                    apart, each believing it used the established name.
+
+                    So `themed` becomes a declaration, CROSS-CHECKED against the middleware
+                    chain at admission (see the spec-level rules below): a rename that would
+                    silently re-classify this app now fails the claim instead of quietly
+                    changing what renders. And `group` becomes a reference to a NavGroup from
+                    the reviewed 8-group taxonomy, enforced by an enum, so "Monitoring" is a
+                    REJECTED value rather than a new one-member section.
+
+                    WHAT THIS DOES NOT DO. It does not change which pipeline renders the nav.
+                    build_nav.py is still the live deriver and still reads gethomepage.dev/*.
+                    The composition therefore emits BOTH the declarative nav.catalyst.io/*
+                    annotations — which build_nav.py ignores, because its second prefix is
+                    `catalyst.nav/`, not `nav.catalyst.io/` — AND the two gethomepage.dev keys
+                    the live pipeline actually groups and sorts by, derived from the fields
+                    here. One declaration, two encodings, nothing for an operator to keep in
+                    sync by hand. Phase 6 drops the derived pair once the operator is the only
+                    reader.
+                  required: [themed, group]
+                  properties:
+                    themed:
+                      type: boolean
+                      description: >-
+                        True iff this app carries a per-app FULL theme (a catalyst-<slug>
+                        middleware), as opposed to catalyst-nav, which adds the bar and leaves
+                        the app's own styling alone. False means the bar dims this entry, so it
+                        is visible up front that the destination will not look like where you
+                        came from.
+
+                        REQUIRED when the nav block is present, and deliberately NOT given a
+                        default. A default is materialised by the API server on every claim, so
+                        `default: false` would mean a themed app that only wanted to state its
+                        `group` gets rejected by the cross-check below for a value it never
+                        wrote. Say it out loud instead.
+
+                        ENFORCED, not merely described: the spec-level rule
+                        "spec.nav.themed must equal what the middleware chain implies" rejects
+                        a claim whose declaration disagrees with what build_nav.py would derive
+                        from spec.middlewares. That equality is the whole point — it is what
+                        makes phase 6's switch from inference to declaration provably a no-op
+                        for every claim that is already admitted.
+                    group:
+                      type: string
+                      # KEEP SORTED. The drift test compares this list to the taxonomy's
+                      # NavGroup names and to the composition's title map as SETS, but a sorted
+                      # list is what makes a review diff readable.
+                      enum:
+                        - comms-and-apps
+                        - downloads
+                        - home-and-tools
+                        - infrastructure
+                        - library
+                        - media
+                        - media-automation
+                        - observability
+                      description: >-
+                        metadata.name of the NavGroup this app joins — the OBJECT name
+                        (`observability`), not the display title ("Observability"). The
+                        composition derives the title from it; see the title map there.
+
+                        THE ENUM IS THE VALIDATION, and it is the only reference checking an
+                        OpenAPI schema can do: a schema cannot look at other objects, so "does
+                        a NavGroup by this name exist?" is unanswerable here (NavEntry's
+                        navGroupRef says the same thing about itself and defers to an admission
+                        webhook). What IS answerable is "is this one of the eight names the
+                        reviewed taxonomy defines?", and that is what this asks. `Monitoring`,
+                        `monitoring`, `Observability` and `observability ` are all rejected at
+                        admission — which is precisely the class of value that produced the
+                        live Monitoring/Observability fork.
+
+                        THE COST, STATED PLAINLY: this list is a COPY of the NavGroup names in
+                        infrastructure/base/catalyst-nav/taxonomy.yaml, so adding a ninth group
+                        means editing the taxonomy, this enum and the composition's title map.
+                        Three copies drift, so they are pinned together by
+                        tests/test_nav_taxonomy_drift.py in this directory, which fails if any
+                        two of them stop agreeing. Never add a value here that has no NavGroup.
+                    order:
+                      type: integer
+                      minimum: 10
+                      maximum: 990
+                      default: 500
+                      description: >-
+                        Position within the group, on the SAME multiples-of-10 scale as
+                        NavGroup.spec.order and NavEntry.spec.order — read the NavGroup CRD for
+                        why only every tenth value is legal (the nine gaps are insertion room,
+                        so a later arrival never forces a renumber). The multiple-of-10 rule is
+                        enforced by a spec-level rule below, not merely documented here.
+
+                        Emitted as gethomepage.dev/weight as well, because that is the key
+                        build_nav.py actually sorts by. CONSEQUENCE WORTH KNOWING BEFORE TAKING
+                        THE DEFAULT: an un-migrated app with no weight annotation falls back to
+                        50 inside build_nav.py, so an app that accepts this field's 500 sorts
+                        after every un-migrated member of its group. Mid-migration that is
+                        rarely what you want — carry the app's existing gethomepage.dev/weight
+                        across, rounded to the nearest 10 (the scale has no room for 35).
+                    visibility:
+                      type: object
+                      required: [authentikGroups]
+                      description: >-
+                        OPTIONAL per-entry override of the NavGroup's own visibility. Omit the
+                        block for "whatever the group says", which is the common case. There is
+                        deliberately no way to express "visible to everyone even though the
+                        group is gated": that is a WIDENING override, and an entry that escapes
+                        its group's gate is a worse failure than one that is too hard to find.
+                        authentikGroups is required inside the block for the same reason —
+                        `visibility: {}` would read as "override with nothing", which is either
+                        a no-op or a widening depending on who is guessing.
+                      properties:
+                        authentikGroups:
+                          type: array
+                          minItems: 1
+                          maxItems: 20
+                          # See NavGroup.spec.visibility.authentikGroups: the apiserver REJECTS
+                          # a CRD that sets plain `uniqueItems` on an array, and list-type set
+                          # is the supported way to get both uniqueness and sane SSA merges.
+                          x-kubernetes-list-type: set
+                          items:
+                            type: string
+                            minLength: 1
+                            maxLength: 253
+                            pattern: '^[^,\s]+$'
+                          description: >-
+                            Authentik group names allowed to see this entry. Same caveat as
+                            NavGroup.spec.visibility.authentikGroups: this schema cannot verify
+                            a name exists in Authentik — only that the list is well formed —
+                            and a wrong name fails SAFE, matching nobody, so the entry simply
+                            never renders rather than rendering for everyone.
+
+                            minItems: 1 and the no-comma/no-whitespace pattern are both load
+                            bearing. The composition flattens this list into ONE annotation
+                            value joined by commas, because annotation values are strings and
+                            function-patch-and-transform cannot loop; a name containing a comma
+                            would silently split into two groups, and an empty list would emit
+                            an empty annotation that reads as "gated to nobody" instead of "not
+                            gated". Both are rejected here rather than discovered later.
                 redirectMiddleware:
                   type: object
                   description: Middleware on the :80 companion route (HTTPS redirect).
