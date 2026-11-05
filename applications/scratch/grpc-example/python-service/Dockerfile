@@ -1,5 +1,5 @@
 # Build stage - generate proto files
-FROM python:3.12-slim AS builder
+FROM python:3.15-slim AS builder
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN mkdir -p gen && \
     sed -i 's/^import echo_pb2/from . import echo_pb2/' gen/echo_pb2_grpc.py
 
 # Runtime stage
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
