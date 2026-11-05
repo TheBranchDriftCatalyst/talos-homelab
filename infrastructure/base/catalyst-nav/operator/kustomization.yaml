@@ -16,6 +16,14 @@
 # The one thing it DOES change on day one is NavEntry admission: the webhook starts refusing a
 # dangling navGroupRef. That is the point (see webhook.yaml), and it cannot affect any other
 # kind — the rule selects naventries only.
+#
+# PHASE 3 adds the per-identity manifest endpoint on port 8082 plus the Service in
+# manifest-endpoint.yaml. That changes nothing user-visible EITHER: no IngressRoute routes to
+# it, so the only thing that can reach it is a pod in the traefik namespace deliberately asking
+# for it, and catalyst-nav.js still fetches the sidecar's static file. The endpoint is also
+# provably neutral for an authorised caller — with no NavGroup carrying spec.visibility (the
+# state of the cluster today) it serves byte-for-byte what the sidecar serves; see
+# internal/controller's TestUnrestrictedIdentityGetsTheUnfilteredBytes.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -29,4 +37,5 @@ resources:
   - rbac.yaml # SA + cluster-wide reads + namespaced ConfigMap write
   - deployment.yaml # the controller + webhook server
   - webhook.yaml # Service, cert-manager Certificate, ValidatingWebhookConfiguration
-  - cilium-network-policy.yaml # default-deny + DNS/apiserver/metrics flows
+  - manifest-endpoint.yaml # phase 3: Service for the per-identity manifest. NO IngressRoute.
+  - cilium-network-policy.yaml # default-deny + DNS/apiserver/metrics/manifest flows

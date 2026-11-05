@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	webhookserver "sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -28,6 +29,7 @@ import (
 	navv1alpha1 "github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/api/v1alpha1"
 	"github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/internal/controller"
 	"github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/internal/navmodel"
+	"github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/internal/navserve"
 	"github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/internal/render"
 	navwebhook "github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/internal/webhook"
 )
@@ -101,10 +103,38 @@ func runManager() error {
 		return fmt.Errorf("building manager: %w", err)
 	}
 
+	// The per-identity manifest endpoint (phase 3). The reconciler publishes into this store
+	// and the handler reads from it, so there is exactly one build per reconcile and the
+	// endpoint cannot disagree with the ConfigMap. Nothing routes to it yet — phase 4 adds
+	// the IngressRoute, and it must NOT carry the catalyst-asset-cache middleware; see
+	// internal/navserve's package comment.
+	snapshots := &navserve.Store{}
+	manifestHandler := navserve.NewHandler(snapshots, navserve.Config{
+		Path:              envOr("NAV_MANIFEST_PATH", navserve.DefaultPath),
+		GroupsHeader:      envOr("NAV_GROUPS_HEADER", navserve.DefaultGroupsHeader),
+		UsernameHeader:    envOr("NAV_USERNAME_HEADER", navserve.DefaultUsernameHeader),
+		GroupSeparator:    envOr("NAV_GROUP_SEPARATOR", navserve.DefaultGroupSeparator),
+		AttestationHeader: envOr("NAV_PROXY_HEADER", navserve.DefaultAttestationHeader),
+		// Empty by default: attestation stays OFF until phase 4 also deploys the
+		// Traefik middleware that injects the secret. Setting it here alone would
+		// anonymise every real user, which is a silent cosmetic regression rather than
+		// a visible failure — exactly the kind this component exists to avoid.
+		AttestationSecret: os.Getenv("NAV_PROXY_SECRET"),
+	}, metrics.Registry)
+	// Same registry Alloy already scrapes on :8080, so the request counters land beside the
+	// controller-runtime ones with no new scrape target.
+	if err := mgr.Add(&navserve.Server{
+		Addr:    envOr("NAV_MANIFEST_ADDR", ":8082"),
+		Handler: manifestHandler,
+	}); err != nil {
+		return fmt.Errorf("wiring the manifest endpoint: %w", err)
+	}
+
 	navReconciler := &controller.NavReconciler{
 		Client:        mgr.GetClient(),
 		Namespace:     ns,
 		ConfigMapName: cmName,
+		Snapshots:     snapshots,
 		Options: navmodel.Options{
 			ScopeAll: envOr("NAV_SCOPE", "themed") == "all",
 			Defaults: navmodel.ParseNavDefaultsEnv(os.Getenv("NAV_DEFAULTS"), os.Stderr),

@@ -117,3 +117,48 @@ spec:
         - ports:
             - port: "8081"
               protocol: TCP
+---
+# THIS POLICY IS THE PRIMARY CONTROL ON THE PER-IDENTITY MANIFEST ENDPOINT. Read
+# operator/internal/navserve's threat model before changing it.
+#
+# The endpoint decides what a caller may see from X-authentik-groups, which Traefik's
+# forward-auth middleware sets from the Authentik outpost's response
+# (infrastructure/base/authentik/middleware.yaml:13-24) — REPLACING whatever the client sent
+# under that name. A request that did not traverse that middleware carries whatever groups its
+# sender felt like claiming, and NO HTTP handler can tell the two apart: there is no header
+# that proves provenance. So "only Traefik can open a connection to this port" is not defence
+# in depth here, it is the defence.
+#
+# The namespace default-denies ingress (default-deny-all, above), so without this rule the port
+# is unreachable by everything including Traefik. With it, it is reachable by the ingress
+# controller and nothing else — not another app's pod, not a compromised workload, not a
+# process on the node.
+#
+# Kept as its OWN policy rather than a fourth rule on allow-metrics-scrape so that deleting the
+# manifest endpoint, or quarantining it, is one object and does not disturb the Alloy scrape or
+# the kubelet probe.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-manifest-ingress-from-traefik
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: manifest
+spec:
+  endpointSelector:
+    matchLabels:
+      app: catalyst-nav-operator
+  ingress:
+    # Namespace-scoped and nothing narrower: Traefik runs as a DaemonSet whose pod labels have
+    # changed across chart revisions, and a selector pinned to a label that gets renamed fails
+    # CLOSED here — the nav bar stops rendering cluster-wide — which is loud, but needlessly
+    # fragile for a boundary whose purpose is "the ingress controller, not arbitrary pods".
+    # Same shape as infrastructure/base/themepark/server/cilium-network-policy.yaml.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: traefik
+      toPorts:
+        - ports:
+            - port: "8082"
+              protocol: TCP

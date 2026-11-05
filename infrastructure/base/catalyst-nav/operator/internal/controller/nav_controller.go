@@ -15,10 +15,15 @@ package controller
 // composite and Kyverno's annotation derivation). It never asks "what changed?", only "what
 // should the manifest be now?".
 //
-// WHAT IT DOES NOT DO: serve anything. The model is published into a ConfigMap and nothing
-// reads it yet — infrastructure/base/themepark's sidecar keeps writing and serving its own
-// catalyst-nav.json, untouched. Phase 3 adds the authenticated per-identity endpoint on top of
-// the SAME model; that is why building the model and publishing it are separate functions here.
+// WHAT IT DOES NOT DO: serve anything. The model is published into a ConfigMap and, as of
+// phase 3, handed to internal/navserve as a snapshot — but infrastructure/base/themepark's
+// sidecar keeps writing and serving its own catalyst-nav.json, untouched, and no IngressRoute
+// routes anything to the operator's manifest port yet. Switching the client over is phase 4.
+//
+// PHASE 3's addition is the Snapshots store below. The per-identity endpoint filters the SAME
+// model this reconcile publishes, built ONCE here rather than per request, so "what the
+// endpoint serves" and "what the ConfigMap holds" are the same object and cannot drift — see
+// internal/navserve/snapshot.go.
 
 import (
 	"context"
@@ -27,6 +32,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -44,6 +50,7 @@ import (
 
 	navv1alpha1 "github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/api/v1alpha1"
 	"github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/internal/navmodel"
+	"github.com/TheBranchDriftCatalyst/talos-homelab/infrastructure/base/catalyst-nav/operator/internal/navserve"
 )
 
 // ManifestKey is the ConfigMap key the published manifest lands under. Named to match the file
@@ -73,6 +80,12 @@ type NavReconciler struct {
 	// Options are the model knobs (NAV_SCOPE / NAV_DEFAULTS equivalents), held once rather
 	// than re-read from the environment per reconcile.
 	Options navmodel.Options
+
+	// Snapshots receives the resolved model plus its visibility rules for the per-identity
+	// endpoint to read. Nil is allowed and means "do not serve" — which is what the render
+	// parity mode and most of the unit tests want, and it keeps the endpoint from being a
+	// thing you have to opt OUT of in a test that is about something else.
+	Snapshots *navserve.Store
 }
 
 // Reconcile rebuilds the whole model and reports the outcome on every contributing object.
@@ -99,10 +112,23 @@ func (r *NavReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (rec
 	}
 
 	model := navmodel.Build(doc, r.Options)
+	// Resolve MUST run before the snapshot is published: it is what stamps NavGroupRef onto
+	// each manifest group, and the visibility filter keys group rules by that ref. Publish a
+	// model that has not been resolved and every group looks unrestricted — a silent,
+	// total fail-open on group visibility.
 	res := Resolve(model, groups.Items, entries.Items)
 
-	if err := r.publish(ctx, model); err != nil {
+	revision, err := r.publish(ctx, model)
+	if err != nil {
 		return reconcile.Result{}, err
+	}
+	if r.Snapshots != nil {
+		r.Snapshots.Publish(&navserve.Snapshot{
+			Manifest: model,
+			Index:    BuildVisibilityIndex(groups.Items, entries.Items),
+			Revision: revision,
+			BuiltAt:  time.Now(),
+		})
 	}
 	if err := r.writeStatuses(ctx, res, groups.Items, entries.Items); err != nil {
 		return reconcile.Result{}, err
@@ -125,9 +151,13 @@ func (r *NavReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (rec
 // (phase 3's server, a future Flux healthcheck) would see churn that does not reflect a nav
 // change. build_nav.py has the same property for the same reason — see its sorted/byte-stable
 // comments.
-func (r *NavReconciler) publish(ctx context.Context, m *navmodel.Manifest) error {
+// It returns the revision (the sha256 of the manifest bytes) so the caller can stamp the same
+// value onto the snapshot the per-identity endpoint serves. Returning it rather than
+// recomputing it is the point: the ConfigMap and the endpoint then provably describe one build.
+func (r *NavReconciler) publish(ctx context.Context, m *navmodel.Manifest) (string, error) {
 	payload := string(navmodel.Encode(m))
 	sum := sha256.Sum256([]byte(payload))
+	revision := hex.EncodeToString(sum[:])
 
 	var cm corev1.ConfigMap
 	key := client.ObjectKey{Namespace: r.Namespace, Name: r.ConfigMapName}
@@ -145,14 +175,14 @@ func (r *NavReconciler) publish(ctx context.Context, m *navmodel.Manifest) error
 			},
 			Data: map[string]string{ManifestKey: payload},
 		}
-		cm.Annotations = map[string]string{"nav.catalyst.io/manifest-sha256": hex.EncodeToString(sum[:])}
-		return r.Client.Create(ctx, &cm)
+		cm.Annotations = map[string]string{"nav.catalyst.io/manifest-sha256": revision}
+		return revision, r.Client.Create(ctx, &cm)
 	case err != nil:
-		return fmt.Errorf("reading published ConfigMap: %w", err)
+		return "", fmt.Errorf("reading published ConfigMap: %w", err)
 	}
 
 	if cm.Data[ManifestKey] == payload {
-		return nil
+		return revision, nil
 	}
 	if cm.Data == nil {
 		cm.Data = map[string]string{}
@@ -161,8 +191,8 @@ func (r *NavReconciler) publish(ctx context.Context, m *navmodel.Manifest) error
 	if cm.Annotations == nil {
 		cm.Annotations = map[string]string{}
 	}
-	cm.Annotations["nav.catalyst.io/manifest-sha256"] = hex.EncodeToString(sum[:])
-	return r.Client.Update(ctx, &cm)
+	cm.Annotations["nav.catalyst.io/manifest-sha256"] = revision
+	return revision, r.Client.Update(ctx, &cm)
 }
 
 // writeStatuses stamps conditions onto every NavGroup and NavEntry.
