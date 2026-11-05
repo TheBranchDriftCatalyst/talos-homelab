@@ -74,7 +74,49 @@
     register: register                        // hoisted; defined below
   };
 
-  var MANIFEST = '/catalyst/resources/catalyst-nav.json';
+  /* -- Where the manifest comes from ----------------------------------------
+   * TWO SOURCES, AND AN APP IS ON EXACTLY ONE OF THEM. This is the strangler
+   * fig's seam: the static file is what every app has always used, and the
+   * authenticated endpoint is what replaces it, ONE APP AT A TIME.
+   *
+   *   STATIC    a public file a sidecar writes and nginx serves under the asset
+   *             prefix. Identical for every caller, so it can only ever list
+   *             what is safe for everyone -- which today means it lists every
+   *             internal hostname in the cluster to anybody on the LAN.
+   *   IDENTITY  the operator's per-identity endpoint. Filtered server-side from
+   *             the forward-auth headers Authentik injects, so two users on the
+   *             same page get different bars.
+   *
+   * THE SELECTOR IS A KEYWORD, NEVER A URL. Both URLs are constants in this
+   * file; the injected tag only chooses between them by name. Letting the
+   * attribute carry a URL would hand the manifest's origin to whatever can
+   * write that tag -- a rewriteBody middleware, a compromised theme server --
+   * and the manifest is what decides every link in the bar. Same reasoning as
+   * APPLET_URL_RULES below: the allowlist lives HERE, not in the caller.
+   *
+   * ABSENT OR UNRECOGNISED => STATIC, because the default has to be the
+   * behaviour the other ~60 apps already have. Shipping this file therefore
+   * changes nothing on its own. An app is cut over by adding
+   * `data-nav-manifest="identity"` to its OWN catalyst-inject-<app> middleware,
+   * and rolled back by deleting that one attribute -- no other app is touched
+   * in either direction.
+   * ------------------------------------------------------------------------ */
+  var MANIFEST_STATIC   = '/catalyst/resources/catalyst-nav.json';
+  var MANIFEST_IDENTITY = '/catalyst-nav/v1/manifest.json';
+
+  // document.currentScript IS the injected <script> while this IIFE runs: it is
+  // defined for a deferred classic script, and null only for modules and for
+  // code reached from an async callback. The querySelector is the fallback for a
+  // host app that re-evaluates this file outside its own tag.
+  var SRC = (function () {
+    var tag = document.currentScript ||
+              document.querySelector('script[src*="catalyst-nav.js"]');
+    var want = tag && tag.getAttribute('data-nav-manifest');
+    return want === 'identity'
+      ? { url: MANIFEST_IDENTITY, identity: true }
+      : { url: MANIFEST_STATIC, identity: false };
+  }());
+
   var C = 'catalyst-nav';
 
   /* -- Configuration --------------------------------------------------------
@@ -287,7 +329,7 @@
    * names, and each bundle calls register() to get an element of its own.
    *
    * TWO ORDERS, BOTH REAL, AND THE ORDER IS NOT OURS TO CHOOSE. build() is only
-   * reached through start() -> fetch(MANIFEST) -> .then(build), with three tries
+   * reached through start() -> fetch(SRC.url) -> .then(build), with three tries
    * and 1s/2s backoff; a bundle is a <script defer> the browser schedules on its
    * own. Either can win:
    *
@@ -301,6 +343,14 @@
    * null IS the queue, and both paths go through the same renderApplet call --
    * which is what stops the early path and the late path from drifting, the way
    * three hand-maintained copies of this file once did.
+   *
+   * A THIRD CASE EXISTS NOW, and it is not a race: on the identity manifest a
+   * 401/403/302 is TERMINAL, so build() may never run at all. An applet that
+   * registered first then waits in that queue forever, dock null, rendering
+   * nothing. That is the intended shape -- there is no bar to dock into, and
+   * the alternative is an applet floating in an app with no nav -- but it does
+   * mean "registered" has never implied "will eventually render", and on a
+   * cut-over app it now visibly does not.
    *
    * EVERYTHING HERE IS SILENT. Not quietly, deliberately: the manifest is parsed
    * and these bundles are run inside forty applications we did not write, and
@@ -818,28 +868,87 @@
     window.addEventListener('scroll', schedule, { passive: true, capture: true });
   }
 
-  // No `cache: 'no-store'` here: it would defeat the Cache-Control the
-  // catalyst-asset-cache middleware sets on this route and refetch the manifest
-  // on every navigation. The sidecar refreshes it every 5 minutes and the cache
-  // max-age matches, so staleness is bounded to one refresh cycle.
-  //
-  // The manifest is written by a sidecar into the same volume nginx serves, so
-  // for a few seconds after a pod rolls the theme is already up while the
-  // manifest is not. Without a retry, anyone loading in that window gets no nav
-  // and no reason why. Three tries with backoff covers it; after that we stay
-  // quiet, because the nav is cosmetic and must never surface an error into a
-  // third-party app.
+  /* -- Fetching the manifest ------------------------------------------------
+   * TWO REQUEST SHAPES, because the two sources have OPPOSITE credential and
+   * caching needs, and getting either one wrong fails quietly rather than
+   * loudly.
+   *
+   * STATIC -- unchanged, including the deliberate absence of `cache:
+   * 'no-store'`. That file is public and the catalyst-asset-cache middleware
+   * stamps `max-age=300` on it; no-store would defeat that Cache-Control and
+   * refetch on every navigation. The sidecar refreshes every 5 minutes and the
+   * max-age matches, so staleness stays bounded to one refresh cycle.
+   *
+   * IDENTITY -- the opposite on every axis. THE PARAGRAPH ABOVE DOES NOT APPLY
+   * TO THIS PATH, which is why it is no longer the only comment here:
+   *
+   *   credentials  'same-origin', and this is the whole point of the phase. The
+   *                endpoint works out who is asking from the forward-auth
+   *                headers Authentik injects, and the outpost can only produce
+   *                those from the SESSION COOKIE. With 'omit' -- what the
+   *                static path still uses, correctly -- the outpost resolves no
+   *                identity at all and every user is served the anonymous
+   *                subset: a working bar, merely a smaller one, with nothing
+   *                anywhere saying why. That is the silent failure this setting
+   *                exists to prevent. NOT 'include': this URL is a relative
+   *                path on the app's own host and so is same-origin by
+   *                construction, and 'include' would keep sending the cookie if
+   *                it ever stopped being -- which is the case that should fail.
+   *   cache        'no-store'. The body is per-identity and the handler already
+   *                says `private, no-store`; this is the client half of that
+   *                same statement, so no memory-cache or bfcache hit can show
+   *                one user the bar that was built for another.
+   *   redirect     'manual', and this is the subtle one. Forward-auth answers an
+   *                unauthenticated request with a 302 TO THE SSO LOGIN FLOW, not
+   *                a 401. Followed, that redirect lands on an HTML login page
+   *                which arrives as a perfectly valid 200 and then explodes in
+   *                r.json() -- a parse error, reported as though the manifest
+   *                were malformed, retried three times, inside an application we
+   *                did not write. 'manual' makes it an opaqueredirect instead:
+   *                status 0, ok false, no body, and the terminal branch below
+   *                reads it for what it actually is.
+   *
+   * TERMINAL VS TRANSIENT, which the single old catch could not tell apart. The
+   * endpoint answers 503 before its first reconcile -- a pod that has just
+   * rolled serves the theme before the manifest exists, which is the reason
+   * this retry was written in the first place -- so a 503 and a network error
+   * must still be retried. An AUTH outcome must not be: an opaqueredirect, a
+   * 401 or a 403 is an authoritative answer about who the caller is, and asking
+   * twice more cannot change it. Retrying only delays the quiet giving-up by
+   * three seconds and puts two more pointless requests through the outpost.
+   *
+   * AND IT NEVER FALLS BACK TO THE STATIC FILE. That is the obvious "graceful"
+   * move and it is wrong twice over. The static file is the public
+   * everything-manifest this endpoint exists to stop handing out, so falling
+   * back would re-leak the whole host list to precisely the caller who just
+   * failed to prove an identity -- and it would disguise a broken cutover as a
+   * working one, for as long as nobody looked. NO BAR is the correct degraded
+   * state. The bar is cosmetic: it must never surface an error into a
+   * third-party app, and it must never surface more than the caller is entitled
+   * to either.
+   * ------------------------------------------------------------------------ */
   function start(attempt) {
     attempt = attempt || 0;
-    fetch(MANIFEST, { credentials: 'omit' })
+
+    var opts = SRC.identity
+      ? { credentials: 'same-origin', cache: 'no-store', redirect: 'manual' }
+      : { credentials: 'omit' };
+
+    var again = function () {
+      if (attempt < 2) setTimeout(function () { start(attempt + 1); }, 1000 * (attempt + 1));
+    };
+
+    fetch(SRC.url, opts)
       .then(function (r) {
         if (r.ok) return r.json();
+        // Terminal -- an answer about identity, not a transient fault. Resolve
+        // with nothing so build() never runs and `again` is never reached: no
+        // bar, no error, no retry.
+        if (r.type === 'opaqueredirect' || r.status === 401 || r.status === 403) return null;
         throw new Error('manifest ' + r.status);
       })
       .then(function (d) { if (d) build(d); })
-      .catch(function () {
-        if (attempt < 2) setTimeout(function () { start(attempt + 1); }, 1000 * (attempt + 1));
-      });
+      .catch(again);
   }
 
   function bootstrap() {
