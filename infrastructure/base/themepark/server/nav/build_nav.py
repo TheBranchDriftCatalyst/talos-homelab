@@ -303,7 +303,26 @@ def main() -> int:
             "name": name,
             "group": group,
             "weight": weight,
-            "href": f"//{host}/",
+            # ABSOLUTE, with the scheme spelled out. This was `//{host}/` until
+            # 2026-11-05 -- the same URL to a browser, but NOT to the host app's
+            # router, and that difference silently broke the bar on Grafana.
+            #
+            # Grafana's interceptLinkClicks installs a document-level click handler
+            # that routes every anchor through its own SPA router. It decides
+            # "external" by looking for a scheme, so a leading `//` reads as an
+            # internal path and it called history.pushState() with a URL on another
+            # origin. pushState cannot cross origins, so it threw SecurityError --
+            # after preventDefault() had already run, so the real navigation never
+            # happened either. Left-click did nothing while right-click
+            # "open in new window" worked, because that path never enters JS.
+            # Measured on grafana.talos00: `//plausible.talos00/` throws and stays
+            # put; `https://plausible.talos00/` navigates cleanly.
+            #
+            # Every host here is HTTPS (:80 carries only a redirect companion), so
+            # there is nothing for protocol-relative to adapt to -- it bought no
+            # flexibility and cost a whole class of SPA-router collisions. Any app
+            # that intercepts clicks the same way is fixed by the same property.
+            "href": f"https://{host}/",
             "themed": themed,
         }
 

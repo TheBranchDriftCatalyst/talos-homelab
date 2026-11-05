@@ -245,3 +245,43 @@ def test_shared_middlewares_alone_do_not_make_an_app_injected():
 def test_an_app_with_no_catalyst_middleware_is_not_in_the_bar():
     out, _ = run({"items": [entry(["authentik"])]})
     assert out["groups"] == []
+
+
+# ── entry href shape ─────────────────────────────────────────────────────────
+# The manifest is consumed inside host applications we did not write, several of
+# which install a document-level click handler and route every anchor through
+# their own SPA router. Those routers decide "external" by looking for a scheme,
+# so a protocol-relative href reads to them as an internal path.
+#
+# Grafana did exactly that on 2026-11-05: interceptLinkClicks called
+# history.pushState() with `//plausible.talos00/` resolved onto another origin,
+# which is not allowed, so it threw SecurityError -- and because preventDefault()
+# had already run, the browser never performed the real navigation either. The
+# bar looked fine and every link was dead to left-click while right-click
+# "open in new window" still worked, because that path never enters JS.
+#
+# An explicit scheme is what makes the link unmistakably external to those
+# routers. This spec fails if anyone reverts to `//host/`.
+
+def test_entry_href_is_absolute_https_not_protocol_relative():
+    out, _ = run({"items": [entry(["catalyst-nav"], host="plausible.talos00",
+                                  name="Plausible")]})
+    hrefs = [i["href"] for g in out["groups"] for i in g["items"]]
+    assert hrefs == ["https://plausible.talos00/"]
+    for h in hrefs:
+        assert not h.startswith("//"), (
+            f"{h!r} is protocol-relative; a host app's SPA router will treat it "
+            "as an internal path and pushState will throw cross-origin"
+        )
+
+
+def test_every_emitted_href_carries_a_scheme():
+    """Holds across groups and dedup, not just the single-entry happy path."""
+    out, _ = run({"items": [
+        entry(["catalyst-nav"], host="a.talos00", name="A"),
+        entry(["catalyst-grafana"], host="b.talos00", name="B"),
+        entry([], host="c.talos00", name="C"),
+    ]})
+    hrefs = [i["href"] for g in out["groups"] for i in g["items"]]
+    assert hrefs, "expected at least one entry"
+    assert all(h.startswith("https://") for h in hrefs), hrefs

@@ -73,3 +73,16 @@ spec:
       kind: LogTriagePolicy
       jsonPointers:
         - /status
+    # Kyverno ClusterPolicy `ingressroute-lan-only-talos00` (landed 2026-10-24)
+    # prepends the `lan-only` middleware to every *.talos00 IngressRoute, and its
+    # `existing-*` rules set mutateExistingOnPolicyUpdate, so it retrofits routes
+    # that were already applied. Git never carries that entry, so ArgoCD read it as
+    # drift and selfHeal stripped it on every reconcile — Kyverno then put it back.
+    # That is a revert loop, not one-off drift: all six affected apps re-synced
+    # every few minutes for ~12 days. The cost is not just a lost Synced signal —
+    # each cycle leaves a brief window where the WAN-exposure guard is absent from
+    # the live route. Kyverno owns this field; ArgoCD must not compare it.
+    - group: traefik.io
+      kind: IngressRoute
+      jqPathExpressions:
+        - .spec.routes[].middlewares
