@@ -1,0 +1,185 @@
+---
+# NavGroup — the navbar taxonomy, as an object instead of a free-text field.
+#
+# WHY THIS EXISTS. Today's nav (infrastructure/base/themepark/server/nav/) derives its groups
+# from gethomepage.dev/group, a bare string stamped on each IngressRoute. A bare string has no
+# spellchecker and no single source of truth, so it forks: the live cluster carries BOTH
+# "Monitoring" and "Observability" as separate dropdown groups today, each with its own apps,
+# because two different IngressRoutes were annotated six months apart by two different sessions
+# that both believed they were using the established name. Nothing in that system could have
+# caught it — gethomepage.dev/group is typed `string`, not an enum, by design (it has to accept
+# any app's annotation, whatever it says).
+#
+# NavGroup turns the taxonomy into a cluster-scoped object with a real OpenAPI schema. The
+# group's identity is `metadata.name` — a Kubernetes object name, which the API server already
+# guarantees is unique — not `spec.title`, so the typo-fork failure mode (two objects meaning
+# the same group) becomes "two objects with different names", which is visible in
+# `kubectl get navgroups` as two rows instead of invisible as two strings nobody diffed.
+#
+# This is phase 1 of a strangler-fig migration (see infrastructure/base/catalyst-nav/README
+# intent in the kustomization comment). THIS CRD IS NOT WIRED TO ANYTHING YET. The existing
+# discover.sh + build_nav.py sidecar keeps deriving catalyst-nav.json from annotations exactly
+# as before; nothing here changes what ships to the browser. Phase 2 teaches that pipeline to
+# resolve gethomepage.dev/group against these objects instead of taking the string verbatim —
+# that is the point at which a typo in an annotation starts getting caught.
+#
+# Scope is Cluster, not Namespaced: a navbar group is cluster-wide taxonomy, not a thing any one
+# app namespace owns. (Contrast NavEntry, below, which is namespaced because it belongs to
+# whichever app's manifests it rides along with.)
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: navgroups.nav.catalyst.io
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/part-of: catalyst
+spec:
+  group: nav.catalyst.io
+  scope: Cluster
+  names:
+    kind: NavGroup
+    listKind: NavGroupList
+    plural: navgroups
+    singular: navgroup
+    shortNames:
+      - ng
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      additionalPrinterColumns:
+        - name: Title
+          type: string
+          jsonPath: .spec.title
+        - name: Order
+          type: integer
+          jsonPath: .spec.order
+        - name: Lifecycle
+          type: string
+          jsonPath: .spec.lifecycle
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: >-
+            NavGroup is one entry in the Catalyst navbar's top-level taxonomy (a dropdown
+            group, e.g. "Media" or "Observability"). See the file header for why this is an
+            object and not a string.
+          properties:
+            spec:
+              type: object
+              required: [title, order]
+              x-kubernetes-validations:
+                - rule: "self.order % 10 == 0"
+                  message: >-
+                    order must be a multiple of 10. See the field's description for the
+                    documented scale — this isn't an arbitrary restriction, it's what keeps
+                    the scale sparse enough to insert a new group between two existing ones
+                    without renumbering the whole taxonomy.
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 40
+                  # No leading/trailing whitespace: "Observability" and "Observability " are
+                  # the exact kind of silent duplicate this CRD exists to make impossible.
+                  # (It does NOT catch "Monitoring" vs "Observability" — two genuinely
+                  # different strings for the same intended group. Nothing short of a fixed,
+                  # reviewed set of NavGroup objects — which is what this taxonomy file is —
+                  # catches that; a regex can't know two words mean the same thing.)
+                  pattern: '^\S(.*\S)?$'
+                  description: >-
+                    Display label shown in the navbar dropdown header.
+                order:
+                  type: integer
+                  minimum: 10
+                  maximum: 990
+                  description: >-
+                    Where this group sits left-to-right (or top-to-bottom, depending on the
+                    nav's rendering) relative to every other group. Lower sorts first.
+
+                    THE SCALE: multiples of 10 from 10 to 990 (enforced above). Only every
+                    tenth value is legal on purpose — the 9 unused values between any two
+                    claimed ones (e.g. 11-19 between Media=10 and Media Automation=20) are
+                    insertion room. A group added later slots into whichever decade its
+                    domain belongs to by taking the next free multiple of 10 in that range;
+                    nothing existing has to be renumbered to make space for it.
+
+                    Ranges are reserved by taxonomy domain, loosely ordered by how often a
+                    user actually visits:
+
+                      10-40  media-consumption surface (Media, Media Automation,
+                             Downloads, Library)
+                      50-60  platform/ops (Infrastructure, Observability)
+                      70-80  everything else (Home & Tools, Comms & Apps)
+                      90-990 unclaimed; reserved for future domains
+
+                    See taxonomy.yaml in this directory for the exact value each of the 8
+                    current groups was assigned and why.
+                icon:
+                  type: string
+                  maxLength: 128
+                  # dashboard-icons (github.com/walkxcode/dashboard-icons) publishes every
+                  # filename lowercase-kebab; a mixed-case value could never resolve against
+                  # that CDN, so admission is the right place to catch it, not a dangling
+                  # <img> in the rendered navbar.
+                  pattern: '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?\.(png|svg|webp)$'
+                  description: >-
+                    dashboard-icons filename (e.g. "grafana.png"), not a URL. Deliberately
+                    narrower than the gethomepage.dev/icon annotation this cluster already
+                    uses elsewhere, which also accepts bare names ("grafana") and full
+                    raw.githubusercontent.com URLs — this is a new schema and isn't obligated
+                    to inherit that laxity. Full-URL icons can be added back as a second
+                    field later if a group genuinely needs one; none of the 8 taxonomy
+                    groups in this migration do.
+                lifecycle:
+                  type: string
+                  enum: [stable, experimental]
+                  default: stable
+                  description: >-
+                    stable: generally-available, expected to keep working.
+                    experimental: may move, rename or disappear without the usual notice —
+                    rendered distinctly so a user doesn't build a bookmark habit around it.
+                    A malformed value (anything not in the enum) is rejected at admission,
+                    not silently coerced to a default — see the CatalystCNPGAppDB XRD's
+                    comment about a schema that CLAIMED a constraint it didn't enforce; this
+                    enum is the actual enforcement.
+                visibility:
+                  type: object
+                  description: >-
+                    Omit entirely, or leave authentikGroups empty, for a group visible to
+                    everyone — that is the common case and costs nothing to express.
+                  properties:
+                    authentikGroups:
+                      type: array
+                      maxItems: 20
+                      # Not `uniqueItems: true` — the apiserver REJECTS the CRD itself with
+                      # that set (uniqueness is quadratic to check as a bare array). The
+                      # supported way to get the same guarantee is x-kubernetes-list-type:
+                      # set, which both enforces no duplicates and gives SSA sane merge
+                      # semantics for this field.
+                      x-kubernetes-list-type: set
+                      items:
+                        type: string
+                        minLength: 1
+                        maxLength: 253
+                      description: >-
+                        Authentik group names allowed to see this nav group. This schema
+                        does not (and cannot, without a webhook that calls out to Authentik)
+                        verify the name exists there — it only guarantees the list itself is
+                        well-formed. Getting the name wrong fails safe: a nonexistent
+                        Authentik group matches nobody, so the group simply never renders,
+                        rather than rendering for everyone.
+            status:
+              type: object
+              description: >-
+                Reserved for phase 2+, when a controller exists to report e.g. how many
+                derived NavEntry objects currently resolve into this group. Empty for now —
+                there is no controller yet, and a status subresource with nothing to write
+                to it would be a lie.
+              properties: {}
+              x-kubernetes-preserve-unknown-fields: true
+      subresources:
+        status: {}
