@@ -1,0 +1,153 @@
+---
+# The nav operator: watches IngressRoutes / NavGroups / NavEntries / CatalystWebSecureIngress
+# claims and publishes the nav model into a ConfigMap. Also serves the NavEntry validating
+# webhook.
+#
+# NOT YET DEPLOYED. No Flux Kustomization points at infrastructure/base/catalyst-nav — see
+# that directory's kustomization.yaml. Wiring it is a later phase; the image below does not
+# exist in the registry yet either (see Dockerfile for the build command).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalyst-nav-operator
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/part-of: catalyst
+spec:
+  replicas: 1
+  # Recreate, not RollingUpdate: two replicas would both reconcile the same singleton
+  # ConfigMap and race each other's status writes, and LeaderElection is deliberately off
+  # (see main.go). Recreate keeps the invariant that there is only ever one.
+  #
+  # The cost is a gap of a few seconds during a rollout in which the webhook is unavailable
+  # and — because failurePolicy is Fail — NavEntry writes are refused. That is the correct
+  # trade: NavEntry is an override/inject object edited by hand a few times a year, and the
+  # alternative (failurePolicy: Ignore) would let a dangling navGroupRef through during every
+  # rollout, which is the exact silent failure this component exists to prevent.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalyst-nav
+      app.kubernetes.io/component: operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalyst-nav
+        app.kubernetes.io/component: operator
+        app.kubernetes.io/part-of: catalyst
+        # The CiliumNetworkPolicies select on `app`, not on app.kubernetes.io/name — same
+        # arrangement as the themepark pod template, and for the same reason: a CNP
+        # endpointSelector written against the dotted label is easy to get wrong and fails
+        # open-looking (the policy matches nothing and the pod keeps working until the
+        # default-deny is what you were relying on).
+        app: catalyst-nav-operator
+      annotations:
+        # Alloy discovers scrape targets by pod annotation in this cluster, so no
+        # ServiceMonitor is needed. See infrastructure/base/monitoring/v2-otel/alloy.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: catalyst-nav-operator
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532 # nonroot uid in the distroless base
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # Soft anti-affinity away from talos03, the memory-constrained node — the house pattern
+      # for a single-replica workload here (version-checker carries the same block).
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [talos03]
+      containers:
+        - name: operator
+          # Built and pushed manually; the registry is the in-cluster Zot. No CI in this repo
+          # builds images (verified: no workflow, no Taskfile task, no lefthook hook does).
+          # Pin a digest once it is pushed — `:latest` on a stale tag is an upgrade trigger
+          # that fast-forwards across every release at once.
+          image: registry.talos00/talos00-registry/catalyst-nav-operator:v0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            # The operator writes its ConfigMap here and scopes its ConfigMap informer to
+            # this namespace; without the scope it would cache every ConfigMap in the
+            # cluster, which is tens of megabytes of Grafana dashboard JSON.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NAV_CONFIGMAP
+              value: catalyst-nav-manifest
+            # Mirrors the sidecar's own env so the two produce comparable output during the
+            # migration. Changing either without the other makes the phase-6 diff meaningless.
+            - name: NAV_SCOPE
+              value: themed
+            # GOMEMLIMIT at ~80% of the memory limit, per this repo's convention for Go
+            # workloads: the Go runtime otherwise has no idea the cgroup limit exists and
+            # gets OOM-killed mid-GC rather than collecting harder.
+            - name: GOMEMLIMIT
+              value: "100MiB"
+          ports:
+            - name: webhook
+              containerPort: 9443
+              protocol: TCP
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          # Readiness is gated on the webhook's TLS listener, not on a generic ping — a pod
+          # that reports Ready before the listener is up makes the Service route admission to
+          # a closed port, and failurePolicy: Fail turns that into "every NavEntry write in
+          # the cluster is refused". See main.go's AddReadyzCheck.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          # No startupProbe here on purpose: the Kyverno ClusterPolicy
+          # `startupprobe-from-liveness` derives one from the livenessProbe above
+          # (add-if-absent, failurePolicy Ignore), and catalyst-nav is not in its excluded
+          # namespace list. A hand-written one would win and would then have to be maintained
+          # against that policy's timings.
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+      volumes:
+        - name: webhook-certs
+          secret:
+            # Minted by cert-manager from the Certificate in webhook.yaml. `optional: false`
+            # by omission is deliberate — a pod that started without its serving cert would
+            # report Ready-never and block NavEntry writes with no indication why, so failing
+            # to mount is the better signal.
+            secretName: catalyst-nav-webhook-cert
+            defaultMode: 0400

@@ -1,0 +1,109 @@
+---
+# The NavEntry validating webhook: Service, serving Certificate, and the
+# ValidatingWebhookConfiguration.
+#
+# WHY THIS IS NOT OPTIONAL. naventry-crd.yaml types spec.navGroupRef as a bare string and says
+# plainly that cross-object validation "would need an admission webhook, which is out of scope
+# for this phase ... Closing that gap is explicitly deferred, not solved, by this CRD." Without
+# this file the CRDs buy visibility over the annotations they replace but not correctness — a
+# typo'd navGroupRef fails exactly as silently as the free-text gethomepage.dev/group that put
+# both "Monitoring" and "Observability" in this cluster's navbar.
+#
+# CEL cannot do this. x-kubernetes-validations sees only the object under admission; there is no
+# expression that can check whether another object exists. (A ValidatingAdmissionPolicy with a
+# paramRef binds ONE named parameter object, not "any NavGroup with this name", so it does not
+# cover this either.) A webhook is the only mechanism.
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalyst-nav-webhook
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+    app.kubernetes.io/part-of: catalyst
+spec:
+  selector:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+  ports:
+    - name: https
+      port: 443
+      targetPort: webhook
+      protocol: TCP
+---
+# Serving cert from the existing cluster-wide self-signed ClusterIssuer.
+#
+# `selfsigned-issuer` rather than `homelab-ca-issuer`: cert-manager-issuers/cluster-issuer.yaml
+# documents selfsigned-issuer as the one for "webhook certificates, internal mTLS", and a
+# webhook's trust comes from the caBundle the apiserver is handed below, not from any shared
+# root — so chaining to the homelab CA would add a dependency on that CA's rotation (it expires
+# 2026-12-09) to a fail-closed admission path for no gain. This is also what the vendored
+# RabbitMQ operators in this cluster do, with their own namespaced selfSigned Issuers.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: catalyst-nav-webhook-cert
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+spec:
+  secretName: catalyst-nav-webhook-cert
+  issuerRef:
+    kind: ClusterIssuer
+    name: selfsigned-issuer
+  dnsNames:
+    # Both spellings: the apiserver resolves the Service's short form, and the long form is
+    # what some clients present during SNI. Omitting either produces an x509 hostname
+    # mismatch that surfaces as a generic webhook connection failure.
+    - catalyst-nav-webhook.catalyst-nav.svc
+    - catalyst-nav-webhook.catalyst-nav.svc.cluster.local
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: catalyst-nav-naventry
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+  annotations:
+    # cainjector fills caBundle below from this Certificate. The Certificate-ref form, which
+    # is what the other webhooks in this cluster use. caBundle is deliberately absent rather
+    # than inlined: a pinned PEM goes stale at renewal and the failure lands on a fail-closed
+    # path.
+    cert-manager.io/inject-ca-from: catalyst-nav/catalyst-nav-webhook-cert
+webhooks:
+  - name: naventry.nav.catalyst.io
+    admissionReviewVersions: [v1]
+    # The handler only reads NavGroups; it writes nothing and caches nothing per-request.
+    sideEffects: None
+    # Fail, not Ignore. Ignore would admit a dangling navGroupRef whenever the operator is
+    # rolling or unreachable — i.e. it would reintroduce the silent failure on exactly the
+    # schedule nobody is watching. The blast radius of Fail is bounded to one namespaced,
+    # hand-edited kind: it CANNOT block an app deployment, an IngressRoute, or anything Flux
+    # reconciles, because the rule below selects naventries and nothing else.
+    failurePolicy: Fail
+    # 10s, not the 30s maximum: the handler does one cached read. A long timeout here would
+    # just extend how long a `kubectl apply` hangs when the operator is down.
+    timeoutSeconds: 10
+    clientConfig:
+      service:
+        name: catalyst-nav-webhook
+        namespace: catalyst-nav
+        path: /validate-nav-catalyst-io-v1alpha1-naventry
+        port: 443
+    # There is NO namespaceSelector: a NavEntry in ANY namespace must be validated. Scoping
+    # this to a label would mean a new app's namespace silently opts out of the check by
+    # forgetting a label, which is the failure class this component exists to close.
+    #
+    # DELETE is absent from `operations` on purpose: a delete request carries no object to
+    # validate, and an entry must always be removable — including an entry whose NavGroup was
+    # deleted out from under it, which is precisely the state the reconciler reports with a
+    # NavGroupNotFound condition.
+    rules:
+      - operations: [CREATE, UPDATE]
+        apiGroups: [nav.catalyst.io]
+        apiVersions: [v1alpha1]
+        resources: [naventries]
+        scope: Namespaced

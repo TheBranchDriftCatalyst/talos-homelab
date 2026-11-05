@@ -1,0 +1,119 @@
+---
+# Default-deny plus the three flows this operator actually needs.
+#
+# Modelled on infrastructure/base/themepark/server/cilium-network-policy.yaml, including the
+# failure mode documented there: without the apiserver egress rule the default-deny blackholes
+# the API call, "the pod stays 2/2 Running and the only symptom is a nav manifest that never
+# appears."
+#
+# The one addition over themepark's set is INGRESS FROM THE APISERVER — a webhook is called by
+# the control plane, so a policy that only allows ingress from Traefik would leave the
+# admission path blackholed. With failurePolicy: Fail that presents as "every NavEntry write is
+# refused", with a timeout rather than an error, which is a genuinely confusing way to discover
+# a network policy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+spec:
+  endpointSelector: {}
+  ingress:
+    - {}
+  egress:
+    - {}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+spec:
+  endpointSelector:
+    matchLabels:
+      app: catalyst-nav-operator
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-apiserver-egress
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+spec:
+  endpointSelector:
+    matchLabels:
+      app: catalyst-nav-operator
+  egress:
+    # `toEntities: kube-apiserver` is the Cilium-native way to express this: it resolves to
+    # whatever the real API server endpoints are, so it keeps working across control-plane IP
+    # changes, unlike a hardcoded CIDR.
+    - toEntities:
+        - kube-apiserver
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-apiserver-webhook-ingress
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+spec:
+  endpointSelector:
+    matchLabels:
+      app: catalyst-nav-operator
+  ingress:
+    # The admission call. Same entity-based reasoning as the egress rule above.
+    - fromEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-metrics-scrape
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+spec:
+  endpointSelector:
+    matchLabels:
+      app: catalyst-nav-operator
+  ingress:
+    # Alloy scrapes by pod annotation from the monitoring namespace. Without this the
+    # prometheus.io/scrape annotations on the Deployment are honoured by Alloy and then
+    # dropped by the default-deny — a target that is permanently `down` with no other symptom.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # Kubelet probes the health port. Cilium exempts the host from policy by default in most
+    # configurations, but stating it removes the dependency on that default — a silently
+    # failing probe would CrashLoop the operator and take the webhook with it.
+    - fromEntities:
+        - host
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP

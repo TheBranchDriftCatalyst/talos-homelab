@@ -1,0 +1,110 @@
+# The Catalyst nav operator: build, test, and the phase-6 parity gate.
+#
+# The module is at infrastructure/base/catalyst-nav/operator — Go source living beside the
+# manifests it ships with, the same arrangement as applications/crossplane-demo/plausible/
+# exporter. GOWORK=off everywhere for the reason dev/Taskfile.docs.yaml gives: a parent go.work
+# in the surrounding workspace otherwise drags sibling modules in.
+#
+# `parity` IS THE GATE PHASE 6 DEPENDS ON. Nothing in this repo's CI runs Go (verified: no
+# workflow, no lefthook hook), so these tasks are the front door and running them is manual —
+# which is exactly why `parity` prints a verdict rather than only an exit code.
+version: "3"
+
+vars:
+  SRC: infrastructure/base/catalyst-nav/operator
+  BIN: infrastructure/base/catalyst-nav/operator/bin/catalyst-nav-operator
+  BUILD_NAV: infrastructure/base/themepark/server/nav/build_nav.py
+  CORPUS: infrastructure/base/catalyst-nav/operator/testdata/cluster-ingressroutes.json
+
+tasks:
+  default:
+    desc: "Run the nav operator's test suites"
+    cmds:
+      - task: test
+
+  build:
+    desc: "Compile the catalyst-nav-operator binary"
+    sources:
+      - "{{.SRC}}/**/*.go"
+      - "{{.SRC}}/go.mod"
+      - "{{.SRC}}/go.sum"
+    generates:
+      - "{{.BIN}}"
+    cmds:
+      - cmd: cd {{.SRC}} && GOWORK=off go build -o bin/catalyst-nav-operator ./cmd/catalyst-nav-operator
+      - cmd: echo "built {{.BIN}}"
+
+  test:
+    desc: "Unit + parity suites (no cluster, no control plane needed)"
+    cmds:
+      # The envtest package skips cleanly without control-plane binaries; use test:envtest
+      # to run it deliberately.
+      - cmd: cd {{.SRC}} && GOWORK=off go test ./...
+
+  test:envtest:
+    desc: "Full suite including envtest (downloads a control plane on first run)"
+    cmds:
+      - cmd: |
+          cd {{.SRC}} && \
+          KUBEBUILDER_ASSETS="$(GOWORK=off go run sigs.k8s.io/controller-runtime/tools/setup-envtest use -p path)" \
+          GOWORK=off go test ./... -count=1
+
+  vet:
+    desc: "go vet the operator module"
+    cmds:
+      - cmd: cd {{.SRC}} && GOWORK=off go vet ./...
+
+  corpus:
+    desc: "Regenerate the parity corpus from the repo's committed IngressRoutes"
+    cmds:
+      - cmd: bash {{.SRC}}/testdata/extract-corpus.sh --from-repo
+
+  corpus:cluster:
+    desc: "Capture the AUTHORITATIVE parity corpus from the live cluster (read-only)"
+    cmds:
+      # Routes minted by a HelmRelease or by the catalyst-websecure-ingress Composition
+      # exist only in the cluster, so the live set is larger than the repo corpus. Phase 6
+      # must sign off against THIS one.
+      - cmd: bash {{.SRC}}/testdata/extract-corpus.sh --from-cluster
+
+  parity:
+    desc: "PHASE 6 GATE: diff the operator's manifest against build_nav.py's, byte for byte"
+    deps: [build]
+    cmds:
+      - cmd: |
+          set -eu
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          status=0
+          for scope in themed all; do
+            NAV_SCOPE=$scope python3 {{.BUILD_NAV}} < {{.CORPUS}} > "$tmp/py.json" 2>/dev/null
+            NAV_SCOPE=$scope ./{{.BIN}} render < {{.CORPUS}} > "$tmp/go.json" 2>/dev/null
+            hosts=$(grep -o '"href"' "$tmp/py.json" | wc -l | tr -d ' ')
+            if cmp -s "$tmp/py.json" "$tmp/go.json"; then
+              echo "NAV_SCOPE=$scope  IDENTICAL  ($(wc -c < "$tmp/py.json" | tr -d ' ') bytes, $hosts hosts)"
+            else
+              echo "NAV_SCOPE=$scope  *** DIFFERS ***"
+              diff <(python3 -m json.tool "$tmp/py.json") <(python3 -m json.tool "$tmp/go.json") || true
+              status=1
+            fi
+          done
+          exit $status
+
+  validate:
+    desc: "kustomize build + client-side dry-run of the catalyst-nav component"
+    cmds:
+      # The NavGroup objects in taxonomy.yaml will report "no matches for kind" until the
+      # CRDs are installed in whatever cluster kubectl points at — phase 1 was never
+      # deployed, so that is expected here and is not a manifest error. The CRDs themselves
+      # are schema-validated by test:envtest, which installs them for real.
+      - cmd: kustomize build infrastructure/base/catalyst-nav/
+      - cmd: kustomize build infrastructure/base/catalyst-nav/ | kubectl apply --dry-run=client -f - || true
+
+  generate:
+    desc: "Re-run controller-gen for the DeepCopy methods"
+    cmds:
+      # The CRD YAML is NOT generated — see api/v1alpha1/navgroup_types.go for why the
+      # hand-written, reviewed schemas are the source of truth. Only `object` runs here.
+      - cmd: |
+          cd {{.SRC}} && GOWORK=off go run sigs.k8s.io/controller-tools/cmd/controller-gen \
+            object:headerFile=hack/boilerplate.go.txt paths=./api/...

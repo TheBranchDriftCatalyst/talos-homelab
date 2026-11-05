@@ -1,0 +1,32 @@
+---
+# The nav operator's workload. Phase 2 of the catalyst-nav strangler-fig migration.
+#
+# STILL NOT DEPLOYED, same as phase 1. The parent kustomization (../kustomization.yaml) is not
+# referenced by any Flux Kustomization in clusters/catalyst-cluster/, so nothing here reaches
+# the cluster yet — deliberately. The operator has never run against the live apiserver, and
+# putting an untested controller with a fail-closed admission webhook into a Flux-managed
+# cluster is a separate, reviewable step.
+#
+# WHAT IT CHANGES WHEN IT IS DEPLOYED: nothing user-visible. It publishes the nav model into
+# the `catalyst-nav-manifest` ConfigMap and nothing reads that ConfigMap.
+# infrastructure/base/themepark's discover.sh + build_nav.py keep deriving and serving
+# catalyst-nav.json exactly as before. The two outputs are meant to be diffed — see
+# operator/testdata/extract-corpus.sh and `catalyst-nav-operator render`.
+#
+# The one thing it DOES change on day one is NavEntry admission: the webhook starts refusing a
+# dangling navGroupRef. That is the point (see webhook.yaml), and it cannot affect any other
+# kind — the rule selects naventries only.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Every manifest here also carries an explicit metadata.namespace, redundantly, matching the
+# house style (version-checker, kubeview and aws-inventory-exporter all do both). The
+# cluster-scoped objects in rbac.yaml and webhook.yaml are unaffected by this.
+namespace: catalyst-nav
+
+resources:
+  - namespace.yaml # dedicated ns; see the file for why not `themepark`
+  - rbac.yaml # SA + cluster-wide reads + namespaced ConfigMap write
+  - deployment.yaml # the controller + webhook server
+  - webhook.yaml # Service, cert-manager Certificate, ValidatingWebhookConfiguration
+  - cilium-network-policy.yaml # default-deny + DNS/apiserver/metrics flows
