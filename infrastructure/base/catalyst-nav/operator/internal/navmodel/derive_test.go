@@ -342,7 +342,7 @@ func TestPlainRouteIsPreferredOverPathPrefix(t *testing.T) {
 			 "middlewares":[{"name":"catalyst-nav","namespace":"traefik"}]},
 			{"match":"Host(` + "`app.talos00`" + `)",
 			 "middlewares":[{"name":"catalyst-nav","namespace":"traefik"}]}]}}]}`
-	if got := onlyItem(t, mustBuild(t, doc)).Href; got != "//app.talos00/" {
+	if got := onlyItem(t, mustBuild(t, doc)).Href; got != "https://app.talos00/" {
 		t.Fatalf("href = %q, want the plain route's host", got)
 	}
 }
@@ -353,7 +353,7 @@ func TestPathPrefixHostIsUsedWhenItIsTheOnlyOne(t *testing.T) {
 		"gethomepage.dev/enabled":"true","gethomepage.dev/name":"App"}},
 		"spec":{"routes":[{"match":"Host(` + "`only.talos00`" + `) && PathPrefix(` + "`/x/`" + `)",
 			"middlewares":[{"name":"catalyst-nav","namespace":"traefik"}]}]}}]}`
-	if got := onlyItem(t, mustBuild(t, doc)).Href; got != "//only.talos00/" {
+	if got := onlyItem(t, mustBuild(t, doc)).Href; got != "https://only.talos00/" {
 		t.Fatalf("href = %q, want the PathPrefix route's host as a fallback", got)
 	}
 }

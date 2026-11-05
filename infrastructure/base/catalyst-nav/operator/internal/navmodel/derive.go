@@ -406,7 +406,18 @@ func Build(doc *Doc, opts Options) *Manifest {
 		entries[host] = &entry{item: Item{
 			Name:   name,
 			Weight: weight,
-			Href:   "//" + host + "/",
+			// Absolute, scheme spelled out, matching build_nav.py as of
+			// 2026-11-05. A protocol-relative href is the same URL to a browser
+			// but not to a host app's SPA router: Grafana's interceptLinkClicks
+			// decides "external" by looking for a scheme, so a leading `//` read
+			// as an internal path and it called history.pushState() across
+			// origins, which throws -- after preventDefault() had already run,
+			// so the real navigation never happened either. Every nav link was
+			// dead to left-click while right-click still worked.
+			//
+			// Parity depends on this matching the Python exactly; the live
+			// differential is the gate that catches it if either side drifts.
+			Href:   "https://" + host + "/",
 			Themed: themed,
 			Group:  group,
 			Source: src,
