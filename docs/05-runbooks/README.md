@@ -60,7 +60,12 @@ is declared under `configs/patches/` and composed into each node's config by tal
 > Not listed in the table but present in this directory:
 > [bluetooth-enablement.md](bluetooth-enablement.md),
 > [kubernetes-upgrade.md](kubernetes-upgrade.md),
-> [talsecret-1password-backup.md](talsecret-1password-backup.md).
+> [talsecret-1password-backup.md](talsecret-1password-backup.md),
+> [catalyst-nav-xrd-migration.md](catalyst-nav-xrd-migration.md) — migrating a live
+> `CatalystWebSecureIngress` claim onto the declared `spec.nav` block. Read it before editing
+> either of the two live claims: the Flux `prune` guard it opens with has to be reconciled in
+> an **earlier** commit than the change it protects, and deleting that XRD cascades to every
+> claim's IngressRoutes and NetworkPolicies.
 
 ## Machine-config patches
 

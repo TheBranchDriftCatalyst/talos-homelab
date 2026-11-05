@@ -8,11 +8,27 @@
 # `parity` IS THE GATE PHASE 6 DEPENDS ON. Nothing in this repo's CI runs Go (verified: no
 # workflow, no lefthook hook), so these tasks are the front door and running them is manual —
 # which is exactly why `parity` prints a verdict rather than only an exit code.
+#
+# `xrd-schema` IS THE GATE PHASE 5 DEPENDS ON — the CatalystWebSecureIngress XRD's `nav` block.
+# Separate from `parity` on purpose: parity asks "does the Go port still reproduce
+# build_nav.py byte for byte", xrd-schema asks "does the declared nav membership actually get
+# refused when it is wrong". Neither answers the other's question.
 version: "3"
 
 vars:
-  SRC: infrastructure/base/catalyst-nav/operator
-  BIN: infrastructure/base/catalyst-nav/operator/bin/catalyst-nav-operator
+  # OPERATOR/OPERATOR_BIN, not SRC/BIN. dev/Taskfile.docs.yaml defines BOTH of those names for
+  # the docsgen module, and with the two files included from the same root Taskfile the names
+  # COLLIDE ACROSS THEM — in both directions, and silently:
+  #   * `task nav:test:envtest` expanded to `cd dev/docs-generator && go test ./... -count=1`.
+  #     It ran the docsgen suite and reported it as the operator's envtest run.
+  #   * `task docs:lint` expanded to `infrastructure/.../catalyst-nav-operator lint`, i.e. the
+  #     nav operator binary was handed the docs linter's arguments and printed its usage.
+  # Single-line `cmd:` entries resolved the local SRC correctly while multi-line ones did not,
+  # so half the breakage was invisible unless you read the echoed command. Renamed rather than
+  # papered over: a var name unique across every included Taskfile is the only form that cannot
+  # be shadowed. Do not reintroduce a bare SRC or BIN here.
+  OPERATOR: infrastructure/base/catalyst-nav/operator
+  OPERATOR_BIN: infrastructure/base/catalyst-nav/operator/bin/catalyst-nav-operator
   BUILD_NAV: infrastructure/base/themepark/server/nav/build_nav.py
   CORPUS: infrastructure/base/catalyst-nav/operator/testdata/cluster-ingressroutes.json
 
@@ -25,39 +41,55 @@ tasks:
   build:
     desc: "Compile the catalyst-nav-operator binary"
     sources:
-      - "{{.SRC}}/**/*.go"
-      - "{{.SRC}}/go.mod"
-      - "{{.SRC}}/go.sum"
+      - "{{.OPERATOR}}/**/*.go"
+      - "{{.OPERATOR}}/go.mod"
+      - "{{.OPERATOR}}/go.sum"
     generates:
-      - "{{.BIN}}"
+      - "{{.OPERATOR_BIN}}"
     cmds:
-      - cmd: cd {{.SRC}} && GOWORK=off go build -o bin/catalyst-nav-operator ./cmd/catalyst-nav-operator
-      - cmd: echo "built {{.BIN}}"
+      - cmd: cd {{.OPERATOR}} && GOWORK=off go build -o bin/catalyst-nav-operator ./cmd/catalyst-nav-operator
+      - cmd: echo "built {{.OPERATOR_BIN}}"
 
   test:
     desc: "Unit + parity suites (no cluster, no control plane needed)"
     cmds:
       # The envtest package skips cleanly without control-plane binaries; use test:envtest
       # to run it deliberately.
-      - cmd: cd {{.SRC}} && GOWORK=off go test ./...
+      - cmd: cd {{.OPERATOR}} && GOWORK=off go test ./...
 
   test:envtest:
     desc: "Full suite including envtest (downloads a control plane on first run)"
     cmds:
       - cmd: |
-          cd {{.SRC}} && \
+          cd {{.OPERATOR}} && \
           KUBEBUILDER_ASSETS="$(GOWORK=off go run sigs.k8s.io/controller-runtime/tools/setup-envtest use -p path)" \
           GOWORK=off go test ./... -count=1
+
+  xrd-schema:
+    desc: "PHASE 5 GATE: the CatalystWebSecureIngress nav schema — admission + taxonomy drift"
+    cmds:
+      # Two halves, and both are needed. The Go suite installs the CRD the XRD generates into
+      # a throwaway apiserver and proves each constraint by REJECTION — the only way to tell a
+      # CEL rule that works from one that evaluates true always, and the only way to learn
+      # whether the rules fit inside the apiserver's CEL cost budget at all. The pytest suite
+      # needs no control plane and compares the three copies of the taxonomy (taxonomy.yaml,
+      # the XRD enum, the composition's title map) plus the four copies of the shared
+      # middleware trio.
+      - cmd: |
+          cd {{.OPERATOR}} && \
+          KUBEBUILDER_ASSETS="$(GOWORK=off go run sigs.k8s.io/controller-runtime/tools/setup-envtest use -p path)" \
+          GOWORK=off go test ./internal/xrdschema/ -count=1
+      - cmd: python3 -m pytest infrastructure/base/catalyst-websecure-ingress/tests/ -q
 
   vet:
     desc: "go vet the operator module"
     cmds:
-      - cmd: cd {{.SRC}} && GOWORK=off go vet ./...
+      - cmd: cd {{.OPERATOR}} && GOWORK=off go vet ./...
 
   corpus:
     desc: "Regenerate the parity corpus from the repo's committed IngressRoutes"
     cmds:
-      - cmd: bash {{.SRC}}/testdata/extract-corpus.sh --from-repo
+      - cmd: bash {{.OPERATOR}}/testdata/extract-corpus.sh --from-repo
 
   corpus:cluster:
     desc: "Capture the AUTHORITATIVE parity corpus from the live cluster (read-only)"
@@ -65,7 +97,7 @@ tasks:
       # Routes minted by a HelmRelease or by the catalyst-websecure-ingress Composition
       # exist only in the cluster, so the live set is larger than the repo corpus. Phase 6
       # must sign off against THIS one.
-      - cmd: bash {{.SRC}}/testdata/extract-corpus.sh --from-cluster
+      - cmd: bash {{.OPERATOR}}/testdata/extract-corpus.sh --from-cluster
 
   parity:
     desc: "PHASE 6 GATE: diff the operator's manifest against build_nav.py's, byte for byte"
@@ -78,7 +110,7 @@ tasks:
           status=0
           for scope in themed all; do
             NAV_SCOPE=$scope python3 {{.BUILD_NAV}} < {{.CORPUS}} > "$tmp/py.json" 2>/dev/null
-            NAV_SCOPE=$scope ./{{.BIN}} render < {{.CORPUS}} > "$tmp/go.json" 2>/dev/null
+            NAV_SCOPE=$scope ./{{.OPERATOR_BIN}} render < {{.CORPUS}} > "$tmp/go.json" 2>/dev/null
             hosts=$(grep -o '"href"' "$tmp/py.json" | wc -l | tr -d ' ')
             if cmp -s "$tmp/py.json" "$tmp/go.json"; then
               echo "NAV_SCOPE=$scope  IDENTICAL  ($(wc -c < "$tmp/py.json" | tr -d ' ') bytes, $hosts hosts)"
@@ -106,5 +138,5 @@ tasks:
       # The CRD YAML is NOT generated — see api/v1alpha1/navgroup_types.go for why the
       # hand-written, reviewed schemas are the source of truth. Only `object` runs here.
       - cmd: |
-          cd {{.SRC}} && GOWORK=off go run sigs.k8s.io/controller-tools/cmd/controller-gen \
+          cd {{.OPERATOR}} && GOWORK=off go run sigs.k8s.io/controller-tools/cmd/controller-gen \
             object:headerFile=hack/boilerplate.go.txt paths=./api/...

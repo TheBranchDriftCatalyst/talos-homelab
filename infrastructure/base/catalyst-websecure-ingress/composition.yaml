@@ -110,6 +110,83 @@ spec:
                 toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/weight"]
                 transforms: [{type: convert, convert: {toType: string}}]
 
+              # ---- nav.catalyst.io/* : DECLARED nav membership (phase 5) ----------
+              # The nav counterpart to the gethomepage block above, and the reason
+              # it exists: build_nav.py INFERS `themed` from middleware name
+              # substrings, and infers the group from a free-text annotation. Both
+              # inferences have failed in this cluster (see spec.nav's description
+              # in xrd.yaml). These annotations carry the DECLARATION instead.
+              #
+              # BACKWARD COMPATIBILITY IS A PROPERTY OF THE SOURCE PATHS, not of
+              # anything written here. Every patch below reads from spec.nav.*, and
+              # function-patch-and-transform's only conditional is "skip the patch
+              # when its source field path is absent" (v0.10.9, fn.go:221). A claim
+              # with no spec.nav block therefore renders byte-identically to before
+              # this block was added — which is what keeps kubeview and system-graph,
+              # the two live claims, untouched by this change even though
+              # compositionUpdatePolicy: Automatic moves them onto the new revision
+              # the moment it is committed.
+              #
+              # NOTHING HERE IS VISIBLE TO THE LIVE PIPELINE. build_nav.py reads two
+              # annotation prefixes, `gethomepage.dev/` and `catalyst.nav/`.
+              # `nav.catalyst.io/` is neither, so these four keys are inert until the
+              # catalyst-nav operator becomes the reader in phase 6. That inertness is
+              # the point: it is what lets the declaration land on live routes and be
+              # inspected (kubectl get ingressroute -o yaml) before anything depends
+              # on it.
+              - fromFieldPath: spec.nav.themed
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["nav.catalyst.io/themed"]
+                transforms: [{type: convert, convert: {toType: string}}]
+              - fromFieldPath: spec.nav.group
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["nav.catalyst.io/group"]
+              - fromFieldPath: spec.nav.order
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["nav.catalyst.io/order"]
+                transforms: [{type: convert, convert: {toType: string}}]
+              # One annotation, comma-joined: annotation values are strings and P&T
+              # cannot loop over a list. The XRD forbids commas and whitespace inside
+              # each group name and requires minItems: 1, so this encoding is lossless
+              # and never emits an empty value (Join on an empty array yields "", which
+              # would read as "gated to nobody").
+              - fromFieldPath: spec.nav.visibility.authentikGroups
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["nav.catalyst.io/visibility.authentik-groups"]
+                transforms: [{type: string, string: {type: Join, join: {separator: ","}}}]
+
+              # ---- the two gethomepage keys DERIVED from the nav declaration ------
+              # These are what make spec.nav sufficient on its own: the live pipeline
+              # still groups by gethomepage.dev/group and sorts by
+              # gethomepage.dev/weight, so an app that declared only spec.nav would
+              # otherwise land in the "Other" group at weight 50. Deriving them here
+              # means one declaration produces correct behaviour in BOTH pipelines with
+              # no hand-written annotation and nothing for an operator to keep in sync.
+              #
+              # The XRD makes spec.homepage.group/.weight mutually exclusive with
+              # spec.nav, so each of these annotation keys has exactly ONE source on
+              # any admissible claim and the outcome never depends on patch order.
+              #
+              # THE TITLE MAP IS THE THIRD COPY of the taxonomy (the first is
+              # catalyst-nav/taxonomy.yaml, the second the XRD's enum). A `map`
+              # transform ERRORS on an unmapped key — ResolveMap returns "key %s is not
+              # found in map" — which surfaces as a composition render failure and
+              # Synced=False on the claim, not as a missing annotation. The XRD's enum
+              # keeps the input inside this key set, and
+              # tests/test_nav_taxonomy_drift.py keeps all three copies equal.
+              - fromFieldPath: spec.nav.group
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/group"]
+                transforms:
+                  - type: map
+                    map:
+                      comms-and-apps: Comms & Apps
+                      downloads: Downloads
+                      home-and-tools: Home & Tools
+                      infrastructure: Infrastructure
+                      library: Library
+                      media: Media
+                      media-automation: Media Automation
+                      observability: Observability
+              - fromFieldPath: spec.nav.order
+                toFieldPath: spec.forProvider.manifest.metadata.annotations["gethomepage.dev/weight"]
+                transforms: [{type: convert, convert: {toType: string}}]
+
           # ---- 2. web IngressRoute (:80 -> HTTPS redirect) -------------------------
           - name: ir-web
             base:
