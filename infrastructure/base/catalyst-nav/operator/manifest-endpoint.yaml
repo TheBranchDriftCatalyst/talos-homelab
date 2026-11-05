@@ -1,0 +1,42 @@
+---
+# The per-identity manifest endpoint's Service. Phase 3 of the catalyst-nav strangler fig.
+#
+# THERE IS NO IngressRoute HERE, DELIBERATELY. Nothing routes to this Service yet; switching
+# catalyst-nav.js over to it is phase 4, and that phase has to get three things right that this
+# one deliberately does not attempt:
+#
+#   1. The route must NOT reference `catalyst-asset-cache` (traefik/themepark). That middleware
+#      stamps `public, max-age=300, stale-while-revalidate=3600` via customResponseHeaders,
+#      which OVERWRITE the backend's headers — one user's nav served to the next for five
+#      minutes. The handler's path is outside /catalyst/ precisely so the prefix cannot attach
+#      it by accident, but a hand-written route could still reference it by name.
+#   2. The route must carry the `authentik` forward-auth middleware
+#      (infrastructure/base/authentik/middleware.yaml), which is what makes X-authentik-groups
+#      trustworthy in the first place — and `lan-only`, matching the asset route.
+#   3. catalyst-nav.js currently fetches with `credentials: 'omit'` and no `cache: 'no-store'`,
+#      both correct for a static public file and both wrong for this one: without the session
+#      cookie the forward-auth outpost has no identity to resolve, so every user would be
+#      served the public subset. Phase 4 changes that fetch.
+#
+# A SEPARATE Service from catalyst-nav-webhook rather than a second port on it: the webhook
+# Service is the clientConfig target of a failurePolicy: Fail ValidatingWebhookConfiguration,
+# and widening the object the apiserver's admission path depends on in order to publish an
+# unrelated HTTP endpoint is how an admission outage gets caused by a nav change.
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalyst-nav-manifest
+  namespace: catalyst-nav
+  labels:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: manifest
+    app.kubernetes.io/part-of: catalyst
+spec:
+  selector:
+    app.kubernetes.io/name: catalyst-nav
+    app.kubernetes.io/component: operator
+  ports:
+    - name: http
+      port: 80
+      targetPort: manifest
+      protocol: TCP
