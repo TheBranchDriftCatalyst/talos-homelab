@@ -209,20 +209,35 @@ func TestRestrictingTheMediaNavGroupHidesFifteenRealAppsFromANonMember(t *testin
 
 func TestPerHostConfigDoesNotOutliveItsEntryOnTheRealCorpus(t *testing.T) {
 	// Manifest.hosts is keyed by hostname, so it is a second, less obvious channel for the
-	// same disclosure. Asserted against the corpus because the fixture in
-	// internal/visibility cannot prove the real manifest actually populates `hosts`.
+	// same disclosure as `groups`.
+	//
+	// THE HOST CONFIG HERE IS INJECTED, and that is not laziness. No IngressRoute in the
+	// committed capture carries a catalyst.nav/* annotation, so the corpus manifest ships no
+	// `hosts` block at all — meaning the obvious version of this test ("filter the corpus,
+	// assert no Media host survives in hosts") iterates over an empty list and passes no
+	// matter what the filter does. Verified by mutation: deleting the pruning loop entirely
+	// left that version green. So the config is added to the built model on purpose, with
+	// the real corpus's real hostnames, which is what gives the assertion teeth.
 	groups := []navv1alpha1.NavGroup{navGroup("media", "Media", visibleTo("catalyst-media"))}
 	m := corpusModel(t, groups)
 	ix := BuildVisibilityIndex(groups, nil)
 
 	mediaHosts := map[string]bool{}
+	var keep string
 	for _, g := range m.Groups {
-		if g.Name != "Media" {
-			continue
-		}
 		for _, it := range g.Items {
-			mediaHosts[hostFromHref(it.Href)] = true
+			h := hostFromHref(it.Href)
+			if g.Name == "Media" {
+				mediaHosts[h] = true
+				m.Hosts.Set(h, cfgWith("mode", "overlay"))
+			} else if keep == "" {
+				keep = h
+				m.Hosts.Set(h, cfgWith("height", 48))
+			}
 		}
+	}
+	if len(mediaHosts) == 0 || keep == "" {
+		t.Fatal("the corpus has no Media group or no other group; this test measures nothing")
 	}
 
 	out := visibility.Filter(m, ix, visibility.Anonymous())
@@ -231,6 +246,20 @@ func TestPerHostConfigDoesNotOutliveItsEntryOnTheRealCorpus(t *testing.T) {
 			t.Errorf("host config for %q survived its filtered-out entry", h)
 		}
 	}
+	// ...and the surviving entry's config is still there, or "pruning" would just mean
+	// "dropping hosts", which would break every app's per-host nav config.
+	if _, ok := out.Hosts.Values[keep]; !ok {
+		t.Errorf("host config for the still-visible %q was pruned too", keep)
+	}
+	if strings.Contains(string(navmodel.Encode(out)), `"mode":"overlay"`) {
+		t.Error("a filtered-out host's config block reached the encoded manifest")
+	}
+}
+
+func cfgWith(k string, v any) navmodel.OrderedConfig {
+	var c navmodel.OrderedConfig
+	c.Set(k, v)
+	return c
 }
 
 func hostFromHref(href string) string {
